@@ -843,6 +843,7 @@ class PathBRuntimeTests(unittest.TestCase):
             )
             runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
             runtime.adapter.mark_filled(plan.path_run_id, price=100, qty=1, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain1")
+            runtime._market_open_for_advisor = lambda market: True  # type: ignore[method-assign]
             pos = {"ticker": "005930", "qty": 1, "entry": 100.0, "peak_pnl_pct": 3.0}
 
             def slow_advisor(*args, **kwargs):
@@ -3150,6 +3151,7 @@ class PathBRuntimeTests(unittest.TestCase):
             runtime.reconcile_sell_pending = Mock(return_value={})
             runtime.reconcile_filled_positions = Mock(return_value={})
             runtime._minutes_to_close = lambda market: 10.9  # type: ignore[method-assign]
+            runtime._market_open_for_advisor = lambda market: True  # type: ignore[method-assign]
             runtime._run_pre_close_carry_review = Mock(
                 return_value={"decision": "CARRY", "reason": "trend intact", "confidence": 0.8, "advice": {"action": "HOLD"}}
             )

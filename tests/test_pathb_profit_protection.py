@@ -86,9 +86,37 @@ def _runtime_with_plan(tmp: str, *, market: str = "US", status: str = "FILLED"):
 
 
 class PathBProfitProtectionTests(unittest.TestCase):
+    def test_market_open_for_advisor_ignores_current_market_when_session_time_open(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch("runtime.pathb_runtime._is_trading_day", return_value=True):
+            runtime, bot, _store, _plan = _runtime_with_plan(tmp, market="US")
+            bot.current_market = "KR"
+            now = datetime.now(KST)
+            runtime._session_date = lambda market: now.date().isoformat()  # type: ignore[method-assign]
+            runtime._minutes_to_close = lambda market: 120.0  # type: ignore[method-assign]
+            runtime._advisor_market_open_close = lambda market, session_date, now_dt: (  # type: ignore[method-assign]
+                now_dt - timedelta(minutes=30),
+                now_dt + timedelta(minutes=120),
+            )
+
+            self.assertTrue(runtime._market_open_for_advisor("US"))
+
+    def test_market_open_for_advisor_rejects_rollover_minutes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch("runtime.pathb_runtime._is_trading_day", return_value=True):
+            runtime, _bot, _store, _plan = _runtime_with_plan(tmp, market="US")
+            now = datetime.now(KST)
+            runtime._session_date = lambda market: now.date().isoformat()  # type: ignore[method-assign]
+            runtime._minutes_to_close = lambda market: 1437.0  # type: ignore[method-assign]
+            runtime._advisor_market_open_close = lambda market, session_date, now_dt: (  # type: ignore[method-assign]
+                now_dt - timedelta(minutes=30),
+                now_dt + timedelta(minutes=120),
+            )
+
+            self.assertFalse(runtime._market_open_for_advisor("US"))
+
     def test_apply_general_hold_advice_creates_protective_hold_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, _bot, store, plan = _runtime_with_plan(tmp, market="US")
+            runtime._minutes_to_close = lambda market: 120.0  # type: ignore[method-assign]
             pos = {
                 "ticker": "HALO",
                 "qty": 1,
@@ -112,6 +140,63 @@ class PathBProfitProtectionTests(unittest.TestCase):
             self.assertEqual(policy["mode"], "protective_hold")
             self.assertEqual(policy["protective_stop"], 70.80)
             self.assertLessEqual(policy["hard_stop"], policy["protective_stop"])
+
+    def test_intraday_hold_valid_minutes_floor_is_20_for_normal_profit_hold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, _bot, store, plan = _runtime_with_plan(tmp, market="US")
+            runtime._minutes_to_close = lambda market: 120.0  # type: ignore[method-assign]
+            pos = {
+                "ticker": "HALO",
+                "qty": 1,
+                "display_avg_price": 70.34,
+                "display_current_price": 71.16,
+                "decision_stage": "INTRADAY_REVIEW",
+                "pathb_path_run_id": plan.path_run_id,
+            }
+            advice = {
+                "action": "HOLD",
+                "decision_stage": "INTRADAY_REVIEW",
+                "protective_stop": 70.20,
+                "hard_stop": 69.01,
+                "valid_for_min": 10,
+                "confidence": 0.72,
+                "reason": "protect open profit",
+            }
+
+            result = runtime.apply_general_hold_advice_policy(pos, "US", advice, 71.16)
+
+            self.assertTrue(result["updated"])
+            policy = store.find_path_run(plan.path_run_id)["plan"]["auto_sell_policy"]
+            self.assertEqual(policy["valid_for_min"], 20)
+
+    def test_intraday_hold_valid_minutes_keeps_10_for_stop_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, _bot, store, plan = _runtime_with_plan(tmp, market="US")
+            runtime._minutes_to_close = lambda market: 120.0  # type: ignore[method-assign]
+            pos = {
+                "ticker": "HALO",
+                "qty": 1,
+                "display_avg_price": 70.34,
+                "display_current_price": 71.16,
+                "decision_stage": "INTRADAY_REVIEW",
+                "pathb_path_run_id": plan.path_run_id,
+            }
+            advice = {
+                "action": "HOLD",
+                "decision_stage": "INTRADAY_REVIEW",
+                "hold_mode": "stop_recovery",
+                "protective_stop": 70.20,
+                "hard_stop": 69.01,
+                "valid_for_min": 10,
+                "confidence": 0.72,
+                "reason": "watch recovery",
+            }
+
+            result = runtime.apply_general_hold_advice_policy(pos, "US", advice, 71.16)
+
+            self.assertTrue(result["updated"])
+            policy = store.find_path_run(plan.path_run_id)["plan"]["auto_sell_policy"]
+            self.assertEqual(policy["valid_for_min"], 10)
 
     def test_apply_general_hold_advice_preserves_sellability_quarantine(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -215,6 +300,29 @@ class PathBProfitProtectionTests(unittest.TestCase):
             self.assertEqual(result["action"], "sell")
             self.assertEqual(result["signal"].reason, "policy_protective_stop")
             self.assertEqual(result["signal"].close_reason, "CLOSED_CLAUDE_PRICE_STOP")
+
+    def test_protective_hold_rechecks_on_price_trigger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, _bot, store, plan = _runtime_with_plan(tmp, market="US")
+            store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "auto_sell_policy": {
+                        "status": "active",
+                        "mode": "protective_hold",
+                        "protective_stop": 70.80,
+                        "hard_stop": 69.01,
+                        "reask_if_price_above": 72.50,
+                        "valid_until": (datetime.now(KST) + timedelta(minutes=10)).isoformat(timespec="seconds"),
+                    }
+                },
+                merge_plan=True,
+            )
+
+            result = runtime._evaluate_pathb_auto_sell_policy(plan, {"ticker": "HALO"}, 72.60)
+
+            self.assertEqual(result["action"], "recheck")
+            self.assertEqual(result["reason"], "policy_price_above_trigger")
 
     def test_protective_hold_sells_on_hard_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -357,6 +465,7 @@ class PathBProfitProtectionTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", env, clear=False):
             runtime, _bot, _store, plan = _runtime_with_plan(tmp, market="KR")
+            runtime._market_open_for_advisor = lambda market: True  # type: ignore[method-assign]
             pos = {"ticker": "005930", "entry": 100.0, "peak_pnl_pct": 3.0, "pathb_path_run_id": plan.path_run_id}
             with patch("minority_report.hold_advisor.ask", return_value={"action": "HOLD", "confidence": 0.5}) as ask:
                 first = runtime._maybe_trigger_profit_protection_review(plan, pos, 102.50, "KR")
@@ -366,6 +475,24 @@ class PathBProfitProtectionTests(unittest.TestCase):
         self.assertFalse(second["triggered"])
         self.assertEqual(second["reason"], "cooldown")
         self.assertEqual(ask.call_count, 1)
+
+    def test_profit_protection_review_skips_hold_advisor_when_market_closed(self) -> None:
+        env = {
+            "PATHB_PROFIT_REVIEW_ENABLED": "true",
+            "PATHB_PROFIT_REVIEW_TIMEOUT_SEC": "0",
+            "PATHB_PROFIT_REVIEW_COOLDOWN_SEC": "0",
+            "PATHB_LADDER_MIN_HOLD_SEC": "0",
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", env, clear=False):
+            runtime, _bot, _store, plan = _runtime_with_plan(tmp, market="KR")
+            runtime._market_open_for_advisor = lambda market: False  # type: ignore[method-assign]
+            pos = {"ticker": "005930", "entry": 100.0, "peak_pnl_pct": 3.0, "pathb_path_run_id": plan.path_run_id}
+            with patch("minority_report.hold_advisor.ask") as ask:
+                result = runtime._maybe_trigger_profit_protection_review(plan, pos, 102.50, "KR")
+
+        self.assertFalse(result["triggered"])
+        self.assertEqual(result["reason"], "market_closed")
+        ask.assert_not_called()
 
     def test_profit_protection_review_sell_creates_forced_sell_policy(self) -> None:
         env = {
@@ -377,6 +504,7 @@ class PathBProfitProtectionTests(unittest.TestCase):
         advice = {"action": "SELL", "confidence": 0.8, "reason": "give back risk"}
         with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", env, clear=False):
             runtime, _bot, store, plan = _runtime_with_plan(tmp, market="KR")
+            runtime._market_open_for_advisor = lambda market: True  # type: ignore[method-assign]
             pos = {"ticker": "005930", "entry": 100.0, "peak_pnl_pct": 3.0, "pathb_path_run_id": plan.path_run_id}
             with patch("minority_report.hold_advisor.ask", return_value=advice):
                 result = runtime._maybe_trigger_profit_protection_review(plan, pos, 102.50, "KR")
