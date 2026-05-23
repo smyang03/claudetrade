@@ -95,6 +95,7 @@ _BROKER_SNAPSHOT_STATUS: dict[str, dict] = {}
 _BROKER_TRADE_BUNDLE_CACHE: dict[tuple[str, str, str, str, str], dict] = {}
 _BROKER_POSITIONS_CACHE: dict[tuple[str, str], dict] = {}
 _BROKER_POSITIONS_STATUS: dict[tuple[str, str], dict] = {}
+_CURRENT_SESSION_PERIOD_PROFIT_CACHE: dict[tuple[str, str, str], dict] = {}
 _BROKER_REFRESH_STATUS: dict[str, dict] = {}
 _BROKER_REFRESH_LAST_TS: dict[str, float] = {}
 _BROKER_SNAPSHOT_LOCK = threading.Lock()
@@ -3490,7 +3491,7 @@ def _live_equity_payload(
         session_day = _session_trade_date(market)
         if d_start <= session_day <= d_end:
             session_label = session_day.isoformat()
-            status = _current_session_realized_pnl_status(market, mode, live=live)
+            status = _current_session_realized_pnl_status(market, mode, live=live, allow_period_profit=False)
             if bool(status.get("available", False)):
                 live_realized = float(status.get("pnl_krw", 0) or 0)
                 rows_realized = _known_sell_pnl_for_date(broker_rows, session_label)
@@ -3665,8 +3666,10 @@ def _live_equity_payload_fast(
     start: str,
     end: str,
     mode: str = "live",
+    *,
+    allow_period_profit: bool = False,
 ) -> dict:
-    """Build live equity from persisted state only. This function never calls KIS."""
+    """Build live equity from persisted state; KIS period profit is opt-in for summary cards."""
     market = str(market or "").upper() or best_market_with_data()
     mode = _normalize_mode(mode)
     broker = _broker_snapshot_fast(mode=mode)
@@ -3767,12 +3770,19 @@ def _live_equity_payload_fast(
         unrealized.append(last_unrealized)
 
     session_realized = 0.0
+    session_realized_source = ""
     if d_start <= session_day <= d_end:
         try:
             live = _load_live_status(market, mode=mode) or {}
-            status = _current_session_realized_pnl_status(market, mode, live=live)
+            status = _current_session_realized_pnl_status(
+                market,
+                mode,
+                live=live,
+                allow_period_profit=allow_period_profit,
+            )
             if bool(status.get("available", False)):
                 session_realized = float(status.get("pnl_krw", 0) or 0)
+                session_realized_source = str(status.get("source", "") or "")
         except Exception:
             session_realized = 0.0
 
@@ -3841,6 +3851,7 @@ def _live_equity_payload_fast(
         "performance_basis": "cached_state",
         "cash_flow_basis": "cached_asset_delta_minus_unrealized_delta",
         "cash_flow_label": "입출금/환전 추정",
+        "realized_pnl_source": session_realized_source,
         "source": source,
         "cache": cache_meta,
     }
@@ -3953,9 +3964,72 @@ def _broker_period_profit_bucket(market: str, mode: str, start_date: date, end_d
     return _period_profit_bucket_from_payload(market_key, payload)
 
 
+def _current_session_period_profit_realized_pnl(market: str, mode: str) -> Optional[dict]:
+    runtime_mode = _normalize_mode(mode)
+    if runtime_mode != "live":
+        return None
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    session_day = _session_trade_date(market_key)
+    session_ymd = session_day.strftime("%Y%m%d")
+    cache_key = (runtime_mode, market_key, session_ymd)
+    now_ts = _time.time()
+    try:
+        ttl_sec = max(10, int(os.getenv("DASHBOARD_PERIOD_PROFIT_CACHE_SEC", "60") or 60))
+    except Exception:
+        ttl_sec = 60
+    cached = _CURRENT_SESSION_PERIOD_PROFIT_CACHE.get(cache_key)
+    if cached and now_ts - float(cached.get("ts", 0) or 0) < ttl_sec:
+        payload = cached.get("value")
+        return dict(payload) if isinstance(payload, dict) else None
+
+    candidate_days = [session_day]
+    if market_key == "US":
+        previous_day = session_day - timedelta(days=1)
+        if previous_day not in candidate_days:
+            candidate_days.append(previous_day)
+
+    last_error = ""
+    for query_day in candidate_days:
+        query_ymd = query_day.strftime("%Y%m%d")
+        try:
+            bucket = _broker_period_profit_bucket(market_key, runtime_mode, query_day, query_day)
+        except Exception as exc:
+            last_error = str(exc)
+            continue
+        if not isinstance(bucket, dict):
+            continue
+
+        pnl_krw = float(bucket.get("pnl_krw", bucket.get("today_pnl_krw", 0)) or 0)
+        sell_count = int(bucket.get("sell_count", bucket.get("known_sell_count", 0)) or 0)
+        if sell_count <= 0 and abs(pnl_krw) < 0.5:
+            continue
+
+        result = {
+            "available": True,
+            "pnl_krw": round(pnl_krw, 6),
+            "source": "kis_current_session_period_profit",
+            "broker_sell_count": sell_count,
+            "known_sell_count": int(bucket.get("known_sell_count", sell_count) or 0),
+            "fee_krw": round(float(bucket.get("fee_krw", 0) or 0), 6),
+            "query_start": str(bucket.get("query_start") or query_ymd),
+            "query_end": str(bucket.get("query_end") or query_ymd),
+        }
+        if query_day != session_day:
+            result["query_date_fallback"] = True
+            result["session_date"] = session_day.isoformat()
+        _CURRENT_SESSION_PERIOD_PROFIT_CACHE[cache_key] = {"ts": now_ts, "value": result}
+        return dict(result)
+
+    miss = {"ts": now_ts, "value": None}
+    if last_error:
+        miss["error"] = last_error
+    _CURRENT_SESSION_PERIOD_PROFIT_CACHE[cache_key] = miss
+    return None
+
+
 def _apply_current_session_period_profit_adjustment(bucket: dict, market: str, mode: str) -> None:
     try:
-        status = _current_session_realized_pnl_status(market, mode)
+        status = _current_session_realized_pnl_status(market, mode, allow_period_profit=False)
         if not bool(status.get("available", False)):
             return
         live_realized = float(status.get("pnl_krw", 0) or 0)
@@ -4377,9 +4451,19 @@ def _deduped_local_session_realized_pnl(market: str, mode: str, session_date: st
     }
 
 
-def _current_session_realized_pnl_status(market: str, mode: str, live: Optional[dict] = None) -> dict:
+def _current_session_realized_pnl_status(
+    market: str,
+    mode: str,
+    live: Optional[dict] = None,
+    *,
+    allow_period_profit: bool = True,
+) -> dict:
     market_key = "US" if str(market or "").upper() == "US" else "KR"
     session_date = _session_trade_date(market_key).isoformat()
+    if allow_period_profit:
+        period_profit = _current_session_period_profit_realized_pnl(market_key, mode)
+        if period_profit is not None and bool(period_profit.get("available", False)):
+            return period_profit
     broker_fifo = _broker_today_fill_fifo_realized_pnl(market_key, mode)
     if broker_fifo is not None and bool(broker_fifo.get("available", False)):
         return broker_fifo
@@ -4416,7 +4500,7 @@ def _apply_current_session_realized_adjustment(
     """Include live-session realized PnL while broker history rows lag intraday."""
     try:
         session_date = _session_trade_date(market).isoformat()
-        status = _current_session_realized_pnl_status(market, mode)
+        status = _current_session_realized_pnl_status(market, mode, allow_period_profit=False)
         if not bool(status.get("available", False)):
             return
         live_realized = float(status.get("pnl_krw", 0) or 0)
@@ -5716,6 +5800,7 @@ def api_summary():
                 "",
                 "",
                 mode=mode,
+                allow_period_profit=True,
             )
         except Exception:
             live_equity_summary = {}
@@ -5732,6 +5817,11 @@ def api_summary():
     trading_pnl_pct = float(pnl_pct or 0.0)
     unrealized_today_delta_krw = float(unrealized_pnl_krw or 0.0)
     if live_equity_summary:
+        realized_pnl_krw = _latest_series_value(
+            live_equity_summary,
+            "realized_pnl_krw",
+            float(realized_pnl_krw or 0.0),
+        )
         unrealized_today_delta_krw = _latest_series_value(
             live_equity_summary,
             "unrealized_today_delta_krw",
@@ -5757,6 +5847,8 @@ def api_summary():
     realized_excluding_eval_pnl_krw = float(realized_pnl_krw or 0.0)
     if live_equity_summary:
         realized_excluding_eval_pnl_krw = float(trading_pnl_krw or 0.0) - float(unrealized_today_delta_krw or 0.0)
+        if live_equity_summary.get("realized_pnl_source"):
+            realized_pnl_source = str(live_equity_summary.get("realized_pnl_source") or realized_pnl_source)
     starting_asset_krw = float(live_equity_summary.get("starting_asset_krw", 0.0) or 0.0)
     starting_capital_krw = float(live_equity_summary.get("starting_capital_krw", 0.0) or 0.0)
     broker_unrealized = (broker or {}).get("unrealized_krw", {}) if isinstance(broker, dict) else {}
@@ -6035,6 +6127,13 @@ def api_v2_ops():
     session_date = _session_trade_date(market).isoformat() if market in {"KR", "US"} else None
     mode = _request_mode()
     summary = build_v2_ops_summary(market=market, runtime_mode=mode, session_date=session_date)
+    health = summary.setdefault("system_health", {}) if isinstance(summary, dict) else {}
+    if isinstance(health, dict):
+        bot_info = _read_pid_file(_bot_pid_path(mode))
+        bot_pid = int(bot_info.get("pid", 0) or 0)
+        health["bot_alive"] = _pid_alive(bot_pid)
+        health["bot_pid"] = bot_pid
+        health["bot_started_at"] = bot_info.get("started_at", "")
     _enrich_pathb_watch_prices(summary, market=market, mode=mode)
     _enrich_bucket_monitor_tickers(summary, market=market, mode=mode)
     return jsonify(summary)
@@ -9912,6 +10011,7 @@ function pnlSourceLabel(source) {
   const labels = {
     broker_truth_confirmed_local_pnl: '브로커확인',
     broker_trade_history: '브로커체결',
+    kis_current_session_period_profit: '한투 기간손익',
     current_session_status: '세션상태',
     live_status_cached: '라이브상태',
     live_status_or_metrics_fallback: 'fallback',
@@ -9923,7 +10023,7 @@ function pnlSourceLabel(source) {
 
 function pnlSourceClass(source) {
   const s = String(source || '');
-  if (s === 'broker_truth_confirmed_local_pnl' || s === 'broker_trade_history') return 'ok';
+  if (s === 'broker_truth_confirmed_local_pnl' || s === 'broker_trade_history' || s === 'kis_current_session_period_profit') return 'ok';
   if (s.includes('fallback') || s.includes('legacy')) return 'warn';
   return 'neutral';
 }
@@ -10442,6 +10542,7 @@ const SOURCE_KO = {
   broker_today_fill_fifo_partial: '오늘 브로커 체결 일부(선입선출)',
   broker_today_fills: '오늘 브로커 체결',
   broker_confirmed_local_matches: '브로커 확인 체결',
+  kis_current_session_period_profit: '한투 기간손익',
   broker_sync: '브로커 동기화',
   local_fallback: '로컬 보완',
   local_decisions_duplicate_sell_deduped: '로컬 청산 중복 제거',
@@ -11615,9 +11716,9 @@ async function loadSummary() {
   const todayKrw = document.getElementById('today-krw');
   const pnlSource = String(t.realized_pnl_source || '-');
   todayKrw.innerHTML =
-    `${MARKET} 실현손익 ${fmt.krw(realizedExEvalKrw)} · 평가손익 ${fmt.krw(evalDeltaKrw)}${tradeTotalKrw > 0 ? ' · 매매총액 ' + fmt.krw(tradeTotalKrw) : ''}` +
+    `${MARKET} 실현손익 ${fmt.krw(realizedExEvalKrw)} · 보유평가 변화 ${fmt.krw(evalDeltaKrw)} · 현재 보유평가 ${fmt.krw(holdingEvalKrw)}${tradeTotalKrw > 0 ? ' · 매매총액 ' + fmt.krw(tradeTotalKrw) : ''}` +
     ` <span class="pnl-source-badge ${pnlSourceClass(pnlSource)}">${escapeHtml(pnlSourceLabel(pnlSource))}</span>`;
-  todayKrw.title = `총손익 ${fmt.krw(tradingKrw)} · 보유평가 누적 ${fmt.krw(holdingEvalKrw)} · 실현손익 기준 ${pnlSource}`;
+  todayKrw.title = `오늘 총손익 ${fmt.krw(tradingKrw)} = 실현손익 ${fmt.krw(realizedExEvalKrw)} + 보유평가 변화 ${fmt.krw(evalDeltaKrw)} · 현재 보유평가 ${fmt.krw(holdingEvalKrw)} · 실현손익 기준 ${pnlSource}`;
   document.getElementById('cumulative').textContent = fmt.asset(accountAsset);
   const accountFocus = document.getElementById('account-cash-focus');
   if (accountFocus) accountFocus.innerHTML = formatAccountCashFocus(t);
@@ -12671,9 +12772,9 @@ async function loadSummary() {
   if (todayKrw) {
     const pnlSource = String(t.realized_pnl_source || '-');
     todayKrw.innerHTML =
-      `${MARKET} 실현손익 ${fmt.krw(realizedExEvalKrw)} · 평가손익 ${fmt.krw(evalDeltaKrw)}${tradeTotalKrw > 0 ? ' · 매매총액 ' + fmt.krw(tradeTotalKrw) : ''}` +
+      `${MARKET} 실현손익 ${fmt.krw(realizedExEvalKrw)} · 보유평가 변화 ${fmt.krw(evalDeltaKrw)} · 현재 보유평가 ${fmt.krw(holdingEvalKrw)}${tradeTotalKrw > 0 ? ' · 매매총액 ' + fmt.krw(tradeTotalKrw) : ''}` +
       ` <span class="pnl-source-badge ${pnlSourceClass(pnlSource)}">${escapeHtml(pnlSourceLabel(pnlSource))}</span>`;
-    todayKrw.title = `총손익 ${fmt.krw(tradingKrw)} · 보유평가 누적 ${fmt.krw(holdingEvalKrw)} · 실현손익 기준 ${pnlSource}`;
+    todayKrw.title = `오늘 총손익 ${fmt.krw(tradingKrw)} = 실현손익 ${fmt.krw(realizedExEvalKrw)} + 보유평가 변화 ${fmt.krw(evalDeltaKrw)} · 현재 보유평가 ${fmt.krw(holdingEvalKrw)} · 실현손익 기준 ${pnlSource}`;
   }
   const cumulative = document.getElementById('cumulative');
   if (cumulative) cumulative.textContent = fmt.asset(accountAsset);

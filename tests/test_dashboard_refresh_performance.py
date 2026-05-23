@@ -697,6 +697,10 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         ), patch.object(
             dashboard_server, "_load_live_status", return_value=live
         ), patch.object(
+            dashboard_server,
+            "_current_session_period_profit_realized_pnl",
+            side_effect=AssertionError("fast payload default must not call KIS period profit"),
+        ), patch.object(
             dashboard_server, "_broker_today_fill_fifo_realized_pnl", return_value=None
         ), patch.object(
             dashboard_server, "_broker_confirmed_local_realized_pnl", return_value=None

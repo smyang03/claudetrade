@@ -59,6 +59,9 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertIn("function pnlSourceClass", body)
         self.assertIn("broker_truth_confirmed_local_pnl: '브로커확인'", body)
         self.assertIn("live_status_or_metrics_fallback: 'fallback'", body)
+        self.assertIn("kis_current_session_period_profit: '한투 기간손익'", body)
+        self.assertIn("보유평가 변화", body)
+        self.assertIn("현재 보유평가", body)
         self.assertIn("todayKrw.innerHTML", body)
 
     def test_today_page_defines_escape_html_before_judgment_rendering(self) -> None:
@@ -655,6 +658,8 @@ class DashboardPathBTests(unittest.TestCase):
         with patch.object(dashboard_server, "_broker_period_profit_bucket", return_value=None), patch.object(
             dashboard_server, "_broker_trade_rows_with_pnl", side_effect=fake_rows
         ), patch.object(
+            dashboard_server, "_current_session_period_profit_realized_pnl", return_value=None
+        ), patch.object(
             dashboard_server, "_broker_today_fill_fifo_realized_pnl", return_value=None
         ), patch.object(
             dashboard_server, "_broker_confirmed_local_realized_pnl", return_value=None
@@ -694,6 +699,72 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(bucket["pnl_krw"], -1500.0)
         self.assertEqual(bucket["today_date"], "20260516")
         self.assertEqual(bucket["today_pnl_krw"], -2500.0)
+
+    def test_current_session_realized_pnl_prefers_kis_period_profit(self) -> None:
+        dashboard_server._CURRENT_SESSION_PERIOD_PROFIT_CACHE.clear()
+        try:
+            with patch.object(dashboard_server, "_session_trade_date", return_value=date(2026, 5, 22)), patch.object(
+                dashboard_server,
+                "_broker_period_profit_bucket",
+                return_value={
+                    "pnl_krw": 35_816.377,
+                    "known_sell_count": 8,
+                    "sell_count": 8,
+                    "fee_krw": 11_050.725,
+                    "query_start": "20260522",
+                    "query_end": "20260522",
+                },
+            ), patch.object(
+                dashboard_server,
+                "_broker_today_fill_fifo_realized_pnl",
+                side_effect=AssertionError("period profit should be preferred"),
+            ):
+                status = dashboard_server._current_session_realized_pnl_status(
+                    "US",
+                    "live",
+                    live={"market": "US", "trading_date": "2026-05-22", "market_realized_pnl_krw": 0.0},
+                )
+        finally:
+            dashboard_server._CURRENT_SESSION_PERIOD_PROFIT_CACHE.clear()
+
+        self.assertTrue(status["available"])
+        self.assertEqual(status["pnl_krw"], 35_816.377)
+        self.assertEqual(status["broker_sell_count"], 8)
+        self.assertEqual(status["source"], "kis_current_session_period_profit")
+
+    def test_current_session_realized_pnl_uses_previous_kis_date_for_closed_us_session(self) -> None:
+        dashboard_server._CURRENT_SESSION_PERIOD_PROFIT_CACHE.clear()
+        calls = []
+
+        def fake_period_bucket(_market, _mode, start_date, _end_date):
+            calls.append(start_date)
+            if start_date == date(2026, 5, 23):
+                return {"pnl_krw": 0.0, "known_sell_count": 0, "sell_count": 0}
+            return {
+                "pnl_krw": 35_816.377,
+                "known_sell_count": 8,
+                "sell_count": 8,
+                "query_start": "20260522",
+                "query_end": "20260522",
+            }
+
+        try:
+            with patch.object(dashboard_server, "_session_trade_date", return_value=date(2026, 5, 23)), patch.object(
+                dashboard_server, "_broker_period_profit_bucket", side_effect=fake_period_bucket
+            ):
+                status = dashboard_server._current_session_realized_pnl_status(
+                    "US",
+                    "live",
+                    live={"market": "US", "trading_date": "2026-05-23", "market_realized_pnl_krw": 0.0},
+                )
+        finally:
+            dashboard_server._CURRENT_SESSION_PERIOD_PROFIT_CACHE.clear()
+
+        self.assertEqual(calls, [date(2026, 5, 23), date(2026, 5, 22)])
+        self.assertTrue(status["available"])
+        self.assertEqual(status["pnl_krw"], 35_816.377)
+        self.assertTrue(status["query_date_fallback"])
+        self.assertEqual(status["session_date"], "2026-05-23")
 
     def test_period_profit_direct_adds_missing_intraday_adjustment(self) -> None:
         direct = {
@@ -746,6 +817,34 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(summary["US"]["pnl_krw"], 1000.0)
         self.assertNotIn("current_session_adjustment_krw", summary["US"])
         self.assertEqual(summary["us_pnl_krw"], 1000.0)
+
+    def test_period_profit_direct_does_not_reapply_period_profit_status(self) -> None:
+        bucket = {
+            "pnl_krw": 35_816.377,
+            "known_sell_count": 8,
+            "sell_count": 8,
+            "unknown_cost_basis_count": 0,
+            "source": "kis_overseas_period_profit",
+            "today_pnl_krw": 0.0,
+        }
+
+        with patch.object(
+            dashboard_server,
+            "_current_session_period_profit_realized_pnl",
+            side_effect=AssertionError("direct period bucket must not be adjusted by period profit again"),
+        ), patch.object(
+            dashboard_server, "_broker_today_fill_fifo_realized_pnl", return_value=None
+        ), patch.object(
+            dashboard_server, "_broker_confirmed_local_realized_pnl", return_value=None
+        ), patch.object(
+            dashboard_server, "_deduped_local_session_realized_pnl", return_value=None
+        ), patch.object(
+            dashboard_server, "_load_live_status", return_value={}
+        ):
+            dashboard_server._apply_current_session_period_profit_adjustment(bucket, "US", "live")
+
+        self.assertEqual(bucket["pnl_krw"], 35_816.377)
+        self.assertNotIn("current_session_adjustment_krw", bucket)
 
     def test_current_session_realized_pnl_prefers_broker_confirmed_fills(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -824,7 +923,9 @@ class DashboardPathBTests(unittest.TestCase):
                     path.parent.mkdir(parents=True, exist_ok=True)
                 return path
 
-            with patch.object(dashboard_server, "get_runtime_path", side_effect=fake_runtime_path), patch.object(
+            with patch.object(dashboard_server, "_current_session_period_profit_realized_pnl", return_value=None), patch.object(
+                dashboard_server, "get_runtime_path", side_effect=fake_runtime_path
+            ), patch.object(
                 dashboard_server, "_session_trade_date", return_value=date(2026, 5, 5)
             ):
                 status = dashboard_server._current_session_realized_pnl_status(
@@ -894,7 +995,9 @@ class DashboardPathBTests(unittest.TestCase):
                     path.parent.mkdir(parents=True, exist_ok=True)
                 return path
 
-            with patch.object(dashboard_server, "get_runtime_path", side_effect=fake_runtime_path), patch.object(
+            with patch.object(dashboard_server, "_current_session_period_profit_realized_pnl", return_value=None), patch.object(
+                dashboard_server, "get_runtime_path", side_effect=fake_runtime_path
+            ), patch.object(
                 dashboard_server, "_session_trade_date", return_value=date(2026, 5, 5)
             ):
                 status = dashboard_server._current_session_realized_pnl_status(
@@ -983,7 +1086,9 @@ class DashboardPathBTests(unittest.TestCase):
                     path.parent.mkdir(parents=True, exist_ok=True)
                 return path
 
-            with patch.object(dashboard_server, "get_runtime_path", side_effect=fake_runtime_path), patch.object(
+            with patch.object(dashboard_server, "_current_session_period_profit_realized_pnl", return_value=None), patch.object(
+                dashboard_server, "get_runtime_path", side_effect=fake_runtime_path
+            ), patch.object(
                 dashboard_server, "_session_trade_date", return_value=date(2026, 5, 5)
             ):
                 status = dashboard_server._current_session_realized_pnl_status(
@@ -998,7 +1103,9 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(status["source"], "local_decisions_duplicate_sell_deduped")
 
     def test_current_session_realized_pnl_live_fallback_does_not_call_load_today(self) -> None:
-        with patch.object(dashboard_server, "_broker_today_fill_fifo_realized_pnl", return_value=None), patch.object(
+        with patch.object(dashboard_server, "_current_session_period_profit_realized_pnl", return_value=None), patch.object(
+            dashboard_server, "_broker_today_fill_fifo_realized_pnl", return_value=None
+        ), patch.object(
             dashboard_server, "_broker_confirmed_local_realized_pnl", return_value=None
         ), patch.object(
             dashboard_server, "_deduped_local_session_realized_pnl", return_value=None
@@ -1114,6 +1221,8 @@ class DashboardPathBTests(unittest.TestCase):
         ), patch.object(
             dashboard_server, "_load_broker_equity_snapshots", return_value=snapshots
         ), patch.object(
+            dashboard_server, "_current_session_period_profit_realized_pnl", return_value=None
+        ), patch.object(
             dashboard_server, "_broker_today_fill_fifo_realized_pnl", return_value=None
         ), patch.object(
             dashboard_server, "_broker_confirmed_local_realized_pnl", return_value=None
@@ -1203,6 +1312,8 @@ class DashboardPathBTests(unittest.TestCase):
             dashboard_server, "_is_fresh_live_status", return_value=True
         ), patch.object(
             dashboard_server, "load_today", return_value={"date": "2026-05-05", "market": "US"}
+        ), patch.object(
+            dashboard_server, "_current_session_period_profit_realized_pnl", return_value=None
         ), patch.object(
             dashboard_server, "_broker_today_fill_fifo_realized_pnl", return_value=None
         ), patch.object(
