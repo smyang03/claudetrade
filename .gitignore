@@ -103,3 +103,28 @@ _sim_test.py
 
 # Local credential notes
 *API*.txt
+
+# 날짜별 런타임 state 산출물 (재생성 가능)
+state/candidate_cohort_reliability_*.json
+state/candidate_trainer_*.json
+state/price_collection_priority_*.json
+state/sub_screener_*.json
+state/kr_candidate_flow_*.json
+state/kr_index_history_*.json
+state/brain_backup_*.json
+state/lesson_candidates.backup_*.json
+state/manual_cleanup_backup_*/
+
+# Audit DB (runtime 생성)
+data/audit/
+
+# External market data smoke test artifacts
+data/external_market_data_smoke_*.sqlite-shm
+data/external_market_data_smoke_*.sqlite-wal
+
+# Chrome CDP / 대시보드 스크린샷 임시 파일
+tmp_chrome_cdp_profile*/
+tmp_dashboard_*.png
+
+# 실수로 생성된 파일
+=
