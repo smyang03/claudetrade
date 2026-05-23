@@ -3072,6 +3072,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     continue
                 filtered_ready.append(ticker)
             ready_candidates = filtered_ready
+        filtered_ready = []
+        for ticker in ready_candidates:
+            try:
+                if self._has_open_position(ticker, market_key):
+                    runtime_filtered[ticker] = "already_holding"
+                    continue
+            except Exception:
+                pass
+            try:
+                if self._has_pending_order(ticker, market_key):
+                    runtime_filtered[ticker] = "pending_order"
+                    continue
+            except Exception:
+                pass
+            filtered_ready.append(ticker)
+        ready_candidates = filtered_ready
         slot_config = self._trade_ready_slot_config(mode, market)
         total_cap = min(selection_limits(market)["trade_max"], int(slot_config.get("__total__", len(ready_candidates))))
         slot_counts: dict[str, int] = {}
@@ -6221,6 +6237,68 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return False
         quality = str(consensus.get("consensus_quality", "") or "")
         return quality in {"partial_consensus", "partial_consensus_only", "fail_closed"}
+
+    def _analyst_retry_open_positions(self, market: str) -> list[dict]:
+        market_key = str(market or "").strip().upper()
+        active: list[dict] = []
+        risk = getattr(self, "risk", None)
+        for pos in getattr(risk, "positions", []) or []:
+            try:
+                qty = float(pos.get("qty", 0) or 0)
+            except Exception:
+                qty = 0.0
+            if qty <= 0:
+                continue
+            pos_market = str(pos.get("market", "") or "").strip().upper()
+            if not pos_market:
+                pos_market = self._ticker_market(str(pos.get("ticker", "") or ""))
+            if pos_market == market_key:
+                active.append(pos)
+        return active
+
+    def _analyst_retry_pending_orders(self, market: str) -> list[dict]:
+        market_key = str(market or "").strip().upper()
+        pending: list[dict] = []
+        for order in getattr(self, "pending_orders", []) or []:
+            order_market = str(order.get("market", "KR") or "KR").strip().upper()
+            if order_market == market_key:
+                pending.append(order)
+        return pending
+
+    def _analyst_retry_broker_exposure(self, market: str) -> tuple[list[dict], list[dict]]:
+        pathb = getattr(self, "pathb", None)
+        if pathb is None or getattr(pathb, "broker_truth", None) is None:
+            return [], []
+        market_key = str(market or "").strip().upper()
+        try:
+            market_data = self._broker_truth_market_snapshot(market_key, force=True, ttl_sec=15)
+        except Exception as exc:
+            log.warning(f"[analyst_retry] {market_key} broker truth 확인 실패 - 로컬 상태만 사용: {exc}")
+            return [], []
+        if not market_data:
+            return [], []
+
+        broker_positions: list[dict] = []
+        for row in list(market_data.get("positions", []) or []):
+            try:
+                qty = float(row.get("qty", 0) or 0)
+            except Exception:
+                qty = 0.0
+            if qty > 0:
+                broker_positions.append(row)
+
+        broker_pending: list[dict] = []
+        for row in list(market_data.get("open_orders", []) or []):
+            try:
+                remaining_qty = float(row.get("remaining_qty", row.get("qty", 0)) or 0)
+            except Exception:
+                remaining_qty = 0.0
+            if remaining_qty > 0:
+                broker_pending.append(row)
+        if broker_positions or broker_pending:
+            return broker_positions, broker_pending
+        return broker_positions, broker_pending
+
     def _maybe_handle_analyst_unavailability_retry(self, market: str) -> None:
         """분석가 unavailability block 시 1분 후 재판단 스케줄. 정상 복귀 시 자동 중단."""
         _MAX_RETRIES = 5
@@ -6248,6 +6326,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
             return
         if now_ts < retry_at:
+            return
+        open_positions = self._analyst_retry_open_positions(market)
+        pending_orders = self._analyst_retry_pending_orders(market)
+        broker_positions: list[dict] = []
+        broker_pending: list[dict] = []
+        if not open_positions and not pending_orders:
+            broker_positions, broker_pending = self._analyst_retry_broker_exposure(market)
+        if open_positions or pending_orders or broker_positions or broker_pending:
+            log.warning(
+                f"[analyst_retry] {market} 포지션/미체결 주문 존재 - 재판단 스킵 "
+                f"positions={len(open_positions)} pending={len(pending_orders)} "
+                f"broker_positions={len(broker_positions)} broker_pending={len(broker_pending)}"
+            )
+            self._analyst_unavail_retry_at[market] = now_ts + 60.0
             return
         # 재판단 실행
         self._analyst_unavail_retry_count[market] = retry_count + 1
@@ -11062,7 +11154,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
         return entry, current
 
-    def _position_stop_price(self, pos: dict) -> float:
+    def _position_stop_price(self, pos: dict, market: str = "", current_native: float = 0.0) -> float:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            current_value = float(current_native or 0)
+        except Exception:
+            current_value = 0.0
+        try:
+            fx = float(getattr(self, "usd_krw_rate", 0) or 0)
+        except Exception:
+            fx = 0.0
+        krw_scaled_keys = {
+            "effective_stop_price",
+            "strategy_stop_price",
+            "sl",
+            "loss_cap_price",
+        }
         for key in (
             "effective_stop_price",
             "strategy_stop_price",
@@ -11075,6 +11182,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         ):
             value = self._float_or_zero(pos.get(key))
             if value > 0:
+                if (
+                    market_key == "US"
+                    and key in krw_scaled_keys
+                    and current_value > 0
+                    and value > current_value * 20.0
+                    and fx > 0
+                ):
+                    return value / fx
                 return value
         return 0.0
 
@@ -11160,7 +11275,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             market_key = "US" if str(market or "").upper() == "US" else "KR"
             ticker = str(pos.get("ticker", "") or "").strip()
             entry_native, current_native = self._position_native_prices(pos, market_key)
-            stop_price = self._position_stop_price(pos)
+            stop_price = self._position_stop_price(pos, market_key, current_native)
             stop_distance_pct = None
             if current_native > 0 and stop_price > 0:
                 stop_distance_pct = round((current_native / stop_price - 1.0) * 100.0, 3)
@@ -11404,7 +11519,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "minutes_to_close": round(minutes_to_close, 1),
                 "min_minutes_to_close": min_to_close,
             }
-        stop_price = self._position_stop_price(pos)
+        stop_price = self._position_stop_price(pos, market_key, current_native)
         stop_distance_pct = None
         if current_native > 0 and stop_price > 0:
             stop_distance_pct = (current_native / stop_price - 1.0) * 100.0
@@ -11539,7 +11654,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not ticker:
             return
         entry_native, current_native = self._position_native_prices(cand, market)
-        stop_price = self._position_stop_price(cand)
+        stop_price = self._position_stop_price(cand, market, current_native)
         or_ctx = self._advisor_or_context(market, ticker, entry_native)
         pnl_pct = self._float_or_zero((ex or {}).get("pnl_pct") if ex else cand.get("pnl_pct"))
         if not pnl_pct and entry_native > 0 and current_native > 0:

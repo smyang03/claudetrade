@@ -665,8 +665,21 @@ def _log_decision(ticker: str, market: str, pos: dict,
             "default_policy": default_policy,
             "advisor_context_v2": pos.get("advisor_context_v2", {}) if isinstance(pos, dict) else {},
             "trail_pct":  trail_pct,
-            "votes": {k: {"action": v["action"], "confidence": v["confidence"],
-                          "reason": v["reason"]} for k, v in votes.items()},
+            "votes": {
+                k: {
+                    "action": v["action"],
+                    "confidence": v["confidence"],
+                    "reason": v["reason"],
+                    "revised_sell_target": v.get("revised_sell_target", 0.0),
+                    "protective_stop": v.get("protective_stop", 0.0),
+                    "hard_stop": v.get("hard_stop", 0.0),
+                    "valid_for_min": v.get("valid_for_min", 0),
+                    "reask_after_min": v.get("reask_after_min", 0),
+                    "hold_mode": v.get("hold_mode", ""),
+                    "invalid_if": v.get("invalid_if", ""),
+                }
+                for k, v in votes.items()
+            },
             "outcome":    None,   # 청산 후 채워짐
         }
         with open(log_file, "a", encoding="utf-8") as f:

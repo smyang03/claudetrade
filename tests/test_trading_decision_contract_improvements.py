@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import unittest
 from contextlib import ExitStack
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from bot.candidate_policy import normalize_selection_result
 from decision.claude_price_plan import parse_plan_from_claude
 from minority_report import hold_advisor, postmortem
+from trading_bot import TradingBot
 
 
 class SelectionSizingContractTests(unittest.TestCase):
@@ -49,6 +52,32 @@ class SelectionSizingContractTests(unittest.TestCase):
 
 
 class PricePlanContractTests(unittest.TestCase):
+    def test_us_stop_price_converts_krw_scaled_sl_for_advisor_context(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.usd_krw_rate = 1350.0
+
+        stop = bot._position_stop_price({"sl": 135000.0}, "US", 100.0)
+
+        self.assertAlmostEqual(stop, 100.0)
+
+    def test_us_stop_price_keeps_native_auto_sell_policy_stop(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.usd_krw_rate = 1350.0
+
+        stop = bot._position_stop_price({"auto_sell_policy_protective_stop": 95.0}, "US", 100.0)
+
+        self.assertAlmostEqual(stop, 95.0)
+
+    def test_us_stop_price_converts_krw_scaled_strategy_and_loss_cap(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.usd_krw_rate = 1350.0
+
+        strategy_stop = bot._position_stop_price({"strategy_stop_price": 132300.0}, "US", 100.0)
+        loss_cap = bot._position_stop_price({"loss_cap_price": 131625.0}, "US", 100.0)
+
+        self.assertAlmostEqual(strategy_stop, 98.0)
+        self.assertAlmostEqual(loss_cap, 97.5)
+
     def test_parse_plan_round_trips_additive_execution_fields(self) -> None:
         plan, errors = parse_plan_from_claude(
             decision_id="d1",
@@ -151,6 +180,47 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
         self.assertEqual(result["decision_stage"], "INTRADAY_REVIEW")
         self.assertEqual(len(captured), 3)
         self.assertTrue(all(call["decision_stage"] == "INTRADAY_REVIEW" for call in captured))
+
+    def test_decision_log_preserves_vote_price_policy_fields(self) -> None:
+        votes = {
+            "bull": {
+                "action": "HOLD",
+                "confidence": 0.7,
+                "reason": "extend",
+                "revised_sell_target": 120.0,
+                "protective_stop": 98.0,
+                "hard_stop": 97.0,
+                "valid_for_min": 20,
+                "reask_after_min": 10,
+                "hold_mode": "target_extension",
+                "invalid_if": "loses 98",
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "minority_report.hold_advisor.get_runtime_path",
+            return_value=Path(tmp) / "logs" / "hold_advisor",
+        ):
+            hold_advisor._log_decision(
+                "TEST",
+                "US",
+                {"entry": 100.0, "current_price": 101.0, "display_avg_price": 100.0, "display_current_price": 101.0},
+                "HOLD",
+                0.02,
+                votes,
+                "AUTO_SELL_REVIEW",
+                "policy",
+            )
+            files = list((Path(tmp) / "logs" / "hold_advisor").glob("decisions_*.jsonl"))
+            row = json.loads(files[0].read_text(encoding="utf-8").splitlines()[0])
+
+        logged_vote = row["votes"]["bull"]
+        self.assertEqual(logged_vote["revised_sell_target"], 120.0)
+        self.assertEqual(logged_vote["protective_stop"], 98.0)
+        self.assertEqual(logged_vote["hard_stop"], 97.0)
+        self.assertEqual(logged_vote["valid_for_min"], 20)
+        self.assertEqual(logged_vote["reask_after_min"], 10)
+        self.assertEqual(logged_vote["hold_mode"], "target_extension")
+        self.assertEqual(logged_vote["invalid_if"], "loses 98")
 
     def test_pre_close_carry_prompt_uses_stage_lead_and_minutes(self) -> None:
         captured: dict[str, str] = {}

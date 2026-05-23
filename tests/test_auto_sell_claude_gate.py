@@ -775,24 +775,26 @@ class AutoSellClaudeGateTests(unittest.TestCase):
         actions = [call.args[1] for call in bot._record_decision_event.call_args_list]
         self.assertNotIn("sell_filled", actions)
 
-    def test_pathb_target_hold_blocks_submit_sell(self) -> None:
+    def test_pathb_target_hold_without_protective_stop_falls_back_to_sell(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan, pos = _pathb_runtime(tmp)
 
-            with patch("minority_report.hold_advisor.ask", return_value={"action": "HOLD", "reason": "carry"}), patch(
-                "runtime.pathb_runtime.precheck_order"
-            ) as precheck:
-                ok = runtime._submit_sell(
+            with patch("minority_report.hold_advisor.ask", return_value={"action": "HOLD", "reason": "carry"}) as advisor:
+                result = runtime._run_pathb_sell_review_gate(
                     plan,
                     pos,
                     ExitSignal(True, "claude_sell_target", "CLOSED_CLAUDE_PRICE_TARGET", 121.0, plan.path_run_id),
                 )
 
             run = runtime.store.find_path_run(plan.path_run_id)
-            self.assertFalse(ok)
-            precheck.assert_not_called()
-            self.assertNotIn("pathb_closing", pos)
-            self.assertEqual(run["plan"]["auto_sell_review_action"], "HOLD")
+            self.assertTrue(result["allowed"])
+            advisor.assert_called_once()
+            self.assertEqual(run["plan"]["auto_sell_review_action"], "SELL")
+            self.assertTrue(run["plan"]["auto_sell_hold_fallback_to_sell"])
+            self.assertIn(
+                run["plan"]["auto_sell_policy_reject_reason"],
+                {"protective_stop_missing", "revised_target_not_above_current"},
+            )
 
     def test_pathb_hard_stop_bypasses_hold_advisor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -899,9 +901,71 @@ class AutoSellClaudeGateTests(unittest.TestCase):
             self.assertFalse(ok)
             precheck.assert_not_called()
             self.assertEqual(policy["mode"], "target_extension")
+            self.assertEqual(policy["source"], "gain_lock_hold")
             self.assertEqual(policy["revised_sell_target"], 130.0)
-            self.assertEqual(policy["protective_stop"], 112.0)
+            self.assertGreaterEqual(policy["protective_stop"], 117.0)
+            self.assertEqual(policy["original_sell_target"], 120.0)
             self.assertEqual(run["plan"]["sell_target"], 130.0)
+
+    def test_pathb_target_hold_rejects_when_gain_lock_floor_too_close(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan, pos = _pathb_runtime(tmp)
+            advice = {
+                "action": "HOLD",
+                "reason": "extend target with protected profit",
+                "confidence": 0.78,
+                "revised_sell_target": 130.0,
+                "protective_stop": 112.0,
+            }
+
+            with patch("minority_report.hold_advisor.ask", return_value=advice):
+                result = runtime._run_pathb_sell_review_gate(
+                    plan,
+                    pos,
+                    ExitSignal(True, "claude_sell_target", "CLOSED_CLAUDE_PRICE_TARGET", 118.0, plan.path_run_id),
+                )
+
+            run = runtime.store.find_path_run(plan.path_run_id)
+            self.assertTrue(result["allowed"])
+            self.assertEqual(run["plan"]["auto_sell_review_action"], "SELL")
+            self.assertTrue(run["plan"]["auto_sell_hold_fallback_to_sell"])
+            self.assertEqual(run["plan"]["auto_sell_policy_reject_reason"], "protective_stop_too_close_or_above_current")
+
+    def test_pathb_target_hold_keeps_when_existing_policy_stop_satisfies_gain_lock_floor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan, pos = _pathb_runtime(tmp)
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "auto_sell_policy": {
+                        "status": "active",
+                        "mode": "target_extension",
+                        "protective_stop": 118.0,
+                        "original_sell_target": 120.0,
+                    }
+                },
+                merge_plan=True,
+            )
+            advice = {
+                "action": "HOLD",
+                "reason": "extend target but looser stop",
+                "confidence": 0.78,
+                "revised_sell_target": 130.0,
+                "protective_stop": 80.0,
+            }
+
+            with patch("minority_report.hold_advisor.ask", return_value=advice):
+                result = runtime._run_pathb_sell_review_gate(
+                    plan,
+                    pos,
+                    ExitSignal(True, "claude_sell_target", "CLOSED_CLAUDE_PRICE_TARGET", 121.0, plan.path_run_id),
+                )
+
+            run = runtime.store.find_path_run(plan.path_run_id)
+            self.assertFalse(result["allowed"])
+            self.assertEqual(run["plan"]["auto_sell_review_action"], "HOLD")
+            self.assertTrue(run["plan"]["auto_sell_policy_existing_stop_hold"])
+            self.assertEqual(run["plan"]["auto_sell_policy_existing_stop_source"], "existing_policy_protective_stop")
 
     def test_pathb_active_policy_suppresses_repeated_target_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -929,6 +993,33 @@ class AutoSellClaudeGateTests(unittest.TestCase):
 
             self.assertEqual(result["action"], "skip")
             self.assertEqual(result["reason"], "inside_target_policy")
+
+    def test_pathb_active_target_policy_rechecks_on_price_trigger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan, pos = _pathb_runtime(tmp)
+            now = datetime.now().astimezone()
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "sell_target": 130.0,
+                    "auto_sell_policy": {
+                        "status": "active",
+                        "mode": "target_extension",
+                        "valid_until": (now + timedelta(minutes=10)).isoformat(timespec="seconds"),
+                        "reask_after_at": (now + timedelta(minutes=10)).isoformat(timespec="seconds"),
+                        "revised_sell_target": 130.0,
+                        "protective_stop": 112.0,
+                        "reask_if_price_above": 123.0,
+                    },
+                },
+                merge_plan=True,
+            )
+
+            with patch.dict(os.environ, {"PATHB_HOLD_POLICY_MODE": "enforce"}):
+                result = runtime._evaluate_pathb_auto_sell_policy(plan, pos, 124.0)
+
+            self.assertEqual(result["action"], "recheck")
+            self.assertEqual(result["reason"], "policy_price_above_trigger")
 
     def test_pathb_policy_protective_stop_is_firm_exit_without_advisor_recheck(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -971,6 +1062,58 @@ class AutoSellClaudeGateTests(unittest.TestCase):
             self.assertTrue(ok)
             advisor.assert_not_called()
             precheck.assert_called_once()
+
+    def test_pathb_policy_protective_stop_preempts_time_recheck(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan, pos = _pathb_runtime(tmp)
+            now = datetime.now().astimezone()
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "auto_sell_policy": {
+                        "status": "active",
+                        "mode": "target_extension",
+                        "valid_until": (now + timedelta(minutes=10)).isoformat(timespec="seconds"),
+                        "reask_after_at": (now - timedelta(minutes=1)).isoformat(timespec="seconds"),
+                        "revised_sell_target": 130.0,
+                        "protective_stop": 112.0,
+                    },
+                },
+                merge_plan=True,
+            )
+
+            with patch.dict(os.environ, {"PATHB_HOLD_POLICY_MODE": "enforce"}):
+                result = runtime._evaluate_pathb_auto_sell_policy(plan, pos, 111.0)
+
+            self.assertEqual(result["action"], "sell")
+            self.assertEqual(result["reason"], "policy_protective_stop")
+            self.assertEqual(result["signal"].close_reason, "CLOSED_CLAUDE_PRICE_STOP")
+
+    def test_pathb_policy_protective_stop_preempts_expiry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan, pos = _pathb_runtime(tmp)
+            now = datetime.now().astimezone()
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "auto_sell_policy": {
+                        "status": "active",
+                        "mode": "target_extension",
+                        "valid_until": (now - timedelta(minutes=1)).isoformat(timespec="seconds"),
+                        "reask_after_at": (now - timedelta(minutes=1)).isoformat(timespec="seconds"),
+                        "revised_sell_target": 130.0,
+                        "protective_stop": 112.0,
+                    },
+                },
+                merge_plan=True,
+            )
+
+            with patch.dict(os.environ, {"PATHB_HOLD_POLICY_MODE": "enforce"}):
+                result = runtime._evaluate_pathb_auto_sell_policy(plan, pos, 111.0)
+
+            self.assertEqual(result["action"], "sell")
+            self.assertEqual(result["reason"], "policy_protective_stop")
+            self.assertEqual(result["signal"].close_reason, "CLOSED_CLAUDE_PRICE_STOP")
 
     def test_final_policy_exits_bypass_review_even_when_review_all_enabled(self) -> None:
         from trading_bot import TradingBot
