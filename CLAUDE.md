@@ -398,7 +398,7 @@ until more data is available or a human explicitly approves the change.
 
 | 파라미터 | 현재값 |
 |---|---|
-| 고정 주문금액 | 500,000 KRW |
+| 고정 주문금액 | 450,000 KRW |
 | 최대 포지션 수 (`PATHB_MAX_POSITIONS`) | 15 |
 | 일일 최대 진입 수 (`PATHB_MAX_DAILY_ENTRIES`) | 40 |
 | 최소 confidence (`PATHB_MIN_CONFIDENCE`) | 0.5 |
