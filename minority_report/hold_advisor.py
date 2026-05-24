@@ -420,11 +420,13 @@ JSON으로만 응답:
   "reason": "한 문장"
 }}"""
 
+    call_started = time.perf_counter()
     try:
         resp = client.messages.create(
             model=MODEL, max_tokens=700,
             messages=[{"role": "user", "content": prompt}],
         )
+        duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
         raw = resp.content[0].text.strip()
         result = extract_json(raw)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor", model=MODEL)
@@ -435,16 +437,22 @@ JSON으로만 응답:
             market=market,
             model=MODEL,
             prompt_version="hold_advisor_v3",
+            duration_ms=duration_ms,
             extra={
                 "decision_stage": decision_stage,
                 "default_policy": default_policy_text,
                 "advisor_context_v2": advisor_ctx if isinstance(advisor_ctx, dict) else {},
             },
         )
-        return _coerce_vote(result, decision_stage=decision_stage, default_policy=default_policy_text)
+        vote = _coerce_vote(result, decision_stage=decision_stage, default_policy=default_policy_text)
+        vote["duration_ms"] = duration_ms
+        return vote
     except Exception as e:
+        duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
         log.warning(f"[hold_advisor:{analyst_type}] 오류 → HOLD fallback: {e}")
-        return _fallback_vote("error", decision_stage=decision_stage, default_policy=default_policy_text)
+        vote = _fallback_vote("error", decision_stage=decision_stage, default_policy=default_policy_text)
+        vote["duration_ms"] = duration_ms
+        return vote
 
 
 def ask(
@@ -503,6 +511,7 @@ def ask(
         except Exception:
             pass
 
+    advisor_started = time.perf_counter()
     votes   = {}
     for atype in ("bull", "bear", "neutral"):
         votes[atype] = _ask_one(
@@ -591,7 +600,18 @@ def ask(
     )
 
     # ── 결정 시점 JSONL 기록 ──────────────────────────────────────────────────
-    _log_decision(ticker, market, pos, action, trail_pct, votes, decision_stage, default_policy_text)
+    advisor_duration_ms = int(max(0.0, (time.perf_counter() - advisor_started) * 1000.0))
+    _log_decision(
+        ticker,
+        market,
+        pos,
+        action,
+        trail_pct,
+        votes,
+        decision_stage,
+        default_policy_text,
+        duration_ms=advisor_duration_ms,
+    )
 
     return {
         "action": action,
@@ -615,13 +635,15 @@ def ask(
         "invalid_if": invalid_if,
         "decision_stage": decision_stage,
         "default_policy": default_policy_text,
+        "duration_ms": advisor_duration_ms,
     }
 
 
 def _log_decision(ticker: str, market: str, pos: dict,
                   action: str, trail_pct: float, votes: dict,
                   decision_stage: str = "TP_REVIEW",
-                  default_policy: str = ""):
+                  default_policy: str = "",
+                  duration_ms: int = 0):
     """hold_advisor 결정을 JSONL 파일에 기록"""
     try:
         log_dir = get_runtime_path("logs", "hold_advisor", make_parents=False)
@@ -663,12 +685,14 @@ def _log_decision(ticker: str, market: str, pos: dict,
             "decision":   action,
             "decision_stage": decision_stage,
             "default_policy": default_policy,
+            "duration_ms": int(duration_ms or 0),
             "advisor_context_v2": pos.get("advisor_context_v2", {}) if isinstance(pos, dict) else {},
             "trail_pct":  trail_pct,
             "votes": {
                 k: {
                     "action": v["action"],
                     "confidence": v["confidence"],
+                    "duration_ms": int(v.get("duration_ms", 0) or 0),
                     "reason": v["reason"],
                     "revised_sell_target": v.get("revised_sell_target", 0.0),
                     "protective_stop": v.get("protective_stop", 0.0),

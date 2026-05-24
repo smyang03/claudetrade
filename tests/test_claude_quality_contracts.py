@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -223,6 +224,35 @@ class CreditTrackerTests(unittest.TestCase):
 
 
 class HoldAdvisorTests(unittest.TestCase):
+    def test_ask_one_records_call_duration(self) -> None:
+        pos = {"ticker": "TEST", "entry": 100.0, "current_price": 110.0, "tp": 105.0}
+        response = SimpleNamespace(
+            content=[
+                SimpleNamespace(
+                    text=json.dumps(
+                        {
+                            "action": "HOLD",
+                            "confidence": 0.7,
+                            "trail_pct": 0.03,
+                            "reason": "ok",
+                        }
+                    )
+                )
+            ],
+            usage=SimpleNamespace(input_tokens=11, output_tokens=7),
+        )
+        captured: dict[str, object] = {}
+
+        with patch.object(hold_advisor.client.messages, "create", return_value=response), \
+             patch.object(hold_advisor, "credit_record", lambda *args, **kwargs: None), \
+             patch.object(hold_advisor, "save_raw_call", lambda **kwargs: captured.update(kwargs)), \
+             patch.object(hold_advisor.time, "perf_counter", side_effect=[10.0, 10.25]):
+            vote = hold_advisor._ask_one("bull", pos, "KR", "", "")
+
+        self.assertEqual(captured["duration_ms"], 250)
+        self.assertEqual(vote["duration_ms"], 250)
+        self.assertEqual(vote["action"], "HOLD")
+
     def test_ask_one_failure_returns_hold_fallback(self) -> None:
         pos = {"ticker": "TEST", "entry": 100.0, "current_price": 110.0, "tp": 105.0}
         with patch.object(hold_advisor.client.messages, "create", side_effect=RuntimeError("boom")):
