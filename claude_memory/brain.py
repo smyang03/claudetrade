@@ -943,6 +943,53 @@ Recent Selection Feedback
 """
     return summary
 
+_DEBATE_ANALYSTS = ("bull", "bear", "neutral")
+
+
+def _debate_stance(entry: dict, round_key: str, analyst: str) -> str:
+    round_payload = entry.get(round_key) if isinstance(entry, dict) else {}
+    analyst_payload = round_payload.get(analyst) if isinstance(round_payload, dict) else {}
+    if not isinstance(analyst_payload, dict):
+        return ""
+    return str(analyst_payload.get("stance") or "")
+
+
+def _debate_reason_from_r2(entry: dict, analyst: str) -> str:
+    r2_payload = entry.get("r2") if isinstance(entry, dict) else {}
+    analyst_payload = r2_payload.get(analyst) if isinstance(r2_payload, dict) else {}
+    if not isinstance(analyst_payload, dict):
+        return ""
+    return str(analyst_payload.get("change_reason") or analyst_payload.get("key_reason") or "")
+
+
+def _actual_debate_changes(entry: dict) -> list[dict]:
+    stored_changes = entry.get("changes") if isinstance(entry, dict) else []
+    reason_by_analyst: dict[str, str] = {}
+    if isinstance(stored_changes, list):
+        for change in stored_changes:
+            if not isinstance(change, dict):
+                continue
+            analyst = str(change.get("analyst") or "")
+            if analyst in _DEBATE_ANALYSTS and analyst not in reason_by_analyst:
+                reason_by_analyst[analyst] = str(change.get("reason") or "")
+
+    changes = []
+    for analyst in _DEBATE_ANALYSTS:
+        r1_stance = _debate_stance(entry, "r1", analyst)
+        r2_stance = _debate_stance(entry, "r2", analyst)
+        if not r1_stance or not r2_stance or r1_stance == r2_stance:
+            continue
+        changes.append(
+            {
+                "analyst": analyst,
+                "r1_stance": r1_stance,
+                "r2_stance": r2_stance,
+                "reason": reason_by_analyst.get(analyst) or _debate_reason_from_r2(entry, analyst),
+            }
+        )
+    return changes
+
+
 def save_debate_result(market: str, target_date: str, r1: dict, r2: dict):
     """
     R1/R2 토론 결과를 brain.json에 저장한다.
@@ -975,10 +1022,10 @@ def save_debate_result(market: str, target_date: str, r1: dict, r2: dict):
         return out
 
     changes = []
-    for atype in ("bull", "bear", "neutral"):
+    for atype in _DEBATE_ANALYSTS:
         r1s = r1[atype].get("stance", "")
         r2s = r2[atype].get("stance", "")
-        if r1s != r2s or r2[atype].get("changed"):
+        if r1s != r2s:
             changes.append({
                 "analyst":   atype,
                 "r1_stance": r1s,
@@ -991,7 +1038,7 @@ def save_debate_result(market: str, target_date: str, r1: dict, r2: dict):
         "r1": {k: _compact(r1[k]) for k in r1},
         "r2": {k: _compact(r2[k]) for k in r2},
         "unavailable_roles": [
-            k for k in ("bull", "bear", "neutral")
+            k for k in _DEBATE_ANALYSTS
             if (r2.get(k) or r1.get(k) or {}).get("analyst_unavailable")
             or (r2.get(k) or r1.get(k) or {}).get("available") is False
             or str((r2.get(k) or r1.get(k) or {}).get("stance") or "").upper() == "UNAVAILABLE"
@@ -1020,8 +1067,9 @@ def get_debate_summary(market: str, n: int = 5) -> str:
     recent = history[-n:]
     lines = []
 
-    change_results = [h for h in history if h["consensus_shifted"] and h["outcome"] is not None]
-    keep_results = [h for h in history if not h["consensus_shifted"] and h["outcome"] is not None]
+    scored_history = [(h, _actual_debate_changes(h)) for h in history if h.get("outcome") is not None]
+    change_results = [h for h, changes in scored_history if changes]
+    keep_results = [h for h, changes in scored_history if not changes]
     change_hit_rate = (
         sum(1 for h in change_results if h["outcome"] == "correct") / len(change_results)
         if change_results else None
@@ -1047,10 +1095,11 @@ def get_debate_summary(market: str, n: int = 5) -> str:
         outcome_mark = {"correct": "OK", "wrong": "BAD"}.get(h.get("outcome"), "--")
         unavailable_roles = list(h.get("unavailable_roles") or [])
         outage_txt = f" outages={','.join(unavailable_roles)}" if unavailable_roles else ""
-        if h["changes"]:
+        actual_changes = _actual_debate_changes(h)
+        if actual_changes:
             change_txt = ", ".join(
                 f"{c['analyst'].upper()} {c['r1_stance']}->{c['r2_stance']} ({c['reason'][:30]})"
-                for c in h["changes"]
+                for c in actual_changes
                 if c.get("analyst") not in unavailable_roles
             )
             if change_txt:

@@ -300,3 +300,82 @@ def test_brain_debate_history_preserves_unavailable_without_reusing_as_stance():
     assert "outages=bear" in summary
     assert "bear=UNAVAILABLE" not in summary
     assert "bull=MILD_BULL" in summary
+
+
+def test_brain_debate_save_ignores_changed_flag_when_stance_is_unchanged():
+    r1 = {
+        "bull": _judgment("MILD_BULL"),
+        "bear": _judgment("NEUTRAL"),
+        "neutral": _judgment("NEUTRAL"),
+    }
+    r2 = {
+        "bull": _judgment("MILD_BULL"),
+        "bear": {**_judgment("NEUTRAL"), "changed": True, "change_reason": "reviewed but kept"},
+        "neutral": _judgment("NEUTRAL"),
+    }
+    brain = {"markets": {"US": {"debate_history": []}}}
+
+    with patch.object(brain_module, "load", return_value=brain), \
+         patch.object(brain_module, "save"):
+        brain_module.save_debate_result("US", "2026-05-22", r1, r2)
+
+    entry = brain["markets"]["US"]["debate_history"][0]
+    assert entry["changes"] == []
+    assert entry["consensus_shifted"] is False
+
+
+def test_brain_debate_summary_recomputes_changes_from_actual_stances():
+    brain = {
+        "markets": {
+            "US": {
+                "debate_history": [
+                    {
+                        "date": "2026-05-22",
+                        "r1": {
+                            "bull": {"stance": "MILD_BULL"},
+                            "bear": {"stance": "MILD_BULL"},
+                            "neutral": {"stance": "NEUTRAL"},
+                        },
+                        "r2": {
+                            "bull": {"stance": "MILD_BULL"},
+                            "bear": {"stance": "MILD_BULL"},
+                            "neutral": {"stance": "NEUTRAL"},
+                        },
+                        "changes": [
+                            {
+                                "analyst": "neutral",
+                                "r1_stance": "NEUTRAL",
+                                "r2_stance": "MILD_BULL",
+                                "reason": "stale metadata",
+                            }
+                        ],
+                        "consensus_shifted": False,
+                        "outcome": "wrong",
+                    },
+                    {
+                        "date": "2026-05-23",
+                        "r1": {
+                            "bull": {"stance": "NEUTRAL"},
+                            "bear": {"stance": "NEUTRAL"},
+                            "neutral": {"stance": "NEUTRAL"},
+                        },
+                        "r2": {
+                            "bull": {"stance": "MILD_BULL", "key_reason": "actual shift"},
+                            "bear": {"stance": "NEUTRAL"},
+                            "neutral": {"stance": "NEUTRAL"},
+                        },
+                        "changes": [],
+                        "consensus_shifted": False,
+                        "outcome": "correct",
+                    },
+                ]
+            }
+        }
+    }
+
+    with patch.object(brain_module, "load", return_value=brain):
+        summary = brain_module.get_debate_summary("US", n=2)
+
+    assert "NEUTRAL->MILD_BULL (stale metadata)" not in summary
+    assert "2026-05-22 BAD kept:" in summary
+    assert "2026-05-23 OK changed BULL NEUTRAL->MILD_BULL" in summary
