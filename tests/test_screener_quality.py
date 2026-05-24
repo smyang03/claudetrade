@@ -305,6 +305,87 @@ class ScreenerQualityTests(unittest.TestCase):
         self.assertEqual(len(second), 30)
         self.assertTrue(second[0]["screener_cache_used"])
 
+    def test_us_projected_dollar_volume_shadow_does_not_change_filter(self) -> None:
+        import kis_api
+
+        candidate = {
+            "ticker": "ABCD",
+            "name": "Projected Volume",
+            "price": 10.0,
+            "change_rate": 1.0,
+            "volume": 100_000,
+            "vol_ratio": 1.0,
+            "category": "most_actives",
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "US_SCREEN_PROJECTED_DOLLAR_VOL_SHADOW_ENABLED": "true",
+                "US_SCREEN_PROJECTED_DOLLAR_VOL_FRACTION_FLOOR": "0.05",
+            },
+            clear=False,
+        ), patch.object(kis_api, "_us_screen_market_elapsed_min", return_value=10.0):
+            filtered, stats = kis_api._us_post_filter_with_stats(
+                [candidate],
+                "most_actives",
+                5.0,
+                25.0,
+                15_000_000,
+                20.0,
+            )
+
+        self.assertEqual(filtered, [])
+        self.assertEqual(stats["dollar_volume_reject_count"], 1)
+        self.assertEqual(stats["projected_dollar_volume_shadow_count"], 1)
+        self.assertEqual(stats["projected_dollar_volume_would_pass_count"], 1)
+        shadow = stats["projected_dollar_volume_shadow"][0]
+        self.assertEqual(shadow["current_filter_rejected_reason"], "dollar_volume_below_min")
+        self.assertEqual(shadow["current_dollar_vol"], 1_000_000.0)
+        self.assertEqual(shadow["projected_dollar_vol"], 20_000_000.0)
+        self.assertTrue(shadow["would_pass_projected_dollar_vol"])
+
+    def test_us_kis_ranking_shadow_records_overlap_without_changing_yahoo_return(self) -> None:
+        import kis_api
+
+        captured_payloads: list[dict] = []
+
+        def fake_kis_get(_token: str, *, path: str, tr_id: str, params: dict, label: str) -> list[dict]:
+            if "trade-vol" in path:
+                return [{"SYMB": "AAA", "LAST": "12.5", "PRDY_CTRT": "1.2", "ACML_VOL": "2000000"}]
+            if str(params.get("GUBN")) == "1":
+                return [{"SYMB": "GGG", "LAST": "15.0", "PRDY_CTRT": "5.0", "ACML_VOL": "3000000"}]
+            return [{"SYMB": "LLL", "LAST": "9.0", "PRDY_CTRT": "-4.0", "ACML_VOL": "2500000"}]
+
+        def fake_write(payload: dict) -> str:
+            captured_payloads.append(payload)
+            return "shadow.jsonl"
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "US_KIS_RANKING_SHADOW_ENABLED": "true",
+                "US_KIS_RANKING_SHADOW_EXCHANGES": "NAS",
+                "US_SCREEN_MIN_CACHE_CANDIDATES": "1",
+                "US_SCREEN_MIN_CACHE_RATIO": "0.0",
+            },
+            clear=False,
+        ), patch.object(kis_api, "_US_SCREEN_CACHE_PATH", Path(tmp) / "us_screen_cache.json"), patch.object(
+            kis_api, "_yf_screen_candidates", return_value=self._us_raw_by_cat(actives=1, gainers=0, losers=0)
+        ), patch.object(
+            kis_api, "_kis_us_ranking_get", side_effect=fake_kis_get
+        ), patch.object(
+            kis_api, "_write_us_kis_ranking_shadow", side_effect=fake_write
+        ):
+            rows = kis_api.screen_market_us(top_n=1, mode="NEUTRAL", token="token")
+
+        self.assertEqual([row["ticker"] for row in rows], ["AAA"])
+        self.assertEqual(len(captured_payloads), 1)
+        self.assertFalse(captured_payloads[0]["selection_behavior_changed"])
+        self.assertEqual(captured_payloads[0]["categories"]["most_actives"]["overlap_count"], 1)
+        self.assertEqual(rows[0]["us_kis_ranking_shadow_path"], "shadow.jsonl")
+        self.assertEqual(rows[0]["us_kis_ranking_shadow_overlap_by_category"]["most_actives"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

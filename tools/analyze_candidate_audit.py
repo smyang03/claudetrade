@@ -142,6 +142,19 @@ def _where_clause(*, session_date: str, market: str, runtime_mode: str) -> tuple
     return " AND ".join(where), params
 
 
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    try:
+        return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    except Exception:
+        return set()
+
+
+def _optional_col(columns: set[str], name: str, *, alias: str = "r", default_sql: str = "NULL") -> str:
+    if name in columns:
+        return f"{alias}.{name} AS {name}"
+    return f"{default_sql} AS {name}"
+
+
 def _row_uniqueness_summary(
     conn: sqlite3.Connection,
     *,
@@ -212,15 +225,30 @@ def _load_outcome_rows(
     where, params = _where_clause(session_date=session_date, market=market, runtime_mode=runtime_mode)
     params.append(int(horizon_min))
     row_source = "audit_candidate_latest_rows" if latest_only else "audit_candidate_rows"
+    columns = _table_columns(conn, "audit_candidate_rows")
+    col = lambda name, default="NULL": _optional_col(columns, name, default_sql=default)
     return [
         dict(row)
         for row in conn.execute(
             f"""
             SELECT r.candidate_key, r.session_date, r.market, r.call_id, r.known_at,
                    r.ticker, COALESCE(r.classification, 'unknown') AS classification,
+                   {col('claude_action')}, {col('claude_reason')}, {col('claude_veto_reason')},
+                   {col('claude_watchlist', '0')}, {col('claude_trade_ready', '0')},
                    r.recommended_strategy, r.strategy_used, r.filled_count,
-                   r.pnl_pct, r.close_reason, r.route_reason, r.route_cancel_pathb,
+                   {col('no_signal_count', '0')}, {col('watch_only_count', '0')}, {col('buy_signal_count', '0')},
+                   {col('entry_price')}, {col('first_signal_at')}, {col('first_fill_at')},
+                   {col('execution_decision_id')}, {col('config_hash')},
+                   r.pnl_pct, r.close_reason, r.route_original_action,
+                   r.route_final_action, r.route_route, r.route_reason,
+                   {col('route_demoted_to')}, r.route_runtime_gate_reason,
+                   r.route_cancel_pathb,
                    r.route_suspend_pathb, r.route_warnings_json,
+                   {col('action_ceiling')}, {col('evidence_data_state')},
+                   {col('evidence_missing_fields_json', "'[]'")}, {col('evidence_action_ceiling')},
+                   {col('evidence_ceiling_applied', '0')}, {col('entry_timing_snapshot_json', "'{}'")},
+                   {col('post_open_features_json', "'{}'")}, {col('failed_ready_reasons_json', "'[]'")},
+                   {col('path_run_count', '0')}, {col('intraday_signal_count', '0')}, {col('intraday_traded_count', '0')},
                    o.horizon_min, o.status,
                    o.return_pct, o.max_runup_pct, o.max_drawdown_pct,
                    o.observed_at, o.observed_price, o.payload_json
@@ -937,6 +965,185 @@ def _watch_trigger_shadow_outcomes(
     return out
 
 
+WATCH_ONLY_BUCKET_CLASSES = {
+    "watch_only",
+    "in_prompt_not_selected",
+    "not_in_prompt",
+    "ready_no_signal",
+    "avoid_watch",
+    "data_insufficient",
+}
+
+
+def _json_list(value: Any) -> list[Any]:
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            parsed = []
+    return list(parsed) if isinstance(parsed, list) else []
+
+
+def _json_dict(value: Any) -> dict[str, Any]:
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            parsed = {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
+
+
+def _row_text_blob(row: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in (
+        "classification",
+        "claude_action",
+        "claude_reason",
+        "claude_veto_reason",
+        "route_original_action",
+        "route_final_action",
+        "route_route",
+        "route_reason",
+        "route_demoted_to",
+        "route_runtime_gate_reason",
+        "action_ceiling",
+        "evidence_data_state",
+        "evidence_action_ceiling",
+        "close_reason",
+    ):
+        value = row.get(key)
+        if value not in (None, ""):
+            parts.append(str(value))
+    for key in ("route_warnings_json", "evidence_missing_fields_json", "failed_ready_reasons_json"):
+        for item in _json_list(row.get(key)):
+            parts.append(str(item))
+    return " ".join(parts).lower()
+
+
+def _is_route_demoted(row: dict[str, Any]) -> bool:
+    demoted_to = str(row.get("route_demoted_to") or "").strip()
+    if demoted_to:
+        return True
+    original = str(row.get("route_original_action") or "").strip().upper()
+    final = str(row.get("route_final_action") or "").strip().upper()
+    if original and final and original != final:
+        return True
+    return False
+
+
+def _watch_only_primary_bucket(row: dict[str, Any]) -> tuple[str, str]:
+    classification = str(row.get("classification") or "unknown")
+    text = _row_text_blob(row)
+    if classification == "not_in_prompt":
+        return "not_in_prompt", "candidate never reached Claude prompt"
+    if classification == "in_prompt_not_selected":
+        return "claude_not_selected", "candidate was in prompt but not selected"
+    if bool(row.get("evidence_ceiling_applied")) or "evidence" in text or "data_fail" in text:
+        return "evidence_ceiling", "evidence/data ceiling blocked readiness"
+    if "pathb" in text or "path_b" in text or "zone" in text or int(row.get("path_run_count") or 0) > 0:
+        return "pathb_zone_or_plan", "PathB zone/plan state prevented immediate entry"
+    risk_terms = (
+        "risk",
+        "afford",
+        "cash",
+        "broker",
+        "quarantine",
+        "late",
+        "blackout",
+        "same_day",
+        "reentry",
+        "hard_block",
+    )
+    if any(term in text for term in risk_terms):
+        return "risk_or_affordability", "risk, broker, cash, late-session, or reentry block"
+    if _is_route_demoted(row):
+        return "routing_demotion", "route changed Claude action before execution"
+    if classification == "ready_no_signal" or int(row.get("no_signal_count") or 0) > 0:
+        return "strategy_no_signal", "ready candidate did not trigger a strategy signal"
+    final_action = str(row.get("route_final_action") or row.get("claude_action") or "").upper()
+    if final_action in {"WATCH", "PULLBACK_WAIT", "WAIT"}:
+        return "claude_watch_conservative", "Claude or route left candidate in watch state"
+    if classification == "data_insufficient":
+        return "data_insufficient", "candidate data was insufficient before prompt/execution"
+    return "unknown", "not enough audit detail to classify"
+
+
+def watch_only_bucket_decomposition(
+    rows: list[dict[str, Any]],
+    *,
+    limit: int = 10,
+    missed_runup_pct: float = MISSED_WINNER_MFE_PCT,
+) -> dict[str, Any]:
+    candidates = [
+        row
+        for row in rows
+        if str(row.get("classification") or "unknown") in WATCH_ONLY_BUCKET_CLASSES
+        or str(row.get("route_final_action") or "").upper() in {"WATCH", "PULLBACK_WAIT"}
+    ]
+    buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    reasons: dict[str, str] = {}
+    for row in candidates:
+        bucket, reason = _watch_only_primary_bucket(row)
+        buckets[bucket].append(row)
+        reasons.setdefault(bucket, reason)
+
+    bucket_rows: list[dict[str, Any]] = []
+    for bucket, items in buckets.items():
+        missed = [
+            row
+            for row in items
+            if (_to_float(row.get("max_runup_pct")) or float("-inf")) >= float(missed_runup_pct)
+        ]
+        bucket_rows.append(
+            {
+                "bucket": bucket,
+                "reason": reasons.get(bucket, ""),
+                "rows": len(items),
+                "missed_runup_rows": len(missed),
+                "missed_runup_rate": _round(len(missed) / len(items) if items else None),
+                **_metric_summary(items),
+            }
+        )
+    bucket_rows.sort(key=lambda row: (int(row.get("missed_runup_rows") or 0), int(row.get("rows") or 0)), reverse=True)
+
+    examples: dict[str, list[dict[str, Any]]] = {}
+    for bucket, items in buckets.items():
+        ranked = sorted(
+            items,
+            key=lambda row: _to_float(row.get("max_runup_pct")) or float("-inf"),
+            reverse=True,
+        )
+        examples[bucket] = [
+            {
+                "session_date": row.get("session_date"),
+                "market": row.get("market"),
+                "ticker": row.get("ticker"),
+                "classification": row.get("classification"),
+                "claude_action": row.get("claude_action") or "",
+                "route_final_action": row.get("route_final_action") or "",
+                "route_reason": row.get("route_reason") or row.get("route_runtime_gate_reason") or "",
+                "return_pct": _round(_to_float(row.get("return_pct"))),
+                "max_runup_pct": _round(_to_float(row.get("max_runup_pct"))),
+                "max_drawdown_pct": _round(_to_float(row.get("max_drawdown_pct"))),
+                "execution_decision_id": row.get("execution_decision_id") or "",
+            }
+            for row in ranked[: max(int(limit or 1), 1)]
+        ]
+
+    return {
+        "rows_considered": len(candidates),
+        "missed_runup_threshold_pct": float(missed_runup_pct),
+        "bucket_count": len(bucket_rows),
+        "buckets": bucket_rows,
+        "examples": examples,
+        "interpretation": (
+            "Use this to choose the next narrow fix. Do not open global gates from a high blocked ratio alone."
+        ),
+    }
+
+
 def analyze_candidate_audit(
     *,
     db_path: str | Path | None = None,
@@ -1034,6 +1241,10 @@ def analyze_candidate_audit(
             rows,
             session_date=session_date,
             market=market,
+        ),
+        "watch_only_bucket_decomposition": watch_only_bucket_decomposition(
+            rows,
+            limit=limit,
         ),
     }
 

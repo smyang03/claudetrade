@@ -168,6 +168,34 @@ def write_candidate_quality_log(
                     if isinstance(candidate.get("dollar_volume_reject_count_by_category"), dict)
                     else {}
                 ),
+                "projected_dollar_volume_shadow_count_by_category": (
+                    candidate.get("projected_dollar_volume_shadow_count_by_category")
+                    if isinstance(candidate.get("projected_dollar_volume_shadow_count_by_category"), dict)
+                    else {}
+                ),
+                "projected_dollar_volume_would_pass_count_by_category": (
+                    candidate.get("projected_dollar_volume_would_pass_count_by_category")
+                    if isinstance(candidate.get("projected_dollar_volume_would_pass_count_by_category"), dict)
+                    else {}
+                ),
+                "projected_dollar_volume_shadow_path": str(candidate.get("projected_dollar_volume_shadow_path") or ""),
+                "us_kis_ranking_shadow_path": str(candidate.get("us_kis_ranking_shadow_path") or ""),
+                "us_kis_ranking_shadow_overlap_by_category": (
+                    candidate.get("us_kis_ranking_shadow_overlap_by_category")
+                    if isinstance(candidate.get("us_kis_ranking_shadow_overlap_by_category"), dict)
+                    else {}
+                ),
+                "us_kis_ranking_shadow_only_kis_by_category": (
+                    candidate.get("us_kis_ranking_shadow_only_kis_by_category")
+                    if isinstance(candidate.get("us_kis_ranking_shadow_only_kis_by_category"), dict)
+                    else {}
+                ),
+                "us_kis_ranking_shadow_only_yahoo_by_category": (
+                    candidate.get("us_kis_ranking_shadow_only_yahoo_by_category")
+                    if isinstance(candidate.get("us_kis_ranking_shadow_only_yahoo_by_category"), dict)
+                    else {}
+                ),
+                "us_kis_ranking_shadow_error": str(candidate.get("us_kis_ranking_shadow_error") or ""),
                 "quota_total": _safe_int(candidate.get("quota_total")),
                 "fresh_count": _safe_int(candidate.get("fresh_count")),
                 "min_cache_count": _safe_int(candidate.get("min_cache_count")),

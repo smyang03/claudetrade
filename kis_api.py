@@ -3863,6 +3863,10 @@ def _us_screen_quality_state(
     raw_count_by_category: dict,
     filtered_count_by_category: dict,
     dollar_reject_count_by_category: dict,
+    projected_shadow_count_by_category: dict | None = None,
+    projected_would_pass_count_by_category: dict | None = None,
+    projected_shadow_path: str = "",
+    kis_ranking_shadow: dict | None = None,
 ) -> dict:
     min_cache_count = int(threshold.get("min_cache_count") or 0)
     fresh = int(fresh_count or 0)
@@ -3899,6 +3903,14 @@ def _us_screen_quality_state(
         "raw_count_by_category": dict(raw_count_by_category or {}),
         "filtered_count_by_category": dict(filtered_count_by_category or {}),
         "dollar_volume_reject_count_by_category": dict(dollar_reject_count_by_category or {}),
+        "projected_dollar_volume_shadow_count_by_category": dict(projected_shadow_count_by_category or {}),
+        "projected_dollar_volume_would_pass_count_by_category": dict(projected_would_pass_count_by_category or {}),
+        "projected_dollar_volume_shadow_path": str(projected_shadow_path or ""),
+        "us_kis_ranking_shadow_path": str((kis_ranking_shadow or {}).get("path") or ""),
+        "us_kis_ranking_shadow_overlap_by_category": dict((kis_ranking_shadow or {}).get("overlap_by_category") or {}),
+        "us_kis_ranking_shadow_only_kis_by_category": dict((kis_ranking_shadow or {}).get("only_kis_by_category") or {}),
+        "us_kis_ranking_shadow_only_yahoo_by_category": dict((kis_ranking_shadow or {}).get("only_yahoo_by_category") or {}),
+        "us_kis_ranking_shadow_error": str((kis_ranking_shadow or {}).get("error") or ""),
         "quota_total": int(threshold.get("quota_total") or 0),
         "fresh_count": fresh,
         "min_cache_count": min_cache_count,
@@ -3922,6 +3934,14 @@ def _annotate_us_screen_quality(candidates: list, quality: dict) -> list:
             "raw_count_by_category",
             "filtered_count_by_category",
             "dollar_volume_reject_count_by_category",
+            "projected_dollar_volume_shadow_count_by_category",
+            "projected_dollar_volume_would_pass_count_by_category",
+            "projected_dollar_volume_shadow_path",
+            "us_kis_ranking_shadow_path",
+            "us_kis_ranking_shadow_overlap_by_category",
+            "us_kis_ranking_shadow_only_kis_by_category",
+            "us_kis_ranking_shadow_only_yahoo_by_category",
+            "us_kis_ranking_shadow_error",
             "quota_total",
             "fresh_count",
             "min_cache_count",
@@ -4166,6 +4186,94 @@ def get_screening_preset(market: str, mode: str) -> dict:
         return base
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _us_projected_dollar_volume_shadow_enabled() -> bool:
+    return _env_bool("US_SCREEN_PROJECTED_DOLLAR_VOL_SHADOW_ENABLED", True)
+
+
+def _us_projected_dollar_volume_context() -> dict:
+    elapsed_min = _us_screen_market_elapsed_min()
+    session_minutes = max(1.0, _safe_float_value(os.getenv("US_SCREEN_SESSION_MINUTES"), 390.0))
+    floor = _safe_float_value(os.getenv("US_SCREEN_PROJECTED_DOLLAR_VOL_FRACTION_FLOOR"), 0.05)
+    floor = min(1.0, max(0.001, float(floor or 0.05)))
+    raw_fraction = None
+    if elapsed_min is not None:
+        raw_fraction = max(0.0, float(elapsed_min)) / session_minutes
+    elapsed_fraction = max(floor, raw_fraction if raw_fraction is not None else 0.0)
+    elapsed_fraction = min(1.0, elapsed_fraction)
+    return {
+        "elapsed_min": elapsed_min,
+        "session_minutes": session_minutes,
+        "elapsed_session_fraction": elapsed_fraction,
+        "elapsed_session_fraction_floor": floor,
+    }
+
+
+def _us_projected_dollar_volume_shadow_row(
+    candidate: dict,
+    *,
+    category: str,
+    min_dollar_vol: float,
+    context: dict,
+    rejected_reason: str,
+) -> dict | None:
+    if not _us_projected_dollar_volume_shadow_enabled():
+        return None
+    ticker = str((candidate or {}).get("ticker") or "").strip().upper()
+    price = _safe_float_value((candidate or {}).get("price"), 0.0)
+    volume = _safe_int((candidate or {}).get("volume"), 0)
+    current = price * float(volume)
+    fraction = max(0.001, float((context or {}).get("elapsed_session_fraction") or 0.001))
+    projected = current / fraction if current > 0 else 0.0
+    return {
+        "ticker": ticker,
+        "category": str(category or ""),
+        "price": round(float(price), 6),
+        "volume": int(volume),
+        "current_dollar_vol": round(float(current), 2),
+        "projected_dollar_vol": round(float(projected), 2),
+        "min_dollar_vol": round(float(min_dollar_vol or 0.0), 2),
+        "elapsed_min": (
+            round(float(context.get("elapsed_min")), 2)
+            if isinstance(context, dict) and context.get("elapsed_min") is not None
+            else None
+        ),
+        "elapsed_session_fraction": round(float(fraction), 6),
+        "elapsed_session_fraction_floor": round(float((context or {}).get("elapsed_session_fraction_floor") or 0.0), 6),
+        "would_pass_projected_dollar_vol": bool(projected >= float(min_dollar_vol or 0.0)),
+        "current_filter_rejected_reason": rejected_reason,
+    }
+
+
+def _write_us_projected_dollar_volume_shadow(rows: list[dict], *, source: str, mode: str) -> str:
+    if not rows or not _us_projected_dollar_volume_shadow_enabled():
+        return ""
+    now = datetime.now()
+    path = get_runtime_path("logs", "screener", f"{now.strftime('%Y%m%d')}_US_projected_dollar_volume_shadow.jsonl")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "timestamp": now.isoformat(timespec="seconds"),
+            "market": "US",
+            "source": str(source or ""),
+            "mode": str(mode or ""),
+            "selection_behavior_changed": False,
+            "rows": list(rows or []),
+        }
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        return str(path)
+    except Exception as exc:
+        log.debug(f"[US projected dollar volume shadow] write failed: {exc}")
+        return ""
+
+
 def _us_post_filter(
     candidates: list,
     category: str,
@@ -4204,7 +4312,11 @@ def _us_post_filter_with_stats(
     stats = {
         "raw_count": len(candidates or []),
         "dollar_volume_reject_count": 0,
+        "projected_dollar_volume_shadow": [],
+        "projected_dollar_volume_shadow_count": 0,
+        "projected_dollar_volume_would_pass_count": 0,
     }
+    projected_context: dict | None = None
     for c in candidates:
         ticker = str(c.get("ticker", "")).strip()
         if not ticker or not ticker.isalpha() or len(ticker) > 5:
@@ -4231,6 +4343,20 @@ def _us_post_filter_with_stats(
             continue
         if not vol_miss and min_dollar_vol > 0 and price * volume < min_dollar_vol:
             stats["dollar_volume_reject_count"] += 1
+            if projected_context is None:
+                projected_context = _us_projected_dollar_volume_context()
+            shadow_row = _us_projected_dollar_volume_shadow_row(
+                c,
+                category=category,
+                min_dollar_vol=min_dollar_vol,
+                context=projected_context or {},
+                rejected_reason="dollar_volume_below_min",
+            )
+            if shadow_row:
+                stats["projected_dollar_volume_shadow"].append(shadow_row)
+                stats["projected_dollar_volume_shadow_count"] += 1
+                if shadow_row.get("would_pass_projected_dollar_vol"):
+                    stats["projected_dollar_volume_would_pass_count"] += 1
             continue
         result.append(c)
     stats["filtered_count"] = len(result)
@@ -4357,7 +4483,276 @@ def _fmp_screen_candidates() -> list:
     return candidates
 
 
-def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
+def _csv_env_values(name: str, default: str) -> list[str]:
+    raw = str(os.getenv(name, default) or default)
+    values = []
+    for item in raw.split(","):
+        value = item.strip().upper()
+        if value and value not in values:
+            values.append(value)
+    return values
+
+
+def _us_kis_ranking_shadow_enabled() -> bool:
+    return _env_bool("US_KIS_RANKING_SHADOW_ENABLED", False)
+
+
+def _pick_first(row: dict, keys: tuple[str, ...], default=None):
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+        upper = key.upper()
+        if upper != key:
+            value = row.get(upper)
+            if value not in (None, ""):
+                return value
+        lower = key.lower()
+        if lower != key:
+            value = row.get(lower)
+            if value not in (None, ""):
+                return value
+    return default
+
+
+def _kis_rank_rows(payload) -> list[dict]:
+    if isinstance(payload, list):
+        return [dict(row or {}) for row in payload if isinstance(row, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("output", "output1", "output2", "output3"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [dict(row or {}) for row in value if isinstance(row, dict)]
+    for value in payload.values():
+        if isinstance(value, list):
+            return [dict(row or {}) for row in value if isinstance(row, dict)]
+    return []
+
+
+def _normalize_kis_us_rank_row(row: dict, *, category: str, exchange: str) -> dict | None:
+    ticker = str(
+        _pick_first(
+            row,
+            (
+                "symb",
+                "SYMB",
+                "ovrs_pdno",
+                "OVRS_PDNO",
+                "stck_shrn_iscd",
+                "STCK_SHRN_ISCD",
+            ),
+            "",
+        )
+        or ""
+    ).strip().upper()
+    if not ticker:
+        rsym = str(_pick_first(row, ("rsym", "RSYM"), "") or "").strip().upper()
+        for prefix in ("DNAS", "DNYS", "DAMS", "NAS", "NYS", "AMS"):
+            if rsym.startswith(prefix) and len(rsym) > len(prefix):
+                ticker = rsym[len(prefix):]
+                break
+    if not ticker or not ticker.isalpha() or len(ticker) > 5:
+        return None
+    price = _safe_float_value(
+        _pick_first(
+            row,
+            (
+                "last",
+                "LAST",
+                "ovrs_nmix_prpr",
+                "OVRS_NMIX_PRPR",
+                "ovrs_stck_prpr",
+                "OVRS_STCK_PRPR",
+                "price",
+            ),
+            0.0,
+        ),
+        0.0,
+    )
+    change_rate = _safe_float_value(
+        _pick_first(row, ("rate", "RATE", "prdy_ctrt", "PRDY_CTRT", "chg_rate", "change_rate"), 0.0),
+        0.0,
+    )
+    volume = _safe_int(
+        _pick_first(row, ("tvol", "TVOL", "acml_vol", "ACML_VOL", "volume", "VOLUME"), 0),
+        0,
+    )
+    return {
+        "ticker": ticker,
+        "name": str(_pick_first(row, ("name", "NAME", "hts_kor_isnm", "HTS_KOR_ISNM"), ticker) or ticker),
+        "price": price,
+        "change_rate": change_rate,
+        "volume": volume,
+        "vol_ratio": 1.0,
+        "category": category,
+        "exchange": exchange,
+        "candidate_source": "kis_us_ranking_shadow",
+        "raw_kis": row,
+    }
+
+
+def _kis_us_ranking_get(token: str, *, path: str, tr_id: str, params: dict, label: str) -> list[dict]:
+    profile = get_kis_market_profile("US")
+    timeout = float(os.getenv("US_KIS_RANKING_SHADOW_TIMEOUT_SEC", "2.5") or 2.5)
+    resp = _kis_get(
+        f"{profile.base_url}{path}",
+        headers=_headers(token, tr_id, market="US"),
+        params=params,
+        timeout=timeout,
+    )
+    if getattr(resp, "status_code", 0) == 429:
+        raise RuntimeError(f"{label}:rate_limited")
+    resp.raise_for_status()
+    return _kis_rank_rows(resp.json())
+
+
+def _kis_us_trade_vol_candidates(token: str, exchanges: list[str]) -> list[dict]:
+    rows: list[dict] = []
+    for exchange in exchanges:
+        payload_rows = _kis_us_ranking_get(
+            token,
+            path="/uapi/overseas-stock/v1/ranking/trade-vol",
+            tr_id="HHDFS76310010",
+            params={
+                "AUTH": "",
+                "EXCD": exchange,
+                "NATI": "840",
+                "VOL_RANG": "0",
+                "PRC1": "",
+                "PRC2": "",
+            },
+            label=f"trade-vol:{exchange}",
+        )
+        for row in payload_rows:
+            item = _normalize_kis_us_rank_row(row, category="most_actives", exchange=exchange)
+            if item:
+                rows.append(item)
+    return rows
+
+
+def _kis_us_updown_candidates(token: str, exchanges: list[str], *, category: str, gubn: str) -> list[dict]:
+    rows: list[dict] = []
+    for exchange in exchanges:
+        payload_rows = _kis_us_ranking_get(
+            token,
+            path="/uapi/overseas-stock/v1/ranking/updown-rate",
+            tr_id="HHDFS76290000",
+            params={
+                "AUTH": "",
+                "EXCD": exchange,
+                "NATI": "840",
+                "GUBN": gubn,
+                "SORT": "1",
+            },
+            label=f"updown-rate:{exchange}:{gubn}",
+        )
+        for row in payload_rows:
+            item = _normalize_kis_us_rank_row(row, category=category, exchange=exchange)
+            if item:
+                rows.append(item)
+    return rows
+
+
+def _write_us_kis_ranking_shadow(payload: dict) -> str:
+    now = datetime.now()
+    path = get_runtime_path("logs", "screener", f"{now.strftime('%Y%m%d')}_US_kis_ranking_shadow.jsonl")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+        return str(path)
+    except Exception as exc:
+        log.debug(f"[US KIS ranking shadow] write failed: {exc}")
+        return ""
+
+
+def _collect_us_kis_ranking_shadow(
+    *,
+    token: str | None,
+    mode: str,
+    quota: dict,
+    top_n: int,
+    yahoo_raw_by_cat: dict,
+) -> dict:
+    if not token or not _us_kis_ranking_shadow_enabled():
+        return {}
+    exchanges = _csv_env_values("US_KIS_RANKING_SHADOW_EXCHANGES", "NAS,NYS,AMS")
+    max_per_category = max(1, int(os.getenv("US_KIS_RANKING_SHADOW_MAX_PER_CATEGORY", "80") or 80))
+    try:
+        kis_by_cat = {
+            "most_actives": _kis_us_trade_vol_candidates(token, exchanges),
+            "day_gainers": _kis_us_updown_candidates(token, exchanges, category="day_gainers", gubn="1"),
+            "day_losers": _kis_us_updown_candidates(token, exchanges, category="day_losers", gubn="0"),
+        }
+        categories: dict[str, dict] = {}
+        overlap_by_category: dict[str, int] = {}
+        only_kis_by_category: dict[str, int] = {}
+        only_yahoo_by_category: dict[str, int] = {}
+        for category, kis_rows in kis_by_cat.items():
+            limited_kis = list(kis_rows or [])[:max_per_category]
+            kis_tickers = {
+                str(row.get("ticker") or "").strip().upper()
+                for row in limited_kis
+                if str(row.get("ticker") or "").strip()
+            }
+            yahoo_rows = list((yahoo_raw_by_cat or {}).get(category) or [])
+            yahoo_tickers = {
+                str(row.get("ticker") or "").strip().upper()
+                for row in yahoo_rows
+                if str(row.get("ticker") or "").strip()
+            }
+            overlap = sorted(kis_tickers & yahoo_tickers)
+            kis_only = sorted(kis_tickers - yahoo_tickers)
+            yahoo_only = sorted(yahoo_tickers - kis_tickers)
+            suffix_rejects = sorted(
+                ticker for ticker in kis_tickers
+                if ticker.endswith(("W", "U", "R"))
+            )
+            overlap_by_category[category] = len(overlap)
+            only_kis_by_category[category] = len(kis_only)
+            only_yahoo_by_category[category] = len(yahoo_only)
+            categories[category] = {
+                "quota": int((quota or {}).get(category) or 0),
+                "kis_raw_count": len(kis_rows or []),
+                "kis_limited_count": len(limited_kis),
+                "yahoo_raw_count": len(yahoo_rows),
+                "overlap_count": len(overlap),
+                "kis_only_count": len(kis_only),
+                "yahoo_only_count": len(yahoo_only),
+                "overlap_sample": overlap[:20],
+                "kis_only_sample": kis_only[:20],
+                "yahoo_only_sample": yahoo_only[:20],
+                "product_filter_shadow": {
+                    "official_directory_applied": False,
+                    "heuristic_suffix_reject_count": len(suffix_rejects),
+                    "heuristic_suffix_reject_sample": suffix_rejects[:20],
+                    "selection_behavior_changed": False,
+                },
+            }
+        payload = {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "market": "US",
+            "mode": str(mode or ""),
+            "top_n": int(top_n or 0),
+            "exchanges": exchanges,
+            "selection_behavior_changed": False,
+            "source_role": "shadow",
+            "categories": categories,
+        }
+        path = _write_us_kis_ranking_shadow(payload)
+        return {
+            "path": path,
+            "overlap_by_category": overlap_by_category,
+            "only_kis_by_category": only_kis_by_category,
+            "only_yahoo_by_category": only_yahoo_by_category,
+        }
+    except Exception as exc:
+        log.debug(f"[US KIS ranking shadow] collection failed: {exc}")
+        return {"error": str(exc)}
+
+
+def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL", token: str | None = None) -> list:
     """
     US 시장 스크리닝 — 모드 기반 프리셋 + 공통 post-filter + 카테고리 quota 적용.
 
@@ -4482,6 +4877,9 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
         raw_count_by_category = {}
         filtered_count_by_category = {}
         dollar_reject_count_by_category = {}
+        projected_shadow_count_by_category = {}
+        projected_would_pass_count_by_category = {}
+        projected_shadow_rows: list[dict] = []
         for cat, quota in _quota.items():
             bucket = raw_by_cat.get(cat, [])
             filtered, filter_stats = _us_post_filter_with_stats(
@@ -4495,6 +4893,9 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
             raw_count_by_category[cat] = int(filter_stats.get("raw_count") or 0)
             filtered_count_by_category[cat] = int(filter_stats.get("filtered_count") or 0)
             dollar_reject_count_by_category[cat] = int(filter_stats.get("dollar_volume_reject_count") or 0)
+            projected_shadow_count_by_category[cat] = int(filter_stats.get("projected_dollar_volume_shadow_count") or 0)
+            projected_would_pass_count_by_category[cat] = int(filter_stats.get("projected_dollar_volume_would_pass_count") or 0)
+            projected_shadow_rows.extend(list(filter_stats.get("projected_dollar_volume_shadow") or []))
             added = 0
             for c in filtered:
                 if c["ticker"] in seen or added >= quota:
@@ -4505,6 +4906,11 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
             cat_stats[cat] = added
 
         if merged:
+            projected_shadow_path = _write_us_projected_dollar_volume_shadow(
+                projected_shadow_rows,
+                source="yf",
+                mode=mode,
+            )
             quality = _us_screen_quality_state(
                 source="yf",
                 fresh_count=len(merged),
@@ -4512,6 +4918,9 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
                 raw_count_by_category=raw_count_by_category,
                 filtered_count_by_category=filtered_count_by_category,
                 dollar_reject_count_by_category=dollar_reject_count_by_category,
+                projected_shadow_count_by_category=projected_shadow_count_by_category,
+                projected_would_pass_count_by_category=projected_would_pass_count_by_category,
+                projected_shadow_path=projected_shadow_path,
             )
             quality["min_dollar_vol"] = _min_dollar_vol
             _logger.info(
@@ -4540,6 +4949,23 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
                     f"quota_total={quality.get('quota_total')} ratio={quality.get('min_cache_ratio')} "
                     f"source=yf mode={_cache_mode} top_n={_target_n}"
                 )
+            kis_ranking_shadow = _collect_us_kis_ranking_shadow(
+                token=token,
+                mode=mode,
+                quota=_quota,
+                top_n=_target_n,
+                yahoo_raw_by_cat=raw_by_cat,
+            )
+            if kis_ranking_shadow:
+                quality.update(
+                    {
+                        "us_kis_ranking_shadow_path": str(kis_ranking_shadow.get("path") or ""),
+                        "us_kis_ranking_shadow_overlap_by_category": dict(kis_ranking_shadow.get("overlap_by_category") or {}),
+                        "us_kis_ranking_shadow_only_kis_by_category": dict(kis_ranking_shadow.get("only_kis_by_category") or {}),
+                        "us_kis_ranking_shadow_only_yahoo_by_category": dict(kis_ranking_shadow.get("only_yahoo_by_category") or {}),
+                        "us_kis_ranking_shadow_error": str(kis_ranking_shadow.get("error") or ""),
+                    }
+                )
             out = _annotate_us_screen_quality(merged[:_target_n], quality)
             _write_price_collection_priority("US", out, source="yf", mode=mode)
             return out
@@ -4559,6 +4985,12 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
         )
         fmp_cands = fmp_filtered[:_fmp_max]
         if fmp_cands:
+            fmp_projected_rows = list(fmp_stats.get("projected_dollar_volume_shadow") or [])
+            projected_shadow_path = _write_us_projected_dollar_volume_shadow(
+                fmp_projected_rows,
+                source="fmp",
+                mode=mode,
+            )
             quality = _us_screen_quality_state(
                 source="fmp",
                 fresh_count=len(fmp_cands),
@@ -4566,6 +4998,9 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL") -> list:
                 raw_count_by_category={"fmp": int(fmp_stats.get("raw_count") or 0)},
                 filtered_count_by_category={"fmp": int(fmp_stats.get("filtered_count") or 0)},
                 dollar_reject_count_by_category={"fmp": int(fmp_stats.get("dollar_volume_reject_count") or 0)},
+                projected_shadow_count_by_category={"fmp": int(fmp_stats.get("projected_dollar_volume_shadow_count") or 0)},
+                projected_would_pass_count_by_category={"fmp": int(fmp_stats.get("projected_dollar_volume_would_pass_count") or 0)},
+                projected_shadow_path=projected_shadow_path,
             )
             quality["min_dollar_vol"] = _min_dollar_vol
             _logger.info(f"[FMP 스크리너] 통과={len(fmp_cands)}종목 (최대 {_fmp_max}개, volume 미포함)")
