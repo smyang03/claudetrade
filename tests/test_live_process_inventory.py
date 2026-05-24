@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from tools.live_preflight import _classify_live_process_inventory
+from tools.live_preflight import _classify_live_process_inventory, _classify_repo_process_role
 
 
 class LiveProcessInventoryTests(unittest.TestCase):
@@ -35,6 +35,21 @@ class LiveProcessInventoryTests(unittest.TestCase):
 
         self.assertEqual(findings[0]["code"], "duplicate_live_bot")
         self.assertEqual(findings[0]["severity"], "FAIL")
+
+    def test_duplicate_paper_bot_is_fail_in_paper_mode(self) -> None:
+        findings = _classify_live_process_inventory(
+            [{"pid": 10, "role": "paper_bot"}, {"pid": 11, "role": "paper_bot"}],
+            {},
+            mode="paper",
+        )
+
+        self.assertEqual(findings[0]["code"], "duplicate_paper_bot")
+        self.assertEqual(findings[0]["severity"], "FAIL")
+
+    def test_trading_bot_without_live_flag_is_classified_as_paper(self) -> None:
+        self.assertEqual(_classify_repo_process_role(["python", "trading_bot.py"]), "paper_bot")
+        self.assertEqual(_classify_repo_process_role(["python", "trading_bot.py", "--paper"]), "paper_bot")
+        self.assertEqual(_classify_repo_process_role(["python", "trading_bot.py", "--live"]), "live_bot")
 
 
 if __name__ == "__main__":

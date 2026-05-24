@@ -174,8 +174,10 @@ def _order_unknown_remediation_commands(data: dict[str, Any]) -> list[str]:
 def classify_preflight_check(
     check: dict[str, Any],
     *,
+    mode: str = "live",
     start_bot: bool = False,
     start_dashboard: bool = False,
+    ensure_bot: bool = False,
 ) -> GuardianFinding:
     name = str(check.get("name") or "")
     status = str(check.get("status") or "")
@@ -193,6 +195,8 @@ def classify_preflight_check(
         if bool(data.get("auto_fix")):
             return GuardianFinding(name, status, "auto_fixable", detail, data)
         if bool(data.get("alive")) and name == "runtime.bot_pid_lock" and start_bot:
+            if ensure_bot:
+                return GuardianFinding(name, status, "accepted_exception", "bot is already running", data)
             return GuardianFinding(name, status, "hard_fail", "active bot PID blocks duplicate start", data)
         if bool(data.get("accepted_exception")):
             return GuardianFinding(name, status, "accepted_exception", detail, data)
@@ -230,6 +234,16 @@ def classify_preflight_check(
 
     if name.startswith("broker_truth."):
         if status != "PASS":
+            runtime_mode = str(mode or "live").lower()
+            if runtime_mode == "paper" and name in {
+                "broker_truth.snapshot_missing_or_present",
+                "broker_truth.snapshot_file_valid",
+            } and (
+                bool(data.get("startup_expected"))
+                or bool(data.get("snapshot_missing"))
+                or "missing" in detail.lower()
+            ):
+                return GuardianFinding(name, status, "soft_fail", detail, data)
             return GuardianFinding(name, status, "hard_fail", detail, data)
 
     if name == "runtime.pathb_control_state" and status == "FAIL":
@@ -374,6 +388,59 @@ def _run_smoke(*, mode: str, markets: list[str], env: str = "", session_date: st
     return {"ok": all(item.get("ok") for item in results), "results": results}
 
 
+def _active_bot_lock(preflight: dict[str, Any]) -> dict[str, Any]:
+    for check in preflight.get("checks", []):
+        if str(check.get("name") or "") != "runtime.bot_pid_lock":
+            continue
+        data = check.get("data") if isinstance(check.get("data"), dict) else {}
+        if bool(data.get("alive")):
+            return {
+                "pid": int(data.get("pid", 0) or 0),
+                "path": str(data.get("path") or ""),
+            }
+    return {}
+
+
+def _process_inventory_data(preflight: dict[str, Any]) -> dict[str, Any]:
+    for check in preflight.get("checks", []):
+        if str(check.get("name") or "") != "runtime.process_inventory":
+            continue
+        data = check.get("data") if isinstance(check.get("data"), dict) else {}
+        return data
+    return {}
+
+
+def _matching_bot_process(preflight: dict[str, Any], mode: str) -> dict[str, Any]:
+    data = _process_inventory_data(preflight)
+    rows = data.get("rows") if isinstance(data.get("rows"), list) else []
+    expected_role = "live_bot" if str(mode or "").lower() == "live" else "paper_bot"
+    matches = [row for row in rows if isinstance(row, dict) and str(row.get("role") or "") == expected_role]
+    if not matches:
+        return {}
+    return {
+        "source": data.get("source") or "",
+        "role": expected_role,
+        "pids": [row.get("pid") for row in matches],
+        "rows": matches,
+    }
+
+
+def _process_inventory_unavailable(preflight: dict[str, Any]) -> dict[str, Any]:
+    data = _process_inventory_data(preflight)
+    if not data:
+        return {
+            "source": "missing",
+            "warning_kind": "process_inventory_missing",
+            "rows": [],
+            "operator_action": "inspect processes manually before live bot start",
+        }
+    if str(data.get("warning_kind") or "") == "process_inventory_unavailable":
+        return data
+    if str(data.get("source") or "") == "unavailable":
+        return data
+    return {}
+
+
 def run_guardian_once(
     *,
     mode: str = "live",
@@ -381,6 +448,8 @@ def run_guardian_once(
     auto_fix: bool = False,
     start_dashboard: bool = False,
     start_bot: bool = False,
+    ensure_bot: bool = False,
+    dry_run_start: bool = False,
     skip_dashboard: bool = False,
     session_date: str = "",
     bot_start_allowed: bool = True,
@@ -390,8 +459,15 @@ def run_guardian_once(
     _write_guardian_heartbeat(mode, status="running")
     preflight = run_preflight(mode, include_dashboard=not skip_dashboard)
     markets = _enabled_markets(preflight)
+    bot_start_requested = bool(start_bot or ensure_bot)
     findings = [
-        classify_preflight_check(check, start_bot=start_bot, start_dashboard=start_dashboard)
+        classify_preflight_check(
+            check,
+            mode=mode,
+            start_bot=bot_start_requested,
+            start_dashboard=start_dashboard,
+            ensure_bot=ensure_bot,
+        )
         for check in preflight.get("checks", [])
         if str(check.get("status") or "") != "PASS"
     ]
@@ -402,13 +478,41 @@ def run_guardian_once(
             preflight = run_preflight(mode, include_dashboard=not skip_dashboard)
             markets = _enabled_markets(preflight)
             findings = [
-                classify_preflight_check(check, start_bot=start_bot, start_dashboard=start_dashboard)
+                classify_preflight_check(
+                    check,
+                    mode=mode,
+                    start_bot=bot_start_requested,
+                    start_dashboard=start_dashboard,
+                    ensure_bot=ensure_bot,
+                )
                 for check in preflight.get("checks", [])
                 if str(check.get("status") or "") != "PASS"
             ]
 
     smoke = _run_smoke(mode=mode, markets=markets, env=env, session_date=session_date)
     findings.extend(_classify_smoke(smoke))
+    active_bot_process = _matching_bot_process(preflight, mode) if bot_start_requested else {}
+    if active_bot_process and not ensure_bot:
+        findings.append(
+            GuardianFinding(
+                "runtime.bot_process_inventory",
+                "WARN",
+                "hard_fail",
+                "active bot process blocks duplicate start",
+                active_bot_process,
+            )
+        )
+    inventory_unavailable = _process_inventory_unavailable(preflight) if bot_start_requested else {}
+    if inventory_unavailable and str(mode or "").lower() == "live":
+        findings.append(
+            GuardianFinding(
+                "runtime.process_inventory_start_guard",
+                "FAIL",
+                "hard_fail",
+                "process inventory unavailable; refusing live bot start",
+                inventory_unavailable,
+            )
+        )
 
     hard_fail = [finding for finding in findings if finding.classification == "hard_fail"]
     soft_fail = [finding for finding in findings if finding.classification == "soft_fail"]
@@ -416,8 +520,18 @@ def run_guardian_once(
     auto_fixable = [finding for finding in findings if finding.classification == "auto_fixable"]
     action_fail = [action for action in actions if action.status == "FAIL"]
     allow_start = not hard_fail and not action_fail
+    active_bot_lock = _active_bot_lock(preflight) if ensure_bot else {}
 
-    if allow_start and start_bot and not bot_start_allowed:
+    if allow_start and bot_start_requested and (active_bot_lock or active_bot_process):
+        actions.append(
+            GuardianAction(
+                "start_bot",
+                "SKIP",
+                "bot is already running",
+                active_bot_lock or active_bot_process,
+            )
+        )
+    elif allow_start and bot_start_requested and not bot_start_allowed:
         actions.append(
             GuardianAction(
                 "start_bot",
@@ -426,8 +540,16 @@ def run_guardian_once(
                 {"restart_guard": True},
             )
         )
-    elif allow_start and start_bot:
-        action = _start_bot(mode)
+    elif allow_start and bot_start_requested:
+        if dry_run_start:
+            action = GuardianAction(
+                "start_bot",
+                "DRY_RUN",
+                "bot start would be requested",
+                {"mode": mode, "dry_run": True},
+            )
+        else:
+            action = _start_bot(mode)
         actions.append(action)
         if action.status == "FAIL":
             allow_start = False
@@ -655,6 +777,8 @@ def main() -> int:
     parser.add_argument("--auto-fix", action="store_true")
     parser.add_argument("--start-dashboard", action="store_true")
     parser.add_argument("--start-bot", action="store_true")
+    parser.add_argument("--ensure-bot", action="store_true", help="Start the bot if missing; treat an already-running bot as healthy.")
+    parser.add_argument("--dry-run-start", action="store_true", help="Report bot start intent without launching a process.")
     parser.add_argument("--skip-dashboard", action="store_true")
     parser.add_argument("--session-date", default="")
     parser.add_argument("--watch", action="store_true")
@@ -675,7 +799,8 @@ def main() -> int:
         iteration += 1
         bot_start_allowed = True
         bot_start_skip_detail = ""
-        if args.watch and args.start_bot:
+        bot_start_requested = bool(args.start_bot or args.ensure_bot)
+        if args.watch and bot_start_requested:
             cooldown_left = int(max(0.0, float(args.restart_cooldown_sec or 300) - (time.time() - last_bot_start_at)))
             if last_bot_start_at and cooldown_left > 0:
                 bot_start_allowed = False
@@ -691,6 +816,8 @@ def main() -> int:
             auto_fix=args.auto_fix,
             start_dashboard=args.start_dashboard,
             start_bot=args.start_bot,
+            ensure_bot=args.ensure_bot,
+            dry_run_start=args.dry_run_start,
             skip_dashboard=args.skip_dashboard,
             session_date=args.session_date,
             bot_start_allowed=bot_start_allowed,

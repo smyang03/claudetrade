@@ -1278,9 +1278,9 @@ def _repo_python_processes() -> tuple[list[dict[str, Any]], str, str]:
 
 def _classify_repo_process_role(cmdline: list[str]) -> str:
     command = " ".join(str(item) for item in cmdline).lower().replace("\\", "/")
-    if "trading_bot.py" in command and "--live" in command:
-        return "live_bot"
-    if "trading_bot.py" in command and "--paper" in command:
+    if "trading_bot.py" in command:
+        if "--live" in command:
+            return "live_bot"
         return "paper_bot"
     if "run_bot.py" in command and "paper" in command:
         return "paper_bot"
@@ -1337,9 +1337,12 @@ def _classify_live_process_inventory(
     live_bots = by_role.get("live_bot", [])
     paper_bots = by_role.get("paper_bot", [])
     dashboards = by_role.get("dashboard", [])
-    if str(mode or "").lower() == "live" and len(live_bots) > 1:
+    mode_key = str(mode or "").lower()
+    if mode_key == "live" and len(live_bots) > 1:
         findings.append({"severity": "FAIL", "code": "duplicate_live_bot", "pids": [row.get("pid") for row in live_bots]})
-    if str(mode or "").lower() == "live" and paper_bots:
+    if mode_key == "paper" and len(paper_bots) > 1:
+        findings.append({"severity": "FAIL", "code": "duplicate_paper_bot", "pids": [row.get("pid") for row in paper_bots]})
+    if mode_key == "live" and paper_bots:
         findings.append(
             {
                 "severity": "WARN",
@@ -2464,8 +2467,9 @@ def _state_checks(config: dict[str, Any], mode: str) -> list[CheckResult]:
             checks.append(CheckResult("runtime.pathb_control_state", "FAIL", f"Path B control state unreadable: {exc}", {"path": str(control_path)}))
     snapshot_path = ROOT / "state" / f"{mode}_broker_truth_snapshot.json"
     if not snapshot_path.exists():
-        checks.append(CheckResult("broker_truth.snapshot_missing_or_present", "WARN", "broker truth snapshot is missing; bot startup should create it", {"path": str(snapshot_path)}))
-        checks.append(CheckResult("broker_truth.snapshot_file_valid", "WARN", "snapshot file missing before bot startup", {"path": str(snapshot_path)}))
+        startup_missing = {"path": str(snapshot_path), "snapshot_missing": True, "startup_expected": True}
+        checks.append(CheckResult("broker_truth.snapshot_missing_or_present", "WARN", "broker truth snapshot is missing; bot startup should create it", dict(startup_missing)))
+        checks.append(CheckResult("broker_truth.snapshot_file_valid", "WARN", "snapshot file missing before bot startup", dict(startup_missing)))
     else:
         try:
             data = json.loads(snapshot_path.read_text(encoding="utf-8"))
