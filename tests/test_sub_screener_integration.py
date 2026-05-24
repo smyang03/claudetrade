@@ -258,7 +258,7 @@ class SubScreenerIntegrationTests(unittest.TestCase):
         bot._token_for_market = lambda market: "token"
         seen: dict[str, str] = {}
 
-        def screen_us(*, top_n: int, mode: str) -> list[dict]:
+        def screen_us(*, top_n: int, mode: str, token: str | None = None) -> list[dict]:
             seen["us_ttl"] = os.environ.get("US_SCREEN_CACHE_TTL_SEC", "")
             return [{"ticker": "SPOT"}]
 

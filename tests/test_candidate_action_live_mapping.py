@@ -1853,7 +1853,8 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
                     """
                     SELECT candidate_quality_score, quality_data_gaps_json,
                            scorer_input_snapshot_json, scorer_config_hash,
-                           source_tags_json, trainer_candidate_state
+                           source_tags_json, trainer_candidate_state,
+                           config_hash, feature_flags_json
                     FROM audit_candidate_rows
                     WHERE ticker='AAPL'
                     """
@@ -1874,6 +1875,50 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(replay["trainer_candidate_state"], audit_row["trainer_candidate_state"])
         self.assertTrue(str(audit_row["scorer_config_hash"] or ""))
         self.assertIn("US:momentum_now", json.loads(audit_row["source_tags_json"]))
+        self.assertTrue(str(audit_row["config_hash"] or ""))
+        feature_flags = json.loads(audit_row["feature_flags_json"])
+        self.assertEqual(feature_flags["schema"], "candidate_audit_config_v1")
+        self.assertEqual(feature_flags["config_hash"], audit_row["config_hash"])
+
+    def test_candidate_audit_updates_selection_decision_ids_after_v2_registration(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "call_link",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-05-07",
+                    "known_at": "2026-05-07T09:00:00+09:00",
+                    "ticker": "NVDA",
+                    "source_file": "trading_bot.selection_meta",
+                }
+            )
+            with patch.dict(os.environ, {"CANDIDATE_AUDIT_DB_PATH": str(db_path)}, clear=False):
+                TradingBot._candidate_audit_update_selection_decision_ids(
+                    bot,
+                    "US",
+                    {"v2_decision_ids": {"NVDA": "v2_decision_nvda"}},
+                )
+
+            conn = store.connect()
+            try:
+                row = conn.execute(
+                    """
+                    SELECT execution_link_source, execution_decision_id
+                    FROM audit_candidate_rows
+                    WHERE ticker='NVDA'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+        self.assertEqual(row["execution_link_source"], "trading_bot.v2_register_trade_ready")
+        self.assertEqual(row["execution_decision_id"], "v2_decision_nvda")
 
     def test_candidate_audit_marks_only_actual_prompt_as_input_to_claude(self) -> None:
         bot = _make_bot()
@@ -1887,8 +1932,26 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
                 {"ticker": "MSFT", "action": "WATCH", "reason": "watch"},
             ],
             "_final_prompt_pool": [
-                {"ticker": "AAPL", "market": "US", "prompt_rank": 1, "trainer_candidate_state": "PLAN_A"},
-                {"ticker": "NVDA", "market": "US", "prompt_rank": 2, "trainer_candidate_state": "PLAN_A"},
+                {
+                    "ticker": "AAPL",
+                    "market": "US",
+                    "prompt_rank": 1,
+                    "trainer_candidate_state": "PLAN_A",
+                    "price": 100.0,
+                    "change_rate": 5.0,
+                    "volume": 4_000_000,
+                    "category": "day_gainers",
+                },
+                {
+                    "ticker": "NVDA",
+                    "market": "US",
+                    "prompt_rank": 2,
+                    "trainer_candidate_state": "PLAN_A",
+                    "price": 200.0,
+                    "change_rate": 5.0,
+                    "volume": 2_000_000,
+                    "category": "most_actives",
+                },
             ],
             "evidence_prefetch_source": "final_prompt_pool",
             "evidence_requested_tickers": ["AAPL", "NVDA"],
@@ -1924,7 +1987,9 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
                     row["ticker"]: row
                     for row in conn.execute(
                         """
-                        SELECT ticker, input_to_claude_reported, classification
+                        SELECT ticker, input_to_claude_reported, classification,
+                               prompt_rank_after_trim, primary_bucket,
+                               source_tags_json, bucket_reasons_json
                         FROM audit_candidate_rows
                         """
                     ).fetchall()
@@ -1939,7 +2004,20 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(rows["MSFT"]["input_to_claude_reported"], 0)
         self.assertEqual(rows["NVDA"]["input_to_claude_reported"], 1)
         self.assertEqual(rows["NVDA"]["classification"], "in_prompt_not_selected")
+        self.assertEqual(rows["AAPL"]["prompt_rank_after_trim"], 1)
+        self.assertEqual(rows["NVDA"]["prompt_rank_after_trim"], 2)
+        self.assertIsNone(rows["MSFT"]["prompt_rank_after_trim"])
+        self.assertEqual(rows["AAPL"]["primary_bucket"], "momentum_now")
+        self.assertIn("US:momentum_now", json.loads(rows["AAPL"]["source_tags_json"]))
+        self.assertIn("momentum_now", json.loads(rows["AAPL"]["bucket_reasons_json"]))
         self.assertEqual(call_payload["actual_prompt_tickers"], ["AAPL", "NVDA"])
+        self.assertEqual(
+            call_payload["actual_prompt_ranked_tickers"],
+            [
+                {"rank": 1, "ticker": "AAPL", "prompt_rank": 1},
+                {"rank": 2, "ticker": "NVDA", "prompt_rank": 2},
+            ],
+        )
         self.assertEqual(call_payload["actual_prompt_count"], 2)
         self.assertEqual(call_payload["plan_a_in_prompt"], 2)
         self.assertEqual(call_payload["overlay_mode"], "current_only")
@@ -2357,7 +2435,7 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
             try:
                 row = conn.execute(
                     """
-                    SELECT entry_price, exit_price
+                    SELECT entry_price, exit_price, entry_timing_snapshot_json
                     FROM audit_candidate_rows
                     WHERE ticker='NVDA'
                     """
@@ -2367,6 +2445,9 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
 
         self.assertEqual(row["entry_price"], 125.5)
         self.assertEqual(row["exit_price"], 129.25)
+        entry_snapshot = json.loads(row["entry_timing_snapshot_json"])
+        self.assertEqual(entry_snapshot["snapshot_source"], "record_decision_event_fallback")
+        self.assertEqual(entry_snapshot["price_native"], 125.5)
 
 
 if __name__ == "__main__":

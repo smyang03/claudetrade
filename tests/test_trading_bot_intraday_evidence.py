@@ -253,7 +253,7 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
     def test_fail_closed_below_threshold_does_not_overwrite_partial_store(self) -> None:
         bot = _make_bot(lambda **kwargs: _candles()[:1])
         bot.runtime_config.values["KR_INTRADAY_EVIDENCE_MIN_COMPLETE_RATIO"] = 1.0
-        bot.runtime_config.values["INTRADAY_EVIDENCE_FAIL_CLOSED_REPLACE_STALE_SEC"] = 999999
+        bot.runtime_config.values["INTRADAY_EVIDENCE_FAIL_CLOSED_REPLACE_STALE_SEC"] = 9999999
         bot._last_post_open_features_by_ticker = {
             "KR": {
                 "005930": {

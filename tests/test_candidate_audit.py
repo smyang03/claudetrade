@@ -1072,6 +1072,83 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(result["strategy_mismatch"]["match_count"], 1)
             self.assertEqual(result["strategy_mismatch"]["mismatch_count"], 1)
 
+    def test_analyze_candidate_audit_decomposes_watch_only_buckets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            session_date = "2026-05-17"
+            rows = [
+                {
+                    "call_id": "call_bucket",
+                    "runtime_mode": "live",
+                    "market": "KR",
+                    "session_date": session_date,
+                    "known_at": "2026-05-17T09:00:00+09:00",
+                    "ticker": "111111",
+                    "classification": "watch_only",
+                    "claude_action": "WATCH",
+                    "route_final_action": "WATCH",
+                    "route_reason": "evidence_ceiling_watch",
+                    "evidence_ceiling_applied": True,
+                },
+                {
+                    "call_id": "call_bucket",
+                    "runtime_mode": "live",
+                    "market": "KR",
+                    "session_date": session_date,
+                    "known_at": "2026-05-17T09:00:00+09:00",
+                    "ticker": "222222",
+                    "classification": "watch_only",
+                    "claude_action": "PROBE_READY",
+                    "route_final_action": "WATCH",
+                    "route_reason": "probe_blocked_above_pathb_zone",
+                },
+                {
+                    "call_id": "call_bucket",
+                    "runtime_mode": "live",
+                    "market": "KR",
+                    "session_date": session_date,
+                    "known_at": "2026-05-17T09:00:00+09:00",
+                    "ticker": "333333",
+                    "classification": "ready_no_signal",
+                    "claude_action": "BUY_READY",
+                    "route_final_action": "BUY_READY",
+                    "no_signal_count": 1,
+                },
+            ]
+            for row in rows:
+                store.upsert_candidate(row)
+                store.upsert_outcome(
+                    {
+                        "candidate_key": candidate_key(
+                            session_date=session_date,
+                            market="KR",
+                            call_id=row["call_id"],
+                            ticker=row["ticker"],
+                        ),
+                        "horizon_min": 60,
+                        "return_pct": 0.5,
+                        "max_runup_pct": 3.0,
+                        "max_drawdown_pct": -0.5,
+                        "status": "ok",
+                    }
+                )
+
+            result = analyze_candidate_audit(
+                db_path=db_path,
+                session_date=session_date,
+                market="KR",
+                horizon_min=60,
+            )
+
+        decomp = result["watch_only_bucket_decomposition"]
+        counts = {bucket["bucket"]: bucket["rows"] for bucket in decomp["buckets"]}
+        self.assertEqual(counts["evidence_ceiling"], 1)
+        self.assertEqual(counts["pathb_zone_or_plan"], 1)
+        self.assertEqual(counts["strategy_no_signal"], 1)
+        self.assertEqual(decomp["rows_considered"], 3)
+        self.assertEqual(decomp["examples"]["evidence_ceiling"][0]["ticker"], "111111")
+
     def test_audit_call_summary_separates_actual_prompt_and_watchlist_counts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "candidate_audit.db"

@@ -2514,7 +2514,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if market_key == "KR":
                 raw_candidates = screen_market_kr(self._token_for_market("KR"), top_n=top_n, mode=mode)
             else:
-                raw_candidates = screen_market_us(top_n=top_n, mode=mode)
+                us_kis_shadow_token = (
+                    self._token_for_market("US")
+                    if self._runtime_bool("US_KIS_RANKING_SHADOW_ENABLED", False)
+                    else None
+                )
+                raw_candidates = screen_market_us(top_n=top_n, mode=mode, token=us_kis_shadow_token)
         finally:
             if force_us_cache_bypass:
                 if prev_us_ttl is None:
@@ -7504,6 +7509,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if v2_ids:
             meta["v2_decision_ids"] = v2_ids
             self.selection_meta[market] = meta
+            self._candidate_audit_update_selection_decision_ids(market, meta)
         if getattr(self, "pathb", None) is not None:
             try:
                 pathb_runs = self.pathb.register_from_selection_meta(market, meta)
@@ -12189,6 +12195,98 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             out[ticker.upper() if market_key == "US" else ticker] = value
         return out
 
+    def _candidate_audit_config_fingerprint(self, market: str, meta: dict | None = None) -> tuple[str, dict]:
+        keys = (
+            "ANTHROPIC_MODEL",
+            "BULL_R1_MODEL",
+            "BEAR_R1_MODEL",
+            "NEUTRAL_R1_MODEL",
+            "CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS",
+            "CANDIDATE_ACTIONS_V2_ENABLED",
+            "ENABLE_ACTION_ROUTING",
+            "LIVE_EVIDENCE_PACK_SHADOW_ENABLED",
+            "EVIDENCE_PACK_ENABLED",
+            "SELECTION_FULL_EVIDENCE_MAX",
+            "ACTIVE_LESSONS_ENABLED",
+            "ACTIVE_LESSONS_SHADOW",
+            "PATHB_KR_LIVE_ENABLED",
+            "PATHB_US_LIVE_ENABLED",
+            "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK",
+            "KR_CONFIRMATION_GATE_ENABLED",
+            "KR_LATE_ENTRY_GATE_ENABLED",
+            "KR_LATE_ENTRY_EXEC_GATE_ENABLED",
+            "SOFT_GATE_OVERRIDE_VALIDATION_ENABLED",
+            "US_EARLY_ENTRY_SOFT_GATE_ENABLED",
+            "KR_EARLY_ENTRY_SOFT_GATE_ENABLED",
+            "CLAUDE_REVIEW_ALL_AUTOMATED_SELLS",
+        )
+        runtime_cfg = getattr(self, "runtime_config", None)
+        values: dict[str, str] = {}
+        sources: dict[str, str] = {}
+        for key in keys:
+            raw_value = runtime_cfg.get(key, None) if runtime_cfg is not None and hasattr(runtime_cfg, "get") else os.getenv(key)
+            if raw_value in (None, ""):
+                continue
+            values[key] = str(raw_value)
+            if runtime_cfg is not None and hasattr(runtime_cfg, "source_of"):
+                sources[key] = str(runtime_cfg.source_of(key))
+        payload = {
+            "schema": "candidate_audit_config_v1",
+            "runtime_mode": str(getattr(self, "_mode", "live") or "live"),
+            "market": "US" if str(market or "").upper() == "US" else "KR",
+            "prompt_version": self._v2_prompt_version(),
+            "selection_prompt_version": str((meta or {}).get("prompt_version") or ""),
+            "runtime_config_snapshot_path": str(getattr(self, "_runtime_config_snapshot_path", "") or ""),
+            "values": values,
+        }
+        digest = hashlib.sha1(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:20]
+        feature_flags = {
+            "schema": "candidate_audit_config_v1",
+            "config_hash": digest,
+            "runtime_mode": payload["runtime_mode"],
+            "market": payload["market"],
+            "prompt_version": payload["prompt_version"],
+            "runtime_config_snapshot_path": payload["runtime_config_snapshot_path"],
+            "values": values,
+            "sources": sources,
+        }
+        return digest, feature_flags
+
+    def _candidate_audit_update_selection_decision_ids(self, market: str, meta: dict | None) -> None:
+        store = self._candidate_audit_store()
+        if store is None:
+            return
+        ids = (meta or {}).get("v2_decision_ids")
+        if not isinstance(ids, dict) or not ids:
+            return
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            session_date = self._current_session_date_str(market_key)
+        except Exception:
+            session_date = date.today().isoformat()
+        for raw_ticker, decision_id in ids.items():
+            ticker = self._selection_ticker_key(market_key, raw_ticker)
+            decision_key = str(decision_id or "").strip()
+            if not ticker or not decision_key:
+                continue
+            try:
+                store.update_execution_by_ticker(
+                    session_date=session_date,
+                    market=market_key,
+                    runtime_mode=getattr(self, "_mode", "live"),
+                    ticker=ticker,
+                    values={
+                        "execution_link_source": "trading_bot.v2_register_trade_ready",
+                        "execution_decision_id": decision_key,
+                    },
+                    latest_only=True,
+                )
+            except Exception as exc:
+                log.debug(f"[candidate audit] decision id link failed {market_key} {ticker}: {exc}")
+
     @staticmethod
     def _strength_capture_float(value: Any) -> float | None:
         if value in (None, ""):
@@ -12265,11 +12363,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             or ((getattr(self, "today_judgment", {}) or {}).get("consensus", {}) or {}).get("mode")
             or ""
         )
+        audit_config_hash, audit_feature_flags = self._candidate_audit_config_fingerprint(market_key, meta)
         watchlist = list(dict.fromkeys((meta or {}).get("watchlist") or selected or []))
         trade_ready = {
             self._selection_ticker_key(market_key, ticker)
             for ticker in list((meta or {}).get("trade_ready") or [])
         }
+        v2_decision_id_map = self._candidate_audit_ticker_map((meta or {}).get("v2_decision_ids"), market_key)
         actions = list((meta or {}).get("candidate_actions") or [])
         action_by_ticker = {
             self._selection_ticker_key(market_key, (action or {}).get("ticker")): dict(action or {})
@@ -12292,6 +12392,94 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             for row in list((meta or {}).get("_final_prompt_pool") or [])
             if isinstance(row, dict) and str((row or {}).get("ticker") or "").strip()
         ]
+
+        def _candidate_row_value(row: dict, *keys: str, default=None):
+            for key in keys:
+                value = row.get(key)
+                if value not in (None, ""):
+                    return value
+            return default
+
+        def _audit_list(value) -> list:
+            if value is None:
+                return []
+            if isinstance(value, list):
+                return list(value)
+            if isinstance(value, (tuple, set)):
+                return list(value)
+            if isinstance(value, str):
+                text = value.strip()
+                if not text:
+                    return []
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        return list(parsed)
+                except Exception:
+                    pass
+                return [text]
+            return [value]
+
+        def _audit_dict(value) -> dict:
+            if isinstance(value, dict):
+                return dict(value)
+            if isinstance(value, str) and value.strip():
+                try:
+                    parsed = json.loads(value)
+                    return dict(parsed) if isinstance(parsed, dict) else {}
+                except Exception:
+                    return {}
+            return {}
+
+        def _audit_bucket_enriched_row(row: dict, *, prompt_rank_after_trim: int | None = None) -> dict:
+            enriched = dict(row or {})
+            if prompt_rank_after_trim is not None:
+                enriched["prompt_rank_after_trim"] = prompt_rank_after_trim
+            primary = str(enriched.get("primary_bucket") or "").strip().lower()
+            needs_bucket = primary in {"", "unclassified", "unknown", "none"}
+            needs_reasons = not _audit_dict(enriched.get("bucket_reasons") or enriched.get("bucket_reasons_json"))
+            if needs_bucket or needs_reasons:
+                try:
+                    from bot.bucket_classifier import classify_candidate_bucket
+
+                    classified = classify_candidate_bucket(enriched, market_key)
+                except Exception:
+                    classified = {}
+                if isinstance(classified, dict):
+                    classified_primary = str(classified.get("primary_bucket") or "").strip()
+                    if needs_bucket and classified_primary:
+                        enriched["primary_bucket"] = classified_primary
+                    if not enriched.get("secondary_buckets") and classified.get("secondary_buckets"):
+                        enriched["secondary_buckets"] = list(classified.get("secondary_buckets") or [])
+                    if not _audit_dict(enriched.get("bucket_reasons") or enriched.get("bucket_reasons_json")):
+                        enriched["bucket_reasons"] = _audit_dict(classified.get("bucket_reasons"))
+                    if not _audit_list(enriched.get("bucket_data_gaps") or enriched.get("bucket_data_gaps_json")):
+                        enriched["bucket_data_gaps"] = _audit_list(classified.get("bucket_data_gaps"))
+                    for score_key in (
+                        "score_current",
+                        "score_vol_ratio_capped",
+                        "score_vol_ratio_log",
+                        "score_turnover_weighted",
+                    ):
+                        if enriched.get(score_key) in (None, "") and classified.get(score_key) not in (None, ""):
+                            enriched[score_key] = classified.get(score_key)
+            if not _audit_dict(enriched.get("bucket_reasons_json")) and _audit_dict(enriched.get("bucket_reasons")):
+                enriched["bucket_reasons_json"] = _audit_dict(enriched.get("bucket_reasons"))
+            if not _audit_list(enriched.get("bucket_data_gaps_json")) and _audit_list(enriched.get("bucket_data_gaps")):
+                enriched["bucket_data_gaps_json"] = _audit_list(enriched.get("bucket_data_gaps"))
+            primary = str(enriched.get("primary_bucket") or "").strip()
+            if primary and primary.lower() not in {"unclassified", "unknown", "none"}:
+                source_tags = _audit_list(enriched.get("source_tags"))
+                tag = f"{market_key}:{primary}"
+                if tag not in source_tags:
+                    source_tags.append(tag)
+                enriched["source_tags"] = source_tags
+            return enriched
+
+        prompt_rows = [
+            _audit_bucket_enriched_row(row, prompt_rank_after_trim=idx)
+            for idx, row in enumerate(prompt_rows, start=1)
+        ]
         prompt_by_ticker = {
             self._selection_ticker_key(market_key, row.get("ticker")): row
             for row in prompt_rows
@@ -12300,6 +12488,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         actual_prompt_tickers = [
             self._selection_ticker_key(market_key, row.get("ticker"))
             for row in prompt_rows
+            if self._selection_ticker_key(market_key, row.get("ticker"))
+        ]
+        actual_prompt_ranked_tickers = [
+            {
+                "rank": int(row.get("prompt_rank_after_trim") or idx),
+                "ticker": self._selection_ticker_key(market_key, row.get("ticker")),
+                "prompt_rank": row.get("prompt_rank"),
+            }
+            for idx, row in enumerate(prompt_rows, start=1)
             if self._selection_ticker_key(market_key, row.get("ticker"))
         ]
         excluded_prompt_tickers = []
@@ -12338,13 +12535,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if str(row.get("trainer_candidate_state") or "").upper() == "PLAN_A"
         )
 
-        def _candidate_row_value(row: dict, *keys: str, default=None):
-            for key in keys:
-                value = row.get(key)
-                if value not in (None, ""):
-                    return value
-            return default
-
         _screener_quality_keys = (
             "screener_quality_state",
             "screener_degraded",
@@ -12357,6 +12547,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "min_cache_count",
             "min_dollar_vol",
             "market_elapsed_min",
+            "projected_dollar_volume_shadow_count_by_category",
+            "projected_dollar_volume_would_pass_count_by_category",
+            "projected_dollar_volume_shadow_path",
+            "us_kis_ranking_shadow_path",
+            "us_kis_ranking_shadow_overlap_by_category",
+            "us_kis_ranking_shadow_only_kis_by_category",
+            "us_kis_ranking_shadow_only_yahoo_by_category",
+            "us_kis_ranking_shadow_error",
             "screener_cache_used",
             "screener_cache_saved",
             "screener_cache_skipped_reason",
@@ -12393,6 +12591,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "turnover",
             "market_type",
             "primary_bucket",
+            "bucket_reasons",
+            "bucket_data_gaps",
+            "bucket_seen_count",
+            "first_bucket_detected_at",
+            "last_bucket_detected_at",
+            "earliest_bucket_detected_at",
             "category",
             "liquidity_bucket",
             "secondary_buckets",
@@ -12459,9 +12663,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             components = row.get("trainer_score_components")
             if not isinstance(components, dict):
                 components = row.get("trainer_score_components_json") if isinstance(row.get("trainer_score_components_json"), dict) else {}
-            quality_gaps = row.get("quality_data_gaps") or []
+            quality_gaps = _audit_list(row.get("quality_data_gaps") or row.get("quality_data_gaps_json"))
             return {
                 "final_prompt_included": bool(included),
+                "prompt_rank_after_trim": row.get("prompt_rank_after_trim"),
                 "raw_rank": row.get("raw_rank"),
                 "trainer_score_rank": row.get("trainer_score_rank"),
                 "prompt_excluded_reason": excluded_reason or row.get("prompt_excluded_reason") or "",
@@ -12471,8 +12676,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "trainer_risk_score": row.get("trainer_risk_score"),
                 "trainer_score_components_json": components,
                 "trainer_candidate_state": row.get("trainer_candidate_state"),
-                "source_tags_json": row.get("source_tags") or [],
-                "data_quality_flags_json": row.get("data_quality_flags") or quality_gaps,
+                "source_tags_json": _audit_list(row.get("source_tags") or row.get("source_tags_json")),
+                "bucket_reasons_json": _audit_dict(row.get("bucket_reasons") or row.get("bucket_reasons_json")),
+                "bucket_data_gaps_json": _audit_list(row.get("bucket_data_gaps") or row.get("bucket_data_gaps_json")),
+                "bucket_seen_count": row.get("bucket_seen_count"),
+                "first_bucket_detected_at": row.get("first_bucket_detected_at"),
+                "last_bucket_detected_at": row.get("last_bucket_detected_at"),
+                "earliest_bucket_detected_at": row.get("earliest_bucket_detected_at"),
+                "data_quality_flags_json": _audit_list(row.get("data_quality_flags") or row.get("data_quality_flags_json") or quality_gaps),
                 "candidate_quality_score": row.get("candidate_quality_score"),
                 "quality_data_gaps_json": quality_gaps,
                 "scorer_input_snapshot_json": _scorer_input_snapshot(row),
@@ -12484,6 +12695,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "price_change_since_first_seen_pct": row.get("price_change_since_first_seen_pct"),
                 "freshness_verdict": row.get("freshness_verdict"),
                 "trainer_tier": row.get("trainer_tier"),
+            }
+
+        def _v2_decision_audit_fields(ticker_key: str) -> dict:
+            decision_id = str(v2_decision_id_map.get(ticker_key) or "").strip()
+            if not decision_id:
+                return {}
+            return {
+                "execution_link_source": "trading_bot.v2_register_trade_ready",
+                "execution_decision_id": decision_id,
             }
 
         def _stale_cycle_audit_fields(ticker_key: str, row: dict | None = None) -> dict:
@@ -12529,6 +12749,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "selection_stages": stages,
                         "audit_source": "live_write",
                         "actual_prompt_tickers": actual_prompt_tickers,
+                        "actual_prompt_ranked_tickers": actual_prompt_ranked_tickers,
                         "excluded_prompt_tickers": excluded_prompt_tickers,
                         "actual_prompt_count": actual_prompt_count,
                         "excluded_prompt_count": len(excluded_prompt_tickers),
@@ -12592,6 +12813,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "session_date": session_date,
                         "known_at": known_at,
                         "ticker": key,
+                        "config_hash": audit_config_hash,
+                        "feature_flags_json": audit_feature_flags,
                         "source_file": "trading_bot.selection_meta",
                         "prompt_rank": prompt_row.get("prompt_rank") or rank,
                         "in_prompt": True,
@@ -12645,6 +12868,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "soft_gates": list(runtime_gate.get("soft_gates") or []),
                         "tuning_rule_version": str(tuning_feedback.get("rule_version") or ""),
                         "tuning_feedback_applied": bool((meta or {}).get("tuning_feedback_applied", False)),
+                        **_v2_decision_audit_fields(key),
                         **_trainer_audit_fields(prompt_row, included=True),
                         **self._strength_capture_shadow_fields(
                             prompt_row,
@@ -12683,6 +12907,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "session_date": session_date,
                         "known_at": known_at,
                         "ticker": key,
+                        "config_hash": audit_config_hash,
+                        "feature_flags_json": audit_feature_flags,
                         "source_file": "trading_bot.prompt_pool",
                         "prompt_rank": row.get("prompt_rank"),
                         "in_prompt": True,
@@ -12698,6 +12924,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "primary_bucket": _candidate_row_value(row, "primary_bucket", default=""),
                         "secondary_buckets": list(row.get("secondary_buckets") or []),
                         "classification": "in_prompt_not_selected",
+                        **_v2_decision_audit_fields(key),
                         **_trainer_audit_fields(row, included=True),
                         **self._strength_capture_shadow_fields(
                             row,
@@ -12727,6 +12954,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             row[_wk] = item[_wk]
                 else:
                     row = dict(item)
+                row = _audit_bucket_enriched_row(row)
                 key = self._selection_ticker_key(market_key, row.get("ticker") or item.get("ticker"))
                 if not key or key in watch_keys or key in prompt_keys:
                     continue
@@ -12739,6 +12967,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "session_date": session_date,
                         "known_at": known_at,
                         "ticker": key,
+                        "config_hash": audit_config_hash,
+                        "feature_flags_json": audit_feature_flags,
                         "source_file": "trading_bot.prompt_pool_excluded",
                         "prompt_rank": None,
                         "in_prompt": False,
@@ -12754,6 +12984,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "primary_bucket": _candidate_row_value(row, "primary_bucket", default=""),
                         "secondary_buckets": list(row.get("secondary_buckets") or []),
                         "classification": "not_in_prompt",
+                        **_v2_decision_audit_fields(key),
                         **_trainer_audit_fields(row, included=False, excluded_reason=excluded_reason),
                         **self._strength_capture_shadow_fields(
                             row,
@@ -12794,6 +13025,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         now_dt = datetime.now(KST)
         known_at = now_dt.isoformat(timespec="seconds")
         runtime_mode = str(getattr(self, "_mode", "live") or "live")
+        audit_config_hash, audit_feature_flags = self._candidate_audit_config_fingerprint(market_key, {})
         phase_key = str(phase or "history_filter").strip() or "history_filter"
         phase_key = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in phase_key)[:48]
         day_key = session_date.replace("-", "")
@@ -12853,6 +13085,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "session_date": session_date,
                         "known_at": known_at,
                         "ticker": ticker,
+                        "config_hash": audit_config_hash,
+                        "feature_flags_json": audit_feature_flags,
                         "source_file": "trading_bot.screener_filter",
                         "in_prompt": False,
                         "screener_seen": True,
@@ -12889,6 +13123,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             call_id = self._candidate_audit_call_id(market_key, meta)
             known_at = str((meta or {}).get("selection_snapshot_ts") or datetime.now(KST).isoformat(timespec="seconds"))
             key = self._selection_ticker_key(market_key, ticker)
+            audit_config_hash, audit_feature_flags = self._candidate_audit_config_fingerprint(market_key, meta)
             store.upsert_candidate(
                 {
                     "call_id": call_id,
@@ -12897,6 +13132,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "session_date": session_date,
                     "known_at": known_at,
                     "ticker": key,
+                    "config_hash": audit_config_hash,
+                    "feature_flags_json": audit_feature_flags,
                     "source_file": "trading_bot.runtime_filter",
                     "in_prompt": True,
                     "screener_seen": True,
@@ -25602,6 +25839,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             )
                             if _s_row.get(key) not in (None, "")
                         }
+                    _v2_decision_id = self._v2_decision_id_for_ticker(market, _s_tk)
+                    if not _v2_decision_id:
+                        _v2_decision_id = self._v2_ensure_execution_decision_id(
+                            market,
+                            _s_tk,
+                            strategy_hint=_s_strat,
+                            payload={
+                                "registration_source": "path_a_order_sent",
+                                "selected_reason": _s_sr or "",
+                                "entry_priority_score": float(_s_ep),
+                                "strategy": _s_strat,
+                                "path_a_lifecycle_evidence": True,
+                            },
+                        )
                     log.info(
                         f"[{'PAPER' if self.is_paper else 'LIVE'} BUY] "
                         f"{_s_tk} {qty}@{_s_px:,} | {_s_strat} | "
@@ -25616,6 +25867,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         detail=(f"선택이유: {_s_sr}" if _s_sr
                                 else f"mode={mode} tp={_s_tp:.2%} sl={_s_sl:.2%}"),
                         order_no=result.get("order_no", ""), selected_reason=_s_sr,
+                        v2_decision_id=_v2_decision_id,
                         source_strategy=_s_source_strat if _recovery_micro_meta else "",
                         recovery_micro=bool(_recovery_micro_meta),
                         recovery_micro_reason=_recovery_micro_meta.get("recovery_micro_reason", ""),
@@ -25651,20 +25903,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 )
                         except Exception:
                             pass
-                    _v2_decision_id = self._v2_decision_id_for_ticker(market, _s_tk)
-                    if not _v2_decision_id:
-                        _v2_decision_id = self._v2_ensure_execution_decision_id(
-                            market,
-                            _s_tk,
-                            strategy_hint=_s_strat,
-                            payload={
-                                "registration_source": "path_a_order_sent",
-                                "selected_reason": _s_sr or "",
-                                "entry_priority_score": float(_s_ep),
-                                "strategy": _s_strat,
-                                "path_a_lifecycle_evidence": True,
-                            },
-                        )
                     try:
                         tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at)
                         _traded_at = datetime.now(KST).isoformat()
@@ -27240,6 +27478,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 or kwargs.get("entry_timing_snapshot_json")
                 or {}
             )
+            if not isinstance(entry_timing, dict) or not entry_timing:
+                entry_timing = {
+                    "snapshot_source": "record_decision_event_fallback",
+                    "event_timestamp": event.get("timestamp", ""),
+                    "session_date": event.get("session_date", ""),
+                    "market": market,
+                    "ticker": ticker,
+                    "action": action,
+                    "price_native": event.get("price_native"),
+                    "price_krw": event.get("price_krw"),
+                    "strategy": event.get("strategy", ""),
+                    "selected_reason": event.get("selected_reason", ""),
+                }
             if isinstance(entry_timing, dict) and entry_timing:
                 values["entry_timing_snapshot_json"] = entry_timing
                 delay = entry_timing.get("candidate_to_order_delay_min")
