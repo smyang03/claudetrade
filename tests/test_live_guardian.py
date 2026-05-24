@@ -322,6 +322,7 @@ class LiveGuardianTests(unittest.TestCase):
         self.assertEqual(finding.classification, "hard_fail")
 
     def test_ensure_bot_accepts_active_pid_lock(self) -> None:
+        # Valid lock: alive, no mode mismatch, no remediation required
         finding = classify_preflight_check(
             {
                 "name": "runtime.bot_pid_lock",
@@ -333,6 +334,8 @@ class LiveGuardianTests(unittest.TestCase):
                     "pid": 1,
                     "alive": True,
                     "auto_fix": False,
+                    "accepted_exception": True,
+                    "remediation_required": False,
                 },
             },
             start_bot=True,
@@ -340,6 +343,53 @@ class LiveGuardianTests(unittest.TestCase):
         )
 
         self.assertEqual(finding.classification, "accepted_exception")
+
+    def test_ensure_bot_rejects_mode_mismatch_pid_lock(self) -> None:
+        # PID alive but lock mode differs from expected — must NOT skip start
+        finding = classify_preflight_check(
+            {
+                "name": "runtime.bot_pid_lock",
+                "status": "WARN",
+                "detail": "pid lock is active with a mode mismatch",
+                "data": {
+                    "category": "runtime_pid_lock",
+                    "path": "state/live_trading_bot.pid",
+                    "pid": 1,
+                    "alive": True,
+                    "auto_fix": False,
+                    "mode_mismatch": "paper",
+                    "accepted_exception": False,
+                    "remediation_required": True,
+                },
+            },
+            start_bot=True,
+            ensure_bot=True,
+        )
+
+        self.assertEqual(finding.classification, "hard_fail")
+
+    def test_ensure_bot_rejects_remediation_required_pid_lock(self) -> None:
+        # PID alive but remediation_required=True — must NOT skip start
+        finding = classify_preflight_check(
+            {
+                "name": "runtime.bot_pid_lock",
+                "status": "WARN",
+                "detail": "pid lock requires operator action",
+                "data": {
+                    "category": "runtime_pid_lock",
+                    "path": "state/live_trading_bot.pid",
+                    "pid": 1,
+                    "alive": True,
+                    "auto_fix": False,
+                    "accepted_exception": False,
+                    "remediation_required": True,
+                },
+            },
+            start_bot=True,
+            ensure_bot=True,
+        )
+
+        self.assertEqual(finding.classification, "hard_fail")
 
     def test_accepted_exception_warning_is_not_soft_fail(self) -> None:
         finding = classify_preflight_check(

@@ -279,6 +279,27 @@ class SubScreenerIntegrationTests(unittest.TestCase):
         self.assertEqual(kr_rows[0]["ticker"], "005930")
         self.assertEqual(seen["kr_called"], "token")
 
+    def test_us_kis_shadow_token_failure_does_not_block_screener(self) -> None:
+        """US KIS shadow token failures should not block the Yahoo/FMP screener path."""
+        bot = _base_bot()
+        bot._last_screen_candidates = {"KR": [], "US": []}
+        bot._screen_top_n_for_market = lambda market: 30
+        bot._load_persisted_screen_baseline = lambda market: []
+        bot._screen_quality_guard = lambda market, rows, phase: rows
+        bot._token_for_market = lambda market: (_ for _ in ()).throw(RuntimeError("token error"))
+        seen: dict[str, object] = {}
+
+        def screen_us(*, top_n: int, mode: str, token: str | None = None) -> list[dict]:
+            seen["token"] = token
+            return [{"ticker": "NVDA"}]
+
+        with patch.dict(os.environ, {"US_KIS_RANKING_SHADOW_ENABLED": "true"}, clear=False), \
+            patch.object(trading_bot_module, "screen_market_us", side_effect=screen_us):
+            rows = TradingBot._screen_market_candidates(bot, "US", "BALANCED", force_refresh=True)
+
+        self.assertEqual(seen["token"], None)
+        self.assertEqual(rows[0]["ticker"], "NVDA")
+
     def test_success_count_only_on_rescreen_complete(self) -> None:
         bot = _base_bot()
         bot._screen_market_candidates = lambda market, mode, *, force_refresh=False: [{"ticker": "SPOT"}]

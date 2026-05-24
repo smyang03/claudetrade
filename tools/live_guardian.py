@@ -196,6 +196,20 @@ def classify_preflight_check(
             return GuardianFinding(name, status, "auto_fixable", detail, data)
         if bool(data.get("alive")) and name == "runtime.bot_pid_lock" and start_bot:
             if ensure_bot:
+                # mode_mismatch, remediation_required, or explicit accepted_exception=False
+                # means the PID lock cannot be trusted as evidence of the correct bot running
+                if (
+                    bool(data.get("mode_mismatch"))
+                    or bool(data.get("remediation_required"))
+                    or data.get("accepted_exception") is False
+                ):
+                    return GuardianFinding(
+                        name,
+                        status,
+                        "hard_fail",
+                        "pid lock alive but mode mismatch or remediation required; cannot confirm correct bot",
+                        data,
+                    )
                 return GuardianFinding(name, status, "accepted_exception", "bot is already running", data)
             return GuardianFinding(name, status, "hard_fail", "active bot PID blocks duplicate start", data)
         if bool(data.get("accepted_exception")):
@@ -393,11 +407,19 @@ def _active_bot_lock(preflight: dict[str, Any]) -> dict[str, Any]:
         if str(check.get("name") or "") != "runtime.bot_pid_lock":
             continue
         data = check.get("data") if isinstance(check.get("data"), dict) else {}
-        if bool(data.get("alive")):
-            return {
-                "pid": int(data.get("pid", 0) or 0),
-                "path": str(data.get("path") or ""),
-            }
+        if not bool(data.get("alive")):
+            continue
+        # Reject locks that preflight already flagged as mismatched or requiring remediation
+        if (
+            bool(data.get("mode_mismatch"))
+            or bool(data.get("remediation_required"))
+            or data.get("accepted_exception") is False
+        ):
+            continue
+        return {
+            "pid": int(data.get("pid", 0) or 0),
+            "path": str(data.get("path") or ""),
+        }
     return {}
 
 

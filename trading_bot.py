@@ -2514,11 +2514,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if market_key == "KR":
                 raw_candidates = screen_market_kr(self._token_for_market("KR"), top_n=top_n, mode=mode)
             else:
-                us_kis_shadow_token = (
-                    self._token_for_market("US")
-                    if self._runtime_bool("US_KIS_RANKING_SHADOW_ENABLED", False)
-                    else None
-                )
+                us_kis_shadow_token = None
+                if self._runtime_bool("US_KIS_RANKING_SHADOW_ENABLED", False):
+                    try:
+                        us_kis_shadow_token = self._token_for_market("US")
+                    except Exception as _shadow_tok_exc:
+                        log.warning(
+                            f"[US KIS ranking shadow] token unavailable; shadow skipped: {_shadow_tok_exc}"
+                        )
                 raw_candidates = screen_market_us(top_n=top_n, mode=mode, token=us_kis_shadow_token)
         finally:
             if force_us_cache_bypass:
