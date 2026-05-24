@@ -1,0 +1,412 @@
+{
+  "generated_at": "2026-05-24T10:14:27",
+  "basis": {
+    "rows": 30485,
+    "date_min": "2026-04-20",
+    "date_max": "2026-05-22",
+    "caps": [
+      25,
+      30,
+      36
+    ],
+    "label_policy": "forward/outcome labels are used only after scoring for evaluation"
+  },
+  "scenarios": {
+    "current_prompt_cap25": {
+      "n": 13634,
+      "ret60_n": 1332,
+      "ret60_avg": 0.2922,
+      "ret60_median": 0.0,
+      "ret30_avg": 0.2492,
+      "good_rate_pct": 27.18,
+      "bad_rate_pct": 31.83,
+      "pf60": 1.302
+    },
+    "trainer_prompt_cap25": {
+      "n": 15620,
+      "ret60_n": 1381,
+      "ret60_avg": 0.4241,
+      "ret60_median": 0.0,
+      "ret30_avg": 0.3376,
+      "good_rate_pct": 27.66,
+      "bad_rate_pct": 32.26,
+      "pf60": 1.5114
+    },
+    "trainer_plan_a_shadow_cap25": {
+      "n": 3752,
+      "ret60_n": 358,
+      "ret60_avg": 1.4742,
+      "ret60_median": 0.2407,
+      "ret30_avg": 0.9961,
+      "good_rate_pct": 38.27,
+      "bad_rate_pct": 30.76,
+      "pf60": 2.7859
+    },
+    "current_prompt_cap30": {
+      "n": 14771,
+      "ret60_n": 1461,
+      "ret60_avg": 0.3517,
+      "ret60_median": 0.0,
+      "ret30_avg": 0.2691,
+      "good_rate_pct": 27.17,
+      "bad_rate_pct": 32.12,
+      "pf60": 1.3735
+    },
+    "trainer_prompt_cap30": {
+      "n": 17882,
+      "ret60_n": 1621,
+      "ret60_avg": 0.4044,
+      "ret60_median": 0.0,
+      "ret30_avg": 0.301,
+      "good_rate_pct": 27.88,
+      "bad_rate_pct": 32.52,
+      "pf60": 1.4733
+    },
+    "trainer_plan_a_shadow_cap30": {
+      "n": 3884,
+      "ret60_n": 379,
+      "ret60_avg": 1.5343,
+      "ret60_median": 0.2588,
+      "ret30_avg": 1.0109,
+      "good_rate_pct": 39.31,
+      "bad_rate_pct": 30.42,
+      "pf60": 2.6926
+    },
+    "current_prompt_cap36": {
+      "n": 15111,
+      "ret60_n": 1508,
+      "ret60_avg": 0.3831,
+      "ret60_median": 0.0,
+      "ret30_avg": 0.2749,
+      "good_rate_pct": 27.72,
+      "bad_rate_pct": 31.77,
+      "pf60": 1.4174
+    },
+    "trainer_prompt_cap36": {
+      "n": 19993,
+      "ret60_n": 1834,
+      "ret60_avg": 0.4142,
+      "ret60_median": 0.0057,
+      "ret30_avg": 0.2638,
+      "good_rate_pct": 28.68,
+      "bad_rate_pct": 32.38,
+      "pf60": 1.4725
+    },
+    "trainer_plan_a_shadow_cap36": {
+      "n": 3924,
+      "ret60_n": 386,
+      "ret60_avg": 1.5147,
+      "ret60_median": 0.282,
+      "ret30_avg": 1.0169,
+      "good_rate_pct": 39.64,
+      "bad_rate_pct": 30.31,
+      "pf60": 2.6099
+    }
+  },
+  "examples": {
+    "promoted": [
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "010170",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "011930",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "032820",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "042510",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "049080",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "065770",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "069540",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "084650",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "085670",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "093370",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "114800",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "122630",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "252670",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "253840",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "293580",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "299660",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "356680",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "412570",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "430690",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      },
+      {
+        "call_id": "20260420_KR_select_tickers_085130",
+        "market": "KR",
+        "ticker": "452190",
+        "trainer_prompt_score": 65.0,
+        "trainer_candidate_state": "PLAN_B",
+        "ret60": null
+      }
+    ],
+    "omitted": [
+      {
+        "call_id": "20260429_KR_select_tickers_091703",
+        "market": "KR",
+        "ticker": "006345",
+        "prompt_rank": 1,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_091703",
+        "market": "KR",
+        "ticker": "001780",
+        "prompt_rank": 5,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_091703",
+        "market": "KR",
+        "ticker": "026940",
+        "prompt_rank": 6,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_091703",
+        "market": "KR",
+        "ticker": "001510",
+        "prompt_rank": 9,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_091703",
+        "market": "KR",
+        "ticker": "005010",
+        "prompt_rank": 10,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_091703",
+        "market": "KR",
+        "ticker": "047040",
+        "prompt_rank": 12,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_091703",
+        "market": "KR",
+        "ticker": "009830",
+        "prompt_rank": 13,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_091703",
+        "market": "KR",
+        "ticker": "005930",
+        "prompt_rank": 15,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_091703",
+        "market": "KR",
+        "ticker": "006340",
+        "prompt_rank": 16,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_091703",
+        "market": "KR",
+        "ticker": "058430",
+        "prompt_rank": 18,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_091703",
+        "market": "KR",
+        "ticker": "001440",
+        "prompt_rank": 23,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_101759",
+        "market": "KR",
+        "ticker": "006345",
+        "prompt_rank": 1,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_101759",
+        "market": "KR",
+        "ticker": "006340",
+        "prompt_rank": 2,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_101759",
+        "market": "KR",
+        "ticker": "002780",
+        "prompt_rank": 7,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_101759",
+        "market": "KR",
+        "ticker": "001780",
+        "prompt_rank": 8,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_101759",
+        "market": "KR",
+        "ticker": "001510",
+        "prompt_rank": 10,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_101759",
+        "market": "KR",
+        "ticker": "009830",
+        "prompt_rank": 12,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_101759",
+        "market": "KR",
+        "ticker": "047040",
+        "prompt_rank": 13,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_101759",
+        "market": "KR",
+        "ticker": "005930",
+        "prompt_rank": 15,
+        "ret60": null
+      },
+      {
+        "call_id": "20260429_KR_select_tickers_101759",
+        "market": "KR",
+        "ticker": "058430",
+        "prompt_rank": 20,
+        "ret60": null
+      }
+    ]
+  }
+}

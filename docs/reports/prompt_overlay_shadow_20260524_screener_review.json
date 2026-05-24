@@ -1,0 +1,54 @@
+{
+  "generated_at": "2026-05-24T10:19:06",
+  "db_path": "data\\audit\\candidate_audit.db",
+  "filters": {
+    "market": null,
+    "runtime_mode": "live",
+    "date_from": "2026-05-12",
+    "date_to": "",
+    "horizon_min": 60
+  },
+  "call_count": 262,
+  "mode_counts": {
+    "current_only": 248,
+    "shadow": 14
+  },
+  "overlay_day_count": 3,
+  "plan_a_coverage_day_count": 7,
+  "plan_a_zero_cycles": 160,
+  "plan_b_fallback_count": 0,
+  "current_pool_pf": {
+    "n": 700,
+    "avg": 0.8601,
+    "median": 0.2489,
+    "win_rate_pct": 57.71,
+    "pf": 2.2214
+  },
+  "shadow_overlay_pool_pf": {
+    "n": 490,
+    "avg": 1.0859,
+    "median": 0.294,
+    "win_rate_pct": 61.22,
+    "pf": 2.9096
+  },
+  "overlay_triggered_pf": {
+    "n": 8,
+    "avg": 4.1267,
+    "median": 1.4668,
+    "win_rate_pct": 75.0,
+    "pf": 20.808
+  },
+  "top_day_contribution": {
+    "top_day": "2026-05-20",
+    "top_day_sum": 29.8907,
+    "top_day_contribution_pct": 90.54
+  },
+  "gate": {
+    "shadow_days_min_10": true,
+    "overlay_days_min_4": false,
+    "overlay_triggered_pf_gt_1": true,
+    "top_day_contribution_lt_40": false,
+    "plan_b_fallback_zero": true
+  },
+  "gate_pass": false
+}
