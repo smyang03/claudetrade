@@ -196,21 +196,15 @@ def classify_preflight_check(
             return GuardianFinding(name, status, "auto_fixable", detail, data)
         if bool(data.get("alive")) and name == "runtime.bot_pid_lock" and start_bot:
             if ensure_bot:
-                # mode_mismatch, remediation_required, or explicit accepted_exception=False
-                # means the PID lock cannot be trusted as evidence of the correct bot running
-                if (
-                    bool(data.get("mode_mismatch"))
-                    or bool(data.get("remediation_required"))
-                    or data.get("accepted_exception") is False
-                ):
-                    return GuardianFinding(
-                        name,
-                        status,
-                        "hard_fail",
-                        "pid lock alive but mode mismatch or remediation required; cannot confirm correct bot",
-                        data,
-                    )
-                return GuardianFinding(name, status, "accepted_exception", "bot is already running", data)
+                if _pid_lock_is_trusted_bot_lock(data):
+                    return GuardianFinding(name, status, "accepted_exception", "bot is already running", data)
+                return GuardianFinding(
+                    name,
+                    status,
+                    "hard_fail",
+                    "pid lock alive but not validated as the expected bot",
+                    data,
+                )
             return GuardianFinding(name, status, "hard_fail", "active bot PID blocks duplicate start", data)
         if bool(data.get("accepted_exception")):
             return GuardianFinding(name, status, "accepted_exception", detail, data)
@@ -402,23 +396,66 @@ def _run_smoke(*, mode: str, markets: list[str], env: str = "", session_date: st
     return {"ok": all(item.get("ok") for item in results), "results": results}
 
 
-def _active_bot_lock(preflight: dict[str, Any]) -> dict[str, Any]:
+def _pid_lock_is_trusted_bot_lock(data: dict[str, Any]) -> bool:
+    return (
+        bool(data.get("alive"))
+        and data.get("accepted_exception") is True
+        and not bool(data.get("mode_mismatch"))
+        and not bool(data.get("remediation_required"))
+    )
+
+
+def _pid_set_for_matching_bot_process(preflight: dict[str, Any], mode: str) -> set[int]:
+    data = _process_inventory_data(preflight)
+    rows = data.get("rows") if isinstance(data.get("rows"), list) else []
+    expected_role = "live_bot" if str(mode or "").lower() == "live" else "paper_bot"
+    pids: set[int] = set()
+    for row in rows:
+        if not isinstance(row, dict) or str(row.get("role") or "") != expected_role:
+            continue
+        try:
+            pids.add(int(row.get("pid") or 0))
+        except Exception:
+            continue
+    pids.discard(0)
+    return pids
+
+
+def _active_bot_lock(preflight: dict[str, Any], mode: str) -> dict[str, Any]:
+    matching_pids = _pid_set_for_matching_bot_process(preflight, mode)
+    if not matching_pids:
+        return {}
     for check in preflight.get("checks", []):
         if str(check.get("name") or "") != "runtime.bot_pid_lock":
             continue
         data = check.get("data") if isinstance(check.get("data"), dict) else {}
-        if not bool(data.get("alive")):
+        if not _pid_lock_is_trusted_bot_lock(data):
             continue
-        # Reject locks that preflight already flagged as mismatched or requiring remediation
-        if (
-            bool(data.get("mode_mismatch"))
-            or bool(data.get("remediation_required"))
-            or data.get("accepted_exception") is False
-        ):
+        pid = int(data.get("pid", 0) or 0)
+        if pid not in matching_pids:
             continue
         return {
-            "pid": int(data.get("pid", 0) or 0),
+            "pid": pid,
             "path": str(data.get("path") or ""),
+        }
+    return {}
+
+
+def _unmatched_active_bot_lock(preflight: dict[str, Any], mode: str) -> dict[str, Any]:
+    matching_pids = _pid_set_for_matching_bot_process(preflight, mode)
+    for check in preflight.get("checks", []):
+        if str(check.get("name") or "") != "runtime.bot_pid_lock":
+            continue
+        data = check.get("data") if isinstance(check.get("data"), dict) else {}
+        if not _pid_lock_is_trusted_bot_lock(data):
+            continue
+        pid = int(data.get("pid", 0) or 0)
+        if pid in matching_pids:
+            continue
+        return {
+            "pid": pid,
+            "path": str(data.get("path") or ""),
+            "matching_bot_pids": sorted(matching_pids),
         }
     return {}
 
@@ -524,6 +561,21 @@ def run_guardian_once(
                 active_bot_process,
             )
         )
+    unmatched_active_bot_lock = (
+        _unmatched_active_bot_lock(preflight, mode)
+        if bot_start_requested and not active_bot_process
+        else {}
+    )
+    if unmatched_active_bot_lock:
+        findings.append(
+            GuardianFinding(
+                "runtime.bot_pid_lock_inventory_mismatch",
+                "WARN",
+                "hard_fail",
+                "active PID lock has no matching bot process",
+                unmatched_active_bot_lock,
+            )
+        )
     inventory_unavailable = _process_inventory_unavailable(preflight) if bot_start_requested else {}
     if inventory_unavailable and str(mode or "").lower() == "live":
         findings.append(
@@ -542,7 +594,7 @@ def run_guardian_once(
     auto_fixable = [finding for finding in findings if finding.classification == "auto_fixable"]
     action_fail = [action for action in actions if action.status == "FAIL"]
     allow_start = not hard_fail and not action_fail
-    active_bot_lock = _active_bot_lock(preflight) if ensure_bot else {}
+    active_bot_lock = _active_bot_lock(preflight, mode) if ensure_bot else {}
 
     if allow_start and bot_start_requested and (active_bot_lock or active_bot_process):
         actions.append(

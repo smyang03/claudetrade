@@ -64,7 +64,10 @@ class LiveGuardianTests(unittest.TestCase):
                     "name": "runtime.process_inventory",
                     "status": "PASS",
                     "detail": "process inventory ok",
-                    "data": {"source": "psutil", "rows": []},
+                    "data": {
+                        "source": "psutil",
+                        "rows": [],
+                    },
                 }
             ],
             "effective_config": {"ENABLED_MARKETS": "KR"},
@@ -391,6 +394,26 @@ class LiveGuardianTests(unittest.TestCase):
 
         self.assertEqual(finding.classification, "hard_fail")
 
+    def test_ensure_bot_rejects_pid_lock_without_preflight_acceptance(self) -> None:
+        finding = classify_preflight_check(
+            {
+                "name": "runtime.bot_pid_lock",
+                "status": "WARN",
+                "detail": "pid lock is active",
+                "data": {
+                    "category": "runtime_pid_lock",
+                    "path": "state/live_trading_bot.pid",
+                    "pid": 1,
+                    "alive": True,
+                    "auto_fix": False,
+                },
+            },
+            start_bot=True,
+            ensure_bot=True,
+        )
+
+        self.assertEqual(finding.classification, "hard_fail")
+
     def test_accepted_exception_warning_is_not_soft_fail(self) -> None:
         finding = classify_preflight_check(
             {
@@ -468,7 +491,10 @@ class LiveGuardianTests(unittest.TestCase):
                     "name": "runtime.process_inventory",
                     "status": "PASS",
                     "detail": "process inventory ok",
-                    "data": {"source": "psutil", "rows": []},
+                    "data": {
+                        "source": "psutil",
+                        "rows": [],
+                    },
                 }
             ],
             "effective_config": {"ENABLED_MARKETS": "KR"},
@@ -520,7 +546,10 @@ class LiveGuardianTests(unittest.TestCase):
                     "name": "runtime.process_inventory",
                     "status": "PASS",
                     "detail": "process inventory ok",
-                    "data": {"source": "psutil", "rows": []},
+                    "data": {
+                        "source": "psutil",
+                        "rows": [{"pid": 42, "role": "live_bot", "cmdline": ["python", "trading_bot.py", "--live"]}],
+                    },
                 }
             ],
             "effective_config": {"ENABLED_MARKETS": "KR"},
@@ -548,6 +577,57 @@ class LiveGuardianTests(unittest.TestCase):
         self.assertEqual(report["actions"][0]["name"], "start_bot")
         self.assertEqual(report["actions"][0]["status"], "SKIP")
         self.assertEqual(report["actions"][0]["detail"], "bot is already running")
+        start_mock.assert_not_called()
+
+    def test_guardian_ensure_bot_blocks_pid_lock_without_matching_process(self) -> None:
+        preflight = {
+            "ok": True,
+            "fail_count": 0,
+            "warn_count": 1,
+            "checks": [
+                {
+                    "name": "runtime.bot_pid_lock",
+                    "status": "WARN",
+                    "detail": "pid lock is active",
+                    "data": {
+                        "category": "runtime_pid_lock",
+                        "path": "state/live_trading_bot.pid",
+                        "pid": 42,
+                        "alive": True,
+                        "auto_fix": False,
+                        "accepted_exception": True,
+                        "remediation_required": False,
+                    },
+                },
+                {
+                    "name": "runtime.process_inventory",
+                    "status": "PASS",
+                    "detail": "process inventory ok",
+                    "data": {"source": "psutil", "rows": []},
+                },
+            ],
+            "effective_config": {"ENABLED_MARKETS": "KR"},
+        }
+        smoke = {"ok": True, "results": [{"ok": True, "market": "KR"}]}
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "tools.live_guardian.run_preflight",
+            return_value=preflight,
+        ), patch(
+            "tools.live_guardian._run_smoke",
+            return_value=smoke,
+        ), patch(
+            "tools.live_guardian._start_bot",
+        ) as start_mock, patch(
+            "tools.live_guardian._write_guardian_heartbeat",
+        ), patch(
+            "tools.live_guardian._write_guardian_report",
+            return_value=(Path(tmp) / "guardian.json", Path(tmp) / "guardian.md"),
+        ):
+            report = run_guardian_once(mode="live", ensure_bot=True)
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["findings"][-1]["name"], "runtime.bot_pid_lock_inventory_mismatch")
         start_mock.assert_not_called()
 
     def test_guardian_ensure_bot_skips_start_when_matching_process_exists_without_pid_lock(self) -> None:
