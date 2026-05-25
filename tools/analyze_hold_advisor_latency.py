@@ -5,7 +5,7 @@ import json
 import sqlite3
 import sys
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +95,8 @@ def _date_text(row: dict[str, Any]) -> str:
 
 def _in_scope(row: dict[str, Any], *, start_date: str, end_date: str, market: str) -> bool:
     day = _date_text(row)
+    if (start_date or end_date) and not day:
+        return False
     if start_date and day and day < start_date:
         return False
     if end_date and day and day > end_date:
@@ -565,7 +567,8 @@ def write_report(payload: dict[str, Any], *, output: str | Path, fmt: str) -> Pa
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     text = to_markdown(payload) if fmt == "md" else json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
-    path.write_text(text + ("" if text.endswith("\n") else "\n"), encoding="utf-8", newline="\n")
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text + ("" if text.endswith("\n") else "\n"))
     return path
 
 
