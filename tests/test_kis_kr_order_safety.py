@@ -18,6 +18,93 @@ class _Resp:
 
 
 class KisKrOrderSafetyTests(unittest.TestCase):
+    def test_kr_ccld_unfilled_row_preserves_order_price(self) -> None:
+        row = kis_api._normalize_kr_daily_ccld_row(
+            {
+                "odno": "0012214400",
+                "pdno": "069540",
+                "sll_buy_dvsn_cd": "02",
+                "ord_qty": "33",
+                "tot_ccld_qty": "0",
+                "rmn_qty": "33",
+                "avg_prvs": "0",
+                "ord_unpr": "6780",
+            }
+        )
+
+        self.assertEqual(row["order_price"], 6_780)
+        self.assertEqual(row["fill_price"], 6_780)
+        self.assertEqual(row["remaining_qty"], 33)
+        self.assertEqual(row["order_status"], "open")
+
+    def test_kr_ccld_rejected_row_is_not_remaining_open(self) -> None:
+        row = kis_api._normalize_kr_daily_ccld_row(
+            {
+                "odno": "0012214400",
+                "pdno": "069540",
+                "sll_buy_dvsn_cd": "02",
+                "ord_qty": "33",
+                "tot_ccld_qty": "0",
+                "rmn_qty": "0",
+                "rjct_qty": "33",
+                "cncl_cfrm_qty": "0",
+                "avg_prvs": "0",
+                "ord_unpr": "6780",
+            }
+        )
+
+        self.assertEqual(row["remaining_qty"], 0)
+        self.assertEqual(row["rejected_qty"], 33)
+        self.assertEqual(row["order_status"], "rejected")
+
+    def test_us_ccnl_unfilled_sell_has_remaining_qty(self) -> None:
+        # 미체결 US 매도 주문 → remaining_qty > 0 이어야 open_orders 필터 통과
+        row = kis_api._normalize_us_inquire_ccnl_row(
+            {
+                "odno": "0030262408",
+                "pdno": "IBM",
+                "sll_buy_dvsn": "01",
+                "ord_qty": "1",
+                "ft_ccld_qty": "0",
+                "ovrs_ord_unpr": "254.247",
+            }
+        )
+
+        self.assertEqual(row["remaining_qty"], 1)
+        self.assertEqual(row["side"], "sell")
+        self.assertEqual(row["order_no"], "0030262408")
+
+    def test_us_ccnl_unfilled_sell_uses_nccs_qty_when_available(self) -> None:
+        # API가 nccs_qty(미체결수량)를 직접 제공하는 경우 우선 사용
+        row = kis_api._normalize_us_inquire_ccnl_row(
+            {
+                "odno": "0030262408",
+                "pdno": "IBM",
+                "sll_buy_dvsn": "01",
+                "ord_qty": "3",
+                "ft_ccld_qty": "1",
+                "nccs_qty": "2",
+                "ovrs_ord_unpr": "254.247",
+            }
+        )
+
+        self.assertEqual(row["remaining_qty"], 2)
+
+    def test_us_ccnl_filled_order_has_zero_remaining_qty(self) -> None:
+        # 완전 체결된 주문 → remaining_qty == 0 → open_orders 필터 제외
+        row = kis_api._normalize_us_inquire_ccnl_row(
+            {
+                "odno": "0030111111",
+                "pdno": "AAPL",
+                "sll_buy_dvsn": "02",
+                "ord_qty": "1",
+                "ft_ccld_qty": "1",
+                "ovrs_ord_unpr": "200.0",
+            }
+        )
+
+        self.assertEqual(row["remaining_qty"], 0)
+
     def test_kr_order_body_uses_integer_strings_and_exchange_code(self) -> None:
         captured: dict = {}
 

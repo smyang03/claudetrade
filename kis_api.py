@@ -2209,16 +2209,41 @@ def _normalize_kr_daily_ccld_row(row: dict) -> dict:
         "tot_ccld_qty", "ccld_qty", "tot_ccld_qty_sum", "ft_ccld_qty", "exec_qty"
     ]), 0))
     order_qty = int(_to_float(_pick_first(row, ["ord_qty", "ORD_QTY"]), 0))
+    remaining_raw = _pick_first(row, ["rmn_qty", "RMN_QTY", "ord_rmn_qty", "ORD_RMN_QTY"], None)
+    rejected_qty = int(_to_float(_pick_first(row, ["rjct_qty", "RJCT_QTY"], 0), 0))
+    cancelled_qty = int(_to_float(_pick_first(row, ["cncl_cfrm_qty", "CNCL_CFRM_QTY"], 0), 0))
+    if remaining_raw is None:
+        remaining_qty = max(0, order_qty - filled_qty - rejected_qty - cancelled_qty)
+    else:
+        remaining_qty = max(0, int(_to_float(remaining_raw, 0)))
     fill_price = _to_float(_pick_first(row, [
-        "avg_prvs", "avg_cntr_prc", "avg_ccld_unpr", "tot_ccld_unpr", "ccld_unpr", "ord_unpr"
+        "avg_prvs", "avg_cntr_prc", "avg_ccld_unpr", "tot_ccld_unpr", "ccld_unpr"
     ]), 0)
+    order_price = _to_float(_pick_first(row, ["ord_unpr", "ORD_UNPR"]), 0)
+    if fill_price <= 0:
+        fill_price = order_price
+    if rejected_qty > 0 and remaining_qty == 0 and filled_qty == 0:
+        order_status = "rejected"
+    elif cancelled_qty > 0 and remaining_qty == 0:
+        order_status = "cancelled" if filled_qty == 0 else "partial_cancelled"
+    elif remaining_qty > 0:
+        order_status = "partial_open" if filled_qty > 0 else "open"
+    elif order_qty > 0 and filled_qty >= order_qty:
+        order_status = "filled"
+    else:
+        order_status = ""
     return {
         "order_no": order_no,
         "ticker": ticker,
         "side": side,
         "filled_qty": filled_qty,
         "order_qty": order_qty,
+        "remaining_qty": remaining_qty,
+        "rejected_qty": rejected_qty,
+        "cancelled_qty": cancelled_qty,
+        "order_status": order_status,
         "fill_price": fill_price,
+        "order_price": order_price,
         "order_date": str(_pick_first(row, ["ord_dt", "ORD_DT", "ord_date"], "") or "").strip(),
         "order_time": str(_pick_first(row, ["ord_tmd", "ORD_TMD"], "") or "").strip(),
         "raw": row,
@@ -2355,16 +2380,26 @@ def _normalize_us_inquire_ccnl_row(row: dict) -> dict:
         "ft_ccld_qty", "ccld_qty", "tot_ccld_qty", "tot_ccld_qty_sum", "exec_qty"
     ]), 0))
     order_qty = int(_to_float(_pick_first(row, ["ord_qty", "ORD_QTY"]), 0))
+    remaining_raw = _pick_first(row, ["nccs_qty", "NCCS_QTY", "rmn_qty", "RMN_QTY"], None)
+    if remaining_raw is not None:
+        remaining_qty = max(0, int(_to_float(remaining_raw, 0)))
+    else:
+        remaining_qty = max(0, order_qty - filled_qty)
     fill_price = _to_float(_pick_first(row, [
-        "ft_ccld_unpr3", "ft_ccld_unpr", "avg_prvs", "avg_ccld_unpr", "ccld_unpr", "ovrs_ord_unpr"
+        "ft_ccld_unpr3", "ft_ccld_unpr", "avg_prvs", "avg_ccld_unpr", "ccld_unpr"
     ]), 0)
+    order_price = _to_float(_pick_first(row, ["ovrs_ord_unpr", "OVRS_ORD_UNPR", "ord_unpr", "ORD_UNPR"]), 0)
+    if fill_price <= 0:
+        fill_price = order_price
     return {
         "order_no": order_no,
         "ticker": ticker,
         "side": side,
         "filled_qty": filled_qty,
         "order_qty": order_qty,
+        "remaining_qty": remaining_qty,
         "fill_price": fill_price,
+        "order_price": order_price,
         "order_date": str(_pick_first(row, ["ord_dt", "ORD_DT", "ord_date"], "") or "").strip(),
         "order_time": str(_pick_first(row, ["ord_tmd", "ORD_TMD", "ord_time"], "") or "").strip(),
         "raw": row,
