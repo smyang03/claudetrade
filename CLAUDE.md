@@ -574,15 +574,47 @@ KIS 브로커 API(`kis_api.py`)는 `KIS_APP_KEY_US` / `KIS_APP_SECRET_US`가 비
 - `data/ticker_selection_log.db`: selection 로그
 - `logs/pead/*.json`: surprise shadow 기록
 
+### KIS API 정규화 규칙
+
+- `broker_truth_snapshot.py`의 `open_orders`는 오늘 체결/미체결 조회 결과 중
+  `remaining_qty > 0`인 행만 필터링하여 파생된다.
+- `_normalize_kr_daily_ccld_row()`와 `_normalize_us_inquire_ccnl_row()` 등
+  모든 KIS 주문 정규화 함수는 반드시 `remaining_qty` 필드를 포함해야 한다.
+  누락 시 해당 시장의 `open_orders`가 항상 빈 리스트가 되어
+  ORDER_UNKNOWN 매도 복구, sellable qty reject 처리가 전부 오작동한다.
+- US 정규화는 `nccs_qty` 필드를 우선 사용하고, 없으면 `order_qty - filled_qty`로 fallback.
+
+### PathB 매도 차단 조건 및 복구
+
+`sellable_qty_untrusted=True`는 매도를 완전히 차단하며, 다음 조건 중 하나로 설정된다:
+
+- 매도 주문이 실패하고 브로커 `open_orders`에서 미체결 주문을 찾지 못한 경우
+  (`resolution=no_open_order_or_fill`)
+- `manual_reconcile_required=True` 또는 `broker_sell_lock_suspected=True`
+
+복구 경로:
+
+1. `_pathb_sellable_qty_reject_evidence()` → 브로커 fresh refresh (`force=True, ttl_sec=15`)
+2. `open_orders`에 매도 주문 발견 → `_recover_existing_sell_order_after_qty_reject()` →
+   자동 복구 (sellable_qty_untrusted 해제, 기존 주문 ack로 재연결)
+3. 발견 못하면 → `manual_reconcile_required=True` → **운영자 수동 처리 필요**
+
+ORDER_UNKNOWN 매도 복구 흐름 (`_reconcile_exit_order_unknown_run`):
+
+- 체결 확인 → 포지션 종료
+- 브로커 `open_orders`에 매도 주문 발견 → ack 등록 (재매도 시도 안 함)
+- 미체결 증거 없고 보유 확인 → stale 복구 + 재매도 시도
+
+`open_orders`가 정상 작동하지 않으면 세 번째 경로가 잘못 실행되어 중복 매도 시도 →
+"주문수량이 가능수량보다 큽니다" → `sellable_qty_untrusted` 영구 잠금으로 이어진다.
+
 ## TODO / 미완성 작업 목록
 
-### 진행 중
+백로그와 우선순위는 [`docs/important/core/TODO_ROADMAP.md`](docs/important/core/TODO_ROADMAP.md)와
+[`docs/important/ACTIVE_WORK.md`](docs/important/ACTIVE_WORK.md)가 관리한다.
+이 파일에 중복 기재하지 않는다.
 
-- PEAD surprise shadow 5거래일 관찰
-- KR structured earnings source 안정성 확인
-- live dashboard broker truth 검증 범위 확대
-
-### 완료
+### 완료 (주요 이력)
 
 - soft watch 승격 기본 차단
 - continuation live 중단, shadow-only 전환
@@ -590,12 +622,7 @@ KIS 브로커 API(`kis_api.py`)는 `KIS_APP_KEY_US` / `KIS_APP_SECRET_US`가 비
 - stale legacy 포지션 정리
 - `brain.json` 중복/상충 기록 정규화
 - 브레인/대시보드 한글 깨짐 복원
-
-### 예정
-
-- brain 자동 승격 승인형 워크플로우
-- history auto-fill 안정화
-- low-gap continuation 전략화 여부 재검토
+- US 미체결 주문 `remaining_qty` 누락으로 `open_orders` 필터 실패 수정 (2026-05-27)
 
 ## 재시작 / 장애 복구 절차
 
