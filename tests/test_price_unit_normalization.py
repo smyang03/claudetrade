@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from minority_report import hold_advisor
 from runtime.pathb_runtime import PathBRuntime
@@ -109,6 +109,54 @@ class PriceUnitNormalizationTests(unittest.TestCase):
         self.assertAlmostEqual(kr_price_pos["current_price"], 71_000.0)
         self.assertAlmostEqual(kr_price_pos["display_current_price"], 71_000.0)
         self.assertAlmostEqual(bot._native_position_price(kr_price_pos, "KR", current=True), 71_000.0)
+
+    def test_trading_bot_kr_native_price_prefers_broker_display_price(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.usd_krw_rate = 1470.0
+        bot.price_cache = {}
+        bot.price_cache_raw = {}
+
+        pos = {
+            "ticker": "128940",
+            "entry": 453_500.0,
+            "current_price": 454_000.0,
+            "display_current_price": 469_000.0,
+        }
+        price_pos = bot._position_with_latest_price_context(pos, "KR")
+
+        self.assertAlmostEqual(price_pos["current_price"], 469_000.0)
+        self.assertAlmostEqual(bot._native_position_price(price_pos, "KR", current=True), 469_000.0)
+
+    def test_refresh_position_prices_from_broker_updates_kr_cache(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.usd_krw_rate = 1470.0
+        bot.price_cache = {}
+        bot.price_cache_raw = {}
+        bot._broker_state = {}
+        pos = {
+            "ticker": "128940",
+            "entry": 453_500.0,
+            "current_price": 454_000.0,
+            "display_current_price": 454_000.0,
+        }
+        bot.risk = SimpleNamespace(positions=[pos], update_prices=Mock())
+        bot._token_for_market = lambda market, force_refresh=False: "token"  # type: ignore[method-assign]
+
+        with patch(
+            "trading_bot.get_balance",
+            return_value={
+                "cash": 1_000_000,
+                "total_eval": 469_000,
+                "stocks": [{"ticker": "128940", "qty": 1, "avg_price": 453_500.0, "eval_price": 469_000.0}],
+            },
+        ):
+            summary = bot._refresh_position_prices_from_broker("KR", [pos], reason="test")
+
+        self.assertEqual(summary["updated"], ["128940"])
+        self.assertAlmostEqual(pos["current_price"], 469_000.0)
+        self.assertAlmostEqual(pos["display_current_price"], 469_000.0)
+        self.assertAlmostEqual(bot.price_cache["128940"], 469_000.0)
+        bot.risk.update_prices.assert_called_once()
 
 
 if __name__ == "__main__":

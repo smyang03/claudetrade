@@ -60,6 +60,52 @@ class ScreenerQualityTests(unittest.TestCase):
             self.assertIn("flow_missing", by_ticker["001510"]["quality_data_gaps"])
             self.assertEqual(by_ticker["001510"]["flow_window_5d_count"], 3)
 
+    def test_write_candidate_quality_log_uses_final_prompt_pool_for_actual_visibility(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "quality.jsonl"
+            write_candidate_quality_log(
+                market="US",
+                phase="session_open",
+                raw_candidates=[
+                    {"ticker": "AAPL", "price": 100, "change_rate": 2.0, "volume": 1000, "raw_rank": 1},
+                    {"ticker": "MSFT", "price": 200, "change_rate": 3.0, "volume": 1000, "raw_rank": 2},
+                ],
+                prompt_candidates=[
+                    {"ticker": "AAPL"},
+                    {"ticker": "MSFT"},
+                ],
+                selected=["AAPL"],
+                selection_meta={
+                    "selection_trace_id": "US:trace:test",
+                    "visibility_contract_version": "actual_prompt_v1",
+                    "_final_prompt_pool": [
+                        {"ticker": "AAPL", "prompt_rank_after_trim": 1, "trainer_score_rank": 1},
+                    ],
+                    "_excluded_from_prompt": [
+                        {
+                            "candidate": {"ticker": "MSFT", "trainer_score_rank": 36},
+                            "prompt_excluded_reason": "hard_cap_cutoff",
+                        }
+                    ],
+                },
+                now=datetime(2026, 5, 27, 9, 35, 0),
+                path=path,
+                bucket_state_path=Path(tmp) / "bucket_state.json",
+            )
+
+            rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+            by_ticker = {row["ticker"]: row for row in rows}
+
+            self.assertTrue(by_ticker["AAPL"]["reported_input_to_claude"])
+            self.assertTrue(by_ticker["AAPL"]["actual_prompt_included"])
+            self.assertEqual(by_ticker["AAPL"]["actual_prompt_rank"], 1)
+            self.assertEqual(by_ticker["AAPL"]["selection_trace_id"], "US:trace:test")
+            self.assertTrue(by_ticker["MSFT"]["reported_input_to_claude"])
+            self.assertFalse(by_ticker["MSFT"]["actual_prompt_included"])
+            self.assertIsNone(by_ticker["MSFT"]["actual_prompt_rank"])
+            self.assertEqual(by_ticker["MSFT"]["prompt_excluded_reason"], "hard_cap_cutoff")
+            self.assertEqual(by_ticker["MSFT"]["excluded_reason"], "hard_cap_cutoff")
+
     def test_opening_fresh_quality_metrics_triggers_when_top_gainers_missing(self) -> None:
         metrics = opening_fresh_quality_metrics(
             market="KR",

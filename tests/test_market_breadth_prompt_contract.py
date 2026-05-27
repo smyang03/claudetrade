@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from phase1_trainer.digest_builder import build_breadth_summary, digest_to_prompt
 from minority_report import analysts, tuner
+from runtime.tuning_bounds import RUNTIME_ADJUSTMENT_BOUNDS
 
 
 class DigestBreadthContractTests(unittest.TestCase):
@@ -258,8 +259,7 @@ class TunePromptContractTests(unittest.TestCase):
         self.assertIn("breadth 변화", captured["prompt"])
         self.assertIn("연속 MAINTAIN 횟수: 3", captured["prompt"])
         self.assertIn("advance_ratio -30%p", captured["prompt"])
-        self.assertIn("momentum_wait_adjust_min: -10 ~ 10", captured["prompt"])
-        self.assertIn("entry_priority_cutoff_adjust: -0.05 ~ 0.05", captured["prompt"])
+        self.assertIn(tuner._runtime_adjustment_bounds_text(), captured["prompt"])
 
     def test_tune_bounds_match_policy(self) -> None:
         result = tuner._coerce_runtime_adjustments(
@@ -271,10 +271,10 @@ class TunePromptContractTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(result["momentum_wait_adjust_min"], 10)
-        self.assertEqual(result["entry_priority_cutoff_adjust"], 0.05)
-        self.assertEqual(result["kr_momentum_atr_cap_adjust"], 0.02)
-        self.assertEqual(result["kr_momentum_atr_cap_high_adjust"], -0.01)
+        self.assertEqual(result["momentum_wait_adjust_min"], int(RUNTIME_ADJUSTMENT_BOUNDS["momentum_wait_adjust_min"][1]))
+        self.assertEqual(result["entry_priority_cutoff_adjust"], RUNTIME_ADJUSTMENT_BOUNDS["entry_priority_cutoff_adjust"][1])
+        self.assertEqual(result["kr_momentum_atr_cap_adjust"], RUNTIME_ADJUSTMENT_BOUNDS["kr_momentum_atr_cap_adjust"][1])
+        self.assertEqual(result["kr_momentum_atr_cap_high_adjust"], RUNTIME_ADJUSTMENT_BOUNDS["kr_momentum_atr_cap_high_adjust"][0])
 
 
 if __name__ == "__main__":

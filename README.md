@@ -23,7 +23,7 @@ Claude 기반 KR/US 자동매매 봇입니다.
 
 ## 주요 문서
 
-- [docs/trading_process.md](/E:/code/claudetrade/docs/trading_process.md)
+- [docs/important/core/trading_process.md](/E:/code/claudetrade/docs/important/core/trading_process.md)
   - 실제 세션 시작, 장중, 청산 흐름
 - [DATA.md](/E:/code/claudetrade/DATA.md)
   - 상태/로그/DB 파일 설명
@@ -71,5 +71,5 @@ python -m phase1_trainer.sim_runner --market ALL --engine both --start 2022-01-0
 ## 문서 정리 원칙
 
 - 루트에는 사용자/운영 기준 문서만 둠
-- 상세 로그성 문서는 `docs/reports/` 또는 Git history에 보존
-- active plan은 `docs/TODO_ROADMAP.md` 하나로 통합
+- 상세 로그성 문서는 요약 후 `docs/important/`에 반영하고 원본은 Git history에 보존
+- active plan은 `docs/important/ACTIVE_WORK.md`와 `docs/important/core/TODO_ROADMAP.md`로 통합

@@ -77,6 +77,9 @@ def calculate_order_quantity(
     min_qty = int(math.ceil(float(min_order or 0.0) / px)) if min_order and min_order > 0 else 0
     candidate_qty = max(qty_by_budget, min_qty)
     notional = candidate_qty * px
+    if candidate_qty <= 0 and hard_cap > 0 and px > hard_cap and allow_one_share_over_budget:
+        candidate_qty = 1
+        notional = px
     if candidate_qty <= 0:
         if hard_cap > 0 and px > hard_cap:
             return SizingDecision(

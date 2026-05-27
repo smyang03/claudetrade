@@ -18,6 +18,8 @@ This file is the shared operating guide for agentic coding tools working in this
 
 ## Trading Safety & Runtime Rules
 
+- PathB `AUTO_SELL_REVIEW` HOLD cooldown guard는 Claude 사용량 폭증 방지용 안전장치입니다. `runtime/pathb_runtime.py`의 `_pathb_auto_sell_review_cooldown_payload()` / `_run_pathb_sell_review_gate()` 흐름과 `tests/test_auto_sell_claude_gate.py::test_pathb_loss_cap_hold_respects_reask_cooldown`을 삭제하거나 완화하지 마세요. 변경이 필요하면 작업 설명, 커밋 메시지, PR 본문 중 하나에 반드시 이유, 예상 Claude 호출/토큰 영향, 대체 반복호출 방지책, 실행한 테스트를 명시하세요.
+- `CLAUDE_REVIEW_ALL_AUTOMATED_SELLS=true` 상태에서는 PathB `loss_cap`/`hard_stop`/`profit_ladder` review가 다시 열릴 수 있으므로 위 cooldown guard가 필수입니다. 이 플래그 또는 `AUTO_SELL_REVIEW_HOLD_COOLDOWN_MINUTES`, `PATHB_AUTO_SELL_REVIEW_HOLD_REASK_DROP_PCT`를 건드릴 때도 동일하게 사유와 검증 계획을 남기세요.
 - Path A는 `trading_bot.py`의 `TradingBot` 흐름이며 Claude selection, 전략 신호, 주문으로 이어집니다.
 - Path B는 `runtime/pathb_runtime.py`의 `PathBRuntime` 흐름이며 Claude 가격 플랜 기반 진입/청산을 담당합니다. 현재 KR/US 모두 live 활성 상태입니다 (`PATHB_KR_LIVE_ENABLED=true`, `PATHB_US_LIVE_ENABLED=true`).
 - 두 경로는 `runtime/action_routing.py`의 `RouteDecision`으로 합류합니다.

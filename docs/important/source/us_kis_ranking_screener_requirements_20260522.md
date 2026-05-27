@@ -2,6 +2,8 @@
 
 작성일: 2026-05-22
 
+상태 업데이트: 2026-05-25 - KIS ranking은 shadow 수집/overlap 로그까지 구현되었고 primary/live 전환은 `ACTIVE_WORK.md`의 shadow outcome gate 통과 전까지 보류한다.
+
 대상 범위:
 
 - `kis_api.py`

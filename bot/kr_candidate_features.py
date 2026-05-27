@@ -27,6 +27,9 @@ QUALITY_FEATURE_KEYS: tuple[str, ...] = (
     "foreign_net_qty_5d",
     "institution_net_qty_5d",
     "flow_window_5d_count",
+    "flow_data_quality",
+    "investor_flow_quality",
+    "flow_quality_flags",
     "candidate_quality_score",
     "candidate_quality_grade",
     "candidate_quality_components",
@@ -372,6 +375,15 @@ def _apply_flow(features: dict[str, Any], flow: dict[str, Any]) -> None:
         value = _optional_float(flow.get(raw_key))
         if value is not None:
             features[out_key] = value
+    quality = str(flow.get("flow_data_quality") or flow.get("investor_flow_quality") or "").strip()
+    if quality:
+        features["flow_data_quality"] = quality
+        features["investor_flow_quality"] = quality
+    flags = flow.get("flow_quality_flags")
+    if isinstance(flags, (list, tuple, set)):
+        clean_flags = [str(flag).strip() for flag in flags if str(flag).strip()]
+        if clean_flags:
+            features["flow_quality_flags"] = clean_flags
 
 
 def _score_log_scale(value: float, *, low: float, high: float) -> float:

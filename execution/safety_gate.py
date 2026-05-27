@@ -41,6 +41,14 @@ class SafetyContext:
     now: datetime | None = None
     stopped_tickers: set[str] = field(default_factory=set)
     order_unknown_blocked: bool = False
+    original_budget_krw: float | None = None
+    effective_budget_krw: float | None = None
+    early_gate_applied: bool = False
+    early_gate_size_mult: float | None = None
+    can_buy_1_share: bool | None = None
+    fixed_sizing: bool = False
+    sizing_reason: str = ""
+    sizing_details: dict[str, Any] = field(default_factory=dict)
 
 
 class SafetyGate:
@@ -50,17 +58,40 @@ class SafetyGate:
     def evaluate(self, ctx: SafetyContext) -> SafetyDecision:
         market = str(ctx.market or "").upper()
         ticker = _normalize_ticker(market, ctx.ticker)
+        price_krw = float(ctx.price_krw or 0.0)
+        qty = int(ctx.qty or 0)
+        order_cost_krw = float(ctx.order_cost_krw or 0.0)
+        cash_krw = float(ctx.cash_krw or 0.0)
+        original_budget_krw = float(ctx.original_budget_krw or 0.0)
+        effective_budget_krw = float(ctx.effective_budget_krw or 0.0)
+        can_buy_1_share = ctx.can_buy_1_share
+        if can_buy_1_share is None:
+            can_buy_1_share = bool(price_krw > 0 and cash_krw >= price_krw)
+            if original_budget_krw > 0:
+                can_buy_1_share = bool(can_buy_1_share and price_krw <= original_budget_krw)
         details = {
             "market": market,
             "ticker": ticker,
-            "qty": int(ctx.qty or 0),
-            "order_cost_krw": float(ctx.order_cost_krw or 0.0),
-            "cash_krw": float(ctx.cash_krw or 0.0),
+            "price_krw": price_krw,
+            "qty": qty,
+            "order_cost_krw": order_cost_krw,
+            "cash_krw": cash_krw,
             "daily_entry_count": int(ctx.daily_entry_count or 0),
             "max_daily_entries": int(ctx.max_daily_entries) if ctx.max_daily_entries is not None else None,
             "daily_pnl_pct": float(ctx.daily_pnl_pct or 0.0),
             "daily_pnl_basis": str(ctx.daily_pnl_basis or "realized"),
+            "original_budget_krw": original_budget_krw,
+            "effective_budget_krw": effective_budget_krw,
+            "early_gate_applied": bool(ctx.early_gate_applied),
+            "can_buy_1_share": bool(can_buy_1_share),
+            "fixed_sizing": bool(ctx.fixed_sizing),
         }
+        if ctx.early_gate_size_mult is not None:
+            details["early_gate_size_mult"] = float(ctx.early_gate_size_mult)
+        if str(ctx.sizing_reason or "").strip():
+            details["sizing_reason"] = str(ctx.sizing_reason or "").strip()
+        if isinstance(ctx.sizing_details, dict) and ctx.sizing_details:
+            details.update(dict(ctx.sizing_details))
         if ctx.realized_daily_pnl_pct is not None:
             details["realized_daily_pnl_pct"] = float(ctx.realized_daily_pnl_pct)
         if ctx.equity_daily_pnl_pct is not None:
@@ -87,8 +118,14 @@ class SafetyGate:
             )
         if broker_trust == "untrusted":
             return _blocked("BROKER_UNTRUSTED", "broker state is untrusted", details)
-        if float(ctx.price_krw or 0.0) <= 0 or int(ctx.qty or 0) <= 0:
-            return _blocked("INVALID_PRICE", "invalid price or quantity", details)
+        if price_krw <= 0:
+            return _blocked("INVALID_PRICE", "invalid price", details)
+        if qty <= 0:
+            if original_budget_krw > 0 and price_krw > original_budget_krw:
+                return _blocked("HIGH_PRICE_BUDGET_BLOCK", "one-share price exceeds pre-gate budget", details)
+            if bool(ctx.early_gate_applied):
+                return _blocked("ORDER_SIZE_TOO_SMALL_GATE", "early soft gate reduced order below one share", details)
+            return _blocked("INVALID_QTY", "invalid order quantity", details)
         if _is_stale(ctx.last_market_data_at, ctx.now, self.config.stale_market_data_minutes):
             return _blocked("STALE_MARKET_DATA", "market data is stale", details)
         if ticker in {_normalize_ticker(market, t) for t in ctx.stopped_tickers}:

@@ -2423,6 +2423,8 @@ Rules:
             "prompt_exec_missing_pct",
             "prompt_exec_formed_count",
             "prompt_exec_forming_count",
+            "selection_trace_id",
+            "visibility_contract_version",
         ):
             if key in prompt_pool_meta:
                 enriched[key] = prompt_pool_meta.get(key)

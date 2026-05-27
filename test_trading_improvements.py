@@ -20,6 +20,7 @@ from bot.log_sanitizer import mask_secrets
 from dashboard import dashboard_server as dashboard_server_module
 from minority_report import consensus as consensus_module
 from minority_report import tuner as tuner_module
+from runtime.tuning_bounds import RUNTIME_ADJUSTMENT_BOUNDS
 import risk_manager
 import trading_bot as trading_bot_module
 import universe_manager as universe_manager_module
@@ -803,9 +804,10 @@ class TradingBotGateTests(unittest.TestCase):
     def test_effective_momentum_wait_window_clamps_runtime_adjustment(self):
         bot = self._make_bot()
         bot._claude_runtime_overrides["US"] = {"momentum_wait_adjust_min": -20}
+        wait_low = RUNTIME_ADJUSTMENT_BOUNDS["momentum_wait_adjust_min"][0]
 
-        self.assertEqual(bot._effective_momentum_wait_window("US", 15), 5.0)
-        self.assertEqual(bot._effective_momentum_wait_window("US", 45), 30.0)
+        self.assertEqual(bot._effective_momentum_wait_window("US", 15), max(5.0, 15 + wait_low))
+        self.assertEqual(bot._effective_momentum_wait_window("US", 45), 45 + wait_low)
 
     def test_effective_kr_momentum_atr_caps_use_runtime_override(self):
         bot = self._make_bot()
@@ -1151,16 +1153,20 @@ class TradingBotGateTests(unittest.TestCase):
                 "entry_priority_cutoff_adjust": -0.03,
                 "kr_momentum_atr_cap_adjust": 0.01,
                 "kr_momentum_atr_cap_high_adjust": 0.02,
+                "action": "TIGHTEN",
+                "reason": "non-runtime field must not persist in overrides",
             },
         )
 
-        self.assertEqual(changed["momentum_wait_adjust_min"], -12)
+        wait_low = int(RUNTIME_ADJUSTMENT_BOUNDS["momentum_wait_adjust_min"][0])
+        self.assertEqual(changed["momentum_wait_adjust_min"], wait_low)
         self.assertAlmostEqual(changed["entry_priority_cutoff_adjust"], -0.03)
-        self.assertEqual(bot._claude_runtime_overrides["KR"]["momentum_wait_adjust_min"], -12)
+        self.assertEqual(bot._claude_runtime_overrides["KR"]["momentum_wait_adjust_min"], wait_low)
         self.assertEqual(
             bot.today_judgment["claude_runtime_overrides"]["KR"]["kr_momentum_atr_cap_high_adjust"],
             0.02,
         )
+        self.assertEqual(set(bot._claude_runtime_overrides["KR"]), set(RUNTIME_ADJUSTMENT_BOUNDS))
 
     def test_restore_runtime_overrides_from_payload_restores_saved_market_values(self):
         bot = self._make_bot()
@@ -2102,6 +2108,7 @@ class TunerRuntimeAdjustmentTests(unittest.TestCase):
     def test_coerce_runtime_adjustments_clamps_values(self):
         result = tuner_module._coerce_runtime_adjustments(
             {
+                "action": "TIGHTEN",
                 "momentum_wait_adjust_min": -30,
                 "entry_priority_cutoff_adjust": "0.20",
                 "kr_momentum_atr_cap_adjust": -0.05,
@@ -2109,10 +2116,11 @@ class TunerRuntimeAdjustmentTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(result["momentum_wait_adjust_min"], -10)
-        self.assertEqual(result["entry_priority_cutoff_adjust"], 0.05)
-        self.assertEqual(result["kr_momentum_atr_cap_adjust"], -0.01)
-        self.assertEqual(result["kr_momentum_atr_cap_high_adjust"], 0.02)
+        self.assertEqual(result["action"], "TIGHTEN")
+        self.assertEqual(result["momentum_wait_adjust_min"], int(RUNTIME_ADJUSTMENT_BOUNDS["momentum_wait_adjust_min"][0]))
+        self.assertEqual(result["entry_priority_cutoff_adjust"], RUNTIME_ADJUSTMENT_BOUNDS["entry_priority_cutoff_adjust"][1])
+        self.assertEqual(result["kr_momentum_atr_cap_adjust"], RUNTIME_ADJUSTMENT_BOUNDS["kr_momentum_atr_cap_adjust"][0])
+        self.assertEqual(result["kr_momentum_atr_cap_high_adjust"], RUNTIME_ADJUSTMENT_BOUNDS["kr_momentum_atr_cap_high_adjust"][1])
 
     def test_runtime_adjustment_summary_formats_all_override_fields(self):
         summary = tuner_module._runtime_adjustment_summary(

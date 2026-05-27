@@ -66,6 +66,173 @@ class BrokerTruthSnapshotTests(unittest.TestCase):
             self.assertEqual(summary["total_eval_krw"], 2_239_550)
             self.assertEqual(summary["kis_exchange_rate"], 1503.5)
 
+    def test_open_order_preserves_order_price_for_reservation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            snapshot = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=path,
+                balance_provider=lambda market, force: {"cash": 500_000, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "069540",
+                        "side": "buy",
+                        "order_no": "0012214400",
+                        "order_qty": 33,
+                        "filled_qty": 0,
+                        "remaining_qty": 33,
+                        "fill_price": 0,
+                        "order_price": 6_780,
+                    }
+                ],
+            )
+
+            data = snapshot.refresh_market("KR", force=True, ttl_sec=30)
+
+            order = data["markets"]["KR"]["open_orders"][0]
+            self.assertEqual(order["order_price"], 6_780)
+            self.assertEqual(order["avg_price"], 6_780)
+
+    def test_us_open_order_live_fields_preserve_identity_in_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            snapshot = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=path,
+                balance_provider=lambda market, force: {"cash": 500_000, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "odno": "0030262408",
+                        "pdno": "IBM",
+                        "sll_buy_dvsn": "01",
+                        "ft_ord_qty": "3",
+                        "ft_ccld_qty": "0",
+                        "nccs_qty": "3",
+                        "ft_ord_unpr3": "254.247",
+                    }
+                ],
+            )
+
+            data = snapshot.refresh_market("US", force=True, ttl_sec=30)
+
+            market_data = data["markets"]["US"]
+            order = market_data["open_orders"][0]
+            self.assertEqual(order["ticker"], "IBM")
+            self.assertEqual(order["side"], "sell")
+            self.assertEqual(order["order_no"], "0030262408")
+            self.assertEqual(order["remaining_qty"], 3)
+            self.assertEqual(order["order_qty"], 3)
+            self.assertEqual(order["order_price"], 254.247)
+            self.assertEqual(order["avg_price"], 254.247)
+            self.assertEqual(market_data["open_order_integrity_issues"], [])
+
+    def test_open_order_integrity_issues_flag_zero_qty_or_price(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            snapshot = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=path,
+                balance_provider=lambda market, force: {"cash": 500_000, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "AAPL",
+                        "side": "buy",
+                        "order_no": "bad-us-open",
+                        "order_qty": 0,
+                        "filled_qty": 0,
+                        "remaining_qty": 2,
+                        "order_price": 0,
+                    }
+                ],
+            )
+
+            data = snapshot.refresh_market("US", force=True, ttl_sec=30)
+
+            market_data = data["markets"]["US"]
+            order = market_data["open_orders"][0]
+            self.assertEqual(order["integrity_flags"], ["order_qty_zero", "order_price_zero"])
+            self.assertEqual(len(market_data["open_order_integrity_issues"]), 1)
+            issue = market_data["open_order_integrity_issues"][0]
+            self.assertEqual(issue["ticker"], "AAPL")
+            self.assertEqual(issue["order_no"], "bad-us-open")
+            self.assertEqual(issue["remaining_qty"], 2)
+            self.assertEqual(issue["flags"], ["order_qty_zero", "order_price_zero"])
+
+    def test_rejected_order_is_not_open_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            snapshot = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=path,
+                balance_provider=lambda market, force: {"cash": 500_000, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "069540",
+                        "side": "buy",
+                        "order_no": "0012214400",
+                        "order_qty": 33,
+                        "filled_qty": 0,
+                        "remaining_qty": 0,
+                        "rejected_qty": 33,
+                        "fill_price": 0,
+                        "order_price": 6_780,
+                        "order_status": "rejected",
+                    }
+                ],
+            )
+
+            data = snapshot.refresh_market("KR", force=True, ttl_sec=30)
+
+            self.assertEqual(data["markets"]["KR"]["open_orders"], [])
+
+    def test_write_snapshot_preserves_newer_other_market_on_parallel_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            snapshot = BrokerTruthSnapshot(runtime_mode="live", path=path)
+            snapshot.write_snapshot(
+                {
+                    "generated_at": "2026-05-26T12:46:33+00:00",
+                    "runtime_mode": "live",
+                    "schema_version": 1,
+                    "markets": {
+                        "KR": {
+                            "missing": False,
+                            "stale": False,
+                            "last_success_at": "2026-05-26T12:46:33+00:00",
+                            "open_orders": [{"ticker": "069540", "order_price": 6780.0}],
+                        },
+                        "US": {"missing": True, "stale": True, "last_success_at": ""},
+                    },
+                }
+            )
+
+            snapshot.write_snapshot(
+                {
+                    "generated_at": "2026-05-26T12:46:44+00:00",
+                    "runtime_mode": "live",
+                    "schema_version": 1,
+                    "markets": {
+                        "KR": {
+                            "missing": False,
+                            "stale": True,
+                            "last_success_at": "2026-05-26T12:23:39+00:00",
+                            "open_orders": [],
+                        },
+                        "US": {
+                            "missing": False,
+                            "stale": False,
+                            "last_success_at": "2026-05-26T12:46:44+00:00",
+                        },
+                    },
+                }
+            )
+
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(data["markets"]["KR"]["last_success_at"], "2026-05-26T12:46:33+00:00")
+            self.assertFalse(data["markets"]["KR"]["stale"])
+            self.assertEqual(data["markets"]["KR"]["open_orders"][0]["order_price"], 6780.0)
+            self.assertEqual(data["markets"]["US"]["last_success_at"], "2026-05-26T12:46:44+00:00")
+
     def test_missing_and_broken_snapshot_handling(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             missing = BrokerTruthSnapshot(runtime_mode="live", path=Path(tmp) / "missing.json").load_snapshot()

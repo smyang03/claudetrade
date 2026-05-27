@@ -216,10 +216,16 @@ class ClaudePriceAdapter:
         runtime_mode: str,
         brain_snapshot_id: str,
     ) -> None:
+        sent_at = utc_now_iso()
         self.store.update_path_run(
             path_run_id,
             status="ORDER_SENT",
-            plan={"entry_execution_id": execution_id, "entry_order_price": float(price or 0), "entry_qty": int(qty or 0)},
+            plan={
+                "entry_execution_id": execution_id,
+                "entry_order_price": float(price or 0),
+                "entry_qty": int(qty or 0),
+                "entry_order_sent_at": sent_at,
+            },
             merge_plan=True,
         )
         self._append_event(
@@ -229,11 +235,17 @@ class ClaudePriceAdapter:
             brain_snapshot_id=brain_snapshot_id,
             execution_id=execution_id,
             path_status="ORDER_SENT",
-            extra={"price": float(price or 0), "qty": int(qty or 0), "side": "buy"},
+            extra={"price": float(price or 0), "qty": int(qty or 0), "side": "buy", "entry_order_sent_at": sent_at},
         )
 
     def mark_order_acked(self, path_run_id: str, *, execution_id: str, runtime_mode: str, brain_snapshot_id: str) -> None:
-        self.store.update_path_run(path_run_id, status="ORDER_ACKED")
+        acked_at = utc_now_iso()
+        self.store.update_path_run(
+            path_run_id,
+            status="ORDER_ACKED",
+            plan={"entry_execution_id": execution_id, "entry_order_acked_at": acked_at},
+            merge_plan=True,
+        )
         self._append_event(
             LifecycleEventType.ORDER_ACKED,
             path_run_id,
@@ -241,6 +253,7 @@ class ClaudePriceAdapter:
             brain_snapshot_id=brain_snapshot_id,
             execution_id=execution_id,
             path_status="ORDER_ACKED",
+            extra={"entry_order_acked_at": acked_at},
         )
 
     def mark_partial_filled(

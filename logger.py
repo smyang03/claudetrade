@@ -130,6 +130,32 @@ class JsonFormatter(logging.Formatter):
 
 _loggers: dict[str, logging.Logger] = {}
 
+class DatePathRotatingFileHandler(RotatingFileHandler):
+    """Rotating handler that moves to today's dated filename on each emit."""
+
+    def __init__(self, path_factory, *args, **kwargs):
+        self._path_factory = path_factory
+        super().__init__(self._current_path(), *args, **kwargs)
+
+    def _current_path(self) -> str:
+        path = Path(self._path_factory())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return str(path)
+
+    def emit(self, record):
+        current_path = os.path.abspath(self._current_path())
+        if self.baseFilename != current_path:
+            self.acquire()
+            try:
+                if self.stream:
+                    self.stream.flush()
+                    self.stream.close()
+                    self.stream = None
+                self.baseFilename = current_path
+            finally:
+                self.release()
+        super().emit(record)
+
 def reset_logger_runtime_dir_for_tests(path: str | Path | None = None, *, bot_mode: str = "test") -> None:
     """Reset logger cache so tests can isolate log files from live/paper logs."""
     global LOG_DIR, _BOT_MODE
@@ -186,9 +212,11 @@ def get_logger(
 
     # 텍스트 로그 파일 (읽기 쉬운 형식)
     if to_file:
-        log_path = LOG_DIR / log_type / f"{mode_prefix}{name}_{today}.log"
-        fh = RotatingFileHandler(
-            log_path, maxBytes=10*1024*1024,  # 10MB
+        fh = DatePathRotatingFileHandler(
+            lambda log_type=log_type, mode_prefix=mode_prefix, name=name: (
+                LOG_DIR / log_type / f"{mode_prefix}{name}_{date.today().strftime('%Y%m%d')}.log"
+            ),
+            maxBytes=10*1024*1024,  # 10MB
             backupCount=30, encoding="utf-8"
         )
         fh.setLevel(logging.DEBUG)
@@ -200,9 +228,11 @@ def get_logger(
 
     # JSON 로그 파일 (프로그램 파싱용)
     if json_file:
-        json_path = LOG_DIR / log_type / f"{mode_prefix}{name}_{today}.jsonl"
-        jh = RotatingFileHandler(
-            json_path, maxBytes=10*1024*1024,
+        jh = DatePathRotatingFileHandler(
+            lambda log_type=log_type, mode_prefix=mode_prefix, name=name: (
+                LOG_DIR / log_type / f"{mode_prefix}{name}_{date.today().strftime('%Y%m%d')}.jsonl"
+            ),
+            maxBytes=10*1024*1024,
             backupCount=30, encoding="utf-8"
         )
         jh.setLevel(logging.DEBUG)
@@ -210,9 +240,9 @@ def get_logger(
         logger.addHandler(jh)
 
     # 에러 전용 파일
-    err_path = LOG_DIR / "system" / f"{mode_prefix}error_{today}.log"
-    eh = RotatingFileHandler(
-        err_path, maxBytes=5*1024*1024,
+    eh = DatePathRotatingFileHandler(
+        lambda mode_prefix=mode_prefix: LOG_DIR / "system" / f"{mode_prefix}error_{date.today().strftime('%Y%m%d')}.log",
+        maxBytes=5*1024*1024,
         backupCount=30, encoding="utf-8"
     )
     eh.setLevel(logging.ERROR)
@@ -223,9 +253,9 @@ def get_logger(
     ))
     logger.addHandler(eh)
 
-    err_json_path = LOG_DIR / "system" / f"{mode_prefix}error_{today}.jsonl"
-    ejh = RotatingFileHandler(
-        err_json_path, maxBytes=5*1024*1024,
+    ejh = DatePathRotatingFileHandler(
+        lambda mode_prefix=mode_prefix: LOG_DIR / "system" / f"{mode_prefix}error_{date.today().strftime('%Y%m%d')}.jsonl",
+        maxBytes=5*1024*1024,
         backupCount=30, encoding="utf-8"
     )
     ejh.setLevel(logging.ERROR)

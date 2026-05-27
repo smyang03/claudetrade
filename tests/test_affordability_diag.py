@@ -70,6 +70,51 @@ class AffordabilityDiagTests(unittest.TestCase):
         self.assertIn("budget_krw=110,000", detail)
         self.assertIn("shortfall_krw=177,000", detail)
 
+    def test_market_budget_available_subtracts_pending_buy_orders(self) -> None:
+        self.bot.risk = type("Risk", (), {"cash": 500_000.0})()
+        self.bot.pending_orders = [
+            {"market": "KR", "ticker": "069540", "qty": 33, "risk_price_krw": 6_780.0},
+            {"market": "KR", "ticker": "006400", "qty": 1, "risk_price_krw": 642_000.0, "side": "sell"},
+            {"market": "US", "ticker": "IBM", "qty": 1, "risk_price_krw": 380_000.0},
+        ]
+
+        self.assertEqual(self.bot._pending_order_reserved_cost_krw("KR"), 223_740.0)
+        self.assertEqual(self.bot._market_budget_available("KR"), 276_260.0)
+
+    def test_market_budget_available_uses_broker_orderable_cash(self) -> None:
+        self.bot.risk = type("Risk", (), {"cash": 3_365_827.0})()
+        self.bot.pending_orders = []
+        self.bot._broker_state = {}
+        self.bot._broker_truth_market_snapshot = lambda market, force=False, ttl_sec=None: {
+            "missing": False,
+            "stale": False,
+            "error": "",
+            "account_summary": {"orderable_cash": 1_941_524.0},
+            "open_orders": [],
+        }
+
+        self.assertEqual(self.bot._market_budget_available("KR"), 1_941_524.0)
+
+    def test_market_budget_available_subtracts_broker_truth_open_buy_orders(self) -> None:
+        self.bot.risk = type("Risk", (), {"cash": 500_000.0})()
+        self.bot.pending_orders = []
+        self.bot.price_cache = {"069540": 6_780.0}
+        self.bot.price_cache_raw = {}
+        self.bot._broker_state = {}
+        self.bot._broker_truth_market_snapshot = lambda market, force=False, ttl_sec=None: {
+            "missing": False,
+            "stale": False,
+            "error": "",
+            "account_summary": {"orderable_cash": 500_000.0},
+            "open_orders": [
+                {"market": "KR", "ticker": "069540", "side": "buy", "order_no": "0012214400", "remaining_qty": 33},
+                {"market": "KR", "ticker": "006400", "side": "sell", "order_no": "sell1", "remaining_qty": 1},
+            ],
+        }
+
+        self.assertEqual(self.bot._pending_order_reserved_cost_krw("KR"), 223_740.0)
+        self.assertEqual(self.bot._market_budget_available("KR"), 276_260.0)
+
 
 if __name__ == "__main__":
     unittest.main()

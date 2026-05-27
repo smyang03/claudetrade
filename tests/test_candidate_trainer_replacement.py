@@ -275,6 +275,30 @@ class CandidateTrainerReplacementTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertLess(gate["incoming_score"], gate["outgoing_score"] + gate["delta"])
 
+    def test_replacement_gate_softens_min_score_for_execution_blocked_outgoing(self) -> None:
+        bot = _bot_with_health(
+            {
+                "OUT": {"health_state": "OBSERVE"},
+                "IN": {"health_state": "OBSERVE"},
+            }
+        )
+        bot.runtime_config = _RuntimeConfig({"US_TRAINER_REPLACEMENT_MIN_IN_SCORE": 4.0, "US_TRAINER_REPLACEMENT_DELTA": 0.75})
+        bot._ticker_runtime_blocked_reasons["US"]["OUT"] = {"INVALID_QTY": 2}
+
+        ok, gate = TradingBot._candidate_replacement_delta_ok(
+            bot,
+            "US",
+            "OUT",
+            "IN",
+            {"IN": {"ticker": "IN", "entry_priority_score": 0.851}},
+        )
+
+        self.assertTrue(ok)
+        self.assertTrue(gate["execution_blocked_exception"])
+        self.assertEqual(gate["effective_min_score"], 3.75)
+        self.assertEqual(gate["effective_delta"], 0.375)
+        self.assertGreaterEqual(gate["incoming_score"], gate["effective_min_score"])
+
     def test_kr_replacement_delta_gate_is_enabled_with_stricter_defaults(self) -> None:
         bot = _bot_with_health(
             {

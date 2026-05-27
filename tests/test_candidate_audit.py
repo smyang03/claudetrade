@@ -64,8 +64,110 @@ class CandidateAuditBackfillTests(unittest.TestCase):
         self.assertEqual(result["row_uniqueness"]["call_level_rows"], 2)
         self.assertEqual(result["row_uniqueness"]["latest_session_ticker_rows"], 1)
         self.assertEqual(result["consistency"]["input_reported_not_in_prompt_count"], 1)
+        self.assertEqual(result["consistency"]["legacy_input_reported_mismatch_count"], 1)
+        self.assertEqual(result["consistency"]["actual_prompt_mismatch_count"], 0)
         self.assertEqual(result["consistency"]["trade_ready_family_mismatch_count"], 1)
         self.assertEqual(result["consistency"]["invalid_price_count"], 1)
+        self.assertEqual(result["consistency"]["invalid_price_reason_counts"]["non_positive_price"], 1)
+
+    def test_analyze_candidate_audit_splits_invalid_price_reasons(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            base = {
+                "runtime_mode": "live",
+                "market": "US",
+                "session_date": "2026-05-15",
+                "known_at": "2026-05-15T09:05:00+09:00",
+                "claude_action": "WATCH",
+            }
+            store.upsert_candidate(
+                {
+                    **base,
+                    "call_id": "stale",
+                    "ticker": "STALE",
+                    "price": 0,
+                    "payload": {"quote_invalid_reason": "stale_quote"},
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "call_id": "provider",
+                    "ticker": "PROV",
+                    "price": 0,
+                    "payload": {"price_invalid_reason": "provider_timeout"},
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "call_id": "unit",
+                    "ticker": "UNIT",
+                    "price": 0,
+                    "quality_data_gaps_json": ["price_unit_normalization_failed"],
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "call_id": "broad",
+                    "ticker": "BROAD",
+                    "price": 12.5,
+                    "route_runtime_gate_reason": "INVALID_PRICE",
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "call_id": "legacy",
+                    "ticker": "LEGACY",
+                    "price": None,
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "call_id": "missing",
+                    "ticker": "MISS",
+                    "price": None,
+                    "payload": {"quote_invalid_reason": "quote_missing"},
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "call_id": "failed_ready",
+                    "ticker": "FAILRDY",
+                    "price": None,
+                    "route_reason": "failed_ready",
+                }
+            )
+
+            result = analyze_candidate_audit(
+                db_path=db_path,
+                session_date="2026-05-15",
+                market="US",
+            )
+
+        self.assertEqual(result["consistency"]["invalid_price_count"], 7)
+        self.assertEqual(result["consistency"]["invalid_price_reason_counts"]["stale_quote"], 1)
+        self.assertEqual(result["consistency"]["invalid_price_reason_counts"]["provider_failure"], 1)
+        self.assertEqual(result["consistency"]["invalid_price_reason_counts"]["unit_normalization_issue"], 1)
+        self.assertEqual(result["consistency"]["invalid_price_reason_counts"]["unknown_price_issue"], 1)
+        self.assertEqual(result["consistency"]["invalid_price_reason_counts"]["legacy_price_unmeasured"], 2)
+        self.assertEqual(result["consistency"]["invalid_price_reason_counts"]["missing_quote"], 1)
+        reasons_by_ticker = {
+            item["ticker"]: item["invalid_price_reason_code"]
+            for item in result["consistency"]["invalid_price"]
+        }
+        self.assertEqual(reasons_by_ticker["STALE"], "stale_quote")
+        self.assertEqual(reasons_by_ticker["PROV"], "provider_failure")
+        self.assertEqual(reasons_by_ticker["UNIT"], "unit_normalization_issue")
+        self.assertEqual(reasons_by_ticker["BROAD"], "unknown_price_issue")
+        self.assertEqual(reasons_by_ticker["LEGACY"], "legacy_price_unmeasured")
+        self.assertEqual(reasons_by_ticker["MISS"], "missing_quote")
+        self.assertEqual(reasons_by_ticker["FAILRDY"], "legacy_price_unmeasured")
 
     def test_candidate_audit_additive_trainer_columns_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -80,8 +182,17 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                     "known_at": "2026-05-12T22:30:00+09:00",
                     "ticker": "NVDA",
                     "in_prompt": True,
+                    "selection_trace_id": "US:trace:test",
+                    "visibility_contract_version": "actual_prompt_v1",
+                    "actual_prompt_call_id": "call_trainer_1",
+                    "actual_prompt_included": True,
+                    "actual_prompt_rank": 1,
+                    "reported_input_to_claude": True,
+                    "prompt_join_delta_sec": 0.25,
                     "final_prompt_included": True,
                     "raw_rank": 7,
+                    "raw_score_current": 91.5,
+                    "raw_score_components_json": {"score_current": 91.5, "score_vol_ratio_capped": 8.0},
                     "trainer_score_rank": 1,
                     "trainer_prompt_score": 86.0,
                     "trainer_plan_a_score": 70.0,
@@ -118,6 +229,11 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                 row = conn.execute(
                     """
                     SELECT final_prompt_included, raw_rank, trainer_score_rank,
+                           selection_trace_id, visibility_contract_version,
+                           actual_prompt_call_id, actual_prompt_included,
+                           actual_prompt_rank, reported_input_to_claude,
+                           prompt_join_delta_sec, raw_score_current,
+                           raw_score_components_json,
                            trainer_prompt_score, trainer_candidate_state,
                            trainer_score_components_json, source_tags_json,
                            candidate_quality_score, quality_data_gaps_json,
@@ -135,6 +251,15 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                 conn.close()
 
             self.assertEqual(row["final_prompt_included"], 1)
+            self.assertEqual(row["selection_trace_id"], "US:trace:test")
+            self.assertEqual(row["visibility_contract_version"], "actual_prompt_v1")
+            self.assertEqual(row["actual_prompt_call_id"], "call_trainer_1")
+            self.assertEqual(row["actual_prompt_included"], 1)
+            self.assertEqual(row["actual_prompt_rank"], 1)
+            self.assertEqual(row["reported_input_to_claude"], 1)
+            self.assertEqual(row["prompt_join_delta_sec"], 0.25)
+            self.assertEqual(row["raw_score_current"], 91.5)
+            self.assertIn("score_vol_ratio_capped", row["raw_score_components_json"])
             self.assertEqual(row["raw_rank"], 7)
             self.assertEqual(row["trainer_score_rank"], 1)
             self.assertEqual(row["trainer_prompt_score"], 86.0)

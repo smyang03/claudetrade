@@ -714,13 +714,29 @@ class PathBRuntime:
         if not str(_bot_token(self.bot, market_key) or "").strip():
             details["broker_truth_refresh_skipped"] = True
             details["broker_truth_skip_reason"] = "token_unavailable"
-            return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": details}
+            details["broker_truth_missing"] = True
+            details["broker_truth_stale"] = True
+            return {
+                "allowed": False,
+                "blocked": True,
+                "reason": "BLOCKED_BROKER_TRUTH",
+                "scope": "market",
+                "details": details,
+            }
         provider = getattr(self.broker_truth, "balance_provider", None)
         own_provider = getattr(provider, "__self__", None) is self and getattr(provider, "__name__", "") == "_balance_for_snapshot"
         if own_provider and not callable(getattr(self.bot, "_get_balance_with_token_refresh", None)):
             details["broker_truth_refresh_skipped"] = True
             details["broker_truth_skip_reason"] = "bot_balance_provider_unavailable"
-            return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": details}
+            details["broker_truth_missing"] = True
+            details["broker_truth_stale"] = True
+            return {
+                "allowed": False,
+                "blocked": True,
+                "reason": "BLOCKED_BROKER_TRUTH",
+                "scope": "market",
+                "details": details,
+            }
 
         ttl = max(5, self._runtime_int("PATHB_ENTRY_SCAN_BROKER_TRUTH_TTL_SEC", 30))
         min_interval = max(0, self._runtime_int("PATHB_ENTRY_SCAN_BROKER_TRUTH_MIN_INTERVAL_SEC", min(30, ttl)))
@@ -843,6 +859,93 @@ class PathBRuntime:
             )
         except Exception:
             return ""
+
+    @staticmethod
+    def _pathb_origin_text(plan: PricePlan) -> str:
+        parts: list[str] = [
+            str(getattr(plan, "origin_reason", "") or ""),
+            str(getattr(plan, "invalid_if", "") or ""),
+            str(getattr(plan, "entry_rationale", "") or ""),
+            str(getattr(plan, "rationale", "") or ""),
+        ]
+        for value in list(getattr(plan, "entry_basis_tags", []) or []):
+            parts.append(str(value or ""))
+        for value in list(getattr(plan, "invalidation_conditions", []) or []):
+            parts.append(str(value or ""))
+        return " ".join(parts).upper().replace("-", "_")
+
+    @staticmethod
+    def _kr_pathb_risky_origin_tokens(plan: PricePlan) -> list[str]:
+        text = PathBRuntime._pathb_origin_text(plan)
+        risky_tokens = (
+            "OR_MISSING",
+            "OPENING_RANGE_MISSING",
+            "ATR_BLOCKED",
+            "RISK_HIGH",
+            "RISK_EXTREME",
+            "PA_LOW",
+            "FADE",
+        )
+        return [token for token in risky_tokens if token in text]
+
+    def _kr_pathb_risky_origin_confirmation_gate(self, plan: PricePlan, signal: EntrySignal) -> dict[str, Any]:
+        if str(getattr(plan, "market", "") or "").upper() != "KR":
+            return {"enabled": False, "allowed": True, "reason": "not_kr"}
+        if not self._runtime_bool("PATHB_KR_RISKY_ORIGIN_CONFIRMATION_ENABLED", True):
+            return {"enabled": False, "allowed": True, "reason": "disabled"}
+        tokens = self._kr_pathb_risky_origin_tokens(plan)
+        if not tokens:
+            return {"enabled": True, "allowed": True, "reason": "origin_not_risky", "risky_tokens": []}
+
+        key = self._ticker_key("KR", plan.ticker)
+        features = {}
+        try:
+            raw = ((getattr(self.bot, "_last_post_open_features_by_ticker", {}) or {}).get("KR") or {}).get(key)
+            if not isinstance(raw, dict):
+                raw = ((getattr(self.bot, "_last_post_open_features_by_ticker", {}) or {}).get("KR") or {}).get(plan.ticker)
+            if isinstance(raw, dict):
+                features = dict(raw)
+        except Exception:
+            features = {}
+
+        def _num(value: Any) -> float | None:
+            try:
+                if value in (None, ""):
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        data_quality = str(features.get("data_quality") or "").strip().lower()
+        current = _num(features.get("current_price")) or _num(getattr(signal, "price", 0.0)) or _num(getattr(signal, "limit_price", 0.0))
+        ret_3m = _num(features.get("ret_3m_pct"))
+        ret_5m = _num(features.get("ret_5m_pct"))
+        vwap = _num(features.get("vwap") or features.get("vwap_proxy"))
+        vwap_distance = _num(features.get("vwap_distance_pct"))
+        opening_break = str(features.get("opening_range_break")).strip().lower() in {"1", "true", "yes", "y", "on"}
+        vwap_reclaim = str(features.get("vwap_reclaim")).strip().lower() in {"1", "true", "yes", "y", "on"}
+        if not vwap_reclaim and current is not None and vwap is not None:
+            vwap_reclaim = current >= vwap
+        if not vwap_reclaim and vwap_distance is not None:
+            vwap_reclaim = vwap_distance >= 0.0
+        momentum_ok = bool((ret_3m is not None and ret_3m > 0.0) or (ret_5m is not None and ret_5m > 0.0))
+        confirmed = bool(data_quality == "minute_complete" and momentum_ok and (opening_break or vwap_reclaim))
+        payload = {
+            "enabled": True,
+            "allowed": confirmed,
+            "reason": "" if confirmed else "KR_PATHB_RISK_ORIGIN_CONFIRMATION_REQUIRED",
+            "stage": "pathb_waiting_scan",
+            "cancel_plan": False,
+            "risky_tokens": tokens,
+            "data_quality": data_quality or "missing",
+            "momentum_ok": momentum_ok,
+            "opening_range_break": opening_break,
+            "vwap_reclaim": vwap_reclaim,
+            "ret_3m_pct": ret_3m,
+            "ret_5m_pct": ret_5m,
+            "path_run_id": plan.path_run_id,
+        }
+        return payload
 
     def _audit_pathb_exit_signal(self, plan: PricePlan, pos: dict[str, Any], signal: ExitSignal) -> str:
         bot = getattr(self, "bot", None)
@@ -1354,6 +1457,25 @@ class PathBRuntime:
                         {"errors": errors, "raw_plan": raw_plan, "shadow_registration": bool(shadow_registration)},
                     )
                     continue
+                registration_gate = self._pathb_registration_price_gate(
+                    plan,
+                    shadow_registration=shadow_registration,
+                )
+                if not bool(registration_gate.get("allowed", True)):
+                    reason = str(registration_gate.get("reason") or "HIGH_PRICE_BUDGET_BLOCK")
+                    self._record_blocked(
+                        market,
+                        key,
+                        decision_id,
+                        reason,
+                        registration_gate,
+                    )
+                    log.info(
+                        f"[PathB plan skipped] {market} {key} {reason} "
+                        f"buy_zone_low_krw={float(registration_gate.get('buy_zone_low_krw') or 0):.0f} "
+                        f"max_entry_krw={float(registration_gate.get('max_entry_krw') or 0):.0f}"
+                    )
+                    continue
                 origin_dict = origin if isinstance(origin, dict) else {}
                 resolved_shadow_reason = shadow_reason
                 if shadow_registration and shadow_reason != "market_live_disabled":
@@ -1569,6 +1691,32 @@ class PathBRuntime:
             # See register_from_selection_meta policy note: a waiting Claude price
             # plan may originate from PULLBACK_WAIT rather than PathA trade_ready.
             self._audit_pathb_zone_hit(plan, signal)
+            confirmation_gate = self._kr_pathb_risky_origin_confirmation_gate(plan, signal)
+            if confirmation_gate.get("allowed") is False:
+                self.store.update_path_run(
+                    plan.path_run_id,
+                    plan={
+                        "last_submit_block_reason": str(confirmation_gate.get("reason") or ""),
+                        "last_submit_block_at": datetime.now(KST).isoformat(timespec="seconds"),
+                        "last_submit_block_gate": confirmation_gate,
+                    },
+                    merge_plan=True,
+                )
+                self._record_blocked(
+                    market,
+                    plan.ticker,
+                    plan.decision_id,
+                    str(confirmation_gate.get("reason") or "KR_PATHB_RISK_ORIGIN_CONFIRMATION_REQUIRED"),
+                    {
+                        **self._execution_safety_payload(),
+                        **confirmation_gate,
+                        "price": float(current or 0.0),
+                        "limit_price": float(signal.limit_price or 0.0),
+                        "signal_reason": str(signal.reason or ""),
+                    },
+                    plan.path_run_id,
+                )
+                continue
             self._submit_buy(plan, signal)
         if kr_blocked_tickers:
             sample = ",".join(kr_blocked_tickers[:8])
@@ -1593,6 +1741,8 @@ class PathBRuntime:
         for run in self._pending_buy_runs(market_key):
             try:
                 result = self._reconcile_buy_pending_cancel_above_run(run, market_key)
+                if result == "skipped":
+                    result = self._reconcile_buy_pending_ttl_run(run, market_key)
                 summary["checked"] += 1
                 summary[result] = int(summary.get(result, 0) or 0) + 1
             except Exception as exc:
@@ -2338,7 +2488,7 @@ class PathBRuntime:
         risk_price_krw = self._price_to_krw(signal.limit_price, market)
         cash_krw = float(getattr(getattr(self.bot, "risk", None), "cash", 0) or 0)
         min_order_krw = self._pathb_min_order_krw(market)
-        qty = self._pathb_qty(market, risk_price_krw, cash_krw=cash_krw)
+        qty, sizing_context = self._pathb_qty_with_context(market, risk_price_krw, cash_krw=cash_krw)
         order_cost = float(qty) * float(risk_price_krw)
         realized_daily_pnl_pct = self._daily_pnl_pct(market)
         equity_daily_pnl_pct = self._equity_daily_pnl_pct(market)
@@ -2364,6 +2514,14 @@ class PathBRuntime:
             last_market_data_at=datetime.now(KST).isoformat(),
             stopped_tickers=set(getattr(self.bot, "_v2_same_day_stop_tickers", {}).get(market, set()) or set()),
             order_unknown_blocked=self._order_unknown_blocked(market),
+            original_budget_krw=sizing_context["original_budget_krw"],
+            effective_budget_krw=sizing_context["effective_budget_krw"],
+            early_gate_applied=sizing_context["early_gate_applied"],
+            early_gate_size_mult=sizing_context["early_gate_size_mult"],
+            can_buy_1_share=sizing_context["can_buy_1_share"],
+            fixed_sizing=sizing_context["fixed_sizing"],
+            sizing_reason=sizing_context["sizing_reason"],
+            sizing_details=sizing_context["sizing_details"],
         )
         decision = self.safety_gate.evaluate(
             ctx,
@@ -2376,7 +2534,32 @@ class PathBRuntime:
             order_unknown_blocked=self._order_unknown_blocked(market),
         )
         if not decision.passed:
-            self._record_blocked(market, plan.ticker, plan.decision_id, decision.reason_code, decision.details, plan.path_run_id)
+            keep_waiting = self._pathb_submit_safety_block_keeps_waiting(plan, decision)
+            block_payload = dict(decision.details or {})
+            if keep_waiting:
+                block_payload["submit_block_keeps_waiting"] = True
+                block_payload["submit_block_keep_reason"] = "temporary_early_entry_size_gate"
+            if not keep_waiting or not self._recent_pathb_submit_block(plan.path_run_id, decision.reason_code):
+                self._record_blocked(
+                    market,
+                    plan.ticker,
+                    plan.decision_id,
+                    decision.reason_code,
+                    block_payload,
+                    plan.path_run_id,
+                )
+            if keep_waiting:
+                self.store.update_path_run(
+                    plan.path_run_id,
+                    plan={
+                        "last_submit_block_reason": str(decision.reason_code or ""),
+                        "last_submit_block_at": datetime.now(KST).isoformat(timespec="seconds"),
+                        "last_submit_block_gate": block_payload,
+                        "submit_block_keeps_waiting": True,
+                    },
+                    merge_plan=True,
+                )
+                return False
             self.adapter.cancel_plan(
                 plan.path_run_id,
                 reason=decision.reason_code,
@@ -2458,6 +2641,13 @@ class PathBRuntime:
             runtime_mode=self.mode,
             brain_snapshot_id=self._brain_snapshot_id(market),
         )
+        try:
+            funnel = getattr(self.bot, "_funnel", None)
+            if isinstance(funnel, dict):
+                bucket = funnel.setdefault(market, {})
+                bucket["ordered"] = int(bucket.get("ordered", 0) or 0) + 1
+        except Exception:
+            pass
         self.bot._add_pending_order({
             "order_no": execution_id,
             "ticker": plan.ticker,
@@ -2617,6 +2807,89 @@ class PathBRuntime:
         if pnl_pct <= -threshold:
             return True, f"loss {pnl_pct:.2f}% <= force threshold -{threshold:.2f}%"
         return False, ""
+
+    def _pathb_submit_safety_block_keeps_waiting(self, plan: PricePlan, decision: Any) -> bool:
+        reason = str(getattr(decision, "reason_code", "") or "")
+        if reason not in {"ORDER_SIZE_TOO_SMALL_GATE", "HIGH_PRICE_BUDGET_BLOCK"}:
+            return False
+        details = getattr(decision, "details", {}) or {}
+        if not isinstance(details, dict) or not bool(details.get("early_gate_applied")):
+            return False
+        registration_gate = self._pathb_registration_price_gate(plan)
+        return bool(registration_gate.get("allowed", True))
+
+    def _recent_pathb_submit_block(self, path_run_id: str, reason_code: str) -> bool:
+        try:
+            interval = max(0, self._runtime_int("PATHB_SUBMIT_BLOCK_RECORD_MIN_INTERVAL_SEC", 300))
+        except Exception:
+            interval = 300
+        if interval <= 0:
+            return False
+        try:
+            run = self.store.find_path_run(path_run_id) or {}
+            plan_json = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+            if str(plan_json.get("last_submit_block_reason") or "") != str(reason_code or ""):
+                return False
+            age = self._seconds_since_iso(plan_json.get("last_submit_block_at"))
+            return age is not None and age < float(interval)
+        except Exception:
+            return False
+
+    def _pathb_auto_sell_review_cooldown_payload(
+        self,
+        plan: PricePlan,
+        signal: ExitSignal,
+        current_native: float,
+        *,
+        now: datetime,
+        run_plan: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if str(run_plan.get("auto_sell_review_action", "") or "").upper() != "HOLD":
+            return None
+        if bool(run_plan.get("auto_sell_review_fallback", False)):
+            return None
+        if str(run_plan.get("auto_sell_review_reason", "") or "").lower() != str(signal.reason or "").lower():
+            return None
+        prev_close_reason = str(run_plan.get("auto_sell_review_close_reason", "") or "").upper()
+        if prev_close_reason and prev_close_reason != str(signal.close_reason or "").upper():
+            return None
+        reviewed_at = self._parse_kst_iso(run_plan.get("auto_sell_reviewed_at"))
+        if reviewed_at is None:
+            return None
+        try:
+            reask_min = int(float(run_plan.get("auto_sell_review_reask_after_min") or 0))
+        except Exception:
+            reask_min = 0
+        if reask_min <= 0:
+            reask_min = _env_int("AUTO_SELL_REVIEW_HOLD_COOLDOWN_MINUTES", 5)
+        reask_min = max(1, min(60, reask_min))
+        until = reviewed_at + timedelta(minutes=reask_min)
+        if now >= until:
+            return None
+        previous_price = self._policy_float(run_plan.get("auto_sell_review_price_native"))
+        if previous_price > 0 and current_native > 0:
+            drop_reask_pct = max(0.0, _env_float("PATHB_AUTO_SELL_REVIEW_HOLD_REASK_DROP_PCT", 0.5))
+            if drop_reask_pct > 0 and current_native <= previous_price * (1.0 - drop_reask_pct / 100.0):
+                return None
+        detail = (
+            f"pathb_auto_sell_review_cooldown:"
+            f"until={until.isoformat(timespec='seconds')};"
+            f"reason={signal.reason}"
+        )
+        return {
+            "auto_sell_reviewed_at": reviewed_at.isoformat(timespec="seconds"),
+            "auto_sell_review_reason": str(signal.reason or ""),
+            "auto_sell_review_close_reason": str(signal.close_reason or ""),
+            "auto_sell_review_action": "HOLD",
+            "auto_sell_review_detail": detail,
+            "auto_sell_review_confidence": float(run_plan.get("auto_sell_review_confidence") or 0.0),
+            "auto_sell_review_fallback": False,
+            "auto_sell_review_reask_after_min": reask_min,
+            "auto_sell_review_cooldown_until": until.isoformat(timespec="seconds"),
+            "auto_sell_review_cooldown_checked_at": now.isoformat(timespec="seconds"),
+            "auto_sell_review_cooldown_active": True,
+            "auto_sell_review_price_native": float(current_native or 0.0),
+        }
 
     @staticmethod
     def _parse_kst_iso(raw: Any) -> datetime | None:
@@ -4040,6 +4313,37 @@ class PathBRuntime:
         now_dt = datetime.now(KST)
         now_iso = now_dt.isoformat(timespec="seconds")
         current_native = float(signal.price or 0)
+        run = self.store.find_path_run(plan.path_run_id) or {}
+        run_plan = dict(run.get("plan") or {}) if isinstance(run, dict) else {}
+        force_sell, force_detail = self._pathb_auto_sell_review_force_sell_required(
+            plan,
+            pos,
+            signal,
+            current_native,
+        )
+        if not force_sell:
+            cooldown_payload = self._pathb_auto_sell_review_cooldown_payload(
+                plan,
+                signal,
+                current_native,
+                now=now_dt,
+                run_plan=run_plan,
+            )
+            if cooldown_payload is not None:
+                pos.update(cooldown_payload)
+                try:
+                    self.store.update_path_run(plan.path_run_id, plan=cooldown_payload, merge_plan=True)
+                except Exception:
+                    pass
+                try:
+                    self._save_positions_if_possible()
+                except Exception:
+                    pass
+                log.debug(
+                    f"[PathB auto sell review HOLD cooldown] {plan.market} {plan.ticker} "
+                    f"reason={signal.reason} until={cooldown_payload.get('auto_sell_review_cooldown_until')}"
+                )
+                return {"allowed": False, **cooldown_payload}
         review_pos = dict(pos)
         review_pos["ticker"] = plan.ticker
         review_pos["market"] = plan.market
@@ -4107,12 +4411,6 @@ class PathBRuntime:
                 action = "SELL"
                 advice["action"] = "SELL"
                 detail = detail + f" | review_unavailable_failsafe:{raw_close_reason.lower()}"
-        force_sell, force_detail = self._pathb_auto_sell_review_force_sell_required(
-            plan,
-            pos,
-            signal,
-            current_native,
-        )
         if action != "SELL" and force_sell:
             action = "SELL"
             detail = (detail + " | " if detail else "") + f"system_force_sell_after_review:{force_detail}"
@@ -4131,6 +4429,7 @@ class PathBRuntime:
             "auto_sell_review_confidence": confidence,
             "auto_sell_review_fallback": fallback,
             "auto_sell_review_reask_after_min": _advice_reask,
+            "auto_sell_review_price_native": current_native,
         }
         if force_sell:
             payload["auto_sell_review_system_force_sell"] = True
@@ -5206,6 +5505,298 @@ class PathBRuntime:
                 )
             )
         return runs
+
+    def _pathb_buy_pending_ttl_sec(self, market: str) -> int:
+        market_key = str(market or "").upper()
+        market_value = self._runtime_int(f"PATHB_{market_key}_BUY_PENDING_TTL_SEC", -1)
+        if market_value >= 0:
+            return market_value
+        return max(0, self._runtime_int("PATHB_BUY_PENDING_TTL_SEC", 0))
+
+    @staticmethod
+    def _seconds_since_iso(raw: Any) -> float | None:
+        text = str(raw or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=KST)
+            return max(0.0, (datetime.now(KST) - parsed.astimezone(KST)).total_seconds())
+        except Exception:
+            return None
+
+    def _pending_buy_age_sec(self, run: dict[str, Any]) -> float | None:
+        plan_json = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+        for key in ("entry_order_acked_at", "entry_order_sent_at"):
+            age = self._seconds_since_iso(plan_json.get(key))
+            if age is not None:
+                return age
+        return None
+
+    @staticmethod
+    def _broker_order_no(row: dict[str, Any]) -> str:
+        return str(row.get("order_no", "") or row.get("odno", "") or row.get("ord_no", "") or "").strip()
+
+    def _pathb_ttl_fill_match(
+        self,
+        plan: PricePlan,
+        plan_json: dict[str, Any],
+        rows: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        exact = self._match_pathb_fill_by_execution(plan_json, rows)
+        if exact:
+            return exact
+        execution_id = str(plan_json.get("entry_execution_id", "") or "").strip()
+        if not execution_id:
+            return self._match_pathb_fill(plan, rows)
+        candidates = [
+            row for row in rows
+            if self._side_matches(row, "buy")
+            and int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) > 0
+        ]
+        candidates = self._filter_price_zone(plan, candidates)
+        mismatched = [row for row in candidates if self._broker_order_no(row) and self._broker_order_no(row) != execution_id]
+        if mismatched:
+            return {"execution_mismatch": True, "rows": mismatched[:3]}
+        no_order_no = [row for row in candidates if not self._broker_order_no(row)]
+        if len(no_order_no) == 1:
+            return {"row": no_order_no[0], "fallback_no_order_no": True}
+        if len(no_order_no) > 1:
+            return {"ambiguous": True, "rows": no_order_no[:3]}
+        return {}
+
+    def _pathb_ttl_open_order_match(
+        self,
+        plan: PricePlan,
+        plan_json: dict[str, Any],
+        rows: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        exact = self._match_pathb_open_order_by_execution(plan_json, rows)
+        if exact:
+            return exact
+        execution_id = str(plan_json.get("entry_execution_id", "") or "").strip()
+        if not execution_id:
+            return self._match_pathb_open_order(plan, rows)
+        candidates = [
+            row for row in rows
+            if self._side_matches(row, "buy")
+            and int(row.get("remaining_qty", 0) or 0) > 0
+        ]
+        candidates = self._filter_price_zone(plan, candidates)
+        mismatched = [row for row in candidates if self._broker_order_no(row) and self._broker_order_no(row) != execution_id]
+        if mismatched:
+            return {"execution_mismatch": True, "rows": mismatched[:3]}
+        no_order_no = [row for row in candidates if not self._broker_order_no(row)]
+        if len(no_order_no) == 1:
+            return {"row": no_order_no[0], "fallback_no_order_no": True}
+        if len(no_order_no) > 1:
+            return {"ambiguous": True, "rows": no_order_no[:3]}
+        return {}
+
+    def _reconcile_buy_pending_ttl_run(self, run: dict[str, Any], market: str) -> str:
+        ttl_sec = self._pathb_buy_pending_ttl_sec(market)
+        if ttl_sec <= 0:
+            return "skipped"
+        path_run_id = str(run.get("path_run_id", "") or "")
+        plan = self._plan_from_run(run)
+        if not path_run_id or plan is None:
+            return "skipped"
+        plan_json = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+        cancel_requested_at = str(plan_json.get("pending_buy_ttl_cancel_requested_at", "") or "").strip()
+        age_sec = self._pending_buy_age_sec(run)
+        if age_sec is None or age_sec < float(ttl_sec):
+            return "skipped"
+
+        execution_id = str(plan_json.get("entry_execution_id", "") or "")
+        qty = int(plan_json.get("entry_qty", 0) or 0)
+        order_price = float(plan_json.get("entry_order_price", 0) or 0)
+        if not execution_id or qty <= 0:
+            self.adapter.mark_order_unknown(
+                path_run_id,
+                detail="buy_pending_ttl_missing_order_identity",
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(market),
+                execution_id=execution_id,
+            )
+            return "order_unknown"
+
+        try:
+            self.refresh_broker_truth(market, force=True)
+        except Exception:
+            pass
+        market_data = self.broker_truth.market_snapshot(market)
+        if bool(market_data.get("missing")) or bool(market_data.get("stale")) or str(market_data.get("error", "") or ""):
+            self.store.update_path_run(
+                path_run_id,
+                plan={
+                    "pending_buy_ttl_deferred_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "pending_buy_ttl_deferred_reason": "broker_truth_unavailable",
+                    "pending_buy_age_sec": round(float(age_sec), 3),
+                    "pending_buy_ttl_sec": int(ttl_sec),
+                },
+                merge_plan=True,
+            )
+            return "still_open"
+
+        ticker = self._ticker_key(market, plan.ticker)
+        fills = self._broker_rows_for_ticker(market_data.get("today_fills", []), market, ticker)
+        fill_match = self._pathb_ttl_fill_match(plan, plan_json, fills)
+        if fill_match.get("execution_mismatch"):
+            self.store.update_path_run(
+                path_run_id,
+                plan={
+                    "pending_buy_ttl_deferred_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "pending_buy_ttl_deferred_reason": "buy_pending_ttl_fill_execution_mismatch",
+                    "pending_buy_age_sec": round(float(age_sec), 3),
+                    "pending_buy_ttl_sec": int(ttl_sec),
+                    "pending_buy_mismatched_fill_evidence": fill_match.get("rows", []),
+                },
+                merge_plan=True,
+            )
+            self.adapter.mark_order_unknown(
+                path_run_id,
+                detail="buy_pending_ttl_fill_execution_mismatch",
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(market),
+                execution_id=execution_id,
+            )
+            return "order_unknown"
+        if fill_match.get("row"):
+            row = dict(fill_match["row"])
+            filled_qty = int(row.get("filled_qty", 0) or row.get("qty", 0) or qty)
+            fill_price = float(row.get("avg_price", 0) or row.get("fill_price", 0) or row.get("price", 0) or order_price)
+            fill_execution_id = str(row.get("order_no", "") or execution_id)
+            self.adapter.mark_filled(
+                path_run_id,
+                price=fill_price,
+                qty=filled_qty,
+                execution_id=fill_execution_id,
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(market),
+            )
+            positions = self._broker_rows_for_ticker(market_data.get("positions", []), market, ticker)
+            self._attach_recovered_broker_position(plan, positions, row, filled_qty, fill_price, fill_execution_id)
+            self._save_positions_if_possible()
+            return "filled"
+        if fill_match.get("ambiguous"):
+            self.adapter.mark_order_unknown(
+                path_run_id,
+                detail="buy_pending_ttl_ambiguous_buy_fill",
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(market),
+                execution_id=execution_id,
+            )
+            return "order_unknown"
+
+        open_orders = self._broker_rows_for_ticker(market_data.get("open_orders", []), market, ticker)
+        open_match = self._pathb_ttl_open_order_match(plan, plan_json, open_orders)
+        if open_match.get("execution_mismatch"):
+            self.store.update_path_run(
+                path_run_id,
+                plan={
+                    "pending_buy_ttl_deferred_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "pending_buy_ttl_deferred_reason": "buy_pending_ttl_open_order_execution_mismatch",
+                    "pending_buy_age_sec": round(float(age_sec), 3),
+                    "pending_buy_ttl_sec": int(ttl_sec),
+                    "pending_buy_mismatched_open_order_evidence": open_match.get("rows", []),
+                },
+                merge_plan=True,
+            )
+            return "still_open"
+        if open_match.get("ambiguous"):
+            self.adapter.mark_order_unknown(
+                path_run_id,
+                detail="buy_pending_ttl_ambiguous_open_order",
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(market),
+                execution_id=execution_id,
+            )
+            return "order_unknown"
+        if open_match.get("row"):
+            now_iso = datetime.now(KST).isoformat(timespec="seconds")
+            if cancel_requested_at:
+                self.store.update_path_run(
+                    path_run_id,
+                    plan={
+                        "pending_buy_ttl_still_open_at": now_iso,
+                        "pending_buy_age_sec": round(float(age_sec), 3),
+                        "pending_buy_ttl_sec": int(ttl_sec),
+                        "pending_buy_open_order_evidence": True,
+                    },
+                    merge_plan=True,
+                )
+                return "still_open"
+            try:
+                result = cancel_order(
+                    plan.ticker,
+                    execution_id,
+                    qty,
+                    _bot_token(self.bot, market),
+                    market=market,
+                    price=order_price,
+                )
+            except Exception as exc:
+                self.store.update_path_run(
+                    path_run_id,
+                    plan={
+                        "pending_buy_ttl_cancel_requested_at": now_iso,
+                        "pending_buy_ttl_cancel_error": str(exc),
+                        "pending_buy_age_sec": round(float(age_sec), 3),
+                        "pending_buy_ttl_sec": int(ttl_sec),
+                    },
+                    merge_plan=True,
+                )
+                self.adapter.mark_order_unknown(
+                    path_run_id,
+                    detail=f"buy_pending_ttl_cancel_failed:{exc}",
+                    runtime_mode=self.mode,
+                    brain_snapshot_id=self._brain_snapshot_id(market),
+                    execution_id=execution_id,
+                )
+                return "order_unknown"
+            self.store.update_path_run(
+                path_run_id,
+                plan={
+                    "pending_buy_ttl_cancel_requested_at": now_iso,
+                    "pending_buy_ttl_cancel_result": result,
+                    "pending_buy_age_sec": round(float(age_sec), 3),
+                    "pending_buy_ttl_sec": int(ttl_sec),
+                    "pending_buy_open_order_evidence": True,
+                },
+                merge_plan=True,
+            )
+            try:
+                unknown = getattr(self.bot, "v2_order_unknown", None)
+                if unknown is not None and hasattr(unknown, "record_cancel_requested"):
+                    unknown.record_cancel_requested(
+                        market=market,
+                        ticker=plan.ticker,
+                        order_no=execution_id,
+                        qty=qty,
+                        reason="buy_pending_ttl",
+                    )
+            except Exception as exc:
+                log.debug(f"[PathB cancel registry] buy TTL record request failed {market} {plan.ticker}: {exc}")
+            return "cancel_requested"
+
+        self.adapter.cancel_plan(
+            path_run_id,
+            reason="buy_pending_ttl_no_open_order",
+            runtime_mode=self.mode,
+            brain_snapshot_id=self._brain_snapshot_id(market),
+        )
+        self.store.update_path_run(
+            path_run_id,
+            plan={
+                "pending_buy_ttl_cancel_confirmed": True,
+                "pending_buy_ttl_cancel_confirmed_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "pending_buy_age_sec": round(float(age_sec), 3),
+                "pending_buy_ttl_sec": int(ttl_sec),
+            },
+            merge_plan=True,
+        )
+        return "cancel_confirmed"
 
     def _reconcile_buy_pending_cancel_above_run(self, run: dict[str, Any], market: str) -> str:
         path_run_id = str(run.get("path_run_id", "") or "")
@@ -6841,14 +7432,14 @@ class PathBRuntime:
         return {}
 
     def _match_pathb_fill_by_execution(self, plan_json: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
-        execution_id = str(plan_json.get("entry_execution_id", "") or "")
+        execution_id = str(plan_json.get("entry_execution_id", "") or "").strip()
         if not execution_id:
             return {}
         candidates = [
             row for row in rows
             if self._side_matches(row, "buy")
             and int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) > 0
-            and str(row.get("order_no", "") or "") == execution_id
+            and self._broker_order_no(row) == execution_id
         ]
         if len(candidates) == 1:
             return {"row": candidates[0]}
@@ -6857,14 +7448,14 @@ class PathBRuntime:
         return {}
 
     def _match_pathb_open_order_by_execution(self, plan_json: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
-        execution_id = str(plan_json.get("entry_execution_id", "") or "")
+        execution_id = str(plan_json.get("entry_execution_id", "") or "").strip()
         if not execution_id:
             return {}
         candidates = [
             row for row in rows
             if self._side_matches(row, "buy")
             and int(row.get("remaining_qty", 0) or 0) > 0
-            and str(row.get("order_no", "") or "") == execution_id
+            and self._broker_order_no(row) == execution_id
         ]
         if len(candidates) == 1:
             return {"row": candidates[0]}
@@ -8182,15 +8773,113 @@ class PathBRuntime:
         loss_ok = max_loss_pct <= 0 or pnl_pct <= max_loss_pct
         return bool(cost_ok and loss_ok)
 
-    def _pathb_qty(self, market: str, price_krw: float, *, cash_krw: float) -> int:
+    def _pathb_registration_max_entry_krw(self, market: str) -> float:
+        fixed_budget = max(0.0, float(self.config.pathb_fixed_order_krw or 0.0))
+        max_entry = fixed_budget
+        if not bool(self.config.pathb_allow_one_share_over_budget):
+            return max_entry
+
+        one_share_cap = math.inf
+        max_notional = float(self.config.pathb_one_share_over_budget_max_krw or 0.0)
+        if max_notional > 0:
+            one_share_cap = min(one_share_cap, max_notional)
+        account_pct = float(self.config.pathb_one_share_over_budget_max_account_pct or 0.0)
+        if account_pct <= 0:
+            return max_entry
+        try:
+            fallback_cash = float(getattr(getattr(self.bot, "risk", None), "cash", 0.0) or 0.0)
+        except Exception:
+            fallback_cash = 0.0
+        equity = self._pathb_total_equity_krw(market, fallback_cash_krw=fallback_cash)
+        if equity <= 0:
+            return max_entry
+        one_share_cap = min(one_share_cap, equity * account_pct / 100.0)
+        if math.isinf(one_share_cap):
+            return max_entry
+        return max(max_entry, one_share_cap)
+
+    def _pathb_registration_price_gate(
+        self,
+        plan: PricePlan,
+        *,
+        shadow_registration: bool = False,
+    ) -> dict[str, Any]:
+        market = str(getattr(plan, "market", "") or "").upper()
+        if shadow_registration:
+            return {"allowed": True, "reason": "shadow_registration"}
+        buy_zone_low_native = float(getattr(plan, "buy_zone_low", 0.0) or 0.0)
+        buy_zone_high_native = float(getattr(plan, "buy_zone_high", 0.0) or 0.0)
+        if buy_zone_low_native <= 0:
+            return {"allowed": True, "reason": "price_unavailable"}
+        buy_zone_low_krw = self._price_to_krw(buy_zone_low_native, market)
+        buy_zone_high_krw = self._price_to_krw(buy_zone_high_native, market) if buy_zone_high_native > 0 else 0.0
+        max_entry_krw = self._pathb_registration_max_entry_krw(market)
+        payload = {
+            "allowed": True,
+            "reason": "",
+            "stage": "pathb_plan_registration",
+            "market": market,
+            "ticker": getattr(plan, "ticker", ""),
+            "buy_zone_low": buy_zone_low_native,
+            "buy_zone_high": buy_zone_high_native,
+            "buy_zone_low_krw": buy_zone_low_krw,
+            "buy_zone_high_krw": buy_zone_high_krw,
+            "max_entry_krw": max_entry_krw,
+            "pathb_fixed_order_krw": float(self.config.pathb_fixed_order_krw or 0.0),
+            "pathb_allow_one_share_over_budget": bool(self.config.pathb_allow_one_share_over_budget),
+            "pathb_one_share_over_budget_max_krw": float(
+                self.config.pathb_one_share_over_budget_max_krw or 0.0
+            ),
+            "pathb_one_share_over_budget_max_account_pct": float(
+                self.config.pathb_one_share_over_budget_max_account_pct or 0.0
+            ),
+        }
+        if max_entry_krw <= 0 or buy_zone_low_krw <= max_entry_krw:
+            return payload
+        payload.update(
+            {
+                "allowed": False,
+                "reason": "HIGH_PRICE_BUDGET_BLOCK",
+                "blocker": "pathb_plan_price_above_budget_cap",
+                "skip_plan_registration": True,
+            }
+        )
+        return payload
+
+    def _pathb_qty_with_context(self, market: str, price_krw: float, *, cash_krw: float) -> tuple[int, dict[str, Any]]:
         price = float(price_krw or 0)
-        if price <= 0:
-            return 0
         cash = max(0.0, float(cash_krw or 0))
-        budget = float(self.config.pathb_fixed_order_krw)
+        original_budget = float(self.config.pathb_fixed_order_krw)
         early_gate = self._us_early_entry_soft_gate(market)
-        if early_gate.get("active"):
-            budget *= max(0.1, min(1.0, float(early_gate.get("size_mult") or 0.5)))
+        early_gate_applied = bool(early_gate.get("active"))
+        early_gate_size_mult = (
+            max(0.1, min(1.0, float(early_gate.get("size_mult") or 0.5)))
+            if early_gate_applied
+            else 1.0
+        )
+        budget = original_budget * early_gate_size_mult if early_gate_applied else original_budget
+        if price <= 0:
+            sizing_context = {
+                "original_budget_krw": original_budget,
+                "effective_budget_krw": budget,
+                "early_gate_applied": early_gate_applied,
+                "early_gate_size_mult": early_gate_size_mult,
+                "can_buy_1_share": False,
+                "fixed_sizing": True,
+                "sizing_reason": "invalid_price",
+                "sizing_details": {
+                    "pathb_sizing": {
+                        "qty": 0,
+                        "notional": 0.0,
+                        "blocker": "invalid_price",
+                        "warnings": [],
+                        "size_intent": "normal",
+                        "effective_budget": 0.0,
+                        "hard_budget_cap": max(0.0, budget),
+                    }
+                },
+            }
+            return 0, sizing_context
         min_order = self._pathb_min_order_krw(market)
         decision = calculate_order_quantity(
             price=price,
@@ -8203,11 +8892,38 @@ class PathBRuntime:
             one_share_max_account_pct=float(self.config.pathb_one_share_over_budget_max_account_pct),
             total_equity=self._pathb_total_equity_krw(market, fallback_cash_krw=cash),
         )
+        qty = max(0, int(decision.qty or 0))
+        decision_payload = decision.to_dict()
+        sizing_reason = str(decision.blocker or "pathb_fixed_sizing")
         if "one_share_over_budget_allowed" in decision.warnings:
             max_notional = float(self.config.pathb_one_share_over_budget_max_krw or 0)
             if max_notional > 0 and float(decision.notional or 0) > max_notional:
-                return 0
-        return max(0, int(decision.qty or 0))
+                qty = 0
+                sizing_reason = "one_share_over_budget_max_krw"
+                decision_payload = {
+                    **decision_payload,
+                    "qty": 0,
+                    "notional": 0.0,
+                    "blocker": sizing_reason,
+                    "pre_cap_qty": int(decision.qty or 0),
+                    "pre_cap_notional": float(decision.notional or 0),
+                }
+        can_buy_1_share = bool(price > 0 and original_budget > 0 and price <= original_budget and cash >= price)
+        sizing_context = {
+            "original_budget_krw": original_budget,
+            "effective_budget_krw": budget,
+            "early_gate_applied": early_gate_applied,
+            "early_gate_size_mult": early_gate_size_mult,
+            "can_buy_1_share": can_buy_1_share,
+            "fixed_sizing": True,
+            "sizing_reason": sizing_reason,
+            "sizing_details": {"pathb_sizing": decision_payload},
+        }
+        return qty, sizing_context
+
+    def _pathb_qty(self, market: str, price_krw: float, *, cash_krw: float) -> int:
+        qty, _ = self._pathb_qty_with_context(market, price_krw, cash_krw=cash_krw)
+        return qty
 
     def _us_early_entry_soft_gate(self, market: str) -> dict[str, Any]:
         try:

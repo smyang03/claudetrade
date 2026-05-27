@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 import tempfile
 import unittest
@@ -12,6 +12,7 @@ from unittest.mock import patch
 from audit.candidate_audit_store import CandidateAuditStore
 from execution.sizing import FixedSizingResult
 from runtime.candidate_quality_trainer import score_candidate_for_trainer
+from runtime.tuning_bounds import RUNTIME_ADJUSTMENT_BOUNDS
 from trading_bot import KST, TradingBot, _mode_family
 
 
@@ -134,6 +135,105 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
     def test_balanced_mode_family_is_not_risk_off(self) -> None:
         self.assertEqual(_mode_family("BALANCED"), "BALANCED")
         self.assertEqual(_mode_family("NEUTRAL"), "BALANCED")
+
+    def test_runtime_override_restore_and_apply_use_policy_bounds(self) -> None:
+        bot = _make_bot()
+        bot._claude_runtime_overrides = {"KR": {}, "US": {}}
+        bot.today_judgment = {"market": "US"}
+
+        restored = TradingBot._restore_runtime_overrides_from_payload(
+            bot,
+            "US",
+            {
+                "claude_runtime_overrides": {
+                    "US": {
+                        "momentum_wait_adjust_min": 15,
+                        "entry_priority_cutoff_adjust": 0.08,
+                        "kr_momentum_atr_cap_adjust": 0.03,
+                        "kr_momentum_atr_cap_high_adjust": -0.02,
+                        "reason": "non-runtime field from persisted payload",
+                    }
+                }
+            },
+        )
+
+        self.assertEqual(restored["momentum_wait_adjust_min"], int(RUNTIME_ADJUSTMENT_BOUNDS["momentum_wait_adjust_min"][1]))
+        self.assertEqual(restored["entry_priority_cutoff_adjust"], RUNTIME_ADJUSTMENT_BOUNDS["entry_priority_cutoff_adjust"][1])
+        self.assertEqual(restored["kr_momentum_atr_cap_adjust"], RUNTIME_ADJUSTMENT_BOUNDS["kr_momentum_atr_cap_adjust"][1])
+        self.assertEqual(restored["kr_momentum_atr_cap_high_adjust"], RUNTIME_ADJUSTMENT_BOUNDS["kr_momentum_atr_cap_high_adjust"][0])
+        self.assertEqual(set(restored), set(RUNTIME_ADJUSTMENT_BOUNDS))
+
+        changed = TradingBot._apply_runtime_tuning_adjustments(
+            bot,
+            "US",
+            {
+                "momentum_wait_adjust_min": -15,
+                "entry_priority_cutoff_adjust": -0.08,
+                "kr_momentum_atr_cap_adjust": -0.03,
+                "kr_momentum_atr_cap_high_adjust": 0.03,
+                "action": "REVERSE",
+            },
+        )
+
+        self.assertEqual(changed["momentum_wait_adjust_min"], int(RUNTIME_ADJUSTMENT_BOUNDS["momentum_wait_adjust_min"][0]))
+        self.assertEqual(changed["entry_priority_cutoff_adjust"], RUNTIME_ADJUSTMENT_BOUNDS["entry_priority_cutoff_adjust"][0])
+        self.assertEqual(changed["kr_momentum_atr_cap_adjust"], RUNTIME_ADJUSTMENT_BOUNDS["kr_momentum_atr_cap_adjust"][0])
+        self.assertEqual(changed["kr_momentum_atr_cap_high_adjust"], RUNTIME_ADJUSTMENT_BOUNDS["kr_momentum_atr_cap_high_adjust"][1])
+        self.assertEqual(set(bot._claude_runtime_overrides["US"]), set(RUNTIME_ADJUSTMENT_BOUNDS))
+
+    def test_ops_review_snapshot_records_row_and_distinct_trigger_basis(self) -> None:
+        bot = _make_bot()
+        bot.is_paper = False
+        bot._ops_review_mode_value = lambda: "live"
+        bot._current_session_date = lambda market: date(2026, 5, 22)
+        bot._current_session_date_str = lambda market: "2026-05-22"
+        bot._load_recent_judgment_review_records = lambda *args, **kwargs: []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "ticker_selection_log.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE ticker_selection_log (
+                        bot_mode TEXT, market TEXT, date TEXT, ticker TEXT,
+                        trade_ready INTEGER, signal_fired INTEGER,
+                        forward_3d REAL, max_runup_3d REAL, blocked_reason TEXT
+                    )
+                    """
+                )
+                for idx in range(20):
+                    conn.execute(
+                        """
+                        INSERT INTO ticker_selection_log
+                        VALUES ('live', 'US', '2026-05-22', ?, 1, ?, NULL, NULL, NULL)
+                        """,
+                        (f"T{idx:02d}", 1 if idx < 3 else 0),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO ticker_selection_log
+                        VALUES ('live', 'US', '2026-05-22', ?, 1, 0, NULL, NULL, NULL)
+                        """,
+                        (f"T{idx:02d}",),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+            with patch("trading_bot.tsdb.DB_PATH", str(db_path)), patch(
+                "trading_bot._DECISIONS_DB_PATH",
+                Path(tmp) / "missing_decisions.db",
+            ):
+                snapshot = TradingBot._build_ops_review_snapshot(bot, "US", days=30)
+
+        self.assertEqual(snapshot["metric_basis"]["trade_ready_signal_conversion"], "distinct_ticker_date")
+        self.assertEqual(snapshot["metric_basis"]["trade_ready_signal_conversion_row_basis"], "row_count")
+        self.assertEqual(snapshot["trigger_metric_basis"]["low_trade_ready_conversion"], "trade_ready_signal_conversion")
+        self.assertEqual(snapshot["metrics"]["trade_ready_signal_conversion"]["value"], 15.0)
+        self.assertFalse(snapshot["metrics"]["trade_ready_signal_conversion"]["breached"])
+        self.assertEqual(snapshot["metrics"]["trade_ready_signal_conversion_row_basis"]["value"], 7.5)
+        self.assertTrue(snapshot["metrics"]["trade_ready_signal_conversion_row_basis"]["breached"])
 
     def test_us_early_entry_soft_gate_uses_elapsed_minutes_not_kst_hour(self) -> None:
         bot = _make_bot()
@@ -322,6 +422,35 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(qty, 1)
         self.assertEqual(budget, 35_000)
         self.assertEqual(order_cost, 28_000)
+
+    def test_one_share_affordability_meta_is_observational(self) -> None:
+        bot = _make_bot()
+        bot.risk.cash = 1_000_000
+        bot.usd_krw_rate = 1000
+        bot._market_budget_available = lambda market: 1_000_000
+        bot._us_early_entry_soft_gate = lambda market: {"active": True, "size_mult": 0.5}
+        bot._v2_fixed_size_entry = lambda market, price: FixedSizingResult(
+            market=market,
+            qty=1,
+            budget_krw=450_000,
+            order_cost_krw=price,
+            min_order_krw=30_000,
+            price_krw=price,
+        )
+        meta = {
+            "watchlist": ["MRVL"],
+            "trade_ready": ["MRVL"],
+            "price_targets": {"MRVL": {"reference_price": 310}},
+            "_candidate_action_routes": [{"ticker": "MRVL", "final_action": "BUY_READY"}],
+        }
+
+        updated = TradingBot._attach_one_share_affordability_meta(bot, "US", meta)
+
+        one_share = updated["_one_share_affordability"]["MRVL"]
+        self.assertTrue(one_share["can_buy_1_share_now"])
+        self.assertEqual(one_share["one_share_budget_basis_krw"], 450_000)
+        self.assertTrue(updated["_candidate_action_routes"][0]["can_buy_1_share_now"])
+        self.assertEqual(updated["trade_ready"], ["MRVL"])
 
     def test_probe_ready_maps_to_trade_ready_with_probe_cap(self) -> None:
         bot = _make_bot()
@@ -904,7 +1033,7 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertNotIn("005930", bot.v2.registered_meta["trade_ready"])
         self.assertEqual(bot.pathb.registered_meta["_pathb_shadow_tickers"], ["005930"])
 
-    def test_kr_confirmation_live_blocks_unconfirmed_pullback_wait(self) -> None:
+    def test_kr_confirmation_live_does_not_block_unconfirmed_pullback_wait(self) -> None:
         bot = _make_bot()
         bot.runtime_config.values.update(
             {
@@ -942,11 +1071,12 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
             meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
 
-        self.assertEqual(meta.get("_pathb_wait_tickers"), [])
+        self.assertEqual(meta.get("_pathb_wait_tickers"), ["005930"])
         route = meta["_candidate_action_routes"][0]
-        self.assertEqual(route["final_action"], "WATCH")
-        self.assertEqual(route["runtime_gate_reason"], "kr_momentum_not_confirmed")
-        self.assertEqual(route["confirmation_state"], "CONFIRMING")
+        self.assertEqual(route["final_action"], "PULLBACK_WAIT")
+        self.assertEqual(route["runtime_gate_reason"], "")
+        self.assertEqual(route["confirmation_state"], "")
+        self.assertNotIn("kr_confirmation_checks", route["runtime_gate"])
 
     def test_kr_confirmation_live_blocks_missing_momentum(self) -> None:
         bot = _make_bot()
@@ -1925,6 +2055,8 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
         meta = {
             "selection_snapshot_ts": "2026-05-07T09:00:00+09:00",
+            "selection_trace_id": "US:trace:test",
+            "visibility_contract_version": "actual_prompt_v1",
             "watchlist": ["AAPL", "MSFT"],
             "trade_ready": [],
             "candidate_actions": [
@@ -1989,7 +2121,10 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
                         """
                         SELECT ticker, input_to_claude_reported, classification,
                                prompt_rank_after_trim, primary_bucket,
-                               source_tags_json, bucket_reasons_json
+                               source_tags_json, bucket_reasons_json,
+                               selection_trace_id, actual_prompt_call_id,
+                               actual_prompt_included, actual_prompt_rank,
+                               reported_input_to_claude
                         FROM audit_candidate_rows
                         """
                     ).fetchall()
@@ -2003,6 +2138,16 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(rows["AAPL"]["input_to_claude_reported"], 1)
         self.assertEqual(rows["MSFT"]["input_to_claude_reported"], 0)
         self.assertEqual(rows["NVDA"]["input_to_claude_reported"], 1)
+        self.assertEqual(rows["AAPL"]["actual_prompt_included"], 1)
+        self.assertEqual(rows["MSFT"]["actual_prompt_included"], 0)
+        self.assertEqual(rows["NVDA"]["actual_prompt_included"], 1)
+        self.assertEqual(rows["AAPL"]["actual_prompt_rank"], 1)
+        self.assertIsNone(rows["MSFT"]["actual_prompt_rank"])
+        self.assertEqual(rows["NVDA"]["actual_prompt_rank"], 2)
+        self.assertEqual(rows["AAPL"]["reported_input_to_claude"], 1)
+        self.assertEqual(rows["MSFT"]["reported_input_to_claude"], 0)
+        self.assertEqual(rows["AAPL"]["selection_trace_id"], "US:trace:test")
+        self.assertTrue(str(rows["AAPL"]["actual_prompt_call_id"] or ""))
         self.assertEqual(rows["NVDA"]["classification"], "in_prompt_not_selected")
         self.assertEqual(rows["AAPL"]["prompt_rank_after_trim"], 1)
         self.assertEqual(rows["NVDA"]["prompt_rank_after_trim"], 2)
@@ -2033,6 +2178,8 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
         meta = {
             "selection_snapshot_ts": "2026-05-07T09:00:00+09:00",
+            "selection_trace_id": "US:trace:test",
+            "visibility_contract_version": "actual_prompt_v1",
             "watchlist": ["AAPL", "MSFT"],
             "trade_ready": [],
             "candidate_actions": [
@@ -2063,6 +2210,15 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
                     FROM audit_claude_calls
                     """
                 ).fetchone()
+                row_payload = json.loads(
+                    conn.execute(
+                        """
+                        SELECT payload_json
+                        FROM audit_candidate_rows
+                        WHERE ticker='AAPL'
+                        """
+                    ).fetchone()["payload_json"]
+                )
             finally:
                 conn.close()
 
@@ -2072,6 +2228,11 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(call["watchlist_count"], 2)
         self.assertEqual(payload["actual_prompt_count"], 1)
         self.assertEqual(payload["actual_prompt_tickers"], ["AAPL"])
+        self.assertEqual(payload["visibility_contract_version"], "actual_prompt_v1")
+        self.assertEqual(payload["selection_trace_id"], "US:trace:test")
+        self.assertEqual(row_payload["visibility_contract_version"], "actual_prompt_v1")
+        self.assertEqual(row_payload["selection_trace_id"], "US:trace:test")
+        self.assertTrue(row_payload["actual_prompt_included"])
 
     def test_candidate_audit_records_shadow_and_live_overlay_payloads(self) -> None:
         bot = _make_bot()

@@ -104,6 +104,7 @@ from kis_api import (
     _daily_ohlcv_us_alpha,
     _daily_ohlcv_us_yf,
     KISTokenExpiredError,
+    KISTokenRateLimitError,
 )
 from indicators import calc_all
 from execution.order_failure import broker_reject_reason, is_permanent_order_failure
@@ -179,6 +180,7 @@ from runtime.action_routing import route_candidate_action
 from runtime.broker_side import broker_row_side_matches
 from runtime.candidate_pool_runtime import build_candidate_pool
 from runtime import sub_screener
+from runtime.tuning_bounds import RUNTIME_ADJUSTMENT_BOUNDS, coerce_runtime_adjustments
 from runtime.exit_lifecycle import (
     DEFAULT_LIVE_BYPASS_REASONS,
     EXPANDABLE_LIVE_BYPASS_REASONS,
@@ -588,10 +590,7 @@ _TRADE_READY_SLOT_LIMITS = {
     },
 }
 _CLAUDE_RUNTIME_OVERRIDE_BOUNDS = {
-    "momentum_wait_adjust_min": (-15, 15),
-    "entry_priority_cutoff_adjust": (-0.08, 0.08),
-    "kr_momentum_atr_cap_adjust": (-0.02, 0.03),
-    "kr_momentum_atr_cap_high_adjust": (-0.02, 0.03),
+    key: value for key, value in RUNTIME_ADJUSTMENT_BOUNDS.items()
 }
 def _mode_family(mode: str) -> str:
     normalized = str(mode or "").upper()
@@ -1088,6 +1087,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if market_key == "KR" or not self.token:
                     self.token = token
                 return token
+            except KISTokenRateLimitError as exc:
+                log.error(f"[startup token] {market_key} KIS token rate limited; startup token refresh stopped: {exc}")
+                raise
             except Exception as exc:
                 last_error = exc
                 if attempt < attempts:
@@ -1929,57 +1931,70 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             else None
         )
         selection_stats = {
+            "trade_ready_row_count": 0,
+            "trade_ready_signal_row_count": 0,
             "trade_ready_rows": 0,
             "trade_ready_signal_rows": 0,
             "trade_ready_forward_n": 0,
             "trade_ready_forward_avg": None,
+            "watch_only_forward_row_count": 0,
+            "watch_only_missed_row_count": 0,
             "watch_only_forward_n": 0,
             "watch_only_missed_rows": 0,
             "atr_blocked_rows": 0,
             "atr_blocked_runup_avg": None,
         }
         if os.path.exists(tsdb.DB_PATH):
+            conn = None
             try:
-                with sqlite3.connect(tsdb.DB_PATH) as conn:
-                    conn.row_factory = sqlite3.Row
-                    row = conn.execute(
-                        """
-                        WITH filtered AS (
-                            SELECT *
-                            FROM ticker_selection_log
-                            WHERE bot_mode=? AND market=? AND date>=? AND date<=?
-                        ),
-                        trade_ready_forward_dedup AS (
-                            SELECT ticker, date, AVG(forward_3d) AS forward_3d
-                            FROM filtered
-                            WHERE trade_ready=1 AND forward_3d IS NOT NULL
-                            GROUP BY ticker, date
-                        ),
-                        atr_dedup AS (
-                            SELECT ticker, date, MAX(max_runup_3d) AS max_runup_3d
-                            FROM filtered
-                            WHERE blocked_reason='momentum_atr_too_high' AND max_runup_3d IS NOT NULL
-                            GROUP BY ticker, date
-                        )
-                        SELECT
-                            COUNT(DISTINCT CASE WHEN trade_ready=1 THEN ticker || '|' || date END) AS trade_ready_rows,
-                            COUNT(DISTINCT CASE WHEN trade_ready=1 AND signal_fired=1 THEN ticker || '|' || date END) AS trade_ready_signal_rows,
-                            (SELECT COUNT(*) FROM trade_ready_forward_dedup) AS trade_ready_forward_n,
-                            (SELECT AVG(forward_3d) FROM trade_ready_forward_dedup) AS trade_ready_forward_avg,
-                            COUNT(DISTINCT CASE WHEN trade_ready=0 AND forward_3d IS NOT NULL THEN ticker || '|' || date END) AS watch_only_forward_n,
-                            COUNT(DISTINCT CASE WHEN trade_ready=0 AND forward_3d IS NOT NULL AND max_runup_3d >= 5.0 THEN ticker || '|' || date END) AS watch_only_missed_rows,
-                            (SELECT COUNT(*) FROM atr_dedup) AS atr_blocked_rows,
-                            (SELECT AVG(max_runup_3d) FROM atr_dedup) AS atr_blocked_runup_avg
+                conn = sqlite3.connect(tsdb.DB_PATH)
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    """
+                    WITH filtered AS (
+                        SELECT *
+                        FROM ticker_selection_log
+                        WHERE bot_mode=? AND market=? AND date>=? AND date<=?
+                    ),
+                    trade_ready_forward_dedup AS (
+                        SELECT ticker, date, AVG(forward_3d) AS forward_3d
                         FROM filtered
-                        """,
-                        (mode_value, market, start_date, as_of),
-                    ).fetchone()
+                        WHERE trade_ready=1 AND forward_3d IS NOT NULL
+                        GROUP BY ticker, date
+                    ),
+                    atr_dedup AS (
+                        SELECT ticker, date, MAX(max_runup_3d) AS max_runup_3d
+                        FROM filtered
+                        WHERE blocked_reason='momentum_atr_too_high' AND max_runup_3d IS NOT NULL
+                        GROUP BY ticker, date
+                    )
+                    SELECT
+                        COUNT(CASE WHEN trade_ready=1 THEN 1 END) AS trade_ready_row_count,
+                        COALESCE(SUM(CASE WHEN trade_ready=1 AND signal_fired=1 THEN 1 ELSE 0 END), 0) AS trade_ready_signal_row_count,
+                        COUNT(DISTINCT CASE WHEN trade_ready=1 THEN ticker || '|' || date END) AS trade_ready_rows,
+                        COUNT(DISTINCT CASE WHEN trade_ready=1 AND signal_fired=1 THEN ticker || '|' || date END) AS trade_ready_signal_rows,
+                        (SELECT COUNT(*) FROM trade_ready_forward_dedup) AS trade_ready_forward_n,
+                        (SELECT AVG(forward_3d) FROM trade_ready_forward_dedup) AS trade_ready_forward_avg,
+                        COUNT(CASE WHEN trade_ready=0 AND forward_3d IS NOT NULL THEN 1 END) AS watch_only_forward_row_count,
+                        COUNT(CASE WHEN trade_ready=0 AND forward_3d IS NOT NULL AND max_runup_3d >= 5.0 THEN 1 END) AS watch_only_missed_row_count,
+                        COUNT(DISTINCT CASE WHEN trade_ready=0 AND forward_3d IS NOT NULL THEN ticker || '|' || date END) AS watch_only_forward_n,
+                        COUNT(DISTINCT CASE WHEN trade_ready=0 AND forward_3d IS NOT NULL AND max_runup_3d >= 5.0 THEN ticker || '|' || date END) AS watch_only_missed_rows,
+                        (SELECT COUNT(*) FROM atr_dedup) AS atr_blocked_rows,
+                        (SELECT AVG(max_runup_3d) FROM atr_dedup) AS atr_blocked_runup_avg
+                    FROM filtered
+                    """,
+                    (mode_value, market, start_date, as_of),
+                ).fetchone()
                 if row:
                     selection_stats = {
+                        "trade_ready_row_count": int(row["trade_ready_row_count"] or 0),
+                        "trade_ready_signal_row_count": int(row["trade_ready_signal_row_count"] or 0),
                         "trade_ready_rows": int(row["trade_ready_rows"] or 0),
                         "trade_ready_signal_rows": int(row["trade_ready_signal_rows"] or 0),
                         "trade_ready_forward_n": int(row["trade_ready_forward_n"] or 0),
                         "trade_ready_forward_avg": round(float(row["trade_ready_forward_avg"]), 3) if row["trade_ready_forward_avg"] is not None else None,
+                        "watch_only_forward_row_count": int(row["watch_only_forward_row_count"] or 0),
+                        "watch_only_missed_row_count": int(row["watch_only_missed_row_count"] or 0),
                         "watch_only_forward_n": int(row["watch_only_forward_n"] or 0),
                         "watch_only_missed_rows": int(row["watch_only_missed_rows"] or 0),
                         "atr_blocked_rows": int(row["atr_blocked_rows"] or 0),
@@ -1987,6 +2002,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     }
             except Exception as e:
                 log.warning(f"[ops review {market}] selection stats load failed: {e}")
+            finally:
+                if conn is not None:
+                    conn.close()
         decision_stats = {
             "blocked_rows": 0,
             "entry_blackout_rows": 0,
@@ -1995,22 +2013,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "continuation_avg_pnl": None,
         }
         if _DECISIONS_DB_PATH.exists():
+            conn = None
             try:
-                with sqlite3.connect(str(_DECISIONS_DB_PATH)) as conn:
-                    conn.row_factory = sqlite3.Row
-                    row = conn.execute(
-                        """
-                        SELECT
-                            SUM(CASE WHEN COALESCE(TRIM(block_reason), '') != '' THEN 1 ELSE 0 END) AS blocked_rows,
-                            SUM(CASE WHEN block_reason='entry_blackout' THEN 1 ELSE 0 END) AS entry_blackout_rows,
-                            SUM(CASE WHEN block_reason='watch_only' THEN 1 ELSE 0 END) AS watch_only_blocked_rows,
-                            SUM(CASE WHEN decision='BUY_SIGNAL' AND strategy_used='continuation' AND pnl_pct IS NOT NULL THEN 1 ELSE 0 END) AS continuation_trades,
-                            AVG(CASE WHEN decision='BUY_SIGNAL' AND strategy_used='continuation' AND pnl_pct IS NOT NULL THEN pnl_pct END) AS continuation_avg_pnl
-                        FROM decisions
-                        WHERE data_source=? AND market=? AND session_date>=? AND session_date<=?
-                        """,
-                        (mode_value, market, start_date, as_of),
-                    ).fetchone()
+                conn = sqlite3.connect(str(_DECISIONS_DB_PATH))
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    """
+                    SELECT
+                        SUM(CASE WHEN COALESCE(TRIM(block_reason), '') != '' THEN 1 ELSE 0 END) AS blocked_rows,
+                        SUM(CASE WHEN block_reason='entry_blackout' THEN 1 ELSE 0 END) AS entry_blackout_rows,
+                        SUM(CASE WHEN block_reason='watch_only' THEN 1 ELSE 0 END) AS watch_only_blocked_rows,
+                        SUM(CASE WHEN decision='BUY_SIGNAL' AND strategy_used='continuation' AND pnl_pct IS NOT NULL THEN 1 ELSE 0 END) AS continuation_trades,
+                        AVG(CASE WHEN decision='BUY_SIGNAL' AND strategy_used='continuation' AND pnl_pct IS NOT NULL THEN pnl_pct END) AS continuation_avg_pnl
+                    FROM decisions
+                    WHERE data_source=? AND market=? AND session_date>=? AND session_date<=?
+                    """,
+                    (mode_value, market, start_date, as_of),
+                ).fetchone()
                 if row:
                     decision_stats = {
                         "blocked_rows": int(row["blocked_rows"] or 0),
@@ -2021,13 +2040,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     }
             except Exception as e:
                 log.warning(f"[ops review {market}] decision stats load failed: {e}")
+            finally:
+                if conn is not None:
+                    conn.close()
         trade_ready_signal_conversion = _pct(
             selection_stats["trade_ready_signal_rows"],
             selection_stats["trade_ready_rows"],
         )
+        trade_ready_signal_conversion_row_basis = _pct(
+            selection_stats["trade_ready_signal_row_count"],
+            selection_stats["trade_ready_row_count"],
+        )
         watch_only_missed_runup_ratio = _pct(
             selection_stats["watch_only_missed_rows"],
             selection_stats["watch_only_forward_n"],
+        )
+        watch_only_missed_runup_ratio_row_basis = _pct(
+            selection_stats["watch_only_missed_row_count"],
+            selection_stats["watch_only_forward_row_count"],
         )
         entry_blackout_ratio = _pct(
             decision_stats["entry_blackout_rows"],
@@ -2044,7 +2074,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "unanimous_mismatch_count": _metric(unanimous_mismatch_count, 1, sample=judgment_sample, min_sample=1, direction="ge"),
             "unanimous_override_count": _metric(unanimous_override_count, 1, sample=judgment_sample, min_sample=1, direction="ge"),
             "trade_ready_signal_conversion": _metric(trade_ready_signal_conversion, signal_conversion_threshold, sample=selection_stats["trade_ready_rows"], min_sample=20, direction="lt"),
+            "trade_ready_signal_conversion_row_basis": _metric(
+                trade_ready_signal_conversion_row_basis,
+                signal_conversion_threshold,
+                sample=selection_stats["trade_ready_row_count"],
+                min_sample=20,
+                direction="lt",
+            ),
             "watch_only_missed_runup_ratio": _metric(watch_only_missed_runup_ratio, 30.0, sample=selection_stats["watch_only_forward_n"], min_sample=20, direction="ge"),
+            "watch_only_missed_runup_ratio_row_basis": _metric(
+                watch_only_missed_runup_ratio_row_basis,
+                30.0,
+                sample=selection_stats["watch_only_forward_row_count"],
+                min_sample=20,
+                direction="ge",
+            ),
             "trade_ready_forward_3d_average": _metric(selection_stats["trade_ready_forward_avg"], 0.0, sample=selection_stats["trade_ready_forward_n"], min_sample=1, direction="lt"),
             "atr_blocked_missed_runup": _metric(selection_stats["atr_blocked_runup_avg"], 4.0, sample=selection_stats["atr_blocked_rows"], min_sample=10, direction="ge"),
             "entry_blackout_ratio": _metric(entry_blackout_ratio, 15.0, sample=decision_stats["blocked_rows"], min_sample=1, direction="ge"),
@@ -2061,10 +2105,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "best_analyst": best_analyst,
             "analyst_hit_rates": analyst_rates,
             "analyst_hit_samples": analyst_samples,
+            "metric_basis": {
+                "trade_ready_signal_conversion": "distinct_ticker_date",
+                "watch_only_missed_runup_ratio": "distinct_ticker_date",
+                "trade_ready_signal_conversion_row_basis": "row_count",
+                "watch_only_missed_runup_ratio_row_basis": "row_count",
+            },
+            "trigger_metric_basis": {
+                "low_trade_ready_conversion": "trade_ready_signal_conversion",
+                "high_watch_only_missed_runup": "watch_only_missed_runup_ratio",
+            },
             "samples": {
+                "trade_ready_row_count": selection_stats["trade_ready_row_count"],
+                "trade_ready_signal_row_count": selection_stats["trade_ready_signal_row_count"],
                 "trade_ready_rows": selection_stats["trade_ready_rows"],
+                "trade_ready_signal_rows": selection_stats["trade_ready_signal_rows"],
                 "trade_ready_forward_n": selection_stats["trade_ready_forward_n"],
+                "watch_only_forward_row_count": selection_stats["watch_only_forward_row_count"],
+                "watch_only_missed_row_count": selection_stats["watch_only_missed_row_count"],
                 "watch_only_forward_n": selection_stats["watch_only_forward_n"],
+                "watch_only_missed_rows": selection_stats["watch_only_missed_rows"],
                 "atr_blocked_rows": selection_stats["atr_blocked_rows"],
                 "blocked_rows": decision_stats["blocked_rows"],
                 "continuation_trades": decision_stats["continuation_trades"],
@@ -5159,6 +5219,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "universe_filter_bypassed": bool(universe_filter_bypass.get("bypassed")),
                 "universe_filter_bypass": universe_filter_bypass,
                 "selection_trace_id": selection_trace_id,
+                "visibility_contract_version": "actual_prompt_v1",
                 "evidence_pack_source": evidence_pack_source,
                 "evidence_pack_tickers": evidence_pack_tickers,
                 "evidence_pack_count": len(evidence_pack_tickers),
@@ -5187,6 +5248,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "universe_filter_bypassed": bool(universe_filter_bypass.get("bypassed")),
                     "universe_filter_bypass": universe_filter_bypass,
                     "selection_trace_id": selection_trace_id,
+                    "visibility_contract_version": "actual_prompt_v1",
                     "evidence_pack_source": evidence_pack_source,
                     "evidence_pack_tickers": evidence_pack_tickers,
                     "evidence_pack_count": len(evidence_pack_tickers),
@@ -5714,7 +5776,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     execution_context["action_ceiling"] = "WATCH"
                     risk_tags.append("action_ceiling_watch")
                 _merge_soft_gates(risk_tags)
-            if market_key == "KR" and str(action_for_route.get("action") or "").upper() in {"PROBE_READY", "BUY_READY", "PULLBACK_WAIT"}:
+            if market_key == "KR" and str(action_for_route.get("action") or "").upper() in {"PROBE_READY", "BUY_READY"}:
                 execution_context.update(
                     self._kr_confirmation_gate_state(market_key, key, execution_context)
                 )
@@ -6126,6 +6188,183 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         qty = int(budget // price) if price > 0 and budget > 0 else 0
         order_cost = max(0, qty) * price
         return max(0, qty), budget, order_cost
+
+    @staticmethod
+    def _plan_a_us_one_share_after_gate_adjustment(
+        *,
+        market: str,
+        price_krw: float,
+        qty: int,
+        original_budget_krw: float,
+        effective_budget_krw: float,
+        available_budget_krw: float,
+        cash_krw: float,
+        early_gate_applied: bool,
+    ) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        price = float(price_krw or 0.0)
+        original_budget = float(original_budget_krw or 0.0)
+        effective_budget = float(effective_budget_krw or 0.0)
+        available = float(available_budget_krw or 0.0)
+        cash = float(cash_krw or 0.0)
+        meta = {
+            "allowed": False,
+            "reason": "not_applicable",
+            "market": market_key,
+            "original_qty": int(qty or 0),
+            "price_krw": price,
+            "original_budget_krw": original_budget,
+            "effective_budget_krw": effective_budget,
+            "early_gate_applied": bool(early_gate_applied),
+            "can_buy_1_share": False,
+        }
+        if market_key != "US":
+            meta["reason"] = "market_not_enabled"
+            return meta
+        if int(qty or 0) > 0:
+            meta["reason"] = "qty_already_positive"
+            meta["can_buy_1_share"] = True
+            return meta
+        if not bool(early_gate_applied):
+            meta["reason"] = "early_gate_not_applied"
+            return meta
+        if price <= 0 or original_budget <= 0:
+            meta["reason"] = "invalid_basis"
+            return meta
+        if price > original_budget:
+            meta["reason"] = "HIGH_PRICE_BUDGET_BLOCK"
+            return meta
+        meta["can_buy_1_share"] = True
+        if available < price:
+            meta["reason"] = "market_budget_exceeded"
+            meta["can_buy_1_share"] = False
+            return meta
+        if cash < price:
+            meta["reason"] = "insufficient_cash"
+            meta["can_buy_1_share"] = False
+            return meta
+        meta.update(
+            {
+                "allowed": True,
+                "reason": "one_share_allowed_after_early_gate",
+                "adjusted_qty": 1,
+                "adjusted_order_cost_krw": price,
+                "oversize_ratio": price / max(effective_budget, 1.0),
+            }
+        )
+        return meta
+
+    def _one_share_affordability_price_krw(self, market: str, ticker: str, meta: dict) -> float:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+
+        def _num(value: Any) -> float:
+            try:
+                return float(str(value or "").replace(",", ""))
+            except Exception:
+                return 0.0
+
+        def _to_krw(raw: Any) -> float:
+            value = _num(raw)
+            if value <= 0:
+                return 0.0
+            if market_key == "KR":
+                return value
+            rate = float(getattr(self, "usd_krw_rate", 0.0) or os.getenv("USD_KRW_RATE", "0") or 0.0)
+            if rate > 0 and value < 10_000:
+                return value * rate
+            return value
+
+        price_targets = dict((meta or {}).get("price_targets") or {})
+        target = price_targets.get(key) or price_targets.get(str(ticker) or "") or {}
+        if isinstance(target, dict):
+            for field in ("reference_price", "current_price", "entry_price", "buy_zone_high", "buy_zone_low"):
+                price = _to_krw(target.get(field))
+                if price > 0:
+                    return price
+
+        features_by_ticker = dict((meta or {}).get("_post_open_features_by_ticker") or {})
+        features = features_by_ticker.get(key) or features_by_ticker.get(str(ticker) or "") or {}
+        if isinstance(features, dict):
+            for field in ("current_price", "price", "last_price"):
+                price = _to_krw(features.get(field))
+                if price > 0:
+                    return price
+
+        for action in list((meta or {}).get("candidate_actions") or []):
+            if not isinstance(action, dict):
+                continue
+            action_key = self._selection_ticker_key(market_key, action.get("ticker"))
+            if action_key != key:
+                continue
+            for field in ("current_price", "price", "reference_price"):
+                price = _to_krw(action.get(field))
+                if price > 0:
+                    return price
+        return 0.0
+
+    def _attach_one_share_affordability_meta(self, market: str, meta: dict) -> dict:
+        if not isinstance(meta, dict):
+            return meta
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            available = float(self._market_budget_available(market_key))
+        except Exception:
+            available = 0.0
+        cash = float(getattr(getattr(self, "risk", None), "cash", 0.0) or 0.0)
+        early_gate = self._us_early_entry_soft_gate(market_key) if market_key == "US" else {"active": False, "size_mult": 1.0}
+        size_mult = float((early_gate or {}).get("size_mult") or 1.0)
+        tickers = list(dict.fromkeys(
+            list((meta or {}).get("watchlist") or [])
+            + list((meta or {}).get("trade_ready") or [])
+            + [
+                route.get("ticker")
+                for route in list((meta or {}).get("_candidate_action_routes") or [])
+                if isinstance(route, dict)
+            ]
+        ))
+        affordability: dict[str, dict] = {}
+        for ticker in tickers:
+            key = self._selection_ticker_key(market_key, ticker)
+            if not key:
+                continue
+            price = self._one_share_affordability_price_krw(market_key, key, meta)
+            original_budget = 0.0
+            effective_budget = 0.0
+            if price > 0:
+                try:
+                    fixed = self._v2_fixed_size_entry(market_key, price)
+                    original_budget = float(getattr(fixed, "budget_krw", 0.0) or 0.0) if fixed is not None else 0.0
+                    effective_budget = original_budget * size_mult if bool((early_gate or {}).get("active")) else original_budget
+                except Exception:
+                    original_budget = 0.0
+                    effective_budget = 0.0
+            can_buy = bool(
+                price > 0
+                and (original_budget <= 0 or price <= original_budget)
+                and cash >= price
+                and available >= price
+            )
+            affordability[key] = {
+                "can_buy_1_share_now": can_buy,
+                "one_share_price_krw": float(price or 0.0),
+                "one_share_budget_basis_krw": float(original_budget or 0.0),
+                "one_share_effective_budget_krw": float(effective_budget or 0.0),
+                "one_share_cash_ok": bool(price > 0 and cash >= price),
+                "one_share_market_budget_ok": bool(price > 0 and available >= price),
+                "one_share_policy": "plan_a_us_pre_gate_budget" if market_key == "US" else "kr_existing_one_share_policy",
+                "early_gate_applied": bool((early_gate or {}).get("active")),
+            }
+        if affordability:
+            meta["_one_share_affordability"] = affordability
+            for route in list(meta.get("_candidate_action_routes") or []):
+                if not isinstance(route, dict):
+                    continue
+                key = self._selection_ticker_key(market_key, route.get("ticker"))
+                if key in affordability:
+                    route["can_buy_1_share_now"] = bool(affordability[key].get("can_buy_1_share_now"))
+                    route["one_share_affordability"] = dict(affordability[key])
+        return meta
 
     def _v2_daily_entry_count(self, market: str) -> int:
         return self.v2.daily_entry_count(market) if getattr(self, "v2", None) is not None else 0
@@ -7067,6 +7306,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         qty: int,
         order_cost_krw: float,
         min_order_krw: float,
+        sizing_context: Optional[dict] = None,
     ):
         if getattr(self, "v2", None) is None:
             return None
@@ -7077,6 +7317,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             qty=qty,
             order_cost_krw=order_cost_krw,
             min_order_krw=min_order_krw,
+            sizing_context=sizing_context,
         )
     def _v2_record_order_unknown(self, market: str, ticker: str, order: dict, detail: str) -> None:
         if getattr(self, "v2", None) is not None:
@@ -7444,6 +7685,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             meta,
             allow_missing_price_targets=allow_missing_price_targets,
         )
+        meta = self._attach_one_share_affordability_meta(market, meta)
         if self._runtime_bool("LIVE_EVIDENCE_PACK_SHADOW_ENABLED", True):
             meta = attach_live_evidence_summary(
                 market=market,
@@ -8182,6 +8424,63 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         score -= self._candidate_cohort_penalty(market_key, candidate)
         return round(float(score), 4)
 
+    def _outgoing_execution_block_state(self, market: str, ticker: str) -> dict:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        blocked_map = getattr(self, "_ticker_runtime_blocked_reasons", {}) or {}
+        blocked_counts = (blocked_map.get(market_key, {}) or {}).get(key, {})
+        execution_reason_keys = {
+            "INVALID_PRICE",
+            "INVALID_QTY",
+            "ORDER_SIZE_TOO_SMALL_GATE",
+            "HIGH_PRICE_BUDGET_BLOCK",
+            "MIN_ORDER_NOT_MET",
+            "INSUFFICIENT_CASH",
+            "affordability_fail",
+            "order_size_too_small",
+        }
+        execution_block_count = sum(
+            int((blocked_counts or {}).get(reason, 0) or 0)
+            for reason in execution_reason_keys
+        )
+        health: dict[str, Any] = {}
+        health_state = ""
+        degraded = False
+        stale = False
+        stale_cycle_info: dict[str, Any] = {}
+        try:
+            health = self._candidate_health_tracker(market_key).state_for(key)
+            health_state = str((health or {}).get("health_state") or "OBSERVE")
+            degraded = bool(
+                health_state in {"FAILED_READY", "WEAKENING_READY"}
+                or self._candidate_health_ready_degraded(health)
+            )
+            stale = bool(self._candidate_health_is_stale(market_key, health))
+            stale_cycle_info = self._candidate_stale_cycle_info(market_key, key, health)
+        except Exception:
+            pass
+        stale_cycle = bool(stale_cycle_info.get("stale_cycle"))
+        blocked = bool(execution_block_count >= 2 or degraded or stale or stale_cycle)
+        reasons: list[str] = []
+        if execution_block_count >= 2:
+            reasons.append("repeated_execution_block")
+        if degraded:
+            reasons.append("degraded")
+        if stale or stale_cycle:
+            reasons.append("stale")
+        return {
+            "blocked": blocked,
+            "ticker": key,
+            "execution_block_count": int(execution_block_count),
+            "blocked_counts": dict(blocked_counts or {}),
+            "health_state": health_state,
+            "degraded": bool(degraded),
+            "stale": bool(stale),
+            "stale_cycle": bool(stale_cycle),
+            "stale_cycle_count": int(stale_cycle_info.get("stale_cycle_count") or 0),
+            "reasons": reasons,
+        }
+
     def _candidate_replacement_delta_ok(
         self,
         market: str,
@@ -8208,7 +8507,27 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             f"{market_key}_TRAINER_REPLACEMENT_DELTA",
             self._runtime_float("TRAINER_REPLACEMENT_DELTA", default_delta),
         )
-        ok = True if not gate_enabled else bool(in_score >= min_score and in_score >= out_score + delta)
+        effective_min_score = float(min_score)
+        effective_delta = float(delta)
+        block_state = self._outgoing_execution_block_state(market_key, outgoing)
+        if bool(block_state.get("blocked")):
+            execution_min_default = max(0.0, float(min_score) - (0.5 if market_key == "KR" else 0.25))
+            execution_delta_default = max(0.0, float(delta) * 0.5)
+            effective_min_score = min(
+                float(min_score),
+                self._runtime_float(
+                    f"{market_key}_TRAINER_REPLACEMENT_EXEC_BLOCK_MIN_SCORE",
+                    self._runtime_float("TRAINER_REPLACEMENT_EXEC_BLOCK_MIN_SCORE", execution_min_default),
+                ),
+            )
+            effective_delta = min(
+                float(delta),
+                self._runtime_float(
+                    f"{market_key}_TRAINER_REPLACEMENT_EXEC_BLOCK_DELTA",
+                    self._runtime_float("TRAINER_REPLACEMENT_EXEC_BLOCK_DELTA", execution_delta_default),
+                ),
+            )
+        ok = True if not gate_enabled else bool(in_score >= effective_min_score and in_score >= out_score + effective_delta)
         return ok, {
             "outgoing": outgoing,
             "incoming": incoming,
@@ -8216,6 +8535,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "incoming_score": in_score,
             "min_score": min_score,
             "delta": delta,
+            "effective_min_score": effective_min_score,
+            "effective_delta": effective_delta,
+            "execution_blocked_exception": bool(block_state.get("blocked")),
+            "outgoing_block_reason": ",".join(block_state.get("reasons") or []),
+            "outgoing_block_state": block_state,
             "enabled": gate_enabled,
             "passed": ok,
         }
@@ -8656,18 +8980,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._claude_runtime_overrides = raw_map
         market_key = "US" if str(market).upper() == "US" else "KR"
         raw = dict(raw_map.get(market_key, {}) or {})
-        normalized = {}
-        for key, (low, high) in _CLAUDE_RUNTIME_OVERRIDE_BOUNDS.items():
-            try:
-                value = float(raw.get(key, 0) or 0)
-            except (TypeError, ValueError):
-                value = 0.0
-            value = max(low, min(high, value))
-            if key == "momentum_wait_adjust_min":
-                normalized[key] = int(round(value))
-            else:
-                normalized[key] = round(value, 4)
-        return normalized
+        return coerce_runtime_adjustments(raw, preserve_extra=False)
     def _reset_runtime_reason_counters(self, market: str) -> None:
         market_key = "US" if str(market).upper() == "US" else "KR"
         self._ticker_runtime_blocked_reasons[market_key] = {}
@@ -8772,6 +9085,143 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             f"budget_krw={budget:,.0f} "
             f"shortfall_krw={shortfall:,.0f}"
         )
+
+    @staticmethod
+    def _kr_sector_play_confirmation_detail(state: dict) -> str:
+        confirmation = dict(state or {})
+        checks = dict(confirmation.get("confirmation_checks") or {})
+        return (
+            "sector_play_gate: "
+            f"data_quality={confirmation.get('data_quality', 'missing')} "
+            f"feature_present={bool(confirmation.get('feature_present'))} "
+            f"volume_ok={bool(checks.get('volume_ok'))} "
+            f"opening_range_break={bool(checks.get('opening_range_break'))} "
+            f"vwap_reclaim={bool(checks.get('vwap_reclaim'))} "
+            f"momentum_ok={bool(checks.get('momentum_ok'))} "
+            f"relative_ok={bool(checks.get('relative_ok'))}"
+        )
+
+    def _kr_sector_play_confirmation_gate(self, ticker: str, price_krw: float, play: Optional[dict] = None) -> dict:
+        key = self._selection_ticker_key("KR", ticker)
+        enabled = self._runtime_bool("KR_SECTOR_PLAY_CONFIRMATION_GATE_ENABLED", True)
+        state: dict[str, Any] = {
+            "enabled": bool(enabled),
+            "allowed": True,
+            "reason": "kr_sector_play_confirmation_disabled" if not enabled else "kr_sector_play_confirmed",
+            "ticker": key,
+            "price_krw": float(price_krw or 0.0),
+        }
+        if not enabled:
+            return state
+
+        def _num(value: Any) -> Optional[float]:
+            try:
+                if value in (None, ""):
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        def _positive(value: Any) -> Optional[float]:
+            parsed = _num(value)
+            return parsed if parsed is not None and parsed > 0 else None
+
+        def _truthy(value: Any) -> bool:
+            if isinstance(value, bool):
+                return value
+            return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+        market_features = (getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get("KR") or {}
+        raw_features = (
+            market_features.get(key)
+            or market_features.get(str(ticker or "").strip())
+            or market_features.get(self._post_open_key("KR", key))
+        )
+        features = dict(raw_features) if isinstance(raw_features, dict) else {}
+        data_quality = str(features.get("data_quality") or "").strip().lower()
+        state.update(
+            {
+                "data_quality": data_quality or "missing",
+                "feature_present": bool(features),
+            }
+        )
+        if not features or data_quality != "minute_complete":
+            state.update({"allowed": False, "reason": "kr_sector_play_intraday_unconfirmed"})
+            return state
+
+        current = _positive(features.get("current_price")) or _positive(price_krw)
+        opening_range_high = _positive(features.get("opening_range_high") or features.get("or_high"))
+        opening_range_break = _truthy(features.get("opening_range_break"))
+        if not opening_range_break and current is not None and opening_range_high is not None:
+            opening_range_break = current >= opening_range_high
+        vwap = _positive(features.get("vwap") or features.get("vwap_proxy"))
+        vwap_distance = _num(features.get("vwap_distance_pct"))
+        vwap_reclaim = _truthy(features.get("vwap_reclaim"))
+        if not vwap_reclaim and vwap_distance is not None:
+            vwap_reclaim = vwap_distance >= 0
+        if not vwap_reclaim and current is not None and vwap is not None:
+            vwap_reclaim = current >= vwap
+        volume_ratio = _num(features.get("volume_ratio_open") or features.get("volume_ratio") or features.get("rvol"))
+        min_volume_ratio = self._runtime_float("KR_SECTOR_PLAY_MIN_VOLUME_RATIO_OPEN", 1.0)
+        volume_ok = volume_ratio is not None and volume_ratio >= min_volume_ratio
+        returns = [
+            value
+            for value in (
+                _num(features.get("ret_3m_pct")),
+                _num(features.get("ret_5m_pct")),
+                _num(features.get("ret_10m_pct")),
+                _num(features.get("ret_30m_pct")),
+                _num(features.get("day_change_pct")),
+                _num(features.get("change_pct")),
+            )
+            if value is not None
+        ]
+        momentum_ok = bool(returns and max(returns) > 0)
+        momentum_state = str(features.get("momentum_state") or "").strip().lower()
+        relative_strength = _num(
+            features.get("sector_relative_strength_pct")
+            or features.get("etf_relative_strength_pct")
+            or features.get("relative_strength_pct")
+        )
+        min_relative_strength = self._runtime_float("KR_SECTOR_PLAY_MIN_RELATIVE_STRENGTH_PCT", 0.0)
+        relative_ok = relative_strength is None or relative_strength >= min_relative_strength
+        checks = {
+            "minute_complete": data_quality == "minute_complete",
+            "momentum_state": momentum_state or "unknown",
+            "momentum_ok": momentum_ok,
+            "opening_range_break": bool(opening_range_break),
+            "vwap_reclaim": bool(vwap_reclaim),
+            "volume_ratio_open": volume_ratio,
+            "min_volume_ratio_open": min_volume_ratio,
+            "volume_ok": bool(volume_ok),
+            "relative_strength_pct": relative_strength,
+            "min_relative_strength_pct": min_relative_strength,
+            "relative_ok": bool(relative_ok),
+        }
+        state.update(
+            {
+                "confirmation_checks": checks,
+                "current_price": current,
+                "opening_range_high": opening_range_high,
+                "vwap": vwap,
+                "vwap_distance_pct": vwap_distance,
+                "ret_max_pct": max(returns) if returns else None,
+                "etf": (play or {}).get("etf", ""),
+                "etf_chg": (play or {}).get("etf_chg", ""),
+            }
+        )
+        if momentum_state in {"fade", "fading", "weak", "weakening", "downtrend", "selloff"}:
+            state.update({"allowed": False, "reason": "kr_sector_play_intraday_weak"})
+        elif not volume_ok:
+            state.update({"allowed": False, "reason": "kr_sector_play_volume_unconfirmed"})
+        elif not (opening_range_break or vwap_reclaim):
+            state.update({"allowed": False, "reason": "kr_sector_play_price_confirmation_missing"})
+        elif not momentum_ok:
+            state.update({"allowed": False, "reason": "kr_sector_play_individual_momentum_missing"})
+        elif not relative_ok:
+            state.update({"allowed": False, "reason": "kr_sector_play_individual_relative_weak"})
+        return state
+
     def _one_share_over_budget_adjustment(
         self,
         *,
@@ -9502,6 +9952,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         score += float(blocked_counts.get("momentum_atr_too_high", 0)) * 2.5
         score += float(blocked_counts.get("affordability_fail", 0)) * 1.0
         score += float(blocked_counts.get("order_size_too_small", 0)) * 1.5
+        score += float(blocked_counts.get("ORDER_SIZE_TOO_SMALL_GATE", 0)) * 1.5
+        score += float(blocked_counts.get("HIGH_PRICE_BUDGET_BLOCK", 0)) * 1.5
+        score += float(blocked_counts.get("INVALID_QTY", 0)) * 1.5
+        score += float(blocked_counts.get("INVALID_PRICE", 0)) * 1.0
         score += float(blocked_counts.get("entry_blackout", 0)) * 1.5
         score += float(blocked_counts.get("blocked_by_mode", 0)) * 2.0
         score += float(blocked_counts.get("same_day_reentry_blocked", 0)) * 1.0
@@ -9562,17 +10016,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 raw_market = dict(raw_blob.get(market_key) or {})
             elif any(key in raw_blob for key in _CLAUDE_RUNTIME_OVERRIDE_BOUNDS):
                 raw_market = dict(raw_blob)
-        normalized = {}
-        for key, (low, high) in _CLAUDE_RUNTIME_OVERRIDE_BOUNDS.items():
-            try:
-                value = float(raw_market.get(key, 0) or 0)
-            except (TypeError, ValueError):
-                value = 0.0
-            value = max(low, min(high, value))
-            if key == "momentum_wait_adjust_min":
-                normalized[key] = int(round(value))
-            else:
-                normalized[key] = round(value, 4)
+        normalized = coerce_runtime_adjustments(raw_market, preserve_extra=False)
         self._claude_runtime_overrides[market_key] = normalized
         if isinstance(getattr(self, "today_judgment", None), dict) and self.today_judgment.get("market") == market_key:
             self.today_judgment.setdefault("claude_runtime_overrides", {})
@@ -9683,19 +10127,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _apply_runtime_tuning_adjustments(self, market: str, result: dict) -> dict:
         market_key = "US" if str(market).upper() == "US" else "KR"
         current = self._runtime_overrides(market_key)
-        updated = {}
+        updated = coerce_runtime_adjustments(result or {}, preserve_extra=False)
         changed = {}
-        for key, (low, high) in _CLAUDE_RUNTIME_OVERRIDE_BOUNDS.items():
-            try:
-                value = float((result or {}).get(key, 0) or 0)
-            except (TypeError, ValueError):
-                value = 0.0
-            value = max(low, min(high, value))
-            if key == "momentum_wait_adjust_min":
-                value = int(round(value))
-            else:
-                value = round(value, 4)
-            updated[key] = value
+        for key in _CLAUDE_RUNTIME_OVERRIDE_BOUNDS:
+            value = updated.get(key)
             if current.get(key) != value:
                 changed[key] = value
         self._claude_runtime_overrides[market_key] = updated
@@ -9867,6 +10302,43 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if new_rank > old_rank:
             return True
         return False
+    def _maybe_update_or_cache_from_post_open_feature(self, market: str, ticker: str, features: dict) -> bool:
+        if not isinstance(features, dict) or not features:
+            return False
+        if str(features.get("data_quality") or "").strip().lower() != "minute_complete":
+            return False
+
+        def _positive(value: Any) -> Optional[float]:
+            try:
+                if value in (None, ""):
+                    return None
+                parsed = float(value)
+            except Exception:
+                return None
+            return parsed if parsed > 0 else None
+
+        high = _positive(features.get("opening_range_high") or features.get("or_high"))
+        low = _positive(features.get("opening_range_low") or features.get("or_low"))
+        if high is None or low is None or high <= low:
+            return False
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        if not key:
+            return False
+        if not isinstance(getattr(self, "_or_high", None), dict):
+            self._or_high = {}
+        if not isinstance(getattr(self, "_or_low", None), dict):
+            self._or_low = {}
+        if not isinstance(getattr(self, "_or_formed", None), dict):
+            self._or_formed = {}
+        existing_high = _positive(self._or_high.get(key))
+        existing_low = _positive(self._or_low.get(key))
+        if bool(self._or_formed.get(key)) and existing_high is not None and existing_low is not None:
+            return False
+        self._or_high[key] = float(high)
+        self._or_low[key] = float(low)
+        self._or_formed[key] = True
+        return True
     def _merge_last_post_open_features(self, market: str, incoming: dict[str, dict]) -> dict[str, dict]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         store = getattr(self, "_last_post_open_features_by_ticker", None)
@@ -9880,6 +10352,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             existing = current.get(key) or current.get(raw_key) or {}
             if self._post_open_feature_should_replace(existing, raw_features):
                 current[key] = dict(raw_features)
+                self._maybe_update_or_cache_from_post_open_feature(market_key, key, raw_features)
         store[market_key] = current
         self._last_post_open_features_by_ticker = store
         return current
@@ -11156,8 +11629,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return entry, current
         entry = self._float_or_zero(pos.get("entry") or pos.get("avg_price") or pos.get("display_avg_price"))
         current = self._float_or_zero(
-            pos.get("current_price")
-            or pos.get("display_current_price")
+            pos.get("display_current_price")
+            or pos.get("current_price")
             or self.price_cache_raw.get(pos.get("ticker", ""))
             or entry
         )
@@ -12057,9 +12530,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "runtime_filtered": runtime_filtered,
             "price_target_coverage": coverage,
             "candidate_action_routes": list((meta or {}).get("_candidate_action_routes") or []),
+            "one_share_affordability": dict((meta or {}).get("_one_share_affordability") or {}),
             "pathb_wait_tickers": list((meta or {}).get("_pathb_wait_tickers") or []),
             "partial_reselect": dict((meta or {}).get("_partial_reselect_replacement") or {}),
             "live_evidence": live_evidence_summary,
+            "selection_trace_id": (meta or {}).get("selection_trace_id", ""),
+            "visibility_contract_version": (meta or {}).get("visibility_contract_version", ""),
             "selection_stages": stages,
         }
         self._write_funnel_event("candidate_funnel_snapshot", market, payload)
@@ -12361,6 +12837,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             session_date = date.today().isoformat()
         call_id = self._candidate_audit_call_id(market_key, meta)
         known_at = str((meta or {}).get("selection_snapshot_ts") or datetime.now(KST).isoformat(timespec="seconds"))
+        selection_trace_id = str((meta or {}).get("selection_trace_id") or f"{market_key}:{known_at}").strip()
+        visibility_contract_version = str((meta or {}).get("visibility_contract_version") or "actual_prompt_v1").strip()
         consensus_mode = str(
             (meta or {}).get("consensus_mode")
             or ((getattr(self, "today_judgment", {}) or {}).get("consensus", {}) or {}).get("mode")
@@ -12502,6 +12980,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             for idx, row in enumerate(prompt_rows, start=1)
             if self._selection_ticker_key(market_key, row.get("ticker"))
         ]
+        actual_prompt_rank_by_ticker = {
+            str(item.get("ticker") or ""): int(item.get("rank") or 0)
+            for item in actual_prompt_ranked_tickers
+            if str(item.get("ticker") or "").strip()
+        }
         excluded_prompt_tickers = []
         for item in excluded_rows:
             if not isinstance(item, dict):
@@ -12700,6 +13183,40 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "trainer_tier": row.get("trainer_tier"),
             }
 
+        def _raw_score_components(row: dict) -> dict:
+            components = row.get("raw_score_components") or row.get("score_current_components")
+            if isinstance(components, dict):
+                return dict(components)
+            result: dict[str, Any] = {}
+            for key in (
+                "score_current",
+                "score_vol_ratio_capped",
+                "score_vol_ratio_log",
+                "score_turnover_weighted",
+            ):
+                value = row.get(key)
+                if value not in (None, ""):
+                    result[key] = value
+            return result
+
+        def _actual_prompt_audit_fields(
+            ticker_key: str,
+            row: dict,
+            *,
+            included: bool,
+        ) -> dict:
+            actual_rank = actual_prompt_rank_by_ticker.get(ticker_key)
+            return {
+                "selection_trace_id": selection_trace_id,
+                "visibility_contract_version": visibility_contract_version,
+                "actual_prompt_call_id": call_id,
+                "actual_prompt_included": bool(included),
+                "actual_prompt_rank": actual_rank if included else None,
+                "reported_input_to_claude": bool(included),
+                "raw_score_current": row.get("raw_score_current", row.get("score_current")),
+                "raw_score_components_json": _raw_score_components(row),
+            }
+
         def _v2_decision_audit_fields(ticker_key: str) -> dict:
             decision_id = str(v2_decision_id_map.get(ticker_key) or "").strip()
             if not decision_id:
@@ -12751,6 +13268,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "candidate_actions_source": (meta or {}).get("_candidate_actions_source", ""),
                         "selection_stages": stages,
                         "audit_source": "live_write",
+                        "visibility_contract_version": visibility_contract_version,
+                        "selection_trace_id": selection_trace_id,
                         "actual_prompt_tickers": actual_prompt_tickers,
                         "actual_prompt_ranked_tickers": actual_prompt_ranked_tickers,
                         "excluded_prompt_tickers": excluded_prompt_tickers,
@@ -12802,6 +13321,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 action = action_by_ticker.get(key, {})
                 route = route_by_ticker.get(key, {})
                 prompt_row = prompt_by_ticker.get(key, {})
+                actual_prompt_included = key in prompt_ticker_keys
                 runtime_gate = dict(route.get("runtime_gate") or {})
                 soft_validation = dict(runtime_gate.get("soft_gate_override_validation") or {})
                 risk_tags = risk_tag_map.get(key, [])
@@ -12820,9 +13340,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "feature_flags_json": audit_feature_flags,
                         "source_file": "trading_bot.selection_meta",
                         "prompt_rank": prompt_row.get("prompt_rank") or rank,
-                        "in_prompt": True,
+                        "in_prompt": actual_prompt_included,
                         "screener_seen": True,
-                        "input_to_claude_reported": key in prompt_ticker_keys,
+                        "input_to_claude_reported": actual_prompt_included,
                         "name": _candidate_row_value(prompt_row, "name", default=""),
                         "price": _candidate_row_value(prompt_row, "price", "current_price"),
                         "change_pct": _candidate_row_value(prompt_row, "change_pct", "change_rate"),
@@ -12871,8 +13391,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "soft_gates": list(runtime_gate.get("soft_gates") or []),
                         "tuning_rule_version": str(tuning_feedback.get("rule_version") or ""),
                         "tuning_feedback_applied": bool((meta or {}).get("tuning_feedback_applied", False)),
+                        **_actual_prompt_audit_fields(key, prompt_row, included=actual_prompt_included),
                         **_v2_decision_audit_fields(key),
-                        **_trainer_audit_fields(prompt_row, included=True),
+                        **_trainer_audit_fields(prompt_row, included=actual_prompt_included),
                         **self._strength_capture_shadow_fields(
                             prompt_row,
                             market=market_key,
@@ -12887,6 +13408,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "evidence_tickers": list((meta or {}).get("evidence_tickers") or []),
                             "tuning_feedback": tuning_feedback,
                             "selection_stage": "live_selection_meta",
+                            "visibility_contract_version": visibility_contract_version,
+                            "selection_trace_id": selection_trace_id,
+                            "actual_prompt_call_id": call_id,
+                            "actual_prompt_included": actual_prompt_included,
+                            "actual_prompt_rank": actual_prompt_rank_by_ticker.get(key),
                             "overlay_mode": overlay_mode,
                             "prompt_overlay_added": bool(prompt_row.get("prompt_overlay_added")),
                             "overlay_plan_b_used": overlay_plan_b_used,
@@ -12927,6 +13453,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "primary_bucket": _candidate_row_value(row, "primary_bucket", default=""),
                         "secondary_buckets": list(row.get("secondary_buckets") or []),
                         "classification": "in_prompt_not_selected",
+                        **_actual_prompt_audit_fields(key, row, included=True),
                         **_v2_decision_audit_fields(key),
                         **_trainer_audit_fields(row, included=True),
                         **self._strength_capture_shadow_fields(
@@ -12938,6 +13465,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "payload": {
                             "selection_stage": "trainer_prompt_pool",
                             "prompt_pool_audit": True,
+                            "visibility_contract_version": visibility_contract_version,
+                            "selection_trace_id": selection_trace_id,
+                            "actual_prompt_call_id": call_id,
+                            "actual_prompt_included": True,
+                            "actual_prompt_rank": actual_prompt_rank_by_ticker.get(key),
                             "overlay_mode": overlay_mode,
                             "prompt_overlay_added": bool(row.get("prompt_overlay_added")),
                             "overlay_plan_b_used": overlay_plan_b_used,
@@ -12987,6 +13519,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "primary_bucket": _candidate_row_value(row, "primary_bucket", default=""),
                         "secondary_buckets": list(row.get("secondary_buckets") or []),
                         "classification": "not_in_prompt",
+                        **_actual_prompt_audit_fields(key, row, included=False),
                         **_v2_decision_audit_fields(key),
                         **_trainer_audit_fields(row, included=False, excluded_reason=excluded_reason),
                         **self._strength_capture_shadow_fields(
@@ -12999,6 +13532,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "selection_stage": "trainer_prompt_pool_excluded",
                             "prompt_pool_audit": True,
                             "excluded_reason": excluded_reason,
+                            "visibility_contract_version": visibility_contract_version,
+                            "selection_trace_id": selection_trace_id,
+                            "actual_prompt_call_id": call_id,
+                            "actual_prompt_included": False,
+                            "actual_prompt_rank": None,
                             "overlay_mode": overlay_mode,
                             "overlay_removed": key in overlay_removed_tickers or key in shadow_overlay_removed_tickers,
                             "overlay_plan_b_used": overlay_plan_b_used,
@@ -13192,7 +13730,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         import json as _json
         from runtime_paths import get_runtime_path as _grp
         _funnel = self._funnel.get(market, {})
-        if not any(_funnel.get(k, 0) for k in ("selected", "signaled", "ordered")):
+        if not any(_funnel.get(k, 0) for k in ("selected", "signaled", "ordered", "filled")):
             return  # 아무 활동 없으면 저장 생략
         today = self._current_session_date_str(market)
         log_dir = _grp("logs", "funnel", make_parents=True)
@@ -14003,9 +14541,147 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             lines.append(f"\n⚠️ {fail_count}개 API 연결 실패 — 확인 필요")
         system_alert(f"봇 시작 [{mode_label}] — API 점검 결과", lines[1:], icon="🤖")
     # ── 시장별 예산 조회 ────────────────────────────────────────────────────
+    def _order_reserved_cost_krw(self, order: dict, market: str) -> float:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+
+        def _num(value) -> float:
+            try:
+                return max(0.0, float(value or 0.0))
+            except Exception:
+                return 0.0
+
+        qty = int(_num(order.get("remaining_qty") if order.get("remaining_qty") is not None else order.get("qty")))
+        if qty <= 0:
+            return 0.0
+        price_krw = _num(
+            order.get("risk_price_krw")
+            or order.get("price_krw")
+            or order.get("limit_price_krw")
+            or order.get("order_price_krw")
+        )
+        if price_krw <= 0:
+            raw_price = _num(
+                order.get("raw_price")
+                or order.get("order_price")
+                or order.get("limit_price")
+                or order.get("price")
+                or order.get("fill_price")
+                or order.get("avg_price")
+            )
+            if raw_price > 0:
+                try:
+                    price_krw = _num(self._price_to_krw(raw_price, market_key))
+                except Exception:
+                    price_krw = raw_price if market_key == "KR" else 0.0
+        if price_krw <= 0:
+            ticker = str(order.get("ticker") or "").strip()
+            cached = _num(
+                getattr(self, "price_cache", {}).get(ticker)
+                or getattr(self, "price_cache_raw", {}).get(ticker)
+                or getattr(self, "price_cache_raw", {}).get(ticker.upper())
+            )
+            if cached > 0:
+                try:
+                    price_krw = _num(self._price_to_krw(cached, market_key))
+                except Exception:
+                    price_krw = cached if market_key == "KR" else 0.0
+        cost = qty * price_krw if price_krw > 0 else 0.0
+        if cost <= 0:
+            cost = _num(
+                order.get("reserved_cost_krw")
+                or order.get("remaining_order_cost_krw")
+                or order.get("adjusted_order_cost_krw")
+                or order.get("original_order_cost_krw")
+                or order.get("order_cost_krw")
+            )
+        return max(0.0, cost)
+
+    def _broker_truth_open_buy_orders(self, market: str) -> list[dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            market_data = self._broker_truth_market_snapshot(market_key, force=False, ttl_sec=60)
+        except Exception:
+            return []
+        if not market_data or bool(market_data.get("missing")) or bool(market_data.get("stale")):
+            return []
+        if str(market_data.get("error", "") or "").strip():
+            return []
+        return [dict(row) for row in list(market_data.get("open_orders", []) or [])]
+
+    def _broker_orderable_cash_krw(self, market: str) -> float:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+
+        def _num(value) -> float:
+            try:
+                return max(0.0, float(value or 0.0))
+            except Exception:
+                return 0.0
+
+        values: list[float] = []
+        state = dict(getattr(self, "_broker_state", {}).get(market_key, {}) or {})
+        for snap_key in ("last_trusted_snapshot", "last_snapshot"):
+            snap = dict(state.get(snap_key) or {})
+            value = _num(snap.get("orderable_cash_krw"))
+            if value <= 0 and market_key == "KR":
+                value = _num(snap.get("cash_krw"))
+            if value <= 0 and market_key == "US":
+                usd = _num(snap.get("orderable_cash_usd"))
+                rate = _num(snap.get("kis_exchange_rate") or getattr(self, "usd_krw_rate", 0))
+                value = usd * rate if usd > 0 and rate > 0 else 0.0
+            if value > 0:
+                values.append(value)
+        try:
+            market_data = self._broker_truth_market_snapshot(market_key, force=False, ttl_sec=60)
+        except Exception:
+            market_data = {}
+        if market_data and not bool(market_data.get("missing")) and not bool(market_data.get("stale")):
+            if not str(market_data.get("error", "") or "").strip():
+                summary = dict(market_data.get("account_summary") or {})
+                if market_key == "US":
+                    usd = _num(summary.get("orderable_cash") or summary.get("cash"))
+                    rate = _num(summary.get("kis_exchange_rate") or getattr(self, "usd_krw_rate", 0))
+                    value = _num(summary.get("orderable_cash_krw")) or (usd * rate if usd > 0 and rate > 0 else 0.0)
+                else:
+                    value = _num(summary.get("orderable_cash") or summary.get("cash"))
+                if value > 0:
+                    values.append(value)
+        return min(values) if values else 0.0
+
+    def _pending_order_reserved_cost_krw(self, market: str) -> float:
+        """Return cash reserved by local and broker-truth open buy orders."""
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+
+        reserved = 0.0
+        seen_order_nos: set[str] = set()
+        for order in list(getattr(self, "pending_orders", []) or []):
+            order_market = str(order.get("market", "KR") or "KR").strip().upper()
+            if order_market != market_key:
+                continue
+            side = str(order.get("side") or order.get("order_side") or "").strip().lower()
+            if side in {"sell", "s", "ask", "매도"} or "sell" in side:
+                continue
+            order_no = str(order.get("order_no") or order.get("execution_id") or "").strip()
+            if order_no:
+                seen_order_nos.add(order_no)
+            reserved += self._order_reserved_cost_krw(order, market_key)
+        for order in self._broker_truth_open_buy_orders(market_key):
+            side = str(order.get("side") or order.get("order_side") or "").strip().lower()
+            if side in {"sell", "s", "ask", "매도"} or "sell" in side:
+                continue
+            order_no = str(order.get("order_no") or order.get("execution_id") or "").strip()
+            if order_no and order_no in seen_order_nos:
+                continue
+            reserved += self._order_reserved_cost_krw(order, market_key)
+        return max(0.0, reserved)
+
     def _market_budget_available(self, market: str) -> float:
-        """Return available shared cash budget for the market."""
-        return max(0.0, self.risk.cash)
+        """Return available shared cash budget after open buy-order reservations."""
+        cash = max(0.0, float(getattr(getattr(self, "risk", None), "cash", 0.0) or 0.0))
+        broker_orderable = self._broker_orderable_cash_krw(market)
+        if broker_orderable > 0:
+            cash = min(cash, broker_orderable)
+        reserved = self._pending_order_reserved_cost_krw(market)
+        return max(0.0, cash - reserved)
     def is_claude_reinvoke_enabled(self) -> bool:
         self._refresh_claude_control()
         return bool(self.claude_control.get("enabled", True))
@@ -14522,13 +15198,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if order_no in local_by_order_no:
                 continue
             ticker = str(row.get("ticker", "") or "").strip()
+            remaining_qty = int(row.get("remaining_qty", 0) or 0)
+            order_qty = int(row.get("order_qty", row.get("qty", 0)) or 0)
+            payload_qty = order_qty if order_qty > 0 else remaining_qty
             payload = {
                 "market": market_key,
                 "ticker": ticker,
                 "order_no": order_no,
                 "side": row.get("side", ""),
-                "qty": int(row.get("order_qty", row.get("qty", 0)) or 0),
-                "remaining_qty": int(row.get("remaining_qty", 0) or 0),
+                "qty": payload_qty,
+                "remaining_qty": remaining_qty,
                 "reason": reason,
             }
             summary["broker_only_open_orders"].append(payload)
@@ -15108,11 +15787,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "fetched_at": datetime.now(KST).isoformat(timespec="seconds"),
             }
         cash_krw = float(balance.get("cash", 0) or 0)
+        orderable_krw = float(balance.get("orderable_cash", cash_krw) or cash_krw)
         eval_krw = float(balance.get("total_eval", 0) or 0)
         profit_krw = float(balance.get("total_profit", 0) or 0)
         return {
             "market": market,
             "cash_krw": cash_krw,
+            "orderable_cash_krw": orderable_krw,
             "eval_krw": eval_krw,
             "total_krw": cash_krw + eval_krw,
             "profit_krw": profit_krw,
@@ -16735,7 +17416,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if fallback > 0 and self.usd_krw_rate > 0 and fallback > 1000:
                 return fallback / float(self.usd_krw_rate)
             return fallback
-        return self._float_or_zero(pos.get("current_price" if current else "entry"))
+        if current:
+            return self._float_or_zero(pos.get("display_current_price") or pos.get("current_price"))
+        return self._float_or_zero(pos.get("display_avg_price") or pos.get("entry"))
 
     def _apply_pathb_hold_advice_bridge(self, pos: dict, market: str, advice: dict) -> dict:
         if not isinstance(pos, dict) or not isinstance(advice, dict):
@@ -16796,7 +17479,102 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if cached > 0:
             price_pos["current_price"] = cached
             price_pos["display_current_price"] = cached
+        else:
+            display_current = self._float_or_zero(price_pos.get("display_current_price"))
+            if display_current > 0:
+                price_pos["current_price"] = display_current
         return price_pos
+
+    def _refresh_position_prices_from_broker(
+        self,
+        market: str,
+        positions: Optional[list[dict]] = None,
+        *,
+        reason: str = "",
+    ) -> dict:
+        """Refresh held-position current prices from broker balance before advisory reviews."""
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        targets = []
+        for pos in list(positions if positions is not None else getattr(getattr(self, "risk", None), "positions", []) or []):
+            ticker = str((pos or {}).get("ticker", "") or "").strip()
+            if ticker and self._ticker_market(ticker) == market_key:
+                targets.append(ticker.upper() if market_key == "US" else ticker)
+        targets = sorted(set(targets))
+        summary = {"market": market_key, "reason": str(reason or ""), "requested": targets, "updated": [], "missing": [], "error": ""}
+        if not targets:
+            return summary
+        try:
+            try:
+                balance = get_balance(self._token_for_market(market_key), market=market_key, force_refresh=True)
+            except TypeError:
+                balance = get_balance(self._token_for_market(market_key), market=market_key)
+            broker_positions = self._normalize_broker_balance(balance, market_key)
+            self._set_broker_state(
+                market_key,
+                trust_level="trusted",
+                snapshot=self._broker_snapshot_from_balance(market_key, balance),
+            )
+        except Exception as exc:
+            summary["error"] = str(exc)[:240]
+            log.warning(f"[position price refresh] {market_key} broker balance failed: {exc}")
+            return summary
+
+        if not hasattr(self, "price_cache_raw") or not isinstance(self.price_cache_raw, dict):
+            self.price_cache_raw = {}
+        if not hasattr(self, "price_cache") or not isinstance(self.price_cache, dict):
+            self.price_cache = {}
+
+        for pos in list(getattr(getattr(self, "risk", None), "positions", []) or []):
+            ticker = str((pos or {}).get("ticker", "") or "").strip()
+            if not ticker or self._ticker_market(ticker) != market_key:
+                continue
+            key = ticker.upper() if market_key == "US" else ticker
+            if key not in targets:
+                continue
+            broker_pos = broker_positions.get(key)
+            if not broker_pos:
+                summary["missing"].append(ticker)
+                continue
+            native_eval = self._float_or_zero(
+                broker_pos.get("eval_price")
+                or broker_pos.get("current_price")
+                or broker_pos.get("now_pric2")
+                or broker_pos.get("prpr")
+            )
+            if native_eval <= 0:
+                summary["missing"].append(ticker)
+                continue
+            if market_key == "US":
+                fx = self._float_or_zero(getattr(self, "usd_krw_rate", 0) or (balance or {}).get("kis_exchange_rate"))
+                pos["display_current_price"] = native_eval
+                if fx > 0:
+                    pos["current_price"] = native_eval * fx
+                self.price_cache_raw[ticker] = native_eval
+                self.price_cache_raw[key] = native_eval
+                try:
+                    self.price_cache[ticker] = self._price_to_krw(native_eval, market_key)
+                    self.price_cache[key] = self.price_cache[ticker]
+                except Exception:
+                    if fx > 0:
+                        self.price_cache[ticker] = native_eval * fx
+                        self.price_cache[key] = native_eval * fx
+            else:
+                pos["current_price"] = native_eval
+                pos["display_current_price"] = native_eval
+                self.price_cache[ticker] = native_eval
+                self.price_cache_raw[ticker] = native_eval
+            pos["display_currency"] = "USD" if market_key == "US" else "KRW"
+            pos["current_price_source"] = "broker_balance"
+            pos.setdefault("price_source", "broker_balance")
+            summary["updated"].append(ticker)
+        try:
+            if summary["updated"]:
+                self.risk.update_prices(self.price_cache, self.price_cache_raw)
+        except Exception as exc:
+            log.debug(f"[position price refresh] risk.update_prices failed: {exc}")
+        if summary["updated"]:
+            log.info(f"[position price refresh] {market_key} updated={summary['updated']} reason={reason}")
+        return summary
     def _soft_exit_reference_for_position(self, pos: dict) -> dict:
         target = self._float_or_zero(pos.get("pathb_reference_target"))
         if target > 0:
@@ -17404,6 +18182,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
         session_date = self._current_session_date_str(market)
         targets: list[str] = []
+        changed = False
         for pos in list(self.risk.positions):
             if self._ticker_market(pos.get("ticker", "")) != market:
                 continue
@@ -17414,12 +18193,34 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 pos.get("pending_next_open_sell_recheck_session") == session_date
                 and status in {"reviewed", "hold_confirmed", "trail_confirmed", "sell_confirmed"}
             ):
+                if status in {"reviewed", "hold_confirmed", "trail_confirmed"}:
+                    pos["pending_next_open_sell"] = False
+                    pos["pending_next_open_reason"] = ""
+                    changed = True
                 continue
             ticker = str(pos.get("ticker", "") or "")
             if ticker:
                 targets.append(ticker)
         if not targets:
+            if changed:
+                try:
+                    self._save_positions()
+                except Exception:
+                    pass
             return
+        try:
+            target_set = set(targets)
+            target_positions = [
+                pos for pos in list(self.risk.positions)
+                if str(pos.get("ticker", "") or "") in target_set
+            ]
+            self._refresh_position_prices_from_broker(
+                market,
+                target_positions,
+                reason="pending_next_open_sell_recheck",
+            )
+        except Exception as exc:
+            log.warning(f"[pending next open sell price refresh] {market}: {exc}")
         _log_flow("info", f"[장초 SELL 재검증] {market} {len(targets)}건: {targets}")
         now_iso = datetime.now(KST).isoformat(timespec="seconds")
         for ticker in targets:
@@ -24921,6 +25722,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         atr_pct=_s_atr, atr_target_pct=self.atr_target_pct,
                     )
                     order_cost = qty * _s_rpx if qty > 0 else 0.0
+                    _v2_sizing_context = {
+                        "price_krw": float(_s_rpx),
+                        "qty": int(qty or 0),
+                        "order_cost_krw": float(order_cost or 0.0),
+                        "original_budget_krw": float(order_budget or 0.0),
+                        "effective_budget_krw": float(order_budget or 0.0),
+                        "early_gate_applied": False,
+                        "early_gate_size_mult": 1.0,
+                        "can_buy_1_share": bool(float(_s_rpx or 0.0) > 0 and float(self.risk.cash or 0.0) >= float(_s_rpx or 0.0)),
+                        "fixed_sizing": False,
+                        "sizing_reason": "risk_sizing",
+                    }
                     _v2_fixed = self._v2_fixed_size_entry(market, _s_rpx)
                     if _v2_fixed is not None:
                         _v2_fixed_budget_before = float(getattr(_v2_fixed, "budget_krw", 0.0) or 0.0)
@@ -24937,6 +25750,48 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                     "v2_fixed_budget_after_krw": float(order_budget),
                                 }
                             )
+                        _v2_sizing_context.update(
+                            {
+                                "qty": int(qty or 0),
+                                "order_cost_krw": float(order_cost or 0.0),
+                                "original_budget_krw": float(_v2_fixed_budget_before or 0.0),
+                                "effective_budget_krw": float(order_budget or 0.0),
+                                "early_gate_applied": bool(_v2_fixed_budget_multiplier < 1.0 and _us_early_gate_payload.get("active")),
+                                "early_gate_size_mult": float(_v2_fixed_budget_multiplier),
+                                "fixed_sizing": True,
+                                "sizing_reason": "v2_fixed_sizing",
+                            }
+                        )
+                    _plan_a_us_one_share_meta = self._plan_a_us_one_share_after_gate_adjustment(
+                        market=market,
+                        price_krw=float(_s_rpx),
+                        qty=int(qty),
+                        original_budget_krw=float(_v2_sizing_context.get("original_budget_krw") or 0.0),
+                        effective_budget_krw=float(order_budget),
+                        available_budget_krw=float(avail),
+                        cash_krw=float(self.risk.cash),
+                        early_gate_applied=bool(_v2_sizing_context.get("early_gate_applied")),
+                    )
+                    if _plan_a_us_one_share_meta.get("allowed"):
+                        qty = int(_plan_a_us_one_share_meta["adjusted_qty"])
+                        order_cost = float(_plan_a_us_one_share_meta["adjusted_order_cost_krw"])
+                        _v2_sizing_context.update(
+                            {
+                                "qty": int(qty),
+                                "order_cost_krw": float(order_cost),
+                                "can_buy_1_share": True,
+                                "sizing_reason": str(_plan_a_us_one_share_meta.get("reason") or ""),
+                            }
+                        )
+                    elif str(_plan_a_us_one_share_meta.get("reason") or "") == "HIGH_PRICE_BUDGET_BLOCK":
+                        _v2_sizing_context.update(
+                            {
+                                "can_buy_1_share": False,
+                                "sizing_reason": "high_price_budget_block",
+                            }
+                        )
+                    if _plan_a_us_one_share_meta.get("reason") not in ("market_not_enabled", "qty_already_positive", "early_gate_not_applied", "not_applicable"):
+                        _us_early_gate_payload["plan_a_us_one_share"] = dict(_plan_a_us_one_share_meta)
                     _one_share_over_budget_meta = self._one_share_over_budget_adjustment(
                         market=market,
                         price_krw=float(_s_rpx),
@@ -24949,6 +25804,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     if _one_share_over_budget_meta.get("allowed"):
                         qty = int(_one_share_over_budget_meta["adjusted_qty"])
                         order_cost = float(_one_share_over_budget_meta["adjusted_order_cost_krw"])
+                        _v2_sizing_context.update(
+                            {
+                                "qty": int(qty),
+                                "order_cost_krw": float(order_cost),
+                                "can_buy_1_share": True,
+                                "sizing_reason": str(_one_share_over_budget_meta.get("reason") or ""),
+                            }
+                        )
                     _v2_min_order_krw = (
                         float(_v2_fixed.min_order_krw)
                         if _v2_fixed is not None
@@ -25228,6 +26091,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         qty=int(qty),
                         order_cost_krw=float(order_cost),
                         min_order_krw=float(_v2_min_order_krw),
+                        sizing_context=_v2_sizing_context,
                     )
                     if _v2_safety is not None and not _v2_safety.passed:
                         self._bump_runtime_reason(market, _s_tk, _v2_safety.reason_code)
@@ -25255,6 +26119,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 "message": _v2_safety.message,
                                 "strategy": _s_strat,
                                 "fixed_sizing": _v2_fixed is not None,
+                                "sizing_context": dict(_v2_sizing_context or {}),
                             },
                         )
                         if _ML_DB_ENABLED:
@@ -25293,6 +26158,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 **_v2_late_payload,
                                 "strategy": _s_strat,
                                 "fixed_sizing": _v2_fixed is not None,
+                                "sizing_context": dict(_v2_sizing_context or {}),
                             },
                         )
                     is_too_small, min_effective_order = self._is_order_size_too_small(
@@ -26209,6 +27075,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             f"| ETF={_play['etf']} {_play['etf_chg']:+.2f}% "
                             f"| conf={_play['confidence']:.2f} | {_play['reason']}"
                         )
+                        self._funnel.setdefault("US", {}).setdefault("ordered", 0)
+                        self._funnel["US"]["ordered"] += 1
                         self._record_decision_event(
                             "US", "buy_order", _t2_ticker,
                             strategy="sector_play",
@@ -26289,6 +27157,42 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             continue
                         _t2_risk_price = int(_t2_price_info.get("price", 0) or 0)
                         if _t2_risk_price <= 0:
+                            continue
+                        _t2_confirmation = self._kr_sector_play_confirmation_gate(_t2_ticker, _t2_risk_price, _play)
+                        if not bool(_t2_confirmation.get("allowed", True)):
+                            _t2_confirm_reason = str(
+                                _t2_confirmation.get("reason") or "kr_sector_play_intraday_unconfirmed"
+                            )
+                            _t2_confirm_detail = self._kr_sector_play_confirmation_detail(_t2_confirmation)
+                            self._bump_runtime_reason("KR", _t2_ticker, _t2_confirm_reason)
+                            self._record_decision_event(
+                                "KR",
+                                "buy_skipped",
+                                _t2_ticker,
+                                strategy="kr_sector_play",
+                                qty=0,
+                                price_native=float(_t2_risk_price),
+                                price_krw=float(_t2_risk_price),
+                                reason=_t2_confirm_reason,
+                                reason_family="confirmation",
+                                detail=_t2_confirm_detail,
+                                selected_reason=f"kr_sector_etf={_play['etf']}",
+                                confirmation_gate=dict(_t2_confirmation),
+                            )
+                            analysis_log.info(
+                                f"[skip KR] {_t2_ticker} {_t2_confirm_reason}",
+                                extra={"extra": {
+                                    "event": "entry_skip",
+                                    "market": "KR",
+                                    "ticker": _t2_ticker,
+                                    "reason": _t2_confirm_reason,
+                                    "strategy": "kr_sector_play",
+                                    "mode": mode,
+                                    "price": _t2_risk_price,
+                                    "risk_price_krw": _t2_risk_price,
+                                    **_t2_confirmation,
+                                }},
+                            )
                             continue
                         self.price_cache[_t2_ticker] = _t2_risk_price
                         self.risk.update_prices(self.price_cache, self.price_cache_raw)
@@ -26372,6 +27276,41 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 }},
                             )
                             continue
+                        if _t2_cost > min(float(_t2_avail), float(self.risk.cash)):
+                            _t2_cash_reason = str(_t2_affordability.get("affordability_reason") or "budget_too_small")
+                            self._bump_runtime_reason("KR", _t2_ticker, "affordability_fail")
+                            self._bump_runtime_reason("KR", _t2_ticker, _t2_cash_reason)
+                            self._record_decision_event(
+                                "KR",
+                                "buy_skipped",
+                                _t2_ticker,
+                                strategy="kr_sector_play",
+                                qty=int(_t2_qty),
+                                price_native=float(_t2_risk_price),
+                                price_krw=float(_t2_risk_price),
+                                reason=_t2_cash_reason,
+                                reason_family="affordability",
+                                detail=self._affordability_detail(_t2_affordability),
+                                selected_reason=f"kr_sector_etf={_play['etf']}",
+                                **_t2_affordability,
+                            )
+                            analysis_log.info(
+                                f"[skip KR] {_t2_ticker} {_t2_cash_reason}",
+                                extra={"extra": {
+                                    "event": "entry_skip",
+                                    "market": "KR",
+                                    "ticker": _t2_ticker,
+                                    "reason": _t2_cash_reason,
+                                    "strategy": "kr_sector_play",
+                                    "mode": mode,
+                                    "price": _t2_risk_price,
+                                    "risk_price_krw": _t2_risk_price,
+                                    "qty": int(_t2_qty),
+                                    "order_cost_krw": float(_t2_cost),
+                                    **_t2_affordability,
+                                }},
+                            )
+                            continue
                         _kr_tier2_submit_gate = self._new_buy_block_state("KR", _t2_ticker, "kr_sector_play")
                         if not bool(_kr_tier2_submit_gate.get("allowed", True)):
                             self._record_new_buy_block(
@@ -26413,6 +27352,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             f"| ETF={_play['etf']} {_play['etf_chg']:+.2f}% "
                             f"| conf={_play['confidence']:.2f} | {_play['reason']}"
                         )
+                        self._funnel.setdefault("KR", {}).setdefault("ordered", 0)
+                        self._funnel["KR"]["ordered"] += 1
                         self._record_decision_event(
                             "KR", "buy_order", _t2_ticker,
                             strategy="kr_sector_play",
@@ -26979,6 +27920,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             new_meta,
             allow_missing_price_targets=allow_missing_price_targets,
         )
+        new_meta = self._attach_one_share_affordability_meta(market, new_meta)
         candidate_trade_ready = self._selection_replace_candidates(new_meta, new_selected)
         candidate_map = {
             (str(c.get("ticker", "")).upper() if market == "US" else str(c.get("ticker", ""))): c
@@ -27074,6 +28016,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         }
         final_meta = self._normalize_selection_meta_runtime(market, final_meta, final, mode=mode)
         final_meta = self._enforce_trade_ready_price_targets(market, final_meta)
+        final_meta = self._attach_one_share_affordability_meta(market, final_meta)
         if kr_watch_only_replacement:
             filtered = dict(final_meta.get("_runtime_filtered_trade_ready") or {})
             for ticker in replace_in:
@@ -28067,6 +29010,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.current_market = None
         self._stop_ws_for_market(market)
         self._write_live_status(market, force=True)
+
+        try:
+            self._refresh_position_prices_from_broker(market, reason="session_close_review")
+        except Exception as _price_refresh_e:
+            log.warning(f"[session_close price refresh] {market}: {_price_refresh_e}")
 
         # ── 퍼널 집계 저장 ────────────────────────────────────────────────────
         try:

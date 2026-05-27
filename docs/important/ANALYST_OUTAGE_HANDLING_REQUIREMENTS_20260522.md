@@ -1,12 +1,12 @@
 # Analyst API Outage Handling Requirements
 
 작성일: 2026-05-22  
-상태: 요구사항 정의  
+상태 업데이트: 2026-05-25 - core unavailable/quorum/learning-exclusion code is implemented; remaining UI polish/tests are tracked in `ACTIVE_WORK.md`. This file is retained as source evidence, not as an active plan.
 대상: `minority_report/analysts.py`, `minority_report/consensus.py`, `minority_report/postmortem.py`, `dashboard/dashboard_server.py`, `trading_bot.py`
 
 ## 1. 배경
 
-Anthropic API `529 overloaded_error` 같은 provider 일시 장애가 발생하면 현재 일부 분석가 호출이 실패한다. 현재 구현은 실패한 분석가를 `NEUTRAL`, confidence `0.3`, `key_reason="오류:..."` 형태로 반환한다.
+Anthropic API `529 overloaded_error` 같은 provider 일시 장애가 발생하면 일부 분석가 호출이 실패한다. 이 요구사항 작성 당시 구현은 실패한 분석가를 `NEUTRAL`, confidence `0.3`, `key_reason="오류:..."` 형태로 반환했다.
 
 이 방식은 다음 문제를 만든다.
 

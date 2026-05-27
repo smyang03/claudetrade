@@ -72,6 +72,175 @@ class EntryRiskControlTests(unittest.TestCase):
         self.assertFalse(decision["allowed"])
         self.assertEqual(decision["reason"], "insufficient_cash")
 
+    def test_us_one_share_after_early_gate_allows_pre_gate_budget_case(self) -> None:
+        decision = TradingBot._plan_a_us_one_share_after_gate_adjustment(
+            market="US",
+            price_krw=310_000,
+            qty=0,
+            original_budget_krw=450_000,
+            effective_budget_krw=225_000,
+            available_budget_krw=1_000_000,
+            cash_krw=1_000_000,
+            early_gate_applied=True,
+        )
+
+        self.assertTrue(decision["allowed"])
+        self.assertEqual(decision["adjusted_qty"], 1)
+        self.assertEqual(decision["reason"], "one_share_allowed_after_early_gate")
+        self.assertTrue(decision["can_buy_1_share"])
+
+    def test_us_one_share_after_early_gate_blocks_above_pre_gate_budget(self) -> None:
+        decision = TradingBot._plan_a_us_one_share_after_gate_adjustment(
+            market="US",
+            price_krw=790_000,
+            qty=0,
+            original_budget_krw=450_000,
+            effective_budget_krw=225_000,
+            available_budget_krw=1_000_000,
+            cash_krw=1_000_000,
+            early_gate_applied=True,
+        )
+
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["reason"], "HIGH_PRICE_BUDGET_BLOCK")
+        self.assertFalse(decision["can_buy_1_share"])
+
+    def test_us_one_share_after_early_gate_still_requires_cash(self) -> None:
+        decision = TradingBot._plan_a_us_one_share_after_gate_adjustment(
+            market="US",
+            price_krw=310_000,
+            qty=0,
+            original_budget_krw=450_000,
+            effective_budget_krw=225_000,
+            available_budget_krw=1_000_000,
+            cash_krw=200_000,
+            early_gate_applied=True,
+        )
+
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["reason"], "insufficient_cash")
+
+    def test_kr_sector_play_confirmation_blocks_missing_minute_evidence(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot._last_post_open_features_by_ticker = {"KR": {}, "US": {}}
+
+        with patch.dict(os.environ, {"KR_SECTOR_PLAY_CONFIRMATION_GATE_ENABLED": "true"}, clear=False):
+            state = bot._kr_sector_play_confirmation_gate("003670", 246_500, {"etf": "305720", "etf_chg": 0.61})
+
+        self.assertFalse(state["allowed"])
+        self.assertEqual(state["reason"], "kr_sector_play_intraday_unconfirmed")
+
+    def test_kr_sector_play_confirmation_allows_minute_confirmed_strength(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot._last_post_open_features_by_ticker = {
+            "KR": {
+                "003670": {
+                    "data_quality": "minute_complete",
+                    "current_price": 246_500,
+                    "ret_3m_pct": 0.4,
+                    "ret_5m_pct": 0.8,
+                    "opening_range_high": 245_000,
+                    "opening_range_break": True,
+                    "vwap": 245_800,
+                    "vwap_distance_pct": 0.3,
+                    "volume_ratio_open": 1.3,
+                    "momentum_state": "continuation",
+                    "sector_relative_strength_pct": 0.2,
+                }
+            },
+            "US": {},
+        }
+
+        with patch.dict(os.environ, {"KR_SECTOR_PLAY_CONFIRMATION_GATE_ENABLED": "true"}, clear=False):
+            state = bot._kr_sector_play_confirmation_gate("003670", 246_500, {"etf": "305720", "etf_chg": 0.61})
+
+        self.assertTrue(state["allowed"])
+        self.assertEqual(state["reason"], "kr_sector_play_confirmed")
+        self.assertTrue(state["confirmation_checks"]["volume_ok"])
+
+    def test_kr_sector_play_confirmation_blocks_intraday_weakness(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot._last_post_open_features_by_ticker = {
+            "KR": {
+                "003670": {
+                    "data_quality": "minute_complete",
+                    "current_price": 240_500,
+                    "ret_3m_pct": -0.6,
+                    "opening_range_high": 246_000,
+                    "vwap": 244_000,
+                    "vwap_distance_pct": -1.4,
+                    "volume_ratio_open": 1.4,
+                    "momentum_state": "fade",
+                }
+            },
+            "US": {},
+        }
+
+        with patch.dict(os.environ, {"KR_SECTOR_PLAY_CONFIRMATION_GATE_ENABLED": "true"}, clear=False):
+            state = bot._kr_sector_play_confirmation_gate("003670", 240_500, {"etf": "305720", "etf_chg": 0.61})
+
+        self.assertFalse(state["allowed"])
+        self.assertEqual(state["reason"], "kr_sector_play_intraday_weak")
+
+    def test_kr_sector_play_confirmation_blocks_missing_volume(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot._last_post_open_features_by_ticker = {
+            "KR": {
+                "003670": {
+                    "data_quality": "minute_complete",
+                    "current_price": 246_500,
+                    "ret_3m_pct": 0.4,
+                    "opening_range_break": True,
+                    "vwap_distance_pct": 0.3,
+                    "momentum_state": "continuation",
+                }
+            },
+            "US": {},
+        }
+
+        with patch.dict(os.environ, {"KR_SECTOR_PLAY_CONFIRMATION_GATE_ENABLED": "true"}, clear=False):
+            state = bot._kr_sector_play_confirmation_gate("003670", 246_500, {"etf": "305720", "etf_chg": 0.61})
+
+        self.assertFalse(state["allowed"])
+        self.assertEqual(state["reason"], "kr_sector_play_volume_unconfirmed")
+
+    def test_kr_sector_play_confirmation_detail_includes_skip_evidence(self) -> None:
+        detail = TradingBot._kr_sector_play_confirmation_detail(
+            {
+                "data_quality": "minute_complete",
+                "feature_present": True,
+                "confirmation_checks": {
+                    "volume_ok": False,
+                    "opening_range_break": True,
+                    "vwap_reclaim": False,
+                    "momentum_ok": True,
+                    "relative_ok": True,
+                },
+            }
+        )
+
+        for token in (
+            "sector_play_gate:",
+            "data_quality=minute_complete",
+            "feature_present=True",
+            "volume_ok=False",
+            "opening_range_break=True",
+            "vwap_reclaim=False",
+            "momentum_ok=True",
+            "relative_ok=True",
+        ):
+            self.assertIn(token, detail)
+
+    def test_kr_sector_play_confirmation_can_be_disabled(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot._last_post_open_features_by_ticker = {"KR": {}, "US": {}}
+
+        with patch.dict(os.environ, {"KR_SECTOR_PLAY_CONFIRMATION_GATE_ENABLED": "false"}, clear=False):
+            state = bot._kr_sector_play_confirmation_gate("003670", 246_500, {"etf": "305720", "etf_chg": 0.61})
+
+        self.assertTrue(state["allowed"])
+        self.assertFalse(state["enabled"])
+
     def test_v2_daily_cap_can_be_split_by_market(self) -> None:
         runtime = V2LifecycleRuntime.__new__(V2LifecycleRuntime)
 

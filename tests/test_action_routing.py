@@ -155,7 +155,7 @@ class ActionRoutingTests(unittest.TestCase):
         self.assertEqual(decision.runtime_gate["kr_confirmation_gate_mode"], "FAST_TRIGGER_WITH_HARD_VETO")
         self.assertTrue(decision.runtime_gate["kr_confirmation_fast_window_ok"])
 
-    def test_kr_confirmation_live_blocks_pullback_wait(self) -> None:
+    def test_kr_confirmation_live_does_not_block_pullback_wait(self) -> None:
         decision = route_candidate_action(
             {
                 "ticker": "005930",
@@ -180,10 +180,12 @@ class ActionRoutingTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(decision.final_action, "WATCH")
-        self.assertEqual(decision.reason, "kr_momentum_not_confirmed")
-        self.assertEqual(decision.runtime_gate_reason, "kr_momentum_not_confirmed")
-        self.assertEqual(decision.demoted_to, "WATCH")
+        self.assertEqual(decision.final_action, "PULLBACK_WAIT")
+        self.assertEqual(decision.reason, "pullback_wait")
+        self.assertEqual(decision.runtime_gate_reason, "")
+        self.assertEqual(decision.demoted_to, "")
+        self.assertEqual(decision.confirmation_state, "CONFIRMING")
+        self.assertEqual(decision.confirmation_reason, "kr_momentum_not_confirmed")
 
     def test_kr_or_missing_at_high_demotes_buy_ready_to_probe(self) -> None:
         decision = route_candidate_action(

@@ -873,6 +873,41 @@ class AutoSellClaudeGateTests(unittest.TestCase):
             self.assertEqual(run["plan"]["auto_sell_review_action"], "HOLD")
             self.assertEqual(run["plan"]["auto_sell_policy"]["mode"], "stop_recovery")
 
+    def test_pathb_loss_cap_hold_respects_reask_cooldown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan, pos = _pathb_runtime(tmp)
+            pos["display_avg_price"] = 100.0
+            advice = {
+                "action": "HOLD",
+                "confidence": 0.7,
+                "reason": "controlled stop recovery",
+                "hard_stop": 96.0,
+                "recover_above": 99.0,
+                "protective_stop": 96.0,
+                "valid_for_min": 5,
+                "reask_after_min": 10,
+                "next_review_min": 10,
+            }
+            signal = ExitSignal(True, "loss_cap", "CLOSED_LOSS_CAP", 98.0, plan.path_run_id)
+
+            with patch.dict(os.environ, {"CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "true"}, clear=False), patch(
+                "minority_report.hold_advisor.ask",
+                return_value=advice,
+            ) as advisor:
+                first = runtime._run_pathb_sell_review_gate(plan, pos, signal)
+                reviewed_at = runtime.store.find_path_run(plan.path_run_id)["plan"]["auto_sell_reviewed_at"]
+                second = runtime._run_pathb_sell_review_gate(plan, pos, signal)
+
+            run = runtime.store.find_path_run(plan.path_run_id)
+            self.assertFalse(first["allowed"])
+            self.assertFalse(second["allowed"])
+            advisor.assert_called_once()
+            self.assertTrue(second["auto_sell_review_cooldown_active"])
+            self.assertEqual(second["auto_sell_reviewed_at"], reviewed_at)
+            self.assertTrue(second["auto_sell_review_cooldown_checked_at"])
+            self.assertEqual(run["plan"]["auto_sell_review_action"], "HOLD")
+            self.assertTrue(run["plan"]["auto_sell_review_cooldown_until"])
+
     def test_pathb_target_hold_stores_policy_and_revised_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan, pos = _pathb_runtime(tmp)

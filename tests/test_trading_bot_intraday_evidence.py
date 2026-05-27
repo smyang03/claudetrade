@@ -125,6 +125,63 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertEqual(bot._last_post_open_features_by_ticker["KR"]["005930"]["data_quality"], "minute_complete")
         self.assertEqual(bot._last_funnel_event[0], "selection_intraday_evidence_coverage")
 
+    def test_minute_complete_feature_updates_or_cache(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles())
+
+        TradingBot._merge_last_post_open_features(
+            bot,
+            "KR",
+            {
+                "005930": {
+                    "data_quality": "minute_complete",
+                    "opening_range_high": 104.0,
+                    "opening_range_low": 99.0,
+                }
+            },
+        )
+
+        self.assertTrue(bot._or_formed["005930"])
+        self.assertEqual(bot._or_high["005930"], 104.0)
+        self.assertEqual(bot._or_low["005930"], 99.0)
+
+    def test_partial_feature_does_not_form_or_cache(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles())
+
+        TradingBot._merge_last_post_open_features(
+            bot,
+            "KR",
+            {
+                "005930": {
+                    "data_quality": "minute_partial",
+                    "opening_range_high": 104.0,
+                    "opening_range_low": 99.0,
+                }
+            },
+        )
+
+        self.assertNotIn("005930", bot._or_formed)
+
+    def test_existing_formed_or_cache_is_not_overwritten_by_feature(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles())
+        bot._or_high = {"005930": 110.0}
+        bot._or_low = {"005930": 100.0}
+        bot._or_formed = {"005930": True}
+
+        TradingBot._merge_last_post_open_features(
+            bot,
+            "KR",
+            {
+                "005930": {
+                    "data_quality": "minute_complete",
+                    "opening_range_high": 104.0,
+                    "opening_range_low": 99.0,
+                }
+            },
+        )
+
+        self.assertEqual(bot._or_high["005930"], 110.0)
+        self.assertEqual(bot._or_low["005930"], 100.0)
+
     def test_prefetch_uses_phase_target_limit_and_candidate_priority(self) -> None:
         bot = _make_bot(lambda **kwargs: _candles())
         bot.runtime_config.values["INTRADAY_EVIDENCE_MAX_TICKERS"] = 2

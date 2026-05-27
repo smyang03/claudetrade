@@ -583,6 +583,7 @@ class V2LifecycleRuntime:
         qty: int,
         order_cost_krw: float,
         min_order_krw: float,
+        sizing_context: dict | None = None,
     ):
         if not self.enabled or self.safety_gate is None:
             return None
@@ -598,6 +599,7 @@ class V2LifecycleRuntime:
             realized_daily_pnl_pct = float(self.bot._market_realized_daily_return_pct(market))
         except Exception:
             realized_daily_pnl_pct = equity_daily_pnl_pct
+        sizing = dict(sizing_context or {})
         ctx = SafetyContext(
             market=market,
             runtime_mode=self.bot._mode,
@@ -621,6 +623,13 @@ class V2LifecycleRuntime:
             ),
             stopped_tickers=set(self.same_day_stop_tickers.get(market, set()) or set()),
             order_unknown_blocked=self.order_unknown_blocked(market, ticker),
+            original_budget_krw=sizing.get("original_budget_krw"),
+            effective_budget_krw=sizing.get("effective_budget_krw"),
+            early_gate_applied=bool(sizing.get("early_gate_applied", False)),
+            early_gate_size_mult=sizing.get("early_gate_size_mult"),
+            can_buy_1_share=sizing.get("can_buy_1_share"),
+            fixed_sizing=bool(sizing.get("fixed_sizing", False)),
+            sizing_reason=str(sizing.get("sizing_reason") or ""),
         )
         try:
             return self.safety_gate.evaluate(ctx)

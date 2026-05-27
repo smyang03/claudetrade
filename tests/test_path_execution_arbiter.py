@@ -89,6 +89,25 @@ class PathExecutionArbiterTests(unittest.TestCase):
             self.assertTrue(decision.shadow["pathb_waiting_price_chase"])
             self.assertEqual(decision.shadow["pathb_waiting_strategy"], "momentum")
 
+    def test_waiting_pathb_records_same_ticker_shadow_even_inside_zone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            self._path_run(store, "WAITING", plan={"buy_zone_low": 52000, "buy_zone_high": 52500})
+
+            decision = PathExecutionArbiter(store).evaluate_path_a_entry(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-04-27",
+                ticker="005930",
+                current_price=52200,
+                strategy="momentum",
+            )
+
+            self.assertTrue(decision.allowed)
+            self.assertTrue(decision.shadow["pathb_waiting_same_ticker"])
+            self.assertEqual(decision.shadow["pathb_waiting_shadow_reason"], "PATHB_WAITING_SAME_TICKER_SHADOW")
+            self.assertNotIn("pathb_waiting_price_chase", decision.shadow)
+
     def test_cancel_if_open_above_is_shadow_not_hard_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = self._store(tmp)

@@ -88,18 +88,16 @@
 
 문서 저장소입니다.
 
-- `docs/trading_process.md`
+- `docs/important/core/trading_process.md`
   - 운영 플로우 기준 문서
-- `docs/TODO_ROADMAP.md`
+- `docs/important/core/TODO_ROADMAP.md`
   - active plan 단일 원장
-- `docs/DEVELOPED_WORK.md`
+- `docs/important/core/DEVELOPED_WORK.md`
   - 완료 plan 요약
-- `docs/reports/`
-  - QA, 분석, 시뮬레이션 리포트
 
 ## 10. 정리 원칙
 
 - `state/`, `logs/`, `data/backtest/`, `data/cache/`는 자주 변합니다
 - Git에는 보통 소스/문서만 올리고, 생성 산출물은 제외합니다
 - 운영 판단은 `brain.json`, `decisions.db`, `ticker_selection_log.db`를 함께 봐야 합니다
-- 미완료 계획은 `docs/TODO_ROADMAP.md` 하나로 통합합니다
+- 미완료 계획은 `docs/important/ACTIVE_WORK.md`와 `docs/important/core/TODO_ROADMAP.md`로 통합하고 raw report는 요약 후 제거합니다

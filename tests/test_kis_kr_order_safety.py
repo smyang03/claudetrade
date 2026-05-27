@@ -90,6 +90,24 @@ class KisKrOrderSafetyTests(unittest.TestCase):
 
         self.assertEqual(row["remaining_qty"], 2)
 
+    def test_us_ccnl_live_fields_preserve_order_qty_and_price(self) -> None:
+        row = kis_api._normalize_us_inquire_ccnl_row(
+            {
+                "odno": "0030262408",
+                "pdno": "IBM",
+                "sll_buy_dvsn": "01",
+                "ft_ord_qty": "3",
+                "ft_ccld_qty": "0",
+                "nccs_qty": "3",
+                "ft_ord_unpr3": "254.247",
+            }
+        )
+
+        self.assertEqual(row["remaining_qty"], 3)
+        self.assertEqual(row["order_qty"], 3)
+        self.assertEqual(row["order_price"], 254.247)
+        self.assertEqual(row["fill_price"], 254.247)
+
     def test_us_ccnl_filled_order_has_zero_remaining_qty(self) -> None:
         # 완전 체결된 주문 → remaining_qty == 0 → open_orders 필터 제외
         row = kis_api._normalize_us_inquire_ccnl_row(

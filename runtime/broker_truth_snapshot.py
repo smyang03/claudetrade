@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import uuid
@@ -18,6 +19,7 @@ from runtime_paths import get_runtime_path
 
 KST = ZoneInfo("Asia/Seoul") if ZoneInfo is not None else None
 MARKETS = ("KR", "US")
+log = logging.getLogger("trading")
 
 
 def utc_now_iso() -> str:
@@ -87,6 +89,15 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(default)
 
 
+def _first_value(row: dict[str, Any], keys: tuple[str, ...], default: Any = None) -> Any:
+    for key in keys:
+        for candidate in (key, key.upper(), key.lower()):
+            value = row.get(candidate)
+            if value not in (None, ""):
+                return value
+    return default
+
+
 def mask_sensitive(value: Any) -> Any:
     if isinstance(value, dict):
         masked: dict[str, Any] = {}
@@ -139,24 +150,60 @@ def normalize_position(market: str, row: dict[str, Any]) -> dict[str, Any]:
 
 def normalize_order(market: str, row: dict[str, Any]) -> dict[str, Any]:
     market_key = str(market or "").upper()
-    ticker = str(row.get("ticker") or row.get("pdno") or row.get("ovrs_pdno") or "").strip()
+    ticker = str(_first_value(row, ("ticker", "pdno", "ovrs_pdno"), "") or "").strip()
     if market_key == "US":
         ticker = ticker.upper()
-    order_qty = _safe_int(row.get("order_qty", row.get("qty", 0)))
-    filled_qty = _safe_int(row.get("filled_qty", 0))
-    remaining_qty = max(0, _safe_int(row.get("remaining_qty", order_qty - filled_qty)))
-    return {
+    order_qty = _safe_int(_first_value(row, ("order_qty", "ft_ord_qty", "ord_qty", "qty"), 0))
+    if order_qty <= 0:
+        order_qty = _safe_int(_first_value(row, ("ft_ord_qty", "ord_qty", "qty"), 0))
+    filled_qty = _safe_int(_first_value(row, ("filled_qty", "ft_ccld_qty", "ccld_qty", "tot_ccld_qty"), 0))
+    rejected_qty = _safe_int(_first_value(row, ("rejected_qty", "rjct_qty"), 0))
+    cancelled_qty = _safe_int(_first_value(row, ("cancelled_qty", "cncl_cfrm_qty"), 0))
+    remaining_raw = _first_value(row, ("remaining_qty", "nccs_qty", "rmn_qty", "ord_rmn_qty"), None)
+    if remaining_raw is None:
+        remaining_qty = max(0, order_qty - filled_qty - rejected_qty - cancelled_qty)
+    else:
+        remaining_qty = max(0, _safe_int(remaining_raw))
+        if remaining_qty <= 0:
+            remaining_qty = max(remaining_qty, _safe_int(_first_value(row, ("nccs_qty", "rmn_qty", "ord_rmn_qty"), 0)))
+    order_price = _safe_float(
+        _first_value(row, ("order_price", "limit_price", "ft_ord_unpr3", "ovrs_ord_unpr", "ord_unpr"), 0)
+    )
+    if order_price <= 0:
+        order_price = _safe_float(_first_value(row, ("ft_ord_unpr3", "ovrs_ord_unpr", "ord_unpr"), 0))
+    avg_price = _safe_float(_first_value(row, ("avg_price", "fill_price", "price", "ft_ccld_unpr3", "ft_ccld_unpr"), 0))
+    if avg_price <= 0:
+        avg_price = order_price
+    side = str(row.get("side") or "").strip().lower()
+    if not side:
+        side_code = str(_first_value(row, ("sll_buy_dvsn", "sll_buy_dvsn_cd"), "") or "").strip()
+        side = {"01": "sell", "02": "buy"}.get(side_code, "")
+    order_status = str(row.get("order_status") or "").strip().lower()
+    if not order_status:
+        if rejected_qty > 0 and remaining_qty == 0 and filled_qty == 0:
+            order_status = "rejected"
+        elif cancelled_qty > 0 and remaining_qty == 0:
+            order_status = "cancelled" if filled_qty == 0 else "partial_cancelled"
+        elif remaining_qty > 0:
+            order_status = "partial_open" if filled_qty > 0 else "open"
+        else:
+            order_status = "filled"
+    normalized = {
         "market": market_key,
         "ticker": ticker,
         "name": str(row.get("name") or "").strip(),
-        "order_no": str(row.get("order_no") or "").strip(),
-        "side": str(row.get("side") or "").strip().lower(),
-        "order_status": str(row.get("order_status") or ("open" if remaining_qty > 0 else "filled")),
+        "order_no": str(_first_value(row, ("order_no", "odno", "ord_no"), "") or "").strip(),
+        "side": side,
+        "order_status": order_status,
         "qty": order_qty,
         "order_qty": order_qty,
         "filled_qty": filled_qty,
         "remaining_qty": remaining_qty,
-        "avg_price": _safe_float(row.get("avg_price", row.get("fill_price", row.get("price", 0)))),
+        "rejected_qty": rejected_qty,
+        "cancelled_qty": cancelled_qty,
+        "avg_price": avg_price,
+        "order_price": order_price,
+        "limit_price": order_price,
         "current_price": _safe_float(row.get("current_price", 0)),
         "eval_amount": _safe_float(row.get("eval_amount", 0)),
         "pnl": _safe_float(row.get("pnl", 0)),
@@ -166,6 +213,27 @@ def normalize_order(market: str, row: dict[str, Any]) -> dict[str, Any]:
         "fill_time": str(row.get("fill_time") or row.get("order_time") or "").strip(),
         "source": "broker",
     }
+    flags = open_order_integrity_flags(normalized)
+    if flags:
+        normalized["integrity_flags"] = flags
+    return normalized
+
+
+def open_order_integrity_flags(order: dict[str, Any]) -> list[str]:
+    if _safe_int(order.get("remaining_qty", 0)) <= 0:
+        return []
+    flags: list[str] = []
+    if _safe_int(order.get("order_qty", order.get("qty", 0))) <= 0:
+        flags.append("order_qty_zero")
+    if _safe_float(order.get("order_price", order.get("limit_price", 0))) <= 0:
+        flags.append("order_price_zero")
+    if not str(order.get("order_no") or "").strip():
+        flags.append("order_no_missing")
+    if not str(order.get("ticker") or "").strip():
+        flags.append("ticker_missing")
+    if not str(order.get("side") or "").strip():
+        flags.append("side_missing")
+    return flags
 
 
 class BrokerTruthSnapshot:
@@ -294,6 +362,25 @@ class BrokerTruthSnapshot:
         return snap
 
     def write_snapshot(self, snapshot: dict[str, Any]) -> None:
+        if self.path.exists():
+            try:
+                existing = json.loads(self.path.read_text(encoding="utf-8"))
+            except Exception:
+                existing = {}
+            incoming_markets = snapshot.setdefault("markets", {})
+            existing_markets = existing.get("markets") if isinstance(existing, dict) else {}
+            if isinstance(existing_markets, dict):
+                for market in MARKETS:
+                    incoming_market = incoming_markets.get(market)
+                    existing_market = existing_markets.get(market)
+                    if not isinstance(incoming_market, dict) or not isinstance(existing_market, dict):
+                        continue
+                    incoming_last = parse_dt(incoming_market.get("last_success_at"))
+                    existing_last = parse_dt(existing_market.get("last_success_at"))
+                    if existing_last is not None and (
+                        incoming_last is None or existing_last > incoming_last
+                    ):
+                        incoming_markets[market] = existing_market
         safe = mask_sensitive(snapshot)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_name(f"{self.path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
@@ -323,6 +410,12 @@ class BrokerTruthSnapshot:
         fills = self._get_today_orders(market)
         open_orders = [row for row in fills if int(row.get("remaining_qty", 0) or 0) > 0]
         today_fills = [row for row in fills if int(row.get("filled_qty", 0) or 0) > 0]
+        open_order_integrity_issues = self._open_order_integrity_issues(market, open_orders)
+        if open_order_integrity_issues:
+            log.warning(
+                f"[broker truth 미체결 identity 경고] {market} "
+                f"issues={open_order_integrity_issues[:5]}"
+            )
         account_summary = {
             "cash": _safe_float(balance.get("cash", 0)),
             "orderable_cash": _safe_float(balance.get("orderable_cash", balance.get("cash", 0))),
@@ -349,7 +442,29 @@ class BrokerTruthSnapshot:
             "positions": [normalize_position(market, row) for row in balance.get("stocks", []) or []],
             "open_orders": open_orders,
             "today_fills": today_fills,
+            "open_order_integrity_issues": open_order_integrity_issues,
         }
+
+    def _open_order_integrity_issues(self, market: str, open_orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        issues: list[dict[str, Any]] = []
+        market_key = str(market or "").upper()
+        for row in open_orders:
+            flags = list(row.get("integrity_flags") or open_order_integrity_flags(row))
+            if not flags:
+                continue
+            issues.append(
+                {
+                    "market": market_key,
+                    "ticker": str(row.get("ticker") or "").strip(),
+                    "order_no": str(row.get("order_no") or "").strip(),
+                    "side": str(row.get("side") or "").strip(),
+                    "remaining_qty": _safe_int(row.get("remaining_qty", 0)),
+                    "order_qty": _safe_int(row.get("order_qty", row.get("qty", 0))),
+                    "order_price": _safe_float(row.get("order_price", row.get("limit_price", 0))),
+                    "flags": flags,
+                }
+            )
+        return issues
 
     def _get_balance(self, market: str, *, force: bool) -> dict[str, Any]:
         if self.balance_provider is not None:

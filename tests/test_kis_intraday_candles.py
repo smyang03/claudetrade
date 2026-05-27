@@ -161,6 +161,139 @@ class KISIntradayCandleTests(unittest.TestCase):
         self.assertEqual(mocked.call_count, 1)
         self.assertEqual(first.iloc[0]["close"], second.iloc[0]["close"])
 
+    def test_us_kis_intraday_normalizes_desc_rows_to_ascending_kst(self) -> None:
+        payload = {
+            "rt_cd": "0",
+            "output2": [
+                {
+                    "kymd": "20260514",
+                    "khms": "013200",
+                    "open": "101",
+                    "high": "102",
+                    "low": "100",
+                    "last": "101.5",
+                    "evol": "20",
+                },
+                {
+                    "kymd": "20260514",
+                    "khms": "013100",
+                    "open": "100",
+                    "high": "101",
+                    "low": "99",
+                    "last": "100.5",
+                    "evol": "10",
+                },
+            ],
+        }
+
+        with patch("kis_api._get_us_quote_codes", return_value=("NASD", "NAS")), patch(
+            "kis_api._kis_get",
+            return_value=_Resp(payload),
+        ) as mocked:
+            df = kis_api._intraday_ohlcv_us_kis(
+                "tsla",
+                "token",
+                session_date="2026-05-13",
+                start_at="2026-05-14T01:30:00+09:00",
+                end_at="2026-05-14T01:33:00+09:00",
+            )
+
+        params = mocked.call_args_list[0].kwargs["params"]
+        self.assertEqual(params["EXCD"], "NAS")
+        self.assertEqual(params["NMIN"], "1")
+        self.assertEqual(params["PINC"], "0")
+        self.assertEqual(list(df["close"]), [100.5, 101.5])
+        self.assertEqual(list(df["volume"]), [10.0, 20.0])
+        self.assertEqual(list(df["source"]), ["kis_us_intraday", "kis_us_intraday"])
+        self.assertEqual(str(df.iloc[0]["ts"]), "2026-05-14 01:31:00")
+
+    def test_us_kis_intraday_paginates_older_rows_with_keyb(self) -> None:
+        first = {
+            "rt_cd": "0",
+            "output2": [
+                {
+                    "kymd": "20260514",
+                    "khms": "013200",
+                    "xymd": "20260513",
+                    "xhms": "123200",
+                    "open": "102",
+                    "high": "103",
+                    "low": "101",
+                    "last": "102",
+                    "evol": "12",
+                },
+                {
+                    "kymd": "20260514",
+                    "khms": "013100",
+                    "xymd": "20260513",
+                    "xhms": "123100",
+                    "open": "101",
+                    "high": "102",
+                    "low": "100",
+                    "last": "101",
+                    "evol": "11",
+                },
+            ],
+        }
+        second = {
+            "rt_cd": "0",
+            "output2": [
+                {
+                    "kymd": "20260514",
+                    "khms": "013000",
+                    "xymd": "20260513",
+                    "xhms": "123000",
+                    "open": "100",
+                    "high": "101",
+                    "low": "99",
+                    "last": "100",
+                    "evol": "10",
+                },
+                {
+                    "kymd": "20260514",
+                    "khms": "012900",
+                    "xymd": "20260513",
+                    "xhms": "122900",
+                    "open": "99",
+                    "high": "100",
+                    "low": "98",
+                    "last": "99",
+                    "evol": "9",
+                },
+            ],
+        }
+
+        with patch.dict("os.environ", {"US_INTRADAY_KIS_MAX_PAGES": "2", "US_INTRADAY_KIS_PAGE_SLEEP_SEC": "0"}), patch(
+            "kis_api._get_us_quote_codes",
+            return_value=("NASD", "NAS"),
+        ), patch("kis_api._kis_get", side_effect=[_Resp(first), _Resp(second)]) as mocked:
+            df = kis_api._intraday_ohlcv_us_kis(
+                "TSLA",
+                "token",
+                session_date="2026-05-13",
+                start_at="2026-05-14T01:29:00+09:00",
+                end_at="2026-05-14T01:33:00+09:00",
+            )
+
+        second_params = mocked.call_args_list[1].kwargs["params"]
+        self.assertEqual(second_params["NEXT"], "1")
+        self.assertEqual(second_params["PINC"], "1")
+        self.assertEqual(second_params["KEYB"], "20260513123000")
+        self.assertEqual(list(df["close"]), [99.0, 100.0, 101.0, 102.0])
+
+    def test_us_kis_provider_dispatches_without_yfinance_fallback(self) -> None:
+        with patch("kis_api._intraday_ohlcv_us_kis", side_effect=RuntimeError("kis failed")):
+            with self.assertRaisesRegex(RuntimeError, "kis failed"):
+                kis_api.get_intraday_candles(
+                    "AAPL",
+                    token="token",
+                    market="US",
+                    session_date="2026-05-13",
+                    start_at="2026-05-13T22:30:00+09:00",
+                    end_at="2026-05-13T22:35:00+09:00",
+                    provider="kis",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

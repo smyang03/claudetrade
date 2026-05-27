@@ -84,10 +84,12 @@ class PathExecutionArbiter:
                     shadow,
                 )
             if status == "WAITING":
-                waiting_shadow = self._waiting_price_chase_shadow(run, current_price)
-                if waiting_shadow:
-                    waiting_shadow["pathb_waiting_strategy"] = str(strategy or "")
-                    shadow.update(waiting_shadow)
+                waiting_shadow = {
+                    **_waiting_same_ticker_shadow(run, current_price),
+                    **self._waiting_price_chase_shadow(run, current_price),
+                }
+                waiting_shadow["pathb_waiting_strategy"] = str(strategy or "")
+                shadow.update(waiting_shadow)
 
         cancel_shadow = self._cancel_if_open_above_shadow(
             market=market_key,
@@ -354,6 +356,24 @@ def _run_details(run: dict[str, Any], market: str, ticker: str) -> dict[str, Any
         "path_status": str(run.get("status") or ""),
         "decision_id": str(run.get("decision_id") or ""),
     }
+
+
+def _waiting_same_ticker_shadow(run: dict[str, Any], current_price: float | None) -> dict[str, Any]:
+    plan = run.get("plan") or {}
+    out = {
+        "pathb_waiting_same_ticker": True,
+        "pathb_waiting_shadow_reason": "PATHB_WAITING_SAME_TICKER_SHADOW",
+        "pathb_waiting_path_run_id": str(run.get("path_run_id") or ""),
+        "pathb_waiting_status": str(run.get("status") or ""),
+        "pathb_waiting_buy_zone_low": plan.get("buy_zone_low"),
+        "pathb_waiting_buy_zone_high": plan.get("buy_zone_high"),
+    }
+    if current_price is not None:
+        try:
+            out["pathb_waiting_current_price"] = float(current_price)
+        except Exception:
+            pass
+    return out
 
 
 def _is_broker_sync_close(event: dict[str, Any]) -> bool:

@@ -229,13 +229,46 @@ class PreSessionSellQueueTests(unittest.TestCase):
         bot._market_after_open_refresh_time = lambda market: True  # type: ignore[method-assign]
         bot._current_session_date_str = lambda market: "2026-05-04"  # type: ignore[method-assign]
         bot._ticker_market = lambda ticker: "US"  # type: ignore[method-assign]
+        bot._refresh_position_prices_from_broker = Mock(return_value={})  # type: ignore[method-assign]
         bot._intraday_position_review = Mock()  # type: ignore[method-assign]
         bot._save_positions = Mock()  # type: ignore[method-assign]
 
         bot._maybe_recheck_pending_next_open_sells("US")
 
+        bot._refresh_position_prices_from_broker.assert_called_once_with(
+            "US",
+            bot.risk.positions,
+            reason="pending_next_open_sell_recheck",
+        )
         bot._intraday_position_review.assert_called_once_with("US", force=True, ticker_filter="QCOM")
         self.assertEqual(bot.risk.positions[0]["pending_next_open_sell_recheck_status"], "reviewing")
+        bot._save_positions.assert_called_once()
+
+    def test_pending_next_open_sell_recheck_clears_confirmed_hold_flag(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.session_active = True
+        bot.current_market = "KR"
+        pos = {
+            "ticker": "128940",
+            "pending_next_open_sell": True,
+            "pending_next_open_reason": "stale sell",
+            "pending_next_open_sell_recheck_status": "hold_confirmed",
+            "pending_next_open_sell_recheck_session": "2026-05-26",
+        }
+        bot.risk = type("Risk", (), {"positions": [pos]})()
+        bot._current_judgment_phase = lambda market: "opening_confirm"  # type: ignore[method-assign]
+        bot._is_executable_judgment_phase = lambda phase: True  # type: ignore[method-assign]
+        bot._market_after_open_refresh_time = lambda market: True  # type: ignore[method-assign]
+        bot._current_session_date_str = lambda market: "2026-05-26"  # type: ignore[method-assign]
+        bot._ticker_market = lambda ticker: "KR"  # type: ignore[method-assign]
+        bot._intraday_position_review = Mock()  # type: ignore[method-assign]
+        bot._save_positions = Mock()  # type: ignore[method-assign]
+
+        bot._maybe_recheck_pending_next_open_sells("KR")
+
+        self.assertFalse(pos["pending_next_open_sell"])
+        self.assertEqual(pos["pending_next_open_reason"], "")
+        bot._intraday_position_review.assert_not_called()
         bot._save_positions.assert_called_once()
 
     def test_pending_position_review_without_ticker_reviews_market_positions(self) -> None:

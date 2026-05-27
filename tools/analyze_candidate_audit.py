@@ -21,6 +21,46 @@ KST = timezone(timedelta(hours=9))
 FRESHNESS_WARN_SEC = 120
 MISSED_WINNER_MFE_PCT = 2.0
 MISSED_WINNER_MIN_DRAWDOWN_PCT = -2.0
+PRICE_STALE_TERMS = (
+    "stale_quote",
+    "quote_stale",
+    "expired_quote",
+    "expired_price",
+    "old_quote",
+    "quote_age",
+    "price_stale",
+)
+PRICE_UNIT_TERMS = ("unit", "normaliz", "scale", "price_unit", "currency_mismatch")
+PRICE_PROVIDER_TERMS = (
+    "exception",
+    "provider_timeout",
+    "provider_failure",
+    "api_error",
+    "api_timeout",
+    "http_error",
+    "http_timeout",
+    "quote_provider_error",
+    "quote_provider_failure",
+    "quote_fetch_failed",
+    "quote_fetch_failure",
+    "quote_fetch_timeout",
+    "quote_timeout",
+)
+MISSING_QUOTE_TERMS = (
+    "missing_quote",
+    "quote_missing",
+    "no_quote",
+    "empty_quote",
+    "absent_quote",
+    "quote_absent",
+)
+BROAD_INVALID_PRICE_TERMS = (
+    "invalid_price",
+    "invalid price",
+    "claude_price_invalid",
+    "price_invalid",
+    "quote_invalid",
+)
 
 
 def normalize_candidate_action(action: str) -> str:
@@ -43,6 +83,101 @@ def _to_float(value: Any) -> float | None:
         return float(value)
     except Exception:
         return None
+
+
+def _text_contains_any(text: str, terms: tuple[str, ...]) -> bool:
+    lowered = str(text or "").lower()
+    return any(term in lowered for term in terms)
+
+
+def _invalid_price_evidence_text(row: dict[str, Any], payload: dict[str, Any]) -> str:
+    evidence_parts: list[str] = []
+    for key in (
+        "invalid_price_reason",
+        "price_invalid_reason",
+        "quote_invalid_reason",
+        "price_data_reason",
+        "claude_reason",
+        "claude_veto_reason",
+        "runtime_filter_reason",
+        "route_final_action",
+        "route_reason",
+        "route_runtime_gate_reason",
+        "evidence_data_state",
+        "data_quality",
+        "classification",
+    ):
+        value = row.get(key)
+        if value not in (None, ""):
+            evidence_parts.append(str(value))
+        payload_value = payload.get(key)
+        if payload_value not in (None, ""):
+            evidence_parts.append(str(payload_value))
+    for key in (
+        "evidence_missing_fields_json",
+        "data_quality_flags_json",
+        "quality_data_gaps_json",
+        "bucket_data_gaps_json",
+    ):
+        value = row.get(key)
+        if value not in (None, ""):
+            evidence_parts.append(str(value))
+        payload_value = payload.get(key)
+        if payload_value not in (None, ""):
+            evidence_parts.append(str(payload_value))
+    return " ".join(evidence_parts)
+
+
+def _price_provider_evidence_text(row: dict[str, Any], payload: dict[str, Any]) -> str:
+    evidence_parts: list[str] = []
+    for key in (
+        "invalid_price_reason",
+        "price_invalid_reason",
+        "quote_invalid_reason",
+        "price_data_reason",
+    ):
+        value = row.get(key)
+        if value not in (None, ""):
+            evidence_parts.append(str(value))
+        payload_value = payload.get(key)
+        if payload_value not in (None, ""):
+            evidence_parts.append(str(payload_value))
+    return " ".join(evidence_parts)
+
+
+def _has_invalid_price_observation(row: dict[str, Any], payload: dict[str, Any]) -> bool:
+    price = _to_float(row.get("price"))
+    if price is None or price <= 0:
+        return True
+    text = _invalid_price_evidence_text(row, payload)
+    return _text_contains_any(text, BROAD_INVALID_PRICE_TERMS)
+
+
+def _invalid_price_reason(row: dict[str, Any], payload: dict[str, Any]) -> tuple[str, str]:
+    price = _to_float(row.get("price"))
+    text = _invalid_price_evidence_text(row, payload)
+    provider_text = _price_provider_evidence_text(row, payload)
+    if _text_contains_any(text, PRICE_STALE_TERMS):
+        return "stale_quote", "quote evidence was stale or expired"
+    if _text_contains_any(text, PRICE_UNIT_TERMS):
+        return "unit_normalization_issue", "price unit or normalization evidence was invalid"
+    if _text_contains_any(provider_text, PRICE_PROVIDER_TERMS):
+        return "provider_failure", "quote provider returned an error or timed out"
+    if _text_contains_any(text, MISSING_QUOTE_TERMS):
+        return "missing_quote", "quote evidence was missing"
+    if price is None:
+        return "legacy_price_unmeasured", "price field was empty and no quote-failure evidence was present"
+    if price <= 0:
+        return "non_positive_price", "price field was zero or negative"
+    return "unknown_price_issue", "price was invalid but no specific evidence was available"
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _row_expr(columns: set[str], name: str, default_sql: str = "NULL") -> str:
+    return f"r.{name}" if name in columns else f"{default_sql} AS {name}"
 
 
 def _percentile(values: list[float], pct: float) -> float | None:
@@ -508,13 +643,28 @@ def _candidate_consistency_summary(
     runtime_mode: str,
 ) -> dict[str, Any]:
     where, params = _where_clause(session_date=session_date, market=market, runtime_mode=runtime_mode)
+    columns = _columns(conn, "audit_candidate_rows")
     rows = [
         dict(row)
         for row in conn.execute(
             f"""
             SELECT candidate_key, session_date, market, ticker, price,
                    input_to_claude_reported, in_prompt, claude_trade_ready,
-                   claude_action, route_final_action
+                   final_prompt_included, claude_action, claude_reason, claude_veto_reason,
+                   route_final_action,
+                   route_reason, route_runtime_gate_reason, source_file,
+                   {_row_expr(columns, "evidence_data_state", "''")},
+                   {_row_expr(columns, "evidence_missing_fields_json", "'[]'")},
+                   {_row_expr(columns, "data_quality", "''")},
+                   {_row_expr(columns, "data_quality_flags_json", "'[]'")},
+                   {_row_expr(columns, "quality_data_gaps_json", "'[]'")},
+                   {_row_expr(columns, "bucket_data_gaps_json", "'[]'")},
+                   {_row_expr(columns, "selection_trace_id", "''")},
+                   {_row_expr(columns, "visibility_contract_version", "''")},
+                   {_row_expr(columns, "actual_prompt_call_id", "''")},
+                   {_row_expr(columns, "actual_prompt_included")},
+                   {_row_expr(columns, "actual_prompt_rank")},
+                   payload_json
             FROM audit_candidate_latest_rows r
             WHERE {where}
             """,
@@ -522,10 +672,24 @@ def _candidate_consistency_summary(
         )
     ]
     input_reported_not_in_prompt: list[dict[str, Any]] = []
+    actual_prompt_mismatch: list[dict[str, Any]] = []
+    actual_prompt_unmeasured: list[dict[str, Any]] = []
+    legacy_input_reported_mismatch: list[dict[str, Any]] = []
+    trace_join_missing: list[dict[str, Any]] = []
     trade_ready_family_mismatch: list[dict[str, Any]] = []
     invalid_price: list[dict[str, Any]] = []
+    invalid_price_reason_counts: Counter[str] = Counter()
     action_family_counts: Counter[str] = Counter()
     for row in rows:
+        try:
+            payload = json.loads(str(row.get("payload_json") or "{}"))
+            if not isinstance(payload, dict):
+                payload = {}
+        except Exception:
+            payload = {}
+        visibility_version = str(row.get("visibility_contract_version") or payload.get("visibility_contract_version") or "").strip()
+        has_actual_contract = visibility_version == "actual_prompt_v1"
+        trace_id = str(row.get("selection_trace_id") or payload.get("selection_trace_id") or "").strip()
         action = str(row.get("route_final_action") or row.get("claude_action") or "")
         family = normalize_candidate_action(action)
         action_family_counts[family] += 1
@@ -539,20 +703,59 @@ def _candidate_consistency_summary(
         }
         if int(row.get("input_to_claude_reported") or 0) == 1 and int(row.get("in_prompt") or 0) == 0:
             input_reported_not_in_prompt.append(item)
+            if has_actual_contract:
+                actual_prompt_mismatch.append({**item, "visibility_contract_version": visibility_version})
+            else:
+                legacy_input_reported_mismatch.append(item)
+        actual_prompt_included = row.get("actual_prompt_included")
+        if actual_prompt_included is None and "actual_prompt_included" in payload:
+            actual_prompt_included = payload.get("actual_prompt_included")
+        if has_actual_contract and actual_prompt_included is None:
+            actual_prompt_unmeasured.append({**item, "visibility_contract_version": visibility_version})
+        if has_actual_contract and actual_prompt_included is not None:
+            actual_flag = 1 if bool(actual_prompt_included) else 0
+            reported_flag = int(row.get("input_to_claude_reported") or 0)
+            if actual_flag != reported_flag:
+                actual_prompt_mismatch.append({**item, "visibility_contract_version": visibility_version})
+        if (
+            has_actual_contract
+            and row.get("final_prompt_included") is not None
+            and int(row.get("final_prompt_included") or 0) != int(row.get("in_prompt") or 0)
+        ):
+            actual_prompt_mismatch.append({**item, "visibility_contract_version": visibility_version})
+        if has_actual_contract and not trace_id:
+            trace_join_missing.append({**item, "visibility_contract_version": visibility_version})
         if int(row.get("claude_trade_ready") or 0) == 1 and family != "trade_ready_family":
             trade_ready_family_mismatch.append(item)
-        price = _to_float(row.get("price"))
-        if price is None or price <= 0:
-            invalid_price.append({**item, "price": row.get("price")})
+        if _has_invalid_price_observation(row, payload):
+            reason_code, reason_detail = _invalid_price_reason(row, payload)
+            invalid_price_reason_counts[reason_code] += 1
+            invalid_price.append(
+                {
+                    **item,
+                    "price": row.get("price"),
+                    "invalid_price_reason_code": reason_code,
+                    "invalid_price_reason_detail": reason_detail,
+                }
+            )
     return {
         "latest_rows_checked": len(rows),
         "action_family_counts": dict(action_family_counts),
         "input_reported_not_in_prompt": input_reported_not_in_prompt[:30],
         "input_reported_not_in_prompt_count": len(input_reported_not_in_prompt),
+        "actual_prompt_mismatch": actual_prompt_mismatch[:30],
+        "actual_prompt_mismatch_count": len(actual_prompt_mismatch),
+        "actual_prompt_unmeasured": actual_prompt_unmeasured[:30],
+        "actual_prompt_unmeasured_count": len(actual_prompt_unmeasured),
+        "legacy_input_reported_mismatch": legacy_input_reported_mismatch[:30],
+        "legacy_input_reported_mismatch_count": len(legacy_input_reported_mismatch),
+        "trace_join_missing": trace_join_missing[:30],
+        "trace_join_missing_count": len(trace_join_missing),
         "trade_ready_family_mismatch": trade_ready_family_mismatch[:30],
         "trade_ready_family_mismatch_count": len(trade_ready_family_mismatch),
         "invalid_price": invalid_price[:30],
         "invalid_price_count": len(invalid_price),
+        "invalid_price_reason_counts": dict(invalid_price_reason_counts.most_common()),
     }
 
 

@@ -14,6 +14,7 @@ from credit_tracker import record as credit_record
 from logger import get_minority_logger
 from minority_report.claude_utils import extract_json
 from minority_report.raw_call_logger import save as save_raw_call
+from runtime.tuning_bounds import RUNTIME_ADJUSTMENT_BOUNDS, coerce_runtime_adjustments
 
 log = get_minority_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
@@ -32,12 +33,7 @@ _VALID_MODES = {
     "DEFENSIVE",
     "HALT",
 }
-_RUNTIME_ADJUSTMENT_BOUNDS = {
-    "momentum_wait_adjust_min": (-10, 10),
-    "entry_priority_cutoff_adjust": (-0.05, 0.05),
-    "kr_momentum_atr_cap_adjust": (-0.01, 0.02),
-    "kr_momentum_atr_cap_high_adjust": (-0.01, 0.02),
-}
+_RUNTIME_ADJUSTMENT_BOUNDS = RUNTIME_ADJUSTMENT_BOUNDS
 
 
 def _is_overloaded_error(exc: Exception) -> bool:
@@ -68,19 +64,19 @@ def _format_positions_summary(positions: list) -> str:
 
 
 def _coerce_runtime_adjustments(result: dict) -> dict:
-    normalized = dict(result or {})
+    return coerce_runtime_adjustments(result)
+
+
+def _format_runtime_bound(value: float) -> str:
+    return f"{value:g}"
+
+
+def _runtime_adjustment_bounds_text() -> str:
+    lines = []
     for key, (low, high) in _RUNTIME_ADJUSTMENT_BOUNDS.items():
-        raw_value = normalized.get(key, 0)
-        try:
-            value = float(raw_value or 0)
-        except (TypeError, ValueError):
-            value = 0.0
-        value = max(low, min(high, value))
-        if key == "momentum_wait_adjust_min":
-            normalized[key] = int(round(value))
-        else:
-            normalized[key] = round(value, 4)
-    return normalized
+        suffix = " 정수" if key == "momentum_wait_adjust_min" else ""
+        lines.append(f"- {key}: {_format_runtime_bound(low)} ~ {_format_runtime_bound(high)}{suffix}")
+    return "\n".join(lines)
 
 
 def _runtime_adjustment_summary(result: dict) -> str:
@@ -221,10 +217,7 @@ def tune(market: str, elapsed_min: int, current_state: dict,
 - KR momentum ATR cap은 완화/강화만 허용
 
 bounded override 범위:
-- momentum_wait_adjust_min: -10 ~ 10 정수
-- entry_priority_cutoff_adjust: -0.05 ~ 0.05
-- kr_momentum_atr_cap_adjust: -0.01 ~ 0.02
-- kr_momentum_atr_cap_high_adjust: -0.01 ~ 0.02
+{_runtime_adjustment_bounds_text()}
 
 JSON으로만 응답:
 {{"action":"MAINTAIN|TIGHTEN|REVERSE","mode":"{prev_mode} 또는 조정된 모드",

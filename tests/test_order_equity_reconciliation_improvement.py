@@ -180,6 +180,44 @@ class OrderUnknownRegistryTests(unittest.TestCase):
             self.assertIn("006340", registry.state["paused_tickers"]["KR"])
 
 
+class BrokerOpenOrderReconcileTests(unittest.TestCase):
+    def test_broker_only_open_order_uses_remaining_qty_when_order_qty_missing(self) -> None:
+        bot = object.__new__(trading_bot.TradingBot)
+        bot.pending_orders = []
+        bot.v2_order_unknown = Mock()
+        bot._flag_execution_issue = Mock()
+        bot._broker_truth_market_snapshot = Mock(
+            return_value={
+                "missing": False,
+                "stale": False,
+                "error": "",
+                "open_orders": [
+                    {
+                        "market": "US",
+                        "ticker": "IBM",
+                        "order_no": "0030262408",
+                        "side": "sell",
+                        "order_qty": 0,
+                        "remaining_qty": 3,
+                    }
+                ],
+            }
+        )
+
+        summary = trading_bot.TradingBot._reconcile_broker_open_orders(
+            bot,
+            "US",
+            reason="test",
+            force=True,
+        )
+
+        payload = summary["broker_only_open_orders"][0]
+        self.assertEqual(payload["qty"], 3)
+        self.assertEqual(payload["remaining_qty"], 3)
+        bot.v2_order_unknown.record_broker_open_order.assert_called_once()
+        self.assertEqual(bot.v2_order_unknown.record_broker_open_order.call_args.kwargs["qty"], 3)
+
+
 class EquityReferenceTests(unittest.TestCase):
     def _bot_for_equity(self, market: str, base: float, broker_total: float, *, daily_pnl: float = 0.0):
         bot = object.__new__(trading_bot.TradingBot)

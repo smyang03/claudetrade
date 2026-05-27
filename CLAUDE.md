@@ -29,6 +29,12 @@ This repository is a Python-based KR/US automated trading system. `trading_bot.p
 - Add or update tests close to the behavior being changed. New test files should use `tests/test_<feature>.py`; test functions should use `test_<expected_behavior>`.
 - When changing `trading_bot.py`, order execution, live config, audit stores, DB schemas, orchestrators, or dashboard behavior, run the focused tests first and then broaden to `py_compile` and wider pytest coverage.
 
+### PathB Auto-Sell Review Cooldown Guard
+
+- Do not remove or loosen the PathB `AUTO_SELL_REVIEW` HOLD cooldown guard. It prevents repeated Claude calls when `CLAUDE_REVIEW_ALL_AUTOMATED_SELLS=true` causes PathB `loss_cap`, `hard_stop`, or `profit_ladder` exits to pass through hold advisor review.
+- The protected flow is `runtime/pathb_runtime.py` `_pathb_auto_sell_review_cooldown_payload()` and `_run_pathb_sell_review_gate()`, with coverage in `tests/test_auto_sell_claude_gate.py::test_pathb_loss_cap_hold_respects_reask_cooldown`.
+- If this guard or related knobs (`CLAUDE_REVIEW_ALL_AUTOMATED_SELLS`, `AUTO_SELL_REVIEW_HOLD_COOLDOWN_MINUTES`, `PATHB_AUTO_SELL_REVIEW_HOLD_REASK_DROP_PCT`) must change, state the reason, expected Claude call/token impact, replacement duplicate-call protection, and tests run in the work note, commit message, or PR body.
+
 ### Commit, PR, and Security Standards
 
 - Commit units should be one behavior change at a time. Recent history uses Conventional Commit prefixes such as `feat:` and `fix:` with short Korean or English summaries.

@@ -88,6 +88,7 @@ _KIS_LAST_CALL_TS = 0.0
 _TOKEN_ALIAS_LOCK = threading.Lock()
 _TOKEN_ALIAS: dict[str, str] = {}
 _TOKEN_MARKET: dict[str, str] = {}
+_TOKEN_RATE_LIMIT_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -463,6 +464,27 @@ class KISTokenExpiredError(RuntimeError):
     """KIS API가 EGW00123(토큰 만료)을 반환한 경우."""
 
 
+class KISTokenRateLimitError(RuntimeError):
+    """KIS API가 EGW00133(토큰 발급 제한)을 반환한 경우."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        market: str,
+        retry_after_sec: int = 0,
+        cooldown_until: str = "",
+        status_code: int = 0,
+        response_text: str = "",
+    ):
+        self.market = str(market or "").upper()
+        self.retry_after_sec = int(retry_after_sec or 0)
+        self.cooldown_until = str(cooldown_until or "")
+        self.status_code = int(status_code or 0)
+        self.response_text = str(response_text or "")
+        super().__init__(message)
+
+
 class KISOrderHTTPError(RuntimeError):
     """KIS 주문 HTTP 오류. 주문은 중복 위험이 있어 일반 조회처럼 blind retry하지 않는다."""
 
@@ -517,6 +539,168 @@ def save_token(token, expires_in, market: str = "KR"):
     _remember_token_market(token, profile.market)
 
 
+def _token_rate_limit_path(profile: KISMarketProfile):
+    mode = "paper" if profile.is_paper else "live"
+    shared_with_kr = bool(getattr(profile, "shared_with_kr", False))
+    market_label = "kr" if shared_with_kr else str(profile.market or "KR").lower()
+    credential_scope = "shared_kr" if shared_with_kr else str(profile.credential_mode or market_label)
+    fingerprint = _fingerprint(f"{profile.base_url}|{profile.app_key}|{credential_scope}|{mode}")
+    return get_runtime_path("state", f"{mode}_kis_token_rate_limit_{market_label}_{fingerprint}.json")
+
+
+def _token_rate_limit_default_cooldown_sec() -> int:
+    try:
+        return max(5, int(float(os.getenv("KIS_TOKEN_RATE_LIMIT_COOLDOWN_SEC", "70"))))
+    except Exception:
+        return 70
+
+
+def _response_text_for_token_error(response) -> str:
+    text = str(getattr(response, "text", "") or "")
+    if text:
+        return text
+    try:
+        data = response.json()
+        return json.dumps(data, ensure_ascii=False)
+    except Exception:
+        return ""
+
+
+def _extract_token_rate_limit_payload(source) -> dict | None:
+    body = source if isinstance(source, dict) else {}
+    text = ""
+    if not isinstance(source, dict) and source is not None:
+        text = _response_text_for_token_error(source)
+        try:
+            parsed = source.json()
+            if isinstance(parsed, dict):
+                body = parsed
+        except Exception:
+            pass
+    msg_cd = str((body or {}).get("msg_cd") or "")
+    msg1 = str((body or {}).get("msg1") or "")
+    combined = " ".join([msg_cd, msg1, text])
+    if "EGW00133" not in combined:
+        return None
+    return {
+        "msg_cd": msg_cd or "EGW00133",
+        "msg1": msg1,
+        "rt_cd": str((body or {}).get("rt_cd") or ""),
+        "text": text[:500],
+    }
+
+
+def _token_rate_limit_retry_after_sec(response) -> int:
+    headers = getattr(response, "headers", {}) or {}
+    raw = ""
+    try:
+        raw = str(headers.get("Retry-After", "") or "")
+    except Exception:
+        raw = ""
+    if raw:
+        try:
+            return max(1, int(float(raw)))
+        except Exception:
+            pass
+    return _token_rate_limit_default_cooldown_sec()
+
+
+def _token_rate_limit_message(profile: KISMarketProfile, retry_after_sec: int, cooldown_until: str, payload: dict | None = None) -> str:
+    payload = payload or {}
+    detail = str(payload.get("msg1") or payload.get("text") or "").strip()
+    suffix = f" detail={detail[:200]}" if detail else ""
+    return (
+        f"KIS {profile.market} 토큰 발급 rate limit(EGW00133): "
+        f"cooldown_until={cooldown_until}, retry_after_sec={int(retry_after_sec or 0)}.{suffix}"
+    )
+
+
+def _active_token_rate_limit(profile: KISMarketProfile) -> dict | None:
+    path = _token_rate_limit_path(profile)
+    try:
+        with _TOKEN_RATE_LIMIT_LOCK:
+            if not path.exists():
+                return None
+            marker = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except Exception:
+        return None
+    if not isinstance(marker, dict):
+        return None
+    context = marker.get("context")
+    if isinstance(context, dict) and context != _token_cache_context(profile.market):
+        return None
+    try:
+        until_ts = float(marker.get("cooldown_until_ts", 0) or 0)
+    except Exception:
+        until_ts = 0.0
+    retry_after_sec = int(max(0, until_ts - time.time()))
+    if retry_after_sec <= 0:
+        return None
+    marker["retry_after_sec"] = retry_after_sec
+    return marker
+
+
+def _raise_if_token_rate_limited(profile: KISMarketProfile) -> None:
+    marker = _active_token_rate_limit(profile)
+    if not marker:
+        return
+    retry_after_sec = int(marker.get("retry_after_sec", 0) or 0)
+    cooldown_until = str(marker.get("cooldown_until") or "")
+    payload = marker.get("payload") if isinstance(marker.get("payload"), dict) else {}
+    raise KISTokenRateLimitError(
+        _token_rate_limit_message(profile, retry_after_sec, cooldown_until, payload),
+        market=profile.market,
+        retry_after_sec=retry_after_sec,
+        cooldown_until=cooldown_until,
+        status_code=int(marker.get("status_code", 0) or 0),
+        response_text=str(marker.get("response_text") or ""),
+    )
+
+
+def _record_token_rate_limit(profile: KISMarketProfile, payload: dict, response=None) -> KISTokenRateLimitError:
+    retry_after_sec = _token_rate_limit_retry_after_sec(response)
+    cooldown_until_ts = time.time() + retry_after_sec
+    cooldown_until = datetime.fromtimestamp(cooldown_until_ts).isoformat(timespec="seconds")
+    response_text = _response_text_for_token_error(response)[:500] if response is not None else str(payload.get("text") or "")[:500]
+    status_code = int(getattr(response, "status_code", 0) or 0) if response is not None else 0
+    marker = {
+        "market": profile.market,
+        "cooldown_until": cooldown_until,
+        "cooldown_until_ts": cooldown_until_ts,
+        "retry_after_sec": retry_after_sec,
+        "status_code": status_code,
+        "response_text": response_text,
+        "payload": payload,
+        "context": _token_cache_context(profile.market),
+        "recorded_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    try:
+        path = _token_rate_limit_path(profile)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _TOKEN_RATE_LIMIT_LOCK:
+            path.write_text(json.dumps(marker, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    except Exception as exc:
+        log.warning(f"KIS {profile.market} token rate-limit marker write failed: {exc}")
+    return KISTokenRateLimitError(
+        _token_rate_limit_message(profile, retry_after_sec, cooldown_until, payload),
+        market=profile.market,
+        retry_after_sec=retry_after_sec,
+        cooldown_until=cooldown_until,
+        status_code=status_code,
+        response_text=response_text,
+    )
+
+
+def _clear_token_rate_limit_marker(profile: KISMarketProfile) -> None:
+    try:
+        path = _token_rate_limit_path(profile)
+        with _TOKEN_RATE_LIMIT_LOCK:
+            if path.exists():
+                path.unlink()
+    except Exception:
+        pass
+
+
 def get_access_token(force_refresh: bool = False, market: str = "KR"):
     profile = get_kis_market_profile(market)
     token_file = _token_file_for_market(profile.market)
@@ -525,6 +709,7 @@ def get_access_token(force_refresh: bool = False, market: str = "KR"):
         return cached["access_token"]
     if not profile.app_key or not profile.app_secret:
         raise RuntimeError(f"KIS {profile.market} APP_KEY/APP_SECRET 값이 비어 있습니다. .env를 확인하세요.")
+    _raise_if_token_rate_limited(profile)
 
     last_error = None
     last_status_detail = ""
@@ -536,7 +721,11 @@ def get_access_token(force_refresh: bool = False, market: str = "KR"):
             )
             resp.raise_for_status()
             data = resp.json()
+            payload = _extract_token_rate_limit_payload(data)
+            if payload:
+                raise _record_token_rate_limit(profile, payload, response=resp)
             save_token(data["access_token"], int(data.get("expires_in", 86400)), market=profile.market)
+            _clear_token_rate_limit_marker(profile)
             return data["access_token"]
         except requests.exceptions.Timeout as e:
             last_error = e
@@ -548,6 +737,9 @@ def get_access_token(force_refresh: bool = False, market: str = "KR"):
             if response is not None:
                 body = str(getattr(response, "text", "") or "").replace("\n", " ")[:300]
                 last_status_detail = f" HTTP status={response.status_code}, body={body}"
+                payload = _extract_token_rate_limit_payload(response)
+                if payload:
+                    raise _record_token_rate_limit(profile, payload, response=response) from e
             break
 
     mode_hint = ""
@@ -1132,6 +1324,164 @@ def _intraday_ohlcv_us_finnhub(
     return _intraday_filter_frame(out, start_at=start_dt, end_at=end_dt, source="finnhub_intraday")
 
 
+def _kis_item_get(item: dict, *keys: str, default=""):
+    if not isinstance(item, dict):
+        return default
+    for key in keys:
+        if key in item and item.get(key) not in (None, ""):
+            return item.get(key)
+    lower = {str(k).lower(): v for k, v in item.items()}
+    for key in keys:
+        value = lower.get(str(key).lower())
+        if value not in (None, ""):
+            return value
+    return default
+
+
+def _parse_us_kis_intraday_ts(item: dict) -> tuple[Optional[datetime], Optional[datetime]]:
+    """Return (KST naive timestamp, KEYB naive timestamp) for a KIS US minute row."""
+    key_dt = None
+    kst_dt = None
+    kymd = str(_kis_item_get(item, "kymd", "KYM", "k_ymd") or "").strip()
+    khms = str(_kis_item_get(item, "khms", "KHM", "k_hms") or "").strip().zfill(6)
+    if len(kymd) == 8 and len(khms) >= 6:
+        kst_dt = _parse_intraday_dt(f"{kymd[:4]}-{kymd[4:6]}-{kymd[6:8]}T{khms[:2]}:{khms[2:4]}:{khms[4:6]}")
+
+    xymd = str(_kis_item_get(item, "xymd", "XYM", "tymd", "TYMD") or "").strip()
+    xhms = str(_kis_item_get(item, "xhms", "XHM", "thms", "THMS") or "").strip().zfill(6)
+    if len(xymd) == 8 and len(xhms) >= 6:
+        key_dt = _parse_intraday_dt(f"{xymd[:4]}-{xymd[4:6]}-{xymd[6:8]}T{xhms[:2]}:{xhms[2:4]}:{xhms[4:6]}")
+        if key_dt is None:
+            return kst_dt, kst_dt
+        if kst_dt is None:
+            try:
+                from zoneinfo import ZoneInfo
+
+                localized = key_dt.replace(tzinfo=ZoneInfo("America/New_York"))
+                kst_dt = localized.astimezone(ZoneInfo("Asia/Seoul")).replace(tzinfo=None)
+            except Exception:
+                kst_dt = key_dt
+    if kst_dt is not None:
+        return kst_dt, key_dt or kst_dt
+    return None, None
+
+
+def _kis_us_intraday_rows(data: dict) -> list[dict]:
+    rows = data.get("output2") or data.get("output") or []
+    if isinstance(rows, dict):
+        return [rows]
+    return rows if isinstance(rows, list) else []
+
+
+def _intraday_ohlcv_us_kis(
+    ticker: str,
+    token: str,
+    *,
+    session_date: str,
+    start_at=None,
+    end_at=None,
+    deadline: Optional[float] = None,
+    request_timeout: Optional[float] = None,
+) -> pd.DataFrame:
+    """US 1-minute candles from KIS overseas stock minute endpoint.
+
+    KIS returns recent rows first for this endpoint. The stored contract is
+    normalized to KST naive timestamps and ascending timestamp order.
+    """
+    ticker_key = str(ticker or "").strip().upper()
+    if not ticker_key:
+        return _intraday_empty_frame()
+    _order_exch, quote_exch = _get_us_quote_codes(ticker_key, token)
+    start_dt = _parse_intraday_dt(start_at) or (datetime.now() - timedelta(hours=8))
+    end_dt = _parse_intraday_dt(end_at) or datetime.now()
+    max_pages = max(1, int(os.getenv("US_INTRADAY_KIS_MAX_PAGES", "4") or "4"))
+    nrec = max(1, min(120, int(os.getenv("US_INTRADAY_KIS_NREC", "120") or "120")))
+    first_pinc = str(os.getenv("US_INTRADAY_KIS_PINC", "0") or "0").strip()
+    rows_all: list[dict] = []
+    seen_times: set[str] = set()
+    seen_keyb: set[str] = set()
+    next_flag = ""
+    keyb = ""
+
+    for page in range(max_pages):
+        timeout = float(request_timeout if request_timeout is not None else 10)
+        if deadline is not None:
+            remaining = float(deadline) - time.time()
+            if remaining <= 0:
+                raise TimeoutError("provider_timeout")
+            timeout = max(0.05, min(timeout, remaining))
+        pinc = first_pinc if page == 0 else "1"
+        params = {
+            "AUTH": "",
+            "EXCD": quote_exch,
+            "SYMB": ticker_key,
+            "NMIN": "1",
+            "PINC": pinc,
+            "NEXT": next_flag,
+            "NREC": str(nrec),
+            "FILL": "",
+            "KEYB": keyb,
+        }
+        resp = _kis_get(
+            f"{_base_url('US')}/uapi/overseas-price/v1/quotations/inquire-time-itemchartprice",
+            headers=_headers(token, "HHDFS76950200", market="US"),
+            params=params,
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        _require_kis_success(data, f"해외주식분봉조회 [{ticker_key}]")
+        page_rows = _kis_us_intraday_rows(data)
+        if not page_rows:
+            break
+
+        parsed: list[tuple[datetime, datetime]] = []
+        for item in page_rows:
+            ts, key_dt = _parse_us_kis_intraday_ts(item)
+            if ts is None or key_dt is None:
+                continue
+            seen_key = ts.isoformat(timespec="seconds")
+            if seen_key in seen_times:
+                continue
+            seen_times.add(seen_key)
+            parsed.append((ts, key_dt))
+            rows_all.append(
+                {
+                    "ts": ts,
+                    "open": _to_float(_kis_item_get(item, "open"), math.nan),
+                    "high": _to_float(_kis_item_get(item, "high"), math.nan),
+                    "low": _to_float(_kis_item_get(item, "low"), math.nan),
+                    "close": _to_float(_kis_item_get(item, "last", "close", "clos"), math.nan),
+                    "volume": _to_float(_kis_item_get(item, "evol", "volume", "tvol")),
+                    "source": "kis_us_intraday",
+                }
+            )
+        if not parsed:
+            break
+
+        earliest_ts, earliest_key_dt = min(parsed, key=lambda item: item[0])
+        if earliest_ts <= start_dt:
+            break
+        next_keyb = (earliest_key_dt - timedelta(minutes=1)).strftime("%Y%m%d%H%M%S")
+        if not next_keyb or next_keyb in seen_keyb:
+            break
+        seen_keyb.add(next_keyb)
+        keyb = next_keyb
+        next_flag = "1"
+        sleep_sec = float(os.getenv("US_INTRADAY_KIS_PAGE_SLEEP_SEC", "0.10") or "0.10")
+        if deadline is not None:
+            remaining = float(deadline) - time.time()
+            if remaining <= 0:
+                raise TimeoutError("provider_timeout")
+            sleep_sec = min(sleep_sec, max(0.0, remaining))
+        if sleep_sec > 0:
+            time.sleep(sleep_sec)
+
+    if not rows_all:
+        return _intraday_empty_frame()
+    return _intraday_filter_frame(pd.DataFrame(rows_all), start_at=start_dt, end_at=end_dt, source="kis_us_intraday")
+
+
 def get_intraday_candles(
     ticker: str,
     token: Optional[str] = None,
@@ -1195,7 +1545,20 @@ def get_intraday_candles(
     elif provider_key == "finnhub":
         df = _intraday_ohlcv_us_finnhub(ticker_key, start_at=start_at, end_at=end_at)
     elif provider_key == "kis":
-        raise RuntimeError("KIS US intraday candle provider not verified; set INTRADAY_EVIDENCE_PROVIDER_US=yfinance/finnhub after policy approval")
+        df = _retry_kis(
+            f"US intraday ohlcv [{ticker_key}]",
+            lambda: _intraday_ohlcv_us_kis(
+                ticker_key,
+                token or get_access_token(market="US"),
+                session_date=session_text,
+                start_at=start_at,
+                end_at=end_at,
+                deadline=deadline,
+                request_timeout=request_timeout,
+            ),
+            retries=0 if deadline is not None else 2,
+            delay_sec=float(os.getenv("US_INTRADAY_KIS_RETRY_AFTER_SEC", "1.0")),
+        )
     else:
         raise RuntimeError(f"unsupported {market_key} intraday provider: {provider_key}")
 
@@ -2379,7 +2742,9 @@ def _normalize_us_inquire_ccnl_row(row: dict) -> dict:
     filled_qty = int(_to_float(_pick_first(row, [
         "ft_ccld_qty", "ccld_qty", "tot_ccld_qty", "tot_ccld_qty_sum", "exec_qty"
     ]), 0))
-    order_qty = int(_to_float(_pick_first(row, ["ord_qty", "ORD_QTY"]), 0))
+    order_qty = int(_to_float(_pick_first(row, [
+        "ft_ord_qty", "FT_ORD_QTY", "ord_qty", "ORD_QTY"
+    ]), 0))
     remaining_raw = _pick_first(row, ["nccs_qty", "NCCS_QTY", "rmn_qty", "RMN_QTY"], None)
     if remaining_raw is not None:
         remaining_qty = max(0, int(_to_float(remaining_raw, 0)))
@@ -2388,7 +2753,11 @@ def _normalize_us_inquire_ccnl_row(row: dict) -> dict:
     fill_price = _to_float(_pick_first(row, [
         "ft_ccld_unpr3", "ft_ccld_unpr", "avg_prvs", "avg_ccld_unpr", "ccld_unpr"
     ]), 0)
-    order_price = _to_float(_pick_first(row, ["ovrs_ord_unpr", "OVRS_ORD_UNPR", "ord_unpr", "ORD_UNPR"]), 0)
+    order_price = _to_float(_pick_first(row, [
+        "ft_ord_unpr3", "FT_ORD_UNPR3",
+        "ovrs_ord_unpr", "OVRS_ORD_UNPR",
+        "ord_unpr", "ORD_UNPR",
+    ]), 0)
     if fill_price <= 0:
         fill_price = order_price
     return {

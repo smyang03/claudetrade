@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from kis_api import KISTokenExpiredError
+from kis_api import KISTokenExpiredError, KISTokenRateLimitError
 from trading_bot import TradingBot
 
 
@@ -52,6 +52,29 @@ class StartupTokenRefreshTests(unittest.TestCase):
         self.assertEqual(token_mock.call_args_list[0].kwargs["market"], "KR")
         self.assertEqual(token_mock.call_args_list[1].kwargs["market"], "KR")
         sleep_mock.assert_called_once_with(0.25)
+
+    def test_startup_token_helper_stops_on_kis_rate_limit(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.tokens = {}
+
+        with patch.dict(
+            "os.environ",
+            {"STARTUP_TOKEN_ATTEMPTS": "3", "STARTUP_TOKEN_BACKOFF_SEC": "0.25"},
+            clear=False,
+        ), patch(
+            "trading_bot.get_access_token",
+            side_effect=KISTokenRateLimitError(
+                "rate limited",
+                market="KR",
+                retry_after_sec=60,
+                cooldown_until="2099-01-01T00:00:00",
+            ),
+        ) as token_mock, patch("trading_bot.time.sleep") as sleep_mock:
+            with self.assertRaises(KISTokenRateLimitError):
+                bot._get_startup_token_with_backoff()
+
+        token_mock.assert_called_once_with(market="KR")
+        sleep_mock.assert_not_called()
 
     def test_disabled_market_balance_lookup_returns_empty_without_kis_call(self) -> None:
         bot = TradingBot.__new__(TradingBot)

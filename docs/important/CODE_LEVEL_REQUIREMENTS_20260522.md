@@ -1,237 +1,51 @@
 # Code-Level Requirements
 
-Date: 2026-05-22
+Updated: 2026-05-27
 
-Purpose: judge what is completed versus not completed from the current code, then define the remaining implementation requirements.
+Purpose: plan/report cleanup 이후 남은 code-level 요구사항과 acceptance gate를 정리한다. 완료 항목은 커밋/코드 근거가 있을 때만 제거하며, 작업트리 구현만 있는 항목은 active review로 남긴다.
+
+Detailed P0/P1 implementation requirements are now tracked in [P0_P1_CODE_LEVEL_DEV_REQUIREMENTS_20260527.md](P0_P1_CODE_LEVEL_DEV_REQUIREMENTS_20260527.md). This file remains the compact judgment and acceptance matrix.
 
 ## Code-Level Judgment
 
-| Item | Code Status | Evidence | Judgment |
+| 카테고리 | Item | Current code status | Remaining judgment |
 | --- | --- | --- | --- |
-| P0-1 sub-screener base | Partially complete | `runtime/sub_screener.py`, `TradingBot.maybe_run_sub_screener()`, `tests/test_sub_screener*.py` | Scanner, counters, rate limit, reinvoke/rescreen path, and tests exist. Effective live/shadow policy is still ambiguous because market-scoped flags override the global flag. |
-| P0-2 zero-holding reconcile | Partially complete | `TradingBot._sell_zero_holding_broker_evidence()`, `PathBRuntime._pathb_zero_holding_broker_evidence()` | Code blocks stale/untrusted broker truth and can remove local stale positions only after fresh zero-holding truth. Still needs real KIS payload fixture coverage and operator visibility. |
-| P0-3 PathB entry broker-truth gate | Partially complete | `PathBRuntime._entry_scan_broker_truth_gate()` | Entry scan can refresh broker truth and block on stale/untrusted state. Still needs preflight/ops visibility and config documentation. |
-| P0-4 profit-review timeout fallback | Partially complete | `PathBRuntime._profit_review_timeout_payload()` and timeout/debounce state | Timeout is converted to HOLD fallback with `advisor_unavailable` and `learning_excluded`. Still needs dashboard/canonical/report visibility so it is not read as strategy HOLD. |
-| P1-1 prompt pool/evidence alignment | Instrumented, not validated | `selection_trace_id`, `missing_evidence_tickers`, `missing_exec_tickers`, overlap metrics | Runtime instrumentation exists. Needs next-session metric review after prompt hard-cap changes. |
-| P1-2 US KIS ranking screener | Not complete | `kis_api.screen_market_us()` still has no `token` parameter and no KIS overseas ranking branch | Implement KIS ranking first-source path with safe fallback. |
-| P1-3 V2 canonical truth | Code mostly complete, ops incomplete | `tools/sync_v2_learning_performance.py`, `strategy/adaptive_params.py`, dashboard digest, candidate audit link fields | Canonical and link code exists. Needs runbook, freshness check, and daily operation rule. |
-| P1-4 counterfactual outcomes | Code mostly complete, ops incomplete | `tools/update_counterfactual_outcomes.py`, `tools/analyze_counterfactual_paths.py`, tests | Store/updater/analyzer exist. Needs scheduled run and review contract. |
-| P1-5 KR confirmation/fade shadow | Complete at code level | `6f8fdc1`, `minute_complete` accepted, `runtime/live_evidence_pack.py`, `runtime/adaptive_live_condition.py`, related tests | No longer active implementation work. Keep KR fade-recovered as P2 observation only. |
+| 수익성 | Actual prompt visibility | prompt count/trace 기반은 커밋되어 있고, 현재 코드에는 `selection_trace_id`, `actual_prompt_*`, raw/trainer score component 계측이 더 보강되어 있다. | fresh KR/US cycle에서 실제 DB rows를 검증하고 report가 legacy `input_to_claude`보다 actual prompt fields를 우선하는지 확인. |
+| 데이터베이스 | Candidate bucket/source quality | source/bucket 일부 필드는 있으나 broad reason과 blank bucket/source gap이 남아 있다. `INVALID_PRICE` reason split은 작업트리 구현으로 보이며 commit 완료로 보지 않는다. | bucket/source/data-quality/score components를 audit/outcome까지 전파하고 blank rate를 측정. |
+| 수익성 | KR entry/exit profit shadow | counterfactual minute base는 있으나 first-entry/OR/VWAP/MFE-cap review가 promotion-ready가 아니다. | sample-size/concentration gate 충족 전 live first-entry/exit 변경 금지. |
+| 운영 | KIS token rate-limit handling | refresh/retry는 있으나 `EGW00133` rate-limit/backoff 분류가 미완료. | duplicate force-refresh prevention과 focused tests 필요. |
+| 버그 | Broker-truth zero-holding reconcile | runtime logic은 있으나 realistic KR/US fixture coverage가 부족. | parser 변경 전 fixture tests로 destructive reconcile fail-closed 보장. |
+| 운영 | PathB entry broker-truth gate | runtime gate는 있다. | operator-visible TTL/failure/block reason이 필요. |
+| 버그 | PathB pending-buy TTL/order matching | 작업트리에 sent/ACK timestamp, exact mismatch defer, cancel-confirm follow-up 구현 흔적이 있다. | commit/QA 전에는 완료로 보지 않고 existing order behavior 불변성 검증 필요. |
+| 버그 | US PathB sizing context | 작업트리에 sizing context와 reason split 구현 흔적이 있다. | qty 결과와 order policy 불변 test가 필요. |
+| 데이터베이스 | Canonical/fallback truth | V2 canonical truth preferred rule은 문서화되어 있으나 freshness warning과 fallback exclusion tests가 부족. | stale/missing truth와 `advisor_unavailable` aggregate exclusion을 visible/tested로 만든다. |
+| 운영 | Brain/sub-screener guards | 일부 runtime behavior는 있으나 직접 brain write 방지와 effective trigger visibility가 부족. | direct-write guard, trigger precedence/counter visibility, stale truth warning tests. |
+| 버그 | Runtime tuning bounds | 기존 bounds는 `minority_report/tuner.py`에 있었고, 현재 작업트리에 `runtime/tuning_bounds.py` migration이 있다. | tracked file/commit 상태 정리 후 non-override key drop assertion 필요. |
+| 운영 | PathB fill/sell-pending/EXPIRED | lifecycle reconcile은 있다. | real KIS payload, partial remainder, EXPIRED resampling, stale waiting-plan cleanup 검증. |
 
-## Requirement R1 - Sub-Screener Effective Trigger Contract
+## Before/After Acceptance Matrix
 
-Current code truth:
+| Requirement | 개선 전 | 개선 후 |
+| --- | --- | --- |
+| R1 actual prompt profit visibility | prompt inclusion을 old field 또는 timestamp-nearest join으로 추정. | `selection_trace_id`, `actual_prompt_call_id`, `actual_prompt_included`, `actual_prompt_rank` 기준으로 measured/unmeasured, included/missing outcomes 분리. |
+| R2 candidate data quality | blank bucket/source와 broad `INVALID_PRICE`가 ranker/source/price/execution 원인을 섞음. | bucket/source/data-quality/raw-score/trainer-score와 invalid-price concrete reason이 query 가능. |
+| R3 KR entry/exit shadow | first-entry/exit overlay 판단이 소수 샘플에 과적합될 수 있음. | 30 fills 또는 4 weeks, top-day contribution < 40%, broker-fill-aware replay 후 review. |
+| R4 KIS token backoff | `EGW00133`가 credential issue처럼 보이거나 force-refresh storm을 유발. | rate-limit/backoff로 throttling되고 credential/config failure는 별도 fail-closed. |
+| R5 zero-holding fixtures | destructive reconcile이 local/cache assumptions에 기대는 위험. | KR/US fixtures가 fresh zero/no-open only cleanup과 unsafe fail-closed를 증명. |
+| R6 PathB broker-truth visibility | entry block이 log-only 상태. | ops/preflight에서 TTL, attempts, latency, error, block reason 확인. |
+| R7 PathB TTL/order matching | plan age와 same-ticker fallback이 wrong cancel/fill 판단을 만들 수 있음. | actual sent/ACK timestamp와 exact `order_no`가 있으면 exact-only matching. |
+| R8 US PathB sizing context | `qty=0` 원인이 `INVALID_QTY`로 뭉침. | order quantity는 유지하고 MRVL형 `ORDER_SIZE_TOO_SMALL_GATE`, APP형 `HIGH_PRICE_BUDGET_BLOCK` 분리. |
+| R9 canonical/fallback truth | stale canonical or fallback HOLD가 성과/학습에 섞일 수 있음. | freshness visible, fallback unavailable rows excluded from learning/canonical aggregate. |
+| R10 Brain/sub-screener guards | hidden trigger/direct memory write가 운영 판단을 오염. | effective trigger visible, automatic brain direct write blocked. |
+| R11 runtime tuning cleanup | non-override fields can survive override payloads. | only bounded numeric keys persist, bounds unchanged. |
+| R12 PathB fill/remainder/EXPIRED | local inference can decide unresolved lifecycle states. | broker truth drives full/partial/cancel/remainder/expired outcomes and ops visibility. |
 
-- `SUB_SCREENER_ENABLED=true` enables scanning.
-- `SUB_SCREENER_TRIGGER_ENABLED=false` does not necessarily mean shadow.
-- `_sub_screener_trigger_enabled()` uses `SUB_SCREENER_KR_TRIGGER_ENABLED` or `SUB_SCREENER_US_TRIGGER_ENABLED` when those env vars exist.
-- If both scoped trigger and global trigger are absent, `_sub_screener_trigger_enabled()` defaults to live trigger because the global fallback default is `True`.
-- Current tracked config has both market-scoped trigger flags set to `true`.
+## Observe-Only Requirements
 
-Required behavior:
+- Prompt overlay / PLAN_A: promotion requires enough trading days, trigger days, labeled outcomes, PF, and concentration gates.
+- US KIS ranking: primary promotion requires at least 10 shadow trading days and 30 evaluated outcome rows.
+- Raw-score shadow, KR confirmation/WATCH_TRIGGER changes, KR first-entry filters, and exit overlays remain shadow/replay until reviewed.
 
-- Expose effective trigger state per market using the same resolution rule as `_sub_screener_trigger_enabled()`.
-- Effective-state visibility can be implemented before policy confirmation because it is read-only.
-- Config changes that alter live/shadow trigger behavior require operator confirmation first.
-- Preflight or ops summary must report:
-  - global trigger flag
-  - KR scoped trigger flag
-  - US scoped trigger flag
-  - effective KR trigger
-  - effective US trigger
-  - max attempts per session
-  - min interval
-  - last detection and last success if state file exists
-- If the intended policy is shadow, config must set market-scoped trigger flags false or remove them.
-- If the intended policy is selective live trigger, document that scoped flags intentionally override global false.
-- Decide whether absent scoped/global trigger config should remain fail-open (`True`) or be changed to fail-closed (`False`). Until that decision is made, preflight must surface the defaulted-live state.
+## Safety Rule
 
-Operator confirmation gate:
-
-```text
-Current code-level effective state:
-SUB_SCREENER_TRIGGER_ENABLED=false
-SUB_SCREENER_KR_TRIGGER_ENABLED=true
-SUB_SCREENER_US_TRIGGER_ENABLED=true
-=> KR effective trigger=true, US effective trigger=true
-
-Before changing config, confirm intended policy:
-1. KR/US both shadow: set market-scoped flags false or remove scoped overrides.
-2. KR/US both live trigger: keep scoped true and document override as approved.
-3. Split policy: keep only the approved market scoped true.
-```
-
-Tests:
-
-- Global false + scoped absent -> effective false.
-- Global false + scoped true -> effective true and preflight shows override.
-- Global true + scoped false -> effective false for that market.
-- Global absent + scoped absent -> effective true under current code, and preflight/ops must label it as `default_live`.
-- Trigger disabled records scan only and does not call `record_attempt()`, `_reinvoke_analysts()`, or `manual_rescreen()`.
-
-Done when:
-
-- Operator can see the effective state without reading code.
-- No one can infer live/shadow status from `SUB_SCREENER_TRIGGER_ENABLED` alone.
-
-## Requirement R2 - Broker-Truth Zero-Holding Reconcile Fixtures
-
-Required behavior:
-
-- Local position removal or PathB run closure is allowed only when all are true:
-  - broker truth is fresh
-  - broker position quantity for ticker is zero
-  - broker open remaining quantity for ticker is zero
-  - no stale/error/missing broker truth marker exists
-- If broker truth is stale, missing, errored, or open order exists, keep local position and emit risk event.
-- The risk event must include broker truth source fields and mark the event as execution safety, not strategy signal.
-
-Tests:
-
-- KR position payload with zero qty and no open order removes stale local position.
-- US position payload with zero qty and no open order removes stale local position.
-- Open order with remaining quantity prevents removal.
-- Stale broker truth prevents removal.
-- Unrecognized KIS row key does not falsely match ticker.
-
-Done when:
-
-- The destructive reconcile path is covered by realistic KR/US broker payload fixtures.
-
-## Requirement R3 - PathB Entry Broker-Truth Gate Ops Visibility
-
-Required behavior:
-
-- Preflight or ops summary must expose:
-  - `PATHB_ENTRY_SCAN_BROKER_TRUTH_REFRESH_ENABLED`
-  - TTL and min interval
-  - last refresh attempted
-  - last success/failure
-  - last latency
-  - last error
-  - current block reason when blocked
-- Token/provider unavailable behavior must be explicit:
-  - paper mode can skip refresh
-  - live token unavailable must not silently create a false-safe path
-
-Tests:
-
-- Refresh failure blocks live entry and reports `BLOCKED_BROKER_TRUTH`.
-- Paper mode skip is reported as skipped, not success.
-- Ops summary includes refresh metrics after one failed and one successful refresh.
-
-Done when:
-
-- A PathB entry block from broker truth can be diagnosed from preflight/ops output without log scraping.
-
-## Requirement R4 - Profit Review Timeout Fallback Visibility
-
-Required behavior:
-
-- Dashboard/ops must show timeout fallback separately from advisor HOLD.
-- Fields to expose:
-  - `profit_review_fallback`
-  - `profit_review_fallback_reason`
-  - `profit_review_timeout`
-  - `timeout_count`
-  - `advisor_unavailable`
-  - `learning_excluded`
-- Canonical/learning reports must not count timeout fallback HOLD as strategy quality.
-
-Tests:
-
-- Timeout row appears as fallback/advisor unavailable in ops output.
-- `learning_excluded=true` prevents inclusion in learning/performance aggregate where applicable.
-- Debounce rows do not create repeated strategy HOLD judgments.
-
-Done when:
-
-- Operator can distinguish "Claude/Hold advisor said HOLD" from "advisor timed out, system held safely."
-
-## Requirement R5 - US KIS Ranking Screener
-
-Current code truth:
-
-- `kis_api.screen_market_us(top_n, mode)` has no `token` parameter.
-- US screening source remains Yahoo Finance -> FMP -> fallback.
-
-Required behavior:
-
-- Extend signature:
-
-```python
-def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL", *, token: str | None = None) -> list:
-    ...
-```
-
-- `trading_bot._screen_market_candidates()` passes `self._token_for_market("US")`.
-- KIS overseas ranking is first source when enabled and token exists.
-- Initial implementation should support shadow comparison before first-source promotion.
-- Required P0 endpoints:
-  - `/uapi/overseas-stock/v1/ranking/trade-vol`
-  - `/uapi/overseas-stock/v1/ranking/updown-rate`
-- Token missing, API failure, empty response, or quality failure falls back to existing Yahoo/FMP/cache path.
-- Shadow comparison log must include quality metrics, not only ticker overlap:
-  - KIS raw candidate count and Yahoo/FMP raw candidate count
-  - raw overlap count and raw overlap ratio
-  - final screened overlap count and `final_candidate_overlap_ratio`
-  - price distribution: min, median, max, min-price fail count
-  - volume or dollar-volume pass/fail count
-  - change_pct distribution and max-change fail count
-  - category counts: `most_actives`, `day_gainers`, `day_losers`
-  - fallback reason: `token_missing`, `api_error`, `empty_response`, `quality_fail`, or `disabled`
-- No order, risk, PathB, broker truth, sizing, or stop logic changes.
-
-Tests:
-
-- Existing no-token calls keep old behavior.
-- KIS success normalizes actives/gainers/losers into existing candidate schema.
-- KIS failure falls back without raising.
-- Cache TTL and force-refresh behavior remain compatible.
-- Shadow comparison records raw overlap and final screened overlap separately.
-- Quality failure can be detected when overlap is acceptable but price/volume/change filters are broken.
-
-Done when:
-
-- US screener can prefer KIS ranking while preserving current fallback and safety behavior.
-
-## Requirement R6 - V2 Canonical Truth Runbook And Freshness Check
-
-Required behavior:
-
-- Document the daily sync command for `tools/sync_v2_learning_performance.py`.
-- Define when `--repair-decisions` is allowed.
-- Add a guardian/preflight or dashboard freshness check for `v2_canonical_performance` sync time.
-- Label legacy `decisions.db` as signal/evaluation history when canonical truth is unavailable.
-
-Done when:
-
-- Daily operations can tell whether canonical truth is fresh before using dashboard/adaptive performance judgments.
-
-## Requirement R7 - Counterfactual Outcome Schedule
-
-Required behavior:
-
-- Define scheduled command for `tools/update_counterfactual_outcomes.py`.
-- Run analyzer after updater and review by market/bucket.
-- Keep status/source/metadata quality visible:
-  - `PRICE_PENDING`
-  - `DATA_MISSING`
-  - `PRICE_UNAVAILABLE`
-  - `OUTCOME_PARTIAL`
-  - close outcome filled
-- Gate changes require outcome evidence, not one-off examples.
-
-Done when:
-
-- Blocked/watch-only candidates have recurring 30m/60m/close outcomes available for policy review.
-
-## Completed Item Rule - KR Fade Recovered
-
-`P1-5` is complete at code level. Do not keep it as pending implementation.
-
-Remaining rule:
-
-- Keep `fade_recovered_shadow` in observation.
-- Do not enable live `PROBE_READY`, US fade relaxation, or PathB wait exception from this work.
-- Promotion requires separate approval, sample review, and a new requirements document.
+No requirement in this document authorizes live gate, order amount, hard stop, broker truth priority, PathB sizing, or runtime parameter changes. Any such change needs explicit operator review.

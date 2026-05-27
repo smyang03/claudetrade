@@ -69,6 +69,86 @@ class KrInvestorFlowCacheTests(unittest.TestCase):
 
             self.assertEqual(flow_for_ticker(cache, "005930")["foreign"], 1)
 
+    def test_all_zero_ok_flows_are_flagged_bad_quality(self) -> None:
+        def fetch(_ticker: str, _target_date: str, _token: str) -> dict:
+            return {"foreign": 0, "institution": 0, "individual": 0}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "flow.json"
+            cache = update_candidate_flow_cache(
+                [str(1000 + idx) for idx in range(10)],
+                session_date="2026-05-10",
+                token="token",
+                fetch_fn=fetch,
+                sleep_sec=0,
+                path=path,
+            )
+
+            self.assertEqual(cache["data_quality"], "bad_zero_flow_cluster")
+            self.assertEqual(cache["ok_record_count"], 10)
+            self.assertEqual(cache["zero_flow_record_count"], 10)
+            self.assertIn("kr_investor_flow_all_zero_cluster", cache["quality_flags"])
+            self.assertEqual(flow_for_ticker(cache, "001000")["flow_data_quality"], "bad_zero_flow_cluster")
+            self.assertIn("kr_investor_flow_all_zero_cluster", flow_for_ticker(cache, "001000")["flow_quality_flags"])
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["data_quality"], "bad_zero_flow_cluster")
+
+    def test_existing_all_zero_cache_is_annotated_without_refetch(self) -> None:
+        records = {
+            str(100000 + idx): {
+                "status": "ok",
+                "foreign": 0,
+                "institution": 0,
+                "individual": 0,
+            }
+            for idx in range(10)
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "flow.json"
+            path.write_text(
+                json.dumps({"date": "2026-05-10", "records": records}),
+                encoding="utf-8",
+            )
+
+            def fetch(_ticker: str, _target_date: str, _token: str) -> dict:
+                raise AssertionError("cache hit should not refetch")
+
+            cache = update_candidate_flow_cache(
+                list(records),
+                session_date="2026-05-10",
+                token="token",
+                fetch_fn=fetch,
+                sleep_sec=0,
+                path=path,
+            )
+
+            self.assertEqual(cache["data_quality"], "bad_zero_flow_cluster")
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["data_quality"], "bad_zero_flow_cluster")
+
+    def test_nonzero_flow_keeps_quality_ok(self) -> None:
+        def fetch(ticker: str, _target_date: str, _token: str) -> dict:
+            if ticker == "001009":
+                return {"foreign": 5, "institution": 0, "individual": -5}
+            return {"foreign": 0, "institution": 0, "individual": 0}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "flow.json"
+            cache = update_candidate_flow_cache(
+                [str(1000 + idx) for idx in range(10)],
+                session_date="2026-05-10",
+                token="token",
+                fetch_fn=fetch,
+                sleep_sec=0,
+                path=path,
+            )
+
+            self.assertEqual(cache["data_quality"], "ok")
+            self.assertEqual(cache["ok_record_count"], 10)
+            self.assertEqual(cache["zero_flow_record_count"], 9)
+            self.assertNotIn("kr_investor_flow_all_zero_cluster", cache["quality_flags"])
+
     def test_load_corrupt_cache_returns_empty(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "flow.json"

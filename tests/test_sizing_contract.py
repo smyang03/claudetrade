@@ -57,6 +57,22 @@ class SizingContractTests(unittest.TestCase):
         self.assertEqual(decision.qty, 1)
         self.assertIn("one_share_over_budget_allowed", decision.warnings)
 
+    def test_one_share_over_budget_does_not_require_min_order_to_force_candidate_qty(self) -> None:
+        decision = calculate_order_quantity(
+            price=300_000,
+            base_budget=200_000,
+            hard_budget_cap=200_000,
+            cash_available=1_000_000,
+            min_order=0,
+            allow_one_share_over_budget=True,
+            one_share_max_account_pct=7.0,
+            total_equity=10_000_000,
+        )
+
+        self.assertEqual(decision.qty, 1)
+        self.assertEqual(decision.notional, 300_000)
+        self.assertIn("one_share_over_budget_allowed", decision.warnings)
+
     def test_size_cap_applies_to_budget_once(self) -> None:
         decision = calculate_order_quantity(
             price=10_000,

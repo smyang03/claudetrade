@@ -111,6 +111,7 @@ state/price_collection_priority_*.json
 state/sub_screener_*.json
 state/kr_candidate_flow_*.json
 state/kr_index_history_*.json
+state/counterfactual_pipeline_state.json
 state/brain_backup_*.json
 state/lesson_candidates.backup_*.json
 state/manual_cleanup_backup_*/

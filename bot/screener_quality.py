@@ -29,6 +29,7 @@ def write_candidate_quality_log(
     bucket_state_path: str | Path | None = None,
 ) -> dict[str, Any]:
     market_key = str(market or "").upper()
+    meta = dict(selection_meta or {})
     ts = now or datetime.now()
     output_path = Path(path) if path else get_runtime_path(
         "logs",
@@ -38,17 +39,57 @@ def write_candidate_quality_log(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     selected_set = {normalize_ticker(market_key, ticker) for ticker in selected or []}
-    trade_ready = {normalize_ticker(market_key, ticker) for ticker in (selection_meta or {}).get("trade_ready", []) or []}
-    watchlist = {normalize_ticker(market_key, ticker) for ticker in (selection_meta or {}).get("watchlist", []) or []}
+    trade_ready = {normalize_ticker(market_key, ticker) for ticker in meta.get("trade_ready", []) or []}
+    watchlist = {normalize_ticker(market_key, ticker) for ticker in meta.get("watchlist", []) or []}
     veto = {
         normalize_ticker(market_key, ticker): value
-        for ticker, value in ((selection_meta or {}).get("veto", {}) or {}).items()
+        for ticker, value in (meta.get("veto", {}) or {}).items()
     }
-    prompt_map = {
+    reported_prompt_map = {
         normalize_ticker(market_key, row.get("ticker")): row
         for row in prompt_candidates or []
         if normalize_ticker(market_key, row.get("ticker"))
     }
+    actual_prompt_candidates = [
+        dict(row or {})
+        for row in list(meta.get("_final_prompt_pool") or [])
+        if isinstance(row, dict) and normalize_ticker(market_key, row.get("ticker"))
+    ]
+    if not actual_prompt_candidates:
+        actual_prompt_candidates = [
+            dict(row or {})
+            for row in list(prompt_candidates or [])
+            if isinstance(row, dict) and normalize_ticker(market_key, row.get("ticker"))
+        ]
+    prompt_map = {
+        normalize_ticker(market_key, row.get("ticker")): row
+        for row in actual_prompt_candidates
+        if normalize_ticker(market_key, row.get("ticker"))
+    }
+    actual_prompt_rank: dict[str, int] = {}
+    for idx, row in enumerate(actual_prompt_candidates, start=1):
+        ticker = normalize_ticker(market_key, row.get("ticker"))
+        if not ticker or ticker in actual_prompt_rank:
+            continue
+        actual_prompt_rank[ticker] = int(_safe_int(row.get("actual_prompt_rank") or row.get("prompt_rank_after_trim"), idx) or idx)
+    excluded_reason_map: dict[str, str] = {}
+    for item in list(meta.get("_excluded_from_prompt") or []):
+        if not isinstance(item, dict):
+            continue
+        candidate = item.get("candidate") if isinstance(item.get("candidate"), dict) else item
+        ticker = normalize_ticker(market_key, (candidate or {}).get("ticker") or item.get("ticker"))
+        if not ticker:
+            continue
+        excluded_reason_map[ticker] = str(
+            item.get("prompt_excluded_reason")
+            or item.get("reason")
+            or (candidate or {}).get("prompt_excluded_reason")
+            or (candidate or {}).get("excluded_reason")
+            or "not_in_prompt"
+        )
+    selection_trace_id = str(meta.get("selection_trace_id") or "").strip()
+    visibility_contract_version = str(meta.get("visibility_contract_version") or "").strip()
+    actual_prompt_call_id = str(meta.get("actual_prompt_call_id") or meta.get("call_id") or "").strip()
     enriched_raw_candidates = annotate_candidates_with_bucket_metadata(
         list(raw_candidates or []),
         market=market_key,
@@ -69,6 +110,7 @@ def write_candidate_quality_log(
     rows: list[dict[str, Any]] = []
     for ticker, candidate in raw_map.items():
         input_to_claude = ticker in prompt_map
+        reported_input_to_claude = ticker in reported_prompt_map
         if ticker in trade_ready:
             status = "TRADE_READY"
         elif ticker in veto:
@@ -147,8 +189,17 @@ def write_candidate_quality_log(
                 "max_drawdown_60m_from_bucket": None,
                 "status": status,
                 "input_to_claude": input_to_claude,
+                "reported_input_to_claude": reported_input_to_claude,
+                "actual_prompt_included": input_to_claude,
+                "actual_prompt_rank": actual_prompt_rank.get(ticker),
+                "actual_prompt_call_id": actual_prompt_call_id,
+                "selection_trace_id": selection_trace_id,
+                "visibility_contract_version": visibility_contract_version,
+                "raw_rank": _safe_int(candidate.get("raw_rank"), None),
+                "trainer_score_rank": _safe_int(candidate.get("trainer_score_rank"), None),
+                "prompt_excluded_reason": excluded_reason_map.get(ticker, ""),
                 "reason": str(reason_map.get(ticker) or ""),
-                "excluded_reason": _excluded_reason(candidate, status, veto.get(ticker)),
+                "excluded_reason": excluded_reason_map.get(ticker) or _excluded_reason(candidate, status, veto.get(ticker)),
                 "market_type": str(candidate.get("market_type") or ""),
                 "category": str(candidate.get("category") or ""),
                 "sector": str(candidate.get("sector") or ""),
@@ -301,10 +352,12 @@ def _safe_list(value: Any) -> list[Any]:
     return [value]
 
 
-def _safe_int(value: Any, default: int = 0) -> int:
+def _safe_int(value: Any, default: int | None = 0) -> int | None:
     try:
         return int(float(str(value or "").replace(",", "")))
     except Exception:
+        if default is None:
+            return None
         return int(default)
 
 

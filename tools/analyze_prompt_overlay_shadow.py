@@ -13,6 +13,10 @@ from typing import Any
 DEFAULT_DB = Path("data/audit/candidate_audit.db")
 
 
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
 def _json_obj(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
@@ -125,6 +129,18 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     try:
+        row_columns = _columns(conn, "audit_candidate_rows")
+        prompt_flags: list[str] = []
+        if "actual_prompt_included" in row_columns:
+            prompt_flags.append("r.actual_prompt_included")
+            measured_expr = "r.actual_prompt_included IS NOT NULL"
+        else:
+            measured_expr = "0"
+        if "final_prompt_included" in row_columns:
+            prompt_flags.append("r.final_prompt_included")
+        prompt_flags.append("r.input_to_claude_reported")
+        current_prompt_predicate = f"COALESCE({', '.join(prompt_flags)})=1"
+
         where_calls, call_params = _where(args, alias="c")
         calls = conn.execute(
             f"""
@@ -145,12 +161,23 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
             JOIN audit_candidate_outcomes o
               ON o.candidate_key = r.candidate_key
              AND o.horizon_min = ?
-            WHERE r.input_to_claude_reported=1
+            WHERE {current_prompt_predicate}
               AND o.return_pct IS NOT NULL
             {where_rows}
             """,
             [args.horizon_min, *row_params],
         ).fetchall()
+        visibility_rows = conn.execute(
+            f"""
+            SELECT
+              COUNT(*) AS rows,
+              COALESCE(SUM(CASE WHEN {measured_expr} THEN 1 ELSE 0 END), 0) AS measured_rows
+            FROM audit_candidate_rows r
+            WHERE 1=1
+            {where_rows}
+            """,
+            row_params,
+        ).fetchone()
 
         overlay_rows: list[dict[str, Any]] = []
         overlay_added_rows: list[dict[str, Any]] = []
@@ -200,6 +227,9 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
         current_values = [float(row["return_pct"]) for row in current_rows]
         overlay_values = [float(row["return_pct"]) for row in overlay_rows]
         overlay_added_values = [float(row["return_pct"]) for row in overlay_added_rows]
+        visibility_summary = dict(visibility_rows or {})
+        visibility_total = int(visibility_summary.get("rows") or 0)
+        visibility_measured = int(visibility_summary.get("measured_rows") or 0)
         gate = {
             "shadow_days_min_10": len({(str(row["market"]), str(row["session_date"])) for row in calls}) >= 10,
             "overlay_days_min_4": len(overlay_days) >= 4,
@@ -225,6 +255,11 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
             "plan_a_coverage_day_count": len(plan_a_days),
             "plan_a_zero_cycles": plan_a_zero_cycles,
             "plan_b_fallback_count": plan_b_fallback_count,
+            "visibility_measurement": {
+                "rows": visibility_total,
+                "measured_rows": visibility_measured,
+                "unmeasured_rows": visibility_total - visibility_measured,
+            },
             "current_pool_pf": _metrics(current_values),
             "shadow_overlay_pool_pf": _metrics(overlay_values),
             "overlay_triggered_pf": _metrics(overlay_added_values),
@@ -242,6 +277,7 @@ def _markdown(payload: dict[str, Any]) -> str:
     triggered = payload["overlay_triggered_pf"]
     top = payload["top_day_contribution"]
     gate = payload["gate"]
+    visibility = payload.get("visibility_measurement") or {}
     lines = [
         "# Prompt Overlay Shadow Analysis",
         "",
@@ -253,6 +289,8 @@ def _markdown(payload: dict[str, Any]) -> str:
         f"- plan_a_coverage_day_count: {payload['plan_a_coverage_day_count']}",
         f"- plan_a_zero_cycles: {payload['plan_a_zero_cycles']}",
         f"- plan_b_fallback_count: {payload['plan_b_fallback_count']}",
+        f"- visibility_measured_rows: {visibility.get('measured_rows')}",
+        f"- visibility_unmeasured_rows: {visibility.get('unmeasured_rows')}",
         "",
         "| pool | n | avg | median | win_rate_pct | pf |",
         "|---|---:|---:|---:|---:|---:|",

@@ -1,178 +1,47 @@
 # Immediate Code Requirements
 
-Date: 2026-05-22
+Updated: 2026-05-27
 
-Scope: only the work that should be developed now. Do not implement deferred backlog from `CODE_LEVEL_REQUIREMENTS_20260522.md` in this pass.
-
-## Goals
-
-- Make sub-screener live/shadow state impossible to misread.
-- Add safety fixture coverage before touching broker-truth zero-holding reconcile logic.
-- Keep config and live behavior unchanged unless the operator explicitly confirms the policy.
+Scope: profitability-first cleanup 이후 즉시 구현/검토해야 할 P0/P1 항목이다. 자세한 active ledger는 [ACTIVE_WORK.md](ACTIVE_WORK.md)를 따른다.
 
 ## Non-Goals
 
-- Do not change `SUB_SCREENER_*` config values.
-- Do not implement US KIS ranking screener in this pass.
-- Do not change PathB order sizing, live gates, stop logic, or broker truth priority.
-- Do not promote KR `fade_recovered_shadow` to live action.
-- Do not edit `state/brain.json`.
+- PathB live gates, order sizing policy, max positions, daily entry limit, confidence, slippage caps, protective hold distance, hard stops, broker-truth priority를 변경하지 않는다.
+- Prompt overlay, PLAN_A, raw-score shadow, US KIS ranking, KR first-entry, exit overlay를 live execution 영향으로 승격하지 않는다.
+- `state/brain.json`을 runtime truth 또는 자동 학습 write target으로 사용하지 않는다.
+- selection 품질 변경과 execution/risk 변경을 한 patch에서 섞지 않는다.
 
-## NOW-0 - Commit Hygiene Guardrail
+## NOW Matrix
 
-Current state:
+| 순서 | 카테고리 | 우선순위 | 요구사항 | 개선 전 | 개선 후/완료 기준 |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 운영 | P0 | Commit hygiene guardrail | 런타임 산출물, `state/brain.json`, DB sidecar가 섞여 stage될 수 있음. | explicit path로 stage하고 `git status --short`, `git diff --stat` 확인. |
+| 1 | 수익성 | P0 | Latest-cycle profit visibility verification | legacy `input_to_claude`/timestamp join이 실제 Claude 입력 여부를 오판. | 최신 KR/US `actual_prompt_v1` rows에서 prompt included/missing, raw/trainer missing, 30/60m outcomes 분리. |
+| 2 | 데이터베이스 | P0 | Candidate bucket/source/score data quality | blank bucket/source, broad `INVALID_PRICE`, score component 누락으로 원인 분리 불가. | bucket/source/data-quality/raw-score/trainer-score가 audit/outcome query 가능하고 broad reason이 세분화됨. |
+| 3 | 수익성 | P0 | KR entry/exit profit shadow instrumentation | first-entry/exit-cap 판단이 sparse sample과 top-day concentration에 취약. | 30 fills 또는 4 weeks broker-fill-aware replay로 OR/VWAP/MFE/MAE/cap-hit 검토 가능. |
+| 4 | 운영 | P0 | KIS token `EGW00133` classification/backoff | token issuance pressure가 credential failure나 refresh storm으로 처리될 수 있음. | rate-limit/backoff와 credential/config failure가 분리되고 shared credential 중복 refresh가 방지됨. |
+| 5 | 버그 | P0 | Broker-truth zero-holding fixture tests | destructive cleanup이 실제 KIS row shape 가정에 의존. | KR/US fresh zero/no-open만 reconcile되고 stale/error/open remainder/fill-only는 fail closed. |
+| 6 | 운영 | P0 | PathB entry broker-truth gate ops visibility | PathB entry block 원인을 log scraping 없이는 알기 어려움. | preflight/ops에서 TTL, attempt, success/failure, latency, error, block reason, paper skip 확인 가능. |
+| 7 | 버그 | P0 | PathB pending-buy TTL/order matching review | plan-created TTL 또는 same-ticker fallback으로 잘못된 취소/복구 가능. | actual sent/ACK timestamp와 exact `order_no` 기준으로 TTL/fill/open/cancel 판단. |
+| 8 | 버그 | P1 | US PathB sizing context/reason split | PathB `qty=0`이 broad `INVALID_QTY`로 뭉침. | qty policy는 유지하면서 early-gate shrink와 high-price budget block이 payload reason으로 분리됨. |
+| 9 | 데이터베이스 | P1 | V2 canonical freshness and fallback exclusion | stale truth 또는 timeout fallback HOLD가 분석/학습에 섞일 수 있음. | freshness warning이 보이고 `advisor_unavailable`/`learning_excluded`는 aggregate에서 제외됨. |
+| 10 | 운영 | P1 | Brain/sub-screener/operator-visible guard tests | hidden trigger, stale canonical, direct brain write가 운영 판단을 오염시킬 수 있음. | direct write 방지, effective trigger visibility, stale truth warning tests 존재. |
+| 11 | 버그 | P1 | Runtime tuning override cleanup | non-tuning fields가 runtime override payload에 남을 수 있음. | `coerce_runtime_adjustments()`가 bounded numeric keys만 반환. |
+| 12 | 운영 | P1 | PathB fill truth / sell pending / EXPIRED monitoring | ORDER_UNKNOWN, partial remainder, expired plan이 local inference에 기대는 위험. | real KIS payload, partial remainder, EXPIRED resampling, stale waiting-plan cleanup이 broker truth 기준으로 검증됨. |
 
-- The working tree contains runtime artifacts and policy memory alongside source/docs.
-- Risk files include `state/brain.json`, generated `state/*.json`, DB sidecars, temp browser profiles, screenshots, and runtime data.
+## Focused Acceptance
 
-Requirement:
-
-- Stage by explicit path.
-- Exclude `state/brain.json` unless separately approved.
-- Exclude runtime/generated artifacts unless the change explicitly targets them.
-- Before commit, run:
-
-```powershell
-git status --short
-git diff --stat
-```
-
-Done when:
-
-- The staged diff contains only intentional source/docs/config/test changes.
-
-## NOW-1 - Sub-Screener Effective Trigger Visibility
-
-Current code truth:
-
-```python
-scoped_name = f"SUB_SCREENER_{market_key}_TRIGGER_ENABLED"
-if os.getenv(scoped_name) is not None:
-    return _env_bool(scoped_name, False)
-return _env_bool("SUB_SCREENER_TRIGGER_ENABLED", True)
-```
-
-Current tracked config:
-
-```text
-SUB_SCREENER_ENABLED=true
-SUB_SCREENER_TRIGGER_ENABLED=false
-SUB_SCREENER_KR_TRIGGER_ENABLED=true
-SUB_SCREENER_US_TRIGGER_ENABLED=true
-```
-
-Therefore:
-
-- KR effective trigger is `true`.
-- US effective trigger is `true`.
-- Global false alone does not mean shadow.
-- If scoped and global trigger flags are both absent, current code defaults to live trigger.
-
-Required behavior:
-
-- Add read-only effective trigger calculation in preflight or ops summary.
-- Use the same precedence rule as `_sub_screener_trigger_enabled()`.
-- Show the following fields per market:
-  - `enabled`
-  - `global_trigger`
-  - `scoped_trigger`
-  - `effective_trigger`
-  - `resolution_source`: `scoped`, `global`, or `default_live`
-  - `max_per_session`
-  - `interval_min`
-  - `min_interval_min`
-  - `blackout_before_close_min`
-  - `state_file_exists`
-  - `scan_count`
-  - `detection_count`
-  - `attempt_count`
-  - `success_count`
-  - `last_scan_at`
-  - `last_detection`
-  - `last_attempt_at`
-  - `last_success_at`
-
-Operator confirmation gate:
-
-- Read-only visibility may be implemented now.
-- Config changes must wait for operator confirmation.
-- The UI/preflight text must state that scoped trigger overrides global trigger.
-
-Tests:
-
-- Global false + scoped true -> effective true, `resolution_source=scoped`.
-- Global true + scoped false -> effective false, `resolution_source=scoped`.
-- Global false + scoped absent -> effective false, `resolution_source=global`.
-- Global absent + scoped absent -> effective true, `resolution_source=default_live`.
-- Disabled trigger records scan only and does not call `record_attempt()`, `_reinvoke_analysts()`, or `manual_rescreen()`.
-
-Done when:
-
-- Operator can identify KR/US effective trigger without reading code.
-- No config value is changed by this implementation.
-
-## NOW-2 - Broker-Truth Zero-Holding Fixture Tests
-
-Current code truth:
-
-- Plan A path: `TradingBot._sell_zero_holding_broker_evidence()`.
-- PathB path: `PathBRuntime._pathb_zero_holding_broker_evidence()`.
-- Local position removal/PathB closure is allowed only when broker truth is fresh, position qty is zero, and open remaining qty is zero.
-
-Requirement:
-
-- Add fixture tests before changing reconcile logic.
-- Tests must use realistic KR/US broker payload shapes for:
-  - positions
-  - open orders
-  - today fills
-  - side fields
-  - remaining quantity fields
-  - ticker fields
-
-Required test cases:
-
-- KR fresh zero position + no open order -> stale local position can be removed.
-- US fresh zero position + no open order -> stale local position can be removed.
-- KR/US open order with remaining qty -> local position is not removed.
-- stale broker truth -> local position is not removed.
-- broker error/missing snapshot -> local position is not removed.
-- unrecognized ticker key -> no false ticker match.
-- sell fill evidence exists but position/open-order condition is unsafe -> manual reconciliation remains required.
-
-Done when:
-
-- Destructive reconcile behavior is covered by KR and US fixtures.
-- Any parser adjustment is made only if fixture tests expose a real mismatch.
+- P0 수익성/DB 작업은 audit/report/observability만 바꾸며 live ranking, prompt cap, PathB gates, sizing, stop/exit rule은 변경하지 않는다.
+- P0 운영/버그 작업은 broker/order fail-closed behavior를 약화하지 않는다.
+- 작업트리 구현만 있는 항목은 관련 tests와 commit 전까지 완료로 문서화하지 않는다.
 
 ## Verification Commands
 
-Run the focused tests for the immediate work:
+Touched modules에 맞춰 가까운 테스트부터 실행한다.
 
 ```powershell
-python -m pytest tests/test_sub_screener_integration.py tests/test_auto_sell_claude_gate.py tests/test_pathb_runtime.py -q
+python -m pytest tests/test_candidate_audit.py tests/test_screener_quality.py tests/test_candidate_action_live_mapping.py -q
+python -m pytest tests/test_broker_truth_snapshot.py tests/test_kis_kr_order_safety.py tests/test_pathb_runtime.py -q
+python -m pytest tests/test_live_order_safety.py tests/test_entry_risk_controls.py -q
+python -m py_compile trading_bot.py kis_api.py runtime/pathb_runtime.py runtime/tuning_bounds.py dashboard/dashboard_server.py
 ```
-
-If preflight/ops code is touched:
-
-```powershell
-python -m pytest tests/test_live_guardian.py tests/test_v2_phase6.py -q
-```
-
-If `trading_bot.py` or `runtime/pathb_runtime.py` is touched:
-
-```powershell
-python -m py_compile trading_bot.py runtime/pathb_runtime.py
-```
-
-## Deferred Backlog
-
-Do not include these in the immediate implementation:
-
-- PathB entry broker-truth gate ops visibility.
-- Profit review timeout fallback dashboard/canonical display.
-- US KIS ranking screener.
-- V2 canonical truth runbook.
-- Counterfactual outcome schedule.
-- Prompt pool/evidence next-session review.
-- KR fade recovery live promotion.

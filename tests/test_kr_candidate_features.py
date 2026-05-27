@@ -49,6 +49,23 @@ class KrCandidateFeaturesTests(unittest.TestCase):
         self.assertIn(features["candidate_quality_grade"], {"A", "B", "C"})
         self.assertGreater(features["candidate_quality_score"], 40)
 
+    def test_flow_quality_metadata_is_propagated_to_candidate_features(self) -> None:
+        features = build_kr_candidate_features(
+            {"ticker": "005930", "price": 195.0, "volume": 2_700_000},
+            _frame(80),
+            flow={
+                "foreign": 0,
+                "institution": 0,
+                "individual": 0,
+                "flow_data_quality": "bad_zero_flow_cluster",
+                "flow_quality_flags": ["kr_investor_flow_all_zero_cluster"],
+            },
+        )
+
+        self.assertEqual(features["flow_data_quality"], "bad_zero_flow_cluster")
+        self.assertEqual(features["investor_flow_quality"], "bad_zero_flow_cluster")
+        self.assertIn("kr_investor_flow_all_zero_cluster", features["flow_quality_flags"])
+
     def test_short_history_marks_gaps_without_zero_placeholders(self) -> None:
         features = build_kr_candidate_features({"ticker": "123456"}, _frame(10))
 
