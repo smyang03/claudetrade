@@ -5744,6 +5744,7 @@ def api_summary():
         else _saved_positions_for_market(market, mode=mode)
     )
     positions = _merge_positions_for_display(market, broker_positions, position_context, broker_ok=broker_ok)
+    _apply_dashboard_position_quote_overlays(market, positions, mode)
     pending_orders = _filter_items_for_market(live.get("pending_orders", []) if live else [], market)
     name_map = _ticker_name_map(market, mode=mode)
     for pos in positions:
@@ -8635,6 +8636,62 @@ def _num_or_zero(value) -> float:
         return 0.0
 
 
+def _apply_position_quote_fields(pos: dict, price: float) -> bool:
+    if not isinstance(pos, dict):
+        return False
+    price = round(_num_or_zero(price), 6)
+    if price <= 0:
+        return False
+
+    changed = False
+    if abs(_num_or_zero(pos.get("current_price")) - price) > 0.000001:
+        pos["current_price"] = price
+        changed = True
+    if abs(_num_or_zero(pos.get("display_current_price")) - price) > 0.000001:
+        pos["display_current_price"] = price
+        changed = True
+
+    avg_price = _num_or_zero(pos.get("display_avg_price") or pos.get("avg_price") or pos.get("entry"))
+    if avg_price > 0:
+        pnl_pct = round((price / avg_price - 1.0) * 100.0, 6)
+        if abs(_num_or_zero(pos.get("pnl_pct")) - pnl_pct) > 0.000001:
+            pos["pnl_pct"] = pnl_pct
+            changed = True
+    return changed
+
+
+def _apply_dashboard_position_quote_overlays(market: str, positions: list, mode: str) -> None:
+    if not positions:
+        return
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    runtime_mode = _normalize_mode(mode)
+    ttl_sec = _dashboard_quote_cache_sec()
+    now_ts = _time.time()
+
+    with _DASHBOARD_QUOTE_LOCK:
+        cached_quotes = {
+            ticker: copy.deepcopy(payload)
+            for (cache_mode, cache_market, ticker), payload in _DASHBOARD_QUOTE_CACHE.items()
+            if cache_mode == runtime_mode and cache_market == market_key
+        }
+
+    for pos in positions or []:
+        ticker = str((pos or {}).get("ticker") or "").strip().upper()
+        quote = cached_quotes.get(ticker)
+        if not quote:
+            continue
+        price = _num_or_zero(quote.get("price"))
+        if price <= 0:
+            continue
+        try:
+            age_sec = max(0.0, now_ts - float(quote.get("cached_at", 0) or 0))
+        except Exception:
+            age_sec = 0.0
+        if ttl_sec > 0 and age_sec > ttl_sec:
+            continue
+        _apply_position_quote_fields(pos, price)
+
+
 def _dashboard_realtime_quotes(
     market: str,
     tickers: list[str],
@@ -8860,69 +8917,91 @@ def api_refresh_prices():
     body   = request.get_json(silent=True) or {}
     mode   = _normalize_mode(body.get("mode"))
     market = body.get("market", "KR").upper()
+    ticker = str(body.get("ticker") or "").strip().upper()
     force_refresh = str(body.get("force") or body.get("refresh") or request.args.get("force") or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
     live = _load_live_status(market, mode=mode) or {}
     positions = live.get("positions", [])
-    if not positions:
-        return jsonify({"ok": True, "market": market, "live": False, "positions": []})
+    live_targets = [
+        pos for pos in positions
+        if not ticker or str(pos.get("ticker", "") or "").strip().upper() == ticker
+    ]
+    display_targets = live_targets
+    if force_refresh and ticker and not display_targets:
+        display_targets = [{"ticker": ticker, "currency": "USD" if market == "US" else "KRW"}]
+    if not positions and not display_targets:
+        return jsonify({"ok": True, "market": market, "ticker": ticker, "live": False, "positions": []})
 
     def _price_payload(*, refreshed: bool, source: str) -> dict:
+        payload_positions = display_targets if ticker else positions
         return {
             "ok": True,
             "market": market,
+            "ticker": ticker,
             "live": refreshed,
             "source": source,
+            "updated_count": 0,
             "positions": [
                 {
                     "ticker":        p.get("ticker"),
-                    "current_price": p.get("current_price", p.get("avg_price", 0)),
+                    "current_price": p.get("display_current_price") or p.get("current_price") or p.get("avg_price", 0),
+                    "display_current_price": p.get("display_current_price") or p.get("current_price") or p.get("avg_price", 0),
                     "avg_price":     p.get("avg_price", 0),
+                    "display_avg_price": p.get("display_avg_price") or p.get("avg_price", 0),
+                    "currency":      p.get("currency", "USD" if market == "US" else "KRW"),
                     "qty":           p.get("qty", 0),
                     "pnl_pct":       (
-                        (float(p.get("current_price") or p.get("avg_price") or 0) /
-                         float(p.get("avg_price") or 1) - 1) * 100
-                        if p.get("avg_price") else p.get("pnl_pct", 0)
+                        (float(p.get("display_current_price") or p.get("current_price") or p.get("avg_price") or 0) /
+                         float(p.get("display_avg_price") or p.get("avg_price") or 1) - 1) * 100
+                        if (p.get("display_avg_price") or p.get("avg_price")) else p.get("pnl_pct", 0)
                     ),
                 }
-                for p in positions
+                for p in payload_positions
             ],
         }
 
     if not force_refresh:
-        return jsonify(_price_payload(refreshed=False, source="live_status_cache"))
+        payload = _price_payload(refreshed=False, source="live_status_cache")
+        if ticker and payload["positions"]:
+            payload["position"] = payload["positions"][0]
+        return jsonify(payload)
+
+    if ticker:
+        display_targets = [dict(pos) for pos in display_targets]
+    else:
+        positions = [dict(pos) for pos in positions]
 
     is_live = _is_live_market(market)
     updated = False
+    updated_count = 0
 
     if is_live:
         try:
-            with _kis_runtime(mode):
-                token = get_access_token(market=market)
-                for pos in positions:
-                    ticker = pos.get("ticker", "")
-                    if not ticker:
-                        continue
-                    try:
-                        px_data = get_price(ticker, token, market=market)
-                        cp = float(px_data.get("current_price") or px_data.get("price") or 0)
-                        if cp > 0:
-                            pos["current_price"] = cp
-                            # display 필드도 갱신
-                            if "display_current_price" in pos:
-                                pos["display_current_price"] = cp
-                            updated = True
-                    except Exception:
-                        pass  # 개별 종목 실패 시 기존값 유지
-                if updated:
-                    live["positions"] = positions
-                    live_path = _live_status_path(mode, market)
-                    _atomic_write_text(live_path, json.dumps(live, ensure_ascii=False))
-                    _STATE_JSON_CACHE[str(live_path)] = copy.deepcopy(live)
+            target_tickers = [
+                str(pos.get("ticker", "") or "").strip().upper()
+                for pos in (display_targets if ticker else positions)
+                if str(pos.get("ticker", "") or "").strip()
+            ]
+            if ticker and ticker not in target_tickers:
+                target_tickers.append(ticker)
+            quotes = _dashboard_realtime_quotes(market, target_tickers, mode, ttl_sec=0)
+            for pos in (display_targets if ticker else positions):
+                pos_ticker = str(pos.get("ticker", "") or "").strip().upper()
+                quote = quotes.get(pos_ticker) or {}
+                cp = _num_or_zero(quote.get("price"))
+                if cp <= 0:
+                    continue
+                _apply_position_quote_fields(pos, cp)
+                updated = True
+                updated_count += 1
         except Exception:
             is_live = False  # 토큰 오류 등 → 저장 데이터 반환
 
-    return jsonify(_price_payload(refreshed=is_live and updated, source="kis_refresh" if is_live and updated else "live_status_cache"))
+    payload = _price_payload(refreshed=is_live and updated, source="kis_refresh" if is_live and updated else "live_status_cache")
+    payload["updated_count"] = updated_count
+    if ticker and payload["positions"]:
+        payload["position"] = payload["positions"][0]
+    return jsonify(payload)
 
 
 @app.route("/api/review_position", methods=["POST"])
@@ -11931,6 +12010,9 @@ async function loadSummary() {
         <button onclick="immediatelySell('KR','${pos.ticker}','${cardId}')"
           style="font-size:10px;padding:3px 10px;border:1px solid rgba(239,68,68,0.5);border-radius:4px;background:rgba(239,68,68,0.1);color:#ef4444;cursor:pointer"
           id="${cardId}-sell-btn">즉시 매도</button>
+        <button onclick="refreshPositionPrice('KR','${pos.ticker}','${cardId}')"
+          style="font-size:10px;padding:3px 10px;border:1px solid rgba(6,182,212,0.45);border-radius:4px;background:rgba(6,182,212,0.1);color:#67e8f9;cursor:pointer"
+          id="${cardId}-price-btn">현재가 조회</button>
         <span id="${cardId}-status" style="font-size:10px;color:var(--text-dim)"></span>
       </div>
     </div>`;
@@ -11972,6 +12054,32 @@ async function refreshPrices(market) {
   try {
     await apiPost('/api/refresh_prices', {market});
   } catch(e) {}
+}
+
+async function refreshPositionPrice(market, ticker, cardId) {
+  const btn = document.getElementById(cardId + '-price-btn');
+  const status = document.getElementById(cardId + '-status');
+  if (btn) { btn.disabled = true; btn.textContent = '조회 중...'; }
+  if (status) status.textContent = '현재가 조회 중';
+  try {
+    const res = await apiPost('/api/refresh_prices', {market, ticker, force: true});
+    const data = await res.json().catch(() => ({}));
+    const pos = data.position || ((data.positions || []).find(p => String(p.ticker || '').toUpperCase() === String(ticker || '').toUpperCase())) || {};
+    const price = Number(pos.display_current_price || pos.current_price || 0);
+    if (!res.ok || data.ok === false || !(price > 0) || !data.live) {
+      const reason = data.error || (!data.live ? '장외 또는 조회 불가' : '현재가 없음');
+      if (status) status.textContent = reason;
+      return;
+    }
+    const currency = String(pos.currency || (market === 'US' ? 'USD' : 'KRW')).toUpperCase();
+    const priceText = currency === 'USD' ? '$' + price.toFixed(2) : Math.round(price).toLocaleString() + '원';
+    if (status) status.innerHTML = `<span style="color:#67e8f9;font-weight:600">현재가 ${priceText} 반영</span>`;
+    await loadSummary();
+  } catch(e) {
+    if (status) status.textContent = '조회 실패';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '현재가 조회'; }
+  }
 }
 
 async function loadAll() {
@@ -12898,12 +13006,12 @@ async function loadSummary() {
     posBoard.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:8px 0">현재 보유 포지션이 없습니다</div>';
   } else {
     posBoard.innerHTML = positions.map(pos => {
-      const pnl = pos.pnl_pct || 0;
-      const pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text-dim)';
       const isKRW = (pos.currency || (MARKET === 'KR' ? 'KRW' : 'USD')) === 'KRW';
       const qty = Number(pos.qty || 0);
-      const avg = Number(pos.avg_price || 0);
-      const curPx = Number(pos.current_price || 0);
+      const avg = Number(pos.display_avg_price || pos.avg_price || pos.entry || 0);
+      const curPx = Number(pos.display_current_price || pos.current_price || pos.avg_price || pos.entry || 0);
+      const pnl = (avg > 0 && curPx > 0) ? ((curPx / avg) - 1) * 100 : Number(pos.pnl_pct || 0);
+      const pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--text-dim)';
       const usdKrw = Number(t.usd_krw || 0);
       const buyTotal = avg * qty;
       const curTotal = curPx * qty;
@@ -12915,8 +13023,8 @@ async function loadSummary() {
         const krw = usdKrw > 0 ? ` (약 ${fmt.price(v * usdKrw)})` : '';
         return '$' + v.toFixed(2) + krw;
       };
-      const entry = fmtEntryPx(Number(pos.avg_price || 0));
-      const cur = fmtEntryPx(Number(pos.current_price || 0));
+      const entry = fmtEntryPx(avg);
+      const cur = fmtEntryPx(curPx);
       // 수수료 차감 실손익
       const feeBuy2  = avg * qty * 0.00015;
       const feeSell2 = curPx * qty * (isKRW ? 0.00195 : 0.00015);
@@ -13045,6 +13153,9 @@ async function loadSummary() {
             <button onclick="immediatelySell(MARKET,'${pos.ticker}','${cardId2}')"
               style="font-size:10px;padding:3px 10px;border:1px solid rgba(239,68,68,0.5);border-radius:4px;background:rgba(239,68,68,0.1);color:#ef4444;cursor:pointer"
               id="${cardId2}-sell-btn">즉시 매도</button>
+            <button onclick="refreshPositionPrice(MARKET,'${pos.ticker}','${cardId2}')"
+              style="font-size:10px;padding:3px 10px;border:1px solid rgba(6,182,212,0.45);border-radius:4px;background:rgba(6,182,212,0.1);color:#67e8f9;cursor:pointer"
+              id="${cardId2}-price-btn">현재가 조회</button>
             <span id="${cardId2}-status" style="font-size:10px;color:var(--text-dim)"></span>
           </div>
         </div>`;

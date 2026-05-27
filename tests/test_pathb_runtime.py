@@ -3933,6 +3933,112 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(signal.reason, "loss_cap")
             self.assertEqual(signal.close_reason, "CLOSED_LOSS_CAP")
 
+    def test_scan_exits_uses_broker_balance_price_over_stale_cache_for_hard_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            bot.current_market = "US"
+            bot.usd_krw_rate = 1350
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_qcom_stale_cache",
+                ticker="QCOM",
+                market="US",
+                session_date="2026-04-27",
+                buy_zone_low=244,
+                buy_zone_high=255,
+                sell_target=265,
+                stop_loss=238,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain_us")
+            runtime.adapter.mark_filled(plan.path_run_id, price=249.935, qty=1, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain_us")
+            bot.risk.positions.append(
+                {
+                    "ticker": "QCOM",
+                    "qty": 1,
+                    "entry": 249.935 * bot.usd_krw_rate,
+                    "sl": 237.54 * bot.usd_krw_rate,
+                    "display_current_price": 231.87,
+                    "current_price": 231.87 * bot.usd_krw_rate,
+                    "current_price_source": "broker_balance",
+                    "price_source": "order_fill",
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                }
+            )
+            bot.price_cache_raw["QCOM"] = 249.25
+            bot.price_cache["QCOM"] = 249.25 * bot.usd_krw_rate
+            runtime.reconcile_sell_pending = Mock(return_value={})
+            runtime.reconcile_filled_positions = Mock(return_value={})
+            runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+            runtime._submit_sell = Mock()
+
+            runtime.scan_exits("US", force=True)
+
+            runtime._submit_sell.assert_called_once()
+            signal = runtime._submit_sell.call_args.args[2]
+            self.assertEqual(signal.reason, "hard_stop")
+            self.assertEqual(signal.close_reason, "CLOSED_HARD_STOP")
+            self.assertAlmostEqual(signal.price, 231.87)
+            self.assertAlmostEqual(bot.price_cache_raw["QCOM"], 231.87)
+
+    def test_scan_exits_uses_broker_truth_snapshot_over_stale_cache_for_hard_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            bot.current_market = "US"
+            bot.usd_krw_rate = 1350
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_qcom_broker_truth_price",
+                ticker="QCOM",
+                market="US",
+                session_date="2026-04-27",
+                buy_zone_low=244,
+                buy_zone_high=255,
+                sell_target=265,
+                stop_loss=238,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain_us")
+            runtime.adapter.mark_filled(plan.path_run_id, price=249.935, qty=1, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain_us")
+            bot.risk.positions.append(
+                {
+                    "ticker": "QCOM",
+                    "qty": 1,
+                    "entry": 249.935 * bot.usd_krw_rate,
+                    "sl": 237.54 * bot.usd_krw_rate,
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                }
+            )
+            runtime.broker_truth.market_snapshot = Mock(
+                return_value={
+                    "missing": False,
+                    "stale": False,
+                    "error": "",
+                    "positions": [{"market": "US", "ticker": "QCOM", "qty": 1, "current_price": 231.87}],
+                }
+            )
+            bot.price_cache_raw["QCOM"] = 249.25
+            bot.price_cache["QCOM"] = 249.25 * bot.usd_krw_rate
+            runtime.reconcile_sell_pending = Mock(return_value={})
+            runtime.reconcile_filled_positions = Mock(return_value={})
+            runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+            runtime._submit_sell = Mock()
+
+            runtime.scan_exits("US", force=True)
+
+            runtime._submit_sell.assert_called_once()
+            signal = runtime._submit_sell.call_args.args[2]
+            self.assertEqual(signal.reason, "hard_stop")
+            self.assertEqual(signal.close_reason, "CLOSED_HARD_STOP")
+            self.assertAlmostEqual(signal.price, 231.87)
+            self.assertAlmostEqual(bot.price_cache_raw["QCOM"], 231.87)
+
     def test_pathb_stop_recovery_policy_hard_stop_preempts_native_hard_stop_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bot = _Bot()

@@ -2991,6 +2991,96 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return blocked
         decision["execution_strategy"] = actual_strategy
         return decision
+    def _ml_base_row(self, market: str, mode: Optional[str], ticker_: str, price_: float, sig_row_: Optional[dict]) -> dict:
+        if not _ML_DB_ENABLED:
+            return {}
+        judgment = self.today_judgment if isinstance(getattr(self, "today_judgment", None), dict) else {}
+        consensus = judgment.get("consensus") or {}
+        if not isinstance(consensus, dict):
+            consensus = {}
+        judgments = judgment.get("judgments") or {}
+        if not isinstance(judgments, dict):
+            judgments = {}
+        digest_raw = judgment.get("digest_raw") or {}
+        if not isinstance(digest_raw, dict):
+            digest_raw = {}
+        ca_ctx = digest_raw.get("context") or {}
+        if not isinstance(ca_ctx, dict):
+            ca_ctx = {}
+        sig_row = sig_row_ if isinstance(sig_row_, dict) else {}
+        jb = judgments.get("bull") or {}
+        jbr = judgments.get("bear") or {}
+        jn = judgments.get("neutral") or {}
+        return {
+            "market":       market,
+            "ticker":       ticker_,
+            "is_simulated": 1 if getattr(self, "is_paper", False) else 0,
+            "data_source":  "paper" if getattr(self, "is_paper", False) else "live",
+            "session_date": self._current_session_date_str(market),
+            "mode":         mode if mode is not None else consensus.get("mode", "NEUTRAL"),
+            "mode_score":   consensus.get("score"),
+            "bull_stance":  jb.get("stance", "NEUTRAL"),
+            "bear_stance":  jbr.get("stance", "NEUTRAL"),
+            "neut_stance":  jn.get("stance", "NEUTRAL"),
+            "bull_conf":    jb.get("confidence"),
+            "bear_conf":    jbr.get("confidence"),
+            "neut_conf":    jn.get("confidence"),
+            "vix":          ca_ctx.get("vix"),
+            "usd_krw":      ca_ctx.get("usd_krw"),
+            "price":        price_,
+            "rsi":          sig_row.get("rsi"),
+            "bb_pct":       sig_row.get("bb_pct"),
+            "vol_ratio":    sig_row.get("vol_ratio"),
+            "macd":         sig_row.get("macd"),
+            "macd_signal":  sig_row.get("macd_signal"),
+            "ma20":         sig_row.get("ma20"),
+            "ma60":         sig_row.get("ma60"),
+            "atr":          sig_row.get("atr"),
+            "gap_pct":      sig_row.get("gap_pct"),
+            "change_pct":   sig_row.get("change_pct"),
+        }
+
+    def _ml_write_eval(
+        self,
+        market: str,
+        ticker_: str,
+        price_: float,
+        sig_row_: Optional[dict],
+        decision_: str,
+        *,
+        mode_: Optional[str] = None,
+        block_reason_: str = None,
+        strategy_used_: str = None,
+        fired_strategy_: str = None,
+        diag_json_: Optional[dict] = None,
+        extra_fields_: Optional[dict] = None,
+    ) -> int:
+        if not _ML_DB_ENABLED:
+            return -1
+        try:
+            row = self._ml_base_row(market, mode_, ticker_, price_, sig_row_)
+            row["decision"] = decision_
+            if block_reason_:
+                row["block_reason"] = block_reason_
+            if strategy_used_:
+                row["strategy_used"] = strategy_used_
+            if fired_strategy_:
+                fired_col = {
+                    "mean_reversion": "mr_fired",
+                    "volatility_breakout": "vb_fired",
+                    "momentum": "mom_fired",
+                    "gap_pullback": "gap_fired",
+                }.get(fired_strategy_)
+                if fired_col:
+                    row[fired_col] = True
+            if diag_json_:
+                row["diag_json"] = diag_json_
+            if extra_fields_:
+                row.update(extra_fields_)
+            return _ml_write(row)
+        except Exception:
+            return -1
+
     def _record_partial_data_entry_block(
         self,
         market: str,
@@ -3025,7 +3115,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
         if _ML_DB_ENABLED and signal_row is not None:
             try:
-                _ml_write_eval(
+                self._ml_write_eval(
+                    market,
                     ticker,
                     float(price_native or 0.0),
                     signal_row,
@@ -7470,7 +7561,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._maybe_alert_new_buy_block(market_key, reason, scope, details)
         if signal_row is not None and _ML_DB_ENABLED:
             try:
-                _ml_write_eval(
+                self._ml_write_eval(
+                    market_key,
                     ticker_key,
                     float(price_native or 0.0),
                     signal_row,

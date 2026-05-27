@@ -2050,7 +2050,7 @@ class PathBRuntime:
             self._clear_stale_pathb_closing_lock(pos, market, plan.path_run_id)
             if self._pathb_sell_in_flight(run, pos):
                 continue
-            current = self._current_native_price(market, plan.ticker)
+            current = self._current_native_price_for_exit(market, plan.ticker, pos)
             if current <= 0:
                 continue
             self._audit_pathb_price_seen(plan, current, source="pathb:exit_scan")
@@ -7968,12 +7968,76 @@ class PathBRuntime:
             info = get_price(key, _bot_token(self.bot, market), market=market)
             price = float(info.get("price", 0) or 0)
             if price > 0:
-                self.bot.price_cache_raw[key] = price
-                self.bot.price_cache[key] = self._price_to_krw(price, market)
+                self._cache_native_price(market, ticker, price)
             return price
         except Exception as exc:
             log.debug(f"[PathB price] {market} {key} failed: {exc}")
             return 0.0
+
+    def _current_native_price_for_exit(self, market: str, ticker: str, pos: dict[str, Any]) -> float:
+        broker_price = self._broker_position_native_price(market, pos)
+        if broker_price > 0:
+            self._cache_native_price(market, ticker, broker_price)
+            return broker_price
+        broker_truth_price = self._broker_truth_position_native_price(market, ticker)
+        if broker_truth_price > 0:
+            self._cache_native_price(market, ticker, broker_truth_price)
+            return broker_truth_price
+        return self._current_native_price(market, ticker)
+
+    def _broker_position_native_price(self, market: str, pos: dict[str, Any] | None) -> float:
+        if not isinstance(pos, dict):
+            return 0.0
+        sources = {
+            str(pos.get("current_price_source", "") or "").strip().lower(),
+            str(pos.get("price_source", "") or "").strip().lower(),
+        }
+        if not (sources & {"broker_balance", "broker_truth"}):
+            return 0.0
+        market_key = str(market or "").upper()
+        display_price = self._policy_float(pos.get("display_current_price"))
+        if display_price > 0:
+            return display_price
+        current_price = self._policy_float(pos.get("current_price"))
+        if current_price <= 0:
+            return 0.0
+        if market_key == "US":
+            fx = self._usd_krw()
+            return current_price / fx if fx > 0 else 0.0
+        return current_price
+
+    def _broker_truth_position_native_price(self, market: str, ticker: str) -> float:
+        try:
+            market_data = self.broker_truth.market_snapshot(market, ttl_sec=60)
+        except Exception:
+            return 0.0
+        if not isinstance(market_data, dict):
+            return 0.0
+        if bool(market_data.get("missing")) or bool(market_data.get("stale")) or str(market_data.get("error", "") or ""):
+            return 0.0
+        key = self._ticker_key(market, ticker)
+        for row in list(market_data.get("positions", []) or []):
+            if not isinstance(row, dict):
+                continue
+            if self._ticker_key(market, str(row.get("ticker", "") or "")) != key:
+                continue
+            if self._policy_int(row.get("qty")) <= 0:
+                continue
+            current_price = self._policy_float(row.get("current_price") or row.get("display_current_price"))
+            if current_price > 0:
+                return current_price
+        return 0.0
+
+    def _cache_native_price(self, market: str, ticker: str, price: float) -> None:
+        if price <= 0:
+            return
+        key = self._ticker_key(market, ticker)
+        raw_cache = getattr(self.bot, "price_cache_raw", None)
+        if isinstance(raw_cache, dict):
+            raw_cache[key] = price
+        krw_cache = getattr(self.bot, "price_cache", None)
+        if isinstance(krw_cache, dict):
+            krw_cache[key] = self._price_to_krw(price, market)
 
     def _active_exit_runs_for_market(self, market: str) -> list[dict[str, Any]]:
         market_key = str(market or "").upper()

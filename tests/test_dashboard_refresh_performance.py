@@ -27,6 +27,7 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         dashboard_server._BROKER_POSITIONS_CACHE.clear()
         dashboard_server._BROKER_POSITIONS_STATUS.clear()
         dashboard_server._BROKER_TRADE_BUNDLE_CACHE.clear()
+        dashboard_server._DASHBOARD_QUOTE_CACHE.clear()
         dashboard_server._STATE_JSON_CACHE.clear()
 
     def tearDown(self) -> None:
@@ -37,6 +38,7 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         dashboard_server._BROKER_POSITIONS_CACHE.clear()
         dashboard_server._BROKER_POSITIONS_STATUS.clear()
         dashboard_server._BROKER_TRADE_BUNDLE_CACHE.clear()
+        dashboard_server._DASHBOARD_QUOTE_CACHE.clear()
         dashboard_server._STATE_JSON_CACHE.clear()
 
     def test_broker_snapshot_fast_returns_no_cache_without_kis_call(self) -> None:
@@ -804,6 +806,10 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         self.assertIn('id="broker-refresh-btn"', body)
         self.assertIn("refreshBrokerSnapshot", body)
         self.assertIn("/api/broker/refresh", body)
+        self.assertIn("refreshPositionPrice", body)
+        self.assertIn("-price-btn", body)
+        self.assertIn("현재가 조회", body)
+        self.assertIn("pos.display_current_price || pos.current_price", body)
         load_all_body = body.split("async function loadAll()", 1)[1].split("}", 1)[0]
         self.assertNotIn("refreshBrokerSnapshot", load_all_body)
 
@@ -826,6 +832,71 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         self.assertEqual(payload["source"], "live_status_cache")
         self.assertFalse(payload["live"])
         self.assertEqual(payload["positions"][0]["current_price"], 70000)
+
+    def test_refresh_prices_default_with_missing_ticker_does_not_load_broker(self) -> None:
+        with patch.object(dashboard_server, "_load_live_status", return_value={"positions": []}), patch.object(
+            dashboard_server, "_load_broker_positions", side_effect=AssertionError("cached refresh must not load broker")
+        ):
+            response = dashboard_server.app.test_client().post(
+                "/api/refresh_prices",
+                json={"market": "KR", "mode": "live", "ticker": "005930"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertFalse(payload["live"])
+        self.assertEqual(payload["positions"], [])
+
+    def test_refresh_prices_force_updates_single_position_fields(self) -> None:
+        live = {
+            "positions": [
+                {"ticker": "005930", "current_price": 70000, "display_current_price": 70000, "avg_price": 68000, "qty": 1},
+                {"ticker": "000660", "current_price": 120000, "display_current_price": 120000, "avg_price": 118000, "qty": 1},
+            ]
+        }
+
+        with patch.object(dashboard_server, "_load_live_status", return_value=live), patch.object(
+            dashboard_server, "_is_live_market", return_value=True
+        ), patch.object(
+            dashboard_server,
+            "_dashboard_realtime_quotes",
+            return_value={"005930": {"ticker": "005930", "price": 71000, "source": "realtime_quote"}},
+        ), patch.object(
+            dashboard_server, "_atomic_write_text", side_effect=AssertionError("price lookup must not persist live_status")
+        ):
+            response = dashboard_server.app.test_client().post(
+                "/api/refresh_prices",
+                json={"market": "KR", "mode": "live", "ticker": "005930", "force": True},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["live"])
+        self.assertEqual(payload["source"], "kis_refresh")
+        self.assertEqual(payload["updated_count"], 1)
+        self.assertEqual(payload["position"]["ticker"], "005930")
+        self.assertEqual(payload["position"]["current_price"], 71000)
+        self.assertEqual(payload["position"]["display_current_price"], 71000)
+        self.assertEqual(live["positions"][0]["current_price"], 70000)
+        self.assertEqual(live["positions"][0]["display_current_price"], 70000)
+        self.assertEqual(live["positions"][1]["current_price"], 120000)
+
+    def test_dashboard_quote_overlay_reuses_existing_position_price_fields(self) -> None:
+        dashboard_server._DASHBOARD_QUOTE_CACHE[("live", "KR", "005930")] = {
+            "cached_at": dashboard_server._time.time(),
+            "ticker": "005930",
+            "price": 71000,
+            "source": "realtime_quote",
+        }
+        positions = [
+            {"ticker": "005930", "current_price": 70000, "display_current_price": 70000, "avg_price": 68000, "qty": 1},
+        ]
+
+        dashboard_server._apply_dashboard_position_quote_overlays("KR", positions, "live")
+
+        self.assertEqual(positions[0]["current_price"], 71000)
+        self.assertEqual(positions[0]["display_current_price"], 71000)
+        self.assertAlmostEqual(positions[0]["pnl_pct"], (71000 / 68000 - 1) * 100, places=6)
 
     def test_broker_refresh_enforces_server_side_cooldown(self) -> None:
         with patch.dict(os.environ, {"DASHBOARD_BROKER_REFRESH_COOLDOWN_SEC": "60"}), patch.object(

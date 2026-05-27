@@ -32,7 +32,7 @@ from minority_report.claude_utils import extract_json
 from minority_report.consensus import build_consensus as runtime_build_consensus
 from phase1_trainer.digest_builder import (
     build_kr_digest, build_us_digest,
-    load_digest, digest_to_prompt
+    load_digest, digest_to_prompt, load_price_with_cache
 )
 from runtime_paths import get_runtime_path
 from universe_manager import (

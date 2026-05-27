@@ -52,6 +52,7 @@ data/backtest_audit/runs/
 # State (runtime) — brain.json만 버전 관리, 나머지는 무시
 state/*.pid
 state/live_status_*.json
+/kis_token.json
 state/kis_token.json
 state/api_usage.json
 state/us_screen_cache.json
