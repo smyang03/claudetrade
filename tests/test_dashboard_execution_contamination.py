@@ -160,3 +160,25 @@ def test_trading_bot_execution_health_classifies_invalid_position_geometry() -> 
 
     assert "invalid_position_geometry" in health["reasons"]
     assert health["learning_excluded"] is True
+
+
+def test_position_context_preserves_auto_sell_policy_for_display() -> None:
+    merged = dashboard_server._merge_position_context(
+        {"ticker": "EL", "avg_price": 87.8},
+        {
+            "ticker": "EL",
+            "auto_sell_policy": {
+                "status": "active",
+                "mode": "target_extension",
+                "policy_currency": "USD",
+                "protective_stop": 88.82,
+                "revised_sell_target": 93.5,
+            },
+            "auto_sell_policy_status": "active",
+            "hold_advice": {"action": "HOLD", "revised_sell_target": 93.5},
+        },
+    )
+
+    assert merged["auto_sell_policy"]["revised_sell_target"] == 93.5
+    assert merged["auto_sell_policy_status"] == "active"
+    assert merged["hold_advice"]["action"] == "HOLD"

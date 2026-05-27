@@ -441,6 +441,32 @@ class PlanAHoldPolicyBotTests(unittest.TestCase):
         self.assertEqual(pos["auto_sell_policy"]["protective_stop"], 104.0)
         self.assertTrue(pos["auto_sell_policy_recreate_block_until"])
 
+    def test_general_hold_advice_stores_policy_for_broker_position(self) -> None:
+        bot = _bot()
+        pos = bot.risk.positions[0]
+        pos["strategy"] = "broker_sync"
+        pos["pathb_path_run_id"] = ""
+        advice = {
+            "action": "HOLD",
+            "hold_mode": "target_extension",
+            "confidence": 0.72,
+            "protective_stop": 104.0,
+            "revised_sell_target": 112.0,
+            "next_review_min": 5,
+            "invalid_if": "loses 104",
+            "reason": "extend target",
+        }
+
+        with patch.dict(os.environ, {"PLANA_HOLD_POLICY_MODE": "shadow", "US_PLANA_HOLD_POLICY_MODE": "shadow"}):
+            result = bot._apply_hold_advice_policy(pos, "US", advice, reason="intraday_review_hold")
+
+        self.assertEqual(result["policy_scope"], "plan_a")
+        self.assertEqual(result["auto_sell_policy_mode"], "target_extension")
+        self.assertEqual(pos["auto_sell_policy"]["policy_currency"], "USD")
+        self.assertEqual(pos["auto_sell_policy"]["signal_reason"], "intraday_review_hold")
+        self.assertEqual(pos["auto_sell_policy"]["revised_sell_target"], 112.0)
+        self.assertEqual(pos["auto_sell_policy"]["protective_stop"], 104.0)
+
     def test_missing_hold_mode_rejects_policy_but_keeps_hold_cooldown(self) -> None:
         bot = _bot()
         cand = {**bot.risk.positions[0], "exit_price": 106.0, "reason": "trail_stop"}

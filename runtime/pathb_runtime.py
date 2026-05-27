@@ -8001,7 +8001,7 @@ class PathBRuntime:
         if cached_price > 0 and (time.time() - cached_ts) < ttl:
             return cached_price
         try:
-            info = get_price(key, _bot_token(self.bot, market), market=market)
+            info = get_price(key, _bot_token(self.bot, market), market=market, allow_fallback=False)
             price = float(info.get("price", 0) or 0)
             if price > 0:
                 self._exit_price_cache[key] = (price, time.time())

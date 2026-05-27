@@ -781,7 +781,7 @@ def get_hashkey(body, token, market: str = "KR"):
     return resp.json()["HASH"]
 
 
-def _get_price_kr(ticker, token):
+def _get_price_kr(ticker, token, *, allow_fallback: bool = True):
     cache_key = ("KR", ticker)
 
     def _fetch():
@@ -810,10 +810,11 @@ def _get_price_kr(ticker, token):
     try:
         return _cache_set(_PRICE_CACHE, cache_key, _retry_kis(f"KR price [{ticker}]", _fetch))
     except Exception:
-        cached = _cache_get(_PRICE_CACHE, cache_key)
-        if cached is not None:
-            log.warning(f"KIS KR 현재가 캐시 사용 [{ticker}]")
-            return cached
+        if allow_fallback:
+            cached = _cache_get(_PRICE_CACHE, cache_key)
+            if cached is not None:
+                log.warning(f"KIS KR 현재가 캐시 사용 [{ticker}]")
+                return cached
         raise
 
 
@@ -1594,8 +1595,21 @@ def is_trading_halted(ticker: str, token) -> bool:
         return False
 
 
-def get_price(ticker, token, market="KR"):
+def get_price(ticker, token, market="KR", *, allow_fallback: bool = True):
+    """Return a quote for ``ticker``.
+
+    ``allow_fallback=False`` is for order/risk paths that need a provider-fresh
+    quote. It disables cached/provider fallback so the caller can fail closed.
+    """
     if market == "US":
+        if not allow_fallback:
+            if IS_PAPER:
+                return _get_price_us_finnhub(ticker)
+            return _retry_kis(
+                f"US price [{ticker}]",
+                lambda: _get_price_us_kis(ticker, token),
+                retries=3, delay_sec=0.5,
+            )
         if IS_PAPER:
             # 모의투자: KIS VTS 미지원(실시간 WS 없음) → Finnhub 1차
             try:
@@ -1634,8 +1648,10 @@ def get_price(ticker, token, market="KR"):
         log.info(f"US 현재가 Alpha Vantage 폴백 성공 [{ticker}]")
         return result
     try:
-        return _get_price_kr(ticker, token)
+        return _get_price_kr(ticker, token, allow_fallback=allow_fallback)
     except Exception as e:
+        if not allow_fallback:
+            raise
         log.warning(f"KIS 가격 조회 실패 [{ticker}] → yfinance 폴백: {e}")
         return _get_price_kr_yf(ticker)
 

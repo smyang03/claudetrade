@@ -18003,6 +18003,36 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.exception(f"[PathB protective_hold bridge] failed {market} {pos.get('ticker')}: {exc}")
             return {"updated": False, "reason": f"bridge_failed:{exc}"}
 
+    def _apply_hold_advice_policy(
+        self,
+        pos: dict,
+        market: str,
+        advice: dict,
+        *,
+        reason: str = "hold_advisor_hold",
+    ) -> dict:
+        if not isinstance(pos, dict) or not isinstance(advice, dict):
+            return {"updated": False, "reason": "invalid_input"}
+        if str(advice.get("action", "HOLD") or "HOLD").strip().upper() != "HOLD":
+            return {"updated": False, "reason": "action_not_hold"}
+
+        live_pos = self._find_live_position_for_candidate(pos, market) or pos
+        path_run_id = str(live_pos.get("pathb_path_run_id") or live_pos.get("path_run_id") or "").strip()
+        if path_run_id:
+            return self._apply_pathb_hold_advice_bridge(live_pos, market, advice)
+
+        price_pos = self._position_with_latest_price_context(live_pos, market)
+        current_native = self._native_position_price(price_pos, market, current=True)
+        if current_native <= 0:
+            current_native = self._native_position_price(pos, market, current=True)
+        if current_native <= 0:
+            return {"updated": False, "reason": "invalid_current_price"}
+
+        cand = {**live_pos, "reason": str(reason or "hold_advisor_hold"), "exit_price": current_native}
+        result = self._apply_plan_a_hold_policy(cand, market, advice, current_native)
+        result["policy_scope"] = "plan_a"
+        return result
+
     def _position_with_latest_price_context(self, pos: dict, market: str) -> dict:
         price_pos = dict(pos)
         ticker = str(price_pos.get("ticker", "") or "")
@@ -18661,12 +18691,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     if p2.get("ticker") == ticker:
                         p2["pending_next_open_sell"] = False
                         p2["pending_next_open_reason"] = ""
-                # Update trail metadata only for trailing positions.
-                if pos.get("trailing"):
-                    for p2 in self.risk.positions:
-                        if p2.get("ticker") == ticker:
-                            p2["hold_advice"] = advice
-                self._apply_pathb_hold_advice_bridge(pos, market, advice)
+                        p2["hold_advice"] = advice
+                self._apply_hold_advice_policy(pos, market, advice, reason="pre_session_hold")
                 hold_list.append((ticker, reason))
                 log.info(f"[오전 리뷰] {ticker} {action} 유지: {reason}")
         # ── 텔레그램 알림 ───────────────────────────────────────────────────
@@ -19182,7 +19208,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         clear_pending=True,
                     )
             if action == "HOLD" and isinstance(advice, dict):
-                self._apply_pathb_hold_advice_bridge(pos, market, advice)
+                self._apply_hold_advice_policy(pos, market, advice, reason="intraday_review_hold")
             action_ko = {"HOLD": "홀드 유지", "TRAIL": "트레일링 유지", "SELL": "즉시 매도"}.get(action, action)
             color_icon = "🔴" if action == "SELL" else ("🟡" if action == "TRAIL" else "🟢")
             block = (
@@ -19342,6 +19368,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     if advice:
                         p2["hold_advice"] = advice
                     break
+            if isinstance(advice, dict):
+                self._apply_hold_advice_policy(cand, market, advice, reason="max_hold_hold")
             self._save_positions()
             msg = (f"⏰ <b>[보유일 검토 · 계속 보유] {ticker}</b>  {pnl:+.2f}%\n"
                    f"  {held_days}일 보유 → 보유일 제한 없이 유지\n"
@@ -19390,6 +19418,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 log.warning(f"[TP Claude] {ticker} 오류 → SELL 차단, trail 기본값 적용: {e}")
                 trailing_alert(market, ticker, "hold", trail_pct=trail_pct)
         self.risk.activate_trailing(ticker, trail_pct, hold_advice=hold_advice)
+        if isinstance(hold_advice, dict):
+            self._apply_hold_advice_policy(cand, market, hold_advice, reason="tp_check_hold")
 
     @staticmethod
     def _auto_sell_review_required(reason: str) -> bool:
@@ -29344,6 +29374,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             sel_reason = str(pord.get("selected_reason", "") or "").strip()
                             break
                 hold_adv = pos.get("hold_advice") or None
+                auto_sell_policy = pos.get("auto_sell_policy") if isinstance(pos.get("auto_sell_policy"), dict) else {}
                 dedup_positions[key] = {
                     "ticker":          ticker,
                     "name":            pos_name,
@@ -29372,6 +29403,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "held_days":       int(pos.get("held_days", 0) or 0),
                     "selected_reason": sel_reason,
                     "hold_advice":     hold_adv,
+                    "auto_sell_policy": auto_sell_policy,
+                    "auto_sell_policy_mode": pos.get("auto_sell_policy_mode", ""),
+                    "auto_sell_policy_status": pos.get("auto_sell_policy_status", ""),
+                    "auto_sell_policy_reject_reason": pos.get("auto_sell_policy_reject_reason", ""),
+                    "auto_sell_policy_last_reject_reason": pos.get("auto_sell_policy_last_reject_reason", ""),
+                    "auto_sell_policy_last_created_at": pos.get("auto_sell_policy_last_created_at", ""),
+                    "auto_sell_policy_last_created_price": round(float(pos.get("auto_sell_policy_last_created_price", 0) or 0), 4),
+                    "auto_sell_policy_recreate_block_until": pos.get("auto_sell_policy_recreate_block_until", ""),
                     "price_source":    pos.get("price_source", "runtime"),
                     "currency":        pos.get("display_currency", "KRW"),
                 }

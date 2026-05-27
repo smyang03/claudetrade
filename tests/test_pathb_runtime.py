@@ -8,6 +8,7 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
+import kis_api
 from config.v2 import V2Config
 from decision.claude_price_plan import make_price_plan
 from execution.claude_price_adapter import EntrySignal
@@ -4848,6 +4849,50 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(result, 0.0)
             # price_cache_raw 는 stale 값 그대로여야 함 (덮어쓰기 금지)
             self.assertEqual(bot.price_cache_raw.get("005930"), 999.0)
+
+    def test_fetch_exit_price_bypasses_kis_price_cache_fallback(self) -> None:
+        """KIS fresh 호출 실패 시 kis_api._PRICE_CACHE 값을 fresh로 승격하지 않는다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+
+            runtime.broker_truth = Mock()
+            runtime.broker_truth.market_snapshot.return_value = {"positions": []}
+
+            old_price_cache = dict(kis_api._PRICE_CACHE)
+            kis_api._PRICE_CACHE.clear()
+            kis_api._cache_set(
+                kis_api._PRICE_CACHE,
+                ("KR", "005930"),
+                {
+                    "ticker": "005930",
+                    "name": "005930",
+                    "price": 999.0,
+                    "change": 0,
+                    "change_rate": 0.0,
+                    "volume": 0,
+                    "open": 0,
+                    "high": 999.0,
+                    "low": 999.0,
+                },
+            )
+            try:
+                with (
+                    patch("kis_api._retry_kis", side_effect=RuntimeError("kis down")),
+                    patch("kis_api._get_price_kr_yf", return_value={"price": 777.0}) as yf_mock,
+                ):
+                    result = runtime._current_native_price_for_exit(
+                        "KR", "005930", {"current_price_source": "order_fill"}
+                    )
+            finally:
+                kis_api._PRICE_CACHE.clear()
+                kis_api._PRICE_CACHE.update(old_price_cache)
+
+            self.assertEqual(result, 0.0)
+            yf_mock.assert_not_called()
+            self.assertNotIn("005930", runtime._exit_price_cache)
+            self.assertNotIn("005930", bot.price_cache_raw)
 
 
 if __name__ == "__main__":

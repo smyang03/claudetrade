@@ -3035,6 +3035,10 @@ def _merge_position_context(base: dict, overlay: Optional[dict]) -> dict:
         "strategy", "entry", "avg_price", "display_avg_price", "display_current_price",
         "tp", "tp_price", "sl", "tp_triggered", "trailing", "trail_sl", "trail_pct",
         "held_days", "entry_date", "entry_time", "hold_advice", "name", "qty",
+        "auto_sell_policy", "auto_sell_policy_mode", "auto_sell_policy_status",
+        "auto_sell_policy_reject_reason", "auto_sell_policy_last_reject_reason",
+        "auto_sell_policy_last_created_at", "auto_sell_policy_last_created_price",
+        "auto_sell_policy_recreate_block_until",
         "source_strategy", "path_type", "pathb_path_run_id", "pathb_plan",
         "v2_decision_id", "v2_execution_id", "position_id", "order_no",
         "currency", "display_currency", "raw_avg_price", "raw_current_price",
@@ -11946,18 +11950,40 @@ async function loadSummary() {
       const krw = usdKrw > 0 ? ` (약 ${fmt.price(v * usdKrw)})` : '';
       return '$' + v.toFixed(2) + krw;
     };
+    const nativePolicyPx = (value, currencyHint = '') => {
+      const raw = Number(value || 0);
+      if (!(raw > 0)) return 0;
+      const hint = String(currencyHint || '').toUpperCase();
+      if (!isKR && hint !== 'USD' && usdKrw > 0 && raw > 1000) return raw / usdKrw;
+      return raw;
+    };
+    const policy = pos.auto_sell_policy || {};
+    const policyActive = String(policy.status || '').toLowerCase() === 'active';
+    const lineAdvice = pos.hold_advice || {};
+    const adviceHold = String(lineAdvice.action || '').toUpperCase() === 'HOLD';
+    const policyTarget = policyActive ? nativePolicyPx(policy.revised_sell_target, policy.policy_currency) : 0;
+    const policyStop = policyActive
+      ? (nativePolicyPx(policy.protective_stop, policy.policy_currency) || nativePolicyPx(policy.hard_stop, policy.policy_currency))
+      : 0;
+    const adviceTarget = adviceHold ? nativePolicyPx(lineAdvice.revised_sell_target, storageCurrency) : 0;
+    const adviceStop = adviceHold
+      ? (nativePolicyPx(lineAdvice.protective_stop, storageCurrency) || nativePolicyPx(lineAdvice.hard_stop, storageCurrency))
+      : 0;
+    const effectiveTp = policyTarget || adviceTarget || tp;
+    const effectiveSl = policyStop || adviceStop || sl;
+    const adjustedLine = !!(policyTarget || adviceTarget || policyStop || adviceStop);
     let stopLine = '';
     if (isTrailing && trailSl > 0) {
       const distPct = curPrice > 0 ? ((trailSl / curPrice - 1) * 100).toFixed(1) : '';
-      const tpTxt = fmtPx(tp) ? `최초 목표 ${fmtPx(tp)}` : '';
+      const tpTxt = fmtPx(effectiveTp) ? `${adjustedLine ? '조정 목표' : '최초 목표'} ${fmtPx(effectiveTp)}` : '';
       const trailStartTxt = fmtPx(tpPrice) ? `목표가 달성가 ${fmtPx(tpPrice)}` : '';
       const stopTxt = `현재 스탑 ${fmtPx(trailSl)} 이하 시 자동 매도 (현재가 대비 ${distPct}%)`;
       stopLine = `<span style="color:#f59e0b">트레일링 중</span> — ${[tpTxt, trailStartTxt, stopTxt, '상방 목표 고정 없음'].filter(Boolean).join(' · ')}`;
-    } else if (sl > 0 || tp > 0) {
-      const slPct = sl > 0 && avgPrice > 0 ? ` (${((sl/avgPrice-1)*100).toFixed(1)}%)` : '';
-      const tpPct = tp > 0 && avgPrice > 0 ? ` (${((tp/avgPrice-1)*100).toFixed(1)}%)` : '';
-      const slTxt = fmtPx(sl) ? `손절 ${fmtPx(sl)}${slPct}` : '';
-      const tpTxt = fmtPx(tp) ? `목표 ${fmtPx(tp)}${tpPct}` : '';
+    } else if (effectiveSl > 0 || effectiveTp > 0) {
+      const slPct = effectiveSl > 0 && avgPrice > 0 ? ` (${((effectiveSl/avgPrice-1)*100).toFixed(1)}%)` : '';
+      const tpPct = effectiveTp > 0 && avgPrice > 0 ? ` (${((effectiveTp/avgPrice-1)*100).toFixed(1)}%)` : '';
+      const slTxt = fmtPx(effectiveSl) ? `${adjustedLine ? '조정 손절' : '손절'} ${fmtPx(effectiveSl)}${slPct}` : '';
+      const tpTxt = fmtPx(effectiveTp) ? `${adjustedLine ? '조정 목표' : '목표'} ${fmtPx(effectiveTp)}${tpPct}` : '';
       stopLine = [slTxt, tpTxt].filter(Boolean).join(' · ');
     }
     // 보유일
@@ -13065,18 +13091,40 @@ async function loadSummary() {
         const krw = usdKrw > 0 ? ` (약 ${fmt.price(v * usdKrw)})` : '';
         return '$' + v.toFixed(2) + krw;
       };
+      const nativePolicyPx = (value, currencyHint = '') => {
+        const raw = Number(value || 0);
+        if (!(raw > 0)) return 0;
+        const hint = String(currencyHint || '').toUpperCase();
+        if (!isKRW && hint !== 'USD' && usdKrw > 0 && raw > 1000) return raw / usdKrw;
+        return raw;
+      };
+      const policy = pos.auto_sell_policy || {};
+      const policyActive = String(policy.status || '').toLowerCase() === 'active';
+      const lineAdvice = pos.hold_advice || {};
+      const adviceHold = String(lineAdvice.action || '').toUpperCase() === 'HOLD';
+      const policyTarget = policyActive ? nativePolicyPx(policy.revised_sell_target, policy.policy_currency) : 0;
+      const policyStop = policyActive
+        ? (nativePolicyPx(policy.protective_stop, policy.policy_currency) || nativePolicyPx(policy.hard_stop, policy.policy_currency))
+        : 0;
+      const adviceTarget = adviceHold ? nativePolicyPx(lineAdvice.revised_sell_target, pos.currency || pos.display_currency) : 0;
+      const adviceStop = adviceHold
+        ? (nativePolicyPx(lineAdvice.protective_stop, pos.currency || pos.display_currency) || nativePolicyPx(lineAdvice.hard_stop, pos.currency || pos.display_currency))
+        : 0;
+      const effectiveTp = policyTarget || adviceTarget || tp;
+      const effectiveSl = policyStop || adviceStop || sl;
+      const adjustedLine = !!(policyTarget || adviceTarget || policyStop || adviceStop);
       let stopLine = '';
       if (isTrailing && trailSl > 0) {
         const distPct = curPx > 0 ? ((trailSl / curPx - 1) * 100).toFixed(1) : '';
-        const tpTxt = fmtPx(tp) ? `최초 목표 ${fmtPx(tp)}` : '';
+        const tpTxt = fmtPx(effectiveTp) ? `${adjustedLine ? '조정 목표' : '최초 목표'} ${fmtPx(effectiveTp)}` : '';
         const trailStartTxt = fmtPx(tpPrice) ? `목표가 달성가 ${fmtPx(tpPrice)}` : '';
         const stopTxt = `현재 스탑 ${fmtPx(trailSl)} 이하 시 자동 매도 (현재가 대비 ${distPct}%)`;
         stopLine = `<span style="color:#f59e0b">트레일링 중</span> — ${[tpTxt, trailStartTxt, stopTxt, '상방 목표 고정 없음'].filter(Boolean).join(' · ')}`;
-      } else if (sl > 0 || tp > 0) {
-        const slPct = sl > 0 && avg > 0 ? ` (${((sl/avg-1)*100).toFixed(1)}%)` : '';
-        const tpPct = tp > 0 && avg > 0 ? ` (${((tp/avg-1)*100).toFixed(1)}%)` : '';
-        const slTxt = fmtPx(sl) ? `손절 ${fmtPx(sl)}${slPct}` : '';
-        const tpTxt = fmtPx(tp) ? `목표 ${fmtPx(tp)}${tpPct}` : '';
+      } else if (effectiveSl > 0 || effectiveTp > 0) {
+        const slPct = effectiveSl > 0 && avg > 0 ? ` (${((effectiveSl/avg-1)*100).toFixed(1)}%)` : '';
+        const tpPct = effectiveTp > 0 && avg > 0 ? ` (${((effectiveTp/avg-1)*100).toFixed(1)}%)` : '';
+        const slTxt = fmtPx(effectiveSl) ? `${adjustedLine ? '조정 손절' : '손절'} ${fmtPx(effectiveSl)}${slPct}` : '';
+        const tpTxt = fmtPx(effectiveTp) ? `${adjustedLine ? '조정 목표' : '목표'} ${fmtPx(effectiveTp)}${tpPct}` : '';
         stopLine = [slTxt, tpTxt].filter(Boolean).join(' · ');
       }
       const pathbPlan = pos.pathb_plan || {};
