@@ -4285,6 +4285,18 @@ class PathBRuntime:
             and str(policy.get("mode", "") or "") == "protective_hold"
         ):
             return {"triggered": False, "reason": "protective_hold_active"}
+        # gate check 전에 broker truth / fresh API로 가격 재검증
+        # scan에서 넘긴 current가 stale cache(예: session_open 이월 가격)일 수 있음
+        verified_price = self._current_native_price_for_exit(plan.market, plan.ticker, pos)
+        if verified_price > 0:
+            price_gap_pct = (verified_price - current_price) / max(current_price, 1e-6) * 100
+            if abs(price_gap_pct) > 0.5:
+                log.warning(
+                    f"[PathB profit_review price verify] {plan.market} {plan.ticker} "
+                    f"scan={current_price:.4f} verified={verified_price:.4f} "
+                    f"gap={price_gap_pct:+.2f}% → using verified"
+                )
+            current_price = verified_price
         floor_info = self._pathb_profit_ladder_floor(plan, pos, current_price, market)
         if not floor_info:
             return {"triggered": False, "reason": "ladder_floor_missing"}
