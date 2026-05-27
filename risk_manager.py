@@ -471,23 +471,66 @@ class RiskManager:
         return entry * (1.0 - cap_pct) if entry > 0 else 0.0
 
     def profit_floor_price(self, pos: dict, *, native: bool = False) -> float:
-        floor_pct = float(PROFIT_FLOOR_EXIT_PCT or 0) / 100.0
+        floor_pct = self._plana_profit_floor_exit_pct(pos) / 100.0
         if native and pos.get("display_currency") == "USD":
             avg_usd = float(pos.get("display_avg_price") or 0)
             return avg_usd * (1.0 + floor_pct) if avg_usd > 0 else 0.0
         entry = float(pos.get("entry") or 0)
         return entry * (1.0 + floor_pct) if entry > 0 else 0.0
 
+    @staticmethod
+    def _plana_strategy_is_momentum(pos: dict) -> bool:
+        fields = (
+            pos.get("strategy"),
+            pos.get("strategy_name"),
+            pos.get("entry_strategy"),
+            pos.get("entry_style"),
+            pos.get("selection_style"),
+            pos.get("signal_type"),
+        )
+        text = " ".join(str(v or "").lower() for v in fields)
+        return any(keyword in text for keyword in ("momentum", "breakout"))
+
+    def _plana_mfe_breakeven_trigger_pct(self, pos: dict) -> float:
+        base = _env_float("PLANA_MFE_BREAKEVEN_TRIGGER_PCT", 2.5)
+        if base <= 0:
+            return 0.0
+        if not self._plana_strategy_is_momentum(pos):
+            return base
+        momentum = _env_float("PLANA_MOMENTUM_MFE_BREAKEVEN_TRIGGER_PCT", 1.5)
+        return min(base, momentum) if momentum > 0 else base
+
+    def _plana_mfe_breakeven_buffer_pct(self, pos: dict) -> float:
+        base = max(0.0, _env_float("PLANA_MFE_BREAKEVEN_BUFFER_PCT", 0.001))
+        if not self._plana_strategy_is_momentum(pos):
+            return base
+        momentum = _env_float("PLANA_MOMENTUM_MFE_BREAKEVEN_BUFFER_PCT", base)
+        return max(0.0, momentum)
+
+    def _plana_profit_floor_trigger_pct(self, pos: dict) -> float:
+        base = float(PROFIT_FLOOR_TRIGGER_PCT or 0)
+        if not self._plana_strategy_is_momentum(pos):
+            return base
+        momentum = _env_float("PLANA_MOMENTUM_PROFIT_FLOOR_TRIGGER_PCT", 1.5)
+        return min(base, momentum) if base > 0 and momentum > 0 else base
+
+    def _plana_profit_floor_exit_pct(self, pos: dict) -> float:
+        base = float(PROFIT_FLOOR_EXIT_PCT or 0)
+        if not self._plana_strategy_is_momentum(pos):
+            return base
+        momentum = _env_float("PLANA_MOMENTUM_PROFIT_FLOOR_EXIT_PCT", base)
+        return max(0.0, momentum)
+
     def mfe_breakeven_price(self, pos: dict, *, native: bool = False) -> float:
         if not _env_bool("PLANA_MFE_BREAKEVEN_ENABLED", True):
             return 0.0
-        trigger_pct = _env_float("PLANA_MFE_BREAKEVEN_TRIGGER_PCT", 2.5)
+        trigger_pct = self._plana_mfe_breakeven_trigger_pct(pos)
         if trigger_pct <= 0:
             return 0.0
         peak = float(pos.get("peak_pnl_pct") or pos.get("position_mfe_pct") or 0)
         if peak < trigger_pct:
             return 0.0
-        buffer_pct = max(0.0, _env_float("PLANA_MFE_BREAKEVEN_BUFFER_PCT", 0.001))
+        buffer_pct = self._plana_mfe_breakeven_buffer_pct(pos)
         if native and pos.get("display_currency") == "USD":
             avg_usd = float(pos.get("display_avg_price") or pos.get("avg_price") or 0)
             return avg_usd * (1.0 + buffer_pct) if avg_usd > 0 else 0.0
@@ -518,7 +561,7 @@ class RiskManager:
         current = self.current_pnl_pct(pos)
         if current is None:
             return False
-        return peak >= float(PROFIT_FLOOR_TRIGGER_PCT or 0) and current <= float(PROFIT_FLOOR_EXIT_PCT or 0)
+        return peak >= self._plana_profit_floor_trigger_pct(pos) and current <= self._plana_profit_floor_exit_pct(pos)
 
     def _position_age_minutes(self, pos: dict) -> float | None:
         raw = str(pos.get("entry_time") or pos.get("created_at") or pos.get("fill_time") or "").strip()
@@ -961,8 +1004,8 @@ class RiskManager:
                 exit_meta["mfe_breakeven_price"] = mfe_breakeven_usd
                 mfe_hit = _mfe_breakeven_hit(cp_usd, mfe_breakeven_usd, avg_usd)
                 exit_meta["mfe_breakeven_triggered"] = bool(mfe_hit)
-                exit_meta["mfe_breakeven_trigger_pct"] = _env_float("PLANA_MFE_BREAKEVEN_TRIGGER_PCT", 2.5)
-                exit_meta["mfe_breakeven_buffer_pct"] = _env_float("PLANA_MFE_BREAKEVEN_BUFFER_PCT", 0.001)
+                exit_meta["mfe_breakeven_trigger_pct"] = self._plana_mfe_breakeven_trigger_pct(pos)
+                exit_meta["mfe_breakeven_buffer_pct"] = self._plana_mfe_breakeven_buffer_pct(pos)
 
                 recovery_reason, recovery_trigger = self._recovery_micro_exit_signal(pos)
                 if recovery_reason:
@@ -1054,8 +1097,8 @@ class RiskManager:
             exit_meta["mfe_breakeven_price"] = mfe_breakeven_krw
             mfe_hit = _mfe_breakeven_hit(cp, mfe_breakeven_krw, mfe_entry_krw)
             exit_meta["mfe_breakeven_triggered"] = bool(mfe_hit)
-            exit_meta["mfe_breakeven_trigger_pct"] = _env_float("PLANA_MFE_BREAKEVEN_TRIGGER_PCT", 2.5)
-            exit_meta["mfe_breakeven_buffer_pct"] = _env_float("PLANA_MFE_BREAKEVEN_BUFFER_PCT", 0.001)
+            exit_meta["mfe_breakeven_trigger_pct"] = self._plana_mfe_breakeven_trigger_pct(pos)
+            exit_meta["mfe_breakeven_buffer_pct"] = self._plana_mfe_breakeven_buffer_pct(pos)
             recovery_reason, recovery_trigger = self._recovery_micro_exit_signal(pos)
             if recovery_reason:
                 reason = recovery_reason

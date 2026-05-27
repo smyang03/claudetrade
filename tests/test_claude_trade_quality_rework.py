@@ -70,6 +70,7 @@ class ClaudeTradeQualityReworkTests(unittest.TestCase):
                 "ticker": "018880",
                 "action": "BUY_READY",
                 "confidence": 0.9,
+                "price_targets": {"max_entry_price": 5800.0},
                 "soft_gate_overrides": ["late_chase"],
             },
             market="KR",
@@ -91,6 +92,7 @@ class ClaudeTradeQualityReworkTests(unittest.TestCase):
                 "ticker": "018880",
                 "action": "BUY_READY",
                 "confidence": 0.9,
+                "price_targets": {"max_entry_price": 5800.0},
                 "soft_gate_overrides": ["late_chase"],
             },
             market="KR",
@@ -111,12 +113,40 @@ class ClaudeTradeQualityReworkTests(unittest.TestCase):
         validation = decision.runtime_gate["soft_gate_override_validation"]
         self.assertTrue(validation["checks"]["ret3_only_grace_used"])
 
+    def test_kr_soft_gate_override_fails_missing_entry_price_cap(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "018880",
+                "action": "BUY_READY",
+                "confidence": 0.9,
+                "soft_gate_overrides": ["late_chase"],
+            },
+            market="KR",
+            execution_context={
+                "market": "KR",
+                "soft_gate_override_validation_enabled": True,
+                "soft_gates": ["late_chase"],
+                "ret_3m_pct": 0.2,
+                "ret_5m_pct": 0.3,
+                "opening_range_break": True,
+                "current_price": 5700.0,
+                "data_quality": "good",
+            },
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        validation = decision.runtime_gate["soft_gate_override_validation"]
+        self.assertFalse(validation["validated"])
+        self.assertFalse(validation["checks"]["entry_price_cap_ok"])
+        self.assertIn("entry_price_cap_missing", validation["failed_checks"])
+
     def test_soft_gate_override_rejects_ret3_only_outside_opening_grace(self) -> None:
         decision = route_candidate_action(
             {
                 "ticker": "018880",
                 "action": "BUY_READY",
                 "confidence": 0.9,
+                "price_targets": {"max_entry_price": 5800.0},
                 "soft_gate_overrides": ["late_chase"],
             },
             market="KR",
@@ -469,6 +499,8 @@ class ClaudeTradeQualityReworkTests(unittest.TestCase):
         self.assertEqual(gate["reason"], "order_time_late_entry_metrics_unresolved_allow")
         self.assertEqual(gate["metrics_missing"], ["price_change_candidate_to_order_pct"])
         self.assertIn("kr_late_entry_metrics_missing", gate["warnings"])
+        self.assertIn("kr_order_time_price_cap_missing", gate["warnings"])
+        self.assertTrue(gate["entry_price_cap_missing"])
 
     def test_order_time_late_entry_gate_derives_chase_from_detected_price(self) -> None:
         bot = TradingBot.__new__(TradingBot)

@@ -74,6 +74,52 @@ def _num_or_none(value: Any) -> float | None:
         return None
 
 
+def _resolve_entry_price_cap(action: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    price_targets = dict((action or {}).get("price_targets") or {})
+    candidates = [
+        ("action.max_entry_price", (action or {}).get("max_entry_price")),
+        ("context.max_entry_price", (context or {}).get("max_entry_price")),
+        ("price_targets.max_entry_price", price_targets.get("max_entry_price")),
+        ("price_targets.cancel_if_open_above", price_targets.get("cancel_if_open_above")),
+        ("price_targets.buy_zone_high", price_targets.get("buy_zone_high")),
+        ("context.cancel_if_open_above", (context or {}).get("cancel_if_open_above")),
+        ("context.buy_zone_high", (context or {}).get("buy_zone_high")),
+    ]
+    raw_candidates: dict[str, Any] = {source: value for source, value in candidates}
+    for source, value in candidates:
+        parsed = _num_or_none(value)
+        if parsed is not None and parsed > 0:
+            return {
+                "entry_price_cap": float(parsed),
+                "entry_price_cap_source": source,
+                "entry_price_cap_missing": False,
+                "entry_price_cap_candidates": raw_candidates,
+            }
+    return {
+        "entry_price_cap": None,
+        "entry_price_cap_source": "",
+        "entry_price_cap_missing": True,
+        "entry_price_cap_candidates": raw_candidates,
+    }
+
+
+def _entry_window_bucket(elapsed_min: Any) -> str:
+    elapsed = _num_or_none(elapsed_min)
+    if elapsed is None:
+        return "UNKNOWN"
+    if elapsed < 0:
+        return "OUTSIDE_SESSION"
+    if elapsed < 30:
+        return "OPEN_0_30"
+    if elapsed < 60:
+        return "OPEN_30_60"
+    if elapsed < 90:
+        return "OPEN_60_90"
+    if elapsed <= 270:
+        return "OPEN_90_270"
+    return "LATE_AFTER_270"
+
+
 def _normalized_tokens(value: Any) -> list[str]:
     if value in (None, ""):
         return []
@@ -154,7 +200,9 @@ def validate_soft_gate_override(action: dict[str, Any], context: dict[str, Any])
     )
     current_price = _num_or_none(context.get("current_price"))
     vwap = _num_or_none(context.get("vwap") or context.get("vwap_proxy"))
-    max_entry_price = _num_or_none(action.get("max_entry_price") or context.get("max_entry_price"))
+    price_cap_info = _resolve_entry_price_cap(action or {}, context or {})
+    entry_price_cap = _num_or_none(price_cap_info.get("entry_price_cap"))
+    entry_price_cap_missing = bool(price_cap_info.get("entry_price_cap_missing"))
     volume = _num_or_none(
         context.get("volume_ratio_open")
         or context.get("volume_acceleration")
@@ -171,7 +219,20 @@ def validate_soft_gate_override(action: dict[str, Any], context: dict[str, Any])
     vwap_ok = _boolish(context.get("vwap_reclaim")) or (
         current_price is not None and vwap is not None and current_price >= vwap
     )
-    price_ok = not (current_price is not None and max_entry_price is not None and max_entry_price > 0 and current_price > max_entry_price)
+    legacy_max_entry_price = _num_or_none(action.get("max_entry_price") or context.get("max_entry_price"))
+    price_check_cap = entry_price_cap if market_key == "KR" else legacy_max_entry_price
+    price_ok = not (current_price is not None and price_check_cap is not None and current_price > price_check_cap)
+    route_requested = str(
+        context.get("route_requested_action")
+        or context.get("requested_action")
+        or (action or {}).get("action")
+        or ""
+    ).strip().upper()
+    entry_price_cap_ok = not (
+        market_key == "KR"
+        and route_requested == "BUY_READY"
+        and entry_price_cap_missing
+    )
     ret3_only_grace_used = bool(
         ret_3m is not None
         and ret_5m is None
@@ -186,7 +247,7 @@ def validate_soft_gate_override(action: dict[str, Any], context: dict[str, Any])
     )
     volume_ok = volume is not None and volume >= float(min_volume or 0.0)
     confirmation_ok = bool(opening_break or vwap_ok or volume_ok)
-    validated = bool(momentum_ok and confirmation_ok and price_ok)
+    validated = bool(momentum_ok and confirmation_ok and price_ok and entry_price_cap_ok)
     failed_checks: list[str] = []
     if not momentum_ok:
         failed_checks.append("fresh_momentum_missing")
@@ -194,6 +255,8 @@ def validate_soft_gate_override(action: dict[str, Any], context: dict[str, Any])
         failed_checks.append("or_vwap_volume_confirmation_missing")
     if not price_ok:
         failed_checks.append("max_entry_price_exceeded")
+    if not entry_price_cap_ok:
+        failed_checks.append("entry_price_cap_missing")
     return {
         "required": True,
         "validated": validated,
@@ -205,8 +268,12 @@ def validate_soft_gate_override(action: dict[str, Any], context: dict[str, Any])
             "vwap_ok": bool(vwap_ok),
             "volume_ok": bool(volume_ok),
             "price_ok": bool(price_ok),
+            "entry_price_cap_ok": bool(entry_price_cap_ok),
+            "entry_price_cap_missing": bool(entry_price_cap_missing),
             "ret3_only_grace_used": ret3_only_grace_used,
         },
+        "entry_price_cap": entry_price_cap,
+        "entry_price_cap_source": str(price_cap_info.get("entry_price_cap_source") or ""),
         "failed_checks": failed_checks,
     }
 
@@ -235,6 +302,9 @@ def route_candidate_action(
     confidence = float((action or {}).get("confidence") or 0.0)
     price_targets = dict((action or {}).get("price_targets") or {})
     context = dict(execution_context or {})
+    context.setdefault("market", market_text)
+    if ticker:
+        context.setdefault("ticker", ticker)
 
     def _positive_float(value: Any) -> float:
         try:
@@ -254,6 +324,9 @@ def route_candidate_action(
     cancel_if_open_above = _positive_float(
         context.get("cancel_if_open_above") or price_targets.get("cancel_if_open_above")
     )
+    price_cap_info = _resolve_entry_price_cap(action or {}, context or {})
+    entry_price_cap = _num_or_none(price_cap_info.get("entry_price_cap"))
+    entry_price_cap_missing = bool(price_cap_info.get("entry_price_cap_missing"))
     if context.get("overextended") is not None:
         overextended = bool(context.get("overextended"))
     elif str(context.get("momentum_state") or "").strip().lower() == "overextended":
@@ -298,6 +371,10 @@ def route_candidate_action(
         gate_context["pathb_waiting_buy_zone_low"] = pathb_waiting_buy_zone_low
     if cancel_if_open_above > 0:
         gate_context["cancel_if_open_above"] = cancel_if_open_above
+    gate_context["entry_price_cap"] = entry_price_cap
+    gate_context["entry_price_cap_source"] = str(price_cap_info.get("entry_price_cap_source") or "")
+    gate_context["entry_price_cap_missing"] = bool(entry_price_cap_missing)
+    gate_context["entry_price_cap_candidates"] = dict(price_cap_info.get("entry_price_cap_candidates") or {})
     gate_context["overextended"] = bool(overextended)
     pathb_hysteresis_enabled = True
     if context.get("pathb_suspend_hysteresis_enabled") not in (None, ""):
@@ -344,6 +421,10 @@ def route_candidate_action(
         "SOFT_GATE_ALLOW_RET3_ONLY_FIRST_MIN_KR",
         "SOFT_GATE_ALLOW_RET3_ONLY_FIRST_MIN_US",
         "market_open_elapsed_min",
+        "entry_window_bucket",
+        "freshness_verdict",
+        "trainer_tier",
+        "cohort_reliability",
         "evidence_pack_ceiling_enabled",
         "evidence_data_state",
         "evidence_missing_fields",
@@ -383,6 +464,8 @@ def route_candidate_action(
     ):
         if context.get(key) is not None:
             gate_context[key] = context.get(key)
+    if "entry_window_bucket" not in gate_context:
+        gate_context["entry_window_bucket"] = _entry_window_bucket(context.get("market_open_elapsed_min"))
 
     action_risk_tags = _normalized_tokens((action or {}).get("risk_tags"))
     context_risk_tags = _normalized_tokens(context.get("risk_tags"))
@@ -401,6 +484,21 @@ def route_candidate_action(
     kr_risk_combo_active = bool(market_text == "KR" and has_or_missing and has_high_entry)
 
     default_warnings: list[str] = []
+    trainer_tier = str(context.get("trainer_tier") or "").strip().upper()
+    freshness_verdict = str(
+        context.get("freshness_verdict")
+        or (action or {}).get("freshness_verdict")
+        or ""
+    ).strip().upper()
+    if freshness_verdict and not gate_context.get("freshness_verdict"):
+        gate_context["freshness_verdict"] = freshness_verdict
+    if market_text == "KR" and trainer_tier == "WATCH":
+        if entry_price_cap_missing:
+            default_warnings.append("trainer_watch_price_cap_missing")
+        if freshness_verdict in {"STALE", "LATE_CHASE"}:
+            default_warnings.append("trainer_watch_late_chase")
+        if overextended:
+            default_warnings.append("trainer_watch_overextended")
     evidence_demoted_to = ""
     evidence_runtime_reason = ""
 
@@ -554,6 +652,8 @@ def route_candidate_action(
         requested in {"PROBE_READY", "BUY_READY"}
         and bool(context.get("soft_gate_override_validation_enabled"))
     ):
+        context["route_requested_action"] = requested
+        gate_context["route_requested_action"] = requested
         validation = validate_soft_gate_override(action or {}, context)
         gate_context["soft_gate_override_validation"] = validation
         if validation.get("required") and not validation.get("validated"):
@@ -611,10 +711,26 @@ def route_candidate_action(
                 demoted_to="WATCH",
                 runtime_gate_reason="chase_above_cancel",
             )
+        if market_text == "KR" and current_price > 0 and entry_price_cap is not None and current_price > entry_price_cap:
+            return _decision(
+                "WATCH",
+                reason="buy_ready_price_cap_exceeded",
+                warnings=["runtime_gate_price_cap_exceeded"],
+                demoted_to="WATCH",
+                runtime_gate_reason="entry_price_cap_exceeded",
+            )
         if pathb_waiting:
             good_data = (not data_quality_missing) and str(data_quality or "").lower() in {"good", "normal", "ok"}
             has_buy_zone_context = current_price > 0 and buy_zone_high > 0
             pathb_price_allows_cancel = not has_buy_zone_context or current_price > buy_zone_high
+            if market_text == "KR" and entry_price_cap_missing:
+                return _decision(
+                    "WATCH",
+                    reason="pathb_waiting_kept_missing_price_cap",
+                    warnings=["buy_ready_missing_price_cap_keeps_pathb"],
+                    demoted_to="WATCH",
+                    runtime_gate_reason="missing_price_cap",
+                )
             if confidence >= float(planb_cancel_confidence_min) and not overextended and good_data and pathb_price_allows_cancel:
                 return _decision(
                     "BUY_READY",
@@ -652,6 +768,15 @@ def route_candidate_action(
                 warnings=["runtime_gate_overextended_demoted"],
                 demoted_to="PROBE_READY",
                 runtime_gate_reason="overextended",
+            )
+        if market_text == "KR" and entry_price_cap_missing:
+            return _decision(
+                "PROBE_READY",
+                route="PlanA.probe",
+                reason="kr_buy_ready_missing_price_cap_demoted",
+                warnings=["kr_missing_price_cap_demoted"],
+                demoted_to="PROBE_READY",
+                runtime_gate_reason="missing_price_cap",
             )
         return _decision("BUY_READY", route="PlanA.buy", reason="buy_ready")
 

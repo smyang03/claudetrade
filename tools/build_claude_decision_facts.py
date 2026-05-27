@@ -140,6 +140,9 @@ CREATE TABLE IF NOT EXISTS fact_execution (
 
     filled INTEGER NOT NULL DEFAULT 0,
     closed INTEGER NOT NULL DEFAULT 0,
+    first_fill_event_id INTEGER,
+    first_close_event_id INTEGER,
+    last_close_event_id INTEGER,
     earliest_fill_at TEXT,
     first_closed_at TEXT,
     last_closed_at TEXT,
@@ -292,7 +295,25 @@ def _connect_writable(path: Path) -> sqlite3.Connection:
 def init_schema(db_path: str | Path = DEFAULT_FACT_DB) -> None:
     with closing(_connect_writable(Path(db_path))) as conn:
         conn.executescript(FACT_SCHEMA)
+        _ensure_fact_schema(conn)
         conn.commit()
+
+
+def _ensure_fact_schema(conn: sqlite3.Connection) -> None:
+    extras = {
+        "fact_execution": {
+            "first_fill_event_id": "INTEGER",
+            "first_close_event_id": "INTEGER",
+            "last_close_event_id": "INTEGER",
+        },
+    }
+    for table, columns in extras.items():
+        existing = _columns(conn, table)
+        if not existing:
+            continue
+        for name, sql_type in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
@@ -549,6 +570,9 @@ def _load_canonical_rows(
         _expr(columns, "origin_action", "''"),
         _expr(columns, "filled", "0"),
         _expr(columns, "closed", "0"),
+        _expr(columns, "first_fill_event_id"),
+        _expr(columns, "first_close_event_id"),
+        _expr(columns, "last_close_event_id"),
         _expr(columns, "earliest_fill_at", "''"),
         _expr(columns, "first_closed_at", "''"),
         _expr(columns, "last_closed_at", "''"),
@@ -980,6 +1004,9 @@ def _build_execution_fact(
         "origin_action": (canonical or {}).get("origin_action"),
         "filled": _as_bool_int((canonical or {}).get("filled")),
         "closed": _as_bool_int((canonical or {}).get("closed")),
+        "first_fill_event_id": _as_int((canonical or {}).get("first_fill_event_id")),
+        "first_close_event_id": _as_int((canonical or {}).get("first_close_event_id")),
+        "last_close_event_id": _as_int((canonical or {}).get("last_close_event_id")),
         "earliest_fill_at": (canonical or {}).get("earliest_fill_at"),
         "first_closed_at": (canonical or {}).get("first_closed_at"),
         "last_closed_at": (canonical or {}).get("last_closed_at"),

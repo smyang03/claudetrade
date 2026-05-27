@@ -1013,6 +1013,92 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(route["runtime_gate_reason"], "chase_above_cancel")
         self.assertEqual(route["runtime_gate"]["current_price"], 130.0)
 
+    def test_kr_candidate_buy_ready_without_price_cap_routes_probe(self) -> None:
+        bot = _make_bot()
+        bot._market_open_elapsed_min = lambda market, now_dt=None: 45.0
+        raw_meta = {
+            "watchlist": ["005930"],
+            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], ["005930"])
+        self.assertEqual(meta["allocation_intent"]["005930"], "probe")
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "PROBE_READY")
+        self.assertEqual(route["reason"], "kr_buy_ready_missing_price_cap_demoted")
+        self.assertEqual(route["runtime_gate_reason"], "missing_price_cap")
+        self.assertTrue(route["runtime_gate"]["entry_price_cap_missing"])
+        self.assertEqual(route["runtime_gate"]["entry_window_bucket"], "OPEN_30_60")
+
+    def test_kr_candidate_buy_ready_with_price_target_cap_routes_buy(self) -> None:
+        bot = _make_bot()
+        raw_meta = {
+            "watchlist": ["005930"],
+            "candidate_actions": [
+                {
+                    "ticker": "005930",
+                    "action": "BUY_READY",
+                    "confidence": 0.9,
+                    "price_targets": {"max_entry_price": 71000},
+                }
+            ],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "BUY_READY")
+        self.assertEqual(route["runtime_gate"]["entry_price_cap"], 71000.0)
+        self.assertIn(
+            route["runtime_gate"]["entry_price_cap_source"],
+            {"context.max_entry_price", "price_targets.max_entry_price"},
+        )
+        self.assertFalse(route["runtime_gate"]["entry_price_cap_missing"])
+
+    def test_trainer_watch_alone_does_not_block_buy_ready_when_price_cap_present(self) -> None:
+        bot = _make_bot()
+        raw_meta = {
+            "watchlist": ["005930"],
+            "candidate_actions": [
+                {
+                    "ticker": "005930",
+                    "action": "BUY_READY",
+                    "confidence": 0.9,
+                    "price_targets": {"max_entry_price": 71000},
+                }
+            ],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["trainer_tier"], "WATCH")
+        self.assertEqual(route["runtime_gate"]["trainer_tier"], "WATCH")
+        self.assertEqual(route["final_action"], "BUY_READY")
+
     def test_kr_confirmation_shadow_keeps_ready_but_marks_confirming(self) -> None:
         bot = _make_bot()
         bot.runtime_config.values.update(
@@ -1023,7 +1109,14 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         )
         raw_meta = {
             "watchlist": ["005930"],
-            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "candidate_actions": [
+                {
+                    "ticker": "005930",
+                    "action": "BUY_READY",
+                    "confidence": 0.9,
+                    "price_targets": {"max_entry_price": 71000},
+                }
+            ],
             "_post_open_features_by_ticker": {
                 "005930": {
                     "current_price": 70000,
@@ -1178,7 +1271,14 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         )
         raw_meta = {
             "watchlist": ["005930"],
-            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "candidate_actions": [
+                {
+                    "ticker": "005930",
+                    "action": "BUY_READY",
+                    "confidence": 0.9,
+                    "price_targets": {"max_entry_price": 71000},
+                }
+            ],
             "_post_open_features_by_ticker": {
                 "005930": {
                     "current_price": 70000,
@@ -1208,7 +1308,14 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         )
         raw_meta = {
             "watchlist": ["005930"],
-            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "candidate_actions": [
+                {
+                    "ticker": "005930",
+                    "action": "BUY_READY",
+                    "confidence": 0.9,
+                    "price_targets": {"max_entry_price": 71000},
+                }
+            ],
             "_post_open_features_by_ticker": {
                 "005930": {
                     "current_price": 70000,
@@ -1313,7 +1420,14 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         )
         raw_meta = {
             "watchlist": ["005930"],
-            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "candidate_actions": [
+                {
+                    "ticker": "005930",
+                    "action": "BUY_READY",
+                    "confidence": 0.9,
+                    "price_targets": {"max_entry_price": 71000},
+                }
+            ],
             "_post_open_features_by_ticker": {
                 "005930": {
                     "current_price": 70000,
@@ -1345,7 +1459,14 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         )
         raw_meta = {
             "watchlist": ["005930"],
-            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "candidate_actions": [
+                {
+                    "ticker": "005930",
+                    "action": "BUY_READY",
+                    "confidence": 0.9,
+                    "price_targets": {"max_entry_price": 71000},
+                }
+            ],
             "_post_open_features_by_ticker": {
                 "005930": {
                     "current_price": 70500,
@@ -1514,7 +1635,14 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         )
         raw_meta = {
             "watchlist": ["005930"],
-            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "candidate_actions": [
+                {
+                    "ticker": "005930",
+                    "action": "BUY_READY",
+                    "confidence": 0.9,
+                    "price_targets": {"max_entry_price": 71000},
+                }
+            ],
             "_post_open_features_by_ticker": {
                 "005930": {
                     "current_price": 70000,

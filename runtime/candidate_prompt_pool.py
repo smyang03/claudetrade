@@ -34,6 +34,16 @@ def _score(row: dict[str, Any], key: str) -> float:
         return 0.0
 
 
+def _is_same_day_stopped(row: dict[str, Any]) -> bool:
+    return bool((row or {}).get("same_day_stopped"))
+
+
+def _same_day_stop_last(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    regular = [row for row in rows or [] if not _is_same_day_stopped(row)]
+    stopped = [row for row in rows or [] if _is_same_day_stopped(row)]
+    return regular + stopped
+
+
 def _merge_duplicate(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     if _score(incoming, "trainer_prompt_score") > _score(existing, "trainer_prompt_score"):
         winner, loser = dict(incoming), existing
@@ -54,6 +64,7 @@ def _merge_duplicate(existing: dict[str, Any], incoming: dict[str, Any]) -> dict
     )
     winner.setdefault("merged_duplicate_count", 1)
     winner["merged_duplicate_count"] = int(winner.get("merged_duplicate_count") or 1) + int(loser.get("merged_duplicate_count") or 1)
+    winner["same_day_stopped"] = bool(existing.get("same_day_stopped")) or bool(incoming.get("same_day_stopped"))
     return winner
 
 
@@ -119,19 +130,23 @@ def build_plan_a_overlay_prompt_pool(
     except Exception:
         plan_a_limit = 4
 
-    current_rows = _dedupe_by_ticker([dict(row or {}) for row in current_prompt_pool or []], market_key=market_key)
+    current_rows = _same_day_stop_last(
+        _dedupe_by_ticker([dict(row or {}) for row in current_prompt_pool or []], market_key=market_key)
+    )
     scored_rows = _dedupe_by_ticker([dict(row or {}) for row in scored_pool or []], market_key=market_key)
     current_top = current_rows[:keep_count]
     current_top_keys = {_ticker_key(row, market_key) for row in current_top}
     current_fill_source = current_rows[keep_count:]
 
-    plan_a_candidates = sorted(
-        [
-            row for row in scored_rows
-            if str(row.get("trainer_candidate_state") or "").upper() == "PLAN_A"
-            and _ticker_key(row, market_key) not in current_top_keys
-        ],
-        key=_sort_key,
+    plan_a_candidates = _same_day_stop_last(
+        sorted(
+            [
+                row for row in scored_rows
+                if str(row.get("trainer_candidate_state") or "").upper() == "PLAN_A"
+                and _ticker_key(row, market_key) not in current_top_keys
+            ],
+            key=_sort_key,
+        )
     )
 
     base_meta = {
@@ -160,7 +175,9 @@ def build_plan_a_overlay_prompt_pool(
 
     overlay_added = plan_a_candidates[:plan_a_limit]
     overlay_added_keys = {_ticker_key(row, market_key) for row in overlay_added}
-    result = _dedupe_by_ticker(current_top + overlay_added + current_fill_source, market_key=market_key)
+    result = _same_day_stop_last(
+        _dedupe_by_ticker(current_top + overlay_added + current_fill_source, market_key=market_key)
+    )
     result = result[:effective_cap]
     result_keys = {_ticker_key(row, market_key) for row in result}
     overlay_added_tickers = [
@@ -261,21 +278,26 @@ def build_trainer_prompt_pool(
         order_index = {ticker: idx for idx, ticker in enumerate(legacy_order)}
         ordered = sorted(scored_pool, key=lambda row: order_index.get(str(row.get("ticker") or ""), 999999))
 
+    trainer_score_rank_by_id = {id(row): rank for rank, row in enumerate(ordered, start=1)}
     eligible = [row for row in ordered if str(row.get("trainer_candidate_state") or "").upper() != "QUARANTINE"]
-    prompt_pool = [dict(row) for row in eligible[:cap]]
+    prompt_order = _same_day_stop_last(eligible)
+    prompt_source = prompt_order[:cap]
+    prompt_pool = [dict(row) for row in prompt_source]
     prompt_keys = {str(row.get("ticker") or "") for row in prompt_pool}
     for rank, row in enumerate(prompt_pool, start=1):
         row["prompt_rank"] = rank
-        row["trainer_score_rank"] = rank
+        source_row = prompt_source[rank - 1] if rank - 1 < len(prompt_source) else {}
+        row["trainer_score_rank"] = trainer_score_rank_by_id.get(id(source_row), rank)
         row["final_prompt_included"] = True
         row["prompt_pool_version"] = PROMPT_POOL_VERSION
 
     excluded: list[dict[str, Any]] = []
+    cap_excluded_ids = {id(row) for row in prompt_order[cap:]}
     for row in ordered:
         ticker = str(row.get("ticker") or "")
         if ticker in prompt_keys:
             continue
-        cap_excluded = row in eligible[cap:]
+        cap_excluded = id(row) in cap_excluded_ids
         reason = _excluded_reason(row, cap_excluded=cap_excluded)
         prompt_excluded_reason = "hard_cap_cutoff" if cap_excluded else reason
         excluded.append(

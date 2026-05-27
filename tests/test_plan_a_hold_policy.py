@@ -164,6 +164,57 @@ class PlanAHoldPolicyRiskTests(unittest.TestCase):
 
         self.assertEqual(candidates[0]["reason"], "mfe_breakeven")
 
+    def test_momentum_mfe_breakeven_uses_early_trigger(self) -> None:
+        risk = RiskManager(init_cash=1_000_000, market="KR")
+        risk.reset_daily_state(override_base=1_000_000)
+        risk.positions = [
+            _kr_position(
+                current_price=100.05,
+                peak_pnl_pct=1.6,
+                trailing=False,
+                trail_sl=0.0,
+                strategy="momentum",
+            )
+        ]
+
+        with patch.dict(
+            os.environ,
+            {
+                "PLANA_MFE_BREAKEVEN_TRIGGER_PCT": "2.5",
+                "PLANA_MOMENTUM_MFE_BREAKEVEN_TRIGGER_PCT": "1.5",
+            },
+            clear=False,
+        ):
+            candidates = risk.get_exit_candidates()
+
+        self.assertEqual(candidates[0]["reason"], "mfe_breakeven")
+        self.assertAlmostEqual(candidates[0]["mfe_breakeven_trigger_pct"], 1.5)
+
+    def test_non_momentum_mfe_breakeven_keeps_base_trigger(self) -> None:
+        risk = RiskManager(init_cash=1_000_000, market="KR")
+        risk.reset_daily_state(override_base=1_000_000)
+        risk.positions = [
+            _kr_position(
+                current_price=100.05,
+                peak_pnl_pct=1.6,
+                trailing=False,
+                trail_sl=0.0,
+                strategy="pullback",
+            )
+        ]
+
+        with patch.dict(
+            os.environ,
+            {
+                "PLANA_MFE_BREAKEVEN_TRIGGER_PCT": "2.5",
+                "PLANA_MOMENTUM_MFE_BREAKEVEN_TRIGGER_PCT": "1.5",
+            },
+            clear=False,
+        ):
+            candidates = risk.get_exit_candidates()
+
+        self.assertEqual(candidates, [])
+
     def test_expired_policy_falls_back_to_existing_exit_logic(self) -> None:
         risk = RiskManager(init_cash=1_000_000, market="KR")
         risk.reset_daily_state(override_base=1_000_000)

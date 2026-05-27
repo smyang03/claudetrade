@@ -117,6 +117,93 @@ class AutoSellClaudeGateTests(unittest.TestCase):
         precheck.assert_not_called()
         self.assertEqual(bot.risk.positions[0]["auto_sell_review_action"], "HOLD")
 
+    def test_plan_a_hard_stop_breach_overrides_hold_advisor(self) -> None:
+        bot = _plan_a_bot()
+        bot.risk.positions[0]["sl"] = 96.0
+        cand = {**bot.risk.positions[0], "exit_price": 95.0, "reason": "stop_loss"}
+
+        with patch.dict("os.environ", {"CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "true"}), patch(
+            "minority_report.hold_advisor.ask", return_value={"action": "HOLD", "reason": "not yet"}
+        ) as advisor:
+            review = bot._run_auto_sell_review_gate(cand, "US", "stop_loss", current_native=95.0)
+
+        self.assertTrue(review["allowed"])
+        advisor.assert_not_called()
+        self.assertEqual(cand["auto_sell_review_action"], "SELL")
+        self.assertIn("hard_stop_override_hold", cand["auto_sell_review_detail"])
+
+    def test_mfe_profit_floor_bypasses_hold_cooldown_for_momentum(self) -> None:
+        bot = _plan_a_bot()
+        bot.risk.positions[0].update(
+            {
+                "strategy": "momentum",
+                "display_current_price": 105.0,
+                "current_price": 105.0,
+                "profit_floor_price": 105.5,
+            }
+        )
+        future = (datetime.now().astimezone() + timedelta(minutes=20)).isoformat(timespec="seconds")
+        cand = {
+            **bot.risk.positions[0],
+            "exit_price": 105.0,
+            "reason": "profit_floor",
+            "auto_sell_review_cooldown_until": future,
+        }
+
+        with patch("minority_report.hold_advisor.ask") as advisor:
+            review = bot._run_auto_sell_review_gate(cand, "US", "profit_floor", current_native=105.0)
+
+        self.assertTrue(review["allowed"])
+        advisor.assert_not_called()
+        self.assertEqual(cand["auto_sell_review_action"], "SELL")
+        self.assertIn("hard_stop_override_hold", cand["auto_sell_review_detail"])
+
+    def test_session_close_hard_stop_breach_marks_sell_even_when_hold_advisor_holds(self) -> None:
+        bot = _plan_a_bot()
+        bot.current_market = "KR"
+        bot.session_active = True
+        bot.pathb = None
+        bot.risk.trade_log = []
+        bot.risk.positions = [
+            {
+                "ticker": "006400",
+                "entry": 651000.0,
+                "avg_price": 651000.0,
+                "current_price": 630000.0,
+                "display_current_price": 630000.0,
+                "qty": 1,
+                "strategy": "kr_sector_play",
+                "sl": 634725.0,
+            }
+        ]
+        bot.price_cache_raw = {"006400": 630000.0}
+        bot.price_cache = {"006400": 630000.0}
+        bot._market_key_for_ws = lambda market: market  # type: ignore[method-assign]
+        bot._current_session_date_str = lambda market: "2026-05-27"  # type: ignore[method-assign]
+        bot._normalize_broker_balance = lambda data, market: {}  # type: ignore[method-assign]
+        bot._reconcile_pending_orders = Mock()  # type: ignore[method-assign]
+        bot._reconcile_pending_sell_confirmations = Mock()  # type: ignore[method-assign]
+        bot._clear_pending_orders_for_market = Mock()  # type: ignore[method-assign]
+        bot._stop_ws_for_market = Mock()  # type: ignore[method-assign]
+        bot._write_live_status = Mock()  # type: ignore[method-assign]
+        bot._refresh_position_prices_from_broker = Mock()  # type: ignore[method-assign]
+        bot._flush_funnel = Mock()  # type: ignore[method-assign]
+        bot._ticker_market = lambda ticker: "KR"  # type: ignore[method-assign]
+        bot._minutes_to_close = lambda market: 0.0  # type: ignore[method-assign]
+        bot._post_session_position_review = Mock()  # type: ignore[method-assign]
+        bot._filter_trades_for_market = Mock(side_effect=RuntimeError("stop_after_close_review"))  # type: ignore[method-assign]
+
+        with patch("trading_bot.get_balance", return_value={}), patch(
+            "telegram_reporter.send"
+        ), patch("minority_report.hold_advisor.ask", return_value={"action": "HOLD", "reason": "carry"}) as advisor:
+            with self.assertRaises(RuntimeError):
+                bot.session_close("KR")
+
+        advisor.assert_not_called()
+        pos = bot.risk.positions[0]
+        self.assertTrue(pos["pending_next_open_sell"])
+        self.assertIn("hard_stop_override_hold", pos["pending_next_open_reason"])
+
     def test_plan_a_loss_cap_sell_reaches_broker_precheck(self) -> None:
         bot = _plan_a_bot()
         cand = {**bot.risk.positions[0], "exit_price": 95.0, "reason": "loss_cap"}

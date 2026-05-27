@@ -485,6 +485,17 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
                     )
                     """
                 )
+                conn.execute(
+                    """
+                    INSERT INTO v2_canonical_performance (
+                        market, runtime_mode, session_date, filled, closed,
+                        pnl_pct, learning_allowed, synced_at
+                    ) VALUES (
+                        'US', 'live', '2026-05-11', 1, 1, -1.0, 0,
+                        '2026-05-12T23:59:00+00:00'
+                    )
+                    """
+                )
                 conn.commit()
             finally:
                 conn.close()
@@ -500,7 +511,10 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         self.assertEqual(digest["canonical_filled_today"], 1)
         self.assertEqual(digest["canonical_closed_today"], 1)
         self.assertEqual(digest["filled"], 1)
-        self.assertEqual(digest["with_outcome"], 1)
+        self.assertEqual(digest["canonical_realized_pnl_available"], 2)
+        self.assertEqual(digest["canonical_learning_allowed"], 1)
+        self.assertEqual(digest["canonical_learning_excluded"], 1)
+        self.assertEqual(digest["with_outcome"], 2)
 
     def test_live_summary_uses_cached_read_path_without_blocking_broker_calls(self) -> None:
         session = date(2026, 5, 15)

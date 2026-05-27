@@ -4,6 +4,8 @@ Updated: 2026-05-27
 
 Implementation delta: P0 KIS `EGW00133` classifier/cooldown/shared marker and PathB broker-truth dependency fail-closed behavior are now code/test covered. Keep only their operator-visible preflight/dashboard status and environment QA in P0.
 
+Data provider decision: keep the US Yahoo/FMP/AV and KIS role split. KIS remains broker truth and pre-order quote priority, while Yahoo/FMP/AV remain live US screener/history/context/fallback sources. Do not switch US intraday evidence or US screener to KIS live primary until smoke/shadow coverage, latency, rate-limit, overlap, and outcome gates pass.
+
 Compact backlog snapshot after plan/report cleanup. The detailed source of truth is [../ACTIVE_WORK.md](../ACTIVE_WORK.md). The latest working-tree code recheck is [../P0_P1_CODE_LEVEL_RECHECK_REPORT_20260527.md](../P0_P1_CODE_LEVEL_RECHECK_REPORT_20260527.md). Do not create separate active plan files for these items.
 
 ## Priority Rule
@@ -41,11 +43,13 @@ Active work is ordered by category and impact: 수익성 P0 first, then live 운
 | 운영 | Analyst outage UI polish | core safety exists but outage can still be visually ambiguous. | dashboard/API separates provider unavailable, partial consensus, and quorum failure. |
 | 운영 | Intraday evidence alignment review | code/test fix exists, but provider/cache/KR timeout pressure remains an operational risk. | remaining warnings are attributed to provider/cache/coverage rather than structural target shortage. |
 | 데이터베이스 | Residual degraded/FMP source-quality observability | degraded/FMP outcome grouping can be confused with P0 audit contract. | source-quality grouping is queryable after the P0 bucket/source/score contract is covered. |
+| 데이터베이스 | US Yahoo/KIS provider role split and intraday shadow | KIS-only conversion could reduce US coverage and compete with broker truth API capacity. | KIS intraday/ranking stays smoke/shadow until source, fallback, overlap, latency, and outcome evidence supports staged promotion. |
 
 ## Observe Gates
 
 - Prompt overlay / PLAN_A: shadow only until enough trading days, trigger days, labeled outcomes, PF, and concentration gates pass.
 - US KIS ranking primary: shadow only until at least 10 shadow trading days and 30 evaluated outcome rows.
+- US intraday KIS primary: keep `INTRADAY_EVIDENCE_PROVIDER_US=yfinance` until small-ticker smoke and 3-5 trading sessions of KIS shadow prove coverage, timestamp quality, latency, close-diff, and rate-limit safety; broker truth must not fall back to Yahoo/FMP/AV.
 - KR confirmation / WATCH_TRIGGER: no live demotion change until kept/demoted labels are sufficient.
 - KR first-entry / exit overlay: replay/shadow only until sample size and broker-fill-aware review pass.
 

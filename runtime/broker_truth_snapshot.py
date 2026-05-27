@@ -89,6 +89,17 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(default)
 
 
+def _orderable_cash_fields(market: str, balance: dict[str, Any]) -> tuple[float, str, bool]:
+    cash = _safe_float(balance.get("cash", 0))
+    has_orderable = "orderable_cash" in balance and balance.get("orderable_cash") not in (None, "")
+    orderable = _safe_float(balance.get("orderable_cash", 0)) if has_orderable else 0.0
+    if orderable > 0:
+        return orderable, "orderable_cash", str(market or "").upper() == "US"
+    if cash > 0:
+        return cash, "cash_fallback", False
+    return 0.0, "missing", False
+
+
 def _first_value(row: dict[str, Any], keys: tuple[str, ...], default: Any = None) -> Any:
     for key in keys:
         for candidate in (key, key.upper(), key.lower()):
@@ -416,9 +427,12 @@ class BrokerTruthSnapshot:
                 f"[broker truth 미체결 identity 경고] {market} "
                 f"issues={open_order_integrity_issues[:5]}"
             )
+        orderable_cash, orderable_source, orderable_nets_open_orders = _orderable_cash_fields(market, balance)
         account_summary = {
             "cash": _safe_float(balance.get("cash", 0)),
-            "orderable_cash": _safe_float(balance.get("orderable_cash", balance.get("cash", 0))),
+            "orderable_cash": orderable_cash,
+            "orderable_cash_source": orderable_source,
+            "orderable_cash_nets_open_orders": bool(orderable_nets_open_orders),
             "total_eval": _safe_float(balance.get("total_eval", 0)),
             "total_profit": _safe_float(balance.get("total_profit", 0)),
             "profit_rate": _safe_float(balance.get("profit_rate", 0)),

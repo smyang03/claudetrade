@@ -5019,7 +5019,9 @@ def _ml_db_digest(market: str) -> dict:
         "canonical_closed": 0,
         "canonical_closed_today": 0,
         "canonical_with_outcome": 0,
+        "canonical_realized_pnl_available": 0,
         "canonical_learning_allowed": 0,
+        "canonical_learning_excluded": 0,
         "canonical_last_synced_at": "",
         "legacy_filled": 0,
         "legacy_with_outcome": 0,
@@ -5146,8 +5148,22 @@ def _ml_db_digest(market: str) -> dict:
                     "SELECT COUNT(*) FROM v2_canonical_performance WHERE market=? AND runtime_mode=? AND pnl_pct IS NOT NULL",
                     canonical_params,
                 ).fetchone()[0] or 0)
+                digest["canonical_realized_pnl_available"] = int(conn.execute(
+                    "SELECT COUNT(*) FROM v2_canonical_performance WHERE market=? AND runtime_mode=? AND closed=1 AND pnl_pct IS NOT NULL",
+                    canonical_params,
+                ).fetchone()[0] or 0)
                 digest["canonical_learning_allowed"] = int(conn.execute(
                     "SELECT COUNT(*) FROM v2_canonical_performance WHERE market=? AND runtime_mode=? AND learning_allowed=1",
+                    canonical_params,
+                ).fetchone()[0] or 0)
+                digest["canonical_learning_excluded"] = int(conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM v2_canonical_performance
+                    WHERE market=? AND runtime_mode=?
+                      AND closed=1 AND pnl_pct IS NOT NULL
+                      AND COALESCE(learning_allowed, 0)=0
+                    """,
                     canonical_params,
                 ).fetchone()[0] or 0)
                 synced_row = conn.execute(
@@ -5158,7 +5174,7 @@ def _ml_db_digest(market: str) -> dict:
                 if digest["canonical_total"] > 0:
                     digest["truth_source"] = "v2_canonical_performance"
                     digest["filled"] = digest["canonical_filled_today"]
-                    digest["with_outcome"] = digest["canonical_with_outcome"]
+                    digest["with_outcome"] = digest["canonical_realized_pnl_available"]
     except Exception:
         pass
     return digest

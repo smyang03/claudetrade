@@ -2056,44 +2056,49 @@ class PathBRuntime:
             self._audit_pathb_price_seen(plan, current, source="pathb:exit_scan")
             hard_stop_price = self._native_hard_stop(pos, market)
             loss_cap_price = self._native_loss_cap_stop(pos, market)
-            mfe_signal = self._pathb_mfe_breakeven_signal(
-                plan,
-                pos,
-                current,
-                hard_stop_price=hard_stop_price,
-                loss_cap_price=loss_cap_price,
-            )
-            if mfe_signal is not None:
-                exit_signal = mfe_signal
-            elif (
-                loss_cap_price is not None
-                and loss_cap_price > 0
-                and (hard_stop_price is None or loss_cap_price >= hard_stop_price)
-                and current <= loss_cap_price
-            ):
-                exit_signal = ExitSignal(True, "loss_cap", "CLOSED_LOSS_CAP", current, plan.path_run_id)
-            elif hard_stop_price is not None and hard_stop_price > 0 and current <= hard_stop_price:
-                exit_signal = ExitSignal(True, "hard_stop", "CLOSED_HARD_STOP", current, plan.path_run_id)
+            policy_stop_eval = self._evaluate_pathb_auto_sell_policy_stop_breach_only(plan, pos, current)
+            policy_stop_action = str(policy_stop_eval.get("action", "proceed") or "proceed")
+            if policy_stop_action in {"sell", "recheck"} and isinstance(policy_stop_eval.get("signal"), ExitSignal):
+                exit_signal = policy_stop_eval["signal"]
             else:
-                ladder_signal = self._pathb_profit_ladder_signal(
+                mfe_signal = self._pathb_mfe_breakeven_signal(
                     plan,
                     pos,
                     current,
-                    market,
                     hard_stop_price=hard_stop_price,
                     loss_cap_price=loss_cap_price,
                 )
-                if ladder_signal is not None:
-                    exit_signal = ladder_signal
+                if mfe_signal is not None:
+                    exit_signal = mfe_signal
+                elif (
+                    loss_cap_price is not None
+                    and loss_cap_price > 0
+                    and (hard_stop_price is None or loss_cap_price >= hard_stop_price)
+                    and current <= loss_cap_price
+                ):
+                    exit_signal = ExitSignal(True, "loss_cap", "CLOSED_LOSS_CAP", current, plan.path_run_id)
+                elif hard_stop_price is not None and hard_stop_price > 0 and current <= hard_stop_price:
+                    exit_signal = ExitSignal(True, "hard_stop", "CLOSED_HARD_STOP", current, plan.path_run_id)
                 else:
-                    policy_eval = self._evaluate_pathb_auto_sell_policy(plan, pos, current)
-                    policy_action = str(policy_eval.get("action", "proceed") or "proceed")
-                    if policy_action == "skip":
-                        continue
-                    if policy_action in {"sell", "recheck"} and isinstance(policy_eval.get("signal"), ExitSignal):
-                        exit_signal = policy_eval["signal"]
+                    ladder_signal = self._pathb_profit_ladder_signal(
+                        plan,
+                        pos,
+                        current,
+                        market,
+                        hard_stop_price=hard_stop_price,
+                        loss_cap_price=loss_cap_price,
+                    )
+                    if ladder_signal is not None:
+                        exit_signal = ladder_signal
                     else:
-                        exit_signal = self.sell_manager.check_exit(plan.path_run_id, current, hard_stop_price=hard_stop_price)
+                        policy_eval = self._evaluate_pathb_auto_sell_policy(plan, pos, current)
+                        policy_action = str(policy_eval.get("action", "proceed") or "proceed")
+                        if policy_action == "skip":
+                            continue
+                        if policy_action in {"sell", "recheck"} and isinstance(policy_eval.get("signal"), ExitSignal):
+                            exit_signal = policy_eval["signal"]
+                        else:
+                            exit_signal = self.sell_manager.check_exit(plan.path_run_id, current, hard_stop_price=hard_stop_price)
             if not exit_signal.signal:
                 self._maybe_trigger_profit_protection_review(plan, pos, current, market)
             if not exit_signal.signal:
@@ -3717,6 +3722,40 @@ class PathBRuntime:
                     "policy": policy,
                 }
         return {}
+
+    def _evaluate_pathb_auto_sell_policy_stop_breach_only(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        current: float,
+    ) -> dict[str, Any]:
+        run = self.store.find_path_run(plan.path_run_id) or {}
+        plan_json = run.get("plan") or {}
+        policy = plan_json.get("auto_sell_policy") if isinstance(plan_json, dict) else {}
+        if not isinstance(policy, dict) or str(policy.get("status", "") or "") != "active":
+            return {"action": "proceed", "reason": "no_active_policy"}
+        current_price = float(current or 0)
+        if current_price <= 0:
+            return {"action": "proceed", "reason": "invalid_current_price", "policy": policy}
+        stop_breach = self._pathb_policy_stop_breach_result(plan, policy, current_price)
+        if stop_breach:
+            return stop_breach
+        now = datetime.now(KST)
+        valid_until = self._parse_kst_iso(policy.get("valid_until"))
+        if valid_until is None or valid_until <= now:
+            return {"action": "proceed", "reason": "policy_expired_no_stop_breach", "policy": policy}
+        mode = str(policy.get("mode", "") or "")
+        if mode == "forced_sell":
+            close_reason = str(policy.get("close_reason") or policy.get("signal_close_reason") or "CLOSED_CLAUDE_SELL").strip().upper()
+            if not close_reason.startswith("CLOSED_"):
+                close_reason = "CLOSED_CLAUDE_SELL"
+            return {
+                "action": "sell",
+                "reason": "policy_forced_sell",
+                "signal": ExitSignal(True, "policy_forced_sell", close_reason, current_price, plan.path_run_id),
+                "policy": policy,
+            }
+        return {"action": "proceed", "reason": "no_policy_stop_breach", "policy": policy}
 
     def _evaluate_pathb_auto_sell_policy(self, plan: PricePlan, pos: dict[str, Any], current: float) -> dict[str, Any]:
         run = self.store.find_path_run(plan.path_run_id) or {}

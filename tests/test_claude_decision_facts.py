@@ -160,6 +160,9 @@ def _create_ml_db(path: Path) -> None:
                 origin_action TEXT,
                 filled INTEGER NOT NULL DEFAULT 0,
                 closed INTEGER NOT NULL DEFAULT 0,
+                first_fill_event_id INTEGER,
+                first_close_event_id INTEGER,
+                last_close_event_id INTEGER,
                 earliest_fill_at TEXT,
                 first_closed_at TEXT,
                 last_closed_at TEXT,
@@ -218,8 +221,45 @@ class ClaudeDecisionFactsBuilderTests(unittest.TestCase):
                         "SELECT name FROM sqlite_master WHERE type='table'"
                     )
                 }
+                execution_columns = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(fact_execution)")
+                }
                 self.assertIn("fact_selection", tables)
                 self.assertIn("fact_build_runs", tables)
+                self.assertIn("first_fill_event_id", execution_columns)
+                self.assertIn("first_close_event_id", execution_columns)
+                self.assertIn("last_close_event_id", execution_columns)
+
+    def test_schema_init_migrates_existing_execution_fact_event_id_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mart = Path(tmp) / "facts.db"
+            with closing(_connect(mart)) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE fact_execution (
+                        execution_key TEXT PRIMARY KEY,
+                        runtime_mode TEXT NOT NULL,
+                        session_date TEXT NOT NULL,
+                        market TEXT NOT NULL,
+                        ticker TEXT NOT NULL,
+                        match_quality TEXT NOT NULL DEFAULT 'unknown',
+                        source_quality TEXT NOT NULL DEFAULT 'unknown'
+                    )
+                    """
+                )
+                conn.commit()
+
+            init_schema(mart)
+
+            with closing(_connect(mart)) as conn:
+                execution_columns = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(fact_execution)")
+                }
+            self.assertIn("first_fill_event_id", execution_columns)
+            self.assertIn("first_close_event_id", execution_columns)
+            self.assertIn("last_close_event_id", execution_columns)
 
     def test_builder_preserves_call_level_audit_rows_and_latest_rank(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -361,13 +401,15 @@ class ClaudeDecisionFactsBuilderTests(unittest.TestCase):
                     INSERT INTO v2_canonical_performance (
                         v2_decision_id, canonical_key, market, runtime_mode,
                         session_date, ticker, status, path_type, path_run_id,
-                        strategy, origin_action, filled, closed, earliest_fill_at,
+                        strategy, origin_action, filled, closed, first_fill_event_id,
+                        first_close_event_id, last_close_event_id, earliest_fill_at,
                         first_closed_at, last_closed_at, entry_price,
                         first_exit_price, last_exit_price, pnl_pct, mfe_pct,
                         mae_pct, quality_grade, learning_allowed
                     )
                     VALUES ('dec_1', 'canon_1', 'US', 'live', '2026-05-20', 'NVDA',
                             'CLOSED', 'plan_a', '', 'momentum', 'BUY_READY', 1, 1,
+                            101, 201, 202,
                             '2026-05-20T09:30:00+09:00', '2026-05-20T10:30:00+09:00',
                             '2026-05-20T10:30:00+09:00', 100.0, 103.0, 103.0,
                             3.0, 4.0, -0.5, 'CLEAN', 1)
@@ -395,6 +437,9 @@ class ClaudeDecisionFactsBuilderTests(unittest.TestCase):
                 outcome = conn.execute("SELECT * FROM fact_forward_outcome").fetchone()
             self.assertEqual(row["v2_decision_id"], "dec_1")
             self.assertEqual(row["match_quality"], "direct_decision_id")
+            self.assertEqual(row["first_fill_event_id"], 101)
+            self.assertEqual(row["first_close_event_id"], 201)
+            self.assertEqual(row["last_close_event_id"], 202)
             self.assertEqual(row["pnl_pct"], 3.0)
             self.assertEqual(outcome["forward_3d_pct"], 4.5)
 

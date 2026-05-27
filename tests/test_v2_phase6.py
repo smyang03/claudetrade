@@ -224,6 +224,117 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(comparison["path_b"]["avg_pnl_pct"], 1.6836)
         self.assertEqual(comparison["path_b"]["realized_pnl_value"], 1764.2989)
 
+    def test_pathb_ops_summary_derives_expired_reason_from_lifecycle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            decision_id = "dec_20260527_KR_049080"
+            store.create_path_run(
+                path_run_id="path_expired",
+                decision_id=decision_id,
+                path_type="claude_price",
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-27",
+                ticker="049080",
+                status="EXPIRED",
+                plan={
+                    "entry_order_price": 1000,
+                    "actual_entry_price": 1003,
+                },
+            )
+            base = {
+                "market": "KR",
+                "runtime_mode": "live",
+                "session_date": "2026-05-27",
+                "ticker": "049080",
+                "decision_id": decision_id,
+                "prompt_version": "v2",
+                "brain_snapshot_id": "brain_phase6",
+            }
+            store.append(
+                LifecycleEvent(
+                    event_type="SAFETY_BLOCKED",
+                    reason_code="KR_PATHB_RISK_ORIGIN_CONFIRMATION_REQUIRED",
+                    occurred_at="2026-05-27T09:30:00+09:00",
+                    **base,
+                )
+            )
+            store.append(
+                LifecycleEvent(
+                    event_type="CLAUDE_PRICE_EXPIRED",
+                    occurred_at="2026-05-27T09:45:00+09:00",
+                    **base,
+                )
+            )
+
+            summary = build_v2_ops_summary(
+                store=store,
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-27",
+            )
+
+        ops = summary["path_b_live"]["ops_summary"]
+        self.assertEqual(ops["join_contract"], "path_run_id_then_decision_market_ticker")
+        self.assertEqual(ops["expired_reason_counts"]["KR_PATHB_RISK_ORIGIN_CONFIRMATION_REQUIRED"], 1)
+        run = summary["path_b_live"]["recent"][0]
+        self.assertEqual(run["ops_reason"], "KR_PATHB_RISK_ORIGIN_CONFIRMATION_REQUIRED")
+        self.assertEqual(run["latest_gate_reason"], "KR_PATHB_RISK_ORIGIN_CONFIRMATION_REQUIRED")
+        self.assertEqual(run["entry_slippage_bps"], 30.0)
+
+    def test_pathb_ops_summary_exposes_order_latency_and_fill_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            decision_id = "dec_20260527_US_NVDA"
+            store.create_path_run(
+                path_run_id="path_filled",
+                decision_id=decision_id,
+                path_type="claude_price",
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-27",
+                ticker="NVDA",
+                status="FILLED",
+                plan={
+                    "entry_order_price": 100.0,
+                    "actual_entry_price": 100.25,
+                    "order_unknown_reconcile_attempts": 2,
+                },
+            )
+            base = {
+                "market": "US",
+                "runtime_mode": "live",
+                "session_date": "2026-05-27",
+                "ticker": "NVDA",
+                "decision_id": decision_id,
+                "prompt_version": "v2",
+                "brain_snapshot_id": "brain_phase6",
+                "payload": {"path_run_id": "path_filled", "path_type": "claude_price"},
+            }
+            store.append(LifecycleEvent(event_type="ORDER_SENT", occurred_at="2026-05-27T09:30:00+09:00", **base))
+            store.append(LifecycleEvent(event_type="ORDER_ACKED", occurred_at="2026-05-27T09:30:03+09:00", **base))
+            store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    occurred_at="2026-05-27T09:30:08+09:00",
+                    payload={"path_run_id": "path_filled", "path_type": "claude_price", "side": "buy"},
+                    **{key: value for key, value in base.items() if key != "payload"},
+                )
+            )
+
+            summary = build_v2_ops_summary(
+                store=store,
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-27",
+            )
+
+        run = summary["path_b_live"]["recent"][0]
+        self.assertEqual(run["sent_to_ack_latency_sec"], 3)
+        self.assertEqual(run["sent_to_fill_latency_sec"], 8)
+        self.assertEqual(run["entry_slippage_bps"], 25.0)
+        self.assertEqual(run["order_unknown_reconcile_attempts"], 2)
+
     def test_pathb_pnl_chart_keeps_individual_trade_pnl_next_to_cumulative(self):
         charts = v2_ops_summary._path_b_charts(
             [

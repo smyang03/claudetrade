@@ -8,6 +8,15 @@ Updated: 2026-05-27
 - P0-6: PathB live entry scan now blocks with `BLOCKED_BROKER_TRUTH` when bot token or balance provider is unavailable. Keep only ops/preflight/dashboard visibility for TTL, attempt, latency, skip/block reason as active follow-up.
 - MD cleanup decision: do not delete the active P0/P1 MD set yet. P0-3/P1 items and the P0-4/P0-6 visibility follow-up are still active.
 
+## 2026-05-27 Data Provider Decision
+
+- Do not replace Yahoo/FMP/AV with KIS across the US data path yet. Keep a role-split model.
+- KIS remains primary for broker truth, pre-order broker quote checks, holdings, open orders, fills, and buying power. If broker truth is unavailable or distrusted, do not synthesize broker truth from Yahoo/FMP/AV.
+- Keep US intraday evidence live primary on `INTRADAY_EVIDENCE_PROVIDER_US=yfinance` for now. KIS intraday should run only as smoke/shadow until coverage, timestamp quality, latency, and rate-limit impact are measured.
+- Keep US screener live primary on Yahoo/FMP until KIS ranking passes the existing shadow gate. KIS ranking promotion requires overlap/fallback review, outcome linkage, and audit fields that separate `candidate_source`, fallback reason, and source disagreement.
+- KIS data collection must not compete with order, balance, open-order, fill, or buying-power API capacity. If KIS collection affects broker truth stability, broker truth wins and data collection is reduced or disabled.
+- Promotion path: small-ticker KIS intraday smoke -> 3-5 trading sessions shadow comparison -> top 5-10 partial KIS primary experiment -> only then consider `kis primary + yfinance fallback` or a degraded fallback design with source recorded in candidate audit.
+
 이 문서는 정리 후 남은 단일 작업 원장이다. `docs/plans/`, `docs/reports/`, 일회성 QA/분석 JSON은 완료 또는 흡수된 뒤 삭제 대상이며, 활성 백로그는 이 파일과 [core/TODO_ROADMAP.md](core/TODO_ROADMAP.md)에만 둔다.
 
 P0/P1의 코드 레벨 상세 개발 요구서는 [P0_P1_CODE_LEVEL_DEV_REQUIREMENTS_20260527.md](P0_P1_CODE_LEVEL_DEV_REQUIREMENTS_20260527.md)를 기준으로 본다. 현재 working tree 기준 코드 확인 결과와 남은 개발 순서는 [P0_P1_CODE_LEVEL_RECHECK_REPORT_20260527.md](P0_P1_CODE_LEVEL_RECHECK_REPORT_20260527.md)를 함께 본다.
@@ -45,6 +54,7 @@ P0/P1의 코드 레벨 상세 개발 요구서는 [P0_P1_CODE_LEVEL_DEV_REQUIREM
 | 13 | 운영 | P1 | PathB fill truth / sell pending / EXPIRED monitoring | lifecycle reconcile은 있으나 실제 KIS full/partial/cancel payload 검증과 stale waiting-plan monitoring이 남아 있다. | `ORDER_UNKNOWN`, partial sell remainder, KR EXPIRED resampling이 local inference에 의존할 수 있음. | broker truth unavailable 때 fill 추론 금지, partial remainder TTL/reorder/close가 visible, stale active rows가 ops에 노출. | real payload fixture, sell-pending remainder, KR EXPIRED resample, stale waiting-plan cleanup 검토. |
 | 14 | 운영 | P2 | hold advisor TTL/cache와 low-risk model tiering | `duration_ms`와 audit linkage baseline은 커밋 완료. cache/tiering은 deferred. | latency/cost 절감 시 sell protection 품질 저하 위험. | 1-2 sessions baseline 후 low-risk HOLD에 한정한 cache/model-tiering shadow가 비용/품질을 함께 측정. | duration/call trend 리뷰 후 설계. |
 | 15 | 운영 | P2 | analyst outage UI polish | core unavailable/quorum/learning exclusion은 커밋 완료. UI polish만 남음. | provider outage가 neutral judgment처럼 보일 수 있음. | dashboard/API가 unavailable/partial/quorum 상태를 raw provider error 노출 없이 보여줌. | dashboard/API regression tests. |
+| 16 | 데이터베이스 | P2 | US Yahoo/KIS provider role split and intraday shadow | Yahoo 제거 또는 KIS-only 전환은 broker truth API capacity와 US coverage를 동시에 흔들 수 있다. | KIS intraday/ranking을 live primary로 올리기 전에 yfinance/Yahoo/FMP와의 coverage, latency, timestamp, overlap, outcome 차이가 부족함. | KIS broker truth와 Yahoo/FMP/AV context 역할이 분리되고, KIS intraday/ranking은 smoke/shadow outcome gate 통과 전까지 live primary가 아님. | KIS intraday smoke/shadow 결과와 KIS ranking overlap/outcome을 candidate audit에 연결한 뒤 단계 승격 판단. |
 
 ## 해야 할 것 / 검토해야 할 것
 
@@ -60,6 +70,7 @@ P0/P1의 코드 레벨 상세 개발 요구서는 [P0_P1_CODE_LEVEL_DEV_REQUIREM
 | --- | --- | --- | --- | --- |
 | Prompt overlay / PLAN_A | shadow 유지 | trigger days와 labeled outcomes가 부족하고 top-day concentration이 높음. | 10 trading days, 4 trigger days, 50 labeled outcomes, PF threshold, top-day contribution < 40%, added > excluded. | prompt/order 영향 금지. |
 | US KIS ranking primary | shadow collector는 커밋됨 | KIS ranking을 primary로 바꾸면 fallback/source 편향을 아직 모름. | 10 shadow trading days, 30 evaluated rows, fallback/overlap review. | Yahoo/FMP fallback 유지, order/risk 변경 금지. |
+| US intraday KIS primary | 보류, yfinance live primary 유지 | KIS minute 수집이 후보 수만큼 호출량을 늘려 broker truth API 안정성을 건드릴 수 있고, 현재 KIS intraday provider 실패 시 yfinance fallback이 없다. | 소수 ticker smoke, 3-5 trading sessions shadow, row coverage/timestamp gap/close diff/latency/rate-limit 영향 검토 후 top 5-10 부분 primary 실험. | broker truth fallback 금지, source audit 기록 전 live 전체 전환 금지. |
 | KR confirmation / WATCH_TRIGGER | demotion 변경 보류 | 60m label이 적어 kept/demoted 차이를 신뢰하기 어려움. | kept/demoted 각 30 labels, market-phase split, concentration gate. | sparse sample로 gate 조정 금지. |
 | KR first-entry / exit overlay | replay/shadow 유지 | 수익성 가설은 있으나 샘플과 broker-fill-aware replay가 부족. | 30 filled trades 또는 4 weeks, single-winner dominance 없음. | live first-entry/stop/exit/PathB sizing 변경 금지. |
 

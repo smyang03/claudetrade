@@ -458,6 +458,8 @@ def _path_b_live_summary(
         for run in runs
         if str(run.get("path_type", "")) == "claude_price"
     ]
+    ops_context = _path_b_ops_context(pathb_runs, events or [])
+    pathb_runs = [_merge_path_b_ops_context(run, ops_context["by_path_run_id"]) for run in pathb_runs]
     name_map = _path_b_name_map(markets, runtime_mode, session_date)
     status_counts = Counter(str(run.get("status", "") or "UNKNOWN") for run in pathb_runs)
     active = [run for run in pathb_runs if str(run.get("status", "")).upper() in PATHB_ACTIVE_STATUSES]
@@ -514,6 +516,7 @@ def _path_b_live_summary(
         "readiness": readiness,
         "runs": len(pathb_runs),
         "metrics": metrics,
+        "ops_summary": ops_context["summary"],
         "path_comparison": comparison,
         "consistency_health": consistency_health,
         "charts": _path_b_charts(pathb_runs, metrics),
@@ -999,6 +1002,288 @@ def _apply_lifecycle_status(run: dict[str, Any], overrides: dict[str, dict[str, 
     out["status_lifecycle_event_type"] = override.get("event_type", "")
     out["status_lifecycle_at"] = override.get("occurred_at", "")
     return out
+
+
+def _path_b_ops_context(runs: list[dict[str, Any]], events: list[dict[str, Any]]) -> dict[str, Any]:
+    by_path, by_decision = _path_b_event_indexes(events)
+    by_run: dict[str, dict[str, Any]] = {}
+    reason_counts: Counter[str] = Counter()
+    expired_reason_counts: Counter[str] = Counter()
+    order_unknown_reason_counts: Counter[str] = Counter()
+    unknown_reason_count = 0
+    runs_with_lifecycle_reason = 0
+    runs_with_lifecycle_events = 0
+
+    for run in runs:
+        path_run_id = str(run.get("path_run_id", "") or "").strip()
+        related = _path_b_related_events(run, by_path, by_decision)
+        if related:
+            runs_with_lifecycle_events += 1
+        ops = _derive_path_b_ops(run, related)
+        if ops.get("reason_codes"):
+            runs_with_lifecycle_reason += 1
+        reason = str(ops.get("ops_reason") or "")
+        if reason:
+            reason_counts[reason] += 1
+            status = str(run.get("status") or "").upper()
+            if status == "EXPIRED":
+                expired_reason_counts[reason] += 1
+            if status == "ORDER_UNKNOWN":
+                order_unknown_reason_counts[reason] += 1
+        else:
+            unknown_reason_count += 1
+        if path_run_id:
+            by_run[path_run_id] = ops
+
+    return {
+        "by_path_run_id": by_run,
+        "summary": {
+            "checked_runs": len(runs),
+            "runs_with_lifecycle_events": runs_with_lifecycle_events,
+            "runs_with_lifecycle_reason": runs_with_lifecycle_reason,
+            "unknown_reason_count": unknown_reason_count,
+            "reason_counts": dict(reason_counts),
+            "expired_reason_counts": dict(expired_reason_counts),
+            "order_unknown_reason_counts": dict(order_unknown_reason_counts),
+            "join_contract": "path_run_id_then_decision_market_ticker",
+        },
+    }
+
+
+def _path_b_event_indexes(events: list[dict[str, Any]]) -> tuple[dict[str, list[dict[str, Any]]], dict[tuple[str, str, str], list[dict[str, Any]]]]:
+    by_path: dict[str, list[dict[str, Any]]] = {}
+    by_decision: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for event in events:
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        path_run_id = str(payload.get("path_run_id") or payload.get("pathb_path_run_id") or "").strip()
+        if path_run_id:
+            by_path.setdefault(path_run_id, []).append(event)
+        decision_id = str(event.get("decision_id") or "").strip()
+        market = str(event.get("market") or "").upper()
+        ticker = _ticker_key(market, event.get("ticker", ""))
+        if decision_id and market and ticker:
+            by_decision.setdefault((decision_id, market, ticker), []).append(event)
+    return by_path, by_decision
+
+
+def _path_b_related_events(
+    run: dict[str, Any],
+    by_path: dict[str, list[dict[str, Any]]],
+    by_decision: dict[tuple[str, str, str], list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    path_run_id = str(run.get("path_run_id") or "").strip()
+    decision_id = str(run.get("decision_id") or "").strip()
+    market = str(run.get("market") or "").upper()
+    ticker = _ticker_key(market, run.get("ticker", ""))
+    raw_events = list(by_path.get(path_run_id, []))
+    raw_events.extend(by_decision.get((decision_id, market, ticker), []))
+    seen: set[str] = set()
+    related: list[dict[str, Any]] = []
+    for event in raw_events:
+        key = str(event.get("event_id") or "")
+        if not key:
+            key = "|".join(
+                [
+                    str(event.get("event_type") or ""),
+                    str(event.get("occurred_at") or ""),
+                    str(event.get("reason_code") or ""),
+                    str(event.get("execution_id") or ""),
+                ]
+            )
+        if key in seen:
+            continue
+        seen.add(key)
+        related.append(event)
+    return sorted(related, key=lambda item: int(item.get("event_id") or 0))
+
+
+def _derive_path_b_ops(run: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
+    plan = run.get("plan") or run.get("plan_json") or {}
+    if not isinstance(plan, dict):
+        plan = {}
+    status = str(run.get("status") or "").upper()
+    reason_items = [_event_reason_item(event) for event in events]
+    reason_items = [item for item in reason_items if item.get("reason")]
+    reason_codes = _unique_list([str(item.get("reason") or "") for item in reason_items])
+    latest_gate = _latest_event_reason(
+        events,
+        {"CLAUDE_PRICE_PLAN_GATE_WARNING", "SAFETY_BLOCKED", "ORDER_UNKNOWN", "CLAUDE_PRICE_INVALID"},
+    )
+    expired_event = _latest_event_reason(events, {"CLAUDE_PRICE_EXPIRED"})
+    sent_at = str(plan.get("entry_order_sent_at") or _first_event_at(events, {"ORDER_SENT"}) or "")
+    acked_at = str(plan.get("entry_order_acked_at") or _first_event_at(events, {"ORDER_ACKED"}) or "")
+    filled_at = str(plan.get("filled_at") or plan.get("entry_filled_at") or _first_entry_fill_at(events) or "")
+    closed_at = str(plan.get("closed_at") or _last_event_at(events, {"CLOSED"}) or "")
+    expired_at = str(_last_event_at(events, {"CLAUDE_PRICE_EXPIRED"}) or "")
+
+    plan_reason, plan_reason_key = _first_plan_reason(
+        plan,
+        (
+            "expired_reason",
+            "cancel_reason",
+            "block_reason",
+            "order_unknown_resolution",
+            "order_unknown_detail",
+            "pending_buy_ttl_deferred_reason",
+            "last_error",
+            "close_reason",
+        ),
+    )
+    ops_reason = plan_reason
+    reason_source = f"plan_json.{plan_reason_key}" if plan_reason else ""
+    if status == "EXPIRED":
+        candidate = expired_event.get("reason") or latest_gate.get("reason") or plan_reason
+        if candidate:
+            ops_reason = str(candidate)
+            reason_source = str(expired_event.get("source") or latest_gate.get("source") or reason_source or "derived")
+    elif status == "ORDER_UNKNOWN":
+        candidate = plan_reason or latest_gate.get("reason")
+        if candidate:
+            ops_reason = str(candidate)
+            reason_source = reason_source or str(latest_gate.get("source") or "derived")
+    elif not ops_reason and latest_gate.get("reason"):
+        ops_reason = str(latest_gate.get("reason"))
+        reason_source = str(latest_gate.get("source") or "lifecycle_reason_code")
+
+    return {
+        "ops_reason": ops_reason,
+        "reason_source": reason_source,
+        "reason_codes": reason_codes,
+        "latest_gate_reason": latest_gate.get("reason") or "",
+        "latest_gate_reason_source": latest_gate.get("source") or "",
+        "expired_reason": expired_event.get("reason") or (ops_reason if status == "EXPIRED" else ""),
+        "expired_reason_source": expired_event.get("source") or (reason_source if status == "EXPIRED" else ""),
+        "event_types": _unique_list([str(event.get("event_type") or "") for event in events]),
+        "event_count": len(events),
+        "sent_at": sent_at,
+        "acked_at": acked_at,
+        "filled_at": filled_at,
+        "closed_at": closed_at,
+        "expired_at": expired_at,
+        "sent_to_ack_latency_sec": _seconds_between(sent_at, acked_at),
+        "sent_to_fill_latency_sec": _seconds_between(sent_at, filled_at),
+        "sent_to_expired_latency_sec": _seconds_between(sent_at, expired_at),
+        "order_unknown_reconcile_attempts": _safe_int(plan.get("order_unknown_reconcile_attempts")),
+        "order_unknown_phase": str(plan.get("order_unknown_phase") or ""),
+        "order_unknown_age_sec": _safe_int(plan.get("order_unknown_age_sec")),
+        "order_unknown_soft_timeout_sec": _safe_int(plan.get("order_unknown_soft_timeout_sec")),
+        "order_unknown_hard_timeout_sec": _safe_int(plan.get("order_unknown_hard_timeout_sec")),
+        "entry_slippage_bps": _bps(plan.get("entry_order_price"), plan.get("actual_entry_price")),
+        "exit_slippage_bps": _bps(plan.get("exit_order_price"), plan.get("actual_exit_price")),
+    }
+
+
+def _merge_path_b_ops_context(run: dict[str, Any], by_run: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    path_run_id = str(run.get("path_run_id") or "").strip()
+    ops = by_run.get(path_run_id) if path_run_id else None
+    if not ops:
+        return run
+    out = dict(run)
+    out["ops"] = dict(ops)
+    return out
+
+
+def _event_reason_item(event: dict[str, Any]) -> dict[str, str]:
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    reason = (
+        str(event.get("reason_code") or "").strip()
+        or str(payload.get("reason_code") or "").strip()
+        or str(payload.get("reason") or "").strip()
+        or str(payload.get("block_reason") or "").strip()
+        or str(payload.get("cancel_reason") or "").strip()
+        or str(payload.get("order_unknown_detail") or "").strip()
+        or str(payload.get("last_error") or "").strip()
+    )
+    source = "lifecycle_reason_code" if str(event.get("reason_code") or "").strip() else "lifecycle_payload"
+    return {
+        "event_type": str(event.get("event_type") or ""),
+        "occurred_at": str(event.get("occurred_at") or ""),
+        "reason": reason,
+        "source": source if reason else "",
+    }
+
+
+def _latest_event_reason(events: list[dict[str, Any]], event_types: set[str]) -> dict[str, str]:
+    latest: dict[str, str] = {}
+    for event in events:
+        if str(event.get("event_type") or "") not in event_types:
+            continue
+        item = _event_reason_item(event)
+        if item.get("reason"):
+            latest = item
+    return latest
+
+
+def _first_plan_reason(plan: dict[str, Any], keys: tuple[str, ...]) -> tuple[str, str]:
+    for key in keys:
+        value = str(plan.get(key) or "").strip()
+        if value:
+            return value, key
+    return "", ""
+
+
+def _first_event_at(events: list[dict[str, Any]], event_types: set[str]) -> str:
+    for event in events:
+        if str(event.get("event_type") or "") in event_types:
+            return str(event.get("occurred_at") or "")
+    return ""
+
+
+def _last_event_at(events: list[dict[str, Any]], event_types: set[str]) -> str:
+    value = ""
+    for event in events:
+        if str(event.get("event_type") or "") in event_types:
+            value = str(event.get("occurred_at") or "")
+    return value
+
+
+def _first_entry_fill_at(events: list[dict[str, Any]]) -> str:
+    for event in events:
+        if str(event.get("event_type") or "") not in {"FILLED", "PARTIAL_FILLED"}:
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        if str(payload.get("side") or "").lower() == "sell":
+            continue
+        return str(event.get("occurred_at") or "")
+    return ""
+
+
+def _seconds_between(start: Any, end: Any) -> int | None:
+    left = _parse_dt(start)
+    right = _parse_dt(end)
+    if left is None or right is None:
+        return None
+    return max(0, int((right - left).total_seconds()))
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=KST)
+    return parsed
+
+
+def _safe_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _bps(reference: Any, actual: Any) -> float | None:
+    ref = _to_float(reference)
+    val = _to_float(actual)
+    if ref is None or val is None or ref <= 0:
+        return None
+    return round((val / ref - 1.0) * 10000.0, 4)
 
 
 def _path_b_consistency_health(
@@ -2241,6 +2526,7 @@ def _compact_path_runs(
         plan = run.get("plan") or run.get("plan_json") or {}
         if not isinstance(plan, dict):
             plan = {}
+        ops = run.get("ops") if isinstance(run.get("ops"), dict) else {}
         ticker = str(run.get("ticker", "") or "")
         market = str(run.get("market", "") or "")
         name = str(plan.get("name", "") or _name_for_ticker(ticker, market, name_map) or "")
@@ -2279,6 +2565,28 @@ def _compact_path_runs(
                 "pnl_pct": plan.get("pnl_pct", ""),
                 "cancel_reason": plan.get("cancel_reason", ""),
                 "close_reason": plan.get("close_reason", ""),
+                "ops_reason": ops.get("ops_reason", ""),
+                "ops_reason_source": ops.get("reason_source", ""),
+                "reason_codes": ops.get("reason_codes", []),
+                "latest_gate_reason": ops.get("latest_gate_reason", ""),
+                "latest_gate_reason_source": ops.get("latest_gate_reason_source", ""),
+                "expired_reason": ops.get("expired_reason", ""),
+                "expired_reason_source": ops.get("expired_reason_source", ""),
+                "sent_at": ops.get("sent_at", ""),
+                "acked_at": ops.get("acked_at", ""),
+                "filled_at": ops.get("filled_at", ""),
+                "closed_at": ops.get("closed_at", ""),
+                "expired_at": ops.get("expired_at", ""),
+                "sent_to_ack_latency_sec": ops.get("sent_to_ack_latency_sec"),
+                "sent_to_fill_latency_sec": ops.get("sent_to_fill_latency_sec"),
+                "sent_to_expired_latency_sec": ops.get("sent_to_expired_latency_sec"),
+                "entry_slippage_bps": ops.get("entry_slippage_bps"),
+                "exit_slippage_bps": ops.get("exit_slippage_bps"),
+                "order_unknown_phase": ops.get("order_unknown_phase", ""),
+                "order_unknown_age_sec": ops.get("order_unknown_age_sec"),
+                "order_unknown_reconcile_attempts": ops.get("order_unknown_reconcile_attempts"),
+                "order_unknown_soft_timeout_sec": ops.get("order_unknown_soft_timeout_sec"),
+                "order_unknown_hard_timeout_sec": ops.get("order_unknown_hard_timeout_sec"),
                 "order_unknown_resolution": plan.get("order_unknown_resolution", ""),
                 "order_unknown_resolution_at": plan.get("order_unknown_resolution_at", ""),
                 "broker_position_evidence": bool(

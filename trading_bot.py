@@ -4654,6 +4654,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             parsed = _num_or_none(value)
             return parsed if parsed is not None and parsed > 0 else None
 
+        def _entry_window_bucket(value: Any) -> str:
+            elapsed = _num_or_none(value)
+            if elapsed is None:
+                return "UNKNOWN"
+            if elapsed < 0:
+                return "OUTSIDE_SESSION"
+            if elapsed < 30:
+                return "OPEN_0_30"
+            if elapsed < 60:
+                return "OPEN_30_60"
+            if elapsed < 90:
+                return "OPEN_60_90"
+            if elapsed <= 270:
+                return "OPEN_90_270"
+            return "LATE_AFTER_270"
+
         def _feature_for_ticker(raw: Any) -> dict:
             if not isinstance(raw, dict):
                 return {}
@@ -4822,11 +4838,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "data_quality": str(data_quality_raw if data_quality_raw not in (None, "") else "missing"),
             "data_quality_missing": data_quality_raw in (None, ""),
             "current_price": current_price,
+            "max_entry_price": _positive_or_none(target.get("max_entry_price") or (action or {}).get("max_entry_price")),
             "buy_zone_high": _positive_or_none(target.get("buy_zone_high")),
             "pathb_waiting_buy_zone_low": _positive_or_none((route_state or {}).get("buy_zone_low")),
             "pathb_waiting_buy_zone_high": _positive_or_none((route_state or {}).get("buy_zone_high")),
             "cancel_if_open_above": _positive_or_none(target.get("cancel_if_open_above")),
             "market_open_elapsed_min": elapsed_min,
+            "entry_window_bucket": _entry_window_bucket(elapsed_min),
             "evidence_data_state": live_pack.get("data_state"),
             "evidence_missing_fields": list(live_pack.get("missing_fields") or []),
             "evidence_action_ceiling": live_pack.get("action_ceiling"),
@@ -5713,6 +5731,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "candidate_to_order_delay_min": delay_min,
             "price_change_candidate_to_order_pct": chase_pct,
             "price_change_source": chase_source,
+            "max_entry_price": max_px,
+            "entry_price_cap_missing": max_px <= 0,
             "fresh_confirmed": fresh_confirmed,
             "ret_3m_pct": ret_3m,
             "ret_5m_pct": ret_5m,
@@ -5729,10 +5749,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 missing.append("candidate_age_min")
             if chase_pct is None:
                 missing.append("price_change_candidate_to_order_pct")
+            warnings = ["kr_late_entry_metrics_missing"]
+            if max_px <= 0:
+                warnings.append("kr_order_time_price_cap_missing")
             state.update({
                 "allowed": True,
                 "reason": "order_time_late_entry_metrics_unresolved_allow",
-                "warnings": ["kr_late_entry_metrics_missing"],
+                "warnings": warnings,
                 "metrics_missing": missing,
             })
             return state
@@ -5886,6 +5909,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 key,
                 candidate=action_for_route,
             )
+            execution_context["trainer_tier"] = gate_info.get("trainer_tier", "")
+            execution_context["cohort_reliability"] = gate_info.get("cohort_reliability", 0.0)
+            execution_context["freshness_verdict"] = str(action_for_route.get("freshness_verdict") or "")
             soft_gate_validation_enabled = self._runtime_bool("SOFT_GATE_OVERRIDE_VALIDATION_ENABLED", False)
 
             def _merge_soft_gates(*values: Any) -> None:
@@ -11859,6 +11885,119 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 return value
         return 0.0
 
+    def _auto_sell_hard_guard_breach(
+        self,
+        cand: dict,
+        market: str,
+        reason: str,
+        *,
+        current_native: float = 0.0,
+    ) -> dict:
+        reason_key = str(reason or "").strip().lower()
+        hard_guard_reasons = {
+            "hard_stop",
+            "stop_loss",
+            "loss_cap",
+            "policy_hard_stop",
+            "policy_protective_stop",
+            "mfe_breakeven",
+            "profit_floor",
+            "soft_exit_floor_price",
+            "trail_stop",
+        }
+        if reason_key not in hard_guard_reasons:
+            return {}
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        live_pos = self._find_live_position_for_candidate(cand, market_key) or {}
+        merged = {**live_pos, **dict(cand or {})}
+        policy = merged.get("auto_sell_policy")
+        if isinstance(policy, dict):
+            hard_stop = self._float_or_zero(policy.get("hard_stop"))
+            protective_stop = self._float_or_zero(policy.get("protective_stop"))
+            if hard_stop > 0 and self._float_or_zero(merged.get("auto_sell_policy_hard_stop")) <= 0:
+                merged["auto_sell_policy_hard_stop"] = hard_stop
+            if protective_stop > 0 and self._float_or_zero(merged.get("auto_sell_policy_protective_stop")) <= 0:
+                merged["auto_sell_policy_protective_stop"] = protective_stop
+        if current_native > 0:
+            if market_key == "US":
+                merged["display_current_price"] = float(current_native)
+            else:
+                merged["current_price"] = float(current_native)
+                merged["display_current_price"] = float(current_native)
+                merged["exit_price"] = float(current_native)
+        price_pos = self._position_with_latest_price_context(merged, market_key)
+        current = self._float_or_zero(current_native) or self._native_position_price(price_pos, market_key, current=True)
+        if current <= 0:
+            return {}
+
+        try:
+            fx = float(getattr(self, "usd_krw_rate", 0) or 0)
+        except Exception:
+            fx = 0.0
+        krw_scaled_keys = {
+            "effective_stop_price",
+            "strategy_stop_price",
+            "sl",
+            "loss_cap_price",
+            "trail_sl",
+            "trail_stop_price",
+            "trailing_stop_price",
+            "selection_reference_stop",
+            "pathb_reference_stop",
+            "auto_sell_policy_hard_stop",
+            "auto_sell_policy_protective_stop",
+            "profit_floor_price",
+            "soft_exit_floor_price",
+        }
+        breached: list[tuple[str, float]] = []
+
+        def add_price(source: str, raw_value: object, *, key: str | None = None) -> None:
+            value = self._float_or_zero(raw_value)
+            if value <= 0:
+                return
+            price = value
+            if market_key == "US" and key in krw_scaled_keys and current > 0 and price > current * 20.0 and fx > 0:
+                price = price / fx
+            if price > 0 and current <= price:
+                breached.append((source, price))
+
+        stop_reasons = {"hard_stop", "stop_loss", "loss_cap", "policy_hard_stop", "policy_protective_stop"}
+        if reason_key in stop_reasons:
+            add_price("position_stop", self._position_stop_price(merged, market_key, current), key="effective_stop_price")
+            for key in (
+                "loss_cap_price",
+                "effective_stop_price",
+                "strategy_stop_price",
+                "sl",
+                "selection_reference_stop",
+                "pathb_reference_stop",
+                "auto_sell_policy_hard_stop",
+                "auto_sell_policy_protective_stop",
+            ):
+                add_price(key, merged.get(key), key=key)
+        if reason_key == "mfe_breakeven":
+            for key in ("mfe_breakeven_price", "effective_stop_price"):
+                add_price(key, merged.get(key), key=key)
+        if reason_key == "profit_floor":
+            for key in ("profit_floor_price", "soft_exit_floor_price", "effective_stop_price"):
+                add_price(key, merged.get(key), key=key)
+        if reason_key == "soft_exit_floor_price":
+            for key in ("soft_exit_floor_price", "effective_stop_price"):
+                add_price(key, merged.get(key), key=key)
+        if reason_key == "trail_stop":
+            for key in ("trail_sl", "trail_sl_usd", "trail_stop_price", "trailing_stop_price", "strategy_stop_price", "effective_stop_price"):
+                add_price(key, merged.get(key), key=key)
+        if not breached:
+            return {}
+        source, stop_price = max(breached, key=lambda item: item[1])
+        return {
+            "breached": True,
+            "reason": reason_key,
+            "source": source,
+            "current": float(current),
+            "stop": float(stop_price),
+        }
+
     def _advisor_or_context(self, market: str, ticker: str, entry_native: float) -> dict:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         raw_ticker = str(ticker or "").strip()
@@ -14792,7 +14931,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return []
         return [dict(row) for row in list(market_data.get("open_orders", []) or [])]
 
-    def _broker_orderable_cash_krw(self, market: str) -> float:
+    def _broker_orderable_cash_info_krw(self, market: str) -> dict:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
 
         def _num(value) -> float:
@@ -14801,19 +14940,78 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception:
                 return 0.0
 
-        values: list[float] = []
+        def _bool(value, default: bool) -> bool:
+            if isinstance(value, bool):
+                return value
+            raw = str(value if value is not None else "").strip().lower()
+            if raw in {"1", "true", "yes", "y", "on"}:
+                return True
+            if raw in {"0", "false", "no", "n", "off"}:
+                return False
+            return bool(default)
+
+        def _source_nets_open_orders(row: dict, source: str, default: bool) -> bool:
+            source_key = str(source or "").strip().lower()
+            if source_key in {"cash_fallback", "missing"}:
+                return False
+            if "orderable_cash_nets_open_orders" in row:
+                return _bool(row.get("orderable_cash_nets_open_orders"), default)
+            return bool(default)
+
+        def _has_provenance(row: dict) -> bool:
+            return "orderable_cash_source" in row or "orderable_cash_nets_open_orders" in row
+
+        def _near(a: float, b: float) -> bool:
+            return abs(float(a or 0.0) - float(b or 0.0)) < 0.0001
+
+        candidates: list[dict] = []
+
+        def _add_candidate(amount_krw: float, source: str, nets_open_orders: bool) -> None:
+            amount = _num(amount_krw)
+            if amount <= 0:
+                return
+            candidates.append(
+                {
+                    "amount_krw": amount,
+                    "source": str(source or "unknown"),
+                    "nets_open_orders": bool(nets_open_orders),
+                }
+            )
+
         state = dict(getattr(self, "_broker_state", {}).get(market_key, {}) or {})
         for snap_key in ("last_trusted_snapshot", "last_snapshot"):
             snap = dict(state.get(snap_key) or {})
             value = _num(snap.get("orderable_cash_krw"))
-            if value <= 0 and market_key == "KR":
-                value = _num(snap.get("cash_krw"))
-            if value <= 0 and market_key == "US":
-                usd = _num(snap.get("orderable_cash_usd"))
-                rate = _num(snap.get("kis_exchange_rate") or getattr(self, "usd_krw_rate", 0))
-                value = usd * rate if usd > 0 and rate > 0 else 0.0
             if value > 0:
-                values.append(value)
+                source = str(snap.get("orderable_cash_source") or "orderable_cash_krw")
+                default_nets = market_key == "US"
+                if market_key == "US" and not _has_provenance(snap):
+                    orderable_usd = _num(snap.get("orderable_cash_usd"))
+                    cash_usd = _num(snap.get("cash_usd"))
+                    settled_cash_krw = _num(snap.get("settled_cash_krw"))
+                    if (
+                        orderable_usd > 0 and cash_usd > 0 and _near(orderable_usd, cash_usd)
+                    ) or (
+                        settled_cash_krw > 0 and _near(value, settled_cash_krw)
+                    ):
+                        source = "legacy_cash_ambiguous"
+                        default_nets = False
+                _add_candidate(value, source, _source_nets_open_orders(snap, source, default_nets))
+                continue
+            if market_key == "KR":
+                value = _num(snap.get("cash_krw"))
+                _add_candidate(value, "cash_fallback", False)
+                continue
+            usd = _num(snap.get("orderable_cash_usd"))
+            rate = _num(snap.get("kis_exchange_rate") or getattr(self, "usd_krw_rate", 0))
+            if usd > 0 and rate > 0:
+                source = str(snap.get("orderable_cash_source") or "orderable_cash")
+                default_nets = True
+                cash_usd = _num(snap.get("cash_usd"))
+                if market_key == "US" and not _has_provenance(snap) and cash_usd > 0 and _near(usd, cash_usd):
+                    source = "legacy_cash_ambiguous"
+                    default_nets = False
+                _add_candidate(usd * rate, source, _source_nets_open_orders(snap, source, default_nets))
         try:
             market_data = self._broker_truth_market_snapshot(market_key, force=False, ttl_sec=60)
         except Exception:
@@ -14822,14 +15020,51 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if not str(market_data.get("error", "") or "").strip():
                 summary = dict(market_data.get("account_summary") or {})
                 if market_key == "US":
-                    usd = _num(summary.get("orderable_cash") or summary.get("cash"))
                     rate = _num(summary.get("kis_exchange_rate") or getattr(self, "usd_krw_rate", 0))
-                    value = _num(summary.get("orderable_cash_krw")) or (usd * rate if usd > 0 and rate > 0 else 0.0)
+                    orderable_usd = _num(summary.get("orderable_cash"))
+                    cash_usd = _num(summary.get("cash"))
+                    value = _num(summary.get("orderable_cash_krw"))
+                    if value > 0:
+                        source = str(summary.get("orderable_cash_source") or "orderable_cash_krw")
+                        default_nets = True
+                        if not _has_provenance(summary) and cash_usd > 0 and rate > 0 and _near(value, cash_usd * rate):
+                            source = "legacy_cash_ambiguous"
+                            default_nets = False
+                        _add_candidate(value, source, _source_nets_open_orders(summary, source, default_nets))
+                    else:
+                        if orderable_usd > 0 and rate > 0:
+                            source = str(summary.get("orderable_cash_source") or "orderable_cash")
+                            default_nets = True
+                            if not _has_provenance(summary) and cash_usd > 0 and _near(orderable_usd, cash_usd):
+                                source = "legacy_cash_ambiguous"
+                                default_nets = False
+                            _add_candidate(
+                                orderable_usd * rate,
+                                source,
+                                _source_nets_open_orders(summary, source, default_nets),
+                            )
+                        elif cash_usd > 0 and rate > 0:
+                            source = str(summary.get("orderable_cash_source") or "cash_fallback")
+                            _add_candidate(cash_usd * rate, source, False)
                 else:
                     value = _num(summary.get("orderable_cash") or summary.get("cash"))
-                if value > 0:
-                    values.append(value)
-        return min(values) if values else 0.0
+                    _add_candidate(value, "orderable_cash" if _num(summary.get("orderable_cash")) > 0 else "cash_fallback", False)
+        if not candidates:
+            return {"amount_krw": 0.0, "source": "missing", "nets_open_orders": False}
+        min_amount = min(float(row.get("amount_krw") or 0.0) for row in candidates)
+        tied = [
+            row for row in candidates
+            if abs(float(row.get("amount_krw") or 0.0) - min_amount) < 0.0001
+        ]
+        selected = dict(tied[0])
+        if any(not bool(row.get("nets_open_orders")) for row in tied):
+            selected["nets_open_orders"] = False
+            if len({str(row.get("source") or "") for row in tied}) > 1:
+                selected["source"] = "mixed"
+        return selected
+
+    def _broker_orderable_cash_krw(self, market: str) -> float:
+        return max(0.0, float(self._broker_orderable_cash_info_krw(market).get("amount_krw") or 0.0))
 
     def _pending_order_reserved_cost_krw(
         self,
@@ -14873,8 +15108,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         """Return available shared cash budget after open buy-order reservations."""
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         cash = max(0.0, float(getattr(getattr(self, "risk", None), "cash", 0.0) or 0.0))
-        broker_orderable = self._broker_orderable_cash_krw(market_key)
-        us_broker_orderable_nets_open_orders = market_key == "US" and broker_orderable > 0
+        broker_orderable_info = self._broker_orderable_cash_info_krw(market_key)
+        broker_orderable = max(0.0, float(broker_orderable_info.get("amount_krw") or 0.0))
+        us_broker_orderable_nets_open_orders = (
+            market_key == "US"
+            and broker_orderable > 0
+            and bool(broker_orderable_info.get("nets_open_orders"))
+        )
         if broker_orderable > 0:
             cash = min(cash, broker_orderable)
         netted_order_nos: set[str] = set()
@@ -15964,7 +16204,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         balance = balance or {}
         if market == "US":
             cash_usd = float(balance.get("cash", 0) or 0)
-            orderable_usd = float(balance.get("orderable_cash", cash_usd) or cash_usd)
+            has_orderable_cash = "orderable_cash" in balance and balance.get("orderable_cash") not in (None, "")
+            raw_orderable_usd = float(balance.get("orderable_cash", 0) or 0) if has_orderable_cash else 0.0
+            if raw_orderable_usd > 0:
+                orderable_usd = raw_orderable_usd
+                orderable_source = "orderable_cash"
+                orderable_nets_open_orders = True
+            elif cash_usd > 0:
+                orderable_usd = cash_usd
+                orderable_source = "cash_fallback"
+                orderable_nets_open_orders = False
+            else:
+                orderable_usd = 0.0
+                orderable_source = "missing"
+                orderable_nets_open_orders = False
             asset_cash_usd = float(balance.get("asset_cash", max(cash_usd, orderable_usd)) or 0)
             if asset_cash_usd <= 0:
                 asset_cash_usd = max(cash_usd, orderable_usd)
@@ -15984,6 +16237,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "cash_usd": cash_usd,
                 "asset_cash_usd": asset_cash_usd,
                 "orderable_cash_usd": orderable_usd,
+                "orderable_cash_source": orderable_source,
+                "orderable_cash_nets_open_orders": bool(orderable_nets_open_orders),
                 "eval_usd": eval_usd,
                 "cash_krw": asset_cash_krw,
                 "settled_cash_krw": cash_usd * rate,
@@ -18610,42 +18865,72 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 log.warning(f"[장후 리뷰] {ticker} entry=0 → hold_advisor 건너뜀, HOLD 유지")
                 lines.append(f"  ⚠️ 진입가 미확정 → Claude 판단 보류 (HOLD)")
                 continue
-            try:
-                from minority_report.hold_advisor import ask as advisor_ask
-                advice = advisor_ask(
-                    self._advisor_pos(price_pos, market),
-                    market,
-                    digest,
-                    decision_stage="PRE_CLOSE_CARRY",
-                    minutes_to_close=float(self._minutes_to_close(market)),
-                )
-                action = advice.get("action", "HOLD")
-                votes  = advice.get("votes", {})
-                for v in votes.values():
-                    if v.get("action") == action and v.get("reason"):
-                        reason = v["reason"][:80]
-                        break
-                # hold_advice 포지션에 기록 (대시보드에서 보임)
-                if not reason:
-                    reason = str(advice.get("reason", "") or "")[:80]
+            hard_guard = self._auto_sell_hard_guard_breach(price_pos, market, "hard_stop", current_native=cur)
+            if hard_guard:
+                action = "SELL"
+                reason = (
+                    f"hard_stop_override_hold:{hard_guard.get('source')} "
+                    f"{float(hard_guard.get('current', 0) or 0):g} <= {float(hard_guard.get('stop', 0) or 0):g}"
+                )[:80]
+                advice = {
+                    "action": "SELL",
+                    "confidence": 0.0,
+                    "reason": reason,
+                    "fallback": False,
+                    "decision_stage": "PRE_CLOSE_CARRY",
+                    "system_force_sell": True,
+                }
                 for p2 in self.risk.positions:
                     if p2.get("ticker") == ticker:
+                        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+                        phase = self._current_judgment_phase(market)
                         p2["hold_advice"] = advice
-                        if action == "SELL":
-                            now_iso = datetime.now(KST).isoformat(timespec="seconds")
-                            phase = self._current_judgment_phase(market)
-                            p2["pending_next_open_sell"] = True
-                            p2["pending_next_open_reason"] = reason
-                            p2["pending_next_open_sell_recheck_status"] = "needs_opening_recheck"
-                            p2["pending_next_open_sell_recheck_phase"] = phase
-                            p2["pending_next_open_sell_recheck_session"] = self._current_session_date_str(market)
-                            p2["pending_next_open_sell_recheck_at"] = now_iso
-                            p2["pending_next_open_sell_recheck_cause"] = "post_session_hold_advisor_sell"
-                            log.info(f"[post session Claude sell] {ticker} queued for next session open")
-                if action == "TRAIL" and advice.get("trail_pct"):
-                    trail_info = f" (트레일링 {advice['trail_pct']*100:.1f}%)"
-            except Exception as e:
-                log.warning(f"[장후 리뷰] {ticker} hold_advisor 오류: {e}")
+                        p2["pending_next_open_sell"] = True
+                        p2["pending_next_open_reason"] = reason
+                        p2["pending_next_open_sell_recheck_status"] = "needs_opening_recheck"
+                        p2["pending_next_open_sell_recheck_phase"] = phase
+                        p2["pending_next_open_sell_recheck_session"] = self._current_session_date_str(market)
+                        p2["pending_next_open_sell_recheck_at"] = now_iso
+                        p2["pending_next_open_sell_recheck_cause"] = "post_session_hard_stop_override"
+                        break
+                log.warning(f"[post session hard stop override] {ticker} {reason}")
+            else:
+                try:
+                    from minority_report.hold_advisor import ask as advisor_ask
+                    advice = advisor_ask(
+                        self._advisor_pos(price_pos, market),
+                        market,
+                        digest,
+                        decision_stage="PRE_CLOSE_CARRY",
+                        minutes_to_close=float(self._minutes_to_close(market)),
+                    )
+                    action = advice.get("action", "HOLD")
+                    votes  = advice.get("votes", {})
+                    for v in votes.values():
+                        if v.get("action") == action and v.get("reason"):
+                            reason = v["reason"][:80]
+                            break
+                    # hold_advice 포지션에 기록 (대시보드에서 보임)
+                    if not reason:
+                        reason = str(advice.get("reason", "") or "")[:80]
+                    for p2 in self.risk.positions:
+                        if p2.get("ticker") == ticker:
+                            p2["hold_advice"] = advice
+                            if action == "SELL":
+                                now_iso = datetime.now(KST).isoformat(timespec="seconds")
+                                phase = self._current_judgment_phase(market)
+                                p2["pending_next_open_sell"] = True
+                                p2["pending_next_open_reason"] = reason
+                                p2["pending_next_open_sell_recheck_status"] = "needs_opening_recheck"
+                                p2["pending_next_open_sell_recheck_phase"] = phase
+                                p2["pending_next_open_sell_recheck_session"] = self._current_session_date_str(market)
+                                p2["pending_next_open_sell_recheck_at"] = now_iso
+                                p2["pending_next_open_sell_recheck_cause"] = "post_session_hold_advisor_sell"
+                                log.info(f"[post session Claude sell] {ticker} queued for next session open")
+                    if action == "TRAIL" and advice.get("trail_pct"):
+                        trail_info = f" (트레일링 {advice['trail_pct']*100:.1f}%)"
+                except Exception as e:
+                    log.warning(f"[장후 리뷰] {ticker} hold_advisor 오류: {e}")
             action_ko = {"HOLD": "홀드 유지", "TRAIL": "트레일링 유지", "SELL": "매도 권고"}.get(action, action)
             # 매도 기준
             is_trailing = pos.get("trailing", False)
@@ -19845,6 +20130,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 now_iso=now_iso,
                 force_detail=force_detail,
                 detail_prefix="system_force_sell_pre_cache",
+            )
+        hard_guard = self._auto_sell_hard_guard_breach(cand, market, reason_key, current_native=current_native)
+        if hard_guard:
+            force_detail = (
+                f"{hard_guard.get('source')} "
+                f"{float(hard_guard.get('current', 0) or 0):g} <= {float(hard_guard.get('stop', 0) or 0):g}"
+            )
+            return self._auto_sell_review_force_sell_result(
+                cand,
+                market,
+                reason_key,
+                current_native=current_native,
+                now_iso=now_iso,
+                force_detail=force_detail,
+                detail_prefix="hard_stop_override_hold",
             )
         cached = self._hold_advisor_soft_cache_get(cand, market, reason_key, current_native)
         if cached:
@@ -29252,28 +29552,45 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             action = "HOLD"
             reason_txt = ""
             advice = None
-            try:
-                from minority_report.hold_advisor import ask as advisor_ask
-                _d = self.today_judgment.get("digest_prompt", "")
-                _ic = self._build_intraday_context(market)
-                digest = _d + "\n\n[장중 현재]\n" + _ic if _ic else _d
-                advice = advisor_ask(
-                    self._advisor_pos(price_pos, market),
-                    market,
-                    digest,
-                    decision_stage="PRE_CLOSE_CARRY",
-                    minutes_to_close=float(self._minutes_to_close(market)),
-                )
-                action = advice.get("action", "HOLD")
-                votes  = advice.get("votes", {})
-                for v in votes.values():
-                    if v.get("action") == action and v.get("reason"):
-                        reason_txt = v["reason"][:100]
-                        break
-                log.info(f"[장마감 검토] {ticker} Claude → {action} ({reason_txt[:50]})")
-            except Exception as e:
-                log.warning(f"[장마감 검토] {ticker} hold_advisor 실패 → HOLD 유지: {e}")
-                action = "HOLD"
+            hard_guard = self._auto_sell_hard_guard_breach(price_pos, market, "hard_stop", current_native=cp)
+            if hard_guard:
+                action = "SELL"
+                reason_txt = (
+                    f"hard_stop_override_hold:{hard_guard.get('source')} "
+                    f"{float(hard_guard.get('current', 0) or 0):g} <= {float(hard_guard.get('stop', 0) or 0):g}"
+                )[:100]
+                advice = {
+                    "action": "SELL",
+                    "confidence": 0.0,
+                    "reason": reason_txt,
+                    "fallback": False,
+                    "decision_stage": "PRE_CLOSE_CARRY",
+                    "system_force_sell": True,
+                }
+                log.warning(f"[장마감 hard stop override] {ticker} {reason_txt}")
+            else:
+                try:
+                    from minority_report.hold_advisor import ask as advisor_ask
+                    _d = self.today_judgment.get("digest_prompt", "")
+                    _ic = self._build_intraday_context(market)
+                    digest = _d + "\n\n[장중 현재]\n" + _ic if _ic else _d
+                    advice = advisor_ask(
+                        self._advisor_pos(price_pos, market),
+                        market,
+                        digest,
+                        decision_stage="PRE_CLOSE_CARRY",
+                        minutes_to_close=float(self._minutes_to_close(market)),
+                    )
+                    action = advice.get("action", "HOLD")
+                    votes  = advice.get("votes", {})
+                    for v in votes.values():
+                        if v.get("action") == action and v.get("reason"):
+                            reason_txt = v["reason"][:100]
+                            break
+                    log.info(f"[장마감 검토] {ticker} Claude → {action} ({reason_txt[:50]})")
+                except Exception as e:
+                    log.warning(f"[장마감 검토] {ticker} hold_advisor 실패 → HOLD 유지: {e}")
+                    action = "HOLD"
             action_ko  = "다음 세션 청산 권고" if action == "SELL" else "내일로 이월"
             color_icon = "🔴" if action == "SELL" else "🟡"
             pnl_icon   = "🟢" if pnl >= 0 else "🔴"

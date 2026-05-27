@@ -129,9 +129,131 @@ class ActionRoutingTests(unittest.TestCase):
         self.assertEqual(decision.reason, "buy_ready_chase_blocked")
         self.assertEqual(decision.runtime_gate_reason, "chase_above_cancel")
 
-    def test_kr_confirmation_score_payload_is_preserved(self) -> None:
+    def test_kr_buy_ready_missing_price_cap_demotes_to_probe(self) -> None:
         decision = route_candidate_action(
             {"ticker": "005930", "action": "BUY_READY", "confidence": 0.9},
+            market="KR",
+            execution_context={"current_price": 70000, "data_quality": "good"},
+        )
+
+        self.assertEqual(decision.final_action, "PROBE_READY")
+        self.assertEqual(decision.route, "PlanA.probe")
+        self.assertEqual(decision.reason, "kr_buy_ready_missing_price_cap_demoted")
+        self.assertEqual(decision.runtime_gate_reason, "missing_price_cap")
+        self.assertTrue(decision.runtime_gate["entry_price_cap_missing"])
+        self.assertIn("kr_missing_price_cap_demoted", decision.warnings)
+
+    def test_us_buy_ready_missing_price_cap_remains_buy_ready(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "AAPL", "action": "BUY_READY", "confidence": 0.9},
+            market="US",
+            execution_context={"current_price": 180.0, "data_quality": "good"},
+        )
+
+        self.assertEqual(decision.final_action, "BUY_READY")
+        self.assertEqual(decision.route, "PlanA.buy")
+        self.assertTrue(decision.runtime_gate["entry_price_cap_missing"])
+
+    def test_kr_buy_ready_with_cancel_if_open_above_does_not_missing_cap_demote(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "005930",
+                "action": "BUY_READY",
+                "confidence": 0.9,
+                "price_targets": {"cancel_if_open_above": 71000.0},
+            },
+            market="KR",
+            execution_context={"current_price": 70000.0, "data_quality": "good"},
+        )
+
+        self.assertEqual(decision.final_action, "BUY_READY")
+        self.assertEqual(decision.route, "PlanA.buy")
+        self.assertFalse(decision.runtime_gate["entry_price_cap_missing"])
+        self.assertEqual(decision.runtime_gate["entry_price_cap"], 71000.0)
+
+    def test_kr_buy_ready_above_entry_price_cap_is_blocked(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "005930",
+                "action": "BUY_READY",
+                "confidence": 0.9,
+                "price_targets": {"max_entry_price": 69000.0},
+            },
+            market="KR",
+            execution_context={"current_price": 70000.0, "data_quality": "good"},
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertEqual(decision.reason, "buy_ready_price_cap_exceeded")
+        self.assertEqual(decision.runtime_gate_reason, "entry_price_cap_exceeded")
+
+    def test_kr_buy_ready_overextended_still_demotes_before_missing_cap(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "005930", "action": "BUY_READY", "confidence": 0.9},
+            market="KR",
+            execution_context={
+                "current_price": 70000.0,
+                "momentum_state": "overextended",
+                "ret_5m_pct": 4.2,
+                "threshold_used": 3.0,
+                "data_quality": "good",
+            },
+        )
+
+        self.assertEqual(decision.final_action, "PROBE_READY")
+        self.assertEqual(decision.reason, "buy_ready_demoted_overextended")
+        self.assertEqual(decision.runtime_gate_reason, "overextended")
+
+    def test_kr_buy_ready_missing_price_cap_keeps_pathb_waiting(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "005930", "action": "BUY_READY", "confidence": 0.95},
+            market="KR",
+            pathb_waiting=True,
+            execution_context={
+                "current_price": 70000.0,
+                "data_quality": "good",
+            },
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertFalse(decision.cancel_pathb)
+        self.assertEqual(decision.reason, "pathb_waiting_kept_missing_price_cap")
+        self.assertEqual(decision.runtime_gate_reason, "missing_price_cap")
+
+    def test_us_soft_gate_buy_zone_high_does_not_change_live_route(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "AAPL",
+                "action": "BUY_READY",
+                "confidence": 0.9,
+                "price_targets": {"buy_zone_high": 100.0},
+                "soft_gate_overrides": ["late_chase"],
+            },
+            market="US",
+            execution_context={
+                "soft_gate_override_validation_enabled": True,
+                "soft_gates": ["late_chase"],
+                "current_price": 105.0,
+                "ret_3m_pct": 0.2,
+                "ret_5m_pct": 0.3,
+                "opening_range_break": True,
+                "data_quality": "good",
+            },
+        )
+
+        self.assertEqual(decision.final_action, "BUY_READY")
+        self.assertEqual(decision.route, "PlanA.buy")
+        self.assertEqual(decision.runtime_gate["entry_price_cap"], 100.0)
+        self.assertTrue(decision.runtime_gate["soft_gate_override_validation"]["validated"])
+
+    def test_kr_confirmation_score_payload_is_preserved(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "005930",
+                "action": "BUY_READY",
+                "confidence": 0.9,
+                "price_targets": {"max_entry_price": 71000},
+            },
             market="KR",
             execution_context={
                 "current_price": 70000,

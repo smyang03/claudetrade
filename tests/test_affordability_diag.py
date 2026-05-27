@@ -115,7 +115,7 @@ class AffordabilityDiagTests(unittest.TestCase):
         self.assertEqual(self.bot._pending_order_reserved_cost_krw("KR"), 223_740.0)
         self.assertEqual(self.bot._market_budget_available("KR"), 276_260.0)
 
-    def test_us_market_budget_available_does_not_double_subtract_broker_orderable_open_orders(self) -> None:
+    def test_us_market_budget_available_keeps_orderable_netting_when_source_is_orderable(self) -> None:
         self.bot.risk = type("Risk", (), {"cash": 1_000_000.0})()
         self.bot.pending_orders = [
             {
@@ -158,6 +158,120 @@ class AffordabilityDiagTests(unittest.TestCase):
             }
         )
         self.assertEqual(self.bot._market_budget_available("US"), 400_000.0)
+
+    def test_us_market_budget_available_subtracts_broker_open_orders_on_cash_fallback(self) -> None:
+        self.bot.risk = type("Risk", (), {"cash": 1_000_000.0})()
+        self.bot.pending_orders = []
+        self.bot._broker_state = {}
+        self.bot._broker_truth_market_snapshot = lambda market, force=False, ttl_sec=None: {
+            "missing": False,
+            "stale": False,
+            "error": "",
+            "account_summary": {"orderable_cash": 0.0, "cash": 1_000.0, "kis_exchange_rate": 1_000.0},
+            "open_orders": [
+                {
+                    "market": "US",
+                    "ticker": "AMD",
+                    "side": "buy",
+                    "order_no": "broker-only-1",
+                    "remaining_qty": 1,
+                    "risk_price_krw": 400_000.0,
+                }
+            ],
+        }
+
+        self.assertEqual(self.bot._market_budget_available("US"), 600_000.0)
+
+    def test_us_market_budget_available_treats_legacy_equal_cash_snapshot_as_not_netted(self) -> None:
+        self.bot.risk = type("Risk", (), {"cash": 1_000_000.0})()
+        self.bot.pending_orders = []
+        self.bot._broker_state = {
+            "US": {
+                "last_trusted_snapshot": {
+                    "cash_usd": 1_000.0,
+                    "orderable_cash_usd": 1_000.0,
+                    "settled_cash_krw": 1_000_000.0,
+                    "orderable_cash_krw": 1_000_000.0,
+                    "kis_exchange_rate": 1_000.0,
+                }
+            }
+        }
+        self.bot._broker_truth_market_snapshot = lambda market, force=False, ttl_sec=None: {
+            "missing": False,
+            "stale": False,
+            "error": "",
+            "account_summary": {},
+            "open_orders": [
+                {
+                    "market": "US",
+                    "ticker": "AMD",
+                    "side": "buy",
+                    "order_no": "broker-only-1",
+                    "remaining_qty": 1,
+                    "risk_price_krw": 400_000.0,
+                }
+            ],
+        }
+
+        self.assertEqual(self.bot._market_budget_available("US"), 600_000.0)
+
+    def test_us_market_budget_available_subtracts_local_only_pending_when_broker_orderable_nets(self) -> None:
+        self.bot.risk = type("Risk", (), {"cash": 1_000_000.0})()
+        self.bot.pending_orders = [
+            {
+                "market": "US",
+                "ticker": "AMD",
+                "side": "buy",
+                "order_no": "us-open-1",
+                "remaining_qty": 1,
+                "risk_price_krw": 500_000.0,
+            },
+            {
+                "market": "US",
+                "ticker": "MSFT",
+                "side": "buy",
+                "order_no": "local-only-1",
+                "remaining_qty": 1,
+                "risk_price_krw": 100_000.0,
+            },
+        ]
+        self.bot._broker_state = {}
+        self.bot._broker_truth_market_snapshot = lambda market, force=False, ttl_sec=None: {
+            "missing": False,
+            "stale": False,
+            "error": "",
+            "account_summary": {"orderable_cash_krw": 500_000.0},
+            "open_orders": [
+                {
+                    "market": "US",
+                    "ticker": "AMD",
+                    "side": "buy",
+                    "order_no": "us-open-1",
+                    "remaining_qty": 1,
+                    "risk_price_krw": 500_000.0,
+                }
+            ],
+        }
+
+        self.assertEqual(self.bot._market_budget_available("US"), 400_000.0)
+
+    def test_kr_market_budget_available_still_subtracts_broker_truth_open_buy_orders(self) -> None:
+        self.bot.risk = type("Risk", (), {"cash": 500_000.0})()
+        self.bot.pending_orders = []
+        self.bot.price_cache = {"069540": 6_780.0}
+        self.bot.price_cache_raw = {}
+        self.bot._broker_state = {}
+        self.bot._broker_truth_market_snapshot = lambda market, force=False, ttl_sec=None: {
+            "missing": False,
+            "stale": False,
+            "error": "",
+            "account_summary": {"orderable_cash": 500_000.0},
+            "open_orders": [
+                {"market": "KR", "ticker": "069540", "side": "buy", "order_no": "kr-open-1", "remaining_qty": 33}
+            ],
+        }
+
+        self.assertEqual(self.bot._market_budget_available("KR"), 276_260.0)
 
 
 if __name__ == "__main__":

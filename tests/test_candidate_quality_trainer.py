@@ -216,6 +216,118 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         self.assertEqual(excluded["BAD"], "trainer_quarantine")
         self.assertEqual(excluded["MID"], "prompt_cap")
 
+    def test_prompt_pool_defers_same_day_stopped_after_trainer_reorder(self) -> None:
+        result = build_trainer_prompt_pool(
+            [
+                {
+                    "ticker": "STOP",
+                    "market": "US",
+                    "same_day_stopped": True,
+                    "primary_bucket": "momentum_now",
+                    "liquidity_bucket": "high",
+                    "change_pct": 5.0,
+                },
+                {
+                    "ticker": "OK",
+                    "market": "US",
+                    "primary_bucket": "unclassified",
+                    "liquidity_bucket": "mid",
+                    "change_pct": 1.0,
+                },
+            ],
+            market="US",
+            target=1,
+            hard_cap=1,
+            reorder_enabled=True,
+        )
+
+        self.assertEqual([row["ticker"] for row in result["prompt_pool"]], ["OK"])
+
+    def test_prompt_pool_includes_same_day_stopped_last_when_cap_has_room(self) -> None:
+        result = build_trainer_prompt_pool(
+            [
+                {
+                    "ticker": "STOP",
+                    "market": "US",
+                    "same_day_stopped": True,
+                    "primary_bucket": "momentum_now",
+                    "liquidity_bucket": "high",
+                    "change_pct": 5.0,
+                },
+                {
+                    "ticker": "OK",
+                    "market": "US",
+                    "primary_bucket": "unclassified",
+                    "liquidity_bucket": "mid",
+                    "change_pct": 1.0,
+                },
+            ],
+            market="US",
+            target=2,
+            hard_cap=2,
+            reorder_enabled=True,
+        )
+
+        self.assertEqual([row["ticker"] for row in result["prompt_pool"]], ["OK", "STOP"])
+        self.assertTrue(result["prompt_pool"][-1]["same_day_stopped"])
+
+    def test_prompt_pool_records_same_day_stopped_cap_exclusion(self) -> None:
+        result = build_trainer_prompt_pool(
+            [
+                {
+                    "ticker": "STOP",
+                    "market": "US",
+                    "same_day_stopped": True,
+                    "primary_bucket": "momentum_now",
+                    "liquidity_bucket": "high",
+                    "change_pct": 5.0,
+                },
+                {
+                    "ticker": "OK",
+                    "market": "US",
+                    "primary_bucket": "unclassified",
+                    "liquidity_bucket": "mid",
+                    "change_pct": 1.0,
+                },
+            ],
+            market="US",
+            target=1,
+            hard_cap=1,
+            reorder_enabled=True,
+        )
+
+        excluded = {row["ticker"]: row for row in result["excluded_from_prompt"]}
+        self.assertEqual(excluded["STOP"]["prompt_excluded_reason"], "hard_cap_cutoff")
+        self.assertTrue(excluded["STOP"]["candidate"]["same_day_stopped"])
+
+    def test_merge_duplicate_preserves_same_day_stopped_marker(self) -> None:
+        result = build_trainer_prompt_pool(
+            [
+                {
+                    "ticker": "DUP",
+                    "market": "US",
+                    "same_day_stopped": True,
+                    "primary_bucket": "unclassified",
+                    "liquidity_bucket": "mid",
+                    "change_pct": 1.0,
+                },
+                {
+                    "ticker": "DUP",
+                    "market": "US",
+                    "primary_bucket": "momentum_now",
+                    "liquidity_bucket": "high",
+                    "change_pct": 5.0,
+                },
+            ],
+            market="US",
+            target=1,
+            hard_cap=1,
+            reorder_enabled=True,
+        )
+
+        self.assertEqual([row["ticker"] for row in result["prompt_pool"]], ["DUP"])
+        self.assertTrue(result["prompt_pool"][0]["same_day_stopped"])
+
     def test_kr_prompt_pool_default_and_config_cap_follow_policy_32(self) -> None:
         candidates = [
             {"ticker": f"{idx:06d}", "market": "KR", "primary_bucket": "liquidity_leader", "liquidity_bucket": "mid"}

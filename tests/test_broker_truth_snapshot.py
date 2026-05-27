@@ -66,6 +66,38 @@ class BrokerTruthSnapshotTests(unittest.TestCase):
             self.assertEqual(summary["total_eval_krw"], 2_239_550)
             self.assertEqual(summary["kis_exchange_rate"], 1503.5)
 
+    def test_broker_truth_snapshot_preserves_us_orderable_cash_source(self) -> None:
+        cases = [
+            (
+                {"cash": 1_000.0, "orderable_cash": 0.0, "stocks": [], "currency": "USD"},
+                "cash_fallback",
+                False,
+                1_000.0,
+            ),
+            (
+                {"cash": 1_000.0, "orderable_cash": 780.0, "stocks": [], "currency": "USD"},
+                "orderable_cash",
+                True,
+                780.0,
+            ),
+        ]
+        for balance, expected_source, expected_nets, expected_orderable in cases:
+            with self.subTest(expected_source=expected_source), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "snapshot.json"
+                snapshot = BrokerTruthSnapshot(
+                    runtime_mode="live",
+                    path=path,
+                    balance_provider=lambda market, force, payload=balance: dict(payload),
+                    ccld_provider=lambda market, day: [],
+                )
+
+                data = snapshot.refresh_market("US", force=True, ttl_sec=30)
+
+                summary = data["markets"]["US"]["account_summary"]
+                self.assertEqual(summary["orderable_cash"], expected_orderable)
+                self.assertEqual(summary["orderable_cash_source"], expected_source)
+                self.assertIs(summary["orderable_cash_nets_open_orders"], expected_nets)
+
     def test_open_order_preserves_order_price_for_reservation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "snapshot.json"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import os
 from pathlib import Path
 import tempfile
 import time
@@ -3931,6 +3932,227 @@ class PathBRuntimeTests(unittest.TestCase):
             signal = runtime._submit_sell.call_args.args[2]
             self.assertEqual(signal.reason, "loss_cap")
             self.assertEqual(signal.close_reason, "CLOSED_LOSS_CAP")
+
+    def test_pathb_stop_recovery_policy_hard_stop_preempts_native_hard_stop_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_policy_hard_stop_first",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-26",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=120,
+                stop_loss=95,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_filled(plan.path_run_id, price=100, qty=2, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain1")
+            store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "auto_sell_policy": {
+                        "status": "active",
+                        "mode": "stop_recovery",
+                        "hard_stop": 94.0,
+                        "recover_above": 101.0,
+                        "valid_until": (datetime.now(KST) + timedelta(minutes=10)).isoformat(timespec="seconds"),
+                    }
+                },
+                merge_plan=True,
+            )
+            bot.risk.positions.append(
+                {
+                    "ticker": "005930",
+                    "qty": 2,
+                    "entry": 100,
+                    "sl": 95,
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                }
+            )
+            bot.price_cache_raw["005930"] = 93.9
+            runtime.reconcile_sell_pending = Mock(return_value={})
+            runtime.reconcile_filled_positions = Mock(return_value={})
+            runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+            runtime._submit_sell = Mock()
+
+            runtime.scan_exits("KR", force=True)
+
+            runtime._submit_sell.assert_called_once()
+            signal = runtime._submit_sell.call_args.args[2]
+            self.assertEqual(signal.reason, "policy_hard_stop")
+            self.assertEqual(signal.close_reason, "CLOSED_HARD_STOP")
+
+    def test_pathb_expired_policy_stop_breach_still_sells(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_expired_policy_stop",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-26",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=120,
+                stop_loss=95,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_filled(plan.path_run_id, price=100, qty=2, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain1")
+            store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "auto_sell_policy": {
+                        "status": "active",
+                        "mode": "stop_recovery",
+                        "hard_stop": 94.0,
+                        "recover_above": 101.0,
+                        "valid_until": (datetime.now(KST) - timedelta(minutes=1)).isoformat(timespec="seconds"),
+                    }
+                },
+                merge_plan=True,
+            )
+            bot.risk.positions.append(
+                {
+                    "ticker": "005930",
+                    "qty": 2,
+                    "entry": 100,
+                    "sl": 95,
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                }
+            )
+            bot.price_cache_raw["005930"] = 93.9
+            runtime.reconcile_sell_pending = Mock(return_value={})
+            runtime.reconcile_filled_positions = Mock(return_value={})
+            runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+            runtime._submit_sell = Mock()
+
+            runtime.scan_exits("KR", force=True)
+
+            runtime._submit_sell.assert_called_once()
+            signal = runtime._submit_sell.call_args.args[2]
+            self.assertEqual(signal.reason, "policy_hard_stop")
+
+    def test_pathb_invalid_policy_falls_back_to_native_hard_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_invalid_policy_native_stop",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-26",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=120,
+                stop_loss=95,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_filled(plan.path_run_id, price=100, qty=2, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain1")
+            store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "auto_sell_policy": {
+                        "status": "active",
+                        "mode": "stop_recovery",
+                        "hard_stop": 0.0,
+                        "recover_above": 101.0,
+                        "valid_until": (datetime.now(KST) + timedelta(minutes=10)).isoformat(timespec="seconds"),
+                    }
+                },
+                merge_plan=True,
+            )
+            bot.risk.positions.append(
+                {
+                    "ticker": "005930",
+                    "qty": 2,
+                    "entry": 100,
+                    "sl": 95,
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                }
+            )
+            bot.price_cache_raw["005930"] = 94.5
+            runtime.reconcile_sell_pending = Mock(return_value={})
+            runtime.reconcile_filled_positions = Mock(return_value={})
+            runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+            runtime._submit_sell = Mock()
+
+            runtime.scan_exits("KR", force=True)
+
+            runtime._submit_sell.assert_called_once()
+            signal = runtime._submit_sell.call_args.args[2]
+            self.assertEqual(signal.reason, "hard_stop")
+
+    def test_pathb_policy_skip_does_not_suppress_native_loss_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            plan = make_price_plan(
+                decision_id="dec_policy_skip_loss_cap",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-26",
+                buy_zone_low=100,
+                buy_zone_high=101,
+                sell_target=120,
+                stop_loss=95,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_filled(plan.path_run_id, price=100, qty=2, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain1")
+            store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "auto_sell_policy": {
+                        "status": "active",
+                        "mode": "target_extension",
+                        "valid_until": (datetime.now(KST) + timedelta(minutes=10)).isoformat(timespec="seconds"),
+                        "reask_after_at": (datetime.now(KST) + timedelta(minutes=10)).isoformat(timespec="seconds"),
+                        "revised_sell_target": 130.0,
+                        "protective_stop": 90.0,
+                        "peak_price": 121.0,
+                    }
+                },
+                merge_plan=True,
+            )
+            bot.risk.positions.append(
+                {
+                    "ticker": "005930",
+                    "qty": 2,
+                    "entry": 100,
+                    "sl": 95,
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                }
+            )
+            bot.risk.loss_cap_price = Mock(return_value=99.0)
+            bot.price_cache_raw["005930"] = 98.9
+            runtime.reconcile_sell_pending = Mock(return_value={})
+            runtime.reconcile_filled_positions = Mock(return_value={})
+            runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+            runtime._submit_sell = Mock()
+
+            with patch.dict(os.environ, {"PATHB_HOLD_POLICY_MODE": "enforce"}, clear=False):
+                runtime.scan_exits("KR", force=True)
+
+            runtime._submit_sell.assert_called_once()
+            signal = runtime._submit_sell.call_args.args[2]
+            self.assertEqual(signal.reason, "loss_cap")
 
     def test_submit_buy_uses_combined_daily_entry_cap_from_v2(self) -> None:
         class _CappedV2(_V2):

@@ -96,6 +96,24 @@ class PromptOverlayHelperTests(unittest.TestCase):
 
         self.assertEqual(len(result), 24)
 
+    def test_plan_overlay_does_not_promote_same_day_stopped_over_regular(self) -> None:
+        current = [_row("KEEP1"), _row("KEEP2"), _row("DROP1")]
+        stopped_plan_a = _row("STOPPA", "PLAN_A", 99.0, 10.0)
+        stopped_plan_a["same_day_stopped"] = True
+
+        result, meta = build_plan_a_overlay_prompt_pool(
+            current,
+            [stopped_plan_a],
+            market="US",
+            cap=3,
+            keep_current=1,
+            plan_a_max=1,
+        )
+
+        self.assertEqual([row["ticker"] for row in result], ["KEEP1", "KEEP2", "DROP1"])
+        self.assertEqual(meta["overlay_added_tickers"], [])
+        self.assertEqual(meta["overlay_candidate_state"], "current_only")
+
 
 class PromptOverlayAnalystTests(unittest.TestCase):
     def _run_select(self, *, mode: str, with_plan_a: bool = True) -> tuple[str, dict]:
