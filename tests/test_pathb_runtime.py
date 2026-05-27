@@ -3916,6 +3916,9 @@ class PathBRuntimeTests(unittest.TestCase):
             )
             bot.risk.loss_cap_price = Mock(return_value=99.0)
             bot.price_cache_raw["005930"] = 98.9
+            runtime._current_native_price_for_exit = (  # type: ignore[method-assign]
+                lambda market, ticker, pos: float(bot.price_cache_raw.get(ticker, 0))
+            )
             runtime.reconcile_sell_pending = Mock(return_value={})
             runtime.reconcile_filled_positions = Mock(return_value={})
             runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
@@ -4082,6 +4085,9 @@ class PathBRuntimeTests(unittest.TestCase):
                 }
             )
             bot.price_cache_raw["005930"] = 93.9
+            runtime._current_native_price_for_exit = (  # type: ignore[method-assign]
+                lambda market, ticker, pos: float(bot.price_cache_raw.get(ticker, 0))
+            )
             runtime.reconcile_sell_pending = Mock(return_value={})
             runtime.reconcile_filled_positions = Mock(return_value={})
             runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
@@ -4137,6 +4143,9 @@ class PathBRuntimeTests(unittest.TestCase):
                 }
             )
             bot.price_cache_raw["005930"] = 93.9
+            runtime._current_native_price_for_exit = (  # type: ignore[method-assign]
+                lambda market, ticker, pos: float(bot.price_cache_raw.get(ticker, 0))
+            )
             runtime.reconcile_sell_pending = Mock(return_value={})
             runtime.reconcile_filled_positions = Mock(return_value={})
             runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
@@ -4191,6 +4200,9 @@ class PathBRuntimeTests(unittest.TestCase):
                 }
             )
             bot.price_cache_raw["005930"] = 94.5
+            runtime._current_native_price_for_exit = (  # type: ignore[method-assign]
+                lambda market, ticker, pos: float(bot.price_cache_raw.get(ticker, 0))
+            )
             runtime.reconcile_sell_pending = Mock(return_value={})
             runtime.reconcile_filled_positions = Mock(return_value={})
             runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
@@ -4248,6 +4260,9 @@ class PathBRuntimeTests(unittest.TestCase):
             )
             bot.risk.loss_cap_price = Mock(return_value=99.0)
             bot.price_cache_raw["005930"] = 98.9
+            runtime._current_native_price_for_exit = (  # type: ignore[method-assign]
+                lambda market, ticker, pos: float(bot.price_cache_raw.get(ticker, 0))
+            )
             runtime.reconcile_sell_pending = Mock(return_value={})
             runtime.reconcile_filled_positions = Mock(return_value={})
             runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
@@ -4331,6 +4346,9 @@ class PathBRuntimeTests(unittest.TestCase):
                 }
             )
             bot.price_cache_raw["005930"] = 110
+            runtime._current_native_price_for_exit = (  # type: ignore[method-assign]
+                lambda market, ticker, pos: float(bot.price_cache_raw.get(ticker, 0))
+            )
             runtime.reconcile_sell_pending = Mock(return_value={})
             runtime.reconcile_filled_positions = Mock(return_value={})
             runtime._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
@@ -4566,6 +4584,9 @@ class PathBRuntimeTests(unittest.TestCase):
             runtime.adapter.mark_filled(plan.path_run_id, price=100, qty=2, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain1")
             bot.risk.positions.append({"ticker": "005930", "qty": 2, "entry": 100, "path_type": "claude_price", "pathb_path_run_id": plan.path_run_id})
             bot.price_cache_raw["005930"] = 110
+            runtime._current_native_price_for_exit = (  # type: ignore[method-assign]
+                lambda market, ticker, pos: float(bot.price_cache_raw.get(ticker, 0))
+            )
             runtime.reconcile_sell_pending = Mock(return_value={})
             runtime.reconcile_filled_positions = Mock(return_value={})
             runtime._minutes_to_close = lambda market: 10.9  # type: ignore[method-assign]
@@ -4713,6 +4734,9 @@ class PathBRuntimeTests(unittest.TestCase):
             store.update_path_run(plan.path_run_id, plan={"carry_decision": "CARRY", "carry_reviewed_at": "2026-04-27T15:45:00+09:00"}, merge_plan=True)
             bot.risk.positions.append({"ticker": "005930", "qty": 2, "entry": 100, "path_type": "claude_price", "pathb_path_run_id": plan.path_run_id})
             bot.price_cache_raw["005930"] = 89
+            runtime._current_native_price_for_exit = (  # type: ignore[method-assign]
+                lambda market, ticker, pos: float(bot.price_cache_raw.get(ticker, 0))
+            )
             runtime.reconcile_sell_pending = Mock(return_value={})
             runtime.reconcile_filled_positions = Mock(return_value={})
             runtime._minutes_to_close = lambda market: 5.0  # type: ignore[method-assign]
@@ -4749,6 +4773,81 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertTrue(runtime._pre_close_force_exit(plan.path_run_id, 10.0))
             store.update_path_run(plan.path_run_id, plan={"carry_decision": "CARRY"}, merge_plan=True)
             self.assertFalse(runtime._pre_close_force_exit(plan.path_run_id, 10.0))
+
+
+    # ──────────────────────────────────────────────────────────────
+    # _fetch_exit_price / exit 전용 가격 경로 테스트
+    # ──────────────────────────────────────────────────────────────
+
+    def test_fetch_exit_price_skips_stale_price_cache_raw(self) -> None:
+        """price_cache_raw에 stale 값이 있어도 exit 경로는 그것을 반환하지 않는다.
+        broker position / broker truth 가 모두 0이면 _fetch_exit_price()로 떨어지며,
+        TTL 만료 + get_price() 를 호출해 fresh 가격을 쓴다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+
+            # stale 값을 price_cache_raw 에 주입
+            bot.price_cache_raw["005930"] = 999.0
+
+            # broker_truth 는 포지션 없음 → 0.0
+            runtime.broker_truth = Mock()
+            runtime.broker_truth.market_snapshot.return_value = {"positions": []}
+
+            fresh_price = 70000.0
+            with patch("runtime.pathb_runtime.get_price", return_value={"price": fresh_price}) as mock_get:
+                result = runtime._current_native_price_for_exit(
+                    "KR", "005930", {"current_price_source": "order_fill"}
+                )
+
+            mock_get.assert_called_once()
+            self.assertEqual(result, fresh_price)
+            # price_cache_raw 도 fresh 값으로 갱신됐는지 확인
+            self.assertEqual(bot.price_cache_raw.get("005930"), fresh_price)
+
+    def test_fetch_exit_price_uses_ttl_cache_within_window(self) -> None:
+        """TTL 이내에 _exit_price_cache 에 값이 있으면 get_price() 를 호출하지 않는다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+
+            cached_price = 68000.0
+            runtime._exit_price_cache["005930"] = (cached_price, time.time())  # 방금 캐시됨
+
+            runtime.broker_truth = Mock()
+            runtime.broker_truth.market_snapshot.return_value = {"positions": []}
+
+            with patch("runtime.pathb_runtime.get_price") as mock_get:
+                result = runtime._current_native_price_for_exit(
+                    "KR", "005930", {"current_price_source": "order_fill"}
+                )
+
+            mock_get.assert_not_called()
+            self.assertEqual(result, cached_price)
+
+    def test_fetch_exit_price_returns_zero_on_api_failure(self) -> None:
+        """broker truth 없고 get_price() 가 예외를 던지면 0.0 반환.
+        price_cache_raw stale 값으로 되돌아가지 않는다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+
+            bot.price_cache_raw["005930"] = 999.0  # stale
+
+            runtime.broker_truth = Mock()
+            runtime.broker_truth.market_snapshot.return_value = {"positions": []}
+
+            with patch("runtime.pathb_runtime.get_price", side_effect=Exception("API error")):
+                result = runtime._current_native_price_for_exit(
+                    "KR", "005930", {"current_price_source": "order_fill"}
+                )
+
+            self.assertEqual(result, 0.0)
+            # price_cache_raw 는 stale 값 그대로여야 함 (덮어쓰기 금지)
+            self.assertEqual(bot.price_cache_raw.get("005930"), 999.0)
 
 
 if __name__ == "__main__":

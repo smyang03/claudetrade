@@ -182,6 +182,7 @@ class PathBRuntime:
         self._profit_review_calls_this_scan = 0
         self._pathb_sell_attempt_locks: dict[str, float] = {}
         self._entry_block_log_state: dict[str, dict[str, Any]] = {}
+        self._exit_price_cache: dict[str, tuple[float, float]] = {}
         self._entry_broker_truth_refresh_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
         self._broker_truth_refresh_metrics: dict[str, dict[str, Any]] = {"KR": {}, "US": {}}
         self.broker_truth = BrokerTruthSnapshot(
@@ -7983,7 +7984,32 @@ class PathBRuntime:
         if broker_truth_price > 0:
             self._cache_native_price(market, ticker, broker_truth_price)
             return broker_truth_price
-        return self._current_native_price(market, ticker)
+        # price_cache_raw는 TTL이 없어 stale일 수 있음 → exit 전용 TTL cache 또는 fresh API 사용
+        return self._fetch_exit_price(market, ticker)
+
+    def _fetch_exit_price(self, market: str, ticker: str) -> float:
+        """exit 전용 가격 조회.
+
+        broker position / broker truth 가 모두 실패한 경우의 최후 경로.
+        price_cache_raw (TTL 없음) 로 떨어지지 않도록 exit 전용 TTL cache를 먼저 보고,
+        만료됐으면 get_price() fresh API 를 직접 호출한다.
+        fresh API 도 실패하면 0.0 을 반환해 exit scan 을 skip 시킨다 (fail-closed).
+        """
+        key = self._ticker_key(market, ticker)
+        ttl = max(10, self._runtime_int("PATHB_EXIT_PRICE_TTL_SEC", 30))
+        cached_price, cached_ts = self._exit_price_cache.get(key, (0.0, 0.0))
+        if cached_price > 0 and (time.time() - cached_ts) < ttl:
+            return cached_price
+        try:
+            info = get_price(key, _bot_token(self.bot, market), market=market)
+            price = float(info.get("price", 0) or 0)
+            if price > 0:
+                self._exit_price_cache[key] = (price, time.time())
+                self._cache_native_price(market, ticker, price)
+            return price
+        except Exception as exc:
+            log.debug(f"[PathB exit price] {market} {key} fresh API 실패: {exc}")
+            return 0.0
 
     def _broker_position_native_price(self, market: str, pos: dict[str, Any] | None) -> float:
         if not isinstance(pos, dict):
