@@ -27,6 +27,30 @@ This file is the shared operating guide for agentic coding tools working in this
 - 매수 차단 조건에는 브로커 상태 불신, affordability fail, hard risk block, same-day reentry block, late-session/blackout, watch_only 유지가 포함됩니다.
 - `_sync_runtime_with_broker()` 변경 시 보유 종목과 미체결 주문 기준 stale 포지션 정리, 시장별 quarantine, HALT/daily_return의 시장별 baseline 계산을 반드시 확인하세요.
 
+## Protected Completed Areas & MD Violation Reporting
+
+아래 동작은 완료/보호 영역입니다. 특정 이슈가 해당 영역을 직접 지목하거나, 실패 테스트/로그/운영 장애가 이 영역을 원인으로 가리킬 때만 최소 범위로 수정합니다. 단순 리팩터링, 이름 변경, 구조 재배치, 테스트 기대값 임의 변경, safety guard 완화는 금지합니다.
+
+- PathB `AUTO_SELL_REVIEW` HOLD cooldown guard: `runtime/pathb_runtime.py`의 `_pathb_auto_sell_review_cooldown_payload()` / `_run_pathb_sell_review_gate()`와 `tests/test_auto_sell_claude_gate.py::test_pathb_loss_cap_hold_respects_reask_cooldown`.
+- PathB broker-truth entry fail-closed: `runtime/pathb_runtime.py::_entry_scan_broker_truth_gate()`는 live에서 token/provider unavailable, stale/error broker truth를 `BLOCKED_BROKER_TRUTH`로 차단해야 합니다. preflight/dashboard 가시성은 개선할 수 있지만 fail-closed 동작은 완화하지 않습니다.
+- PathB sizing reason split: `_pathb_qty_with_context()`와 `execution/safety_gate.py`의 `INVALID_PRICE`, `ORDER_SIZE_TOO_SMALL_GATE`, `HIGH_PRICE_BUDGET_BLOCK` 분리를 보존합니다. fixed sizing, one-share-over-budget 정책, early soft gate, live submit 정책은 승인 없이 바꾸지 않습니다.
+- zero-holding stale reconcile: `TradingBot._sell_zero_holding_broker_evidence()`와 `PathBRuntime._pathb_zero_holding_broker_evidence()`는 fresh broker truth, zero holding, open remaining 0일 때만 local stale position/run을 정리해야 합니다.
+- KIS order normalization: KR/US 체결/미체결 정규화는 `remaining_qty`를 보존해야 하며, `open_orders`는 `remaining_qty > 0` 기준으로 파생되어야 합니다.
+- Path A/Path B 합류 계약: 두 경로는 `runtime/action_routing.py::RouteDecision`을 통해 합류하며, selection 품질 문제와 execution/risk 문제를 한 패치에서 섞지 않습니다.
+- broker truth 우선순위와 `_sync_runtime_with_broker()`의 시장별 quarantine, stale position 정리, HALT/daily_return 시장별 baseline 계산을 보존합니다.
+- `state/brain.json`은 정책 메모리일 뿐 runtime truth가 아닙니다. 승인형 워크플로우 없이 자동 정책 메모리 승격이나 직접 수정 경로를 추가하지 않습니다.
+
+보호 영역을 피할 수 없이 수정해야 하는 경우, 작업 설명/커밋 메시지/PR 본문 중 하나에 반드시 `MD 위반 사항` 섹션을 남깁니다. 이 섹션은 보호 계약 예외를 운영자가 알아볼 수 있게 하는 보고 형식이며, 아래 내용을 포함해야 합니다.
+
+- 어떤 보호 영역을 건드렸는지
+- 왜 우회할 수 없었는지
+- 변경 전/후 동작 차이
+- 주문/리스크/브로커 truth/Claude 호출량/config/env 영향
+- 대체 안전장치 또는 반복호출/오염 방지책
+- 실행한 테스트와 남은 위험
+
+코드 수정 전에는 이번 이슈의 직접 수정 범위, 건드리지 않을 보호 영역, 수정 예정 파일, 실행할 검증 명령을 먼저 명시합니다.
+
 ## Data, Memory, and Logging Contracts
 
 - `state/brain.json`: 정책 메모리입니다. 런타임 truth 또는 원장으로 취급하지 마세요.
@@ -98,7 +122,7 @@ Python 코드는 4칸 들여쓰기를 사용합니다. 함수와 변수는 `snak
 
 | 파라미터 | 현재값 |
 |---|---|
-| 고정 주문금액 | 500,000 KRW |
+| 고정 주문금액 | 450,000 KRW |
 | 최대 포지션 수 | 15 |
 | 일일 최대 진입 수 | 40 |
 | 최소 confidence | 0.5 |

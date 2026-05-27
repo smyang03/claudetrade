@@ -35,6 +35,34 @@ This repository is a Python-based KR/US automated trading system. `trading_bot.p
 - The protected flow is `runtime/pathb_runtime.py` `_pathb_auto_sell_review_cooldown_payload()` and `_run_pathb_sell_review_gate()`, with coverage in `tests/test_auto_sell_claude_gate.py::test_pathb_loss_cap_hold_respects_reask_cooldown`.
 - If this guard or related knobs (`CLAUDE_REVIEW_ALL_AUTOMATED_SELLS`, `AUTO_SELL_REVIEW_HOLD_COOLDOWN_MINUTES`, `PATHB_AUTO_SELL_REVIEW_HOLD_REASK_DROP_PCT`) must change, state the reason, expected Claude call/token impact, replacement duplicate-call protection, and tests run in the work note, commit message, or PR body.
 
+### Protected Completed Areas
+
+These areas are treated as completed/protected behavior. Do not refactor, rename, reorganize, loosen safety checks, or rewrite tests around them unless the current task directly targets the area or failing tests/logs/operational evidence identify it as the root cause.
+
+- PathB `AUTO_SELL_REVIEW` HOLD cooldown guard: `runtime/pathb_runtime.py` `_pathb_auto_sell_review_cooldown_payload()` / `_run_pathb_sell_review_gate()` and `tests/test_auto_sell_claude_gate.py::test_pathb_loss_cap_hold_respects_reask_cooldown`.
+- PathB broker-truth entry fail-closed: `PathBRuntime._entry_scan_broker_truth_gate()` must block live entry scan with `BLOCKED_BROKER_TRUTH` when token/provider is unavailable or broker truth is missing/stale/error. Operator visibility may be improved, but fail-closed behavior must not be weakened.
+- PathB sizing reason split: `_pathb_qty_with_context()` and `execution/safety_gate.py` must preserve `INVALID_PRICE`, `ORDER_SIZE_TOO_SMALL_GATE`, and `HIGH_PRICE_BUDGET_BLOCK` separation. Do not change fixed sizing, one-share-over-budget, early soft gate, or live submit policy without explicit operator approval.
+- Zero-holding stale reconcile: `TradingBot._sell_zero_holding_broker_evidence()` and `PathBRuntime._pathb_zero_holding_broker_evidence()` may remove/close stale local state only with fresh broker truth, zero broker holding, and zero open remaining quantity.
+- KIS order normalization: KR/US order normalization must preserve `remaining_qty`; broker truth `open_orders` must continue to mean rows with `remaining_qty > 0`.
+- Path A/Path B route merge: both paths must continue to merge through `runtime/action_routing.py::RouteDecision`; do not mix selection quality fixes with execution/risk fixes in one behavioral patch.
+- Broker truth priority: broker holdings, open orders, and fills remain first truth. `_sync_runtime_with_broker()` must preserve market-scoped quarantine, stale-position cleanup by holdings/open-orders evidence, and market-scoped HALT/daily_return baselines.
+- `state/brain.json`: policy memory only. Do not add automatic long-term memory promotion or direct runtime truth usage before an approval workflow is in place.
+
+### Protected-Area Exception Report
+
+If a protected area must be changed, the work note, commit message, PR body, or final response must include a section titled exactly `MD 위반 사항`. This is the required operator-visible exception report for protected-contract changes.
+
+The `MD 위반 사항` section must include:
+
+- protected area touched
+- why the change could not be avoided
+- before/after behavior difference
+- order, risk, broker-truth, Claude-call, config, and env impact
+- replacement safety guard or contamination prevention
+- tests run and remaining risk
+
+If the protected change is discovered during implementation, stop broad editing and record `MD 위반 사항` before continuing beyond the minimum fix.
+
 ### Commit, PR, and Security Standards
 
 - Commit units should be one behavior change at a time. Recent history uses Conventional Commit prefixes such as `feat:` and `fix:` with short Korean or English summaries.
