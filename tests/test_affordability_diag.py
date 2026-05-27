@@ -115,6 +115,50 @@ class AffordabilityDiagTests(unittest.TestCase):
         self.assertEqual(self.bot._pending_order_reserved_cost_krw("KR"), 223_740.0)
         self.assertEqual(self.bot._market_budget_available("KR"), 276_260.0)
 
+    def test_us_market_budget_available_does_not_double_subtract_broker_orderable_open_orders(self) -> None:
+        self.bot.risk = type("Risk", (), {"cash": 1_000_000.0})()
+        self.bot.pending_orders = [
+            {
+                "market": "US",
+                "ticker": "AMD",
+                "side": "buy",
+                "order_no": "us-open-1",
+                "remaining_qty": 1,
+                "risk_price_krw": 500_000.0,
+            }
+        ]
+        self.bot._broker_state = {}
+        self.bot._broker_truth_market_snapshot = lambda market, force=False, ttl_sec=None: {
+            "missing": False,
+            "stale": False,
+            "error": "",
+            "account_summary": {"orderable_cash_krw": 500_000.0},
+            "open_orders": [
+                {
+                    "market": "US",
+                    "ticker": "AMD",
+                    "side": "buy",
+                    "order_no": "us-open-1",
+                    "remaining_qty": 1,
+                    "risk_price_krw": 500_000.0,
+                }
+            ],
+        }
+
+        self.assertEqual(self.bot._market_budget_available("US"), 500_000.0)
+
+        self.bot.pending_orders.append(
+            {
+                "market": "US",
+                "ticker": "MSFT",
+                "side": "buy",
+                "order_no": "local-only-1",
+                "remaining_qty": 1,
+                "risk_price_krw": 100_000.0,
+            }
+        )
+        self.assertEqual(self.bot._market_budget_available("US"), 400_000.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -571,6 +571,96 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertIn("GXO", bot.v2.registered_meta["trade_ready"])
         self.assertEqual(bot.v2.registered_meta["_pathb_wait_origins"]["GXO"]["origin_action"], "PULLBACK_WAIT")
 
+    def test_pathb_selection_max_entry_fallback_requires_account_reference(self) -> None:
+        bot = _make_bot()
+        with patch.dict(
+            os.environ,
+            {
+                "PATHB_FIXED_ORDER_KRW": "450000",
+                "PATHB_ALLOW_ONE_SHARE_OVER_BUDGET": "true",
+                "PATHB_ONE_SHARE_OVER_BUDGET_MAX_KRW": "700000",
+                "PATHB_ONE_SHARE_OVER_BUDGET_MAX_ACCOUNT_PCT": "30",
+            },
+            clear=False,
+        ):
+            self.assertEqual(TradingBot._pathb_selection_max_entry_krw(bot, "US"), 450_000)
+
+    def test_high_price_pullback_wait_default_keeps_pathb_wait_registration(self) -> None:
+        bot = _make_bot()
+        bot.usd_krw_rate = 1400
+        bot.pathb._pathb_registration_max_entry_krw = lambda market: 500_000
+        raw_meta = {
+            "watchlist": ["AMD"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {
+                    "ticker": "AMD",
+                    "action": "PULLBACK_WAIT",
+                    "confidence": 0.72,
+                    "price_targets": {
+                        "buy_zone_low": 494.0,
+                        "buy_zone_high": 498.0,
+                        "sell_target": 525.0,
+                        "stop_loss": 480.0,
+                        "hold_days": 1,
+                        "confidence": 0.72,
+                    },
+                }
+            ],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "US", ["AMD"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["_pathb_wait_tickers"], ["AMD"])
+        self.assertIn("AMD", bot.v2.registered_meta["trade_ready"])
+        self.assertEqual(bot.pathb.registered_meta["_pathb_wait_tickers"], ["AMD"])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "PULLBACK_WAIT")
+        price_gate = route["runtime_gate"]["pathb_selection_price_gate"]
+        self.assertTrue(price_gate["allowed"])
+        self.assertEqual(price_gate["reason"], "disabled")
+
+    def test_high_price_pullback_wait_prefilter_preserves_kr_shadow_when_enabled(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values["PATHB_SELECTION_PRICE_PREFILTER_ENABLED"] = True
+        bot.runtime_config.values["PATHB_KR_SHADOW_PLAN_ENABLED"] = True
+        bot.pathb._pathb_registration_max_entry_krw = lambda market: 500_000
+        raw_meta = {
+            "watchlist": ["005930"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {
+                    "ticker": "005930",
+                    "action": "PULLBACK_WAIT",
+                    "confidence": 0.72,
+                    "price_targets": {
+                        "buy_zone_low": 700000.0,
+                        "buy_zone_high": 710000.0,
+                        "sell_target": 760000.0,
+                        "stop_loss": 680000.0,
+                        "hold_days": 1,
+                        "confidence": 0.72,
+                    },
+                }
+            ],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["_pathb_wait_tickers"], [])
+        self.assertEqual(meta["_pathb_shadow_tickers"], ["005930"])
+        self.assertEqual(bot.pathb.registered_meta["_pathb_shadow_tickers"], ["005930"])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "WATCH")
+        self.assertEqual(route["reason"], "pathb_high_price_budget_block")
+        price_gate = route["runtime_gate"]["pathb_selection_price_gate"]
+        self.assertFalse(price_gate["allowed"])
+        self.assertEqual(price_gate["max_entry_krw"], 500_000)
+
     def test_pullback_wait_with_fade_context_does_not_register_pathb(self) -> None:
         bot = _make_bot()
         raw_meta = {

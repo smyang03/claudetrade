@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import sqlite3
 import tempfile
 from pathlib import Path
 
@@ -228,3 +229,18 @@ def test_counterfactual_tickers_filters_market_date_and_status() -> None:
 
         tickers = counterfactual_tickers(db, market="US", session_date="2026-05-19", statuses=["TRIGGERED", "PENDING"])
         assert tickers == ["AAPL"]
+
+
+def test_counterfactual_tickers_initializes_missing_counterfactual_table() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "candidate_audit.db"
+        conn = sqlite3.connect(str(db))
+        try:
+            conn.execute("CREATE TABLE candidate_audit_rows (id INTEGER PRIMARY KEY)")
+            conn.commit()
+        finally:
+            conn.close()
+
+        tickers = counterfactual_tickers(db, market="US", session_date="2026-05-19")
+
+        assert tickers == []

@@ -4513,6 +4513,123 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "stop_loss": plan.get("stop_loss"),
         }
 
+    def _pathb_selection_max_entry_krw(self, market: str) -> float:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        pathb = getattr(self, "pathb", None)
+        max_entry_getter = getattr(pathb, "_pathb_registration_max_entry_krw", None)
+        if callable(max_entry_getter):
+            try:
+                value = float(max_entry_getter(market_key) or 0.0)
+                if value > 0:
+                    return value
+            except Exception:
+                pass
+
+        config = getattr(pathb, "config", None)
+
+        def _cfg_float(attr: str, env_key: str, default: float) -> float:
+            raw = getattr(config, attr, None) if config is not None else None
+            if raw in (None, ""):
+                raw = os.getenv(env_key)
+            try:
+                return float(raw if raw not in (None, "") else default)
+            except Exception:
+                return float(default)
+
+        def _cfg_bool(attr: str, env_key: str, default: bool) -> bool:
+            raw = getattr(config, attr, None) if config is not None else None
+            if raw in (None, ""):
+                raw = os.getenv(env_key)
+            if raw in (None, ""):
+                return bool(default)
+            return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+        fixed_budget = max(0.0, _cfg_float("pathb_fixed_order_krw", "PATHB_FIXED_ORDER_KRW", 100_000.0))
+        max_entry = fixed_budget
+        if not _cfg_bool("pathb_allow_one_share_over_budget", "PATHB_ALLOW_ONE_SHARE_OVER_BUDGET", True):
+            return max_entry
+
+        one_share_cap = math.inf
+        max_notional = _cfg_float(
+            "pathb_one_share_over_budget_max_krw",
+            "PATHB_ONE_SHARE_OVER_BUDGET_MAX_KRW",
+            500_000.0,
+        )
+        if max_notional > 0:
+            one_share_cap = min(one_share_cap, max_notional)
+        account_pct = _cfg_float(
+            "pathb_one_share_over_budget_max_account_pct",
+            "PATHB_ONE_SHARE_OVER_BUDGET_MAX_ACCOUNT_PCT",
+            30.0,
+        )
+        if account_pct <= 0:
+            return max_entry
+        equity = 0.0
+        try:
+            equity_ctx = self._market_equity_reference_context(market_key)
+            equity = float((equity_ctx or {}).get("total_krw", 0) or 0)
+        except Exception:
+            equity = 0.0
+        if equity <= 0:
+            try:
+                equity = float(getattr(getattr(self, "risk", None), "cash", 0) or 0)
+            except Exception:
+                equity = 0.0
+        if equity <= 0:
+            return max_entry
+        one_share_cap = min(one_share_cap, equity * account_pct / 100.0)
+        if not math.isinf(one_share_cap):
+            max_entry = max(max_entry, one_share_cap)
+        return max_entry
+
+    def _pathb_selection_price_gate(
+        self,
+        market: str,
+        ticker: str,
+        price_targets: dict,
+    ) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        if not self._runtime_bool("PATHB_SELECTION_PRICE_PREFILTER_ENABLED", False):
+            return {"allowed": True, "reason": "disabled", "market": market_key, "ticker": key}
+        target = dict(price_targets or {})
+        try:
+            buy_zone_low = float(target.get("buy_zone_low") or 0.0)
+        except Exception:
+            buy_zone_low = 0.0
+        if buy_zone_low <= 0:
+            return {"allowed": True, "reason": "price_unavailable", "market": market_key, "ticker": key}
+
+        try:
+            buy_zone_low_krw = float(self._price_to_krw(buy_zone_low, market_key) or 0.0)
+        except Exception:
+            try:
+                rate = float(getattr(self, "usd_krw_rate", 0) or os.getenv("USD_KRW_RATE", "1350") or 1350)
+            except Exception:
+                rate = 1350.0
+            buy_zone_low_krw = buy_zone_low if market_key == "KR" else buy_zone_low * rate
+        max_entry_krw = self._pathb_selection_max_entry_krw(market_key)
+        payload = {
+            "allowed": True,
+            "reason": "",
+            "stage": "selection_pathb_price_prefilter",
+            "market": market_key,
+            "ticker": key,
+            "buy_zone_low": buy_zone_low,
+            "buy_zone_low_krw": buy_zone_low_krw,
+            "max_entry_krw": max_entry_krw,
+            "filter_scope": "pathb_wait",
+        }
+        if max_entry_krw > 0 and buy_zone_low_krw > max_entry_krw:
+            payload.update(
+                {
+                    "allowed": False,
+                    "reason": "pathb_high_price_budget_block",
+                    "blocker": "pathb_selection_price_above_budget_cap",
+                }
+            )
+        return payload
+
     def _candidate_action_runtime_execution_context(
         self,
         market: str,
@@ -5131,6 +5248,31 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "evidence_fetch_success_ratio": round(float(len(success_tickers)) / denominator, 4),
         }
 
+    def _push_same_day_stop_to_back(self, market: str, candidates: list[dict]) -> list[dict]:
+        """당일 손절 종목을 후보 리스트 맨 뒤로 이동하고 same_day_stopped=True 마킹.
+        analysts._curate_selection_candidates 가 이 플래그를 감지해 최후순위로 처리한다.
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        stopped = set((getattr(self, "_v2_same_day_stop_tickers", {}) or {}).get(market_key, set()) or set())
+        if not stopped:
+            return list(candidates or [])
+        normal: list[dict] = []
+        penalized: list[dict] = []
+        for c in candidates or []:
+            t = self._selection_ticker_key(market_key, (c or {}).get("ticker"))
+            if t and t in stopped:
+                c = dict(c)
+                c["same_day_stopped"] = True
+                penalized.append(c)
+            else:
+                normal.append(c)
+        if penalized:
+            log.info(
+                f"[selection] {market_key} 당일손절 {len(penalized)}개 → 후보 후순위 이동: "
+                f"{[c.get('ticker') for c in penalized[:5]]}"
+            )
+        return normal + penalized
+
     def _prepare_selection_prompt_pool_with_evidence(
         self,
         market: str,
@@ -5138,6 +5280,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         mode: str,
     ) -> tuple[list[dict], list[dict], dict, dict]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
+        # 당일 손절 종목을 후순위로 이동 (prompt cap 여유 없으면 자동 제외)
+        candidates = self._push_same_day_stop_to_back(market_key, candidates)
         alignment_enabled = self._runtime_bool("FINAL_PROMPT_EVIDENCE_ALIGNMENT_ENABLED", True)
         try:
             candidates_with_features = self._annotate_selection_execution_features(
@@ -5934,6 +6078,46 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     route_payload["original_action"] = str((action or {}).get("action") or "")
                     route_payload["demoted_to"] = "PROBE_READY"
                     route_payload["runtime_gate_reason"] = reason
+            if decision.final_action == "PULLBACK_WAIT":
+                target = dict((action or {}).get("price_targets") or {})
+                if not target:
+                    target = self._selection_price_target_for_ticker(market_key, price_targets, key)
+                price_gate = self._pathb_selection_price_gate(market_key, key, target)
+                execution_context["pathb_selection_price_gate"] = price_gate
+                route_payload["runtime_gate"] = execution_context
+                if not bool(price_gate.get("allowed", True)):
+                    reason = str(price_gate.get("reason") or "pathb_high_price_budget_block")
+                    _maybe_add_pathb_shadow(
+                        key,
+                        action_for_route,
+                        final_action="WATCH",
+                        reason=reason,
+                        runtime_context=execution_context,
+                    )
+                    route_payload.update(
+                        {
+                            "final_action": "WATCH",
+                            "route": None,
+                            "reason": reason,
+                            "blocker": reason,
+                            "demoted_to": "WATCH",
+                            "runtime_gate_reason": reason,
+                        }
+                    )
+                    warnings = list(route_payload.get("warnings") or [])
+                    for warning in ("pathb_selection_price_prefilter", reason):
+                        if warning not in warnings:
+                            warnings.append(warning)
+                    route_payload["warnings"] = warnings
+                    action_routes.append(route_payload)
+                    self._write_candidate_action_gate_event(
+                        market_key,
+                        key,
+                        action_for_route,
+                        route_payload,
+                        gate_info,
+                    )
+                    continue
             _maybe_add_pathb_shadow(
                 key,
                 action_for_route,
@@ -14647,12 +14831,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     values.append(value)
         return min(values) if values else 0.0
 
-    def _pending_order_reserved_cost_krw(self, market: str) -> float:
+    def _pending_order_reserved_cost_krw(
+        self,
+        market: str,
+        *,
+        include_broker_truth: bool = True,
+        exclude_order_nos: set[str] | None = None,
+    ) -> float:
         """Return cash reserved by local and broker-truth open buy orders."""
         market_key = "US" if str(market or "").upper() == "US" else "KR"
 
         reserved = 0.0
         seen_order_nos: set[str] = set()
+        excluded_order_nos = {str(order_no).strip() for order_no in (exclude_order_nos or set()) if str(order_no).strip()}
         for order in list(getattr(self, "pending_orders", []) or []):
             order_market = str(order.get("market", "KR") or "KR").strip().upper()
             if order_market != market_key:
@@ -14663,7 +14854,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             order_no = str(order.get("order_no") or order.get("execution_id") or "").strip()
             if order_no:
                 seen_order_nos.add(order_no)
+                if order_no in excluded_order_nos:
+                    continue
             reserved += self._order_reserved_cost_krw(order, market_key)
+        if not include_broker_truth:
+            return max(0.0, reserved)
         for order in self._broker_truth_open_buy_orders(market_key):
             side = str(order.get("side") or order.get("order_side") or "").strip().lower()
             if side in {"sell", "s", "ask", "매도"} or "sell" in side:
@@ -14676,11 +14871,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     def _market_budget_available(self, market: str) -> float:
         """Return available shared cash budget after open buy-order reservations."""
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
         cash = max(0.0, float(getattr(getattr(self, "risk", None), "cash", 0.0) or 0.0))
-        broker_orderable = self._broker_orderable_cash_krw(market)
+        broker_orderable = self._broker_orderable_cash_krw(market_key)
+        us_broker_orderable_nets_open_orders = market_key == "US" and broker_orderable > 0
         if broker_orderable > 0:
             cash = min(cash, broker_orderable)
-        reserved = self._pending_order_reserved_cost_krw(market)
+        netted_order_nos: set[str] = set()
+        if us_broker_orderable_nets_open_orders:
+            for order in self._broker_truth_open_buy_orders(market_key):
+                side = str(order.get("side") or order.get("order_side") or "").strip().lower()
+                if side in {"sell", "s", "ask", "매도"} or "sell" in side:
+                    continue
+                order_no = str(order.get("order_no") or order.get("execution_id") or "").strip()
+                if order_no:
+                    netted_order_nos.add(order_no)
+        reserved = self._pending_order_reserved_cost_krw(
+            market_key,
+            include_broker_truth=not us_broker_orderable_nets_open_orders,
+            exclude_order_nos=netted_order_nos,
+        )
         return max(0.0, cash - reserved)
     def is_claude_reinvoke_enabled(self) -> bool:
         self._refresh_claude_control()

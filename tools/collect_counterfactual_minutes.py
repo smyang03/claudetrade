@@ -8,6 +8,7 @@ import sqlite3
 import sys
 import time
 from collections import Counter
+from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -20,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from bot.session_date import KST, resolve_session_date_str
+from audit.candidate_counterfactual_store import CandidateCounterfactualStore
 from runtime_paths import get_runtime_path
 
 
@@ -416,7 +418,8 @@ def counterfactual_tickers(
         WHERE {' AND '.join(where)}
         ORDER BY ticker
     """
-    with sqlite3.connect(str(path)) as conn:
+    CandidateCounterfactualStore(path)
+    with closing(sqlite3.connect(str(path))) as conn:
         return [normalize_ticker(market_key, row[0]) for row in conn.execute(sql, params).fetchall() if row[0]]
 
 

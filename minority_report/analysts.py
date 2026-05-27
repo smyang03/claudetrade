@@ -846,17 +846,20 @@ def _selection_prompt_diversity_caps(market: str) -> dict[str, int]:
 
 
 def _curate_selection_candidates(candidates: list[dict], market: str, prompt_cap: int) -> list[dict]:
-    if len(candidates or []) <= prompt_cap:
-        _annotate_candidate_prompt_features(candidates or [])
-        return list(candidates or [])
+    raw_candidates = list(candidates or [])
+    if len(raw_candidates) <= prompt_cap:
+        _annotate_candidate_prompt_features(raw_candidates)
+        regular = [candidate for candidate in raw_candidates if not bool((candidate or {}).get("same_day_stopped"))]
+        stopped = [candidate for candidate in raw_candidates if bool((candidate or {}).get("same_day_stopped"))]
+        return regular + stopped
 
     caps = _selection_prompt_diversity_caps(market)
-    _annotate_candidate_prompt_features(candidates or [])
+    _annotate_candidate_prompt_features(raw_candidates)
     chosen: list[dict] = []
     deferred: list[dict] = []
     hard_pin_candidates = [
         candidate
-        for candidate in candidates or []
+        for candidate in raw_candidates
         if str((candidate or {}).get("preopen_pin_tier", "") or "").strip().upper() == "HARD"
         or bool((candidate or {}).get("preopen_pinned"))
     ]
@@ -866,6 +869,9 @@ def _curate_selection_candidates(candidates: list[dict], market: str, prompt_cap
         if not ticker or ticker in hard_pin_seen:
             continue
         hard_pin_seen.add(ticker)
+        if bool((candidate or {}).get("same_day_stopped")):
+            deferred.append(candidate)
+            continue
         chosen.append(candidate)
         if len(chosen) >= prompt_cap:
             return chosen[:prompt_cap]
@@ -875,9 +881,13 @@ def _curate_selection_candidates(candidates: list[dict], market: str, prompt_cap
     low_liquidity_count = 0
     kosdaq_count = 0
 
-    for candidate in candidates or []:
+    for candidate in raw_candidates:
         ticker = str((candidate or {}).get("ticker", "") or "").strip().upper()
         if ticker and ticker in hard_pin_seen:
+            continue
+        # 당일 손절 종목은 다른 후보로 캡을 채운 뒤에만 편입 (최후순위)
+        if bool(candidate.get("same_day_stopped")):
+            deferred.append(candidate)
             continue
         category = str(candidate.get("category", "") or "").strip().lower()
         sector = str(candidate.get("sector", "") or "").strip().lower()

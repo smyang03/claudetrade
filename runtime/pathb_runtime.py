@@ -888,6 +888,107 @@ class PathBRuntime:
         )
         return [token for token in risky_tokens if token in text]
 
+    def _kr_try_upgrade_post_open_features(self, plan: PricePlan) -> None:
+        """first_observed 등 비완전 품질 KR 후보에 대해 intraday_minute_cache로 재계산 시도.
+
+        분봉 데이터가 있으면 OR/VWAP/volume 지표를 계산해 _last_post_open_features_by_ticker에 머지.
+        종목당 cooldown(기본 120s)을 두어 scan 루프마다 API 호출하지 않도록 제한.
+        """
+        bot = getattr(self, "bot", None)
+        if bot is None:
+            return
+        if not self._runtime_bool("KR_PATHB_FEATURE_UPGRADE_ENABLED", True):
+            return
+        key = self._ticker_key("KR", plan.ticker)
+        # 현재 features 품질 확인
+        try:
+            raw = ((getattr(bot, "_last_post_open_features_by_ticker", {}) or {}).get("KR") or {}).get(key)
+            if not isinstance(raw, dict):
+                raw = ((getattr(bot, "_last_post_open_features_by_ticker", {}) or {}).get("KR") or {}).get(plan.ticker)
+            current_quality = str((raw or {}).get("data_quality") or "").strip().lower()
+        except Exception:
+            current_quality = ""
+        if current_quality == "minute_complete":
+            return  # 이미 완전 품질 — 업그레이드 불필요
+        # per-ticker 쿨다운 체크
+        cooldown_store = getattr(self, "_kr_pathb_feature_upgrade_at", None)
+        if not isinstance(cooldown_store, dict):
+            cooldown_store = {}
+            self._kr_pathb_feature_upgrade_at = cooldown_store
+        cooldown_sec = max(30, _env_int("KR_PATHB_FEATURE_UPGRADE_COOLDOWN_SEC", 120))
+        last_upgrade = cooldown_store.get(key, 0.0)
+        if time.time() - last_upgrade < cooldown_sec:
+            return
+        try:
+            cache_getter = getattr(bot, "_ensure_intraday_minute_cache", None)
+            cache = cache_getter() if callable(cache_getter) else getattr(bot, "_intraday_minute_cache", None)
+            if cache is None:
+                return
+            session_date = self._session_date("KR")
+            try:
+                regular_open_dt = bot._market_regular_open_dt("KR", session_date=session_date)
+                regular_open_str = regular_open_dt.astimezone(KST).replace(tzinfo=None).isoformat(timespec="seconds")
+            except Exception:
+                # fallback: session_date YYYYMMDD → 09:00
+                sd = str(session_date)
+                if len(sd) == 8:
+                    regular_open_str = f"{sd[:4]}-{sd[4:6]}-{sd[6:8]}T09:00:00"
+                else:
+                    regular_open_str = f"{sd[:10]}T09:00:00"
+            known_at_str = datetime.now(KST).replace(tzinfo=None).isoformat(timespec="seconds")
+            token = _bot_token(bot, "KR")
+            result = cache.get_many(
+                market="KR",
+                tickers=[plan.ticker],
+                session_date=session_date,
+                token=token or None,
+                regular_open=regular_open_str,
+                known_at=known_at_str,
+                opening_range_min=10,
+                provider_name="",
+            )
+            features_map = dict(result.get("features_by_ticker") or {})
+            fetched = features_map.get(plan.ticker) or features_map.get(key)
+            if isinstance(fetched, dict) and fetched:
+                new_quality = str(fetched.get("data_quality") or "").strip().lower()
+                if new_quality in {"minute_complete", "minute_partial"}:
+                    merge_fn = getattr(bot, "_merge_last_post_open_features", None)
+                    if callable(merge_fn):
+                        merge_fn("KR", {plan.ticker: fetched})
+                    log.info(
+                        f"[PathB KR feature upgrade] {plan.ticker} {current_quality or 'unknown'} → {new_quality}"
+                    )
+        except Exception as exc:
+            log.debug(f"[PathB KR feature upgrade] {plan.ticker} 실패: {exc}")
+        finally:
+            cooldown_store[key] = time.time()
+
+    def _pathb_risk_origin_block_log_allowed(
+        self,
+        plan_data: dict,
+        current_reason: str,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        cooldown_sec = max(0, _env_int("PATHB_RISK_ORIGIN_BLOCK_LOG_COOLDOWN_SEC", 180))
+        if cooldown_sec <= 0:
+            return True
+        reason = str(current_reason or "")
+        last_reason = str((plan_data or {}).get("last_submit_block_log_reason") or "")
+        last_at_str = str((plan_data or {}).get("last_submit_block_log_at") or "")
+        if last_reason != reason or not last_at_str:
+            return True
+        try:
+            last_dt = datetime.fromisoformat(last_at_str)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=KST)
+            now_dt = now or datetime.now(KST)
+            if now_dt.tzinfo is None:
+                now_dt = now_dt.replace(tzinfo=KST)
+            return (now_dt - last_dt).total_seconds() >= cooldown_sec
+        except Exception:
+            return True
+
     def _kr_pathb_risky_origin_confirmation_gate(self, plan: PricePlan, signal: EntrySignal) -> dict[str, Any]:
         if str(getattr(plan, "market", "") or "").upper() != "KR":
             return {"enabled": False, "allowed": True, "reason": "not_kr"}
@@ -896,6 +997,9 @@ class PathBRuntime:
         tokens = self._kr_pathb_risky_origin_tokens(plan)
         if not tokens:
             return {"enabled": True, "allowed": True, "reason": "origin_not_risky", "risky_tokens": []}
+
+        # first_observed 등 비완전 품질 후보의 분봉 데이터 업그레이드 시도
+        self._kr_try_upgrade_post_open_features(plan)
 
         key = self._ticker_key("KR", plan.ticker)
         features = {}
@@ -1693,29 +1797,46 @@ class PathBRuntime:
             self._audit_pathb_zone_hit(plan, signal)
             confirmation_gate = self._kr_pathb_risky_origin_confirmation_gate(plan, signal)
             if confirmation_gate.get("allowed") is False:
+                current_reason = str(confirmation_gate.get("reason") or "KR_PATHB_RISK_ORIGIN_CONFIRMATION_REQUIRED")
+                plan_data = dict(run.get("plan") or {})
+                blocked_at = datetime.now(KST)
+                should_log_block = self._pathb_risk_origin_block_log_allowed(
+                    plan_data,
+                    current_reason,
+                    now=blocked_at,
+                )
+                plan_update = {
+                    "last_submit_block_reason": current_reason,
+                    "last_submit_block_at": blocked_at.isoformat(timespec="seconds"),
+                    "last_submit_block_gate": confirmation_gate,
+                }
+                if should_log_block:
+                    plan_update.update(
+                        {
+                            "last_submit_block_log_reason": current_reason,
+                            "last_submit_block_log_at": blocked_at.isoformat(timespec="seconds"),
+                        }
+                    )
                 self.store.update_path_run(
                     plan.path_run_id,
-                    plan={
-                        "last_submit_block_reason": str(confirmation_gate.get("reason") or ""),
-                        "last_submit_block_at": datetime.now(KST).isoformat(timespec="seconds"),
-                        "last_submit_block_gate": confirmation_gate,
-                    },
+                    plan=plan_update,
                     merge_plan=True,
                 )
-                self._record_blocked(
-                    market,
-                    plan.ticker,
-                    plan.decision_id,
-                    str(confirmation_gate.get("reason") or "KR_PATHB_RISK_ORIGIN_CONFIRMATION_REQUIRED"),
-                    {
-                        **self._execution_safety_payload(),
-                        **confirmation_gate,
-                        "price": float(current or 0.0),
-                        "limit_price": float(signal.limit_price or 0.0),
-                        "signal_reason": str(signal.reason or ""),
-                    },
-                    plan.path_run_id,
-                )
+                if should_log_block:
+                    self._record_blocked(
+                        market,
+                        plan.ticker,
+                        plan.decision_id,
+                        current_reason,
+                        {
+                            **self._execution_safety_payload(),
+                            **confirmation_gate,
+                            "price": float(current or 0.0),
+                            "limit_price": float(signal.limit_price or 0.0),
+                            "signal_reason": str(signal.reason or ""),
+                        },
+                        plan.path_run_id,
+                    )
                 continue
             self._submit_buy(plan, signal)
         if kr_blocked_tickers:
@@ -2871,6 +2992,7 @@ class PathBRuntime:
             drop_reask_pct = max(0.0, _env_float("PATHB_AUTO_SELL_REVIEW_HOLD_REASK_DROP_PCT", 0.5))
             if drop_reask_pct > 0 and current_native <= previous_price * (1.0 - drop_reask_pct / 100.0):
                 return None
+        review_price_native = previous_price if previous_price > 0 else float(current_native or 0.0)
         detail = (
             f"pathb_auto_sell_review_cooldown:"
             f"until={until.isoformat(timespec='seconds')};"
@@ -2888,7 +3010,7 @@ class PathBRuntime:
             "auto_sell_review_cooldown_until": until.isoformat(timespec="seconds"),
             "auto_sell_review_cooldown_checked_at": now.isoformat(timespec="seconds"),
             "auto_sell_review_cooldown_active": True,
-            "auto_sell_review_price_native": float(current_native or 0.0),
+            "auto_sell_review_price_native": float(review_price_native or 0.0),
         }
 
     @staticmethod
