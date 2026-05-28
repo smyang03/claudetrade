@@ -456,13 +456,28 @@ class PathBSellReconcileTests(unittest.TestCase):
                 token_provider=lambda: "token",
                 balance_provider=lambda market, force: {"cash": 0, "stocks": []},
                 ccld_provider=lambda market, day: [
-                    {"ticker": "SNAP", "side": "sell", "order_no": "sell2", "order_qty": 12, "filled_qty": 12, "remaining_qty": 0, "avg_price": 6.1}
+                    {
+                        "ticker": "SNAP",
+                        "side": "sell",
+                        "order_no": "sell2",
+                        "order_qty": 12,
+                        "filled_qty": 12,
+                        "remaining_qty": 0,
+                        "avg_price": 6.1,
+                        "order_date": "20260427",
+                        "fill_time": "230500",
+                    }
                 ],
                 date_provider=lambda market: "2026-04-27",
             )
             plan = _plan()
             runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain")
             runtime.adapter.mark_filled(plan.path_run_id, price=6.0, qty=12, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain")
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={"filled_at": "2026-04-27T14:00:00+00:00"},
+                merge_plan=True,
+            )
 
             summary = runtime.reconcile_filled_positions("US", force=True)
             run = runtime.store.find_path_run(plan.path_run_id)
@@ -470,6 +485,104 @@ class PathBSellReconcileTests(unittest.TestCase):
             self.assertEqual(summary["closed"], 1)
             self.assertEqual(run["status"], "CLOSED")
             self.assertTrue(run["plan"]["stale_filled_recovered"])
+
+    def test_stale_filled_ignores_ticker_only_sell_fill_before_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            bot = _Bot()
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.broker_truth = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=Path(tmp) / "broker_truth.json",
+                token_provider=lambda: "token",
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "SNAP",
+                        "side": "sell",
+                        "order_no": "old-sell",
+                        "order_qty": 12,
+                        "filled_qty": 12,
+                        "remaining_qty": 0,
+                        "avg_price": 6.1,
+                        "order_date": "20260427",
+                        "fill_time": "225900",
+                    }
+                ],
+                date_provider=lambda market: "2026-04-27",
+            )
+            plan = _plan()
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain")
+            runtime.adapter.mark_filled(plan.path_run_id, price=6.0, qty=12, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain")
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={"filled_at": "2026-04-27T14:00:00+00:00"},
+                merge_plan=True,
+            )
+
+            summary = runtime.reconcile_filled_positions("US", force=True)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["closed"], 0)
+            self.assertEqual(summary["order_unknown"], 1)
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["plan"]["ignored_pre_entry_sell_fill_count"], 1)
+            self.assertFalse(run["plan"]["broker_today_sell_fill_evidence"])
+
+    def test_stale_filled_keeps_local_position_when_prior_sell_fill_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            bot = _Bot()
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.broker_truth = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=Path(tmp) / "broker_truth.json",
+                token_provider=lambda: "token",
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "SNAP",
+                        "side": "sell",
+                        "order_no": "old-sell",
+                        "order_qty": 12,
+                        "filled_qty": 12,
+                        "remaining_qty": 0,
+                        "avg_price": 6.1,
+                        "order_date": "20260427",
+                        "fill_time": "225900",
+                    }
+                ],
+                date_provider=lambda market: "2026-04-27",
+            )
+            plan = _plan()
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain")
+            runtime.adapter.mark_filled(plan.path_run_id, price=6.0, qty=12, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain")
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={"filled_at": "2026-04-27T14:00:00+00:00"},
+                merge_plan=True,
+            )
+            bot.risk.positions.append(
+                {
+                    "ticker": plan.ticker,
+                    "qty": 12,
+                    "entry": 6000,
+                    "display_avg_price": 6.0,
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                }
+            )
+
+            summary = runtime.reconcile_filled_positions("US", force=True)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["closed"], 0)
+            self.assertEqual(summary["kept_open_local"], 1)
+            self.assertEqual(run["status"], "FILLED")
+            self.assertEqual(len(bot.risk.positions), 1)
+            self.assertEqual(bot.risk.closed, [])
 
 
 if __name__ == "__main__":

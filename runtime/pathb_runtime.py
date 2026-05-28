@@ -5611,15 +5611,26 @@ class PathBRuntime:
         if positions:
             return "kept_open"
         fills = self._broker_rows_for_ticker(market_data.get("today_fills", []), market, ticker)
-        sell_fills = self._matching_sell_fills(fills, execution_id="")
-        filled_qty = sum(int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) for row in sell_fills)
         plan_json = run.get("plan") or {}
+        entry_filled_at = self._pathb_entry_fill_time(run, local_pos)
+        broker_truth_at = self._parse_kst_iso(str(market_data.get("last_success_at", "") or "").replace("Z", "+00:00"))
+        broker_truth_after_entry = entry_filled_at is None or broker_truth_at is None or broker_truth_at >= entry_filled_at
+        exit_execution_id = str(plan_json.get("exit_execution_id", "") or "").strip()
+        raw_sell_fills = self._matching_sell_fills(
+            fills,
+            execution_id=exit_execution_id,
+            strict_execution=bool(exit_execution_id),
+        )
+        sell_fills, ignored_sell_fills = self._causal_pathb_sell_fills(raw_sell_fills, entry_filled_at, strict=bool(exit_execution_id))
+        filled_qty = sum(int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) for row in sell_fills)
         requested_qty = int(plan_json.get("filled_qty", 0) or plan_json.get("partial_entry_qty", 0) or 0)
-        if sell_fills and (requested_qty <= 0 or filled_qty >= requested_qty):
+        if broker_truth_after_entry and sell_fills and (requested_qty <= 0 or filled_qty >= requested_qty):
             evidence = {
                 "broker_truth_last_success_at": str(market_data.get("last_success_at", "") or ""),
+                "entry_filled_at": entry_filled_at.isoformat(timespec="seconds") if entry_filled_at is not None else "",
                 "broker_sell_fill_qty": int(filled_qty),
                 "broker_position_qty_after_sell": 0,
+                "ignored_pre_entry_sell_fill_count": int(len(ignored_sell_fills)),
                 "stale_filled_recovered": True,
             }
             self._finalize_pathb_sell_close(
@@ -5648,7 +5659,10 @@ class PathBRuntime:
             {
                 "broker_position_evidence": False,
                 "broker_today_sell_fill_evidence": False,
+                "broker_snapshot_before_entry_fill": bool(not broker_truth_after_entry),
+                "entry_filled_at": entry_filled_at.isoformat(timespec="seconds") if entry_filled_at is not None else "",
                 "filled_position_missing": True,
+                "ignored_pre_entry_sell_fill_count": int(len(ignored_sell_fills)),
             },
             next_retry=True,
         )
@@ -6395,6 +6409,71 @@ class PathBRuntime:
             if matched or strict_execution:
                 return matched
         return rows
+
+    def _causal_pathb_sell_fills(
+        self,
+        rows: list[dict[str, Any]],
+        entry_filled_at: datetime | None,
+        *,
+        strict: bool,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        if strict:
+            return rows, []
+        matched: list[dict[str, Any]] = []
+        ignored: list[dict[str, Any]] = []
+        for row in rows:
+            fill_at = self._broker_fill_time(row)
+            if entry_filled_at is not None and fill_at is not None and fill_at > entry_filled_at:
+                matched.append(row)
+            else:
+                ignored.append(row)
+        return matched, ignored
+
+    def _pathb_entry_fill_time(self, run: dict[str, Any], local_pos: dict[str, Any] | None = None) -> datetime | None:
+        plan_json = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+        sources: list[Any] = [
+            plan_json.get("filled_at"),
+            plan_json.get("partial_filled_at"),
+            plan_json.get("entry_filled_at"),
+        ]
+        if local_pos:
+            sources.extend(
+                [
+                    local_pos.get("pathb_filled_at"),
+                    local_pos.get("filled_at"),
+                    local_pos.get("created_at"),
+                ]
+            )
+        sources.extend([run.get("updated_at"), run.get("created_at")])
+        for raw in sources:
+            parsed = self._parse_kst_iso(str(raw or "").replace("Z", "+00:00"))
+            if parsed is not None:
+                return parsed
+        return None
+
+    def _broker_fill_time(self, row: dict[str, Any]) -> datetime | None:
+        for key in ("filled_at", "fill_at", "executed_at", "created_at"):
+            parsed = self._parse_kst_iso(str(row.get(key) or "").replace("Z", "+00:00"))
+            if parsed is not None:
+                return parsed
+        date_raw = str(row.get("order_date") or row.get("date") or "").strip()
+        time_raw = str(row.get("fill_time") or row.get("order_time") or "").strip()
+        if not date_raw or not time_raw:
+            return None
+        date_digits = "".join(ch for ch in date_raw if ch.isdigit())
+        time_digits = "".join(ch for ch in time_raw if ch.isdigit())
+        if len(date_digits) != 8 or len(time_digits) < 4:
+            return None
+        try:
+            year = int(date_digits[0:4])
+            month = int(date_digits[4:6])
+            day = int(date_digits[6:8])
+            hour = int(time_digits[0:2])
+            minute = int(time_digits[2:4])
+            second = int(time_digits[4:6]) if len(time_digits) >= 6 else 0
+            return datetime(year, month, day, hour, minute, second, tzinfo=KST)
+        except Exception:
+            return None
 
     def _matching_sell_open_orders(
         self,

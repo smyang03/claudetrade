@@ -2668,6 +2668,8 @@ class PathBRuntimeTests(unittest.TestCase):
                         "filled_qty": 2,
                         "remaining_qty": 0,
                         "avg_price": 53_000,
+                        "order_date": "20260427",
+                        "fill_time": "100000",
                     }
                 ] if market == "KR" else [],
                 date_provider=lambda market: "2026-04-27",
@@ -2692,6 +2694,11 @@ class PathBRuntimeTests(unittest.TestCase):
                 execution_id="buy1",
                 runtime_mode="live",
                 brain_snapshot_id="brain1",
+            )
+            store.update_path_run(
+                plan.path_run_id,
+                plan={"filled_at": "2026-04-27T09:30:00+09:00"},
+                merge_plan=True,
             )
 
             summary = runtime.recover_on_startup()
