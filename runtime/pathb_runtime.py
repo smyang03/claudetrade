@@ -6271,18 +6271,27 @@ class PathBRuntime:
             pos = self._find_position(market, ticker, path_run_id=path_run_id) or self._find_position(market, ticker)
             requested_qty = int((pos or {}).get("qty", 0) or 0)
         execution_id = str(plan_json.get("exit_execution_id", "") or "")
-        sell_fills = self._matching_sell_fills(
+        local_pos = self._find_position(market, ticker, path_run_id=path_run_id) or self._find_position(market, ticker)
+        entry_filled_at = self._pathb_entry_fill_time(run, local_pos)
+        raw_sell_fills = self._matching_sell_fills(
             fills,
             execution_id=execution_id,
             strict_execution=bool(execution_id),
+        )
+        sell_fills, ignored_sell_fills = self._causal_pathb_sell_fills(
+            raw_sell_fills,
+            entry_filled_at,
+            strict=bool(execution_id),
         )
         filled_qty = sum(int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) for row in sell_fills)
         fill_price = self._weighted_fill_price(sell_fills)
         remaining_balance_qty = self._broker_position_qty(positions)
         evidence = {
             "broker_truth_last_success_at": str(market_data.get("last_success_at", "") or ""),
+            "entry_filled_at": entry_filled_at.isoformat(timespec="seconds") if entry_filled_at is not None else "",
             "broker_sell_fill_qty": int(filled_qty),
             "broker_position_qty_after_sell": int(remaining_balance_qty),
+            "ignored_pre_entry_sell_fill_count": int(len(ignored_sell_fills)),
             "broker_open_order_evidence": bool(self._matching_sell_open_orders(open_orders, execution_id=execution_id)),
             "exit_execution_id": execution_id,
         }
@@ -6417,13 +6426,15 @@ class PathBRuntime:
         *,
         strict: bool,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        if strict:
+        if entry_filled_at is None:
             return rows, []
         matched: list[dict[str, Any]] = []
         ignored: list[dict[str, Any]] = []
         for row in rows:
             fill_at = self._broker_fill_time(row)
-            if entry_filled_at is not None and fill_at is not None and fill_at > entry_filled_at:
+            if fill_at is not None and fill_at > entry_filled_at:
+                matched.append(row)
+            elif strict and fill_at is None:
                 matched.append(row)
             else:
                 ignored.append(row)
@@ -7332,10 +7343,17 @@ class PathBRuntime:
             pos = self._find_position(plan.market, plan.ticker, path_run_id=path_run_id) or self._find_position(plan.market, plan.ticker)
             requested_qty = int((pos or {}).get("qty", 0) or 0)
 
-        sell_fills = self._matching_sell_fills(
+        local_pos = self._find_position(plan.market, plan.ticker, path_run_id=path_run_id) or self._find_position(plan.market, plan.ticker)
+        entry_filled_at = self._pathb_entry_fill_time(run, local_pos)
+        raw_sell_fills = self._matching_sell_fills(
             fills,
             execution_id=execution_id,
             strict_execution=bool(execution_id),
+        )
+        sell_fills, ignored_sell_fills = self._causal_pathb_sell_fills(
+            raw_sell_fills,
+            entry_filled_at,
+            strict=bool(execution_id),
         )
         filled_qty = sum(int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) for row in sell_fills)
         remaining_balance_qty = self._broker_position_qty(positions)
@@ -7348,9 +7366,11 @@ class PathBRuntime:
             **evidence_payload,
             "order_unknown_side": "exit",
             "exit_execution_id": execution_id,
+            "entry_filled_at": entry_filled_at.isoformat(timespec="seconds") if entry_filled_at is not None else "",
             "broker_today_sell_fill_evidence": bool(sell_fills),
             "broker_sell_fill_qty": int(filled_qty),
             "broker_position_qty_after_sell": int(remaining_balance_qty),
+            "ignored_pre_entry_sell_fill_count": int(len(ignored_sell_fills)),
             "broker_open_sell_order_evidence": bool(open_matches),
         }
 

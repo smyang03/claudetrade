@@ -26,6 +26,87 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _connect_read_only(path: Path) -> sqlite3.Connection:
+    sidecars = (Path(f"{path}-wal"), Path(f"{path}-shm"))
+    options = "mode=ro" if any(sidecar.exists() for sidecar in sidecars) else "mode=ro&immutable=1"
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?{options}", timeout=5.0, uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type='table' AND name=?
+        LIMIT 1
+        """,
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    if not _table_exists(conn, table_name):
+        return set()
+    return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table_name})")}
+
+
+def _select_expr(columns: set[str], column_name: str, default_sql: str = "NULL") -> str:
+    return column_name if column_name in columns else f"{default_sql} AS {column_name}"
+
+
+def _empty_update_summary(
+    *,
+    target: Path,
+    session_date: str,
+    market: str,
+    runtime_mode: str,
+    dry_run: bool,
+    force_recompute: bool,
+    horizons: tuple[int, ...],
+    label_generated_at: str,
+    next_due_at: str,
+    status: str,
+    reason: str = "",
+    missing_columns: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "status": status,
+        "db_path": str(target),
+        "session_date": session_date,
+        "market": str(market or "").upper(),
+        "runtime_mode": str(runtime_mode or "live").lower(),
+        "dry_run": bool(dry_run),
+        "force_recompute": bool(force_recompute),
+        "candidate_rows": 0,
+        "outcome_rows": 0,
+        "planned_outcome_rows": 0,
+        "write_rows": 0,
+        "written_rows": 0,
+        "planned_insert_count": 0,
+        "planned_update_count": 0,
+        "planned_overwrite_existing_non_null_count": 0,
+        "skipped_existing_non_null_rows": 0,
+        "skipped_existing_non_null_examples": [],
+        "non_null_return_rows": 0,
+        "horizons": list(horizons),
+        "status_counts": {},
+        "coverage_by_horizon": {},
+        "promotion_gate_state": "not_applicable",
+        "label_generated_at": label_generated_at,
+        "last_success_at": "",
+        "next_due_at": next_due_at,
+        "outcome_health": status,
+    }
+    if reason:
+        summary["reason"] = reason
+    if missing_columns:
+        summary["missing_columns"] = missing_columns
+    return summary
+
+
 def _parse_dt(value: Any) -> datetime | None:
     raw = str(value or "").strip()
     if not raw:
@@ -96,13 +177,18 @@ def _load_candidate_rows(
     runtime_mode: str = "live",
 ) -> list[dict[str, Any]]:
     where, params = _candidate_filters(session_date=session_date, market=market, runtime_mode=runtime_mode)
+    columns = _table_columns(conn, "audit_candidate_rows")
+    classification = _select_expr(columns, "classification")
+    consensus_mode = _select_expr(columns, "consensus_mode")
+    strength_capture_shadow = _select_expr(columns, "strength_capture_shadow", "0")
+    strength_capture_rules = _select_expr(columns, "strength_capture_rules")
     return [
         dict(row)
         for row in conn.execute(
             f"""
             SELECT candidate_key, call_id, runtime_mode, market, session_date,
-                   known_at, ticker, price, classification,
-                   consensus_mode, strength_capture_shadow, strength_capture_rules
+                   known_at, ticker, price, {classification},
+                   {consensus_mode}, {strength_capture_shadow}, {strength_capture_rules}
             FROM audit_candidate_rows
             WHERE {where}
             ORDER BY session_date, market, ticker, known_at
@@ -160,6 +246,8 @@ def _load_existing_outcomes(
     horizons: tuple[int, ...],
 ) -> dict[tuple[str, int], dict[str, Any]]:
     if not candidate_keys or not horizons:
+        return {}
+    if not _table_exists(conn, "audit_candidate_outcomes"):
         return {}
     horizon_values = tuple(sorted({int(value) for value in horizons}))
     horizon_placeholders = ",".join("?" for _ in horizon_values)
@@ -450,15 +538,63 @@ def update_candidate_audit_outcomes(
     force_recompute: bool = False,
 ) -> dict[str, Any]:
     target = Path(db_path) if db_path else get_runtime_path("data", "audit", "candidate_audit.db")
-    store = CandidateAuditStore(target)
     label_generated_at = _utc_now()
     next_due_at = (datetime.now(timezone.utc) + timedelta(minutes=max(horizons or DEFAULT_HORIZONS))).isoformat(timespec="seconds")
     min_samples = dict(MIN_SAMPLES_BY_HORIZON)
     if min_samples_by_horizon:
         min_samples.update({int(k): int(v) for k, v in min_samples_by_horizon.items()})
 
-    conn = store.connect()
+    if dry_run and not target.exists():
+        summary = _empty_update_summary(
+            target=target,
+            session_date=session_date,
+            market=market,
+            runtime_mode=runtime_mode,
+            dry_run=dry_run,
+            force_recompute=force_recompute,
+            horizons=horizons,
+            label_generated_at=label_generated_at,
+            next_due_at=next_due_at,
+            status="db_not_found",
+            reason="dry_run_read_only_target_missing",
+        )
+        if write_report:
+            summary["report_paths"] = _write_outcome_report(summary, report_dir=report_dir)
+        return summary
+
+    store = None if dry_run else CandidateAuditStore(target)
+    conn = _connect_read_only(target) if dry_run else store.connect()
     try:
+        required_candidate_columns = {
+            "candidate_key",
+            "call_id",
+            "runtime_mode",
+            "market",
+            "session_date",
+            "known_at",
+            "ticker",
+            "price",
+        }
+        candidate_columns = _table_columns(conn, "audit_candidate_rows")
+        missing_candidate_columns = sorted(required_candidate_columns - candidate_columns)
+        if missing_candidate_columns:
+            summary = _empty_update_summary(
+                target=target,
+                session_date=session_date,
+                market=market,
+                runtime_mode=runtime_mode,
+                dry_run=dry_run,
+                force_recompute=force_recompute,
+                horizons=horizons,
+                label_generated_at=label_generated_at,
+                next_due_at=next_due_at,
+                status="schema_missing",
+                reason="audit_candidate_rows_missing_or_incomplete",
+                missing_columns={"audit_candidate_rows": missing_candidate_columns},
+            )
+            if write_report:
+                summary["report_paths"] = _write_outcome_report(summary, report_dir=report_dir)
+            return summary
         candidates = _load_candidate_rows(
             conn,
             session_date=session_date,
@@ -553,6 +689,7 @@ def update_candidate_audit_outcomes(
         promotion_gate_state = "pass" if daily_non_null > 0 else "blocked_label_coverage"
 
     summary = {
+        "status": "ok",
         "db_path": str(target),
         "session_date": session_date,
         "market": str(market or "").upper(),

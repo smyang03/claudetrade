@@ -132,6 +132,15 @@ def _make_bot() -> TradingBot:
 
 
 class CandidateActionLiveMappingTests(unittest.TestCase):
+    def test_discovery_live_allow_flags_remain_off_in_start_config(self) -> None:
+        config_path = Path(__file__).resolve().parents[1] / "config" / "v2_start_config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        env_overrides = config.get("env_overrides") or {}
+
+        self.assertEqual(env_overrides.get("DISCOVERY_ALLOW_BUY_READY"), "false")
+        self.assertEqual(env_overrides.get("DISCOVERY_ALLOW_PROBE_READY"), "false")
+        self.assertEqual(env_overrides.get("DISCOVERY_ALLOW_PULLBACK_WAIT"), "false")
+
     def test_balanced_mode_family_is_not_risk_off(self) -> None:
         self.assertEqual(_mode_family("BALANCED"), "BALANCED")
         self.assertEqual(_mode_family("NEUTRAL"), "BALANCED")

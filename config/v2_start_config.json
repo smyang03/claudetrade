@@ -135,9 +135,9 @@
     "DISCOVERY_MAX_SLOTS_US": "3",
     "DISCOVERY_EXCLUDE_UNCLASSIFIED_ONLY": "true",
     "DISCOVERY_EXCLUDE_PULLBACK_ONLY": "true",
-    "DISCOVERY_ALLOW_BUY_READY": "true",
-    "DISCOVERY_ALLOW_PROBE_READY": "true",
-    "DISCOVERY_ALLOW_PULLBACK_WAIT": "true",
+    "DISCOVERY_ALLOW_BUY_READY": "false",
+    "DISCOVERY_ALLOW_PROBE_READY": "false",
+    "DISCOVERY_ALLOW_PULLBACK_WAIT": "false",
     "PROMPT_OVERLAY_MODE": "shadow",
     "PROMPT_OVERLAY_KEEP_CURRENT": "15",
     "PROMPT_OVERLAY_PLAN_A_MAX": "4",
@@ -335,6 +335,6 @@
     "PATHB_EMERGENCY_DISABLE": "false",
     "MAX_ORDER_KRW": "450000"
   },
-  "updated_at": "2026-05-28T17:03:49+09:00",
-  "updated_by": "operator_codex_discovery_full_live_enable"
+  "updated_at": "2026-05-28T22:56:02+09:00",
+  "updated_by": "operator_codex_discovery_observe_only_guard"
 }

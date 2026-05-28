@@ -530,6 +530,39 @@ class PathBSellReconcileTests(unittest.TestCase):
             self.assertEqual(run["plan"]["ignored_pre_entry_sell_fill_count"], 1)
             self.assertFalse(run["plan"]["broker_today_sell_fill_evidence"])
 
+    def test_pending_sell_ignores_exact_order_fill_before_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "SNAP",
+                        "side": "sell",
+                        "order_no": "sell1",
+                        "order_qty": 12,
+                        "filled_qty": 12,
+                        "remaining_qty": 0,
+                        "avg_price": 6.1,
+                        "order_date": "20260427",
+                        "fill_time": "225900",
+                    }
+                ],
+            )
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={"filled_at": "2026-04-27T14:00:00+00:00"},
+                merge_plan=True,
+            )
+
+            summary = runtime.reconcile_sell_pending("US", force=True)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["closed"], 0)
+            self.assertNotEqual(run["status"], "CLOSED")
+            self.assertEqual(run["plan"]["ignored_pre_entry_sell_fill_count"], 1)
+            self.assertEqual(run["plan"]["broker_sell_fill_qty"], 0)
+
     def test_stale_filled_keeps_local_position_when_prior_sell_fill_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")

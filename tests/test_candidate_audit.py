@@ -1188,6 +1188,105 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                 conn.close()
             self.assertEqual(count, 0)
 
+    def test_update_candidate_audit_outcomes_dry_run_missing_db_does_not_create(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "missing" / "candidate_audit.db"
+
+            summary = update_candidate_audit_outcomes(db_path=db_path, dry_run=True)
+
+            self.assertTrue(summary["dry_run"])
+            self.assertEqual(summary["status"], "db_not_found")
+            self.assertEqual(summary["candidate_rows"], 0)
+            self.assertEqual(summary["written_rows"], 0)
+            self.assertEqual(summary["outcome_health"], "db_not_found")
+            self.assertFalse(db_path.exists())
+            self.assertFalse(db_path.parent.exists())
+
+    def test_update_candidate_audit_outcomes_dry_run_existing_db_does_not_migrate_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE audit_candidate_rows (
+                        candidate_key TEXT PRIMARY KEY,
+                        call_id TEXT NOT NULL,
+                        runtime_mode TEXT NOT NULL,
+                        market TEXT NOT NULL,
+                        session_date TEXT NOT NULL,
+                        known_at TEXT,
+                        ticker TEXT NOT NULL,
+                        price REAL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO audit_candidate_rows (
+                        candidate_key, call_id, runtime_mode, market, session_date,
+                        known_at, ticker, price
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "live:KR:2026-05-08:AAA:dry_0",
+                        "dry_0",
+                        "live",
+                        "KR",
+                        "2026-05-08",
+                        "2026-05-08T09:00:00",
+                        "AAA",
+                        100.0,
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            summary = update_candidate_audit_outcomes(db_path=db_path, dry_run=True)
+
+            self.assertEqual(summary["status"], "ok")
+            self.assertEqual(summary["candidate_rows"], 1)
+            self.assertGreater(summary["planned_outcome_rows"], 0)
+            self.assertEqual(summary["written_rows"], 0)
+            conn = sqlite3.connect(db_path)
+            try:
+                outcome_table = conn.execute(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type='table' AND name='audit_candidate_outcomes'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+            self.assertIsNone(outcome_table)
+
+    def test_update_candidate_audit_outcomes_dry_run_idle_wal_db_does_not_create_sidecars(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "dry_wal_0",
+                    "runtime_mode": "live",
+                    "market": "KR",
+                    "session_date": "2026-05-08",
+                    "known_at": "2026-05-08T09:00:00",
+                    "ticker": "AAA",
+                    "price": 100.0,
+                }
+            )
+            sidecars = [Path(f"{db_path}-wal"), Path(f"{db_path}-shm")]
+            self.assertFalse(any(path.exists() for path in sidecars))
+
+            summary = update_candidate_audit_outcomes(db_path=db_path, dry_run=True)
+
+            self.assertEqual(summary["status"], "ok")
+            self.assertEqual(summary["candidate_rows"], 1)
+            self.assertEqual(summary["written_rows"], 0)
+            self.assertFalse(any(path.exists() for path in sidecars))
+
     def test_outcome_update_preserves_existing_non_null_unless_forced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "candidate_audit.db"

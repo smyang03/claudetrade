@@ -16090,10 +16090,171 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._flag_execution_issue(market, "broker_position_removed")
             log.warning(f"[broker verify] removed stale legacy position: {market} {ticker}")
         return verified
+    def _pathb_broker_recovery_template(self, ticker: str, market: str, broker_pos: dict) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = str(ticker or "").strip()
+        ticker_key = ticker_key.upper() if market_key == "US" else ticker_key
+        pathb = getattr(self, "pathb", None)
+        store = getattr(pathb, "store", None) or getattr(getattr(pathb, "adapter", None), "store", None)
+        if store is None or not ticker_key:
+            return {}
+        try:
+            runs = list(
+                store.active_path_runs_for_ticker(
+                    market=market_key,
+                    ticker=ticker_key,
+                    runtime_mode=str(getattr(self, "_mode", "live") or "live"),
+                )
+                or []
+            )
+        except Exception as exc:
+            log.warning(f"[broker sync] PathB metadata recovery lookup failed: {market_key} {ticker_key} {exc}")
+            return {}
+
+        eligible_statuses = {"FILLED", "PARTIAL_FILLED", "SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED", "ORDER_UNKNOWN"}
+        broker_qty = int(float(broker_pos.get("qty", 0) or 0))
+        broker_avg = float(broker_pos.get("avg_price", 0) or 0)
+        matches: list[dict] = []
+        for run in runs:
+            if str(run.get("path_type", "") or "") != "claude_price":
+                continue
+            status = str(run.get("status", "") or "").upper()
+            if status not in eligible_statuses:
+                continue
+            plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+            run_qty = int(
+                float(
+                    plan.get("filled_qty")
+                    or plan.get("partial_entry_qty")
+                    or plan.get("entry_qty")
+                    or 0
+                )
+            )
+            if run_qty > 0 and broker_qty > run_qty:
+                continue
+            entry_price = float(
+                plan.get("actual_entry_price")
+                or plan.get("partial_entry_price")
+                or plan.get("entry_order_price")
+                or 0
+            )
+            if entry_price > 0 and broker_avg > 0:
+                tolerance = max(0.05, entry_price * 0.05)
+                if abs(entry_price - broker_avg) > tolerance:
+                    continue
+            matches.append(run)
+
+        if len(matches) != 1:
+            if len(matches) > 1:
+                log.warning(
+                    f"[broker sync] PathB metadata recovery conflict: {market_key} {ticker_key} "
+                    f"matches={len(matches)}"
+                )
+                return {
+                    "_untrusted_broker_template": True,
+                    "broker_reconcile_status": "pathb_metadata_recovery_conflict",
+                    "pathb_metadata_recovery_conflict_count": len(matches),
+                }
+            return {}
+
+        run = matches[0]
+        plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+        entry_price = float(
+            plan.get("actual_entry_price")
+            or plan.get("partial_entry_price")
+            or broker_pos.get("avg_price", 0)
+            or 0
+        )
+        decision_id = str(run.get("decision_id", "") or plan.get("decision_id", "") or "")
+        path_run_id = str(run.get("path_run_id", "") or "")
+        template = {
+            "order_no": str(plan.get("entry_execution_id", "") or ""),
+            "filled_price_native": entry_price,
+            "fill_time": str(plan.get("filled_at", "") or plan.get("partial_filled_at", "") or ""),
+            "strategy": "claude_price",
+            "source_strategy": "claude_price",
+            "session_date": str(run.get("session_date", "") or plan.get("session_date", "") or ""),
+            "entry_session_date": str(run.get("session_date", "") or plan.get("session_date", "") or ""),
+            "decision_id": decision_id,
+            "v2_decision_id": decision_id,
+            "v2_execution_id": str(plan.get("entry_execution_id", "") or ""),
+            "path_run_id": path_run_id,
+            "parent_decision_id": decision_id,
+            "path_type": "claude_price",
+            "pathb_path_run_id": path_run_id,
+            "pathb_plan": plan,
+            "broker_reconcile_status": "pathb_metadata_recovered_from_event_store",
+        }
+        if entry_price > 0:
+            sell_target = float(plan.get("sell_target", 0) or 0)
+            stop_loss = float(plan.get("stop_loss", 0) or 0)
+            if sell_target > entry_price:
+                template["tp_pct"] = max(0.001, (sell_target / entry_price) - 1.0)
+            if 0 < stop_loss < entry_price:
+                template["sl_pct"] = max(0.001, 1.0 - (stop_loss / entry_price))
+        return template
+
+    def _broker_missing_zero_holding_confirmed(self, pos: dict, market: str, ticker: str) -> tuple[bool, dict]:
+        try:
+            evidence = self._sell_zero_holding_broker_evidence(market, ticker)
+        except Exception as exc:
+            evidence = {
+                **self._execution_safety_payload(),
+                "broker_truth_available": False,
+                "broker_truth_error": str(exc)[:300],
+                "safe_to_reconcile_zero_holding": False,
+            }
+        if not bool(evidence.get("safe_to_reconcile_zero_holding")):
+            return False, evidence
+        is_pathb = bool(pos.get("pathb_path_run_id") or str(pos.get("path_type", "") or "") == "claude_price")
+        if bool(evidence.get("broker_today_sell_fill_evidence")) and not is_pathb:
+            return True, evidence
+        last_success = str(evidence.get("broker_truth_last_success_at", "") or "")
+        prev_success = str(pos.get("broker_missing_last_success_at", "") or "")
+        prior_count = int(pos.get("broker_missing_seen_count", 0) or 0)
+        independent_snapshot = bool(last_success and last_success != prev_success)
+        return bool(prior_count >= 1 and independent_snapshot), evidence
+
+    def _protect_broker_missing_position(self, pos: dict, market: str, ticker: str, evidence: Optional[dict] = None) -> dict:
+        evidence = evidence or {}
+        last_success = str(evidence.get("broker_truth_last_success_at", "") or "")
+        prev_success = str(pos.get("broker_missing_last_success_at", "") or "")
+        current_count = int(pos.get("broker_missing_seen_count", 0) or 0)
+        if last_success and last_success != prev_success:
+            current_count += 1
+        elif current_count <= 0:
+            current_count = 1
+        pos["broker_reconcile_status"] = "broker_missing_unconfirmed"
+        pos["broker_missing_seen_count"] = int(current_count)
+        pos["broker_missing_first_seen_at"] = str(
+            pos.get("broker_missing_first_seen_at") or datetime.now(KST).isoformat(timespec="seconds")
+        )
+        pos["broker_missing_last_seen_at"] = datetime.now(KST).isoformat(timespec="seconds")
+        if last_success:
+            pos["broker_missing_last_success_at"] = last_success
+        pos["manual_reconciliation_required"] = True
+        try:
+            self._flag_execution_issue(market, "broker_position_missing_unconfirmed")
+        except Exception:
+            pass
+        log.warning(
+            f"[broker sync protected] {market} {ticker} broker_position_absent "
+            f"seen={pos.get('broker_missing_seen_count', 1)} status=broker_missing_unconfirmed"
+        )
+        return self._normalize_position_metadata(
+            pos,
+            market,
+            origin=str(pos.get("position_origin") or "saved_restore"),
+            integrity="protected",
+            management_protected=True,
+        )
+
     def _make_runtime_position_from_broker(self, ticker: str, market: str, broker_pos: dict,
                                            template: Optional[dict] = None) -> dict:
-        template = template or {}
-        trusted_template = bool(template)
+        template = dict(template or {})
+        if not template:
+            template = self._pathb_broker_recovery_template(ticker, market, broker_pos)
+        trusted_template = bool(template) and not bool(template.get("_untrusted_broker_template"))
         native_avg_price = float(template.get("filled_price_native", 0) or broker_pos.get("avg_price", 0) or 0)
         native_eval_price = float(broker_pos.get("eval_price", 0) or native_avg_price)
         avg_price = native_avg_price
@@ -16159,6 +16320,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "tp_price": float(template.get("tp_price", 0.0)),
             "decision_id": template.get("decision_id") or self._recover_decision_id(ticker, market),
         }
+        for key in (
+            "v2_decision_id",
+            "v2_execution_id",
+            "position_id",
+            "entry_route",
+            "path_run_id",
+            "parent_decision_id",
+            "selection_snapshot_ts",
+            "strategy_used",
+            "route_source",
+            "path_type",
+            "pathb_path_run_id",
+            "pathb_plan",
+            "broker_reconcile_status",
+            "pathb_metadata_recovery_conflict_count",
+        ):
+            if key in template:
+                pos[key] = template.get(key)
         for key in (
             "peak_pnl_pct",
             "position_mfe_pct",
@@ -17424,6 +17603,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     seen_keys.add(key)
                     log.warning(f"[브로커 런타임 동기화] {market} {ticker} 보유 없음 + 미체결 존재 → 보호 유지")
                     continue
+                confirmed_zero, zero_evidence = self._broker_missing_zero_holding_confirmed(pos, market, ticker)
+                if not confirmed_zero:
+                    synced_positions[key] = self._protect_broker_missing_position(pos, market, ticker, zero_evidence)
+                    seen_keys.add(key)
+                    continue
                 self._flag_execution_issue(market, "broker_position_removed")
                 removed.append(ticker)
                 log.warning(f"[브로커 런타임 동기화] stale 포지션 제거: {market} {ticker}")
@@ -17454,6 +17638,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 pos["display_currency"] = "KRW"
             if not keep_fill_price:
                 pos["price_source"] = "broker_balance"
+            for _broker_missing_key in (
+                "broker_missing_seen_count",
+                "broker_missing_first_seen_at",
+                "broker_missing_last_seen_at",
+                "broker_missing_last_success_at",
+                "manual_reconciliation_required",
+            ):
+                pos.pop(_broker_missing_key, None)
+            if pos.get("broker_reconcile_status") == "broker_missing_unconfirmed":
+                pos.pop("broker_reconcile_status", None)
             existing = synced_positions.get(key)
             if existing is not None:
                 log.warning(f"[브로커 런타임 동기화] 중복 포지션 병합: {ticker}")
