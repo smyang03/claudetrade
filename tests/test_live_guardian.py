@@ -99,6 +99,34 @@ class LiveGuardianTests(unittest.TestCase):
                 self.assertEqual(Path(report["report_paths"]["json"]).parent, runtime_root / "data" / "v2_reports")
                 self.assertEqual(_alert_state_path("live"), runtime_root / "state" / "live_guardian_alert_state.json")
 
+    def test_guardian_skip_smoke_avoids_smoke_runner(self) -> None:
+        preflight = {
+            "ok": True,
+            "fail_count": 0,
+            "warn_count": 0,
+            "checks": [
+                {
+                    "name": "runtime.process_inventory",
+                    "status": "PASS",
+                    "detail": "process inventory ok",
+                    "data": {"source": "psutil", "rows": []},
+                }
+            ],
+            "effective_config": {"ENABLED_MARKETS": "KR"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_root = Path(tmp)
+            with patch("runtime_paths._RUNTIME_ROOT", runtime_root), patch(
+                "tools.live_guardian.run_preflight",
+                return_value=preflight,
+            ), patch("tools.live_guardian._run_smoke") as smoke_runner:
+                report = run_guardian_once(mode="live", skip_dashboard=True, skip_smoke=True)
+
+        smoke_runner.assert_not_called()
+        self.assertTrue(report["smoke"]["skipped"])
+        self.assertEqual(report["smoke"]["reason"], "skip_smoke_requested")
+
     def test_code_marker_fail_is_soft(self) -> None:
         finding = classify_preflight_check(
             {

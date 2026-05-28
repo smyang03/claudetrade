@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -117,11 +118,37 @@ class PathBLegacyRemediationTests(unittest.TestCase):
                     payload={"path_type": "claude_price", "path_run_id": "path_current_partial"},
                 )
             )
+            truth_path = Path(tmp) / "broker_truth.json"
+            truth_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-05-10T01:00:00Z",
+                        "markets": {
+                            "KR": {
+                                "fresh": True,
+                                "trusted": True,
+                                "positions": [{"ticker": "005930", "qty": 3}],
+                                "open_orders": [{"ticker": "000660", "remaining_qty": 1}],
+                                "today_fills": [{"ticker": "005930", "side": "buy"}],
+                            },
+                            "US": {
+                                "fresh": True,
+                                "trusted": True,
+                                "positions": [],
+                                "open_orders": [],
+                                "today_fills": [],
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
 
             report = build_report(
                 db_path=db_path,
                 mode="live",
                 current_sessions={"KR": "2026-05-10", "US": "2026-05-10"},
+                broker_truth_path=truth_path,
             )
 
             self.assertTrue(report["dry_run"])
@@ -131,6 +158,13 @@ class PathBLegacyRemediationTests(unittest.TestCase):
             self.assertEqual(report["stale_active"]["count"], 2)
             self.assertEqual(report["stale_active"]["by_status"]["FILLED"], 1)
             self.assertEqual(report["stale_active"]["by_status"]["ORDER_UNKNOWN"], 1)
+            self.assertTrue(report["broker_truth"]["snapshot_loaded"])
+            current_unknown = report["order_unknown"]["current_session"][0]
+            previous_unknown = report["order_unknown"]["previous_session"][0]
+            self.assertTrue(current_unknown["do_not_start"])
+            self.assertEqual(current_unknown["broker_truth_evidence"]["open_order_count"], 1)
+            self.assertEqual(previous_unknown["broker_truth_evidence"]["position_qty"], 3.0)
+            self.assertEqual(previous_unknown["broker_truth_evidence"]["today_fill_count"], 1)
             self.assertIn("lifecycle_window_consistency", report)
             self.assertIn("lifecycle_full_consistency", report)
             self.assertGreaterEqual(report["lifecycle_consistency"]["missing_events_count"], 2)

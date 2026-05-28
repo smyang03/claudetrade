@@ -510,6 +510,7 @@ def run_guardian_once(
     ensure_bot: bool = False,
     dry_run_start: bool = False,
     skip_dashboard: bool = False,
+    skip_smoke: bool = False,
     session_date: str = "",
     bot_start_allowed: bool = True,
     bot_start_skip_detail: str = "",
@@ -548,8 +549,11 @@ def run_guardian_once(
                 if str(check.get("status") or "") != "PASS"
             ]
 
-    smoke = _run_smoke(mode=mode, markets=markets, env=env, session_date=session_date)
-    findings.extend(_classify_smoke(smoke))
+    if skip_smoke:
+        smoke = {"ok": True, "skipped": True, "reason": "skip_smoke_requested"}
+    else:
+        smoke = _run_smoke(mode=mode, markets=markets, env=env, session_date=session_date)
+        findings.extend(_classify_smoke(smoke))
     active_bot_process = _matching_bot_process(preflight, mode) if bot_start_requested else {}
     if active_bot_process and not ensure_bot:
         findings.append(
@@ -854,6 +858,7 @@ def main() -> int:
     parser.add_argument("--ensure-bot", action="store_true", help="Start the bot if missing; treat an already-running bot as healthy.")
     parser.add_argument("--dry-run-start", action="store_true", help="Report bot start intent without launching a process.")
     parser.add_argument("--skip-dashboard", action="store_true")
+    parser.add_argument("--skip-smoke", action="store_true", help="Skip no-broker/no-order smoke to avoid lifecycle writes in report-only QA.")
     parser.add_argument("--session-date", default="")
     parser.add_argument("--watch", action="store_true")
     parser.add_argument("--interval-sec", type=int, default=60)
@@ -893,6 +898,7 @@ def main() -> int:
             ensure_bot=args.ensure_bot,
             dry_run_start=args.dry_run_start,
             skip_dashboard=args.skip_dashboard,
+            skip_smoke=args.skip_smoke,
             session_date=args.session_date,
             bot_start_allowed=bot_start_allowed,
             bot_start_skip_detail=bot_start_skip_detail,

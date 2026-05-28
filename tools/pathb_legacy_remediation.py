@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from bot.session_date import resolve_session_date
 from lifecycle.event_store import EventStore
+from runtime_paths import get_runtime_path
 
 try:
     from zoneinfo import ZoneInfo
@@ -66,6 +67,118 @@ def _load_plan(value: Any) -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def _load_broker_truth_snapshot(mode: str, broker_truth_path: str | Path | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    candidates = []
+    if broker_truth_path:
+        candidates.append(Path(broker_truth_path))
+    else:
+        runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+        candidates.append(get_runtime_path("state", f"{runtime_mode}_broker_truth_snapshot.json", make_parents=False))
+        candidates.append(get_runtime_path("state", "broker_truth_snapshot.json", make_parents=False))
+    for path in candidates:
+        try:
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                return (data if isinstance(data, dict) else {}), {"path": str(path), "loaded": True}
+        except Exception as exc:
+            return {}, {"path": str(path), "loaded": False, "error": str(exc)}
+    return {}, {"path": str(candidates[0]) if candidates else "", "loaded": False, "error": "snapshot_missing"}
+
+
+def _ticker_from_item(item: dict[str, Any]) -> str:
+    for key in ("ticker", "symbol", "code", "pdno", "stock_code", "stockCode"):
+        value = str(item.get(key) or "").strip().upper()
+        if value:
+            return value
+    return ""
+
+
+def _qty_from_item(item: dict[str, Any], keys: tuple[str, ...]) -> float:
+    for key in keys:
+        raw = item.get(key)
+        if raw is None:
+            continue
+        try:
+            return float(str(raw).replace(",", ""))
+        except Exception:
+            continue
+    return 0.0
+
+
+def _broker_truth_evidence(
+    snapshot: dict[str, Any],
+    meta: dict[str, Any],
+    *,
+    market: str,
+    ticker: str,
+) -> dict[str, Any]:
+    market_key = str(market or "").upper()
+    ticker_key = str(ticker or "").upper()
+    markets = snapshot.get("markets") if isinstance(snapshot, dict) else {}
+    market_data = (markets or {}).get(market_key) if isinstance(markets, dict) else None
+    base = {
+        "snapshot_path": meta.get("path", ""),
+        "snapshot_loaded": bool(meta.get("loaded")),
+        "snapshot_error": meta.get("error", ""),
+        "snapshot_generated_at": snapshot.get("generated_at", "") if isinstance(snapshot, dict) else "",
+        "market_present": isinstance(market_data, dict),
+        "fresh": None,
+        "trusted": None,
+        "ticker": ticker_key,
+        "position_count": 0,
+        "position_qty": 0.0,
+        "open_order_count": 0,
+        "open_remaining_qty": 0.0,
+        "today_fill_count": 0,
+        "fill_sides": [],
+        "evidence_state": "missing_broker_truth",
+    }
+    if not isinstance(market_data, dict):
+        return base
+    base["fresh"] = market_data.get("fresh")
+    base["trusted"] = market_data.get("trusted")
+    positions = [item for item in (market_data.get("positions") or []) if isinstance(item, dict) and _ticker_from_item(item) == ticker_key]
+    open_orders = [item for item in (market_data.get("open_orders") or []) if isinstance(item, dict) and _ticker_from_item(item) == ticker_key]
+    fills = [item for item in (market_data.get("today_fills") or []) if isinstance(item, dict) and _ticker_from_item(item) == ticker_key]
+    base["position_count"] = len(positions)
+    base["position_qty"] = sum(_qty_from_item(item, ("qty", "quantity", "holding_qty", "hldg_qty", "position_qty")) for item in positions)
+    base["open_order_count"] = len(open_orders)
+    base["open_remaining_qty"] = sum(_qty_from_item(item, ("remaining_qty", "remain_qty", "qty", "quantity")) for item in open_orders)
+    base["today_fill_count"] = len(fills)
+    base["fill_sides"] = sorted({str(item.get("side") or item.get("order_side") or "").lower() for item in fills if str(item.get("side") or item.get("order_side") or "").strip()})
+    if positions or open_orders or fills:
+        base["evidence_state"] = "broker_exposure_or_fill_found"
+    else:
+        base["evidence_state"] = "no_broker_exposure_found"
+    return base
+
+
+def _attach_broker_truth_evidence(
+    row: dict[str, Any],
+    snapshot: dict[str, Any],
+    meta: dict[str, Any],
+    *,
+    do_not_start: bool = True,
+) -> dict[str, Any]:
+    evidence = _broker_truth_evidence(
+        snapshot,
+        meta,
+        market=str(row.get("market") or ""),
+        ticker=str(row.get("ticker") or ""),
+    )
+    reason = "requires_operator_broker_reconcile"
+    if evidence.get("evidence_state") == "missing_broker_truth":
+        reason = "broker_truth_snapshot_missing_or_unusable"
+    elif evidence.get("evidence_state") == "broker_exposure_or_fill_found":
+        reason = "broker_truth_has_position_order_or_fill"
+    return {
+        **row,
+        "broker_truth_evidence": evidence,
+        "do_not_start": bool(do_not_start),
+        "do_not_start_reason": reason if do_not_start else "",
+    }
 
 
 def _path_run_id_from_payload(payload: dict[str, Any]) -> str:
@@ -156,6 +269,9 @@ def _remediation_item(row: dict[str, Any], *, category: str, recommended_action:
         "path_run_id": row.get("path_run_id"),
         "status": row.get("status"),
         "recommended_action": recommended_action,
+        "broker_truth_evidence": row.get("broker_truth_evidence") or {},
+        "do_not_start": bool(row.get("do_not_start")),
+        "do_not_start_reason": row.get("do_not_start_reason", ""),
         "source_of_truth_required": ["broker_fills", "broker_open_orders", "broker_positions"],
         "production_write": False,
     }
@@ -235,10 +351,12 @@ def build_report(
     mode: str = "live",
     current_sessions: dict[str, str] | None = None,
     limit: int = 200,
+    broker_truth_path: str | Path | None = None,
 ) -> dict[str, Any]:
     store = EventStore(db_path) if db_path else EventStore()
     sessions = current_sessions or _current_sessions()
     limit = max(1, int(limit or 200))
+    broker_truth_snapshot, broker_truth_meta = _load_broker_truth_snapshot(mode, broker_truth_path)
     with store.connect() as conn:
         unknown_rows = conn.execute(
             """
@@ -315,6 +433,7 @@ def build_report(
         item["order_unknown_phase"] = str(plan.get("order_unknown_phase") or "")
         item["order_unknown_resolution"] = str(plan.get("order_unknown_resolution") or "")
         item["recommended_action"] = _status_action("ORDER_UNKNOWN")
+        item = _attach_broker_truth_evidence(item, broker_truth_snapshot, broker_truth_meta)
         if item.get("session_date") == sessions.get(str(item.get("market") or "")):
             current_unknown.append(item)
         else:
@@ -327,6 +446,7 @@ def build_report(
         if item.get("session_date") == sessions.get(str(item.get("market") or "")):
             continue
         item["recommended_action"] = _status_action(str(item.get("status") or ""))
+        item = _attach_broker_truth_evidence(item, broker_truth_snapshot, broker_truth_meta)
         stale_active.append(item)
 
     recent_events_dict = [_row_dict(row) for row in recent_events]
@@ -355,6 +475,12 @@ def build_report(
         "dry_run": True,
         "write_supported": False,
         "current_sessions": sessions,
+        "broker_truth": {
+            "snapshot_path": broker_truth_meta.get("path", ""),
+            "snapshot_loaded": bool(broker_truth_meta.get("loaded")),
+            "snapshot_error": broker_truth_meta.get("error", ""),
+            "generated_at": broker_truth_snapshot.get("generated_at", "") if isinstance(broker_truth_snapshot, dict) else "",
+        },
         "order_unknown": {
             "current_count": len(current_unknown),
             "previous_count": len(previous_unknown),
@@ -416,6 +542,8 @@ def _to_markdown(report: dict[str, Any]) -> str:
         f"- db_path: {report['db_path']}",
         f"- dry_run: {report['dry_run']}",
         f"- write_supported: {report['write_supported']}",
+        f"- broker_truth_loaded: {(report.get('broker_truth') or {}).get('snapshot_loaded')}",
+        f"- broker_truth_path: {(report.get('broker_truth') or {}).get('snapshot_path', '')}",
         "",
         "## Summary",
         "",
@@ -446,11 +574,17 @@ def main() -> int:
     parser.add_argument("--db", default="", help="EventStore SQLite DB path; default uses runtime path")
     parser.add_argument("--mode", default="live", choices=["live", "paper"])
     parser.add_argument("--limit", type=int, default=200)
+    parser.add_argument("--broker-truth", default="", help="broker truth snapshot JSON path; default uses runtime state snapshot")
     parser.add_argument("--json", action="store_true", dest="print_json")
     parser.add_argument("--write-report", action="store_true", help="write JSON/MD report under data/v2_reports")
     args = parser.parse_args()
 
-    report = build_report(db_path=args.db or None, mode=args.mode, limit=args.limit)
+    report = build_report(
+        db_path=args.db or None,
+        mode=args.mode,
+        limit=args.limit,
+        broker_truth_path=args.broker_truth or None,
+    )
     if args.write_report:
         out_dir = ROOT / "data" / "v2_reports"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -467,6 +601,7 @@ def main() -> int:
         print(f"current_order_unknown={report['order_unknown']['current_count']}")
         print(f"previous_order_unknown={report['order_unknown']['previous_count']}")
         print(f"stale_active={report['stale_active']['count']}")
+        print(f"broker_truth_loaded={report['broker_truth']['snapshot_loaded']}")
         print(f"missing_lifecycle_events={report['lifecycle_consistency']['missing_events_count']}")
         print(f"events_missing_path_run_id={report['lifecycle_consistency']['events_missing_path_run_id_count']}")
         if report.get("report_paths"):
