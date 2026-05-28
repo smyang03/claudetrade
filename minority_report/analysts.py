@@ -817,6 +817,23 @@ def _candidate_trainer_hint(candidate: dict) -> str:
     return "trainer=" + ",".join(parts) if parts else ""
 
 
+def _candidate_discovery_hint(candidate: dict) -> str:
+    role = str(candidate.get("candidate_pool_role") or "").strip().upper()
+    if role != "DISCOVERY":
+        return ""
+    parts = ["role=DISCOVERY"]
+    ceiling = str(candidate.get("discovery_action_ceiling") or "WATCH").strip().upper()
+    if ceiling:
+        parts.append(f"ceiling={ceiling}")
+    signal = str(candidate.get("discovery_signal_family") or "").strip()
+    if signal:
+        parts.append(f"signal={signal}")
+    reason = str(candidate.get("discovery_reason") or "").strip()
+    if reason:
+        parts.append(f"reason={reason}")
+    return " ".join(parts)
+
+
 def _selection_candidate_cap(market: str, watch_max: int, trade_max: int) -> int:
     if market == "US":
         hard_cap = int(os.getenv("US_SELECTION_PROMPT_CAP", "35"))
@@ -1073,6 +1090,29 @@ def _apply_plan_a_prompt_overlay(
     return prompt_candidates, enriched_meta
 
 
+def _apply_discovery_prompt_overlay(
+    prompt_candidates: list[dict],
+    prompt_pool_meta: dict,
+    market: str,
+) -> tuple[list[dict], dict]:
+    if not _env_bool_flag("DISCOVERY_PROMPT_ENABLED", False):
+        return prompt_candidates, dict(prompt_pool_meta or {})
+    try:
+        from runtime.candidate_discovery_overlay import apply_discovery_overlay
+
+        discovery_pool, discovery_meta = apply_discovery_overlay(
+            [dict(row or {}) for row in prompt_candidates or []],
+            dict(prompt_pool_meta or {}),
+            market=market,
+        )
+        return [dict(row or {}) for row in discovery_pool], dict(discovery_meta or {})
+    except Exception as exc:
+        enriched_meta = dict(prompt_pool_meta or {})
+        enriched_meta["_discovery_error"] = str(exc)
+        log.warning(f"[ticker-selection] discovery overlay failed {market}: {exc}")
+        return prompt_candidates, enriched_meta
+
+
 def _build_selection_prompt_pool(candidates: list[dict], market: str, prompt_cap: int) -> tuple[list[dict], dict]:
     if not _trainer_prompt_pool_enabled():
         prompt_candidates = _curate_selection_candidates(candidates, market, prompt_cap)
@@ -1142,6 +1182,11 @@ def prepare_selection_prompt_pool(market: str, candidates: list[dict]) -> tuple[
         prompt_cap,
     )
     prompt_candidates, prompt_pool_meta = _apply_plan_a_prompt_overlay(
+        prompt_candidates,
+        prompt_pool_meta,
+        market,
+    )
+    prompt_candidates, prompt_pool_meta = _apply_discovery_prompt_overlay(
         prompt_candidates,
         prompt_pool_meta,
         market,
@@ -2075,6 +2120,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             f"category={category}" if category else "",
             f"sector={sector}" if sector else "",
             f"liq={liquidity_bucket}",
+            _candidate_discovery_hint(candidate),
             _candidate_trainer_hint(candidate),
             _candidate_quality_hint(candidate),
             _candidate_earnings_hint(candidate),
@@ -2433,6 +2479,17 @@ Rules:
             "prompt_exec_missing_pct",
             "prompt_exec_formed_count",
             "prompt_exec_forming_count",
+            "_discovery_enabled",
+            "_discovery_mode",
+            "_discovery_max_slots",
+            "_discovery_added",
+            "_discovery_added_tickers",
+            "_discovery_role_by_ticker",
+            "_discovery_action_ceiling_by_ticker",
+            "_discovery_signal_by_ticker",
+            "_discovery_reject_counts",
+            "_prompt_pool_core_count",
+            "_prompt_pool_discovery_count",
             "selection_trace_id",
             "visibility_contract_version",
         ):

@@ -5858,6 +5858,195 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return state
         return state
 
+    def _candidate_pool_role_maps(self, market: str, meta: dict) -> tuple[dict[str, str], dict[str, dict]]:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        role_by_ticker: dict[str, str] = {}
+        row_by_ticker: dict[str, dict] = {}
+        for row in list((meta or {}).get("_final_prompt_pool") or []):
+            if not isinstance(row, dict):
+                continue
+            key = self._selection_ticker_key(market_key, row.get("ticker"))
+            if not key:
+                continue
+            row_by_ticker[key] = dict(row)
+            role = str(row.get("candidate_pool_role") or "").strip().upper()
+            if role:
+                role_by_ticker[key] = role
+        for raw_key, raw_role in dict((meta or {}).get("_discovery_role_by_ticker") or {}).items():
+            key = self._selection_ticker_key(market_key, raw_key)
+            if key:
+                role_by_ticker[key] = str(raw_role or "").strip().upper()
+        return role_by_ticker, row_by_ticker
+
+    def _discovery_action_allowed(self, action: str) -> bool:
+        action_text = str(action or "").strip().upper()
+        if action_text in {"BUY_READY", "ADD_READY"}:
+            return self._runtime_bool("DISCOVERY_ALLOW_BUY_READY", False)
+        if action_text == "PROBE_READY":
+            return self._runtime_bool("DISCOVERY_ALLOW_PROBE_READY", False)
+        if action_text == "PULLBACK_WAIT":
+            return self._runtime_bool("DISCOVERY_ALLOW_PULLBACK_WAIT", False)
+        return True
+
+    def _apply_candidate_pool_role_ceiling(
+        self,
+        market: str,
+        meta: dict,
+        *,
+        stage: str,
+    ) -> dict:
+        normalized_meta = dict(meta or {})
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        role_by_ticker, _row_by_ticker = self._candidate_pool_role_maps(market_key, normalized_meta)
+        discovery_keys = {key for key, role in role_by_ticker.items() if role == "DISCOVERY"}
+        if not discovery_keys:
+            return normalized_meta
+
+        demoted_from = dict(normalized_meta.get("_discovery_demoted_from_by_ticker") or {})
+        ceiling_applied = dict(normalized_meta.get("_discovery_action_ceiling_applied_by_ticker") or {})
+        demoted_keys: set[str] = set()
+        allowed_plan_a_keys: set[str] = set()
+        allowed_pathb_keys: set[str] = set()
+
+        def _append_warning(target: dict, warning: str) -> None:
+            for key in ("warnings", "contract_warnings"):
+                values = list(target.get(key) or [])
+                if warning not in values:
+                    values.append(warning)
+                target[key] = values
+
+        sanitized_actions: list[dict] = []
+        for raw_action in list(normalized_meta.get("candidate_actions") or []):
+            action = dict(raw_action or {}) if isinstance(raw_action, dict) else {}
+            key = self._selection_ticker_key(market_key, action.get("ticker"))
+            action_name = str(action.get("action") or "").strip().upper()
+            if key in discovery_keys and action_name:
+                if action_name in {"BUY_READY", "PROBE_READY", "ADD_READY"} and self._discovery_action_allowed(action_name):
+                    allowed_plan_a_keys.add(key)
+                elif action_name == "PULLBACK_WAIT" and self._discovery_action_allowed(action_name):
+                    allowed_pathb_keys.add(key)
+                elif not self._discovery_action_allowed(action_name):
+                    demoted_keys.add(key)
+                    demoted_from[key] = action_name
+                    ceiling_applied[key] = True
+                    action["discovery_demoted_from"] = action_name
+                    action["discovery_action_ceiling_applied"] = True
+                    action["action"] = "WATCH"
+                    action["size_intent"] = "none"
+                    action["action_ceiling_ack"] = "WATCH"
+                    action["reason_code"] = "DISCOVERY_ACTION_CEILING"
+                    action["reason"] = "discovery_action_ceiling"
+                    action["price_targets"] = {}
+                    blocking = list(action.get("blocking_factors") or [])
+                    if "discovery_action_ceiling" not in blocking:
+                        blocking.append("discovery_action_ceiling")
+                    action["blocking_factors"] = blocking
+                    _append_warning(action, "discovery_action_ceiling_applied")
+                    if action_name == "PULLBACK_WAIT":
+                        _append_warning(action, "discovery_pullback_wait_blocked")
+                    elif action_name == "PROBE_READY":
+                        _append_warning(action, "discovery_probe_ready_blocked")
+                    else:
+                        _append_warning(action, "discovery_buy_ready_blocked")
+            sanitized_actions.append(action)
+        normalized_meta["candidate_actions"] = sanitized_actions
+
+        def _filter_list(values: Any, allowed_discovery: set[str] | None = None) -> list:
+            allowed = allowed_discovery or set()
+            result = []
+            for item in list(values or []):
+                key = self._selection_ticker_key(market_key, item)
+                if key in discovery_keys and key not in allowed:
+                    demoted_keys.add(key)
+                    ceiling_applied[key] = True
+                    demoted_from.setdefault(key, "LIST_PERMISSION")
+                    continue
+                result.append(item)
+            return list(dict.fromkeys(result))
+
+        def _filter_map(value: Any, allowed_discovery: set[str] | None = None) -> dict:
+            if not isinstance(value, dict):
+                return {}
+            allowed = allowed_discovery or set()
+            result = {}
+            for raw_key, raw_value in value.items():
+                key = self._selection_ticker_key(market_key, raw_key)
+                if key in discovery_keys and key not in allowed:
+                    continue
+                result[raw_key] = raw_value
+            return result
+
+        normalized_meta["trade_ready"] = _filter_list(normalized_meta.get("trade_ready"), allowed_plan_a_keys)
+        for list_key in ("_candidate_action_plan_a_ready", "_trade_ready_without_price_targets_allowed"):
+            if list_key in normalized_meta:
+                normalized_meta[list_key] = _filter_list(normalized_meta.get(list_key), allowed_plan_a_keys)
+        normalized_meta["_pathb_wait_tickers"] = _filter_list(
+            normalized_meta.get("_pathb_wait_tickers"),
+            allowed_pathb_keys,
+        )
+        normalized_meta["_pathb_price_targets"] = _filter_map(
+            normalized_meta.get("_pathb_price_targets"),
+            allowed_pathb_keys,
+        )
+        normalized_meta["_pathb_wait_origins"] = _filter_map(
+            normalized_meta.get("_pathb_wait_origins"),
+            allowed_pathb_keys,
+        )
+        normalized_meta["_pathb_shadow_tickers"] = _filter_list(normalized_meta.get("_pathb_shadow_tickers"), set())
+        normalized_meta["_pathb_shadow_price_targets"] = _filter_map(normalized_meta.get("_pathb_shadow_price_targets"), set())
+        normalized_meta["_pathb_shadow_origins"] = _filter_map(normalized_meta.get("_pathb_shadow_origins"), set())
+
+        for map_key in (
+            "price_targets",
+            "allocation_intent",
+            "max_order_cap_pct",
+            "risk_budget_pct",
+            "max_position_pct",
+            "size_reason",
+        ):
+            if map_key in normalized_meta:
+                normalized_meta[map_key] = _filter_map(normalized_meta.get(map_key), allowed_plan_a_keys | allowed_pathb_keys)
+
+        sanitized_routes: list[dict] = []
+        for raw_route in list(normalized_meta.get("_candidate_action_routes") or []):
+            route = dict(raw_route or {}) if isinstance(raw_route, dict) else {}
+            key = self._selection_ticker_key(market_key, route.get("ticker"))
+            final_action = str(route.get("final_action") or "").strip().upper()
+            if key in discovery_keys and final_action and not self._discovery_action_allowed(final_action):
+                demoted_keys.add(key)
+                demoted_from[key] = final_action
+                ceiling_applied[key] = True
+                route["original_action"] = route.get("original_action") or route.get("requested_action") or final_action
+                route["final_action"] = "WATCH"
+                route["route"] = None
+                route["reason"] = "discovery_action_ceiling"
+                route["blocker"] = "discovery_action_ceiling"
+                route["demoted_to"] = "WATCH"
+                route["runtime_gate_reason"] = "discovery_action_ceiling"
+                route["cancel_pathb"] = False
+                route["suspend_pathb"] = False
+                warnings = list(route.get("warnings") or [])
+                if "discovery_action_ceiling_applied" not in warnings:
+                    warnings.append("discovery_action_ceiling_applied")
+                route["warnings"] = warnings
+                runtime_gate = dict(route.get("runtime_gate") or {})
+                runtime_gate["action_ceiling"] = "WATCH"
+                runtime_gate["discovery_action_ceiling_applied"] = True
+                route["runtime_gate"] = runtime_gate
+            sanitized_routes.append(route)
+        if sanitized_routes or "_candidate_action_routes" in normalized_meta:
+            normalized_meta["_candidate_action_routes"] = sanitized_routes
+
+        if demoted_keys:
+            normalized_meta["_discovery_demoted_tickers"] = sorted(set(normalized_meta.get("_discovery_demoted_tickers") or []) | demoted_keys)
+            normalized_meta["_discovery_demoted_from_by_ticker"] = demoted_from
+            normalized_meta["_discovery_action_ceiling_applied_by_ticker"] = ceiling_applied
+            stages = list(normalized_meta.get("_discovery_role_ceiling_stages") or [])
+            if stage not in stages:
+                stages.append(stage)
+            normalized_meta["_discovery_role_ceiling_stages"] = stages
+        return normalized_meta
+
     def _apply_candidate_action_live_routes(self, market: str, meta: dict) -> dict:
         normalized_meta = dict(meta or {})
         actions = list(normalized_meta.get("candidate_actions") or [])
@@ -7968,6 +8157,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         candidate_actions, candidate_actions_source = self._normalize_candidate_actions_for_meta(market, meta)
         meta["candidate_actions"] = candidate_actions
         meta["_candidate_actions_source"] = candidate_actions_source
+        meta = self._apply_candidate_pool_role_ceiling(market, meta, stage="pre_route")
         market_key = "US" if str(market).upper() == "US" else "KR"
         last_post_open = (getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key)
         if isinstance(last_post_open, dict) and last_post_open and not meta.get("_post_open_features_by_ticker"):
@@ -7980,6 +8170,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             enabled=self._runtime_bool("ADAPTIVE_LIVE_CONDITION_SHADOW_ENABLED", True),
         )
         meta = self._apply_candidate_action_live_routes(market, meta)
+        meta = self._apply_candidate_pool_role_ceiling(market, meta, stage="post_route")
         meta = self._normalize_selection_meta_runtime(market, meta, selected, mode=mode)
         allow_missing_price_targets = meta.get("_trade_ready_without_price_targets_allowed") or []
         meta = self._enforce_trade_ready_price_targets(
@@ -13277,6 +13468,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             for route in list((meta or {}).get("_candidate_action_routes") or [])
             if isinstance(route, dict) and str((route or {}).get("ticker") or "").strip()
         }
+        discovery_demoted_from = self._candidate_audit_ticker_map((meta or {}).get("_discovery_demoted_from_by_ticker"), market_key)
+        discovery_ceiling_applied = self._candidate_audit_ticker_map((meta or {}).get("_discovery_action_ceiling_applied_by_ticker"), market_key)
         reason_map = self._candidate_audit_ticker_map((meta or {}).get("reasons"), market_key)
         veto_map = self._candidate_audit_ticker_map((meta or {}).get("veto"), market_key)
         risk_tag_map = self._candidate_audit_ticker_map((meta or {}).get("risk_tags"), market_key)
@@ -13596,6 +13789,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "price_change_since_first_seen_pct": row.get("price_change_since_first_seen_pct"),
                 "freshness_verdict": row.get("freshness_verdict"),
                 "trainer_tier": row.get("trainer_tier"),
+                "candidate_pool_role": row.get("candidate_pool_role"),
+                "discovery_signal_family": row.get("discovery_signal_family"),
+                "discovery_reason": row.get("discovery_reason"),
+                "discovery_action_ceiling": row.get("discovery_action_ceiling"),
+                "discovery_baseline_trainer_rank": row.get("discovery_baseline_trainer_rank"),
+                "discovery_overlay_rank": row.get("discovery_overlay_rank"),
             }
 
         def _raw_score_components(row: dict) -> dict:
@@ -13700,6 +13899,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "overlay_keep_current": (meta or {}).get("_overlay_keep_current"),
                         "overlay_plan_a_max": (meta or {}).get("_overlay_plan_a_max"),
                         "overlay_plan_b_used": overlay_plan_b_used,
+                        "discovery_enabled": bool((meta or {}).get("_discovery_enabled")),
+                        "discovery_added": int((meta or {}).get("_discovery_added") or 0),
+                        "discovery_added_tickers": list((meta or {}).get("_discovery_added_tickers") or []),
+                        "prompt_pool_core_count": int((meta or {}).get("_prompt_pool_core_count") or 0),
+                        "prompt_pool_discovery_count": int((meta or {}).get("_prompt_pool_discovery_count") or 0),
+                        "discovery_demoted_tickers": list((meta or {}).get("_discovery_demoted_tickers") or []),
                         "evidence_prefetch_source": (meta or {}).get("evidence_prefetch_source", ""),
                         "evidence_requested_tickers": list((meta or {}).get("evidence_requested_tickers") or []),
                         "evidence_requested_count": int((meta or {}).get("evidence_requested_count") or 0),
@@ -13796,6 +14001,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "evidence_action_ceiling": str(runtime_gate.get("evidence_action_ceiling") or ""),
                         "evidence_ceiling_applied": bool(runtime_gate.get("evidence_ceiling_applied")),
                         "action_ceiling_ack": str(action.get("action_ceiling_ack") or ""),
+                        "discovery_action_ceiling_applied": bool(
+                            discovery_ceiling_applied.get(key)
+                            or action.get("discovery_action_ceiling_applied")
+                            or runtime_gate.get("discovery_action_ceiling_applied")
+                        ),
+                        "discovery_demoted_from": str(discovery_demoted_from.get(key) or action.get("discovery_demoted_from") or ""),
                         "legacy_auto_ready_promoted": bool((meta or {}).get("_legacy_auto_ready_promoted", False)),
                         "soft_gate_overrides": soft_gate_overrides,
                         "override_validated": bool(soft_validation.get("validated")) if soft_validation else None,

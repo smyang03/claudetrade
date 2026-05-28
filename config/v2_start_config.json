@@ -130,6 +130,14 @@
     "CANDIDATE_PROMPT_POOL_TARGET_US": "24",
     "CANDIDATE_PROMPT_POOL_HARD_CAP_KR": "32",
     "CANDIDATE_PROMPT_POOL_HARD_CAP_US": "35",
+    "DISCOVERY_PROMPT_ENABLED": "true",
+    "DISCOVERY_MAX_SLOTS_KR": "4",
+    "DISCOVERY_MAX_SLOTS_US": "3",
+    "DISCOVERY_EXCLUDE_UNCLASSIFIED_ONLY": "true",
+    "DISCOVERY_EXCLUDE_PULLBACK_ONLY": "true",
+    "DISCOVERY_ALLOW_BUY_READY": "true",
+    "DISCOVERY_ALLOW_PROBE_READY": "true",
+    "DISCOVERY_ALLOW_PULLBACK_WAIT": "true",
     "PROMPT_OVERLAY_MODE": "shadow",
     "PROMPT_OVERLAY_KEEP_CURRENT": "15",
     "PROMPT_OVERLAY_PLAN_A_MAX": "4",
@@ -327,6 +335,6 @@
     "PATHB_EMERGENCY_DISABLE": "false",
     "MAX_ORDER_KRW": "450000"
   },
-  "updated_at": "2026-05-23T01:24:40+09:00",
-  "updated_by": "operator_codex_profit_review_slot_update"
+  "updated_at": "2026-05-28T17:03:49+09:00",
+  "updated_by": "operator_codex_discovery_full_live_enable"
 }

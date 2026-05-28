@@ -509,6 +509,70 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         self.assertEqual([row["ticker"] for row in meta["_final_prompt_pool"]], ["GOOD", "BAD"])
         self.assertEqual(prompt_meta["prompt_pool_count"], 2)
 
+    def test_discovery_overlay_appends_after_trainer_prompt_pool(self) -> None:
+        from minority_report import analysts
+
+        candidates = [
+            {"ticker": "CORE", "market": "US", "primary_bucket": "momentum_now", "liquidity_bucket": "high", "change_pct": 5.0},
+            {"ticker": "DISC", "market": "US", "primary_bucket": "near_breakout", "liquidity_bucket": "high", "change_pct": 4.0},
+        ]
+        env = {
+            "CANDIDATE_QUALITY_TRAINER_ENABLED": "true",
+            "CANDIDATE_PROMPT_POOL_REORDER_ENABLED": "false",
+            "CANDIDATE_PROMPT_POOL_TARGET_US": "1",
+            "CANDIDATE_PROMPT_POOL_HARD_CAP_US": "1",
+            "DISCOVERY_PROMPT_ENABLED": "true",
+            "DISCOVERY_MAX_SLOTS_US": "1",
+        }
+
+        with patch.dict("os.environ", env, clear=False):
+            prompt_rows, prompt_meta = analysts.prepare_selection_prompt_pool("US", candidates)
+
+        self.assertEqual([row["ticker"] for row in prompt_rows], ["CORE", "DISC"])
+        self.assertEqual(prompt_rows[1]["candidate_pool_role"], "DISCOVERY")
+        self.assertEqual(prompt_rows[1]["prompt_rank"], 2)
+        self.assertEqual(prompt_meta["prompt_pool_count"], 2)
+        self.assertEqual(prompt_meta["_discovery_added_tickers"], ["DISC"])
+
+    def test_select_tickers_prompt_labels_discovery_candidate(self) -> None:
+        from minority_report import analysts
+
+        captured: dict[str, str] = {}
+
+        def fake_create(**kwargs):
+            captured["prompt"] = kwargs["messages"][0]["content"]
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"watchlist":["CORE","DISC"],"trade_ready":[],"reasons":{},"veto":{}}')],
+                usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+                stop_reason="end_turn",
+            )
+
+        candidates = [
+            {"ticker": "CORE", "market": "US", "primary_bucket": "momentum_now", "liquidity_bucket": "high", "change_pct": 5.0},
+            {"ticker": "DISC", "market": "US", "primary_bucket": "near_breakout", "liquidity_bucket": "high", "change_pct": 4.0},
+        ]
+        env = {
+            "CANDIDATE_QUALITY_TRAINER_ENABLED": "true",
+            "CANDIDATE_PROMPT_POOL_REORDER_ENABLED": "false",
+            "CANDIDATE_PROMPT_POOL_TARGET_US": "1",
+            "CANDIDATE_PROMPT_POOL_HARD_CAP_US": "1",
+            "DISCOVERY_PROMPT_ENABLED": "true",
+            "DISCOVERY_MAX_SLOTS_US": "1",
+            "CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS_SHADOW": "false",
+        }
+
+        with patch.dict("os.environ", env, clear=False), \
+             patch.object(analysts.client.messages, "create", side_effect=fake_create), \
+             patch.object(analysts, "save_raw_call", lambda **_kwargs: None), \
+             patch.object(analysts, "build_active_lesson_context", return_value={"section": "", "metadata": {}}):
+            analysts.select_tickers("US", "digest", "NEUTRAL", candidates)
+
+        self.assertIn("role=DISCOVERY", captured["prompt"])
+        meta = analysts.get_last_selection_meta()
+        self.assertEqual(meta["_final_prompt_pool"][1]["candidate_pool_role"], "DISCOVERY")
+
     def test_select_tickers_override_skips_builder_and_filters_non_prompt_evidence(self) -> None:
         from minority_report import analysts
 

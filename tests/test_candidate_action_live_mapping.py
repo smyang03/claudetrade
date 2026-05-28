@@ -571,6 +571,157 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertIn("GXO", bot.v2.registered_meta["trade_ready"])
         self.assertEqual(bot.v2.registered_meta["_pathb_wait_origins"]["GXO"]["origin_action"], "PULLBACK_WAIT")
 
+    def test_discovery_buy_ready_demoted_to_watch_by_default(self) -> None:
+        bot = _make_bot()
+        raw_meta = {
+            "watchlist": ["DISC"],
+            "trade_ready": ["DISC"],
+            "candidate_actions": [
+                {
+                    "ticker": "DISC",
+                    "action": "BUY_READY",
+                    "confidence": 0.75,
+                    "price_targets": {
+                        "buy_zone_low": 40.0,
+                        "buy_zone_high": 41.0,
+                        "sell_target": 44.0,
+                        "stop_loss": 39.0,
+                        "hold_days": 1,
+                        "confidence": 0.75,
+                    },
+                }
+            ],
+            "price_targets": {"DISC": {"buy_zone_low": 40.0, "buy_zone_high": 41.0}},
+            "_final_prompt_pool": [
+                {
+                    "ticker": "DISC",
+                    "candidate_pool_role": "DISCOVERY",
+                    "discovery_action_ceiling": "WATCH",
+                    "prompt_rank": 1,
+                }
+            ],
+            "_discovery_role_by_ticker": {"DISC": "DISCOVERY"},
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "US", ["DISC"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["candidate_actions"][0]["action"], "WATCH")
+        self.assertEqual(meta["candidate_actions"][0]["discovery_demoted_from"], "BUY_READY")
+        self.assertEqual(meta["_candidate_action_routes"][0]["final_action"], "WATCH")
+        self.assertEqual(meta["_pathb_wait_tickers"], [])
+        self.assertEqual(meta["_discovery_demoted_from_by_ticker"]["DISC"], "BUY_READY")
+
+    def test_discovery_pullback_wait_does_not_register_pathb_by_default(self) -> None:
+        bot = _make_bot()
+        raw_meta = {
+            "watchlist": ["DISC"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {
+                    "ticker": "DISC",
+                    "action": "PULLBACK_WAIT",
+                    "confidence": 0.72,
+                    "price_targets": {
+                        "buy_zone_low": 40.0,
+                        "buy_zone_high": 41.0,
+                        "sell_target": 44.0,
+                        "stop_loss": 39.0,
+                        "hold_days": 1,
+                        "confidence": 0.72,
+                    },
+                }
+            ],
+            "_final_prompt_pool": [
+                {
+                    "ticker": "DISC",
+                    "candidate_pool_role": "DISCOVERY",
+                    "discovery_action_ceiling": "WATCH",
+                    "prompt_rank": 1,
+                }
+            ],
+            "_discovery_role_by_ticker": {"DISC": "DISCOVERY"},
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "US", ["DISC"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["candidate_actions"][0]["action"], "WATCH")
+        self.assertEqual(meta["_pathb_wait_tickers"], [])
+        self.assertEqual(bot.pathb.registered_meta["_pathb_wait_tickers"], [])
+        self.assertEqual(meta["_candidate_action_routes"][0]["final_action"], "WATCH")
+        self.assertEqual(meta["_discovery_demoted_from_by_ticker"]["DISC"], "PULLBACK_WAIT")
+
+    def test_discovery_reserved_pathb_shadow_flag_does_not_preserve_shadow_plan(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values["DISCOVERY_ALLOW_PATHB_SHADOW"] = True
+        raw_meta = {
+            "watchlist": ["DISC"],
+            "trade_ready": [],
+            "candidate_actions": [{"ticker": "DISC", "action": "WATCH", "confidence": 0.6}],
+            "_pathb_shadow_tickers": ["DISC"],
+            "_pathb_shadow_price_targets": {"DISC": {"buy_zone_low": 40.0, "buy_zone_high": 41.0}},
+            "_pathb_shadow_origins": {"DISC": {"origin_action": "PULLBACK_WAIT"}},
+            "_final_prompt_pool": [
+                {
+                    "ticker": "DISC",
+                    "candidate_pool_role": "DISCOVERY",
+                    "discovery_action_ceiling": "WATCH",
+                    "prompt_rank": 1,
+                }
+            ],
+            "_discovery_role_by_ticker": {"DISC": "DISCOVERY"},
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "US", ["DISC"], mode="BALANCED")
+
+        self.assertEqual(meta["_pathb_shadow_tickers"], [])
+        self.assertEqual(meta["_pathb_shadow_price_targets"], {})
+        self.assertEqual(meta["_pathb_shadow_origins"], {})
+
+    def test_discovery_pullback_wait_allowed_only_when_flag_true(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values["DISCOVERY_ALLOW_PULLBACK_WAIT"] = True
+        raw_meta = {
+            "watchlist": ["DISC"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {
+                    "ticker": "DISC",
+                    "action": "PULLBACK_WAIT",
+                    "confidence": 0.72,
+                    "price_targets": {
+                        "buy_zone_low": 40.0,
+                        "buy_zone_high": 41.0,
+                        "sell_target": 44.0,
+                        "stop_loss": 39.0,
+                        "hold_days": 1,
+                        "confidence": 0.72,
+                    },
+                }
+            ],
+            "_final_prompt_pool": [
+                {
+                    "ticker": "DISC",
+                    "candidate_pool_role": "DISCOVERY",
+                    "discovery_action_ceiling": "WATCH",
+                    "prompt_rank": 1,
+                }
+            ],
+            "_discovery_role_by_ticker": {"DISC": "DISCOVERY"},
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "US", ["DISC"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["_pathb_wait_tickers"], ["DISC"])
+        self.assertEqual(bot.pathb.registered_meta["_pathb_wait_tickers"], ["DISC"])
+        self.assertEqual(meta["_candidate_action_routes"][0]["final_action"], "PULLBACK_WAIT")
+
     def test_pathb_selection_max_entry_fallback_requires_account_reference(self) -> None:
         bot = _make_bot()
         with patch.dict(

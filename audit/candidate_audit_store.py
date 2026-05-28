@@ -148,6 +148,14 @@ EXTRA_CANDIDATE_COLUMNS: dict[str, str] = {
     "consensus_mode": "TEXT",
     "strength_capture_shadow": "INTEGER",
     "strength_capture_rules": "TEXT",
+    "candidate_pool_role": "TEXT",
+    "discovery_signal_family": "TEXT",
+    "discovery_reason": "TEXT",
+    "discovery_action_ceiling": "TEXT",
+    "discovery_baseline_trainer_rank": "INTEGER",
+    "discovery_overlay_rank": "INTEGER",
+    "discovery_action_ceiling_applied": "INTEGER",
+    "discovery_demoted_from": "TEXT",
 }
 
 EXTRA_CALL_COLUMNS: dict[str, str] = {
@@ -270,6 +278,7 @@ def _candidate_extra_value(column: str, row: dict[str, Any]) -> Any:
         "stale_cycle",
         "evidence_ceiling_applied",
         "strength_capture_shadow",
+        "discovery_action_ceiling_applied",
     }:
         if value is None:
             return None
