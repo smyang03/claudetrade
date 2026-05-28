@@ -750,6 +750,8 @@ class DashboardPathBTests(unittest.TestCase):
 
         try:
             with patch.object(dashboard_server, "_session_trade_date", return_value=date(2026, 5, 23)), patch.object(
+                dashboard_server, "_is_trading_day", side_effect=lambda _market, day=None: day == date(2026, 5, 22)
+            ), patch.object(
                 dashboard_server, "_broker_period_profit_bucket", side_effect=fake_period_bucket
             ):
                 status = dashboard_server._current_session_realized_pnl_status(
@@ -765,6 +767,41 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertEqual(status["pnl_krw"], 35_816.377)
         self.assertTrue(status["query_date_fallback"])
         self.assertEqual(status["session_date"], "2026-05-23")
+
+    def test_current_session_realized_pnl_does_not_use_previous_kis_date_on_us_trading_day(self) -> None:
+        dashboard_server._CURRENT_SESSION_PERIOD_PROFIT_CACHE.clear()
+        calls = []
+
+        def fake_period_bucket(_market, _mode, start_date, _end_date):
+            calls.append(start_date)
+            if start_date == date(2026, 5, 28):
+                return {"pnl_krw": 0.0, "known_sell_count": 0, "sell_count": 0}
+            return {"pnl_krw": -54_548.0, "known_sell_count": 8, "sell_count": 8}
+
+        try:
+            with patch.object(dashboard_server, "_session_trade_date", return_value=date(2026, 5, 28)), patch.object(
+                dashboard_server, "_is_trading_day", return_value=True
+            ), patch.object(
+                dashboard_server, "_broker_period_profit_bucket", side_effect=fake_period_bucket
+            ), patch.object(
+                dashboard_server, "_broker_today_fill_fifo_realized_pnl", return_value=None
+            ), patch.object(
+                dashboard_server, "_broker_confirmed_local_realized_pnl", return_value=None
+            ), patch.object(
+                dashboard_server, "_deduped_local_session_realized_pnl", return_value=None
+            ):
+                status = dashboard_server._current_session_realized_pnl_status(
+                    "US",
+                    "live",
+                    live={"market": "US", "trading_date": "2026-05-28", "market_realized_pnl_krw": 0.0},
+                )
+        finally:
+            dashboard_server._CURRENT_SESSION_PERIOD_PROFIT_CACHE.clear()
+
+        self.assertEqual(calls, [date(2026, 5, 28)])
+        self.assertTrue(status["available"])
+        self.assertEqual(status["pnl_krw"], 0.0)
+        self.assertEqual(status["source"], "live_status_market_realized_pnl")
 
     def test_period_profit_direct_adds_missing_intraday_adjustment(self) -> None:
         direct = {

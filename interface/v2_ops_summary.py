@@ -570,6 +570,16 @@ def _path_b_selection_snapshot(
     runtime_filtered = meta.get("_runtime_filtered_trade_ready") or normalized_stage.get("runtime_filtered") or {}
     runtime_filtered = runtime_filtered if isinstance(runtime_filtered, dict) else {}
     candidate_actions = meta.get("candidate_actions") if isinstance(meta.get("candidate_actions"), list) else []
+    candidate_action_routes = meta.get("_candidate_action_routes") if isinstance(meta.get("_candidate_action_routes"), list) else []
+    route_by_ticker: dict[str, dict[str, Any]] = {}
+    for route_row in candidate_action_routes:
+        if not isinstance(route_row, dict):
+            continue
+        raw_ticker = str(route_row.get("ticker") or "").strip()
+        if not raw_ticker:
+            continue
+        key = raw_ticker.upper() if market_key == "US" else raw_ticker
+        route_by_ticker[key] = route_row
     price_targets = {
         **_candidate_action_price_targets(candidate_actions, market_key),
         **(meta.get("price_targets") if isinstance(meta.get("price_targets"), dict) else {}),
@@ -588,6 +598,12 @@ def _path_b_selection_snapshot(
     missing_applied = [ticker for ticker in applied_trade_ready if not _selection_lookup(price_targets, ticker, market_key)]
     missing_raw = [ticker for ticker in raw_trade_ready if not _selection_lookup(price_targets, ticker, market_key)]
     filtered_tickers = _unique_list(runtime_filtered.keys())
+    plan_a_routed = [
+        ticker
+        for ticker in applied_trade_ready
+        if str((route_by_ticker.get(ticker.upper() if market_key == "US" else ticker) or {}).get("route") or "").startswith("PlanA.")
+    ]
+    pathb_expected_trade_ready = [ticker for ticker in applied_trade_ready if ticker not in set(plan_a_routed)]
     no_plan_reasons: list[str] = []
 
     if not bool(config.get("enabled", False)):
@@ -606,7 +622,7 @@ def _path_b_selection_snapshot(
         no_plan_reasons.append("PRICE_TARGETS_EMPTY")
     elif missing_applied:
         no_plan_reasons.append("MISSING_PRICE_TARGETS")
-    elif applied_trade_ready and not pathb_runs:
+    elif pathb_expected_trade_ready and not pathb_runs:
         no_plan_reasons.append("NO_PATH_RUN_REGISTERED")
     elif not applied_trade_ready:
         no_plan_reasons.append("NO_TRADE_READY")
@@ -621,12 +637,19 @@ def _path_b_selection_snapshot(
         name = _name_for_ticker(ticker, market_key, name_map)
         target = _selection_lookup(price_targets, ticker, market_key) or {}
         run = run_by_ticker.get(ticker.upper() if market_key == "US" else ticker)
+        route_info = route_by_ticker.get(ticker.upper() if market_key == "US" else ticker) or {}
+        execution_route = str(route_info.get("route") or "")
+        route_is_plan_a = execution_route.startswith("PlanA.")
+        route_is_pathb = execution_route.startswith("PathB.")
+        buy_path = "path_a" if route_is_plan_a else "path_b" if (run or route_is_pathb) else ""
         filtered_reason = _selection_lookup(runtime_filtered, ticker, market_key)
         adaptive_decision = _selection_lookup(adaptive_decisions, ticker, market_key) or {}
         evidence_pack = _selection_lookup(live_evidence_packs, ticker, market_key) or {}
         evidence_trace = evidence_pack.get("decision_trace") if isinstance(evidence_pack.get("decision_trace"), dict) else {}
         if run:
             state = str(run.get("status") or "REGISTERED")
+        elif route_is_plan_a and ticker in applied_trade_ready:
+            state = "PLAN_A_ROUTED"
         elif ticker in applied_trade_ready and target:
             state = "READY_NO_PATH_RUN"
         elif ticker in applied_trade_ready:
@@ -640,6 +663,9 @@ def _path_b_selection_snapshot(
                 "ticker": ticker,
                 "name": name,
                 "display_ticker": _display_ticker(ticker, name),
+                "buy_path": buy_path,
+                "execution_route": execution_route,
+                "route_final_action": str(route_info.get("final_action") or ""),
                 "category": (
                     "applied_trade_ready" if ticker in applied_trade_ready
                     else "filtered_trade_ready" if filtered_reason

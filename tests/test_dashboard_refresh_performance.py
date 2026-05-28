@@ -133,6 +133,88 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         self.assertAlmostEqual(payload["us_asset_cash_usd"], 1_179_781.0 / 1503.5)
         self.assertEqual(payload["cumulative"], 1_941_524.0 + 1_103_500.0 + 3_419_331.0)
 
+    def test_broker_snapshot_fast_uses_kr_asset_total_for_settlement_cash_display(self) -> None:
+        now_iso = dashboard_server.datetime.now(dashboard_server.KST).isoformat()
+        truth = {
+            "generated_at": now_iso,
+            "markets": {
+                "KR": {
+                    "account_summary": {
+                        "cash": 585_072.0,
+                        "orderable_cash": 585_072.0,
+                        "asset_total_krw": 1_728_572.0,
+                        "total_eval": 0.0,
+                        "total_profit": 0.0,
+                    },
+                    "last_success_at": now_iso,
+                    "positions": [],
+                    "stale": False,
+                },
+                "US": {
+                    "account_summary": {"cash": 0.0, "orderable_cash": 0.0, "total_eval": 0.0, "total_profit": 0.0},
+                    "last_success_at": now_iso,
+                    "positions": [],
+                    "stale": False,
+                },
+            },
+        }
+
+        with patch.object(dashboard_server, "_load_broker_truth_snapshot_cached", return_value=truth), patch.object(
+            dashboard_server, "_get_usd_krw_cached", return_value=1350.0
+        ), patch.object(
+            dashboard_server, "_broker_snapshot", side_effect=AssertionError("fast path must not call KIS")
+        ):
+            payload = dashboard_server._broker_snapshot_fast("live")
+
+        self.assertEqual(payload["kr_cash"], 585_072.0)
+        self.assertEqual(payload["kr_cash_effective"], 1_728_572.0)
+        self.assertEqual(payload["kr_asset_total_krw"], 1_728_572.0)
+        self.assertEqual(dashboard_server._market_asset_krw_from_broker_snapshot(payload, "KR"), 1_728_572.0)
+
+    def test_broker_snapshot_fast_direct_refreshes_legacy_kr_snapshot_with_today_sells(self) -> None:
+        now_iso = dashboard_server.datetime.now(dashboard_server.KST).isoformat()
+        truth = {
+            "generated_at": now_iso,
+            "markets": {
+                "KR": {
+                    "account_summary": {"cash": 585_072.0, "orderable_cash": 585_072.0, "total_eval": 0.0},
+                    "today_fills": [
+                        {"side": "sell", "filled_qty": 1, "avg_price": 669_000.0},
+                    ],
+                    "last_success_at": now_iso,
+                    "positions": [],
+                    "stale": False,
+                },
+                "US": {
+                    "account_summary": {"cash": 0.0, "orderable_cash": 0.0, "total_eval": 0.0},
+                    "last_success_at": now_iso,
+                    "positions": [],
+                    "stale": False,
+                },
+            },
+        }
+        direct = {
+            "source": "broker",
+            "cache": {},
+            "usd_krw": 1350.0,
+            "kr_cash": 585_072.0,
+            "kr_cash_effective": 1_951_516.0,
+            "kr_asset_total_krw": 1_951_516.0,
+            "kr_eval": 0.0,
+            "us_asset_krw": 0.0,
+            "unrealized_krw": {"KR": 0.0, "US": 0.0},
+            "cumulative": 1_951_516.0,
+        }
+
+        with patch.object(dashboard_server, "_load_broker_truth_snapshot_cached", return_value=truth), patch.object(
+            dashboard_server, "_get_usd_krw_cached", return_value=1350.0
+        ), patch.object(dashboard_server, "_broker_snapshot", return_value=direct) as refresh:
+            payload = dashboard_server._broker_snapshot_fast("live")
+
+        self.assertEqual(payload["kr_asset_total_krw"], 1_951_516.0)
+        self.assertEqual(payload["kr_cash_effective"], 1_951_516.0)
+        refresh.assert_called_once_with(mode="live")
+
     def test_broker_snapshot_fast_falls_back_to_stale_memory_when_truth_unavailable(self) -> None:
         old_ts = dashboard_server._time.time() - 120
         dashboard_server._BROKER_SNAPSHOT_CACHE["live"] = {

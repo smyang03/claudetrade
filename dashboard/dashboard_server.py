@@ -2555,6 +2555,18 @@ def _dt_age_sec(value: str) -> Optional[int]:
         return None
 
 
+def _first_positive_float(mapping: dict, keys: tuple[str, ...]) -> float:
+    mapping = mapping if isinstance(mapping, dict) else {}
+    for key in keys:
+        try:
+            value = float(str(mapping.get(key, 0) or 0).replace(",", ""))
+        except Exception:
+            continue
+        if value > 0:
+            return value
+    return 0.0
+
+
 def _load_broker_truth_snapshot_cached(mode: str) -> dict:
     return _read_json_state_cached(_broker_truth_snapshot_path(mode), {}, category="broker_truth_snapshot")
 
@@ -2567,6 +2579,11 @@ def _empty_broker_snapshot(source: str = "no_cache", last_error: str = "") -> di
         "usd_krw": _get_usd_krw_cached(),
         "kr_cash": 0.0,
         "kr_cash_effective": 0.0,
+        "kr_asset_cash_krw": 0.0,
+        "kr_asset_total_krw": 0.0,
+        "kr_deposit_cash_krw": 0.0,
+        "kr_today_sell_gross_krw": 0.0,
+        "kr_settlement_fields_missing": False,
         "kr_orderable_cash": 0.0,
         "kr_eval": 0.0,
         "us_cash_usd": 0.0,
@@ -2617,6 +2634,23 @@ def _broker_snapshot_has_account(snapshot: dict) -> bool:
     return False
 
 
+def _broker_snapshot_direct_refresh_for_kr_settlement(runtime_mode: str, saved_cache: Optional[dict] = None) -> Optional[dict]:
+    runtime_mode = _normalize_mode(runtime_mode)
+    previous_cache = saved_cache if saved_cache is not None else _BROKER_SNAPSHOT_CACHE.get(runtime_mode)
+    _BROKER_SNAPSHOT_CACHE.pop(runtime_mode, None)
+    try:
+        direct = _broker_snapshot(mode=runtime_mode)
+    except Exception:
+        if previous_cache is not None:
+            _BROKER_SNAPSHOT_CACHE[runtime_mode] = previous_cache
+        return None
+    if _broker_snapshot_has_account(direct):
+        return direct
+    if previous_cache is not None:
+        _BROKER_SNAPSHOT_CACHE[runtime_mode] = previous_cache
+    return None
+
+
 def _broker_snapshot_from_truth(mode: str) -> dict:
     runtime_mode = _normalize_mode(mode)
     snap = _load_broker_truth_snapshot_cached(runtime_mode)
@@ -2638,6 +2672,20 @@ def _broker_snapshot_from_truth(mode: str) -> dict:
     kr_cash = float(kr_summary.get("cash", 0) or 0)
     kr_orderable = float(kr_summary.get("orderable_cash", kr_cash) or kr_cash)
     kr_eval = float(kr_summary.get("total_eval", 0) or 0)
+    kr_asset_total = _first_positive_float(
+        kr_summary,
+        ("asset_total_krw", "net_asset_krw", "total_asset_krw", "account_asset_krw"),
+    )
+    kr_asset_cash = max(kr_asset_total - kr_eval, 0.0) if kr_asset_total > 0 else kr_cash
+    kr_market_asset = kr_asset_total if kr_asset_total > 0 else kr_asset_cash + kr_eval
+    kr_today_sell_gross = 0.0
+    for fill in kr.get("today_fills", []) or []:
+        if not isinstance(fill, dict) or str(fill.get("side", "") or "").lower() != "sell":
+            continue
+        qty = float(fill.get("filled_qty", fill.get("qty", 0)) or 0)
+        price = float(fill.get("avg_price", fill.get("order_price", 0)) or 0)
+        kr_today_sell_gross += max(qty, 0.0) * max(price, 0.0)
+    kr_settlement_fields_missing = kr_asset_total <= 0 and kr_today_sell_gross > 0
     kr_profit = float(kr_summary.get("total_profit", 0) or 0)
     us_cash_usd = float(us_summary.get("cash", 0) or 0)
     us_orderable_cash_usd = float(us_summary.get("orderable_cash", us_cash_usd) or us_cash_usd)
@@ -2695,7 +2743,12 @@ def _broker_snapshot_from_truth(mode: str) -> dict:
         "kis_profile": {},
         "usd_krw": usd_krw,
         "kr_cash": kr_cash,
-        "kr_cash_effective": kr_cash,
+        "kr_cash_effective": kr_asset_cash,
+        "kr_asset_cash_krw": kr_asset_cash,
+        "kr_asset_total_krw": kr_asset_total,
+        "kr_deposit_cash_krw": kr_cash,
+        "kr_today_sell_gross_krw": kr_today_sell_gross,
+        "kr_settlement_fields_missing": kr_settlement_fields_missing,
         "kr_orderable_cash": kr_orderable,
         "kr_eval": kr_eval,
         "us_cash_usd": us_cash_usd,
@@ -2711,7 +2764,7 @@ def _broker_snapshot_from_truth(mode: str) -> dict:
         "us_kis_exchange_rate": kis_usd_krw,
         "kr_profit_krw": kr_profit,
         "us_profit_krw": float(us_summary.get("total_profit_krw", 0) or 0) or us_profit_native * usd_krw,
-        "cumulative": kr_cash + kr_eval + us_asset_krw,
+        "cumulative": kr_market_asset + us_asset_krw,
         "unrealized_krw": {
             "KR": kr_profit,
             "US": float(us_summary.get("total_profit_krw", 0) or 0) or us_profit_native * usd_krw,
@@ -2738,6 +2791,10 @@ def _broker_snapshot_fast(mode: str = "paper") -> dict:
         if stale:
             refreshed = _broker_snapshot_from_truth(runtime_mode)
             if _broker_snapshot_has_account(refreshed):
+                if bool(refreshed.get("kr_settlement_fields_missing", False)):
+                    direct = _broker_snapshot_direct_refresh_for_kr_settlement(runtime_mode, saved_cache=cached)
+                    if direct is not None:
+                        return direct
                 return refreshed
             refresh_cache = refreshed.get("cache", {}) if isinstance(refreshed, dict) else {}
             last_error = str(
@@ -2757,8 +2814,18 @@ def _broker_snapshot_fast(mode: str = "paper") -> dict:
             return _with_broker_cache_meta(cached.get("value", {}), meta)
         meta = _broker_snapshot_cache_hit_meta(cached, now_ts, source="cache")
         _BROKER_SNAPSHOT_STATUS[runtime_mode] = meta
-        return _with_broker_cache_meta(cached.get("value", {}), meta)
-    return _broker_snapshot_from_truth(runtime_mode)
+        payload = _with_broker_cache_meta(cached.get("value", {}), meta)
+        if bool(payload.get("kr_settlement_fields_missing", False)):
+            direct = _broker_snapshot_direct_refresh_for_kr_settlement(runtime_mode, saved_cache=cached)
+            if direct is not None:
+                return direct
+        return payload
+    refreshed = _broker_snapshot_from_truth(runtime_mode)
+    if bool(refreshed.get("kr_settlement_fields_missing", False)):
+        direct = _broker_snapshot_direct_refresh_for_kr_settlement(runtime_mode)
+        if direct is not None:
+            return direct
+    return refreshed
 
 
 def _broker_snapshot_refresh(mode: str = "live", *, force: bool = False) -> dict:
@@ -3042,6 +3109,8 @@ def _merge_position_context(base: dict, overlay: Optional[dict]) -> dict:
         "source_strategy", "path_type", "pathb_path_run_id", "pathb_plan",
         "v2_decision_id", "v2_execution_id", "position_id", "order_no",
         "currency", "display_currency", "raw_avg_price", "raw_current_price",
+        "broker_reconcile_status", "position_integrity", "management_protected",
+        "manual_reconciliation_required", "broker_missing_seen_count",
     ):
         value = overlay.get(key)
         if value not in (None, "", 0) or key in ("tp_triggered", "trailing"):
@@ -3256,6 +3325,11 @@ def _broker_snapshot(mode: str = "paper") -> dict:
         kr_cash = float(kr.get("cash", 0) or 0)
         kr_orderable = float(kr.get("orderable_cash", kr_cash) or kr_cash)
         kr_eval = float(kr.get("total_eval", 0) or 0)
+        kr_asset_total = _first_positive_float(
+            kr,
+            ("asset_total_krw", "net_asset_krw", "total_asset_krw", "account_asset_krw"),
+        )
+        kr_asset_cash = max(kr_asset_total - kr_eval, 0.0) if kr_asset_total > 0 else kr_cash
         us_cash_usd = float(us.get("cash", 0) or 0)
         us_orderable_cash_usd = float(us.get("orderable_cash", us_cash_usd) or us_cash_usd)
         us_asset_cash_usd = float(us.get("asset_cash", us_orderable_cash_usd) or 0)
@@ -3280,7 +3354,7 @@ def _broker_snapshot(mode: str = "paper") -> dict:
         source = "broker"
 
         # KIS US paper는 달러 현금을 0으로 반환하는 경우가 있어 KR 현금이 과대계상될 수 있다.
-        kr_cash_effective = kr_cash
+        kr_cash_effective = kr_asset_cash
         if runtime_mode == "paper" and us_cash_usd == 0 and (us.get("stocks") or []):
             us_cost_krw = sum(
                 float(stock.get("avg_price", 0) or 0) * float(stock.get("qty", 0) or 0) * usd_krw
@@ -3326,6 +3400,11 @@ def _broker_snapshot(mode: str = "paper") -> dict:
             "usd_krw": usd_krw,
             "kr_cash": kr_cash,
             "kr_cash_effective": kr_cash_effective,
+            "kr_asset_cash_krw": kr_asset_cash,
+            "kr_asset_total_krw": kr_asset_total,
+            "kr_deposit_cash_krw": kr_cash,
+            "kr_today_sell_gross_krw": float(kr.get("today_sell_amount_krw", 0) or 0),
+            "kr_settlement_fields_missing": False,
             "kr_orderable_cash": kr_orderable,
             "kr_eval": kr_eval,
             "us_cash_usd": us_cash_usd,
@@ -3366,6 +3445,8 @@ def _market_asset_krw_from_broker_snapshot(broker: dict, market: str) -> float:
             return float(broker.get("us_asset_krw", 0) or 0)
         cash_krw = float(broker.get("us_asset_cash_krw", broker.get("us_cash_krw", 0)) or 0)
         return cash_krw + float(broker.get("us_eval_krw", 0) or 0)
+    if float(broker.get("kr_asset_total_krw", 0) or 0) > 0:
+        return float(broker.get("kr_asset_total_krw", 0) or 0)
     return float(broker.get("kr_cash_effective", broker.get("kr_cash", 0)) or 0) + float(broker.get("kr_eval", 0) or 0)
 
 
@@ -3968,6 +4049,15 @@ def _broker_period_profit_bucket(market: str, mode: str, start_date: date, end_d
     return _period_profit_bucket_from_payload(market_key, payload)
 
 
+def _previous_trading_day(market: str, anchor: date, max_lookback_days: int = 7) -> date:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    for offset in range(1, max(1, int(max_lookback_days or 1)) + 1):
+        candidate = anchor - timedelta(days=offset)
+        if _is_trading_day(market_key, candidate):
+            return candidate
+    return anchor - timedelta(days=1)
+
+
 def _current_session_period_profit_realized_pnl(market: str, mode: str) -> Optional[dict]:
     runtime_mode = _normalize_mode(mode)
     if runtime_mode != "live":
@@ -3987,8 +4077,8 @@ def _current_session_period_profit_realized_pnl(market: str, mode: str) -> Optio
         return dict(payload) if isinstance(payload, dict) else None
 
     candidate_days = [session_day]
-    if market_key == "US":
-        previous_day = session_day - timedelta(days=1)
+    if market_key == "US" and not _is_trading_day(market_key, session_day):
+        previous_day = _previous_trading_day(market_key, session_day)
         if previous_day not in candidate_days:
             candidate_days.append(previous_day)
 
