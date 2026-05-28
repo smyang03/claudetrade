@@ -10,7 +10,7 @@ from contextlib import closing
 from decision.registry import DecisionRegistry
 from lifecycle.event_store import EventStore
 from lifecycle.models import LifecycleEvent
-from tools.sync_v2_learning_performance import _apply_decision_repair, sync_v2_learning_performance
+from tools.sync_v2_learning_performance import _apply_decision_repair, ensure_schema, sync_v2_learning_performance
 
 
 class V2LearningPerformanceSyncTests(unittest.TestCase):
@@ -126,6 +126,148 @@ class V2LearningPerformanceSyncTests(unittest.TestCase):
             self.assertEqual(row["mae_pct"], -0.4)
             self.assertEqual(row["quality_grade"], "CLEAN")
             self.assertEqual(row["learning_allowed"], 1)
+
+    def test_sync_separates_discovery_origin_performance_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            ids = registry.register_trade_ready_batch(
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-28",
+                tickers=["DISC"],
+                prompt_version="v2",
+                brain_snapshot_id="brain_us",
+                selection_meta={
+                    "trade_ready": ["DISC"],
+                    "_final_prompt_pool": [
+                        {
+                            "ticker": "DISC",
+                            "candidate_pool_role": "DISCOVERY",
+                            "discovery_action_ceiling": "WATCH",
+                            "discovery_signal_family": "near_breakout,momentum_now",
+                            "discovery_reason": "core_cap_signal_candidate",
+                            "discovery_overlay_rank": 1,
+                        }
+                    ],
+                    "_discovery_role_by_ticker": {"DISC": "DISCOVERY"},
+                    "_discovery_action_ceiling_by_ticker": {"DISC": "WATCH"},
+                },
+            )
+            decision_id = ids["DISC"]
+            for event in (
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-28",
+                    ticker="DISC",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={"price": 40.0, "qty": 3, "entry_route": "PlanA.buy"},
+                ),
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-28",
+                    ticker="DISC",
+                    decision_id=decision_id,
+                    execution_id="sell1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={"price": 42.0, "pnl_pct": 5.0},
+                ),
+            ):
+                store.append(event)
+
+            summary = sync_v2_learning_performance(event_db=event_db, ml_db=ml_db, market="US", dry_run=False)
+
+            self.assertEqual(summary["experiment_bucket_counts"], {"discovery_live": 1})
+            self.assertEqual(summary["discovery_live_experiment"], 1)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                learning = conn.execute(
+                    "SELECT * FROM v2_learning_performance WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+                canonical = conn.execute(
+                    "SELECT * FROM v2_canonical_performance WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+
+            for row in (learning, canonical):
+                self.assertIsNotNone(row)
+                self.assertEqual(row["candidate_pool_role"], "DISCOVERY")
+                self.assertEqual(row["experiment_bucket"], "discovery_live")
+                self.assertEqual(row["discovery_live_experiment"], 1)
+                self.assertEqual(row["discovery_action_ceiling"], "WATCH")
+                self.assertEqual(row["discovery_signal_family"], "near_breakout,momentum_now")
+                self.assertEqual(row["discovery_reason"], "core_cap_signal_candidate")
+                self.assertEqual(row["discovery_overlay_rank"], 1)
+
+    def test_ensure_schema_adds_experiment_columns_before_indexes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ml_db = Path(tmp) / "decisions.db"
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute(
+                    """
+                    CREATE TABLE v2_learning_performance (
+                        v2_decision_id TEXT PRIMARY KEY,
+                        market TEXT,
+                        runtime_mode TEXT,
+                        session_date TEXT,
+                        ticker TEXT,
+                        filled INTEGER,
+                        closed INTEGER,
+                        learning_allowed INTEGER,
+                        quality_grade TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE v2_canonical_performance (
+                        v2_decision_id TEXT PRIMARY KEY,
+                        market TEXT,
+                        runtime_mode TEXT,
+                        session_date TEXT,
+                        ticker TEXT,
+                        filled INTEGER,
+                        closed INTEGER,
+                        learning_allowed INTEGER,
+                        quality_grade TEXT
+                    )
+                    """
+                )
+
+                ensure_schema(conn)
+
+                learning_columns = {
+                    row["name"] for row in conn.execute("PRAGMA table_info(v2_learning_performance)").fetchall()
+                }
+                canonical_columns = {
+                    row["name"] for row in conn.execute("PRAGMA table_info(v2_canonical_performance)").fetchall()
+                }
+                learning_index = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_v2_learning_perf_experiment'"
+                ).fetchone()
+                canonical_index = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_v2_canonical_perf_experiment'"
+                ).fetchone()
+
+            self.assertIn("experiment_bucket", learning_columns)
+            self.assertIn("candidate_pool_role", learning_columns)
+            self.assertIn("experiment_bucket", canonical_columns)
+            self.assertIn("candidate_pool_role", canonical_columns)
+            self.assertIsNotNone(learning_index)
+            self.assertIsNotNone(canonical_index)
 
     def test_sync_prefers_fill_payload_path_run_over_first_registered_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

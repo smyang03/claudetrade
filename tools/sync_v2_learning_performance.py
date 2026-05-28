@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS v2_learning_performance (
     path_run_id          TEXT,
     strategy             TEXT,
     origin_action        TEXT,
+    candidate_pool_role  TEXT,
+    experiment_bucket    TEXT NOT NULL DEFAULT 'standard',
+    discovery_live_experiment INTEGER NOT NULL DEFAULT 0,
+    discovery_action_ceiling TEXT,
+    discovery_signal_family TEXT,
+    discovery_reason     TEXT,
+    discovery_overlay_rank INTEGER,
     timing_style         TEXT,
     filled               INTEGER NOT NULL DEFAULT 0,
     closed               INTEGER NOT NULL DEFAULT 0,
@@ -83,6 +90,13 @@ CREATE TABLE IF NOT EXISTS v2_canonical_performance (
     path_run_id          TEXT,
     strategy             TEXT,
     origin_action        TEXT,
+    candidate_pool_role  TEXT,
+    experiment_bucket    TEXT NOT NULL DEFAULT 'standard',
+    discovery_live_experiment INTEGER NOT NULL DEFAULT 0,
+    discovery_action_ceiling TEXT,
+    discovery_signal_family TEXT,
+    discovery_reason     TEXT,
+    discovery_overlay_rank INTEGER,
     filled               INTEGER NOT NULL DEFAULT 0,
     closed               INTEGER NOT NULL DEFAULT 0,
     first_fill_event_id  INTEGER,
@@ -144,7 +158,10 @@ CREATE INDEX IF NOT EXISTS idx_v2_decision_fill_links_status
 UPSERT_SQL = """
 INSERT INTO v2_learning_performance (
     v2_decision_id, market, runtime_mode, session_date, ticker, status,
-    route, path_type, path_run_id, strategy, origin_action, timing_style,
+    route, path_type, path_run_id, strategy, origin_action,
+    candidate_pool_role, experiment_bucket, discovery_live_experiment,
+    discovery_action_ceiling, discovery_signal_family, discovery_reason,
+    discovery_overlay_rank, timing_style,
     filled, closed, fill_event_id, close_event_id, filled_at, closed_at,
     entry_price, exit_price, qty, pnl_krw, pnl_pct, mfe_pct, mae_pct,
     close_reason, forward_complete, quality_grade, quality_reasons_json,
@@ -152,7 +169,10 @@ INSERT INTO v2_learning_performance (
 )
 VALUES (
     :v2_decision_id, :market, :runtime_mode, :session_date, :ticker, :status,
-    :route, :path_type, :path_run_id, :strategy, :origin_action, :timing_style,
+    :route, :path_type, :path_run_id, :strategy, :origin_action,
+    :candidate_pool_role, :experiment_bucket, :discovery_live_experiment,
+    :discovery_action_ceiling, :discovery_signal_family, :discovery_reason,
+    :discovery_overlay_rank, :timing_style,
     :filled, :closed, :fill_event_id, :close_event_id, :filled_at, :closed_at,
     :entry_price, :exit_price, :qty, :pnl_krw, :pnl_pct, :mfe_pct, :mae_pct,
     :close_reason, :forward_complete, :quality_grade, :quality_reasons_json,
@@ -169,6 +189,13 @@ ON CONFLICT(v2_decision_id) DO UPDATE SET
     path_run_id=excluded.path_run_id,
     strategy=excluded.strategy,
     origin_action=excluded.origin_action,
+    candidate_pool_role=excluded.candidate_pool_role,
+    experiment_bucket=excluded.experiment_bucket,
+    discovery_live_experiment=excluded.discovery_live_experiment,
+    discovery_action_ceiling=excluded.discovery_action_ceiling,
+    discovery_signal_family=excluded.discovery_signal_family,
+    discovery_reason=excluded.discovery_reason,
+    discovery_overlay_rank=excluded.discovery_overlay_rank,
     timing_style=excluded.timing_style,
     filled=excluded.filled,
     closed=excluded.closed,
@@ -196,6 +223,9 @@ CANONICAL_UPSERT_SQL = """
 INSERT INTO v2_canonical_performance (
     v2_decision_id, canonical_key, market, runtime_mode, session_date, ticker,
     status, route, path_type, path_run_id, strategy, origin_action,
+    candidate_pool_role, experiment_bucket, discovery_live_experiment,
+    discovery_action_ceiling, discovery_signal_family, discovery_reason,
+    discovery_overlay_rank,
     filled, closed, first_fill_event_id, first_close_event_id, last_close_event_id,
     earliest_fill_at, first_closed_at, last_closed_at,
     entry_price, first_exit_price, last_exit_price, qty, pnl_krw, pnl_pct,
@@ -205,6 +235,9 @@ INSERT INTO v2_canonical_performance (
 VALUES (
     :v2_decision_id, :canonical_key, :market, :runtime_mode, :session_date, :ticker,
     :status, :route, :path_type, :path_run_id, :strategy, :origin_action,
+    :candidate_pool_role, :experiment_bucket, :discovery_live_experiment,
+    :discovery_action_ceiling, :discovery_signal_family, :discovery_reason,
+    :discovery_overlay_rank,
     :filled, :closed, :first_fill_event_id, :first_close_event_id, :last_close_event_id,
     :earliest_fill_at, :first_closed_at, :last_closed_at,
     :entry_price, :first_exit_price, :last_exit_price, :qty, :pnl_krw, :pnl_pct,
@@ -223,6 +256,13 @@ ON CONFLICT(v2_decision_id) DO UPDATE SET
     path_run_id=excluded.path_run_id,
     strategy=excluded.strategy,
     origin_action=excluded.origin_action,
+    candidate_pool_role=excluded.candidate_pool_role,
+    experiment_bucket=excluded.experiment_bucket,
+    discovery_live_experiment=excluded.discovery_live_experiment,
+    discovery_action_ceiling=excluded.discovery_action_ceiling,
+    discovery_signal_family=excluded.discovery_signal_family,
+    discovery_reason=excluded.discovery_reason,
+    discovery_overlay_rank=excluded.discovery_overlay_rank,
     filled=excluded.filled,
     closed=excluded.closed,
     first_fill_event_id=excluded.first_fill_event_id,
@@ -289,7 +329,18 @@ METRIC_CONTRACT = {
     "dedupe_axis": "v2_decision_id_market_session_ticker",
     "bucket_axis": "filled_closed_unmatched",
     "watch_axis": "filled_demoted_pure_watch_separated",
+    "experiment_bucket_axis": "standard_vs_discovery_live",
     "truth_source": "lifecycle_events_and_v2_path_runs",
+}
+
+PERFORMANCE_EXPERIMENT_COLUMNS = {
+    "candidate_pool_role": "TEXT",
+    "experiment_bucket": "TEXT NOT NULL DEFAULT 'standard'",
+    "discovery_live_experiment": "INTEGER NOT NULL DEFAULT 0",
+    "discovery_action_ceiling": "TEXT",
+    "discovery_signal_family": "TEXT",
+    "discovery_reason": "TEXT",
+    "discovery_overlay_rank": "INTEGER",
 }
 
 
@@ -299,8 +350,29 @@ def _connect(path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    for name, column_type in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {column_type}")
+
+
 def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(V2_LEARNING_SCHEMA)
+    _ensure_columns(conn, "v2_learning_performance", PERFORMANCE_EXPERIMENT_COLUMNS)
+    _ensure_columns(conn, "v2_canonical_performance", PERFORMANCE_EXPERIMENT_COLUMNS)
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_v2_learning_perf_experiment
+        ON v2_learning_performance(experiment_bucket, candidate_pool_role, session_date)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_v2_canonical_perf_experiment
+        ON v2_canonical_performance(experiment_bucket, candidate_pool_role, session_date)
+        """
+    )
 
 
 def _json_loads(value: Any) -> dict[str, Any]:
@@ -514,6 +586,97 @@ def _load_path_run(conn: sqlite3.Connection, decision_id: str, path_run_id: str 
     return _row_to_dict(row)
 
 
+def _ticker_key(market: str, ticker: Any) -> str:
+    text = str(ticker or "").strip()
+    return text.upper() if str(market or "").upper() == "US" else text
+
+
+def _selection_meta_for_decision(decision_payload: dict[str, Any]) -> dict[str, Any]:
+    raw = decision_payload.get("selection_meta")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _prompt_row_for_ticker(selection_meta: dict[str, Any], market: str, ticker: str) -> dict[str, Any]:
+    key = _ticker_key(market, ticker)
+    for raw in list(selection_meta.get("_final_prompt_pool") or []):
+        if not isinstance(raw, dict):
+            continue
+        row_key = _ticker_key(market, raw.get("ticker"))
+        if row_key == key:
+            return dict(raw)
+    return {}
+
+
+def _map_value_for_ticker(value: Any, market: str, ticker: str, default: Any = "") -> Any:
+    if not isinstance(value, dict):
+        return default
+    key = _ticker_key(market, ticker)
+    for raw_key in (ticker, key, str(ticker or "").upper()):
+        if raw_key in value:
+            return value.get(raw_key)
+    for raw_key, raw_value in value.items():
+        if _ticker_key(market, raw_key) == key:
+            return raw_value
+    return default
+
+
+def _discovery_performance_context(decision: dict[str, Any], path_run: dict[str, Any]) -> dict[str, Any]:
+    market = str(decision.get("market") or path_run.get("market") or "")
+    ticker = str(decision.get("ticker") or path_run.get("ticker") or "")
+    decision_payload = dict(decision.get("payload") or {})
+    selection_meta = _selection_meta_for_decision(decision_payload)
+    prompt_row = _prompt_row_for_ticker(selection_meta, market, ticker)
+    path_plan = dict(path_run.get("plan") or {})
+    ticker_origin = decision_payload.get("ticker_origin")
+    if not isinstance(ticker_origin, dict):
+        ticker_origin = {}
+
+    role = (
+        str(prompt_row.get("candidate_pool_role") or "").strip().upper()
+        or str(_map_value_for_ticker(selection_meta.get("_discovery_role_by_ticker"), market, ticker, "") or "").strip().upper()
+        or str(ticker_origin.get("candidate_pool_role") or "").strip().upper()
+        or str(path_plan.get("_candidate_pool_role") or path_plan.get("candidate_pool_role") or "").strip().upper()
+    )
+    is_discovery = role == "DISCOVERY"
+    ceiling = (
+        str(prompt_row.get("discovery_action_ceiling") or "").strip().upper()
+        or str(_map_value_for_ticker(selection_meta.get("_discovery_action_ceiling_by_ticker"), market, ticker, "") or "").strip().upper()
+        or str(ticker_origin.get("discovery_action_ceiling") or "").strip().upper()
+        or str(path_plan.get("_discovery_action_ceiling") or path_plan.get("discovery_action_ceiling") or "").strip().upper()
+    )
+    signal_family = (
+        str(prompt_row.get("discovery_signal_family") or "").strip()
+        or str(ticker_origin.get("discovery_signal_family") or "").strip()
+        or str(path_plan.get("_discovery_signal_family") or path_plan.get("discovery_signal_family") or "").strip()
+    )
+    reason = (
+        str(prompt_row.get("discovery_reason") or "").strip()
+        or str(ticker_origin.get("discovery_reason") or "").strip()
+        or str(path_plan.get("_discovery_reason") or path_plan.get("discovery_reason") or "").strip()
+    )
+    overlay_rank = (
+        prompt_row.get("discovery_overlay_rank")
+        if prompt_row.get("discovery_overlay_rank") not in (None, "")
+        else ticker_origin.get("discovery_overlay_rank")
+    )
+    if overlay_rank in (None, ""):
+        overlay_rank = path_plan.get("_discovery_overlay_rank") or path_plan.get("discovery_overlay_rank")
+    try:
+        overlay_rank_value = int(float(overlay_rank)) if overlay_rank not in (None, "") else None
+    except Exception:
+        overlay_rank_value = None
+
+    return {
+        "candidate_pool_role": role,
+        "experiment_bucket": "discovery_live" if is_discovery else "standard",
+        "discovery_live_experiment": 1 if is_discovery else 0,
+        "discovery_action_ceiling": ceiling if is_discovery else "",
+        "discovery_signal_family": signal_family if is_discovery else "",
+        "discovery_reason": reason if is_discovery else "",
+        "discovery_overlay_rank": overlay_rank_value if is_discovery else None,
+    }
+
+
 def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], path_run: dict[str, Any]) -> dict[str, Any]:
     decision_payload = dict(decision.get("payload") or {})
     path_plan = dict(path_run.get("plan") or {})
@@ -541,6 +704,7 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
     )
     close_reason = _text(close_payload, "close_reason", "exit_reason") or str(close.get("reason_code") or "")
     status = "CLOSED" if close else ("FILLED" if fill else str(decision.get("status") or latest_event.get("event_type") or ""))
+    experiment_context = _discovery_performance_context(decision, path_run)
     return {
         "v2_decision_id": str(decision.get("decision_id") or ""),
         "market": str(decision.get("market") or ""),
@@ -553,6 +717,7 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
         "path_run_id": str(path_run.get("path_run_id") or event_path_run_id or close_payload.get("path_run_id") or fill_payload.get("path_run_id") or ""),
         "strategy": strategy,
         "origin_action": str(path_plan.get("origin_action") or decision_payload.get("origin_action") or ""),
+        **experiment_context,
         "timing_style": str(decision.get("timing_style") or decision_payload.get("timing_style") or ""),
         "filled": 1 if fill else 0,
         "closed": 1 if close else 0,
@@ -624,6 +789,13 @@ def build_canonical_row(
         "path_run_id": learning_row.get("path_run_id"),
         "strategy": learning_row.get("strategy"),
         "origin_action": learning_row.get("origin_action"),
+        "candidate_pool_role": learning_row.get("candidate_pool_role"),
+        "experiment_bucket": learning_row.get("experiment_bucket"),
+        "discovery_live_experiment": learning_row.get("discovery_live_experiment"),
+        "discovery_action_ceiling": learning_row.get("discovery_action_ceiling"),
+        "discovery_signal_family": learning_row.get("discovery_signal_family"),
+        "discovery_reason": learning_row.get("discovery_reason"),
+        "discovery_overlay_rank": learning_row.get("discovery_overlay_rank"),
         "filled": 1 if fill_events else 0,
         "closed": 1 if close_events else 0,
         "first_fill_event_id": first_fill.get("event_id") if first_fill else None,
@@ -1067,6 +1239,7 @@ def sync_v2_learning_performance(
     filled = sum(1 for row in rows if row["filled"])
     closed = sum(1 for row in rows if row["closed"])
     learning_allowed = sum(1 for row in rows if row["learning_allowed"])
+    experiment_buckets = sorted({str(row.get("experiment_bucket") or "standard") for row in rows})
     return {
         "event_db": str(event_path),
         "ml_db": str(ml_path),
@@ -1083,6 +1256,11 @@ def sync_v2_learning_performance(
         "closed": closed,
         "forward_complete": sum(1 for row in rows if row["forward_complete"]),
         "learning_allowed": learning_allowed,
+        "experiment_bucket_counts": {
+            bucket: sum(1 for row in rows if str(row.get("experiment_bucket") or "standard") == bucket)
+            for bucket in experiment_buckets
+        },
+        "discovery_live_experiment": sum(1 for row in rows if int(row.get("discovery_live_experiment") or 0)),
         "quality_grade_counts": {
             grade: sum(1 for row in rows if row["quality_grade"] == grade)
             for grade in sorted({row["quality_grade"] for row in rows})

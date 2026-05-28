@@ -479,6 +479,59 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(rows["ZS"]["confidence"], 0.52)
         self.assertFalse(selection["no_plan_action_required"])
 
+    def test_pathb_selection_summary_marks_plan_a_trade_ready_as_plan_a_routed(self):
+        selection_meta = {
+            "watchlist": ["BBY"],
+            "trade_ready": ["BBY"],
+            "candidate_actions": [
+                {
+                    "ticker": "BBY",
+                    "market": "US",
+                    "action": "BUY_READY",
+                    "price_targets": {
+                        "buy_zone_low": 72.3,
+                        "buy_zone_high": 74.2,
+                        "sell_target": 76.5,
+                        "stop_loss": 71.0,
+                        "confidence": 0.74,
+                    },
+                }
+            ],
+            "_candidate_action_routes": [
+                {
+                    "ticker": "BBY",
+                    "market": "US",
+                    "original_action": "BUY_READY",
+                    "final_action": "BUY_READY",
+                    "route": "PlanA.buy",
+                    "reason": "buy_ready",
+                }
+            ],
+        }
+
+        with patch.object(
+            v2_ops_summary,
+            "_load_judgment_record",
+            return_value={"selection_meta": selection_meta, "universe_tickers": ["BBY"]},
+        ):
+            selection = v2_ops_summary._path_b_selection_snapshot(
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-28",
+                pathb_runs=[],
+                config={"enabled": True},
+                control={"enabled": True},
+            )
+
+        row = selection["watch_rows"][0]
+        self.assertEqual(row["ticker"], "BBY")
+        self.assertEqual(row["category"], "applied_trade_ready")
+        self.assertEqual(row["state"], "PLAN_A_ROUTED")
+        self.assertEqual(row["buy_path"], "path_a")
+        self.assertEqual(row["execution_route"], "PlanA.buy")
+        self.assertNotIn("NO_PATH_RUN_REGISTERED", selection["no_plan_reasons"])
+        self.assertFalse(selection["no_plan_action_required"])
+
     def test_pathb_execution_capacity_uses_broker_orderable_cash(self):
         broker_truth = {
             "markets": {

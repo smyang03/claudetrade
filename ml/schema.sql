@@ -110,6 +110,13 @@ CREATE TABLE IF NOT EXISTS v2_learning_performance (
     path_run_id          TEXT,
     strategy             TEXT,
     origin_action        TEXT,
+    candidate_pool_role  TEXT,
+    experiment_bucket    TEXT NOT NULL DEFAULT 'standard',
+    discovery_live_experiment INTEGER NOT NULL DEFAULT 0,
+    discovery_action_ceiling TEXT,
+    discovery_signal_family TEXT,
+    discovery_reason     TEXT,
+    discovery_overlay_rank INTEGER,
     timing_style         TEXT,
     filled               INTEGER NOT NULL DEFAULT 0,
     closed               INTEGER NOT NULL DEFAULT 0,
@@ -139,3 +146,5 @@ CREATE INDEX IF NOT EXISTS idx_v2_learning_perf_ticker
     ON v2_learning_performance(market, ticker, session_date);
 CREATE INDEX IF NOT EXISTS idx_v2_learning_perf_learning
     ON v2_learning_performance(learning_allowed, quality_grade, session_date);
+CREATE INDEX IF NOT EXISTS idx_v2_learning_perf_experiment
+    ON v2_learning_performance(experiment_bucket, candidate_pool_role, session_date);
