@@ -4902,5 +4902,82 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertNotIn("005930", bot.price_cache_raw)
 
 
+class EarlyGateFloorOneShareTests(unittest.TestCase):
+    """early_gate_floor_one_share: early gate로 qty=0이 됐지만 full 예산으로 1주 가능한 경우 qty=1 보장."""
+
+    def _make_runtime(self, tmp: str) -> "PathBRuntime":
+        bot = _Bot()
+        bot.current_market = "US"
+        bot.usd_krw_rate = 1_380
+        bot.risk.cash = 5_000_000
+        bot._us_early_entry_soft_gate = lambda market: {
+            "active": True,
+            "size_mult": 0.5,
+            "elapsed_min": 20.0,
+        }
+        store = EventStore(Path(tmp) / "events.db")
+        return PathBRuntime(
+            bot,
+            is_paper=False,
+            store=store,
+            config=V2Config(
+                pathb_fixed_order_krw=450_000,
+                us_min_order_krw=50_000,
+                pathb_allow_one_share_over_budget=True,
+                pathb_one_share_over_budget_max_krw=700_000,
+                pathb_one_share_over_budget_max_account_pct=30.0,
+            ),
+        )
+
+    def test_early_gate_floor_gives_qty_one_when_reduced_budget_is_too_small(self) -> None:
+        """early gate × 0.5 = 225,000 KRW인데 1주 가격 270,000 KRW → qty=0 → floor → qty=1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = self._make_runtime(tmp)
+            runtime.control_store = _Control()
+            # 1주 가격: $195.65 × 1,380 = 270,000 KRW > 225,000 (축소 예산), <= 450,000 (full)
+            price_krw = 270_000.0
+            qty, ctx = runtime._pathb_qty_with_context("US", price_krw, cash_krw=5_000_000.0)
+            self.assertEqual(qty, 1)
+            self.assertEqual(ctx["sizing_reason"], "early_gate_floor_one_share")
+            self.assertTrue(ctx["early_gate_floor_applied"])
+            self.assertTrue(ctx["early_gate_applied"])
+            self.assertTrue(ctx["can_buy_1_share"])
+
+    def test_early_gate_floor_not_applied_when_full_budget_also_insufficient(self) -> None:
+        """1주 가격이 full 예산(450,000)도 초과 → floor 적용 안 됨, qty=0 유지."""
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = self._make_runtime(tmp)
+            runtime.control_store = _Control()
+            # 1주 가격: $340 × 1,380 = 469,200 KRW > 450,000 (full 예산도 초과)
+            price_krw = 469_200.0
+            qty, ctx = runtime._pathb_qty_with_context("US", price_krw, cash_krw=5_000_000.0)
+            self.assertEqual(qty, 0)
+            self.assertFalse(ctx.get("early_gate_floor_applied", False))
+            self.assertFalse(ctx["can_buy_1_share"])
+
+    def test_early_gate_floor_not_applied_when_no_early_gate(self) -> None:
+        """early gate 비활성 상태에서는 floor 적용 안 됨."""
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            bot.current_market = "US"
+            bot.usd_krw_rate = 1_380
+            bot.risk.cash = 5_000_000
+            bot._us_early_entry_soft_gate = lambda market: {"active": False}
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(
+                bot,
+                is_paper=False,
+                store=store,
+                config=V2Config(pathb_fixed_order_krw=450_000, us_min_order_krw=50_000),
+            )
+            runtime.control_store = _Control()
+            price_krw = 270_000.0
+            qty, ctx = runtime._pathb_qty_with_context("US", price_krw, cash_krw=5_000_000.0)
+            # early gate 없으니 full budget으로 계산: 450,000 / 270,000 = 1주
+            self.assertEqual(qty, 1)
+            self.assertFalse(ctx.get("early_gate_floor_applied", False))
+            self.assertFalse(ctx["early_gate_applied"])
+
+
 if __name__ == "__main__":
     unittest.main()

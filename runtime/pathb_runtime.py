@@ -9239,11 +9239,24 @@ class PathBRuntime:
                     "pre_cap_notional": float(decision.notional or 0),
                 }
         can_buy_1_share = bool(price > 0 and original_budget > 0 and price <= original_budget and cash >= price)
+        early_gate_floor_applied = False
+        if qty == 0 and early_gate_applied and can_buy_1_share:
+            qty = 1
+            sizing_reason = "early_gate_floor_one_share"
+            early_gate_floor_applied = True
+            decision_payload = {
+                **decision_payload,
+                "qty": 1,
+                "blocker": None,
+                "early_gate_floor": True,
+                "pre_floor_qty": 0,
+            }
         sizing_context = {
             "original_budget_krw": original_budget,
             "effective_budget_krw": budget,
             "early_gate_applied": early_gate_applied,
             "early_gate_size_mult": early_gate_size_mult,
+            "early_gate_floor_applied": early_gate_floor_applied,
             "can_buy_1_share": can_buy_1_share,
             "fixed_sizing": True,
             "sizing_reason": sizing_reason,
