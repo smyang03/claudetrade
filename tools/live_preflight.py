@@ -560,6 +560,124 @@ def _load_broker_truth_snapshot_for_db(mode: str) -> dict[str, Any]:
     return BrokerTruthSnapshot(runtime_mode=mode).load_snapshot(ttl_by_market={"KR": ttl, "US": ttl})
 
 
+def _load_broker_truth_snapshot_for_state_check(
+    mode: str,
+    snapshot_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any], bool, str]:
+    raw_data = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    raw_markets = (
+        raw_data.get("markets")
+        if isinstance(raw_data, dict) and isinstance(raw_data.get("markets"), dict)
+        else {}
+    )
+    try:
+        from runtime.broker_truth_snapshot import BrokerTruthSnapshot
+
+        effective_data = BrokerTruthSnapshot(runtime_mode=mode, path=snapshot_path).load_snapshot()
+        effective_markets = (
+            effective_data.get("markets") if isinstance(effective_data.get("markets"), dict) else {}
+        )
+        return raw_data, effective_markets, True, ""
+    except Exception as exc:
+        return raw_data, raw_markets, False, f"{type(exc).__name__}: {exc}"
+
+
+def _broker_truth_snapshot_file_checks(mode: str, snapshot_path: Path) -> list[CheckResult]:
+    checks: list[CheckResult] = []
+    if not snapshot_path.exists():
+        startup_missing = {"path": str(snapshot_path), "snapshot_missing": True, "startup_expected": True}
+        checks.append(
+            CheckResult(
+                "broker_truth.snapshot_missing_or_present",
+                "WARN",
+                "broker truth snapshot is missing; bot startup should create it",
+                dict(startup_missing),
+            )
+        )
+        checks.append(
+            CheckResult(
+                "broker_truth.snapshot_file_valid",
+                "WARN",
+                "snapshot file missing before bot startup",
+                dict(startup_missing),
+            )
+        )
+        return checks
+
+    try:
+        raw_data, markets, stale_recomputed, recompute_error = _load_broker_truth_snapshot_for_state_check(
+            mode,
+            snapshot_path,
+        )
+        raw_markets = raw_data.get("markets") if isinstance(raw_data.get("markets"), dict) else {}
+        checks.append(
+            CheckResult(
+                "broker_truth.snapshot_missing_or_present",
+                "PASS",
+                "broker truth snapshot exists",
+                {"path": str(snapshot_path)},
+            )
+        )
+        checks.append(
+            CheckResult(
+                "broker_truth.snapshot_file_valid",
+                "PASS",
+                "broker truth snapshot JSON parses",
+                {"path": str(snapshot_path)},
+            )
+        )
+        for market in ("KR", "US"):
+            raw_item = raw_markets.get(market) if isinstance(raw_markets.get(market), dict) else {}
+            item = markets.get(market) if isinstance(markets.get(market), dict) else {}
+            status = "PASS"
+            detail = f"{market} snapshot available"
+            if not item or bool(item.get("missing", True)):
+                status = "WARN"
+                detail = f"{market} snapshot missing/account lookup pending"
+            elif str(item.get("error") or ""):
+                status = "WARN"
+                detail = f"{market} snapshot error"
+            elif bool(item.get("stale", False)):
+                status = "WARN"
+                detail = f"{market} snapshot stale"
+            checks.append(
+                CheckResult(
+                    f"broker_truth.{market.lower()}_stale_state",
+                    status,
+                    detail,
+                    {
+                        "last_success_at": item.get("last_success_at", ""),
+                        "last_attempt_at": item.get("last_attempt_at", ""),
+                        "ttl_sec": item.get("ttl_sec", ""),
+                        "error": item.get("error", ""),
+                        "stale": bool(item.get("stale", False)),
+                        "stored_stale": raw_item.get("stale", ""),
+                        "stored_ttl_sec": raw_item.get("ttl_sec", ""),
+                        "stale_recomputed": stale_recomputed,
+                        "stale_recompute_error": recompute_error,
+                    },
+                )
+            )
+    except Exception as exc:
+        checks.append(
+            CheckResult(
+                "broker_truth.snapshot_missing_or_present",
+                "PASS",
+                "snapshot file exists",
+                {"path": str(snapshot_path)},
+            )
+        )
+        checks.append(
+            CheckResult(
+                "broker_truth.snapshot_file_valid",
+                "FAIL",
+                f"broker truth snapshot JSON error: {exc}",
+                {"path": str(snapshot_path)},
+            )
+        )
+    return checks
+
+
 def _attach_exposure_evidence(
     item: dict[str, Any],
     exposure_by_path: dict[str, dict[str, Any]],
@@ -2466,42 +2584,7 @@ def _state_checks(config: dict[str, Any], mode: str) -> list[CheckResult]:
         except Exception as exc:
             checks.append(CheckResult("runtime.pathb_control_state", "FAIL", f"Path B control state unreadable: {exc}", {"path": str(control_path)}))
     snapshot_path = ROOT / "state" / f"{mode}_broker_truth_snapshot.json"
-    if not snapshot_path.exists():
-        startup_missing = {"path": str(snapshot_path), "snapshot_missing": True, "startup_expected": True}
-        checks.append(CheckResult("broker_truth.snapshot_missing_or_present", "WARN", "broker truth snapshot is missing; bot startup should create it", dict(startup_missing)))
-        checks.append(CheckResult("broker_truth.snapshot_file_valid", "WARN", "snapshot file missing before bot startup", dict(startup_missing)))
-    else:
-        try:
-            data = json.loads(snapshot_path.read_text(encoding="utf-8"))
-            markets = data.get("markets") if isinstance(data.get("markets"), dict) else {}
-            checks.append(CheckResult("broker_truth.snapshot_missing_or_present", "PASS", "broker truth snapshot exists", {"path": str(snapshot_path)}))
-            checks.append(CheckResult("broker_truth.snapshot_file_valid", "PASS", "broker truth snapshot JSON parses", {"path": str(snapshot_path)}))
-            for market in ("KR", "US"):
-                item = markets.get(market) if isinstance(markets.get(market), dict) else {}
-                status = "PASS"
-                detail = f"{market} snapshot available"
-                if not item or bool(item.get("missing", True)):
-                    status = "WARN"
-                    detail = f"{market} snapshot missing/account lookup pending"
-                elif bool(item.get("stale", False)):
-                    status = "WARN"
-                    detail = f"{market} snapshot stale"
-                checks.append(
-                    CheckResult(
-                        f"broker_truth.{market.lower()}_stale_state",
-                        status,
-                        detail,
-                        {
-                            "last_success_at": item.get("last_success_at", ""),
-                            "last_attempt_at": item.get("last_attempt_at", ""),
-                            "ttl_sec": item.get("ttl_sec", ""),
-                            "error": item.get("error", ""),
-                        },
-                    )
-                )
-        except Exception as exc:
-            checks.append(CheckResult("broker_truth.snapshot_missing_or_present", "PASS", "snapshot file exists", {"path": str(snapshot_path)}))
-            checks.append(CheckResult("broker_truth.snapshot_file_valid", "FAIL", f"broker truth snapshot JSON error: {exc}", {"path": str(snapshot_path)}))
+    checks.extend(_broker_truth_snapshot_file_checks(mode, snapshot_path))
     return checks
 
 

@@ -66,6 +66,36 @@ class BrokerTruthSnapshotTests(unittest.TestCase):
             self.assertEqual(summary["total_eval_krw"], 2_239_550)
             self.assertEqual(summary["kis_exchange_rate"], 1503.5)
 
+    def test_collect_market_preserves_kr_settlement_account_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            snapshot = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=path,
+                balance_provider=lambda market, force: {
+                    "cash": 585_072,
+                    "orderable_cash": 585_072,
+                    "asset_total_krw": 1_728_572,
+                    "net_asset_krw": 1_728_572,
+                    "cash_settlement_krw": 1_728_572,
+                    "d1_settlement_krw": 1_728_572,
+                    "today_sell_amount_krw": 1_143_500,
+                    "total_eval": 0,
+                    "stocks": [],
+                    "currency": "KRW",
+                },
+                ccld_provider=lambda market, day: [],
+            )
+
+            data = snapshot.refresh_market("KR", force=True, ttl_sec=30)
+
+            summary = data["markets"]["KR"]["account_summary"]
+            self.assertEqual(summary["cash"], 585_072)
+            self.assertEqual(summary["orderable_cash"], 585_072)
+            self.assertEqual(summary["asset_total_krw"], 1_728_572)
+            self.assertEqual(summary["cash_settlement_krw"], 1_728_572)
+            self.assertEqual(summary["today_sell_amount_krw"], 1_143_500)
+
     def test_broker_truth_snapshot_preserves_us_orderable_cash_source(self) -> None:
         cases = [
             (

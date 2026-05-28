@@ -440,6 +440,14 @@ class BrokerTruthSnapshot:
         }
         for key in (
             "asset_cash",
+            "asset_total_krw",
+            "net_asset_krw",
+            "total_asset_krw",
+            "cash_settlement_krw",
+            "d1_settlement_krw",
+            "d2_settlement_krw",
+            "today_buy_amount_krw",
+            "today_sell_amount_krw",
             "kis_total_asset_krw",
             "kis_domestic_cash_krw",
             "market_asset_krw",
