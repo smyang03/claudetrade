@@ -2548,12 +2548,39 @@ def get_balance(token, market="KR", force_refresh: bool = False):
                 if int(s.get("hldg_qty", 0)) > 0
             ]
             s2 = _first_record(data.get("output2", {}))
+            total_eval = int(_to_float(s2.get("scts_evlu_amt"), 0))
+            cash = int(_to_float(s2.get("dnca_tot_amt"), 0))
+            orderable_cash = int(
+                _to_float(
+                    _pick_first(
+                        s2,
+                        ("ord_psbl_cash", "ord_psbl_cash_amt", "max_buy_amt", "nrcvb_buy_amt"),
+                        cash,
+                    ),
+                    cash,
+                )
+            )
+            net_asset = int(_to_float(s2.get("nass_amt"), 0))
+            total_asset = int(_to_float(s2.get("tot_evlu_amt"), 0))
+            d1_settlement = int(_to_float(s2.get("nxdy_excc_amt"), 0))
+            d2_settlement = int(_to_float(s2.get("prvs_rcdl_excc_amt"), 0))
+            account_asset = net_asset or total_asset or (cash + total_eval)
+            cash_settlement = max(cash, d1_settlement, d2_settlement)
             return {
                 "stocks": stocks,
-                "total_eval": int(s2.get("scts_evlu_amt", 0)),
-                "cash": int(s2.get("dnca_tot_amt", 0)),
-                "total_profit": int(s2.get("evlu_pfls_smtl_amt", 0)),
-                "profit_rate": float(s2.get("asst_icdc_erng_rt", 0)),
+                "total_eval": total_eval,
+                "cash": cash,
+                "orderable_cash": orderable_cash,
+                "asset_total_krw": account_asset,
+                "net_asset_krw": net_asset,
+                "total_asset_krw": total_asset,
+                "cash_settlement_krw": cash_settlement,
+                "d1_settlement_krw": d1_settlement,
+                "d2_settlement_krw": d2_settlement,
+                "today_buy_amount_krw": int(_to_float(s2.get("thdt_buy_amt"), 0)),
+                "today_sell_amount_krw": int(_to_float(s2.get("thdt_sll_amt"), 0)),
+                "total_profit": int(_to_float(s2.get("evlu_pfls_smtl_amt"), 0)),
+                "profit_rate": float(_to_float(s2.get("asst_icdc_erng_rt"), 0)),
             }
 
         out = data.get("output", {})
