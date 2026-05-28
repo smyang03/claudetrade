@@ -84,6 +84,10 @@ def _candidate_filters(
     return " AND ".join(where), params
 
 
+def _chunked(values: list[Any], size: int = 400) -> list[list[Any]]:
+    return [values[idx : idx + size] for idx in range(0, len(values), size)]
+
+
 def _load_candidate_rows(
     conn: sqlite3.Connection,
     *,
@@ -147,6 +151,117 @@ def _load_price_observations(
     for values in observations.values():
         values.sort(key=lambda item: item[0])
     return observations
+
+
+def _load_existing_outcomes(
+    conn: sqlite3.Connection,
+    *,
+    candidate_keys: list[str],
+    horizons: tuple[int, ...],
+) -> dict[tuple[str, int], dict[str, Any]]:
+    if not candidate_keys or not horizons:
+        return {}
+    horizon_values = tuple(sorted({int(value) for value in horizons}))
+    horizon_placeholders = ",".join("?" for _ in horizon_values)
+    out: dict[tuple[str, int], dict[str, Any]] = {}
+    for chunk in _chunked(sorted({str(key) for key in candidate_keys if str(key or "").strip()})):
+        key_placeholders = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"""
+            SELECT candidate_key, horizon_min, return_pct, status, updated_at
+            FROM audit_candidate_outcomes
+            WHERE candidate_key IN ({key_placeholders})
+              AND horizon_min IN ({horizon_placeholders})
+            """,
+            (*chunk, *horizon_values),
+        ).fetchall()
+        for row in rows:
+            out[(str(row["candidate_key"] or ""), int(row["horizon_min"] or 0))] = dict(row)
+    return out
+
+
+def _horizon_summary(
+    rows: list[dict[str, Any]],
+    *,
+    rows_to_write: list[dict[str, Any]],
+    skipped_existing_non_null: list[dict[str, Any]],
+    written: int,
+) -> dict[str, dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = {}
+
+    def _entry(horizon: int) -> dict[str, Any]:
+        key = str(int(horizon))
+        if key not in summary:
+            summary[key] = {
+                "planned_rows": 0,
+                "write_rows": 0,
+                "skipped_existing_non_null_rows": 0,
+                "written_rows": 0,
+                "non_null_return_rows": 0,
+                "status_counts": {},
+            }
+        return summary[key]
+
+    for row in rows:
+        entry = _entry(int(row.get("horizon_min") or 0))
+        entry["planned_rows"] += 1
+        if row.get("return_pct") is not None:
+            entry["non_null_return_rows"] += 1
+        status = str(row.get("status") or "unknown")
+        entry["status_counts"][status] = int(entry["status_counts"].get(status, 0)) + 1
+    for row in rows_to_write:
+        _entry(int(row.get("horizon_min") or 0))["write_rows"] += 1
+    for row in skipped_existing_non_null:
+        _entry(int(row.get("horizon_min") or 0))["skipped_existing_non_null_rows"] += 1
+    if written:
+        for row in rows_to_write:
+            _entry(int(row.get("horizon_min") or 0))["written_rows"] += 1
+    return dict(sorted(summary.items(), key=lambda item: int(item[0])))
+
+
+def _write_outcome_report(summary: dict[str, Any], *, report_dir: str | Path | None = None) -> dict[str, str]:
+    out_dir = Path(report_dir) if report_dir else get_runtime_path(
+        "data",
+        "v2_reports",
+        "candidate_audit_outcomes",
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = f"candidate_audit_outcomes_{summary.get('session_date') or 'all'}_{summary.get('market') or 'ALL'}_{stamp}"
+    json_path = out_dir / f"{base}.json"
+    md_path = out_dir / f"{base}.md"
+    json_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    lines = [
+        "# Candidate Audit Outcome Backfill Report",
+        "",
+        f"- generated_at: {summary.get('label_generated_at', '')}",
+        f"- db_path: {summary.get('db_path', '')}",
+        f"- session_date: {summary.get('session_date', '') or '*'}",
+        f"- market: {summary.get('market', '') or '*'}",
+        f"- runtime_mode: {summary.get('runtime_mode', '')}",
+        f"- dry_run: {summary.get('dry_run')}",
+        f"- force_recompute: {summary.get('force_recompute')}",
+        f"- candidate_rows: {summary.get('candidate_rows')}",
+        f"- planned_outcome_rows: {summary.get('planned_outcome_rows')}",
+        f"- write_rows: {summary.get('write_rows')}",
+        f"- skipped_existing_non_null_rows: {summary.get('skipped_existing_non_null_rows')}",
+        f"- written_rows: {summary.get('written_rows')}",
+        f"- promotion_gate_state: {summary.get('promotion_gate_state', '')}",
+        "",
+        "## Coverage By Horizon",
+        "",
+        "| horizon_min | planned | write | skipped_existing_non_null | written | non_null_return | statuses |",
+        "|---|---:|---:|---:|---:|---:|---|",
+    ]
+    for horizon, row in (summary.get("coverage_by_horizon") or {}).items():
+        statuses = ", ".join(f"{key}={value}" for key, value in sorted((row.get("status_counts") or {}).items()))
+        lines.append(
+            f"| {horizon} | {row.get('planned_rows', 0)} | {row.get('write_rows', 0)} | "
+            f"{row.get('skipped_existing_non_null_rows', 0)} | {row.get('written_rows', 0)} | "
+            f"{row.get('non_null_return_rows', 0)} | {statuses} |"
+        )
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"json": str(json_path), "md": str(md_path)}
 
 
 def _build_outcome_row(
@@ -329,6 +444,10 @@ def update_candidate_audit_outcomes(
     runtime_mode: str = "live",
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
     min_samples_by_horizon: dict[int, int] | None = None,
+    dry_run: bool = False,
+    write_report: bool = False,
+    report_dir: str | Path | None = None,
+    force_recompute: bool = False,
 ) -> dict[str, Any]:
     target = Path(db_path) if db_path else get_runtime_path("data", "audit", "candidate_audit.db")
     store = CandidateAuditStore(target)
@@ -351,6 +470,11 @@ def update_candidate_audit_outcomes(
             session_date=session_date,
             market=market,
             runtime_mode=runtime_mode,
+        )
+        existing_outcomes = _load_existing_outcomes(
+            conn,
+            candidate_keys=[str(row.get("candidate_key") or "") for row in candidates],
+            horizons=horizons,
         )
     finally:
         conn.close()
@@ -384,21 +508,80 @@ def update_candidate_audit_outcomes(
             outcome_rows.append(row)
             status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
 
-    written = store.upsert_outcomes(outcome_rows)
-    return {
+    rows_to_write: list[dict[str, Any]] = []
+    skipped_existing_non_null: list[dict[str, Any]] = []
+    planned_insert_count = 0
+    planned_update_count = 0
+    planned_overwrite_existing_non_null_count = 0
+    for row in outcome_rows:
+        key = (str(row.get("candidate_key") or ""), int(row.get("horizon_min") or 0))
+        existing = existing_outcomes.get(key)
+        if existing is not None and existing.get("return_pct") is not None and not force_recompute:
+            skipped_existing_non_null.append(
+                {
+                    "candidate_key": key[0],
+                    "horizon_min": key[1],
+                    "existing_return_pct": existing.get("return_pct"),
+                    "existing_status": existing.get("status"),
+                    "planned_status": row.get("status"),
+                }
+            )
+            continue
+        if existing is None:
+            planned_insert_count += 1
+        else:
+            planned_update_count += 1
+            if existing.get("return_pct") is not None:
+                planned_overwrite_existing_non_null_count += 1
+        rows_to_write.append(row)
+
+    written = 0 if dry_run else store.upsert_outcomes(rows_to_write)
+    coverage_by_horizon = _horizon_summary(
+        outcome_rows,
+        rows_to_write=rows_to_write,
+        skipped_existing_non_null=skipped_existing_non_null,
+        written=written,
+    )
+    daily_horizons = [int(value) for value in horizons if int(value) in DAILY_FORWARD_HORIZONS]
+    daily_non_null = sum(
+        int(row.get("non_null_return_rows") or 0)
+        for horizon, row in coverage_by_horizon.items()
+        if int(horizon) in DAILY_FORWARD_HORIZONS
+    )
+    promotion_gate_state = "not_applicable"
+    if daily_horizons:
+        promotion_gate_state = "pass" if daily_non_null > 0 else "blocked_label_coverage"
+
+    summary = {
         "db_path": str(target),
         "session_date": session_date,
         "market": str(market or "").upper(),
         "runtime_mode": str(runtime_mode or "live").lower(),
+        "dry_run": bool(dry_run),
+        "force_recompute": bool(force_recompute),
         "candidate_rows": len(candidates),
         "outcome_rows": written,
+        "planned_outcome_rows": len(outcome_rows),
+        "write_rows": len(rows_to_write),
+        "written_rows": written,
+        "planned_insert_count": planned_insert_count,
+        "planned_update_count": planned_update_count,
+        "planned_overwrite_existing_non_null_count": planned_overwrite_existing_non_null_count,
+        "skipped_existing_non_null_rows": len(skipped_existing_non_null),
+        "skipped_existing_non_null_examples": skipped_existing_non_null[:20],
+        "non_null_return_rows": sum(1 for row in outcome_rows if row.get("return_pct") is not None),
         "horizons": list(horizons),
         "status_counts": status_counts,
+        "coverage_by_horizon": coverage_by_horizon,
+        "promotion_gate_state": promotion_gate_state,
         "label_generated_at": label_generated_at,
         "last_success_at": label_generated_at if written or not candidates else "",
         "next_due_at": next_due_at,
-        "outcome_health": "ok" if written or not candidates else "no_outcomes_written",
+        "outcome_health": "ok" if written or dry_run or not candidates else "no_outcomes_written",
     }
+    if write_report:
+        summary["report_paths"] = _write_outcome_report(summary, report_dir=report_dir)
+    return summary
 
 
 def main() -> int:
@@ -408,6 +591,10 @@ def main() -> int:
     parser.add_argument("--market", default="", help="KR or US; empty means all markets")
     parser.add_argument("--runtime-mode", default="live")
     parser.add_argument("--horizons", default="30,60", help="comma-separated minute horizons")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--write-report", action="store_true")
+    parser.add_argument("--report-dir", default="")
+    parser.add_argument("--force-recompute", action="store_true")
     args = parser.parse_args()
     horizons = tuple(int(part.strip()) for part in str(args.horizons).split(",") if part.strip())
     summary = update_candidate_audit_outcomes(
@@ -416,6 +603,10 @@ def main() -> int:
         market=args.market,
         runtime_mode=args.runtime_mode,
         horizons=horizons or DEFAULT_HORIZONS,
+        dry_run=args.dry_run,
+        write_report=args.write_report,
+        report_dir=args.report_dir or None,
+        force_recompute=args.force_recompute,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

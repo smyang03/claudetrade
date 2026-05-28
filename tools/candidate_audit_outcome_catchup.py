@@ -78,27 +78,33 @@ def run_catchup(
     dry_run: bool = False,
     write_report: bool = False,
     report_dir: str | Path | None = None,
+    force_recompute: bool = False,
 ) -> dict[str, Any]:
     plan = build_catchup_plan(date_arg=date_arg, from_date=from_date, to_date=to_date, days=days, market=market)
     results: list[dict[str, Any]] = []
-    if not dry_run:
-        for item in plan:
-            results.append(
-                update_candidate_audit_outcomes(
-                    db_path=db_path,
-                    session_date=item["session_date"],
-                    market=item["market"],
-                    runtime_mode=runtime_mode,
-                    horizons=horizons,
-                )
+    for item in plan:
+        results.append(
+            update_candidate_audit_outcomes(
+                db_path=db_path,
+                session_date=item["session_date"],
+                market=item["market"],
+                runtime_mode=runtime_mode,
+                horizons=horizons,
+                dry_run=dry_run,
+                force_recompute=force_recompute,
             )
-    summary = {
+        )
+    summary: dict[str, Any] = {
         "dry_run": bool(dry_run),
+        "force_recompute": bool(force_recompute),
         "runtime_mode": str(runtime_mode or "live").lower(),
         "horizons": list(horizons),
         "planned": plan,
         "results": results,
         "total_outcome_rows": sum(int(row.get("outcome_rows") or 0) for row in results),
+        "total_planned_outcome_rows": sum(int(row.get("planned_outcome_rows") or 0) for row in results),
+        "total_write_rows": sum(int(row.get("write_rows") or 0) for row in results),
+        "total_skipped_existing_non_null_rows": sum(int(row.get("skipped_existing_non_null_rows") or 0) for row in results),
     }
     if write_report:
         summary["report_path"] = str(_write_catchup_report(summary, report_dir=report_dir))
@@ -125,6 +131,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runtime-mode", default="live")
     parser.add_argument("--horizons", default="30,60", help="comma-separated minute horizons, e.g. 30,60,1440,2880,4320")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--write-report", action="store_true")
+    parser.add_argument("--report-dir", default="")
+    parser.add_argument("--force-recompute", action="store_true")
     args = parser.parse_args(argv)
     summary = run_catchup(
         db_path=args.db or None,
@@ -136,7 +145,9 @@ def main(argv: list[str] | None = None) -> int:
         runtime_mode=args.runtime_mode,
         horizons=_parse_horizons(args.horizons),
         dry_run=args.dry_run,
-        write_report=True,
+        write_report=args.write_report,
+        report_dir=args.report_dir or None,
+        force_recompute=args.force_recompute,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

@@ -4,6 +4,8 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,7 +18,7 @@ from tools.analyze_candidate_audit import (
     watch_trigger_funnel_summary,
 )
 from tools.backfill_candidate_audit import backfill_candidate_audit
-from tools.candidate_audit_outcome_catchup import build_catchup_plan, run_catchup
+from tools.candidate_audit_outcome_catchup import build_catchup_plan, main as catchup_main, run_catchup
 from tools.update_candidate_audit_outcomes import update_candidate_audit_outcomes
 import ticker_selection_db
 
@@ -1154,6 +1156,18 @@ class CandidateAuditBackfillTests(unittest.TestCase):
     def test_candidate_audit_outcome_catchup_dry_run_does_not_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "dry_0",
+                    "runtime_mode": "live",
+                    "market": "KR",
+                    "session_date": "2026-05-08",
+                    "known_at": "2026-05-08T09:00:00",
+                    "ticker": "AAA",
+                    "price": 100.0,
+                }
+            )
             summary = run_catchup(
                 db_path=db_path,
                 date_arg="2026-05-08",
@@ -1162,9 +1176,143 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                 dry_run=True,
             )
 
-        self.assertTrue(summary["dry_run"])
-        self.assertEqual(summary["planned"], [{"session_date": "2026-05-08", "market": "KR"}])
-        self.assertEqual(summary["results"], [])
+            self.assertTrue(summary["dry_run"])
+            self.assertEqual(summary["planned"], [{"session_date": "2026-05-08", "market": "KR"}])
+            self.assertEqual(len(summary["results"]), 1)
+            self.assertEqual(summary["total_outcome_rows"], 0)
+            self.assertGreater(summary["total_planned_outcome_rows"], 0)
+            conn = sqlite3.connect(db_path)
+            try:
+                count = conn.execute("SELECT COUNT(*) FROM audit_candidate_outcomes").fetchone()[0]
+            finally:
+                conn.close()
+            self.assertEqual(count, 0)
+
+    def test_outcome_update_preserves_existing_non_null_unless_forced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            session_date = "2026-05-08"
+            prices = [
+                ("call_0", "2026-05-08T09:00:00", 100.0),
+                ("call_1", "2026-05-08T09:10:00", 101.0),
+                ("call_2", "2026-05-08T09:20:00", 103.0),
+                ("call_3", "2026-05-08T09:30:00", 102.0),
+            ]
+            for call_id, known_at, price in prices:
+                store.upsert_candidate(
+                    {
+                        "call_id": call_id,
+                        "runtime_mode": "live",
+                        "market": "KR",
+                        "session_date": session_date,
+                        "known_at": known_at,
+                        "ticker": "AAA",
+                        "price": price,
+                    }
+                )
+            base_key = candidate_key(
+                session_date=session_date,
+                market="KR",
+                call_id="call_0",
+                ticker="AAA",
+            )
+            store.upsert_outcome(
+                {
+                    "candidate_key": base_key,
+                    "horizon_min": 30,
+                    "target_at": "legacy",
+                    "observed_at": "legacy",
+                    "observed_price": 999.0,
+                    "return_pct": 99.0,
+                    "max_runup_pct": 99.0,
+                    "max_drawdown_pct": 0.0,
+                    "status": "legacy_non_null",
+                    "source": "test",
+                    "label_generated_at": "legacy",
+                    "payload": {"legacy": True},
+                }
+            )
+
+            summary = update_candidate_audit_outcomes(
+                db_path=db_path,
+                session_date=session_date,
+                market="KR",
+                horizons=(30,),
+                min_samples_by_horizon={30: 1},
+            )
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                preserved = dict(
+                    conn.execute(
+                        """
+                        SELECT return_pct, status
+                        FROM audit_candidate_outcomes
+                        WHERE candidate_key=? AND horizon_min=30
+                        """,
+                        (base_key,),
+                    ).fetchone()
+                )
+            finally:
+                conn.close()
+            self.assertEqual(summary["skipped_existing_non_null_rows"], 1)
+            self.assertEqual(preserved["return_pct"], 99.0)
+            self.assertEqual(preserved["status"], "legacy_non_null")
+
+            forced = update_candidate_audit_outcomes(
+                db_path=db_path,
+                session_date=session_date,
+                market="KR",
+                horizons=(30,),
+                min_samples_by_horizon={30: 1},
+                force_recompute=True,
+            )
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                overwritten = dict(
+                    conn.execute(
+                        """
+                        SELECT return_pct, status
+                        FROM audit_candidate_outcomes
+                        WHERE candidate_key=? AND horizon_min=30
+                        """,
+                        (base_key,),
+                    ).fetchone()
+                )
+            finally:
+                conn.close()
+            self.assertGreaterEqual(forced["planned_overwrite_existing_non_null_count"], 1)
+            self.assertAlmostEqual(overwritten["return_pct"], 2.0)
+            self.assertEqual(overwritten["status"], "audit_sparse")
+
+    def test_candidate_audit_outcome_catchup_cli_writes_requested_report_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            report_dir = Path(tmp) / "reports"
+            CandidateAuditStore(db_path)
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                rc = catchup_main(
+                    [
+                        "--db",
+                        str(db_path),
+                        "--date",
+                        "2026-05-08",
+                        "--market",
+                        "KR",
+                        "--dry-run",
+                        "--write-report",
+                        "--report-dir",
+                        str(report_dir),
+                    ]
+                )
+            self.assertEqual(rc, 0)
+            reports = list(report_dir.glob("candidate_audit_outcome_catchup_*.json"))
+            self.assertEqual(len(reports), 1)
+            payload = json.loads(reports[0].read_text(encoding="utf-8"))
+            self.assertTrue(payload["dry_run"])
 
     def test_analysis_percentiles_and_strategy_mismatch_are_python_side(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
