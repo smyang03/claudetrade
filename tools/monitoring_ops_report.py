@@ -183,10 +183,25 @@ def _v2_learning_gate_report(db_path: Path, *, market: str, runtime_mode: str) -
             learning_allowed = int(row["allowed"] or 0)
             learning_excluded = int(row["excluded"] or 0)
         reason_counts: Counter[str] = Counter()
-        if "quality_reasons_json" in columns:
+        reason_table = ""
+        reason_columns: set[str] = set()
+        if _table_exists(conn, "v2_learning_performance"):
+            learning_columns = _columns(conn, "v2_learning_performance")
+            if "quality_reasons_json" in learning_columns:
+                reason_table = "v2_learning_performance"
+                reason_columns = learning_columns
+        if not reason_table and "quality_reasons_json" in columns:
+            reason_table = "v2_canonical_performance"
+            reason_columns = columns
+        if reason_table:
+            reason_where = ["runtime_mode=?"]
+            reason_params: list[Any] = [runtime_mode]
+            if market and "market" in reason_columns:
+                reason_where.append("market=?")
+                reason_params.append(market.upper())
             for row in conn.execute(
-                f"SELECT quality_reasons_json FROM v2_canonical_performance WHERE {' AND '.join(where)}",
-                params,
+                f"SELECT quality_reasons_json FROM {reason_table} WHERE {' AND '.join(reason_where)}",
+                reason_params,
             ):
                 try:
                     reasons = json.loads(str(row["quality_reasons_json"] or "[]"))
@@ -256,6 +271,7 @@ def _pead_manual_review_report(
     ][:20]
     surprise_known = sum(1 for row in rows if str(row.get("surprise_sign") or "unknown") != "unknown")
     prompt_applied = sum(1 for row in rows if bool(row.get("prompt_applied")))
+    checklist_complete = bool(checklist) and all(bool(value) for value in checklist.values())
     return {
         "state_path": str(state_path),
         "log_dir": str(log_dir),
@@ -268,7 +284,9 @@ def _pead_manual_review_report(
         "surprise_known_count": surprise_known,
         "prompt_applied_count": prompt_applied,
         "prompt_leak_candidates": prompt_leaks,
-        "promotion_gate_state": "pass" if prompt_enabled and trading_days_observed >= required_trading_days and not prompt_leaks else "blocked_manual_review",
+        "promotion_gate_state": "pass"
+        if prompt_enabled and trading_days_observed >= required_trading_days and not prompt_leaks and checklist_complete
+        else "blocked_manual_review",
         "policy_change_allowed": False,
     }
 
@@ -452,7 +470,11 @@ def build_monitoring_ops_report(
         ),
     }
     payload["gate_summary"] = {
-        "actual_prompt_visibility": (candidate_analysis.get("candidate_consistency") or {}) if isinstance(candidate_analysis, dict) else {},
+        "actual_prompt_visibility": (
+            candidate_analysis.get("consistency") or candidate_analysis.get("candidate_consistency") or {}
+        )
+        if isinstance(candidate_analysis, dict)
+        else {},
         "bucket_source_score_performance_allowed": False,
         "watch_trigger_policy_change_allowed": False,
         "learning_policy_change_allowed": False,

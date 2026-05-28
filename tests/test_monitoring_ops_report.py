@@ -5,8 +5,9 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from tools.monitoring_ops_report import build_monitoring_ops_report
+from tools.monitoring_ops_report import _pead_manual_review_report, build_monitoring_ops_report
 
 
 class MonitoringOpsReportTests(unittest.TestCase):
@@ -22,7 +23,6 @@ class MonitoringOpsReportTests(unittest.TestCase):
                         market TEXT,
                         runtime_mode TEXT,
                         quality_grade TEXT,
-                        quality_reasons_json TEXT,
                         learning_allowed INTEGER,
                         synced_at TEXT
                     )
@@ -30,14 +30,35 @@ class MonitoringOpsReportTests(unittest.TestCase):
                 )
                 conn.execute(
                     """
-                    INSERT INTO v2_canonical_performance
-                    VALUES ('KR', 'live', 'blocked', '["ORDER_UNKNOWN_UNRESOLVED"]', 0, '2026-05-28T00:00:00')
+                    CREATE TABLE v2_learning_performance (
+                        market TEXT,
+                        runtime_mode TEXT,
+                        quality_reasons_json TEXT
+                    )
                     """
                 )
                 conn.execute(
                     """
                     INSERT INTO v2_canonical_performance
-                    VALUES ('KR', 'live', 'clean', '[]', 1, '2026-05-28T01:00:00')
+                    VALUES ('KR', 'live', 'blocked', 0, '2026-05-28T00:00:00')
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO v2_canonical_performance
+                    VALUES ('KR', 'live', 'clean', 1, '2026-05-28T01:00:00')
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO v2_learning_performance
+                    VALUES ('KR', 'live', '["ORDER_UNKNOWN_UNRESOLVED"]')
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO v2_learning_performance
+                    VALUES ('KR', 'live', '["DIRTY_BROKER_TRUTH", "ORDER_UNKNOWN_UNRESOLVED"]')
                     """
                 )
                 conn.commit()
@@ -120,7 +141,8 @@ class MonitoringOpsReportTests(unittest.TestCase):
             self.assertFalse(payload["candidate_analysis"]["available"])
             self.assertEqual(payload["v2_learning_gate"]["learning_allowed"], 1)
             self.assertEqual(payload["v2_learning_gate"]["learning_excluded"], 1)
-            self.assertEqual(payload["v2_learning_gate"]["top_quality_reasons"]["ORDER_UNKNOWN_UNRESOLVED"], 1)
+            self.assertEqual(payload["v2_learning_gate"]["top_quality_reasons"]["ORDER_UNKNOWN_UNRESOLVED"], 2)
+            self.assertEqual(payload["v2_learning_gate"]["top_quality_reasons"]["DIRTY_BROKER_TRUTH"], 1)
             self.assertFalse(payload["v2_learning_gate"]["policy_change_allowed"])
             self.assertEqual(payload["pead_manual_review"]["promotion_gate_state"], "blocked_manual_review")
             self.assertEqual(len(payload["pead_manual_review"]["prompt_leak_candidates"]), 1)
@@ -130,6 +152,78 @@ class MonitoringOpsReportTests(unittest.TestCase):
             self.assertFalse(payload["gate_summary"]["pead_policy_change_allowed"])
             self.assertTrue(Path(payload["report_paths"]["json"]).exists())
             self.assertTrue(Path(payload["report_paths"]["md"]).exists())
+
+    def test_gate_summary_uses_candidate_consistency_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate_db = root / "candidate_audit.db"
+            candidate_db.touch()
+            consistency = {
+                "actual_prompt_mismatch_count": 2,
+                "invalid_price_count": 1,
+                "invalid_price_reason_counts": {"missing_quote": 1},
+            }
+            with patch(
+                "tools.monitoring_ops_report.analyze_candidate_audit",
+                return_value={"available": True, "consistency": consistency},
+            ):
+                payload = build_monitoring_ops_report(
+                    candidate_db=candidate_db,
+                    learning_db=root / "missing_decisions.db",
+                    mode="live",
+                    session_date="2026-05-28",
+                    market="KR",
+                    pead_state=root / "missing_pead_state.json",
+                    pead_log_dir=root / "missing_pead_logs",
+                    hold_decision_dir=root / "missing_hold_logs",
+                )
+
+            self.assertEqual(payload["gate_summary"]["actual_prompt_visibility"], consistency)
+
+    def test_pead_gate_requires_complete_manual_checklist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = root / "pead"
+            logs.mkdir()
+            state = root / "pead_shadow_state.json"
+            state.write_text(
+                json.dumps(
+                    {
+                        "trading_days_observed": 5,
+                        "prompt_surprise_enabled": True,
+                        "manual_review_checklist": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            payload = _pead_manual_review_report(state_path=state, log_dir=logs)
+            self.assertEqual(payload["promotion_gate_state"], "blocked_manual_review")
+
+            state.write_text(
+                json.dumps(
+                    {
+                        "trading_days_observed": 5,
+                        "prompt_surprise_enabled": True,
+                        "manual_review_checklist": {"null_rate_reviewed": True, "prompt_leak_reviewed": False},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            payload = _pead_manual_review_report(state_path=state, log_dir=logs)
+            self.assertEqual(payload["promotion_gate_state"], "blocked_manual_review")
+
+            state.write_text(
+                json.dumps(
+                    {
+                        "trading_days_observed": 5,
+                        "prompt_surprise_enabled": True,
+                        "manual_review_checklist": {"null_rate_reviewed": True, "prompt_leak_reviewed": True},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            payload = _pead_manual_review_report(state_path=state, log_dir=logs)
+            self.assertEqual(payload["promotion_gate_state"], "pass")
 
 
 if __name__ == "__main__":
