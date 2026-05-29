@@ -63,6 +63,51 @@ class MLDbWriterPathTests(unittest.TestCase):
             with patch.dict(os.environ, {"ML_DECISIONS_DB_PATH": str(rel)}):
                 self.assertEqual(db_writer._resolve_db_path(), rel.expanduser().resolve())
 
+    def test_init_db_migrates_existing_v2_learning_bucket_columns_before_indexes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_db = Path(tmp) / "decisions.db"
+            conn = sqlite3.connect(str(temp_db))
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE v2_learning_performance (
+                        v2_decision_id TEXT PRIMARY KEY,
+                        market TEXT NOT NULL,
+                        runtime_mode TEXT NOT NULL,
+                        session_date TEXT NOT NULL,
+                        ticker TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        quality_grade TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN',
+                        learning_allowed INTEGER NOT NULL DEFAULT 0,
+                        source_event_count INTEGER NOT NULL DEFAULT 0,
+                        synced_at TEXT NOT NULL
+                    )
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            with patch.dict(os.environ, {"ML_DECISIONS_DB_PATH": str(temp_db)}):
+                with patch("strategy.param_tuner.ensure_table"):
+                    db_writer.init_db()
+
+            conn = sqlite3.connect(str(temp_db))
+            try:
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(v2_learning_performance)")}
+                indexes = {
+                    row[1]
+                    for row in conn.execute("PRAGMA index_list(v2_learning_performance)")
+                }
+            finally:
+                conn.close()
+
+            self.assertIn("candidate_pool_role", columns)
+            self.assertIn("experiment_bucket", columns)
+            self.assertIn("discovery_live_experiment", columns)
+            self.assertIn("quality_reasons_json", columns)
+            self.assertIn("idx_v2_learning_perf_experiment", indexes)
+
     def test_load_for_ml_defaults_to_live_non_sim_outside_known_gap(self):
         with tempfile.TemporaryDirectory() as tmp:
             temp_db = Path(tmp) / "decisions.db"

@@ -31,6 +31,17 @@ _PROD_DB_PATH = (_ROOT / "data" / "ml" / "decisions.db").resolve()
 _DB_PATH = _PROD_DB_PATH
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
+_V2_LEARNING_PERFORMANCE_MIGRATIONS = {
+    "candidate_pool_role": "TEXT",
+    "experiment_bucket": "TEXT NOT NULL DEFAULT 'standard'",
+    "discovery_live_experiment": "INTEGER NOT NULL DEFAULT 0",
+    "discovery_action_ceiling": "TEXT",
+    "discovery_signal_family": "TEXT",
+    "discovery_reason": "TEXT",
+    "discovery_overlay_rank": "INTEGER",
+    "quality_reasons_json": "TEXT NOT NULL DEFAULT '[]'",
+}
+
 # ── logger ────────────────────────────────────────────────────────────────────
 sys.path.insert(0, str(_ROOT))
 from ml.decision_gap_policy import (
@@ -73,10 +84,31 @@ def _get_conn() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_existing_table_columns(
+    conn: sqlite3.Connection,
+    table: str,
+    columns: dict[str, str],
+) -> None:
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if not existing:
+        return
+    for name, column_type in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {column_type}")
+            _log.info("[ml.db] %s.%s 컬럼 마이그레이션 완료", table, name)
+
+
 def init_db():
     """DB 초기화 — schema.sql 실행 + 기존 DB 컬럼 마이그레이션."""
     sql = _SCHEMA_PATH.read_text(encoding="utf-8")
     with _get_conn() as conn:
+        # Existing DBs may predate M10 learning-bucket columns. Add them before
+        # running schema indexes that reference those columns.
+        _ensure_existing_table_columns(
+            conn,
+            "v2_learning_performance",
+            _V2_LEARNING_PERFORMANCE_MIGRATIONS,
+        )
         conn.executescript(sql)
         # 기존 DB에 strategy_used 컬럼 없으면 추가 (ALTER TABLE은 IF NOT EXISTS 미지원)
         existing = {row[1] for row in conn.execute("PRAGMA table_info(decisions)")}

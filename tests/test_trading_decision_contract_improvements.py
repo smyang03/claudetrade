@@ -267,7 +267,9 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
         pos = {"ticker": "TEST", "entry": 100.0, "current_price": 97.0}
         with patch.dict(os.environ, {"HOLD_ADVISOR_TRIAGE_ENABLED": "true"}, clear=False), patch.object(
             hold_advisor, "_ask_triage", return_value=triage
-        ) as ask_triage, patch.object(hold_advisor, "_ask_one", side_effect=AssertionError("legacy should be skipped")):
+        ) as ask_triage, patch.object(
+            hold_advisor, "_ask_challenge", side_effect=AssertionError("challenge should be skipped")
+        ), patch.object(hold_advisor, "_ask_one", side_effect=AssertionError("legacy should be skipped")):
             result = hold_advisor.ask(pos, "KR", delay=0, decision_stage="AUTO_SELL_REVIEW", default_policy="policy")
 
         ask_triage.assert_called_once()
@@ -276,7 +278,7 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
         self.assertEqual(result["exit_driver"], "failed_recovery")
         self.assertEqual(set(result["votes"]), {"triage"})
 
-    def test_non_stop_sell_triage_falls_back_to_legacy_by_default(self) -> None:
+    def test_non_stop_sell_triage_uses_conditional_challenge_by_default(self) -> None:
         triage = hold_advisor._coerce_triage_vote(
             {
                 "category": "SELL",
@@ -289,6 +291,134 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
             "AUTO_SELL_REVIEW",
             "policy",
         )
+        challenge = {
+            "confirm": False,
+            "final_category": "HOLD",
+            "confidence": 0.78,
+            "hold_mode": "profit_pullback",
+            "sell_urgency": "wait",
+            "protective_stop": 98.5,
+            "hard_stop": 96.0,
+            "recover_above": 102.0,
+            "next_review_min": 20,
+            "invalid_if": "loses 98.5",
+            "risk_if_wrong": "missed time exit",
+            "minimum_condition_to_hold": "above 98.5",
+            "reason": "sell trigger is not decisive enough",
+            "challenge_prompt_version": hold_advisor.CHALLENGE_PROMPT_VERSION,
+            "parse_error": False,
+            "duration_ms": 12,
+        }
+
+        pos = {"ticker": "TEST", "entry": 100.0, "current_price": 101.0}
+        with patch.dict(os.environ, {"HOLD_ADVISOR_TRIAGE_ENABLED": "true"}, clear=False), patch.object(
+            hold_advisor, "_ask_triage", return_value=triage
+        ), patch.object(hold_advisor, "_ask_challenge", return_value=challenge) as ask_challenge, patch.object(
+            hold_advisor, "_ask_one", side_effect=AssertionError("legacy should be skipped")
+        ):
+            result = hold_advisor.ask(pos, "KR", delay=0, decision_stage="AUTO_SELL_REVIEW", default_policy="policy")
+
+        ask_challenge.assert_called_once()
+        self.assertIs(ask_challenge.call_args.args[-1], triage)
+        self.assertEqual(result["action"], "HOLD")
+        self.assertEqual(set(result["votes"]), {"triage", "challenge"})
+        self.assertTrue(result["second_opinion_used"])
+        self.assertEqual(result["second_opinion_reason"], "non_stop_sell_escalation")
+        self.assertEqual(result["exit_category"], "HOLD")
+        self.assertEqual(result["protective_stop"], 98.5)
+        self.assertEqual(result["invalid_if"], "loses 98.5")
+
+    def test_model_requested_second_opinion_uses_challenge_even_for_stop_loss(self) -> None:
+        triage = hold_advisor._coerce_triage_vote(
+            {
+                "category": "STOP_LOSS",
+                "confidence": 0.91,
+                "urgency": "now",
+                "exit_driver": "loss_cap",
+                "needs_second_opinion": True,
+                "reason": "loss cap but context asks for verification",
+            },
+            {"ticker": "TEST"},
+            "AUTO_SELL_REVIEW",
+            "policy",
+        )
+        challenge = {
+            "confirm": True,
+            "final_category": "STOP_LOSS",
+            "confidence": 0.86,
+            "hold_mode": "",
+            "sell_urgency": "now",
+            "protective_stop": 0.0,
+            "hard_stop": 95.0,
+            "recover_above": 0.0,
+            "next_review_min": 10,
+            "invalid_if": "loss cap remains active",
+            "risk_if_wrong": "extends a failed recovery",
+            "minimum_condition_to_hold": "",
+            "reason": "second pass confirms loss cap",
+            "challenge_prompt_version": hold_advisor.CHALLENGE_PROMPT_VERSION,
+            "parse_error": False,
+            "duration_ms": 8,
+        }
+
+        pos = {"ticker": "TEST", "entry": 100.0, "current_price": 96.0}
+        with patch.dict(os.environ, {"HOLD_ADVISOR_TRIAGE_ENABLED": "true"}, clear=False), patch.object(
+            hold_advisor, "_ask_triage", return_value=triage
+        ), patch.object(hold_advisor, "_ask_challenge", return_value=challenge) as ask_challenge, patch.object(
+            hold_advisor, "_ask_one", side_effect=AssertionError("legacy should be skipped")
+        ):
+            result = hold_advisor.ask(pos, "KR", delay=0, decision_stage="AUTO_SELL_REVIEW", default_policy="policy")
+
+        ask_challenge.assert_called_once()
+        self.assertEqual(result["action"], "SELL")
+        self.assertEqual(result["second_opinion_reason"], "model_requested_second_opinion")
+        self.assertEqual(result["challenge_final_category"], "STOP_LOSS")
+        self.assertEqual(set(result["votes"]), {"triage", "challenge"})
+
+    def test_challenge_parse_error_returns_safe_hold_without_legacy_by_default(self) -> None:
+        triage = hold_advisor._coerce_triage_vote(
+            {
+                "category": "SELL",
+                "confidence": 0.9,
+                "urgency": "now",
+                "exit_driver": "profit_protection",
+                "reason": "profit trigger",
+            },
+            {"ticker": "TEST"},
+            "AUTO_SELL_REVIEW",
+            "policy",
+        )
+        challenge = {
+            "confirm": False,
+            "final_category": "HOLD",
+            "confidence": 0.0,
+            "reason": "challenge_error",
+            "challenge_prompt_version": hold_advisor.CHALLENGE_PROMPT_VERSION,
+            "parse_error": True,
+            "duration_ms": 7,
+        }
+
+        pos = {"ticker": "TEST", "entry": 100.0, "current_price": 101.0}
+        with patch.dict(
+            os.environ,
+            {
+                "HOLD_ADVISOR_TRIAGE_ENABLED": "true",
+                "HOLD_ADVISOR_TRIAGE_LEGACY_FALLBACK_ENABLED": "false",
+            },
+            clear=False,
+        ), patch.object(hold_advisor, "_ask_triage", return_value=triage), patch.object(
+            hold_advisor, "_ask_challenge", return_value=challenge
+        ), patch.object(hold_advisor, "_ask_one", side_effect=AssertionError("legacy should be skipped")):
+            result = hold_advisor.ask(pos, "KR", delay=0, decision_stage="AUTO_SELL_REVIEW", default_policy="policy")
+
+        self.assertEqual(result["action"], "HOLD")
+        self.assertTrue(result["second_opinion_used"])
+        self.assertTrue(result["challenge_parse_error"])
+        self.assertEqual(result["reason"], "challenge_error")
+        self.assertEqual(set(result["votes"]), {"triage", "challenge"})
+
+    def test_triage_parse_error_can_opt_into_legacy_fallback(self) -> None:
+        triage = hold_advisor._fallback_triage("triage_error", "AUTO_SELL_REVIEW", "policy")
         legacy_calls = []
 
         def _fake_ask_one(*args, **kwargs):
@@ -300,19 +430,26 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
                 "sell_urgency": "wait",
                 "protective_stop": 98.0,
                 "next_review_min": 30,
-                "reason": "bounded hold",
+                "reason": "legacy bounded hold",
                 "invalid_if": "breaks support",
             }
 
         pos = {"ticker": "TEST", "entry": 100.0, "current_price": 101.0}
-        with patch.dict(os.environ, {"HOLD_ADVISOR_TRIAGE_ENABLED": "true"}, clear=False), patch.object(
-            hold_advisor, "_ask_triage", return_value=triage
+        with patch.dict(
+            os.environ,
+            {
+                "HOLD_ADVISOR_TRIAGE_ENABLED": "true",
+                "HOLD_ADVISOR_TRIAGE_LEGACY_FALLBACK_ENABLED": "true",
+            },
+            clear=False,
+        ), patch.object(hold_advisor, "_ask_triage", return_value=triage), patch.object(
+            hold_advisor, "_ask_challenge", side_effect=AssertionError("parse error should not challenge")
         ), patch.object(hold_advisor, "_ask_one", side_effect=_fake_ask_one):
             result = hold_advisor.ask(pos, "KR", delay=0, decision_stage="AUTO_SELL_REVIEW", default_policy="policy")
 
         self.assertEqual(result["action"], "HOLD")
         self.assertEqual(len(legacy_calls), 3)
-        self.assertEqual(result["second_opinion_reason"], "non_stop_sell_escalation")
+        self.assertEqual(result["second_opinion_reason"], "parse_error")
 
     def test_shadow_requires_positive_call_cap(self) -> None:
         hold_advisor._TRIAGE_SHADOW_CALLS = 0

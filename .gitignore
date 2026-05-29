@@ -45,6 +45,7 @@ data/news/
 data/supplement/
 data/price/
 data/market_data/
+data/monitoring/
 data/v2_reports/
 data/backtest_audit/runs/
 *.sqlite
@@ -68,6 +69,7 @@ state/decisions.jsonl
 state/param_tuner_sessions.json
 state/_api_summary_*.json
 state/*.bak*
+state/*.json.last_good
 state/archive/
 state/brain_snapshots/
 state/shared_judgment_*.json
