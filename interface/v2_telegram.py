@@ -364,6 +364,8 @@ def _ko_pathb_watch_state(value: Any) -> str:
     raw = str(value or "")
     mapping = {
         "WATCH_ONLY": "관찰만",
+        "LIVE_POSITION_HELD": "보유 중",
+        "LIVE_POSITION_HELD_STALE": "보유 중(조회 지연)",
         "READY_NO_PATH_RUN": "등록 대기/누락",
         "MISSING_PRICE_TARGETS": "가격 목표 없음",
         "WAITING": "지정가 대기",

@@ -295,6 +295,112 @@ class BrokerTruthSnapshotTests(unittest.TestCase):
             self.assertEqual(data["markets"]["KR"]["open_orders"][0]["order_price"], 6780.0)
             self.assertEqual(data["markets"]["US"]["last_success_at"], "2026-05-26T12:46:44+00:00")
 
+    def test_write_snapshot_retries_windows_file_contention(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            snapshot = BrokerTruthSnapshot(runtime_mode="live", path=path)
+            attempts = {"count": 0}
+            real_replace = __import__("os").replace
+
+            def flaky_replace(src: str | Path, dst: str | Path) -> None:
+                attempts["count"] += 1
+                if attempts["count"] == 1:
+                    raise PermissionError(13, "Access denied", str(dst))
+                real_replace(src, dst)
+
+            with patch("runtime.broker_truth_snapshot.time.sleep", return_value=None), patch(
+                "runtime.broker_truth_snapshot.os.replace",
+                side_effect=flaky_replace,
+            ):
+                result = snapshot.write_snapshot(
+                    {
+                        "generated_at": "2026-05-26T12:46:33+00:00",
+                        "runtime_mode": "live",
+                        "schema_version": 1,
+                        "markets": {"KR": {"missing": False, "last_success_at": "2026-05-26T12:46:33+00:00"}},
+                    }
+                )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["write_attempts"], 2)
+            self.assertTrue(path.exists())
+
+    def test_write_snapshot_failure_preserves_existing_file_and_reports_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-05-26T12:00:00+00:00",
+                        "runtime_mode": "live",
+                        "schema_version": 1,
+                        "markets": {"KR": {"missing": False, "last_success_at": "old"}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            snapshot = BrokerTruthSnapshot(runtime_mode="live", path=path)
+
+            with patch("runtime.broker_truth_snapshot.time.sleep", return_value=None), patch(
+                "runtime.broker_truth_snapshot.os.replace",
+                side_effect=PermissionError(13, "Access denied", str(path)),
+            ):
+                result = snapshot.write_snapshot(
+                    {
+                        "generated_at": "2026-05-26T12:46:33+00:00",
+                        "runtime_mode": "live",
+                        "schema_version": 1,
+                        "markets": {"KR": {"missing": False, "last_success_at": "new"}},
+                    }
+                )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["write_attempts"], 4)
+            self.assertTrue(result["stale"])
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(data["markets"]["KR"]["last_success_at"], "old")
+
+    def test_write_snapshot_failure_writes_masked_last_good_sidecar(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            snapshot = BrokerTruthSnapshot(runtime_mode="live", path=path)
+            real_replace = __import__("os").replace
+
+            def fail_main_replace(src: str | Path, dst: str | Path) -> None:
+                if Path(dst) == path:
+                    raise PermissionError(13, "Access denied", str(dst))
+                real_replace(src, dst)
+
+            with patch("runtime.broker_truth_snapshot.time.sleep", return_value=None), patch(
+                "runtime.broker_truth_snapshot.os.replace",
+                side_effect=fail_main_replace,
+            ):
+                result = snapshot.write_snapshot(
+                    {
+                        "generated_at": "2026-05-26T12:46:33+00:00",
+                        "runtime_mode": "live",
+                        "schema_version": 1,
+                        "account_no": "1234567890",
+                        "markets": {
+                            "US": {
+                                "missing": False,
+                                "last_success_at": "2026-05-26T12:46:33+00:00",
+                                "error": "CANO=12345678&ACNT_PRDT_CD=01 token=secret",
+                            }
+                        },
+                    }
+                )
+
+            last_good = path.with_name("snapshot.json.last_good")
+            self.assertFalse(result["ok"])
+            self.assertTrue(result["last_good"]["ok"])
+            self.assertTrue(last_good.exists())
+            raw = last_good.read_text(encoding="utf-8")
+            self.assertNotIn("1234567890", raw)
+            self.assertNotIn("CANO=12345678", raw)
+            self.assertNotIn("ACNT_PRDT_CD=01", raw)
+            self.assertIn("CANO=***", raw)
+
     def test_missing_and_broken_snapshot_handling(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             missing = BrokerTruthSnapshot(runtime_mode="live", path=Path(tmp) / "missing.json").load_snapshot()
@@ -304,6 +410,85 @@ class BrokerTruthSnapshotTests(unittest.TestCase):
             broken_path.write_text("{", encoding="utf-8")
             broken = BrokerTruthSnapshot(runtime_mode="live", path=broken_path).load_snapshot()
             self.assertTrue(broken["broken"])
+
+    def test_load_snapshot_uses_last_good_when_main_json_broken(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            path.write_text("{", encoding="utf-8")
+            last_success = (datetime.now(timezone.utc) - timedelta(seconds=20)).isoformat(timespec="seconds")
+            path.with_name("snapshot.json.last_good").write_text(
+                json.dumps(
+                    {
+                        "runtime_mode": "live",
+                        "schema_version": 1,
+                        "markets": {
+                            "US": {
+                                "missing": False,
+                                "last_success_at": last_success,
+                                "last_attempt_at": last_success,
+                                "ttl_sec": 300,
+                                "error": "",
+                                "positions": [{"ticker": "BBY", "qty": 2}],
+                                "open_orders": [],
+                                "today_fills": [],
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = BrokerTruthSnapshot(runtime_mode="live", path=path).load_snapshot(ttl_by_market={"US": 300})
+
+            self.assertTrue(loaded["loaded_from_last_good"])
+            self.assertEqual(loaded["snapshot_source"], "last_good")
+            self.assertFalse(loaded["markets"]["US"]["stale"])
+            self.assertEqual(loaded["markets"]["US"]["positions"][0]["ticker"], "BBY")
+            self.assertEqual(loaded["markets"]["US"]["snapshot_source"], "last_good")
+
+    def test_last_good_recomputes_stale_and_fails_closed_when_old(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            path.write_text("{", encoding="utf-8")
+            last_success = (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat(timespec="seconds")
+            path.with_name("snapshot.json.last_good").write_text(
+                json.dumps(
+                    {
+                        "runtime_mode": "live",
+                        "schema_version": 1,
+                        "markets": {
+                            "US": {
+                                "missing": False,
+                                "last_success_at": last_success,
+                                "last_attempt_at": last_success,
+                                "ttl_sec": 30,
+                                "error": "",
+                                "positions": [{"ticker": "BBY", "qty": 2}],
+                                "open_orders": [],
+                                "today_fills": [],
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = BrokerTruthSnapshot(runtime_mode="live", path=path).load_snapshot(ttl_by_market={"US": 30})
+
+            self.assertTrue(loaded["loaded_from_last_good"])
+            self.assertTrue(loaded["markets"]["US"]["stale"])
+
+    def test_load_snapshot_fails_closed_when_main_and_last_good_are_broken(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            path.write_text("{", encoding="utf-8")
+            path.with_name("snapshot.json.last_good").write_text("{", encoding="utf-8")
+
+            loaded = BrokerTruthSnapshot(runtime_mode="live", path=path).load_snapshot()
+
+            self.assertTrue(loaded["broken"])
+            self.assertEqual(loaded["snapshot_source"], "empty_fail_closed")
+            self.assertIn("last_good_json_error", loaded["error"])
 
     def test_market_failure_preserves_other_market(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

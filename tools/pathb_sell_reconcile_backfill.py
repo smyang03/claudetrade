@@ -15,7 +15,7 @@ from lifecycle.event_store import EventStore
 from lifecycle.models import LifecycleEvent
 
 
-PENDING_STATUSES = {"SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED"}
+PENDING_STATUSES = {"ORDER_UNKNOWN", "SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED"}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -44,6 +44,16 @@ def _market_snapshot(snapshot: dict[str, Any], market: str) -> dict[str, Any]:
     return markets.get(str(market or "").upper()) if isinstance(markets.get(str(market or "").upper()), dict) else {}
 
 
+def _market_fresh(data: dict[str, Any]) -> bool:
+    if not data:
+        return False
+    if bool(data.get("missing")) or bool(data.get("stale")) or str(data.get("error", "") or ""):
+        return False
+    if data.get("fresh") is False or data.get("trusted") is False:
+        return False
+    return True
+
+
 def _sell_fills(snapshot: dict[str, Any], market: str) -> list[dict[str, Any]]:
     data = _market_snapshot(snapshot, market)
     rows = data.get("today_fills") if isinstance(data.get("today_fills"), list) else []
@@ -65,20 +75,41 @@ def _ticker_key(market: str, ticker: Any) -> str:
     return text.upper() if str(market or "").upper() == "US" else text
 
 
-def _match_fill(run: dict[str, Any], fills: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _is_exit_candidate(run: dict[str, Any]) -> bool:
+    if str(run.get("status") or "") != "ORDER_UNKNOWN":
+        return True
+    plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+    detail = str(plan.get("order_unknown_detail") or "").lower()
+    pending_reason = str(plan.get("pending_close_reason") or "").lower()
+    return bool(
+        plan.get("exit_execution_id")
+        or plan.get("exit_qty")
+        or plan.get("sell_order_sent_at")
+        or "sell_" in detail
+        or "closed_" in pending_reason
+        or "pre_close" in pending_reason
+    )
+
+
+def _match_fill(run: dict[str, Any], fills: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, str, str]:
     market = str(run.get("market") or "").upper()
     ticker = _ticker_key(market, run.get("ticker"))
     plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
     execution_id = str(plan.get("exit_execution_id") or "").strip()
-    if execution_id:
-        for fill in fills:
-            if str(fill.get("order_no") or "").strip() == execution_id:
-                return fill
     matches = [fill for fill in fills if _ticker_key(market, fill.get("ticker")) == ticker]
-    return matches[0] if len(matches) == 1 else None
+    if not execution_id:
+        return None, "missing_exit_execution_id", "manual_review_required"
+    for fill in matches:
+        if str(fill.get("order_no") or "").strip() == execution_id:
+            return fill, "exit_execution_id", ""
+    if len(matches) == 1:
+        return None, "ticker_only_mismatch", "manual_review_required"
+    if len(matches) > 1:
+        return None, "ambiguous_ticker_sell_fills", "manual_review_required"
+    return None, "no_matching_sell_fill", "manual_review_required"
 
 
-def _proposal(run: dict[str, Any], fill: dict[str, Any]) -> dict[str, Any]:
+def _proposal(run: dict[str, Any], fill: dict[str, Any], *, match_mode: str) -> dict[str, Any]:
     plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
     exit_price = _num(fill.get("avg_price") or fill.get("fill_price") or fill.get("price"))
     entry_price = _num(plan.get("actual_entry_price") or plan.get("entry_price") or plan.get("buy_zone_high"))
@@ -93,6 +124,7 @@ def _proposal(run: dict[str, Any], fill: dict[str, Any]) -> dict[str, Any]:
         "session_date": run.get("session_date", ""),
         "ticker": run.get("ticker", ""),
         "current_status": run.get("status", ""),
+        "match_mode": match_mode,
         "matched_order_no": str(fill.get("order_no") or ""),
         "matched_fill_qty": qty,
         "fill_price": exit_price,
@@ -105,6 +137,8 @@ def _proposal(run: dict[str, Any], fill: dict[str, Any]) -> dict[str, Any]:
 def build_report(*, db_path: Path, snapshot_path: Path, market: str, mode: str) -> dict[str, Any]:
     store = EventStore(db_path)
     snapshot = _load_json(snapshot_path)
+    market_data = _market_snapshot(snapshot, market)
+    snapshot_fresh = _market_fresh(market_data)
     fills = _sell_fills(snapshot, market)
     runs: list[dict[str, Any]] = []
     for status in sorted(PENDING_STATUSES):
@@ -118,10 +152,10 @@ def build_report(*, db_path: Path, snapshot_path: Path, market: str, mode: str) 
         )
     proposals = []
     unmatched = []
-    for run in runs:
-        fill = _match_fill(run, fills)
+    for run in [row for row in runs if _is_exit_candidate(row)]:
+        fill, match_mode, reason = _match_fill(run, fills)
         if fill:
-            proposals.append(_proposal(run, fill))
+            proposals.append(_proposal(run, fill, match_mode=match_mode))
         else:
             unmatched.append(
                 {
@@ -129,6 +163,8 @@ def build_report(*, db_path: Path, snapshot_path: Path, market: str, mode: str) 
                     "session_date": run.get("session_date", ""),
                     "ticker": run.get("ticker", ""),
                     "status": run.get("status", ""),
+                    "match_mode": match_mode,
+                    "manual_review_reason": reason,
                 }
             )
     return {
@@ -138,6 +174,8 @@ def build_report(*, db_path: Path, snapshot_path: Path, market: str, mode: str) 
         "snapshot_path": str(snapshot_path),
         "market": str(market or "").upper(),
         "mode": mode,
+        "snapshot_fresh": snapshot_fresh,
+        "apply_allowed": snapshot_fresh,
         "pending_runs": len(runs),
         "matched": len(proposals),
         "unmatched": unmatched,
@@ -146,6 +184,11 @@ def build_report(*, db_path: Path, snapshot_path: Path, market: str, mode: str) 
 
 
 def apply_report(report: dict[str, Any], *, db_path: Path) -> dict[str, Any]:
+    if not bool(report.get("snapshot_fresh")) or not bool(report.get("apply_allowed")):
+        return {
+            "applied": [],
+            "errors": [{"error": "broker_truth_unfresh_or_untrusted"}],
+        }
     store = EventStore(db_path)
     applied = []
     errors = []

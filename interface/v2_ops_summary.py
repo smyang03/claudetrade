@@ -494,6 +494,7 @@ def _path_b_live_summary(
         config=config,
         control=control,
         name_map=name_map,
+        broker_truth=broker_truth or {},
     )
     readiness = _path_b_execution_readiness(
         market=market,
@@ -542,6 +543,7 @@ def _path_b_selection_snapshot(
     config: dict[str, Any],
     control: dict[str, Any],
     name_map: dict[str, str] | None = None,
+    broker_truth: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     market_key = str(market or "").upper()
     if not market_key:
@@ -595,15 +597,27 @@ def _path_b_selection_snapshot(
     missing_strategy_count = sum(1 for ticker in watchlist if not _selection_lookup(recommended, ticker, market_key))
 
     run_by_ticker = {str(run.get("ticker", "") or "").upper() if market_key == "US" else str(run.get("ticker", "") or ""): run for run in pathb_runs}
-    missing_applied = [ticker for ticker in applied_trade_ready if not _selection_lookup(price_targets, ticker, market_key)]
-    missing_raw = [ticker for ticker in raw_trade_ready if not _selection_lookup(price_targets, ticker, market_key)]
+    held_by_ticker = _held_positions_by_ticker_from_broker_truth(broker_truth, market_key)
+    held_tickers = set(held_by_ticker)
+    applied_not_held = [ticker for ticker in applied_trade_ready if _ticker_key(market_key, ticker) not in held_tickers]
+    missing_applied = [
+        ticker for ticker in applied_trade_ready
+        if _ticker_key(market_key, ticker) not in held_tickers and not _selection_lookup(price_targets, ticker, market_key)
+    ]
+    missing_raw = [
+        ticker for ticker in raw_trade_ready
+        if _ticker_key(market_key, ticker) not in held_tickers and not _selection_lookup(price_targets, ticker, market_key)
+    ]
     filtered_tickers = _unique_list(runtime_filtered.keys())
     plan_a_routed = [
         ticker
         for ticker in applied_trade_ready
         if str((route_by_ticker.get(ticker.upper() if market_key == "US" else ticker) or {}).get("route") or "").startswith("PlanA.")
     ]
-    pathb_expected_trade_ready = [ticker for ticker in applied_trade_ready if ticker not in set(plan_a_routed)]
+    pathb_expected_trade_ready = [
+        ticker for ticker in applied_trade_ready
+        if ticker not in set(plan_a_routed) and _ticker_key(market_key, ticker) not in held_tickers
+    ]
     no_plan_reasons: list[str] = []
 
     if not bool(config.get("enabled", False)):
@@ -618,7 +632,7 @@ def _path_b_selection_snapshot(
         no_plan_reasons.append("NO_WATCHLIST")
     elif raw_trade_ready and not applied_trade_ready:
         no_plan_reasons.append("ALL_TRADE_READY_FILTERED")
-    elif applied_trade_ready and not price_targets:
+    elif applied_not_held and not price_targets:
         no_plan_reasons.append("PRICE_TARGETS_EMPTY")
     elif missing_applied:
         no_plan_reasons.append("MISSING_PRICE_TARGETS")
@@ -634,20 +648,26 @@ def _path_b_selection_snapshot(
     ordered = _unique_list(list(applied_trade_ready) + list(filtered_tickers) + list(raw_trade_ready) + list(watchlist))
     watch_rows: list[dict[str, Any]] = []
     for ticker in ordered[:30]:
+        ticker_key = _ticker_key(market_key, ticker)
         name = _name_for_ticker(ticker, market_key, name_map)
         target = _selection_lookup(price_targets, ticker, market_key) or {}
-        run = run_by_ticker.get(ticker.upper() if market_key == "US" else ticker)
-        route_info = route_by_ticker.get(ticker.upper() if market_key == "US" else ticker) or {}
+        run = run_by_ticker.get(ticker_key)
+        held = held_by_ticker.get(ticker_key) or {}
+        if not name and held:
+            name = str(held.get("name", "") or "")
+        route_info = route_by_ticker.get(ticker_key) or {}
         execution_route = str(route_info.get("route") or "")
         route_is_plan_a = execution_route.startswith("PlanA.")
         route_is_pathb = execution_route.startswith("PathB.")
-        buy_path = "path_a" if route_is_plan_a else "path_b" if (run or route_is_pathb) else ""
+        buy_path = "path_a" if route_is_plan_a else "path_b" if (run or route_is_pathb) else "manual_or_broker" if held else ""
         filtered_reason = _selection_lookup(runtime_filtered, ticker, market_key)
         adaptive_decision = _selection_lookup(adaptive_decisions, ticker, market_key) or {}
         evidence_pack = _selection_lookup(live_evidence_packs, ticker, market_key) or {}
         evidence_trace = evidence_pack.get("decision_trace") if isinstance(evidence_pack.get("decision_trace"), dict) else {}
         if run:
             state = str(run.get("status") or "REGISTERED")
+        elif held:
+            state = "LIVE_POSITION_HELD_STALE" if bool(held.get("broker_truth_stale")) else "LIVE_POSITION_HELD"
         elif route_is_plan_a and ticker in applied_trade_ready:
             state = "PLAN_A_ROUTED"
         elif ticker in applied_trade_ready and target:
@@ -664,6 +684,7 @@ def _path_b_selection_snapshot(
                 "name": name,
                 "display_ticker": _display_ticker(ticker, name),
                 "buy_path": buy_path,
+                "buy_path_label": _buy_path_label(buy_path),
                 "execution_route": execution_route,
                 "route_final_action": str(route_info.get("final_action") or ""),
                 "category": (
@@ -699,6 +720,10 @@ def _path_b_selection_snapshot(
                 "live_evidence_action_ceiling": evidence_pack.get("action_ceiling", "") if isinstance(evidence_pack, dict) else "",
                 "execution_state": evidence_trace.get("execution_state", "") if isinstance(evidence_trace, dict) else "",
                 "execution_block_reason": evidence_trace.get("block_reason", "") if isinstance(evidence_trace, dict) else "",
+                "broker_position_qty": held.get("qty", "") if held else "",
+                "broker_position_source": held.get("source", "") if held else "",
+                "broker_truth_stale": bool(held.get("broker_truth_stale")) if held else False,
+                "broker_truth_last_success_at": held.get("broker_truth_last_success_at", "") if held else "",
             }
         )
 
@@ -717,6 +742,8 @@ def _path_b_selection_snapshot(
             "runtime_filtered": len(runtime_filtered),
             "price_targets": len(price_targets),
             "registered_plans": len(pathb_runs),
+            "held_positions": len(held_by_ticker),
+            "held_trade_ready": sum(1 for ticker in applied_trade_ready if _ticker_key(market_key, ticker) in held_tickers),
             "candidate_actions": len(candidate_actions),
             "missing_strategy": missing_strategy_count,
             "compact_validation_errors": len(compact_validation.get("errors") or []) if isinstance(compact_validation, dict) else 0,
@@ -861,6 +888,42 @@ def _selection_lookup(mapping: dict[str, Any], ticker: str, market: str) -> Any:
             if str(raw_key).upper() == key:
                 return value
     return None
+
+
+def _held_positions_by_ticker_from_broker_truth(
+    broker_truth: dict[str, Any] | None,
+    market: str,
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(broker_truth, dict):
+        return {}
+    markets = broker_truth.get("markets") if isinstance(broker_truth.get("markets"), dict) else {}
+    market_key = str(market or "").upper()
+    data = markets.get(market_key) if isinstance(markets.get(market_key), dict) else {}
+    if not data or bool(data.get("missing")) or str(data.get("error", "") or ""):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    stale = bool(data.get("stale"))
+    for row in list(data.get("positions") or []):
+        if not isinstance(row, dict):
+            continue
+        ticker = _ticker_key(market_key, row.get("ticker", ""))
+        if not ticker:
+            continue
+        try:
+            qty = int(float(row.get("qty", 0) or 0))
+        except Exception:
+            qty = 0
+        if qty <= 0:
+            continue
+        out[ticker] = {
+            "ticker": ticker,
+            "name": str(row.get("name", "") or ""),
+            "qty": qty,
+            "source": "broker_truth",
+            "broker_truth_stale": stale,
+            "broker_truth_last_success_at": data.get("last_success_at", ""),
+        }
+    return out
 
 
 def _positions_from_state(runtime_mode: str | None) -> list[dict[str, Any]]:

@@ -532,6 +532,65 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertNotIn("NO_PATH_RUN_REGISTERED", selection["no_plan_reasons"])
         self.assertFalse(selection["no_plan_action_required"])
 
+    def test_pathb_selection_summary_marks_broker_held_trade_ready_as_held(self):
+        selection_meta = {
+            "watchlist": ["BBY"],
+            "trade_ready": ["BBY"],
+            "price_targets": {
+                "BBY": {
+                    "buy_zone_low": 72.3,
+                    "buy_zone_high": 74.2,
+                    "sell_target": 76.5,
+                    "stop_loss": 71.0,
+                    "confidence": 0.74,
+                }
+            },
+            "_candidate_action_routes": [
+                {
+                    "ticker": "BBY",
+                    "market": "US",
+                    "final_action": "BUY_READY",
+                    "route": "PlanA.buy",
+                }
+            ],
+        }
+        broker_truth = {
+            "markets": {
+                "US": {
+                    "missing": False,
+                    "stale": False,
+                    "error": "",
+                    "last_success_at": "2026-05-29T00:00:00+00:00",
+                    "positions": [{"ticker": "BBY", "name": "Best Buy", "qty": 2}],
+                }
+            }
+        }
+
+        with patch.object(
+            v2_ops_summary,
+            "_load_judgment_record",
+            return_value={"selection_meta": selection_meta, "universe_tickers": ["BBY"]},
+        ):
+            selection = v2_ops_summary._path_b_selection_snapshot(
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-28",
+                pathb_runs=[],
+                config={"enabled": True},
+                control={"enabled": True},
+                broker_truth=broker_truth,
+            )
+
+        row = selection["watch_rows"][0]
+        self.assertEqual(row["ticker"], "BBY")
+        self.assertEqual(row["state"], "LIVE_POSITION_HELD")
+        self.assertEqual(row["buy_path"], "path_a")
+        self.assertEqual(row["broker_position_qty"], 2)
+        self.assertEqual(selection["counts"]["held_positions"], 1)
+        self.assertEqual(selection["counts"]["held_trade_ready"], 1)
+        self.assertNotIn("NO_PATH_RUN_REGISTERED", selection["no_plan_reasons"])
+        self.assertFalse(selection["no_plan_action_required"])
+
     def test_pathb_execution_capacity_uses_broker_orderable_cash(self):
         broker_truth = {
             "markets": {

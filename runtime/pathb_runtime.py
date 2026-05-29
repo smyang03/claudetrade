@@ -149,6 +149,7 @@ class PathBRuntime:
     ORDER_UNKNOWN_HARD_TIMEOUT_SEC = ORDER_UNKNOWN_HARD_TIMEOUT_SEC_DEFAULT
     ORDER_UNKNOWN_MIN_RECONCILE_ATTEMPTS = ORDER_UNKNOWN_MIN_RECONCILE_ATTEMPTS_DEFAULT
     SELL_PENDING_LOOKBACK_SESSIONS = 5
+    SELL_FILL_TIMESTAMP_GRACE_SEC = 60
     PRE_CLOSE_CARRY_REVIEW_MINUTES = 15.0
     HOLD_POLICY_MIN_VALID_MINUTES = 3
     HOLD_POLICY_MAX_VALID_MINUTES = 30
@@ -6273,35 +6274,45 @@ class PathBRuntime:
         execution_id = str(plan_json.get("exit_execution_id", "") or "")
         local_pos = self._find_position(market, ticker, path_run_id=path_run_id) or self._find_position(market, ticker)
         entry_filled_at = self._pathb_entry_fill_time(run, local_pos)
-        raw_sell_fills = self._matching_sell_fills(
-            fills,
+        close_check = self._verify_sell_close_broker_evidence(
+            run=run,
+            plan=plan,
+            positions=positions,
+            open_orders=open_orders,
+            fills=fills,
+            requested_qty=requested_qty,
+            execution_id=execution_id,
+            entry_filled_at=entry_filled_at,
+            allow_execution_mismatch=True,
+        )
+        safe_strict_fill_path = str(close_check.get("reason") or "") in {
+            "execution_id_match",
+            "strict_match_not_closed",
+        }
+        sell_fills = list(close_check.get("sell_fills") or []) if safe_strict_fill_path else []
+        ignored_sell_fills = list(close_check.get("ignored_sell_fills") or []) if safe_strict_fill_path else []
+        filled_qty = sum(int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) for row in sell_fills)
+        fill_price = self._weighted_fill_price(sell_fills)
+        remaining_balance_qty = int(close_check.get("remaining_balance_qty", self._broker_position_qty(positions)) or 0)
+        open_matches = self._matching_sell_open_orders(
+            open_orders,
             execution_id=execution_id,
             strict_execution=bool(execution_id),
         )
-        sell_fills, ignored_sell_fills = self._causal_pathb_sell_fills(
-            raw_sell_fills,
-            entry_filled_at,
-            strict=bool(execution_id),
-        )
-        filled_qty = sum(int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) for row in sell_fills)
-        fill_price = self._weighted_fill_price(sell_fills)
-        remaining_balance_qty = self._broker_position_qty(positions)
         evidence = {
             "broker_truth_last_success_at": str(market_data.get("last_success_at", "") or ""),
-            "entry_filled_at": entry_filled_at.isoformat(timespec="seconds") if entry_filled_at is not None else "",
-            "broker_sell_fill_qty": int(filled_qty),
-            "broker_position_qty_after_sell": int(remaining_balance_qty),
-            "ignored_pre_entry_sell_fill_count": int(len(ignored_sell_fills)),
-            "broker_open_order_evidence": bool(self._matching_sell_open_orders(open_orders, execution_id=execution_id)),
-            "exit_execution_id": execution_id,
+            **dict(close_check.get("evidence") or {}),
+            "sell_close_evidence_reason": str(close_check.get("reason") or ""),
         }
 
-        if requested_qty > 0 and filled_qty >= requested_qty:
+        if close_check.get("ok"):
+            close_fills = list(close_check.get("sell_fills") or [])
+            close_execution_id = str(close_check.get("matched_execution_id") or execution_id or ((close_fills[0] if close_fills else {}).get("order_no", "") or ""))
             self._finalize_pathb_sell_close(
                 plan,
-                price=fill_price or float(plan_json.get("exit_order_price", 0) or 0),
+                price=self._weighted_fill_price(close_fills) or float(plan_json.get("exit_order_price", 0) or 0),
                 qty=requested_qty,
-                execution_id=execution_id or str((sell_fills[0] if sell_fills else {}).get("order_no", "") or ""),
+                execution_id=close_execution_id,
                 close_reason=str(plan_json.get("pending_close_reason") or run.get("pending_close_reason") or "CLOSED_CLAUDE_PRICE_PRE_CLOSE"),
                 evidence=evidence,
             )
@@ -6414,7 +6425,7 @@ class PathBRuntime:
     ) -> list[dict[str, Any]]:
         rows = [row for row in fills if self._side_matches(row, "sell") and int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) > 0]
         if execution_id:
-            matched = [row for row in rows if str(row.get("order_no", "") or "") == execution_id]
+            matched = [row for row in rows if self._broker_order_no(row) == execution_id]
             if matched or strict_execution:
                 return matched
         return rows
@@ -6482,7 +6493,10 @@ class PathBRuntime:
             hour = int(time_digits[0:2])
             minute = int(time_digits[2:4])
             second = int(time_digits[4:6]) if len(time_digits) >= 6 else 0
-            return datetime(year, month, day, hour, minute, second, tzinfo=KST)
+            parsed = datetime(year, month, day, hour, minute, second, tzinfo=KST)
+            if str(row.get("market", "") or "").upper() == "US" and hour < 12:
+                parsed += timedelta(days=1)
+            return parsed
         except Exception:
             return None
 
@@ -6495,10 +6509,378 @@ class PathBRuntime:
     ) -> list[dict[str, Any]]:
         rows = [row for row in open_orders if self._side_matches(row, "sell") and int(row.get("remaining_qty", 0) or 0) > 0]
         if execution_id:
-            matched = [row for row in rows if str(row.get("order_no", "") or "") == execution_id]
+            matched = [row for row in rows if self._broker_order_no(row) == execution_id]
             if matched or strict_execution:
                 return matched
         return rows
+
+    def _sell_fill_timestamp_grace_sec(self) -> int:
+        configured = self._runtime_int(
+            "PATHB_SELL_FILL_TIMESTAMP_GRACE_SEC",
+            self.SELL_FILL_TIMESTAMP_GRACE_SEC,
+        )
+        return max(0, min(300, int(configured or 0)))
+
+    def _local_sell_order_time(self, run: dict[str, Any], plan_json: dict[str, Any]) -> datetime | None:
+        sources: list[Any] = [
+            plan_json.get("sell_order_sent_at"),
+            plan_json.get("sell_order_acked_at"),
+            plan_json.get("exit_submitted_at"),
+            plan_json.get("exit_order_sent_at"),
+        ]
+        events = self.store.events_for_session(
+            market=str(run.get("market", "") or ""),
+            runtime_mode=self.mode,
+            session_date=str(run.get("session_date", "") or ""),
+        )
+        path_run_id = str(run.get("path_run_id", "") or "")
+        for event in events:
+            if str(event.get("event_type", "") or "") not in {"ORDER_SENT", "ORDER_ACKED"}:
+                continue
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            if str(payload.get("path_run_id", "") or "") != path_run_id:
+                continue
+            if str(payload.get("side", "") or "").lower() != "sell":
+                continue
+            sources.append(event.get("occurred_at"))
+        parsed = [self._parse_kst_iso(str(value or "").replace("Z", "+00:00")) for value in sources]
+        parsed = [value for value in parsed if value is not None]
+        return min(parsed) if parsed else None
+
+    def _pathb_other_active_exposure(
+        self,
+        *,
+        market: str,
+        ticker: str,
+        session_date: str,
+        path_run_id: str,
+        decision_id: str = "",
+    ) -> list[dict[str, Any]]:
+        market_key = str(market or "").upper()
+        ticker_key = self._ticker_key(market_key, ticker)
+        active_statuses = {
+            "ORDER_SENT",
+            "ORDER_ACKED",
+            "PARTIAL_FILLED",
+            "FILLED",
+            "SELL_SENT",
+            "SELL_ACKED",
+            "SELL_PARTIAL_FILLED",
+            "ORDER_UNKNOWN",
+        }
+        evidence: list[dict[str, Any]] = []
+        for run in self.store.path_runs_for_session(
+            market=market_key,
+            runtime_mode=self.mode,
+            session_date=session_date,
+            path_type="claude_price",
+        ):
+            other_id = str(run.get("path_run_id", "") or "")
+            if not other_id or other_id == path_run_id:
+                continue
+            if self._ticker_key(market_key, str(run.get("ticker", "") or "")) != ticker_key:
+                continue
+            status = str(run.get("status", "") or "")
+            if status in active_statuses:
+                evidence.append({"source": "pathb_run", "path_run_id": other_id, "status": status})
+
+        for pos in list(getattr(getattr(self.bot, "risk", None), "positions", []) or []):
+            if str(pos.get("market", market_key) or market_key).upper() != market_key:
+                continue
+            if self._ticker_key(market_key, str(pos.get("ticker", "") or "")) != ticker_key:
+                continue
+            try:
+                qty = int(float(pos.get("qty", 0) or 0))
+            except Exception:
+                qty = 0
+            if qty <= 0:
+                continue
+            pos_path_run_id = str(pos.get("pathb_path_run_id", "") or pos.get("path_run_id", "") or "")
+            if pos_path_run_id and pos_path_run_id == path_run_id:
+                continue
+            evidence.append({"source": "local_position", "path_run_id": pos_path_run_id, "qty": qty})
+
+        for order in list(getattr(self.bot, "pending_orders", []) or []):
+            if str(order.get("market", market_key) or market_key).upper() != market_key:
+                continue
+            if self._ticker_key(market_key, str(order.get("ticker", "") or "")) != ticker_key:
+                continue
+            order_path_run_id = str(order.get("pathb_path_run_id", "") or order.get("path_run_id", "") or "")
+            if order_path_run_id and order_path_run_id == path_run_id:
+                continue
+            evidence.append(
+                {
+                    "source": "pending_order",
+                    "path_run_id": order_path_run_id,
+                    "order_no": str(order.get("order_no", "") or ""),
+                    "side": str(order.get("side", "") or order.get("action", "") or ""),
+                }
+            )
+
+        try:
+            with self.store.connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT decision_id, status
+                    FROM v2_decisions
+                    WHERE market=? AND runtime_mode=? AND session_date=? AND ticker=?
+                    """,
+                    (market_key, self.mode, session_date, ticker_key),
+                ).fetchall()
+            for row in rows:
+                row_decision_id = str(row["decision_id"] or "")
+                if decision_id and row_decision_id == decision_id:
+                    continue
+                status = str(row["status"] or "")
+                if status in {"FILLED", "PARTIAL_FILLED", "SELL_SENT", "SELL_ACKED", "ORDER_UNKNOWN"}:
+                    evidence.append({"source": "decision", "decision_id": row_decision_id, "status": status})
+        except Exception:
+            pass
+        return evidence[:10]
+
+    def _path_a_sell_evidence_for_fills(
+        self,
+        *,
+        market: str,
+        ticker: str,
+        session_date: str,
+        sell_fills: list[dict[str, Any]],
+        exclude_path_run_id: str,
+        exclude_decision_id: str = "",
+    ) -> list[dict[str, Any]]:
+        market_key = str(market or "").upper()
+        ticker_key = self._ticker_key(market_key, ticker)
+        fill_order_ids = {str(row.get("order_no", "") or "") for row in sell_fills if str(row.get("order_no", "") or "")}
+        evidence: list[dict[str, Any]] = []
+        for event in self.store.events_for_session(market=market_key, runtime_mode=self.mode, session_date=session_date):
+            if self._ticker_key(market_key, str(event.get("ticker", "") or "")) != ticker_key:
+                continue
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            if str(payload.get("path_type", "") or "") == "claude_price" or str(payload.get("path_run_id", "") or "") == exclude_path_run_id:
+                continue
+            execution_id = str(event.get("execution_id", "") or "")
+            payload_order_no = str(payload.get("order_no", "") or "")
+            payload_side = str(payload.get("side", "") or "").lower()
+            if fill_order_ids and (execution_id in fill_order_ids or payload_order_no in fill_order_ids):
+                evidence.append({"source": "path_a_lifecycle", "event_type": event.get("event_type", ""), "execution_id": execution_id or payload_order_no})
+            elif payload_side == "sell" and str(event.get("event_type", "") or "") in {"ORDER_SENT", "ORDER_ACKED", "PARTIAL_FILLED", "FILLED", "CLOSED"}:
+                evidence.append({"source": "path_a_lifecycle", "event_type": event.get("event_type", ""), "execution_id": execution_id or payload_order_no})
+        for order in list(getattr(self.bot, "pending_orders", []) or []):
+            if str(order.get("market", market_key) or market_key).upper() != market_key:
+                continue
+            if self._ticker_key(market_key, str(order.get("ticker", "") or "")) != ticker_key:
+                continue
+            if str(order.get("path_type", "") or "") == "claude_price" or str(order.get("pathb_path_run_id", "") or "") == exclude_path_run_id:
+                continue
+            if str(order.get("side", "") or order.get("action", "") or "").lower() in {"sell", "exit"}:
+                evidence.append({"source": "path_a_pending", "order_no": str(order.get("order_no", "") or "")})
+        return evidence[:10]
+
+    def _verify_sell_close_broker_evidence(
+        self,
+        *,
+        run: dict[str, Any],
+        plan: PricePlan,
+        positions: list[dict[str, Any]],
+        open_orders: list[dict[str, Any]],
+        fills: list[dict[str, Any]],
+        requested_qty: int,
+        execution_id: str,
+        entry_filled_at: datetime | None,
+        allow_execution_mismatch: bool,
+    ) -> dict[str, Any]:
+        path_run_id = str(run.get("path_run_id", "") or plan.path_run_id or "")
+        plan_json = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+        strict_rows = self._matching_sell_fills(
+            fills,
+            execution_id=execution_id,
+            strict_execution=bool(execution_id),
+        )
+        strict_fills, strict_ignored = self._causal_pathb_sell_fills(
+            strict_rows,
+            entry_filled_at,
+            strict=bool(execution_id),
+        )
+        remaining_balance_qty = self._broker_position_qty(positions)
+        open_matches = self._matching_sell_open_orders(
+            open_orders,
+            execution_id=execution_id,
+            strict_execution=bool(execution_id),
+        )
+        filled_qty = sum(int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) for row in strict_fills)
+        evidence = {
+            "exit_execution_id": execution_id,
+            "entry_filled_at": entry_filled_at.isoformat(timespec="seconds") if entry_filled_at is not None else "",
+            "broker_today_sell_fill_evidence": bool(strict_fills),
+            "broker_sell_fill_qty": int(filled_qty),
+            "broker_position_qty_after_sell": int(remaining_balance_qty),
+            "ignored_pre_entry_sell_fill_count": int(len(strict_ignored)),
+            "broker_open_order_evidence": bool(open_matches),
+            "broker_open_sell_order_evidence": bool(open_matches),
+            "sell_evidence_match_mode": "execution_id" if strict_fills else "",
+        }
+        if requested_qty > 0 and filled_qty >= requested_qty:
+            return {
+                "ok": True,
+                "reason": "execution_id_match",
+                "sell_fills": strict_fills,
+                "ignored_sell_fills": strict_ignored,
+                "filled_qty": int(filled_qty),
+                "remaining_balance_qty": int(remaining_balance_qty),
+                "open_matches": open_matches,
+                "evidence": evidence,
+            }
+        if requested_qty > 0 and 0 < filled_qty < requested_qty:
+            evidence["sell_evidence_match_mode"] = "execution_id_partial"
+            return {
+                "ok": False,
+                "reason": "strict_match_not_closed",
+                "sell_fills": strict_fills,
+                "ignored_sell_fills": strict_ignored,
+                "filled_qty": int(filled_qty),
+                "remaining_balance_qty": int(remaining_balance_qty),
+                "open_matches": open_matches,
+                "evidence": evidence,
+            }
+        if not allow_execution_mismatch or not execution_id:
+            return {
+                "ok": False,
+                "reason": "strict_match_not_closed",
+                "sell_fills": strict_fills,
+                "ignored_sell_fills": strict_ignored,
+                "filled_qty": int(filled_qty),
+                "remaining_balance_qty": int(remaining_balance_qty),
+                "open_matches": open_matches,
+                "evidence": evidence,
+            }
+
+        all_rows = self._matching_sell_fills(fills, strict_execution=False)
+        causal_rows, ignored_rows = self._causal_pathb_sell_fills(all_rows, entry_filled_at, strict=False)
+        local_sell_at = self._local_sell_order_time(run, plan_json)
+        grace_sec = self._sell_fill_timestamp_grace_sec()
+        candidate_rows: list[dict[str, Any]] = []
+        timestamp_blocked = 0
+        for row in causal_rows:
+            fill_at = self._broker_fill_time(row)
+            if local_sell_at is not None and fill_at is not None:
+                if (local_sell_at - fill_at).total_seconds() > grace_sec:
+                    timestamp_blocked += 1
+                    continue
+            candidate_rows.append(row)
+        fallback_qty = sum(int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) for row in candidate_rows)
+        fallback_evidence = {
+            **evidence,
+            "broker_today_sell_fill_evidence": bool(candidate_rows),
+            "broker_sell_fill_qty": int(fallback_qty),
+            "ignored_pre_entry_sell_fill_count": int(len(ignored_rows)),
+            "sell_evidence_match_mode": "broker_evidence_fallback",
+            "stale_exit_execution_id": execution_id,
+            "exit_execution_id_mismatch": bool(candidate_rows),
+            "timestamp_grace_period_sec": int(grace_sec),
+            "local_sell_order_at": local_sell_at.isoformat(timespec="seconds") if local_sell_at is not None else "",
+            "sell_fill_timestamp_blocked_count": int(timestamp_blocked),
+        }
+        if len(candidate_rows) != 1:
+            fallback_evidence["sell_fill_candidate_count"] = int(len(candidate_rows))
+            return {
+                "ok": False,
+                "reason": "ambiguous_sell_fill_candidates" if candidate_rows else "no_sell_fill_candidate",
+                "sell_fills": candidate_rows,
+                "ignored_sell_fills": ignored_rows,
+                "filled_qty": int(fallback_qty),
+                "remaining_balance_qty": int(remaining_balance_qty),
+                "open_matches": open_matches,
+                "evidence": fallback_evidence,
+            }
+        if requested_qty <= 0 or fallback_qty < requested_qty:
+            return {
+                "ok": False,
+                "reason": "fallback_qty_mismatch",
+                "sell_fills": candidate_rows,
+                "ignored_sell_fills": ignored_rows,
+                "filled_qty": int(fallback_qty),
+                "remaining_balance_qty": int(remaining_balance_qty),
+                "open_matches": open_matches,
+                "evidence": fallback_evidence,
+            }
+        if remaining_balance_qty > 0:
+            return {
+                "ok": False,
+                "reason": "broker_position_still_held",
+                "sell_fills": candidate_rows,
+                "ignored_sell_fills": ignored_rows,
+                "filled_qty": int(fallback_qty),
+                "remaining_balance_qty": int(remaining_balance_qty),
+                "open_matches": open_matches,
+                "evidence": fallback_evidence,
+            }
+        non_strict_open = self._matching_sell_open_orders(open_orders, strict_execution=False)
+        if non_strict_open:
+            fallback_evidence["broker_open_order_evidence"] = True
+            fallback_evidence["broker_open_sell_order_evidence"] = True
+            return {
+                "ok": False,
+                "reason": "broker_open_sell_order_exists",
+                "sell_fills": candidate_rows,
+                "ignored_sell_fills": ignored_rows,
+                "filled_qty": int(fallback_qty),
+                "remaining_balance_qty": int(remaining_balance_qty),
+                "open_matches": non_strict_open,
+                "evidence": fallback_evidence,
+            }
+        other_exposure = self._pathb_other_active_exposure(
+            market=plan.market,
+            ticker=plan.ticker,
+            session_date=plan.session_date,
+            path_run_id=path_run_id,
+            decision_id=str(run.get("decision_id", "") or plan.decision_id or ""),
+        )
+        if other_exposure:
+            fallback_evidence["other_active_local_exposure"] = other_exposure
+            return {
+                "ok": False,
+                "reason": "other_active_local_exposure",
+                "sell_fills": candidate_rows,
+                "ignored_sell_fills": ignored_rows,
+                "filled_qty": int(fallback_qty),
+                "remaining_balance_qty": int(remaining_balance_qty),
+                "open_matches": [],
+                "evidence": fallback_evidence,
+            }
+        path_a_evidence = self._path_a_sell_evidence_for_fills(
+            market=plan.market,
+            ticker=plan.ticker,
+            session_date=plan.session_date,
+            sell_fills=candidate_rows,
+            exclude_path_run_id=path_run_id,
+            exclude_decision_id=str(run.get("decision_id", "") or plan.decision_id or ""),
+        )
+        if path_a_evidence:
+            fallback_evidence["path_a_sell_evidence"] = path_a_evidence
+            return {
+                "ok": False,
+                "reason": "path_a_sell_evidence",
+                "sell_fills": candidate_rows,
+                "ignored_sell_fills": ignored_rows,
+                "filled_qty": int(fallback_qty),
+                "remaining_balance_qty": int(remaining_balance_qty),
+                "open_matches": [],
+                "evidence": fallback_evidence,
+            }
+        matched_execution_id = str(candidate_rows[0].get("order_no", "") or "")
+        fallback_evidence["matched_exit_execution_id"] = matched_execution_id
+        fallback_evidence["sell_fill_candidate_count"] = 1
+        return {
+            "ok": True,
+            "reason": "broker_evidence_fallback",
+            "sell_fills": candidate_rows,
+            "ignored_sell_fills": ignored_rows,
+            "filled_qty": int(fallback_qty),
+            "remaining_balance_qty": int(remaining_balance_qty),
+            "open_matches": [],
+            "evidence": fallback_evidence,
+            "matched_execution_id": matched_execution_id,
+        }
 
     @staticmethod
     def _weighted_fill_price(rows: list[dict[str, Any]]) -> float:
@@ -6938,6 +7320,7 @@ class PathBRuntime:
             plan.session_date,
             path_run_id=path_run_id,
             decision_id=str(run.get("decision_id", "") or plan.decision_id or ""),
+            exit_execution_id=str(plan_json.get("exit_execution_id", "") or ""),
         )
         if closed_lifecycle:
             self.store.update_path_run(
@@ -7345,18 +7728,25 @@ class PathBRuntime:
 
         local_pos = self._find_position(plan.market, plan.ticker, path_run_id=path_run_id) or self._find_position(plan.market, plan.ticker)
         entry_filled_at = self._pathb_entry_fill_time(run, local_pos)
-        raw_sell_fills = self._matching_sell_fills(
-            fills,
+        close_check = self._verify_sell_close_broker_evidence(
+            run=run,
+            plan=plan,
+            positions=positions,
+            open_orders=open_orders,
+            fills=fills,
+            requested_qty=requested_qty,
             execution_id=execution_id,
-            strict_execution=bool(execution_id),
+            entry_filled_at=entry_filled_at,
+            allow_execution_mismatch=True,
         )
-        sell_fills, ignored_sell_fills = self._causal_pathb_sell_fills(
-            raw_sell_fills,
-            entry_filled_at,
-            strict=bool(execution_id),
-        )
+        safe_strict_fill_path = str(close_check.get("reason") or "") in {
+            "execution_id_match",
+            "strict_match_not_closed",
+        }
+        sell_fills = list(close_check.get("sell_fills") or []) if safe_strict_fill_path else []
+        ignored_sell_fills = list(close_check.get("ignored_sell_fills") or []) if safe_strict_fill_path else []
         filled_qty = sum(int(row.get("filled_qty", 0) or row.get("qty", 0) or 0) for row in sell_fills)
-        remaining_balance_qty = self._broker_position_qty(positions)
+        remaining_balance_qty = int(close_check.get("remaining_balance_qty", self._broker_position_qty(positions)) or 0)
         open_matches = self._matching_sell_open_orders(
             open_orders,
             execution_id=execution_id,
@@ -7365,25 +7755,27 @@ class PathBRuntime:
         evidence = {
             **evidence_payload,
             "order_unknown_side": "exit",
-            "exit_execution_id": execution_id,
-            "entry_filled_at": entry_filled_at.isoformat(timespec="seconds") if entry_filled_at is not None else "",
-            "broker_today_sell_fill_evidence": bool(sell_fills),
-            "broker_sell_fill_qty": int(filled_qty),
-            "broker_position_qty_after_sell": int(remaining_balance_qty),
-            "ignored_pre_entry_sell_fill_count": int(len(ignored_sell_fills)),
-            "broker_open_sell_order_evidence": bool(open_matches),
+            **dict(close_check.get("evidence") or {}),
+            "sell_close_evidence_reason": str(close_check.get("reason") or ""),
         }
 
-        if requested_qty > 0 and filled_qty >= requested_qty:
+        if close_check.get("ok"):
+            close_fills = list(close_check.get("sell_fills") or [])
+            close_execution_id = str(close_check.get("matched_execution_id") or execution_id or ((close_fills[0] if close_fills else {}).get("order_no", "") or ""))
             self._finalize_pathb_sell_close(
                 plan,
-                price=self._weighted_fill_price(sell_fills) or float(plan_json.get("exit_order_price", 0) or 0),
+                price=self._weighted_fill_price(close_fills) or float(plan_json.get("exit_order_price", 0) or 0),
                 qty=requested_qty,
-                execution_id=execution_id or str((sell_fills[0] if sell_fills else {}).get("order_no", "") or ""),
+                execution_id=close_execution_id,
                 close_reason=str(plan_json.get("pending_close_reason") or run.get("pending_close_reason") or "CLOSED_CLAUDE_PRICE_PRE_CLOSE"),
                 evidence=evidence,
             )
-            self._set_order_unknown_resolution(path_run_id, "pathb_sell_fill_recovered", evidence, next_retry=False)
+            resolution = (
+                "pathb_sell_fill_recovered_by_broker_evidence"
+                if str(close_check.get("reason") or "") == "broker_evidence_fallback"
+                else "pathb_sell_fill_recovered"
+            )
+            self._set_order_unknown_resolution(path_run_id, resolution, evidence, next_retry=False)
             return "recovered_closed"
 
         if filled_qty > 0:
@@ -7558,10 +7950,13 @@ class PathBRuntime:
         *,
         path_run_id: str,
         decision_id: str = "",
+        exit_execution_id: str = "",
     ) -> dict[str, Any]:
         events = self.store.events_for_session(market=market, runtime_mode=self.mode, session_date=session_date)
         key = self._ticker_key(market, ticker)
-        evidence: dict[str, Any] = {}
+        exact_evidence: dict[str, Any] = {}
+        legacy_candidates: list[dict[str, Any]] = []
+        exit_execution_id = str(exit_execution_id or "").strip()
         for event in events:
             if self._ticker_key(market, str(event.get("ticker", "") or "")) != key:
                 continue
@@ -7572,22 +7967,50 @@ class PathBRuntime:
             payload_path_type = str(payload.get("path_type", "") or "")
             event_decision_id = str(event.get("decision_id", "") or "")
             same_path_run = bool(path_run_id and payload_path_run_id == path_run_id)
-            same_decision_pathb = bool(
-                decision_id
-                and event_decision_id == decision_id
-                and payload_path_type == "claude_price"
-            )
-            if not same_path_run and not same_decision_pathb:
-                continue
-            evidence = {
+            event_execution_id = str(event.get("execution_id", "") or "")
+            base = {
                 "event_id": event.get("event_id", 0),
-                "execution_id": str(event.get("execution_id", "") or ""),
+                "execution_id": event_execution_id,
                 "reason_code": str(event.get("reason_code", "") or ""),
                 "close_reason": str(payload.get("close_reason", "") or event.get("reason_code", "") or ""),
                 "pnl_pct": float(payload.get("pnl_pct", 0) or 0),
                 "path_run_id": payload_path_run_id,
             }
-        return evidence
+            if same_path_run:
+                exact_evidence = {**base, "closed_lifecycle_match_reason": "path_run_id"}
+                continue
+            if payload_path_run_id:
+                continue
+            if str(event.get("session_date", "") or "") != str(session_date or ""):
+                continue
+            if not decision_id or event_decision_id != decision_id:
+                continue
+            if payload_path_type and payload_path_type != "claude_price":
+                continue
+            if exit_execution_id and event_execution_id == exit_execution_id:
+                legacy_candidates.append({**base, "closed_lifecycle_match_reason": "legacy_exit_execution_id"})
+            elif payload_path_type == "claude_price" or not payload_path_type:
+                legacy_candidates.append({**base, "closed_lifecycle_match_reason": "legacy_single_decision_candidate"})
+        if exact_evidence:
+            return exact_evidence
+        if not legacy_candidates:
+            return {}
+        pathb_runs = [
+            run for run in self.store.path_runs_for_session(
+                market=str(market or "").upper(),
+                runtime_mode=self.mode,
+                session_date=session_date,
+                path_type="claude_price",
+            )
+            if self._ticker_key(market, str(run.get("ticker", "") or "")) == key
+            and str(run.get("decision_id", "") or "") == decision_id
+        ]
+        exact_exec = [row for row in legacy_candidates if row.get("closed_lifecycle_match_reason") == "legacy_exit_execution_id"]
+        if len(exact_exec) == 1:
+            return exact_exec[0]
+        if len(pathb_runs) == 1 and len(legacy_candidates) == 1:
+            return legacy_candidates[0]
+        return {}
 
     def _due_order_unknown_runs(self, market: str) -> list[dict[str, Any]]:
         return [run for run in self._order_unknown_runs(market) if self._unknown_recheck_due(run)]
@@ -9260,7 +9683,13 @@ class PathBRuntime:
                 }
         can_buy_1_share = bool(price > 0 and original_budget > 0 and price <= original_budget and cash >= price)
         early_gate_floor_applied = False
-        if qty == 0 and early_gate_applied and can_buy_1_share:
+        early_gate_shortfall = max(0.0, price - budget) if early_gate_applied else 0.0
+        early_gate_floor_allowed = (
+            early_gate_applied
+            and can_buy_1_share
+            and (price <= budget or (min_order > 0 and early_gate_shortfall <= min_order))
+        )
+        if qty == 0 and early_gate_floor_allowed:
             qty = 1
             sizing_reason = "early_gate_floor_one_share"
             early_gate_floor_applied = True
@@ -9269,6 +9698,7 @@ class PathBRuntime:
                 "qty": 1,
                 "blocker": None,
                 "early_gate_floor": True,
+                "early_gate_shortfall_krw": float(early_gate_shortfall),
                 "pre_floor_qty": 0,
             }
         sizing_context = {

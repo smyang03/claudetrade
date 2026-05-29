@@ -77,11 +77,63 @@ def _runtime(tmp: str, *, balance_provider, ccld_provider=lambda market, day: []
         token_provider=lambda: "token",
         balance_provider=balance_provider,
         ccld_provider=ccld_provider,
+        date_provider=lambda market: "2026-04-27",
     )
     plan = _plan()
     runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain")
     runtime.adapter.mark_order_unknown(plan.path_run_id, detail="test", runtime_mode="live", brain_snapshot_id="brain")
     return runtime, plan
+
+
+def _mark_exit_order_unknown(
+    runtime: PathBRuntime,
+    plan: object,
+    *,
+    entry_execution_id: str = "buy1",
+    exit_execution_id: str = "stale-sell",
+    qty: int = 1,
+    entry_time: str = "2026-04-27T09:30:00+09:00",
+    sell_sent_at: str = "2026-04-27T10:00:00+09:00",
+) -> None:
+    runtime.adapter.mark_filled(
+        plan.path_run_id,
+        price=100,
+        qty=qty,
+        execution_id=entry_execution_id,
+        runtime_mode="live",
+        brain_snapshot_id="brain",
+    )
+    runtime.sell_manager.mark_sell_order_sent(
+        plan.path_run_id,
+        execution_id=exit_execution_id,
+        price=105,
+        qty=qty,
+        close_reason="CLOSED_CLAUDE_PRICE_PRE_CLOSE",
+        runtime_mode="live",
+        brain_snapshot_id="brain",
+    )
+    runtime.adapter.mark_order_unknown(
+        plan.path_run_id,
+        detail="sell_fill_not_confirmed:test",
+        runtime_mode="live",
+        brain_snapshot_id="brain",
+        execution_id=exit_execution_id,
+    )
+    runtime.store.update_path_run(
+        plan.path_run_id,
+        plan={
+            "filled_at": entry_time,
+            "entry_execution_id": entry_execution_id,
+            "entry_qty": qty,
+            "actual_entry_price": 100,
+            "sell_order_sent_at": sell_sent_at,
+            "exit_execution_id": exit_execution_id,
+            "exit_qty": qty,
+            "exit_order_price": 105,
+            "pending_close_reason": "CLOSED_CLAUDE_PRICE_PRE_CLOSE",
+        },
+        merge_plan=True,
+    )
 
 
 class OrderUnknownReconciliationTests(unittest.TestCase):
@@ -501,6 +553,391 @@ class OrderUnknownReconciliationTests(unittest.TestCase):
             self.assertEqual(run["plan"]["close_reason"], "CLOSED_USER_MANUAL")
             self.assertEqual(run["plan"]["exit_execution_id"], "sell1")
             self.assertTrue(run["plan"]["external_close_synced"])
+
+    def test_exit_order_unknown_recovers_when_broker_sell_order_id_differs_and_zero_holding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "005930",
+                        "side": "sell",
+                        "order_no": "actual-sell",
+                        "order_qty": 1,
+                        "filled_qty": 1,
+                        "remaining_qty": 0,
+                        "avg_price": 105,
+                        "order_date": "20260427",
+                        "fill_time": "100015",
+                    }
+                ],
+            )
+            _mark_exit_order_unknown(runtime, plan)
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["recovered_closed"], 1)
+            self.assertEqual(run["status"], "CLOSED")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "pathb_sell_fill_recovered_by_broker_evidence")
+            self.assertTrue(run["plan"]["exit_execution_id_mismatch"])
+            self.assertEqual(run["plan"]["stale_exit_execution_id"], "stale-sell")
+            self.assertEqual(run["plan"]["matched_exit_execution_id"], "actual-sell")
+            self.assertEqual(run["plan"]["broker_sell_fill_qty"], 1)
+            self.assertEqual(run["plan"]["broker_position_qty_after_sell"], 0)
+            self.assertFalse(run["plan"]["broker_open_sell_order_evidence"])
+
+    def test_exit_order_unknown_allows_sell_fill_within_timestamp_grace_period(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "005930",
+                        "side": "sell",
+                        "order_no": "actual-sell",
+                        "order_qty": 1,
+                        "filled_qty": 1,
+                        "remaining_qty": 0,
+                        "avg_price": 105,
+                        "order_date": "20260427",
+                        "fill_time": "095930",
+                    }
+                ],
+            )
+            _mark_exit_order_unknown(runtime, plan, sell_sent_at="2026-04-27T10:00:00+09:00")
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["recovered_closed"], 1)
+            self.assertEqual(run["status"], "CLOSED")
+            self.assertEqual(run["plan"]["timestamp_grace_period_sec"], 60)
+            self.assertEqual(run["plan"]["sell_fill_timestamp_blocked_count"], 0)
+
+    def test_exit_order_unknown_does_not_recover_when_sell_fill_precedes_local_exit_request_beyond_grace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "005930",
+                        "side": "sell",
+                        "order_no": "actual-sell",
+                        "order_qty": 1,
+                        "filled_qty": 1,
+                        "remaining_qty": 0,
+                        "avg_price": 105,
+                        "order_date": "20260427",
+                        "fill_time": "095800",
+                    }
+                ],
+            )
+            _mark_exit_order_unknown(runtime, plan, sell_sent_at="2026-04-27T10:00:00+09:00")
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["ambiguous_broker_truth"], 1)
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["plan"]["sell_close_evidence_reason"], "no_sell_fill_candidate")
+            self.assertEqual(run["plan"]["sell_fill_timestamp_blocked_count"], 1)
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "broker_no_sell_evidence")
+
+    def test_exit_order_unknown_does_not_recover_on_qty_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "005930",
+                        "side": "sell",
+                        "order_no": "actual-sell",
+                        "order_qty": 1,
+                        "filled_qty": 1,
+                        "remaining_qty": 0,
+                        "avg_price": 105,
+                        "order_date": "20260427",
+                        "fill_time": "100015",
+                    }
+                ],
+            )
+            _mark_exit_order_unknown(runtime, plan, qty=2)
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["ambiguous_broker_truth"], 1)
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["plan"]["sell_close_evidence_reason"], "fallback_qty_mismatch")
+            self.assertEqual(run["plan"]["broker_sell_fill_qty"], 1)
+
+    def test_exit_order_unknown_does_not_recover_when_position_still_held(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {
+                    "cash": 0,
+                    "stocks": [{"ticker": "005930", "qty": 1, "avg_price": 100, "current_price": 105}],
+                },
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "005930",
+                        "side": "sell",
+                        "order_no": "actual-sell",
+                        "order_qty": 1,
+                        "filled_qty": 1,
+                        "remaining_qty": 0,
+                        "avg_price": 105,
+                        "order_date": "20260427",
+                        "fill_time": "100015",
+                    }
+                ],
+            )
+            _mark_exit_order_unknown(runtime, plan)
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["ambiguous_broker_truth"], 1)
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["plan"]["sell_close_evidence_reason"], "broker_position_still_held")
+            self.assertEqual(run["plan"]["order_unknown_resolution"], "sell_fill_not_confirmed")
+
+    def test_exit_order_unknown_does_not_recover_when_multiple_sell_fills_are_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "005930",
+                        "side": "sell",
+                        "order_no": "actual-sell-1",
+                        "order_qty": 1,
+                        "filled_qty": 1,
+                        "remaining_qty": 0,
+                        "avg_price": 105,
+                        "order_date": "20260427",
+                        "fill_time": "100015",
+                    },
+                    {
+                        "ticker": "005930",
+                        "side": "sell",
+                        "order_no": "actual-sell-2",
+                        "order_qty": 1,
+                        "filled_qty": 1,
+                        "remaining_qty": 0,
+                        "avg_price": 105,
+                        "order_date": "20260427",
+                        "fill_time": "100020",
+                    },
+                ],
+            )
+            _mark_exit_order_unknown(runtime, plan)
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["ambiguous_broker_truth"], 1)
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["plan"]["sell_close_evidence_reason"], "ambiguous_sell_fill_candidates")
+            self.assertEqual(run["plan"]["sell_fill_candidate_count"], 2)
+
+    def test_exit_order_unknown_does_not_recover_when_other_active_pathb_exposure_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "005930",
+                        "side": "sell",
+                        "order_no": "actual-sell",
+                        "order_qty": 1,
+                        "filled_qty": 1,
+                        "remaining_qty": 0,
+                        "avg_price": 105,
+                        "order_date": "20260427",
+                        "fill_time": "100015",
+                    }
+                ],
+            )
+            _mark_exit_order_unknown(runtime, plan)
+            other_plan = _plan()
+            runtime.adapter.register_plan(other_plan, runtime_mode="live", brain_snapshot_id="brain")
+            runtime.adapter.mark_filled(
+                other_plan.path_run_id,
+                price=100,
+                qty=1,
+                execution_id="other-buy",
+                runtime_mode="live",
+                brain_snapshot_id="brain",
+            )
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["ambiguous_broker_truth"], 1)
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["plan"]["sell_close_evidence_reason"], "other_active_local_exposure")
+            self.assertEqual(run["plan"]["other_active_local_exposure"][0]["source"], "pathb_run")
+
+    def test_exit_order_unknown_does_not_recover_when_path_a_sell_evidence_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "005930",
+                        "side": "sell",
+                        "order_no": "actual-sell",
+                        "order_qty": 1,
+                        "filled_qty": 1,
+                        "remaining_qty": 0,
+                        "avg_price": 105,
+                        "order_date": "20260427",
+                        "fill_time": "100015",
+                    }
+                ],
+            )
+            _mark_exit_order_unknown(runtime, plan)
+            runtime.store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-04-27",
+                    ticker="005930",
+                    decision_id=plan.decision_id,
+                    execution_id="actual-sell",
+                    prompt_version="test",
+                    brain_snapshot_id="brain",
+                    payload={"path_type": "timing_adapter", "order_no": "actual-sell", "side": "sell"},
+                )
+            )
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["ambiguous_broker_truth"], 1)
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertEqual(run["plan"]["sell_close_evidence_reason"], "path_a_sell_evidence")
+            self.assertTrue(run["plan"]["path_a_sell_evidence"])
+
+    def test_closed_lifecycle_evidence_requires_same_path_run_when_decision_reused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(tmp, balance_provider=lambda market, force: {"cash": 0, "stocks": []})
+            other_plan = _plan()
+            runtime.adapter.register_plan(other_plan, runtime_mode="live", brain_snapshot_id="brain")
+            runtime.sell_manager.mark_closed(
+                other_plan.path_run_id,
+                close_reason="CLOSED_USER_MANUAL",
+                price=105,
+                pnl_pct=1.0,
+                runtime_mode="live",
+                brain_snapshot_id="brain",
+                execution_id="other-sell",
+            )
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["recovered_closed"], 0)
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
+            self.assertNotEqual(run["plan"].get("exit_execution_id"), "other-sell")
+
+    def test_closed_lifecycle_evidence_allows_legacy_decision_only_when_single_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(tmp, balance_provider=lambda market, force: {"cash": 0, "stocks": []})
+            runtime.store.append(
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-04-27",
+                    ticker="005930",
+                    decision_id=plan.decision_id,
+                    execution_id="legacy-sell",
+                    reason_code="CLOSED_USER_MANUAL",
+                    prompt_version="test",
+                    brain_snapshot_id="brain",
+                    payload={"path_type": "claude_price", "close_reason": "CLOSED_USER_MANUAL", "pnl_pct": 1.5},
+                )
+            )
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["recovered_closed"], 1)
+            self.assertEqual(run["status"], "CLOSED")
+            self.assertEqual(
+                run["plan"]["pathb_closed_lifecycle_evidence"]["closed_lifecycle_match_reason"],
+                "legacy_single_decision_candidate",
+            )
+
+    def test_closed_lifecycle_evidence_matches_exit_execution_id_for_legacy_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(tmp, balance_provider=lambda market, force: {"cash": 0, "stocks": []})
+            other_plan = _plan()
+            runtime.adapter.register_plan(other_plan, runtime_mode="live", brain_snapshot_id="brain")
+            runtime.store.update_path_run(plan.path_run_id, plan={"exit_execution_id": "legacy-sell"}, merge_plan=True)
+            runtime.store.append(
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-04-27",
+                    ticker="005930",
+                    decision_id=plan.decision_id,
+                    execution_id="legacy-sell",
+                    reason_code="CLOSED_USER_MANUAL",
+                    prompt_version="test",
+                    brain_snapshot_id="brain",
+                    payload={"path_type": "claude_price", "close_reason": "CLOSED_USER_MANUAL", "pnl_pct": 1.5},
+                )
+            )
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["recovered_closed"], 1)
+            self.assertEqual(run["status"], "CLOSED")
+            self.assertEqual(
+                run["plan"]["pathb_closed_lifecycle_evidence"]["closed_lifecycle_match_reason"],
+                "legacy_exit_execution_id",
+            )
+
+    def test_closed_lifecycle_evidence_rejects_legacy_event_from_other_session_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(tmp, balance_provider=lambda market, force: {"cash": 0, "stocks": []})
+            runtime.store.update_path_run(plan.path_run_id, plan={"exit_execution_id": "legacy-sell"}, merge_plan=True)
+            runtime.store.append(
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-04-26",
+                    ticker="005930",
+                    decision_id=plan.decision_id,
+                    execution_id="legacy-sell",
+                    reason_code="CLOSED_USER_MANUAL",
+                    prompt_version="test",
+                    brain_snapshot_id="brain",
+                    payload={"path_type": "claude_price", "close_reason": "CLOSED_USER_MANUAL", "pnl_pct": 1.5},
+                )
+            )
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["recovered_closed"], 0)
+            self.assertEqual(run["status"], "ORDER_UNKNOWN")
 
 
 if __name__ == "__main__":

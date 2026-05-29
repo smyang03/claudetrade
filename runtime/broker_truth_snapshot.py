@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -44,6 +45,28 @@ def age_seconds(value: Any, *, now: datetime | None = None) -> float | None:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return max(0.0, (current - dt.astimezone(current.tzinfo or timezone.utc)).total_seconds())
+
+
+def _env_int(name: str, default: int, *, min_value: int, max_value: int) -> int:
+    try:
+        value = int(float(os.getenv(name, str(default)) or default))
+    except Exception:
+        value = int(default)
+    return max(min_value, min(max_value, value))
+
+
+def _env_float(name: str, default: float, *, min_value: float, max_value: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)) or default)
+    except Exception:
+        value = float(default)
+    return max(min_value, min(max_value, value))
+
+
+def _is_snapshot_write_contention(exc: OSError) -> bool:
+    winerror = getattr(exc, "winerror", None)
+    errno = getattr(exc, "errno", None)
+    return isinstance(exc, PermissionError) or winerror in {5, 32} or errno in {13, 32}
 
 
 def _market_template(ttl_sec: int = 60, *, missing: bool = True) -> dict[str, Any]:
@@ -271,15 +294,54 @@ class BrokerTruthSnapshot:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8") or "{}")
         except Exception as exc:
-            snap = empty_snapshot(self.runtime_mode, ttl_by_market=ttl_by_market)
-            snap["broken"] = True
-            snap["error"] = f"snapshot_json_error:{exc}"
-            return snap
+            return self._load_last_good_or_broken(
+                ttl_by_market=ttl_by_market,
+                error=f"snapshot_json_error:{exc}",
+            )
         if not isinstance(data, dict):
-            snap = empty_snapshot(self.runtime_mode, ttl_by_market=ttl_by_market)
-            snap["broken"] = True
-            snap["error"] = "snapshot_root_not_object"
-            return snap
+            return self._load_last_good_or_broken(
+                ttl_by_market=ttl_by_market,
+                error="snapshot_root_not_object",
+            )
+        return self._normalize_snapshot(data, ttl_by_market=ttl_by_market)
+
+    def _last_good_path(self) -> Path:
+        return self.path.with_name(f"{self.path.name}.last_good")
+
+    def _load_last_good_or_broken(
+        self,
+        *,
+        ttl_by_market: dict[str, int] | None,
+        error: str,
+    ) -> dict[str, Any]:
+        last_good = self._last_good_path()
+        if last_good.exists():
+            try:
+                data = json.loads(last_good.read_text(encoding="utf-8") or "{}")
+                if isinstance(data, dict):
+                    normalized = self._normalize_snapshot(data, ttl_by_market=ttl_by_market)
+                    normalized["loaded_from_last_good"] = True
+                    normalized["snapshot_source"] = "last_good"
+                    normalized["primary_snapshot_error"] = error
+                    for market_data in (normalized.get("markets") or {}).values():
+                        if isinstance(market_data, dict):
+                            market_data["snapshot_source"] = "last_good"
+                    return normalized
+                error = f"{error};last_good_root_not_object"
+            except Exception as exc:
+                error = f"{error};last_good_json_error:{exc}"
+        snap = empty_snapshot(self.runtime_mode, ttl_by_market=ttl_by_market)
+        snap["broken"] = True
+        snap["error"] = error
+        snap["snapshot_source"] = "empty_fail_closed"
+        return snap
+
+    def _normalize_snapshot(
+        self,
+        data: dict[str, Any],
+        *,
+        ttl_by_market: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
         data.setdefault("runtime_mode", self.runtime_mode)
         data.setdefault("schema_version", 1)
         data.setdefault("markets", {})
@@ -369,10 +431,14 @@ class BrokerTruthSnapshot:
         snap["generated_at"] = utc_now_iso()
         snap["runtime_mode"] = self.runtime_mode
         snap["schema_version"] = 1
-        self.write_snapshot(snap)
+        write_status = self.write_snapshot(snap)
+        if isinstance(write_status, dict) and not bool(write_status.get("ok", True)):
+            snap["snapshot_write_status"] = write_status
+            snap["snapshot_write_error"] = str(write_status.get("write_error") or "")
+            snap["snapshot_write_attempts"] = int(write_status.get("write_attempts") or 0)
         return snap
 
-    def write_snapshot(self, snapshot: dict[str, Any]) -> None:
+    def write_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         if self.path.exists():
             try:
                 existing = json.loads(self.path.read_text(encoding="utf-8"))
@@ -393,11 +459,69 @@ class BrokerTruthSnapshot:
                     ):
                         incoming_markets[market] = existing_market
         safe = mask_sensitive(snapshot)
+        text = json.dumps(safe, ensure_ascii=False, indent=2, sort_keys=True)
+        json.loads(text)
+        market_names = ",".join(sorted((safe.get("markets") or {}).keys())) if isinstance(safe.get("markets"), dict) else ""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_name(f"{self.path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+        attempts = _env_int("BROKER_TRUTH_SNAPSHOT_WRITE_ATTEMPTS", 4, min_value=1, max_value=10)
+        delay_sec = _env_float("BROKER_TRUTH_SNAPSHOT_WRITE_RETRY_DELAY_SEC", 0.15, min_value=0.0, max_value=2.0)
+        last_error = ""
+        for attempt in range(1, attempts + 1):
+            tmp = self.path.with_name(f"{self.path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+            try:
+                tmp.write_text(text, encoding="utf-8")
+                os.replace(tmp, self.path)
+                return {"ok": True, "write_attempts": attempt, "path": str(self.path)}
+            except OSError as exc:
+                last_error = str(exc)
+                if attempt >= attempts or not _is_snapshot_write_contention(exc):
+                    last_good_status = self._write_last_good_snapshot_text(text)
+                    log.warning(
+                        "[broker truth snapshot write failed] markets=%s path=%s attempts=%s error=%s last_good_ok=%s",
+                        market_names,
+                        self.path,
+                        attempt,
+                        exc,
+                        last_good_status.get("ok"),
+                    )
+                    return {
+                        "ok": False,
+                        "path": str(self.path),
+                        "write_attempts": attempt,
+                        "write_error": last_error,
+                        "write_error_type": type(exc).__name__,
+                        "last_good": last_good_status,
+                        "stale": True,
+                    }
+                time.sleep(delay_sec * attempt)
+            finally:
+                try:
+                    if tmp.exists():
+                        tmp.unlink()
+                except Exception:
+                    pass
+        last_good_status = self._write_last_good_snapshot_text(text)
+        return {
+            "ok": False,
+            "path": str(self.path),
+            "write_attempts": attempts,
+            "write_error": last_error or "unknown_write_failure",
+            "last_good": last_good_status,
+            "stale": True,
+        }
+
+    def _write_last_good_snapshot_text(self, text: str) -> dict[str, Any]:
+        fallback = self._last_good_path()
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        tmp = fallback.with_name(f"{fallback.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
         try:
-            tmp.write_text(json.dumps(safe, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-            os.replace(tmp, self.path)
+            json.loads(text)
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, fallback)
+            return {"ok": True, "path": str(fallback)}
+        except Exception as exc:
+            log.warning("[broker truth last_good write failed] path=%s error=%s", fallback, exc)
+            return {"ok": False, "path": str(fallback), "error": str(exc), "error_type": type(exc).__name__}
         finally:
             try:
                 if tmp.exists():
