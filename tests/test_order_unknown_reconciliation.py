@@ -617,6 +617,43 @@ class OrderUnknownReconciliationTests(unittest.TestCase):
             self.assertEqual(run["plan"]["timestamp_grace_period_sec"], 60)
             self.assertEqual(run["plan"]["sell_fill_timestamp_blocked_count"], 0)
 
+    def test_exit_order_unknown_recovers_exact_sell_fill_when_entry_time_equals_fill_second(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan = _runtime(
+                tmp,
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [
+                    {
+                        "ticker": "005930",
+                        "side": "sell",
+                        "order_no": "actual-sell",
+                        "order_qty": 1,
+                        "filled_qty": 1,
+                        "remaining_qty": 0,
+                        "avg_price": 105,
+                        "order_date": "20260427",
+                        "fill_time": "100000",
+                    }
+                ],
+            )
+            # Broker timestamps are second-level. Exact exit_execution_id evidence
+            # remains causal even when local entry_filled_at was polluted to the same second.
+            _mark_exit_order_unknown(
+                runtime,
+                plan,
+                exit_execution_id="actual-sell",
+                entry_time="2026-04-27T10:00:00+09:00",
+                sell_sent_at="2026-04-27T10:00:00+09:00",
+            )
+
+            summary = runtime.reconcile_order_unknowns("KR", force=True, path_run_id=plan.path_run_id)
+            run = runtime.store.find_path_run(plan.path_run_id)
+
+            self.assertEqual(summary["recovered_closed"], 1)
+            self.assertEqual(run["status"], "CLOSED")
+            self.assertEqual(run["plan"]["sell_close_evidence_reason"], "execution_id_match")
+            self.assertEqual(run["plan"]["exit_execution_id"], "actual-sell")
+
     def test_exit_order_unknown_does_not_recover_when_sell_fill_precedes_local_exit_request_beyond_grace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan = _runtime(

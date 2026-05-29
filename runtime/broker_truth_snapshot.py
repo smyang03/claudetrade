@@ -471,6 +471,7 @@ class BrokerTruthSnapshot:
             try:
                 tmp.write_text(text, encoding="utf-8")
                 os.replace(tmp, self.path)
+                self._write_last_good_snapshot_text(text)
                 return {"ok": True, "write_attempts": attempt, "path": str(self.path)}
             except OSError as exc:
                 last_error = str(exc)

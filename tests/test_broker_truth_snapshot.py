@@ -325,6 +325,49 @@ class BrokerTruthSnapshotTests(unittest.TestCase):
             self.assertEqual(result["write_attempts"], 2)
             self.assertTrue(path.exists())
 
+    def test_write_snapshot_success_updates_last_good_sidecar(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            snapshot = BrokerTruthSnapshot(runtime_mode="live", path=path)
+            last_success = (datetime.now(timezone.utc) - timedelta(seconds=20)).isoformat(timespec="seconds")
+
+            result = snapshot.write_snapshot(
+                {
+                    "generated_at": last_success,
+                    "runtime_mode": "live",
+                    "schema_version": 1,
+                    "account_no": "1234567890",
+                    "markets": {
+                        "US": {
+                            "missing": False,
+                            "stale": False,
+                            "last_success_at": last_success,
+                            "last_attempt_at": last_success,
+                            "ttl_sec": 300,
+                            "error": "CANO=12345678&ACNT_PRDT_CD=01 token=secret",
+                            "positions": [{"ticker": "BBY", "qty": 2}],
+                            "open_orders": [],
+                            "today_fills": [],
+                        }
+                    },
+                }
+            )
+
+            self.assertTrue(result["ok"])
+            last_good = path.with_name("snapshot.json.last_good")
+            self.assertTrue(last_good.exists())
+            raw = last_good.read_text(encoding="utf-8")
+            self.assertNotIn("1234567890", raw)
+            self.assertNotIn("CANO=12345678", raw)
+            self.assertIn("CANO=***", raw)
+
+            path.write_text("{", encoding="utf-8")
+            loaded = BrokerTruthSnapshot(runtime_mode="live", path=path).load_snapshot(ttl_by_market={"US": 300})
+
+            self.assertTrue(loaded["loaded_from_last_good"])
+            self.assertEqual(loaded["markets"]["US"]["positions"][0]["ticker"], "BBY")
+            self.assertFalse(loaded["markets"]["US"]["stale"])
+
     def test_write_snapshot_failure_preserves_existing_file_and_reports_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "snapshot.json"

@@ -6443,7 +6443,7 @@ class PathBRuntime:
         ignored: list[dict[str, Any]] = []
         for row in rows:
             fill_at = self._broker_fill_time(row)
-            if fill_at is not None and fill_at > entry_filled_at:
+            if fill_at is not None and (fill_at > entry_filled_at or (strict and fill_at == entry_filled_at)):
                 matched.append(row)
             elif strict and fill_at is None:
                 matched.append(row)
