@@ -287,6 +287,50 @@ def _safe_json_object(value: Any) -> dict[str, Any]:
         return {}
 
 
+def _first_nonempty(mapping: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = mapping.get(key)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
+def _pathb_operator_context(item: dict[str, Any], plan: dict[str, Any] | None = None) -> dict[str, Any]:
+    plan = plan if isinstance(plan, dict) else {}
+    order_no = _first_nonempty(
+        item,
+        ("order_no", "order_id", "execution_id", "entry_execution_id", "sell_order_no", "sell_order_id"),
+    ) or _first_nonempty(
+        plan,
+        (
+            "order_no",
+            "order_id",
+            "execution_id",
+            "entry_execution_id",
+            "sell_order_no",
+            "sell_order_id",
+            "pending_sell_order_no",
+            "pathb_pending_sell_order_no",
+        ),
+    )
+    last_event_at = _first_nonempty(item, ("last_event_at", "updated_at", "created_at")) or _first_nonempty(
+        plan,
+        ("last_event_at", "updated_at", "created_at", "filled_at", "sell_order_sent_at"),
+    )
+    action = (
+        "read-only: verify broker positions/open orders/fills, then use audited remediation/backfill; "
+        "do not close local PathB rows from DB state alone"
+    )
+    return {
+        "order_no": order_no,
+        "last_event_at": last_event_at,
+        "operator_action": action,
+        "remediation_requires_broker_truth": True,
+        "read_only_check": True,
+        "auto_apply_allowed": False,
+    }
+
+
 def _ticker_key(market: str, ticker: Any) -> str:
     text = str(ticker or "").strip()
     return text.upper() if str(market or "").upper() == "US" else text
@@ -2002,6 +2046,7 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                 plan = json.loads(str(item.pop("plan_json", "") or "{}"))
             except Exception:
                 plan = {}
+            item.update(_pathb_operator_context(item, plan))
             item["order_unknown_phase"] = str(plan.get("order_unknown_phase") or "")
             item["order_unknown_age_sec"] = plan.get("order_unknown_age_sec")
             item["order_unknown_reconcile_attempts"] = plan.get("order_unknown_reconcile_attempts")
@@ -2038,10 +2083,12 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                     "previous_session_recoverable_still_held_count": len(previous_recoverable_still_held),
                     "accepted_exception": False,
                     "remediation_required": bool(unknown_rows),
-                    "auto_remediation": bool(previous_recoverable_still_held),
+                    "auto_remediation": False,
+                    "auto_remediation_allowed": False,
+                    "recoverable_hint_count": len(previous_recoverable_still_held),
                     "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
                     "operator_action": (
-                        "verify broker open orders/fills first, then run the PathB legacy remediation report; do not override broker truth from local DB only"
+                        "read-only: verify broker open orders/fills first, then run the PathB legacy remediation report; do not override broker truth from local DB only"
                         if unknown_rows
                         else "none"
                     ),
@@ -2064,6 +2111,7 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
         for row in stale_rows:
             item = dict(row)
             item["plan"] = _safe_json_object(item.pop("plan_json", ""))
+            item.update(_pathb_operator_context(item, item.get("plan")))
             _attach_exposure_evidence(item, exposure_by_path, broker_snapshot)
             if item.get("path_run_id"):
                 active_runs_by_id[str(item.get("path_run_id"))] = item
@@ -2103,10 +2151,12 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                     "previous_session_recoverable_entry_holding_count": len(stale_recoverable_entry_holding),
                     "accepted_exception": False,
                     "remediation_required": bool(stale_active),
-                    "auto_remediation": bool(stale_recoverable_still_held or stale_recoverable_entry_holding),
+                    "auto_remediation": False,
+                    "auto_remediation_allowed": False,
+                    "recoverable_hint_count": len(stale_recoverable_still_held) + len(stale_recoverable_entry_holding),
                     "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
                     "operator_action": (
-                        "verify broker positions/open orders/fills before closing, expiring, or backfilling any prior-session active row"
+                        "read-only: verify broker positions/open orders/fills before closing, expiring, or backfilling any prior-session active row"
                         if stale_active
                         else "none"
                     ),
@@ -2150,13 +2200,15 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                     "recoverable_still_held_count": len(broker_conflict_recoverable),
                     "accepted_exception": False,
                     "remediation_required": bool(broker_conflicts),
-                    "auto_remediation": bool(broker_conflict_recoverable) and not bool(broker_conflict_blockers),
+                    "auto_remediation": False,
+                    "auto_remediation_allowed": False,
+                    "recoverable_hint_count": len(broker_conflict_recoverable),
                     "remediation_tool": _pathb_broker_conflict_remediation_tool(
                         broker_conflict_blockers,
                         broker_conflicts,
                     ),
                     "operator_action": (
-                        "verify broker positions/open orders/today fills and reconcile local Path B state before live start"
+                        "read-only: verify broker positions/open orders/today fills and reconcile local Path B state before live start"
                         if broker_conflicts
                         else "none"
                     ),

@@ -4019,6 +4019,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         raw_data_quality = (context or {}).get("data_quality")
         data_quality_missing = bool((context or {}).get("data_quality_missing")) or raw_data_quality in (None, "")
         data_quality = "missing" if data_quality_missing else str(raw_data_quality).strip().lower()
+        data_quality_flags_raw = (context or {}).get("data_quality_flags") or (context or {}).get("quality_data_gaps") or []
+        if isinstance(data_quality_flags_raw, (list, tuple, set)):
+            data_quality_flags = [str(flag).strip() for flag in data_quality_flags_raw if str(flag).strip()]
+        else:
+            data_quality_flags = [str(data_quality_flags_raw).strip()] if str(data_quality_flags_raw or "").strip() else []
         overextended = bool((context or {}).get("overextended"))
         elapsed_min = _float_or_none((context or {}).get("market_open_elapsed_min"))
         fast_window_elapsed_missing = elapsed_min is None
@@ -4124,6 +4129,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "kr_confirmation_fast_window_min": fast_window_min,
             "kr_confirmation_fast_window_elapsed_missing": fast_window_elapsed_missing,
             "kr_confirmation_ticker": self._selection_ticker_key(market_key, ticker),
+            "kr_confirmation_data_quality": data_quality,
+            "kr_confirmation_data_quality_flags": data_quality_flags,
+            "kr_confirmation_demoting_flag": data_quality_flags[0] if reason == "kr_data_quality_not_confirmed" and data_quality_flags else "",
         }
 
     def _normalize_candidate_actions_for_meta(self, market: str, meta: dict) -> tuple[list[dict], str]:
@@ -5357,6 +5365,196 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "evidence_fetch_success_ratio": round(float(len(success_tickers)) / denominator, 4),
         }
 
+    def _selection_evidence_payload(
+        self,
+        market: str,
+        ticker: str,
+        row: dict,
+        *,
+        requested_set: set[str],
+        evidence_pack: dict | None = None,
+    ) -> dict[str, Any]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        row_map = dict(row or {})
+        pack = dict(evidence_pack or {})
+        live_pack = pack.get("live_evidence") if isinstance(pack.get("live_evidence"), dict) else {}
+        features = row_map.get("post_open_features") if isinstance(row_map.get("post_open_features"), dict) else {}
+        features = dict(features or {})
+        class_source = "selection_prompt_pool"
+
+        if pack:
+            evidence_class = "FULL_PACK"
+            data_state = str(live_pack.get("data_state") or pack.get("data_state") or "").strip().lower()
+            action_ceiling = str(live_pack.get("action_ceiling") or pack.get("action_ceiling") or "WATCH").strip().upper()
+            missing_fields = list(live_pack.get("missing_fields") or pack.get("missing_fields") or [])
+            class_source = "runtime_evidence_pack"
+        elif key in requested_set:
+            if bool(features.get("fail_closed")):
+                evidence_class = "MISSING_OR_STALE"
+                data_state = "missing"
+                action_ceiling = "WATCH"
+                missing_fields = list(features.get("missing_fields") or [])
+                class_source = str(features.get("source") or "intraday_fail_closed")
+            else:
+                live = build_live_evidence_pack(
+                    market=market_key,
+                    ticker=key,
+                    candidate=row_map,
+                    features=features,
+                )
+                data_state = str(live.get("data_state") or "").strip().lower()
+                missing_fields = list(live.get("missing_fields") or [])
+                if data_state == "confirmed":
+                    evidence_class = "PREFETCHED_COMPLETE"
+                    action_ceiling = str(live.get("action_ceiling") or "BUY_READY").strip().upper()
+                elif data_state == "missing":
+                    evidence_class = "MISSING_OR_STALE"
+                    action_ceiling = "WATCH"
+                else:
+                    evidence_class = "PREFETCHED_PARTIAL"
+                    action_ceiling = str(self._runtime_value("SELECTION_EVIDENCE_PARTIAL_CEILING", "WATCH") or "WATCH").strip().upper()
+                class_source = str(features.get("source") or features.get("evidence_provider") or "intraday_prefetch")
+        else:
+            evidence_class = "COMPACT_ONLY"
+            data_state = "not_prefetched"
+            action_ceiling = str(self._runtime_value("SELECTION_EVIDENCE_MISSING_CEILING", "WATCH") or "WATCH").strip().upper()
+            missing_fields = ["intraday_prefetch"]
+            class_source = "prompt_summary_only"
+
+        if evidence_class in {"COMPACT_ONLY", "MISSING_OR_STALE"}:
+            action_ceiling = "WATCH"
+        if evidence_class == "PREFETCHED_PARTIAL" and not action_ceiling:
+            action_ceiling = "WATCH"
+
+        reason = ""
+        if evidence_class == "COMPACT_ONLY":
+            reason = "not_in_intraday_prefetch"
+        elif evidence_class == "MISSING_OR_STALE":
+            reason = str(features.get("fail_closed_reason") or features.get("runtime_gate_reason") or "evidence_missing_or_stale")
+        elif evidence_class == "PREFETCHED_PARTIAL":
+            reason = ",".join(str(item) for item in missing_fields[:4]) or "partial_intraday_evidence"
+
+        return {
+            "evidence_class": evidence_class,
+            "selection_evidence_action_ceiling": action_ceiling,
+            "selection_evidence_missing_reason": reason,
+            "evidence_required_for_trade_ready": evidence_class not in {"FULL_PACK", "PREFETCHED_COMPLETE"},
+            "evidence_class_source": class_source,
+            "selection_evidence_data_state": data_state,
+            "selection_evidence_missing_fields": [str(item) for item in missing_fields if str(item)],
+        }
+
+    def _annotate_selection_evidence_classes(
+        self,
+        market: str,
+        prompt_rows: list[dict],
+        candidates_with_features: list[dict],
+        *,
+        evidence_requested_tickers: list[str],
+        evidence_by_ticker: dict[str, dict],
+    ) -> dict[str, Any]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        requested_set = {
+            self._selection_ticker_key(market_key, ticker)
+            for ticker in list(evidence_requested_tickers or [])
+            if self._selection_ticker_key(market_key, ticker)
+        }
+        pack_by_ticker = {
+            self._selection_ticker_key(market_key, key): dict(value)
+            for key, value in dict(evidence_by_ticker or {}).items()
+            if self._selection_ticker_key(market_key, key) and isinstance(value, dict)
+        }
+        class_counts: dict[str, int] = {}
+        ceiling_counts: dict[str, int] = {}
+        watch_ceiling_tickers: list[str] = []
+        payload_by_ticker: dict[str, dict[str, Any]] = {}
+        ranked_rows: list[tuple[tuple[int, int, int, int, str], dict]] = []
+        class_priority = {
+            "FULL_PACK": 0,
+            "PREFETCHED_COMPLETE": 1,
+            "PREFETCHED_PARTIAL": 2,
+            "COMPACT_ONLY": 3,
+            "MISSING_OR_STALE": 4,
+        }
+        state_priority = {
+            "PLAN_A": 0,
+            "PLAN_B": 1,
+            "WATCH": 2,
+            "BENCH": 3,
+            "QUARANTINE": 4,
+        }
+        role_priority = {
+            "CORE": 0,
+            "": 0,
+            "DISCOVERY": 1,
+        }
+
+        for idx, row in enumerate(list(prompt_rows or []), start=1):
+            if not isinstance(row, dict):
+                continue
+            key = self._selection_ticker_key(market_key, row.get("ticker"))
+            if not key:
+                continue
+            payload = self._selection_evidence_payload(
+                market_key,
+                key,
+                row,
+                requested_set=requested_set,
+                evidence_pack=pack_by_ticker.get(key),
+            )
+            row.update(payload)
+            payload_by_ticker[key] = payload
+            evidence_class = str(payload.get("evidence_class") or "UNKNOWN")
+            ceiling = str(payload.get("selection_evidence_action_ceiling") or "UNKNOWN")
+            class_counts[evidence_class] = class_counts.get(evidence_class, 0) + 1
+            ceiling_counts[ceiling] = ceiling_counts.get(ceiling, 0) + 1
+            if ceiling == "WATCH":
+                watch_ceiling_tickers.append(key)
+            role = str(row.get("candidate_pool_role") or "").strip().upper()
+            state = str(row.get("trainer_candidate_state") or "").strip().upper()
+            ranked_rows.append(
+                (
+                    (
+                        role_priority.get(role, 0),
+                        state_priority.get(state, 2),
+                        class_priority.get(evidence_class, 9),
+                        idx,
+                        key,
+                    ),
+                    row,
+                )
+            )
+
+        shadow_tickers: list[str] = []
+        for shadow_rank, (_sort_key, row) in enumerate(sorted(ranked_rows, key=lambda item: item[0]), start=1):
+            key = self._selection_ticker_key(market_key, row.get("ticker"))
+            actual_rank = int(row.get("prompt_rank") or row.get("prompt_rank_after_trim") or 0) or None
+            if actual_rank is None:
+                for fallback_idx, raw_row in enumerate(list(prompt_rows or []), start=1):
+                    if raw_row is row:
+                        actual_rank = fallback_idx
+                        break
+            row["selection_evidence_shadow_rank"] = shadow_rank
+            row["selection_evidence_rank_delta"] = int(actual_rank or shadow_rank) - shadow_rank
+            if key:
+                shadow_tickers.append(key)
+
+        for row in list(candidates_with_features or []):
+            if not isinstance(row, dict):
+                continue
+            key = self._selection_ticker_key(market_key, row.get("ticker"))
+            payload = payload_by_ticker.get(key)
+            if payload:
+                row.update(payload)
+
+        return {
+            "evidence_class_counts": class_counts,
+            "selection_evidence_ceiling_counts": ceiling_counts,
+            "selection_evidence_watch_ceiling_tickers": watch_ceiling_tickers,
+            "selection_evidence_reorder_shadow_tickers": shadow_tickers,
+        }
+
     def _push_same_day_stop_to_back(self, market: str, candidates: list[dict]) -> list[dict]:
         """당일 손절 종목을 후보 리스트 맨 뒤로 이동하고 same_day_stopped=True 마킹.
         analysts._curate_selection_candidates 가 이 플래그를 감지해 최후순위로 처리한다.
@@ -5456,6 +5654,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         overlap_ratio = (overlap_count / max(1, len(prompt_set))) if prompt_set else 1.0
         exec_counts = self._prompt_exec_evidence_counts(prompt_rows)
         fetch_success = self._evidence_fetch_success_metrics(market_key, prompt_rows, evidence_requested_tickers)
+        evidence_class_meta = (
+            self._annotate_selection_evidence_classes(
+                market_key,
+                prompt_rows,
+                candidates_with_features,
+                evidence_requested_tickers=evidence_requested_tickers,
+                evidence_by_ticker=evidence_by_ticker,
+            )
+            if self._runtime_bool("SELECTION_EVIDENCE_CLASS_ENABLED", True)
+            else {}
+        )
         universe_filter_bypass = dict(getattr(self, "_last_universe_filter_bypass", {}) or {})
         selection_trace_id = f"{market_key}:{str(prompt_meta.get('selection_snapshot_ts') or prompt_meta.get('_selection_snapshot_ts') or '')}"
         prompt_meta.update(
@@ -5463,6 +5672,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "evidence_prefetch_source": evidence_prefetch_source,
                 "evidence_requested_tickers": evidence_requested_tickers,
                 "evidence_requested_count": len(evidence_requested_tickers),
+                "target_rows": len(evidence_requested_tickers),
+                "prompt_rows": len(prompt_tickers),
+                "evidence_pack_rows": len(evidence_pack_tickers),
+                "omitted_prompt_count": len(missing_evidence_tickers),
                 "evidence_alignment_min_target": int(alignment_min_target_limit or 0),
                 "evidence_prompt_overlap_count": overlap_count,
                 "evidence_prompt_overlap_ratio": round(float(overlap_ratio), 4),
@@ -5476,6 +5689,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "evidence_pack_source": evidence_pack_source,
                 "evidence_pack_tickers": evidence_pack_tickers,
                 "evidence_pack_count": len(evidence_pack_tickers),
+                **evidence_class_meta,
                 **fetch_success,
                 **exec_counts,
             }
@@ -5491,6 +5705,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "evidence_prefetch_source": evidence_prefetch_source,
                     "evidence_requested_tickers": evidence_requested_tickers,
                     "evidence_requested_count": len(evidence_requested_tickers),
+                    "target_rows": len(evidence_requested_tickers),
+                    "prompt_rows": len(prompt_tickers),
+                    "evidence_pack_rows": len(evidence_pack_tickers),
+                    "omitted_prompt_count": len(missing_evidence_tickers),
                     "evidence_alignment_min_target": int(alignment_min_target_limit or 0),
                     "evidence_prompt_overlap_ratio": round(float(overlap_ratio), 4),
                     "missing_evidence_tickers": missing_evidence_tickers[:30],
@@ -5505,6 +5723,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "evidence_pack_source": evidence_pack_source,
                     "evidence_pack_tickers": evidence_pack_tickers,
                     "evidence_pack_count": len(evidence_pack_tickers),
+                    **evidence_class_meta,
                     **fetch_success,
                     **exec_counts,
                 },
@@ -6045,6 +6264,161 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if stage not in stages:
                 stages.append(stage)
             normalized_meta["_discovery_role_ceiling_stages"] = stages
+        return normalized_meta
+
+    def _apply_selection_evidence_ceiling(
+        self,
+        market: str,
+        meta: dict,
+        *,
+        stage: str,
+    ) -> dict:
+        normalized_meta = dict(meta or {})
+        if not self._runtime_bool("SELECTION_EVIDENCE_CLASS_ENABLED", True):
+            return normalized_meta
+        mode = str(self._runtime_value("SELECTION_EVIDENCE_CEILING_MODE", "shadow") or "shadow").strip().lower()
+        enforce = bool(
+            mode == "enforce"
+            or self._runtime_bool("SELECTION_EVIDENCE_REQUIRE_FOR_TRADE_READY", False)
+        )
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        row_by_ticker: dict[str, dict] = {}
+        for row in list(normalized_meta.get("_final_prompt_pool") or []):
+            if not isinstance(row, dict):
+                continue
+            key = self._selection_ticker_key(market_key, row.get("ticker"))
+            if key:
+                row_by_ticker[key] = dict(row)
+        if not row_by_ticker:
+            return normalized_meta
+
+        watch_ceiling = {
+            key
+            for key, row in row_by_ticker.items()
+            if str(row.get("selection_evidence_action_ceiling") or "").strip().upper() == "WATCH"
+            and str(row.get("evidence_class") or "").strip().upper() in {"COMPACT_ONLY", "MISSING_OR_STALE", "PREFETCHED_PARTIAL"}
+        }
+        if not watch_ceiling:
+            normalized_meta["_selection_evidence_ceiling_mode"] = mode
+            normalized_meta["_selection_evidence_ceiling_enforced"] = bool(enforce)
+            return normalized_meta
+
+        violations = list(normalized_meta.get("_selection_evidence_violations") or [])
+        demoted_from = dict(normalized_meta.get("_selection_evidence_demoted_from_by_ticker") or {})
+        demoted_keys: set[str] = set()
+        violation_keys: set[str] = set()
+
+        def _violation_payload(key: str, action_name: str, source: str) -> dict[str, Any]:
+            row = row_by_ticker.get(key) or {}
+            return {
+                "ticker": key,
+                "action": action_name,
+                "source": source,
+                "evidence_class": str(row.get("evidence_class") or ""),
+                "selection_evidence_action_ceiling": str(row.get("selection_evidence_action_ceiling") or ""),
+                "reason": str(row.get("selection_evidence_missing_reason") or "selection_evidence_ceiling"),
+                "stage": stage,
+                "enforced": bool(enforce),
+            }
+
+        sanitized_actions: list[dict] = []
+        for raw_action in list(normalized_meta.get("candidate_actions") or []):
+            action = dict(raw_action or {}) if isinstance(raw_action, dict) else {}
+            key = self._selection_ticker_key(market_key, action.get("ticker"))
+            action_name = str(action.get("action") or "").strip().upper()
+            if key in watch_ceiling and action_name in {"BUY_READY", "PROBE_READY"}:
+                violation_keys.add(key)
+                violations.append(_violation_payload(key, action_name, "candidate_actions"))
+                if enforce:
+                    demoted_keys.add(key)
+                    demoted_from[key] = action_name
+                    action["selection_evidence_demoted_from"] = action_name
+                    action["selection_evidence_ceiling_applied"] = True
+                    action["action"] = "WATCH"
+                    action["size_intent"] = "none"
+                    action["action_ceiling_ack"] = "WATCH"
+                    action["reason_code"] = "SELECTION_EVIDENCE_CEILING"
+                    action["reason"] = "selection_evidence_ceiling"
+                    action["price_targets"] = {}
+                    blocking = list(action.get("blocking_factors") or [])
+                    if "selection_evidence_ceiling" not in blocking:
+                        blocking.append("selection_evidence_ceiling")
+                    action["blocking_factors"] = blocking
+                    warnings = list(action.get("warnings") or action.get("contract_warnings") or [])
+                    if "selection_evidence_ceiling_applied" not in warnings:
+                        warnings.append("selection_evidence_ceiling_applied")
+                    action["warnings"] = warnings
+            sanitized_actions.append(action)
+        if sanitized_actions or "candidate_actions" in normalized_meta:
+            normalized_meta["candidate_actions"] = sanitized_actions
+
+        def _filter_entry_list(values: Any) -> list:
+            result = []
+            for item in list(values or []):
+                key = self._selection_ticker_key(market_key, item)
+                if key in watch_ceiling:
+                    violation_keys.add(key)
+                    violations.append(_violation_payload(key, "LIST_PERMISSION", "entry_list"))
+                    if enforce:
+                        demoted_keys.add(key)
+                        demoted_from.setdefault(key, "LIST_PERMISSION")
+                        continue
+                result.append(item)
+            return list(dict.fromkeys(result))
+
+        if "trade_ready" in normalized_meta:
+            normalized_meta["trade_ready"] = _filter_entry_list(normalized_meta.get("trade_ready"))
+        for list_key in ("_candidate_action_plan_a_ready", "_trade_ready_without_price_targets_allowed"):
+            if list_key in normalized_meta:
+                normalized_meta[list_key] = _filter_entry_list(normalized_meta.get(list_key))
+
+        sanitized_routes: list[dict] = []
+        for raw_route in list(normalized_meta.get("_candidate_action_routes") or []):
+            route = dict(raw_route or {}) if isinstance(raw_route, dict) else {}
+            key = self._selection_ticker_key(market_key, route.get("ticker"))
+            final_action = str(route.get("final_action") or "").strip().upper()
+            if key in watch_ceiling and final_action in {"BUY_READY", "PROBE_READY"}:
+                violation_keys.add(key)
+                violations.append(_violation_payload(key, final_action, "candidate_action_routes"))
+                if enforce:
+                    demoted_keys.add(key)
+                    demoted_from[key] = final_action
+                    route["original_action"] = route.get("original_action") or route.get("requested_action") or final_action
+                    route["final_action"] = "WATCH"
+                    route["route"] = None
+                    route["reason"] = "selection_evidence_ceiling"
+                    route["blocker"] = "selection_evidence_ceiling"
+                    route["demoted_to"] = "WATCH"
+                    route["runtime_gate_reason"] = "selection_evidence_ceiling"
+                    route["cancel_pathb"] = False
+                    route["suspend_pathb"] = False
+                    warnings = list(route.get("warnings") or [])
+                    if "selection_evidence_ceiling_applied" not in warnings:
+                        warnings.append("selection_evidence_ceiling_applied")
+                    route["warnings"] = warnings
+                    runtime_gate = dict(route.get("runtime_gate") or {})
+                    runtime_gate["selection_evidence_action_ceiling"] = "WATCH"
+                    runtime_gate["selection_evidence_ceiling_applied"] = True
+                    route["runtime_gate"] = runtime_gate
+            sanitized_routes.append(route)
+        if sanitized_routes or "_candidate_action_routes" in normalized_meta:
+            normalized_meta["_candidate_action_routes"] = sanitized_routes
+
+        normalized_meta["_selection_evidence_ceiling_mode"] = mode
+        normalized_meta["_selection_evidence_ceiling_enforced"] = bool(enforce)
+        normalized_meta["_selection_evidence_violations"] = violations
+        normalized_meta["_selection_evidence_violation_tickers"] = sorted(
+            set(normalized_meta.get("_selection_evidence_violation_tickers") or []) | violation_keys
+        )
+        if demoted_keys:
+            normalized_meta["_selection_evidence_demoted_tickers"] = sorted(
+                set(normalized_meta.get("_selection_evidence_demoted_tickers") or []) | demoted_keys
+            )
+            normalized_meta["_selection_evidence_demoted_from_by_ticker"] = demoted_from
+        stages = list(normalized_meta.get("_selection_evidence_ceiling_stages") or [])
+        if stage not in stages:
+            stages.append(stage)
+        normalized_meta["_selection_evidence_ceiling_stages"] = stages
         return normalized_meta
 
     def _apply_candidate_action_live_routes(self, market: str, meta: dict) -> dict:
@@ -8158,6 +8532,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         meta["candidate_actions"] = candidate_actions
         meta["_candidate_actions_source"] = candidate_actions_source
         meta = self._apply_candidate_pool_role_ceiling(market, meta, stage="pre_route")
+        meta = self._apply_selection_evidence_ceiling(market, meta, stage="pre_route")
         market_key = "US" if str(market).upper() == "US" else "KR"
         last_post_open = (getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key)
         if isinstance(last_post_open, dict) and last_post_open and not meta.get("_post_open_features_by_ticker"):
@@ -8171,6 +8546,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
         meta = self._apply_candidate_action_live_routes(market, meta)
         meta = self._apply_candidate_pool_role_ceiling(market, meta, stage="post_route")
+        meta = self._apply_selection_evidence_ceiling(market, meta, stage="post_route")
         meta = self._normalize_selection_meta_runtime(market, meta, selected, mode=mode)
         allow_missing_price_targets = meta.get("_trade_ready_without_price_targets_allowed") or []
         meta = self._enforce_trade_ready_price_targets(
@@ -11397,9 +11773,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "errors_sample": [
                     f"{ticker}:{error}" for ticker, error in list((result.get("errors_by_ticker") or {}).items())[:5]
                 ],
+                "error_count": len(result.get("errors_by_ticker") or {}),
+                "failed_tickers_sample": list((result.get("errors_by_ticker") or {}).keys())[:10],
                 "fail_closed_enabled": bool(fail_closed),
                 "fail_closed_applied": bool(fail_closed_applied),
                 "fail_closed_reason": fail_closed_reason,
+                "demotion_layer": "evidence_fetch" if fail_closed_applied else "",
                 "threshold": float(threshold),
                 "blocked_or_missing_count": len(fail_closed_tickers),
             },
@@ -12033,7 +12412,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _build_intraday_context(self, market: str) -> str:
         """장중 재스크리닝용 실시간 시장 컨텍스트 문자열 생성."""
         try:
-            from kis_api import get_index_change
+            from kis_api import get_index_change, get_index_snapshot
             lines = []
             now_str = datetime.now(KST).strftime("%H:%M")
             mode = str((self.today_judgment.get("consensus", {}) or {}).get("mode", "NEUTRAL"))
@@ -12042,8 +12421,28 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if ops_context:
                 lines.append(ops_context)
             if market == "KR":
-                kospi_chg = get_index_change("KR")
-                lines.append(f"현재시각 {now_str} KST | 코스피 현재 {kospi_chg:+.2f}%")
+                live_index_ok = False
+                kospi_chg = None
+                try:
+                    kospi = get_index_snapshot("KR", "KOSPI")
+                    kosdaq = get_index_snapshot("KR", "KOSDAQ")
+                    kospi_price = float(kospi.get("price", 0.0) or 0.0)
+                    kosdaq_price = float(kosdaq.get("price", 0.0) or 0.0)
+                    if kospi_price <= 0 or kosdaq_price <= 0:
+                        raise RuntimeError("KIS live index returned non-positive price")
+                    kospi_chg = float(kospi.get("change_pct", 0.0) or 0.0)
+                    kosdaq_chg = float(kosdaq.get("change_pct", 0.0) or 0.0)
+                    live_index_ok = True
+                    lines.append(
+                        f"현재시각 {now_str} KST | KIS live index: "
+                        f"KOSPI {kospi_chg:+.2f}% ({kospi_price:,.2f}), "
+                        f"KOSDAQ {kosdaq_chg:+.2f}% ({kosdaq_price:,.2f})"
+                    )
+                except Exception as index_exc:
+                    lines.append(
+                        f"현재시각 {now_str} KST | KIS live index unavailable: {index_exc}. "
+                        "live_index_context_ok=false; do not infer fade or intraday direction from stale/preopen index values."
+                    )
                 # 장중 보유 포지션 현황
                 positions = [
                     p for p in list(getattr(getattr(self, "risk", None), "positions", []) or [])
@@ -12062,7 +12461,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "digest_raw", {}).get("context", {}).get("kospi", {}).get("change_pct", 0.0) or 0.0
                 except Exception:
                     pass
-                if abs(kospi_chg - morning_kospi) >= 0.5:
+                if live_index_ok and kospi_chg is not None and abs(kospi_chg - morning_kospi) >= 0.5:
                     direction = "상승" if kospi_chg > morning_kospi else "하락"
                     lines.append(
                         f"장전 대비 {abs(kospi_chg - morning_kospi):.1f}%p {direction} "
@@ -21395,6 +21794,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "cleared_stale": 0,
             "broker_truth_unavailable": False,
             "errors": [],
+            "audit_trail": [],
         }
         target_key = str(ticker_filter or "").strip()
         target_key = target_key.upper() if market_key == "US" else target_key
@@ -21428,6 +21828,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             order_no = str(pos.get("pending_sell_order_no", "") or "")
             reason = str(pos.get("pending_sell_reason", "") or "sell_confirmation_pending")
             requested_qty = int(pos.get("pending_sell_qty", pos.get("qty", 0)) or 0)
+            audit_item = {
+                "market": market_key,
+                "ticker": ticker,
+                "order_no": order_no,
+                "requested_qty": requested_qty,
+                "local_position_qty": int(pos.get("qty", 0) or 0),
+                "stage": "pending_sell_reconcile",
+                "resolution": "",
+                "broker_fill_confirmed": False,
+                "filled_qty": 0,
+                "remaining_qty": 0,
+                "broker_position_qty": None,
+                "open_order_remaining_qty": None,
+            }
             pos["pending_sell_last_checked_at"] = now_iso
             pos["pending_sell_retry_count"] = int(pos.get("pending_sell_retry_count", 0) or 0) + 1
             lookup_fill = None
@@ -21444,6 +21858,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     pos["pending_sell_resolution"] = "BROKER_TRUTH_UNAVAILABLE_KEEP_PENDING"
                     summary["broker_truth_unavailable"] = True
                     summary["kept_pending"] += 1
+                    audit_item.update({"resolution": "BROKER_TRUTH_UNAVAILABLE_KEEP_PENDING", "remaining_qty": int(pos.get("qty", 0) or 0)})
+                    summary["audit_trail"].append(dict(audit_item))
                     log.warning(f"[pending sell reconcile] {market_key} {ticker} BROKER_TRUTH_UNAVAILABLE_KEEP_PENDING order={order_no}")
                     continue
             else:
@@ -21456,8 +21872,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 fill_rows = self._dedupe_broker_rows(fill_rows)
                 open_rows = self._broker_sell_open_order_rows(rows_open, order_no=order_no)
                 broker_qty = sum(max(0, int(row.get("qty", 0) or 0)) for row in rows_positions)
+                audit_item["broker_position_qty"] = broker_qty
+                audit_item["open_order_remaining_qty"] = sum(max(0, int(row.get("remaining_qty", row.get("qty", 0)) or 0)) for row in open_rows)
             filled_qty = sum(max(0, int(row.get("filled_qty", row.get("qty", 0)) or 0)) for row in fill_rows)
             fill_price = self._weighted_broker_fill_price(fill_rows)
+            audit_item["filled_qty"] = int(filled_qty)
             if filled_qty > 0:
                 close_qty = min(filled_qty, requested_qty or filled_qty, int(pos.get("qty", 0) or filled_qty))
                 resolution = "BROKER_SELL_FILL_CONFIRMED" if close_qty >= int(pos.get("qty", 0) or close_qty) else "BROKER_SELL_PARTIAL_FILL_CONFIRMED"
@@ -21491,11 +21910,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 )
                     else:
                         summary["closed"] += 1
+                    audit_item.update(
+                        {
+                            "resolution": resolution,
+                            "broker_fill_confirmed": True,
+                            "remaining_qty": int(pos.get("qty", 0) or 0),
+                        }
+                    )
+                    summary["audit_trail"].append(dict(audit_item))
                 continue
             if not broker_unavailable and open_rows:
                 pos["pending_sell_broker_status"] = "BROKER_OPEN_ORDER_FOUND_KEEP_PENDING"
                 pos["pending_sell_resolution"] = "BROKER_OPEN_ORDER_FOUND_KEEP_PENDING"
                 summary["kept_pending"] += 1
+                audit_item.update({"resolution": "BROKER_OPEN_ORDER_FOUND_KEEP_PENDING", "remaining_qty": int(pos.get("qty", 0) or 0)})
+                summary["audit_trail"].append(dict(audit_item))
                 log.warning(f"[pending sell reconcile] {market_key} {ticker} BROKER_OPEN_ORDER_FOUND_KEEP_PENDING order={order_no}")
                 continue
             if not broker_unavailable and broker_qty <= 0:
@@ -21513,6 +21942,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 )
                 if ex:
                     summary["closed"] += 1
+                    audit_item.update(
+                        {
+                            "resolution": resolution,
+                            "broker_fill_confirmed": True,
+                            "remaining_qty": int(pos.get("qty", 0) or 0),
+                        }
+                    )
+                    summary["audit_trail"].append(dict(audit_item))
                     log.warning(f"[pending sell reconcile] {market_key} {ticker} {resolution} order={order_no}")
                 continue
             if not broker_unavailable:
@@ -21526,6 +21963,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     },
                 )
                 summary["cleared_stale"] += 1
+                audit_item.update({"resolution": resolution, "remaining_qty": int(pos.get("qty", 0) or 0)})
+                summary["audit_trail"].append(dict(audit_item))
                 log.warning(f"[pending sell reconcile] {market_key} {ticker} {resolution} order={order_no}")
         if summary["checked"]:
             try:

@@ -42,6 +42,22 @@ class KrCandidateQualityPromptTests(unittest.TestCase):
         self.assertIn("cohort=low n=7", hint)
         self.assertIn("tier=C", hint)
 
+    def test_quality_hint_marks_all_zero_flow_unavailable(self) -> None:
+        candidate = {
+            "candidate_quality_grade": "C",
+            "candidate_quality_score": 51,
+            "foreign_net_qty_1d": 0,
+            "institution_net_qty_1d": 0,
+            "flow_data_quality": "bad_zero_flow_cluster",
+            "flow_quality_flags": ["kr_investor_flow_all_zero_cluster"],
+        }
+
+        with patch.dict(os.environ, {"ENABLE_KR_CANDIDATE_QUALITY_PROMPT": "true"}, clear=False):
+            hint = _candidate_quality_hint(candidate)
+
+        self.assertIn("flow=unavailable:all_zero_cluster", hint)
+        self.assertNotIn("flow=F", hint)
+
     def test_trainer_hint_regression_keeps_existing_score_fields(self) -> None:
         from minority_report.analysts import _candidate_trainer_hint
 

@@ -628,6 +628,7 @@ def route_candidate_action(
         gate_context["evidence_ceiling_applied"] = False
         if evidence_state == "missing" or evidence_ceiling in {"WATCH", "WAIT_CONFIRMATION"}:
             gate_context["evidence_ceiling_applied"] = True
+            gate_context["demotion_layer"] = "evidence_ceiling"
             fail_closed_reason = str(context.get("evidence_fail_closed_reason") or "").strip()
             runtime_reason = fail_closed_reason or (
                 "data_fail_closed_watch_only" if bool(context.get("evidence_fail_closed")) else "evidence_action_ceiling"
@@ -646,6 +647,7 @@ def route_candidate_action(
             evidence_demoted_to = "PROBE_READY"
             evidence_runtime_reason = "evidence_action_ceiling"
             gate_context["evidence_ceiling_applied"] = True
+            gate_context["demotion_layer"] = "evidence_ceiling"
             default_warnings.append("evidence_ceiling_applied")
 
     if (
@@ -675,6 +677,7 @@ def route_candidate_action(
             if bool(context.get("kr_confirmation_gate_shadow")):
                 default_warnings.append("kr_confirmation_required_shadow")
             else:
+                gate_context["demotion_layer"] = "kr_confirmation_gate"
                 return _decision(
                     "WATCH",
                     reason=confirmation_reason,

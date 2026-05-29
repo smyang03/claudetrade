@@ -728,6 +728,24 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
         self.assertTrue(should_refresh)
         self.assertIn("new_buy_permission_relaxed", reason)
 
+    def test_kr_intraday_context_does_not_render_stale_index_as_zero(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot.today_judgment = {
+            "consensus": {"mode": "NEUTRAL"},
+            "digest_raw": {"context": {"kospi": {"change_pct": 2.25}}},
+        }
+        bot.risk = SimpleNamespace(positions=[])
+        bot._build_execution_profile_text = lambda market, mode: "profile=ok"
+        bot._format_ops_review_context = lambda market: ""
+
+        with patch("kis_api.get_index_snapshot", side_effect=RuntimeError("index unavailable")):
+            context = trading_bot.TradingBot._build_intraday_context(bot, "KR")
+
+        self.assertIn("KIS live index unavailable", context)
+        self.assertIn("live_index_context_ok=false", context)
+        self.assertNotIn("코스피 현재 +0.00%", context)
+        self.assertNotIn("장전 대비", context)
+
     def test_reinvoke_rescreen_triggers_when_cap_relaxes_same_mode(self) -> None:
         bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
 

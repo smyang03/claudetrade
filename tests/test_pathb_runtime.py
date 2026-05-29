@@ -3876,6 +3876,8 @@ class PathBRuntimeTests(unittest.TestCase):
                     "ticker": "005930",
                     "qty": 2,
                     "entry": 100,
+                    "display_current_price": 121,
+                    "current_price_source": "broker_balance",
                     "path_type": "claude_price",
                     "pathb_path_run_id": plan.path_run_id,
                 }
@@ -4541,6 +4543,8 @@ class PathBRuntimeTests(unittest.TestCase):
                 "ticker": "005930",
                 "qty": 2,
                 "entry": 100,
+                "display_current_price": 121,
+                "current_price_source": "broker_balance",
                 "path_type": "claude_price",
                 "pathb_path_run_id": plan.path_run_id,
                 "pathb_closing": old,
@@ -4590,7 +4594,17 @@ class PathBRuntimeTests(unittest.TestCase):
             )
             runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
             runtime.adapter.mark_filled(plan.path_run_id, price=100, qty=2, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain1")
-            bot.risk.positions.append({"ticker": "005930", "qty": 2, "entry": 100, "path_type": "claude_price", "pathb_path_run_id": plan.path_run_id})
+            bot.risk.positions.append(
+                {
+                    "ticker": "005930",
+                    "qty": 2,
+                    "entry": 100,
+                    "display_current_price": 121,
+                    "current_price_source": "broker_balance",
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                }
+            )
             bot.price_cache_raw["005930"] = 110
             runtime._current_native_price_for_exit = (  # type: ignore[method-assign]
                 lambda market, ticker, pos: float(bot.price_cache_raw.get(ticker, 0))
@@ -4706,7 +4720,17 @@ class PathBRuntimeTests(unittest.TestCase):
             runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
             runtime.adapter.mark_filled(plan.path_run_id, price=100, qty=2, execution_id="buy1", runtime_mode="live", brain_snapshot_id="brain1")
             store.update_path_run(plan.path_run_id, plan={"carry_decision": "CARRY", "carry_reviewed_at": "2026-04-27T15:45:00+09:00"}, merge_plan=True)
-            bot.risk.positions.append({"ticker": "005930", "qty": 2, "entry": 100, "path_type": "claude_price", "pathb_path_run_id": plan.path_run_id})
+            bot.risk.positions.append(
+                {
+                    "ticker": "005930",
+                    "qty": 2,
+                    "entry": 100,
+                    "display_current_price": 121,
+                    "current_price_source": "broker_balance",
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                }
+            )
             bot.price_cache_raw["005930"] = 121
             runtime.reconcile_sell_pending = Mock(return_value={})
             runtime.reconcile_filled_positions = Mock(return_value={})

@@ -130,6 +130,9 @@ def flow_for_ticker(cache: dict[str, Any], ticker: Any) -> dict[str, Any]:
     if quality:
         out["flow_data_quality"] = quality
         out["investor_flow_quality"] = quality
+        if quality == "bad_zero_flow_cluster":
+            out["flow_values_trusted"] = False
+            out["flow_unavailable_reason"] = "all_zero_cluster"
     flags = (cache or {}).get("quality_flags") or (cache or {}).get("data_quality_flags") or []
     if isinstance(flags, (list, tuple, set)):
         out["flow_quality_flags"] = [str(flag) for flag in flags if str(flag).strip()]

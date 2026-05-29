@@ -518,6 +518,49 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertEqual(prompt_meta["evidence_prompt_overlap_ratio"], 0.8)
         self.assertEqual(len(prompt_meta["missing_evidence_tickers"]), 7)
 
+    def test_final_prompt_evidence_class_marks_pack_prefetch_and_compact_only(self) -> None:
+        events: list[tuple[str, str, dict]] = []
+        bot = _make_bot(lambda **kwargs: _candles())
+        bot.runtime_config.values.update(
+            {
+                "FINAL_PROMPT_EVIDENCE_ALIGNMENT_ENABLED": True,
+                "INTRADAY_EVIDENCE_MAX_TICKERS": 2,
+                "EVIDENCE_PACK_ENABLED": True,
+                "SELECTION_FULL_EVIDENCE_MAX": 1,
+                "SELECTION_EVIDENCE_CLASS_ENABLED": True,
+            }
+        )
+        bot._write_funnel_event = lambda event, market_key, payload: events.append((event, market_key, payload))
+        prompt_rows = [
+            {"ticker": "111111", "market": "KR", "price": 107.0, "volume": 700, "vol_ratio": 3.0},
+            {"ticker": "222222", "market": "KR", "price": 107.0, "volume": 700, "vol_ratio": 3.0},
+            {"ticker": "333333", "market": "KR", "price": 107.0, "volume": 700, "vol_ratio": 3.0},
+        ]
+
+        with patch(
+            "trading_bot.prepare_selection_prompt_pool",
+            return_value=([dict(row) for row in prompt_rows], {"prompt_pool": [dict(row) for row in prompt_rows], "prompt_pool_count": 3}),
+        ):
+            _candidates, annotated_rows, prompt_meta, evidence = TradingBot._prepare_selection_prompt_pool_with_evidence(
+                bot,
+                "KR",
+                [dict(row) for row in prompt_rows],
+                "NEUTRAL",
+            )
+
+        by_ticker = {row["ticker"]: row for row in annotated_rows}
+        self.assertEqual(set(evidence), {"111111"})
+        self.assertEqual(by_ticker["111111"]["evidence_class"], "FULL_PACK")
+        self.assertEqual(by_ticker["222222"]["evidence_class"], "PREFETCHED_COMPLETE")
+        self.assertEqual(by_ticker["333333"]["evidence_class"], "COMPACT_ONLY")
+        self.assertEqual(by_ticker["333333"]["selection_evidence_action_ceiling"], "WATCH")
+        self.assertIn("selection_evidence_shadow_rank", by_ticker["333333"])
+        self.assertEqual(prompt_meta["selection_evidence_reorder_shadow_tickers"][0], "111111")
+        self.assertEqual(prompt_meta["evidence_class_counts"]["COMPACT_ONLY"], 1)
+        alignment = next(payload for event, _market, payload in events if event == "selection_final_prompt_evidence_alignment")
+        self.assertEqual(alignment["evidence_class_counts"]["FULL_PACK"], 1)
+        self.assertEqual(alignment["evidence_class_counts"]["PREFETCHED_COMPLETE"], 1)
+
     def test_intraday_evidence_alignment_min_target_respects_global_cap(self) -> None:
         events: list[tuple[str, str, dict]] = []
         bot = _make_bot(lambda **kwargs: _candles(), market="US")

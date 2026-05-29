@@ -145,6 +145,67 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(_mode_family("BALANCED"), "BALANCED")
         self.assertEqual(_mode_family("NEUTRAL"), "BALANCED")
 
+    def test_selection_evidence_ceiling_shadow_records_without_demoting(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "SELECTION_EVIDENCE_CLASS_ENABLED": True,
+                "SELECTION_EVIDENCE_CEILING_MODE": "shadow",
+                "SELECTION_EVIDENCE_REQUIRE_FOR_TRADE_READY": False,
+            }
+        )
+        meta = {
+            "watchlist": ["005930"],
+            "trade_ready": ["005930"],
+            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "confidence": 0.9}],
+            "_final_prompt_pool": [
+                {
+                    "ticker": "005930",
+                    "evidence_class": "COMPACT_ONLY",
+                    "selection_evidence_action_ceiling": "WATCH",
+                    "selection_evidence_missing_reason": "not_in_intraday_prefetch",
+                }
+            ],
+        }
+
+        out = TradingBot._apply_selection_evidence_ceiling(bot, "KR", meta, stage="pre_route")
+
+        self.assertEqual(out["candidate_actions"][0]["action"], "BUY_READY")
+        self.assertEqual(out["trade_ready"], ["005930"])
+        self.assertFalse(out["_selection_evidence_ceiling_enforced"])
+        self.assertEqual(out["_selection_evidence_violation_tickers"], ["005930"])
+
+    def test_selection_evidence_ceiling_enforce_demotes_entry_permission(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "SELECTION_EVIDENCE_CLASS_ENABLED": True,
+                "SELECTION_EVIDENCE_CEILING_MODE": "enforce",
+            }
+        )
+        meta = {
+            "watchlist": ["005930"],
+            "trade_ready": ["005930"],
+            "candidate_actions": [{"ticker": "005930", "action": "PROBE_READY", "confidence": 0.8}],
+            "_candidate_action_routes": [{"ticker": "005930", "final_action": "PROBE_READY", "route": "path_a"}],
+            "_final_prompt_pool": [
+                {
+                    "ticker": "005930",
+                    "evidence_class": "COMPACT_ONLY",
+                    "selection_evidence_action_ceiling": "WATCH",
+                    "selection_evidence_missing_reason": "not_in_intraday_prefetch",
+                }
+            ],
+        }
+
+        out = TradingBot._apply_selection_evidence_ceiling(bot, "KR", meta, stage="post_route")
+
+        self.assertEqual(out["candidate_actions"][0]["action"], "WATCH")
+        self.assertEqual(out["trade_ready"], [])
+        self.assertTrue(out["_selection_evidence_ceiling_enforced"])
+        self.assertEqual(out["_candidate_action_routes"][0]["final_action"], "WATCH")
+        self.assertEqual(out["_selection_evidence_demoted_tickers"], ["005930"])
+
     def test_runtime_override_restore_and_apply_use_policy_bounds(self) -> None:
         bot = _make_bot()
         bot._claude_runtime_overrides = {"KR": {}, "US": {}}
@@ -1544,6 +1605,7 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertFalse(state["kr_confirmation_confirmed"])
         self.assertFalse(state["kr_confirmation_checks"]["data_quality_ok"])
         self.assertEqual(state["kr_confirmation_reason"], "kr_data_quality_not_confirmed")
+        self.assertEqual(state["kr_confirmation_data_quality"], "minute_partial")
 
     def test_kr_confirmation_blocks_minute_missing_quality(self) -> None:
         bot = _make_bot()
@@ -1563,12 +1625,14 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
                 "ret_3m_pct": 0.2,
                 "ret_5m_pct": 0.3,
                 "data_quality": "minute_missing",
+                "quality_data_gaps": ["flow_invalid_all_zero_cluster"],
             },
         )
 
         self.assertFalse(state["kr_confirmation_confirmed"])
         self.assertFalse(state["kr_confirmation_checks"]["data_quality_ok"])
         self.assertEqual(state["kr_confirmation_reason"], "kr_data_quality_not_confirmed")
+        self.assertEqual(state["kr_confirmation_demoting_flag"], "flow_invalid_all_zero_cluster")
 
     def test_kr_confirmation_shadow_marks_missing_momentum_confirming(self) -> None:
         bot = _make_bot()

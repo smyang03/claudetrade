@@ -221,6 +221,8 @@ def test_pending_sell_fill_closes_local_position_and_records_closed_event() -> N
 
     assert summary["checked"] == 1
     assert summary["closed"] == 1
+    assert summary["audit_trail"][0]["resolution"] == "BROKER_SELL_FILL_CONFIRMED"
+    assert summary["audit_trail"][0]["filled_qty"] == 2
     assert bot.risk.positions == []
     event = bot.decision_events[-1]
     assert event["action"] == "sell_filled"
@@ -543,6 +545,8 @@ def test_pending_sell_broker_truth_unavailable_keeps_pending() -> None:
     assert summary["checked"] == 1
     assert summary["kept_pending"] == 1
     assert summary["broker_truth_unavailable"] is True
+    assert summary["audit_trail"][0]["resolution"] == "BROKER_TRUTH_UNAVAILABLE_KEEP_PENDING"
+    assert summary["audit_trail"][0]["remaining_qty"] == 2
     pos = bot.risk.positions[0]
     assert pos["sell_confirmation_pending"] is True
     assert pos["pending_sell_resolution"] == "BROKER_TRUTH_UNAVAILABLE_KEEP_PENDING"

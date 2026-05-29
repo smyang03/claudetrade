@@ -379,6 +379,12 @@ def _apply_flow(features: dict[str, Any], flow: dict[str, Any]) -> None:
     if quality:
         features["flow_data_quality"] = quality
         features["investor_flow_quality"] = quality
+        if quality == "bad_zero_flow_cluster":
+            gaps = _gap_list(features.get("quality_data_gaps"))
+            gaps.append("flow_invalid_all_zero_cluster")
+            features["quality_data_gaps"] = sorted(set(gaps))
+            features["flow_values_trusted"] = False
+            features["flow_unavailable_reason"] = "all_zero_cluster"
     flags = flow.get("flow_quality_flags")
     if isinstance(flags, (list, tuple, set)):
         clean_flags = [str(flag).strip() for flag in flags if str(flag).strip()]

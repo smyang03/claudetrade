@@ -5,10 +5,34 @@ import pandas as pd
 
 def diagnostics(df: pd.DataFrame, i: int, params: dict) -> dict:
     """Return a deterministic OR pullback decision and first failure code."""
+    row_count = int(len(df.index)) if df is not None else 0
+    columns = set(str(column).lower() for column in getattr(df, "columns", []))
+    first_ts = ""
+    last_ts = ""
+    current_ts = ""
+    try:
+        if row_count:
+            for key in ("timestamp", "datetime", "date", "time"):
+                if key in columns:
+                    first_ts = str(df.iloc[0].get(key) or "")
+                    last_ts = str(df.iloc[-1].get(key) or "")
+                    if 0 <= i < row_count:
+                        current_ts = str(df.iloc[i].get(key) or "")
+                    break
+    except Exception:
+        pass
+    diag_base = {
+        "row_count": row_count,
+        "first_timestamp": first_ts,
+        "last_timestamp": last_ts,
+        "current_bar_timestamp": current_ts,
+        "volume_column_present": "volume" in columns,
+        "vol_avg20_column_present": "vol_avg20" in columns,
+    }
     if params.get("disabled"):
-        return {"fired": False, "reason": "orp_disabled"}
+        return {"fired": False, "reason": "orp_disabled", **diag_base}
     if i < 5:
-        return {"fired": False, "reason": "orp_data_insufficient"}
+        return {"fired": False, "reason": "orp_data_insufficient", **diag_base}
 
     elapsed_min = float(params.get("session_elapsed_min", 999) or 999)
     or_minutes = float(params.get("or_minutes", 10) or 10)
@@ -19,13 +43,23 @@ def diagnostics(df: pd.DataFrame, i: int, params: dict) -> dict:
 
     if not or_formed:
         reason = "orp_forming" if 0 < elapsed_min <= or_minutes else "orp_not_formed"
+        detail = (
+            "opening_window_in_progress"
+            if reason == "orp_forming"
+            else "opening_window_rows_missing"
+            if row_count <= int(or_minutes)
+            else "session_time_mismatch_or_or_state_missing"
+        )
         return {
             "fired": False,
             "reason": reason,
+            "reason_detail": detail,
             "elapsed_min": elapsed_min,
             "or_minutes": or_minutes,
             "entry_window_min": entry_window_min,
             "or_formed": or_formed,
+            "opening_window_rows": min(row_count, max(0, int(or_minutes))),
+            **diag_base,
         }
     if 0 < elapsed_min <= or_minutes:
         return {
@@ -35,15 +69,22 @@ def diagnostics(df: pd.DataFrame, i: int, params: dict) -> dict:
             "or_minutes": or_minutes,
             "entry_window_min": entry_window_min,
             "or_formed": or_formed,
+            "reason_detail": "opening_window_in_progress",
+            "opening_window_rows": min(row_count, max(0, int(or_minutes))),
+            **diag_base,
         }
     if elapsed_min > (or_minutes + entry_window_min):
         return {
             "fired": False,
             "reason": "orp_entry_window_expired",
+            "reason_detail": "entry_window_elapsed",
             "elapsed_min": elapsed_min,
             "or_minutes": or_minutes,
             "entry_window_min": entry_window_min,
+            "entry_window_expires_at_min": or_minutes + entry_window_min,
             "or_formed": or_formed,
+            "opening_window_rows": min(row_count, max(0, int(or_minutes))),
+            **diag_base,
         }
     if or_high <= 0 or or_low <= 0 or or_high <= or_low:
         return {
@@ -55,6 +96,7 @@ def diagnostics(df: pd.DataFrame, i: int, params: dict) -> dict:
             "or_formed": or_formed,
             "or_high": or_high,
             "or_low": or_low,
+            **diag_base,
         }
 
     or_range_pct = (or_high - or_low) / or_low if or_low > 0 else 0.0
@@ -73,6 +115,7 @@ def diagnostics(df: pd.DataFrame, i: int, params: dict) -> dict:
             "or_range_pct": or_range_pct,
             "or_min_range_pct": or_min_range_pct,
             "or_max_range_pct": or_max_range_pct,
+            **diag_base,
         }
 
     row = df.iloc[i]
@@ -106,6 +149,7 @@ def diagnostics(df: pd.DataFrame, i: int, params: dict) -> dict:
         "upper_bound": upper_bound,
         "vol_ratio": vol_ratio,
         "vol_mult": vol_mult,
+        **diag_base,
     }
     if not in_pullback_zone:
         reason = "orp_pullback_too_shallow" if close_px > upper_bound else "orp_pullback_too_deep"

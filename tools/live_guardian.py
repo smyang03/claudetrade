@@ -171,6 +171,15 @@ def _order_unknown_remediation_commands(data: dict[str, Any]) -> list[str]:
     return commands
 
 
+def _pathb_stale_active_remediation_commands(data: dict[str, Any]) -> list[str]:
+    rows = data.get("rows") if isinstance(data.get("rows"), list) else []
+    markets = sorted({str(row.get("market") or "").upper() for row in rows if isinstance(row, dict) and str(row.get("market") or "").upper() in {"KR", "US"}})
+    commands = [f"{sys.executable} tools/pathb_legacy_remediation.py --mode live --write-report"]
+    for market in markets:
+        commands.append(f"{sys.executable} tools/pathb_legacy_remediation.py --mode live --market {market} --write-report")
+    return commands
+
+
 def classify_preflight_check(
     check: dict[str, Any],
     *,
@@ -235,7 +244,14 @@ def classify_preflight_check(
             else []
         )
         classification = "hard_fail" if previous_with_exposure else "soft_fail"
-        return GuardianFinding(name, status, classification, detail, data)
+        enriched = dict(data)
+        enriched["remediation_commands"] = _pathb_stale_active_remediation_commands(enriched)
+        enriched.setdefault(
+            "operator_action",
+            "read-only: verify broker positions/open orders/fills before audited PathB remediation; never close rows from local DB alone",
+        )
+        enriched["auto_apply_allowed"] = False
+        return GuardianFinding(name, status, classification, detail, enriched)
 
     if bool(data.get("accepted_exception")):
         return GuardianFinding(name, status, "accepted_exception", detail, data)
@@ -698,6 +714,11 @@ def _write_guardian_report(report: dict[str, Any]) -> tuple[Path, Path]:
             f"- {finding.get('classification')} `{finding.get('name')}` "
             f"({finding.get('status')}): {finding.get('detail')}"
         )
+        operator_action = str((finding.get("data") or {}).get("operator_action") or "").strip()
+        if operator_action and operator_action != "none":
+            lines.append(f"  - operator_action: {operator_action}")
+        if (finding.get("data") or {}).get("auto_apply_allowed") is False:
+            lines.append("  - auto_apply_allowed: false")
         for command in (finding.get("data") or {}).get("remediation_commands") or []:
             lines.append(f"  - remediation: `{command}`")
     lines.extend(["", "## Actions", ""])

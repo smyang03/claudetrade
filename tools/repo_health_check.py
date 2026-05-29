@@ -289,6 +289,25 @@ def check_git_diff(root: Path, include_git: bool) -> CheckResult:
     return CheckResult("git.diff_check", "FAIL", _short_output(proc))
 
 
+def check_brain_git_dirty(root: Path, include_git: bool) -> CheckResult:
+    if not include_git:
+        return CheckResult("brain.git_dirty", "WARN", "skipped by option")
+    try:
+        proc = _run_command(["git", "status", "--short", "--", "state/brain.json"], cwd=root, timeout=30)
+    except FileNotFoundError:
+        return CheckResult("brain.git_dirty", "WARN", "git command not found")
+    except Exception as exc:
+        return CheckResult("brain.git_dirty", "WARN", str(exc))
+    text = _short_output(proc)
+    if not text:
+        return CheckResult("brain.git_dirty", "PASS", "state/brain.json has no staged/unstaged git changes")
+    return CheckResult(
+        "brain.git_dirty",
+        "WARN",
+        "state/brain.json is dirty; treat runtime statistics as non-truth and exclude from commits unless explicitly approved",
+    )
+
+
 def check_ml_db_health(root: Path) -> CheckResult:
     target = root / "data" / "ml" / "decisions.db"
     try:
@@ -420,6 +439,7 @@ def run_checks(root: Path, include_git: bool, trigger: str = "manual") -> list[C
     results.extend(check_price_csv_health(root, "KR", trigger))
     results.extend(check_price_csv_health(root, "US", trigger))
     results.append(check_git_diff(root, include_git))
+    results.append(check_brain_git_dirty(root, include_git))
     return results
 
 

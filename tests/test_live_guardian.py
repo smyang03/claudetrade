@@ -237,6 +237,10 @@ class LiveGuardianTests(unittest.TestCase):
         )
 
         self.assertEqual(finding.classification, "hard_fail")
+        self.assertIn("remediation_commands", finding.data)
+        self.assertIn("pathb_legacy_remediation.py", finding.data["remediation_commands"][0])
+        self.assertFalse(finding.data["auto_apply_allowed"])
+        self.assertIn("broker", finding.data["operator_action"])
 
     def test_telegram_fail_is_soft(self) -> None:
         finding = classify_preflight_check(

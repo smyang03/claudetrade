@@ -195,6 +195,17 @@ def write_candidate_quality_log(
                 "actual_prompt_call_id": actual_prompt_call_id,
                 "selection_trace_id": selection_trace_id,
                 "visibility_contract_version": visibility_contract_version,
+                "evidence_class": str(feature_candidate.get("evidence_class") or candidate.get("evidence_class") or ""),
+                "selection_evidence_action_ceiling": str(
+                    feature_candidate.get("selection_evidence_action_ceiling")
+                    or candidate.get("selection_evidence_action_ceiling")
+                    or ""
+                ),
+                "selection_evidence_missing_reason": str(
+                    feature_candidate.get("selection_evidence_missing_reason")
+                    or candidate.get("selection_evidence_missing_reason")
+                    or ""
+                ),
                 "raw_rank": _safe_int(candidate.get("raw_rank"), None),
                 "trainer_score_rank": _safe_int(candidate.get("trainer_score_rank"), None),
                 "prompt_excluded_reason": excluded_reason_map.get(ticker, ""),

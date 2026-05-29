@@ -3,7 +3,10 @@ from pathlib import Path
 import tempfile
 import unittest
 
+import pandas as pd
+
 from bot.entry_timing import EntryTimingTracker, build_entry_timing_summary
+from strategy.opening_range_pullback import diagnostics as orp_diagnostics
 
 
 class _Clock:
@@ -94,6 +97,39 @@ class EntryTimingTests(unittest.TestCase):
             self.assertTrue(summary["missing"])
             self.assertEqual(summary["row_count"], 0)
             self.assertEqual(summary["recent"], [])
+
+    def test_orp_diagnostics_explain_not_formed_and_expired(self):
+        df = pd.DataFrame(
+            [
+                {"timestamp": f"2026-05-28 22:{30 + idx:02d}", "close": 100 + idx, "volume": 1000, "vol_avg20": 900}
+                for idx in range(20)
+            ]
+        )
+
+        not_formed = orp_diagnostics(
+            df,
+            10,
+            {"or_formed": False, "session_elapsed_min": 30, "or_minutes": 15, "entry_window_min": 60},
+        )
+        expired = orp_diagnostics(
+            df,
+            19,
+            {
+                "or_formed": True,
+                "session_elapsed_min": 90,
+                "or_minutes": 15,
+                "entry_window_min": 60,
+                "or_high": 105,
+                "or_low": 100,
+            },
+        )
+
+        self.assertEqual(not_formed["reason"], "orp_not_formed")
+        self.assertIn(not_formed["reason_detail"], {"opening_window_rows_missing", "session_time_mismatch_or_or_state_missing"})
+        self.assertEqual(not_formed["row_count"], 20)
+        self.assertEqual(expired["reason"], "orp_entry_window_expired")
+        self.assertEqual(expired["entry_window_expires_at_min"], 75)
+        self.assertTrue(expired["volume_column_present"])
 
 
 if __name__ == "__main__":

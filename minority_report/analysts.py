@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """minority_report/analysts.py - Bull/Bear/Neutral 3명 Claude 판단
 
 개선사항:
@@ -132,6 +134,68 @@ def _json_array_object_cap(items: list[dict], max_chars: int) -> tuple[str, list
         current_len = next_len
     omitted = max(0, len(source_items) - len(included))
     return "[" + ",".join(parts) + "]", included, omitted
+
+
+def _compact_evidence_num(value) -> float | None:
+    try:
+        if value in (None, ""):
+            return None
+        parsed = float(value)
+    except Exception:
+        return None
+    if parsed != parsed:
+        return None
+    return round(parsed, 4)
+
+
+def _compact_selection_evidence_item(item: dict) -> dict:
+    source = dict(item or {})
+    live = source.get("live_evidence") if isinstance(source.get("live_evidence"), dict) else {}
+    post_open = live.get("post_open_confirmation") if isinstance(live.get("post_open_confirmation"), dict) else {}
+    risk = live.get("risk_control_view") if isinstance(live.get("risk_control_view"), dict) else {}
+    timing = live.get("execution_timing") if isinstance(live.get("execution_timing"), dict) else {}
+    out: dict = {
+        "t": str(source.get("ticker") or live.get("ticker") or ""),
+        "ev": str(source.get("evidence_class") or source.get("selection_evidence_class") or ""),
+        "ceil": str(
+            source.get("selection_evidence_action_ceiling")
+            or live.get("action_ceiling")
+            or source.get("action_ceiling")
+            or risk.get("action_ceiling")
+            or ""
+        ),
+        "ds": str(live.get("data_state") or source.get("data_state") or ""),
+    }
+    missing = live.get("missing_fields") or source.get("missing_fields") or []
+    if missing:
+        out["miss"] = [str(value) for value in list(missing)[:5] if str(value)]
+    for src, dst in (
+        ("ret_3m_pct", "r3"),
+        ("ret_5m_pct", "r5"),
+        ("ret_10m_pct", "r10"),
+        ("ret_30m_pct", "r30"),
+        ("vwap_distance_pct", "vwap"),
+        ("volume_ratio_open", "vol"),
+        ("pullback_from_high_pct", "fh"),
+        ("spread_bps", "spr"),
+    ):
+        value = _compact_evidence_num(post_open.get(src))
+        if value is not None:
+            out[dst] = value
+    if post_open.get("opening_range_break") not in (None, ""):
+        out["or"] = bool(post_open.get("opening_range_break"))
+    if post_open.get("momentum_state"):
+        out["state"] = str(post_open.get("momentum_state"))
+    hard = risk.get("hard_blocks") if isinstance(risk.get("hard_blocks"), list) else []
+    soft = risk.get("soft_gates") if isinstance(risk.get("soft_gates"), list) else []
+    if hard:
+        out["hard"] = [str(value) for value in hard[:5] if str(value)]
+    if soft:
+        out["soft"] = [str(value) for value in soft[:5] if str(value)]
+    age = _compact_evidence_num(timing.get("candidate_age_min"))
+    if age is not None:
+        out["age"] = age
+    return {key: value for key, value in out.items() if value not in ("", [], {}, None)}
 
 
 def _build_tuning_feedback_contract(
@@ -724,24 +788,30 @@ def _candidate_quality_hint(candidate: dict) -> str:
             parts.append(f"{label}={float(value):+.1f}" if "rs" in label else f"{label}={float(value):.1f}x")
         except Exception:
             pass
-    flow_bits = []
-    for key, label in (
-        ("foreign_net_qty_1d", "F1"),
-        ("institution_net_qty_1d", "I1"),
-        ("foreign_net_qty_5d", "F5"),
-        ("institution_net_qty_5d", "I5"),
-    ):
-        value = candidate.get(key)
-        try:
-            parsed = float(value)
-        except Exception:
-            continue
-        if parsed > 0:
-            flow_bits.append(label + "+")
-        elif parsed < 0:
-            flow_bits.append(label + "-")
-    if flow_bits:
-        parts.append("flow=" + "".join(flow_bits))
+    flow_quality = str(candidate.get("flow_data_quality") or candidate.get("investor_flow_quality") or "").strip()
+    flow_flags = candidate.get("flow_quality_flags")
+    flow_flag_set = {str(flag).strip() for flag in flow_flags if str(flag).strip()} if isinstance(flow_flags, (list, tuple, set)) else set()
+    if flow_quality == "bad_zero_flow_cluster" or "kr_investor_flow_all_zero_cluster" in flow_flag_set:
+        parts.append("flow=unavailable:all_zero_cluster")
+    else:
+        flow_bits = []
+        for key, label in (
+            ("foreign_net_qty_1d", "F1"),
+            ("institution_net_qty_1d", "I1"),
+            ("foreign_net_qty_5d", "F5"),
+            ("institution_net_qty_5d", "I5"),
+        ):
+            value = candidate.get(key)
+            try:
+                parsed = float(value)
+            except Exception:
+                continue
+            if parsed > 0:
+                flow_bits.append(label + "+")
+            elif parsed < 0:
+                flow_bits.append(label + "-")
+        if flow_bits:
+            parts.append("flow=" + "".join(flow_bits))
     gaps = candidate.get("quality_data_gaps")
     if isinstance(gaps, list) and gaps:
         parts.append(f"qgap={len(gaps)}")
@@ -832,6 +902,29 @@ def _candidate_discovery_hint(candidate: dict) -> str:
     if reason:
         parts.append(f"reason={reason}")
     return " ".join(parts)
+
+
+def _candidate_evidence_hint(candidate: dict) -> str:
+    evidence_class = str(candidate.get("evidence_class") or "").strip().upper()
+    ceiling = str(
+        candidate.get("selection_evidence_action_ceiling")
+        or candidate.get("evidence_action_ceiling")
+        or ""
+    ).strip().upper()
+    if not evidence_class and not ceiling:
+        return ""
+    parts = []
+    if evidence_class:
+        parts.append(f"ev={evidence_class}")
+    if ceiling:
+        parts.append(f"ceil={ceiling}")
+    state = str(candidate.get("selection_evidence_data_state") or "").strip().lower()
+    if state:
+        parts.append(f"eds={state}")
+    reason = str(candidate.get("selection_evidence_missing_reason") or "").strip()
+    if reason and evidence_class in {"COMPACT_ONLY", "MISSING_OR_STALE", "PREFETCHED_PARTIAL"}:
+        parts.append(f"emiss={reason[:32]}")
+    return ",".join(parts)
 
 
 def _selection_candidate_cap(market: str, watch_max: int, trade_max: int) -> int:
@@ -2123,6 +2216,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             _candidate_discovery_hint(candidate),
             _candidate_trainer_hint(candidate),
             _candidate_quality_hint(candidate),
+            _candidate_evidence_hint(candidate),
             _candidate_earnings_hint(candidate),
             _candidate_preopen_pin_hint(candidate),
             _candidate_post_open_hint(candidate),
@@ -2162,6 +2256,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             f"count={len(dropped_evidence_keys)} sample={dropped_evidence_keys[:10]}"
         )
     evidence_items: list[dict] = []
+    compact_evidence_shadow_items: list[dict] = []
     if evidence_map:
         for candidate in prompt_candidates:
             ticker = _prompt_ticker_key(market, candidate.get("ticker"))
@@ -2172,6 +2267,17 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                 continue
             evidence_item = dict(evidence)
             evidence_item["ticker"] = _prompt_ticker_key(market, evidence_item.get("ticker") or ticker)
+            for meta_key in (
+                "evidence_class",
+                "selection_evidence_action_ceiling",
+                "selection_evidence_missing_reason",
+                "selection_evidence_data_state",
+            ):
+                if candidate.get(meta_key) not in (None, ""):
+                    evidence_item[meta_key] = candidate.get(meta_key)
+            compact_evidence_shadow_items.append(_compact_selection_evidence_item(evidence_item))
+            if _env_bool_flag("SELECTION_COMPACT_EVIDENCE_PACK_ENABLED", False):
+                evidence_item = _compact_selection_evidence_item(evidence_item)
             evidence_items.append(evidence_item)
             if len(evidence_items) >= int(os.getenv("SELECTION_FULL_EVIDENCE_MAX", "8")):
                 break
@@ -2218,6 +2324,13 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         if preopen_watch
         else "- Opening/intraday phase: trade_ready may be non-empty only when live execution context supports a new buy."
     )
+    evidence_rule_block = ""
+    if any(str(row.get("evidence_class") or "").strip() for row in prompt_candidates if isinstance(row, dict)):
+        evidence_rule_block = (
+            "\n- Candidates with ev=COMPACT_ONLY or ev=MISSING_OR_STALE have max action WATCH."
+            "\n- Candidates with ev=PREFETCHED_PARTIAL should remain WATCH unless supplied ceiling explicitly allows more."
+            "\n- Do not put a ticker in trade_ready/tr unless its evidence ceiling allows BUY_READY or PROBE_READY."
+        )
 
     digest_news_section = _digest_news_excerpt(digest_prompt)
     intraday_section = f"\n장중 컨텍스트:\n{intraday_context[:400]}\n" if intraday_context else ""
@@ -2325,6 +2438,7 @@ execution_phase: {execution_phase or 'unspecified'}
 {candidate_action_section}
 규칙:
 {phase_rule_block}
+{evidence_rule_block}
 - 후보 종목 중에서만 고르세요.
 - watchlist는 선별 목록입니다. 최대 {watch_max}개, 보통 8~18개 수준으로 제한하세요.
 - trade_ready는 실제 매수 권한 후보입니다. 최대 {trade_max}개이며 0개도 허용됩니다.
@@ -2412,6 +2526,7 @@ Market context:
 
 Rules:
 {phase_rule_block}
+{evidence_rule_block}
 - Choose only from supplied candidates.
 - Use live execution context and exec= hints as constraints.
 - Strong names with poor execution hints should remain WATCH.
@@ -2475,6 +2590,10 @@ Rules:
             "evidence_pack_source",
             "evidence_pack_tickers",
             "evidence_pack_count",
+            "evidence_class_counts",
+            "selection_evidence_ceiling_counts",
+            "selection_evidence_watch_ceiling_tickers",
+            "selection_evidence_reorder_shadow_tickers",
             "prompt_exec_missing_count",
             "prompt_exec_missing_pct",
             "prompt_exec_formed_count",
@@ -2591,9 +2710,20 @@ Rules:
         )
         selection_meta = _attach_prompt_pool_meta(selection_meta)
         if evidence_items:
-            selection_meta["evidence_version"] = "selection_evidence.v1"
-            selection_meta["evidence_tickers"] = [str(item.get("ticker") or "") for item in evidence_items]
+            compact_evidence_enabled = _env_bool_flag("SELECTION_COMPACT_EVIDENCE_PACK_ENABLED", False)
+            selection_meta["evidence_version"] = (
+                "selection_evidence.compact_v1" if compact_evidence_enabled else "selection_evidence.v1"
+            )
+            selection_meta["evidence_tickers"] = [str(item.get("ticker") or item.get("t") or "") for item in evidence_items]
             selection_meta["evidence_omitted_count"] = int(evidence_omitted_count)
+            selection_meta["compact_evidence_shadow_enabled"] = True
+            selection_meta["compact_evidence_shadow_count"] = len(compact_evidence_shadow_items)
+            selection_meta["compact_evidence_shadow_tickers"] = [str(item.get("t") or "") for item in compact_evidence_shadow_items]
+            selection_meta["compact_evidence_shadow_sample"] = compact_evidence_shadow_items[:8]
+            selection_meta["compact_evidence_pack_enabled"] = bool(compact_evidence_enabled)
+            if compact_evidence_enabled:
+                selection_meta["compact_evidence_pack_tickers"] = [str(item.get("t") or "") for item in evidence_items]
+                selection_meta["compact_evidence_pack_included_count"] = len(evidence_items)
         if tuning_feedback_meta:
             selection_meta["tuning_feedback"] = dict(tuning_feedback_meta)
             selection_meta["tuning_feedback_applied"] = True
@@ -2612,6 +2742,15 @@ Rules:
                 "evidence_pack_source",
                 "evidence_pack_tickers",
                 "evidence_pack_count",
+                "evidence_class_counts",
+                "selection_evidence_ceiling_counts",
+                "selection_evidence_watch_ceiling_tickers",
+                "compact_evidence_pack_enabled",
+                "compact_evidence_pack_tickers",
+                "compact_evidence_pack_included_count",
+                "compact_evidence_shadow_enabled",
+                "compact_evidence_shadow_count",
+                "compact_evidence_shadow_tickers",
                 "prompt_exec_missing_count",
                 "prompt_exec_missing_pct",
                 "prompt_exec_formed_count",
@@ -2633,8 +2772,8 @@ Rules:
             prompt_version="selection_rank_v3+compact_v1" if compact_selection_enabled else "selection_rank_v3+execution_plan_v1",
             extra={
                 "active_lessons": active_lesson_meta,
-                "evidence_version": "selection_evidence.v1" if evidence_items else "",
-                "evidence_tickers": [str(item.get("ticker") or "") for item in evidence_items],
+                "evidence_version": str(selection_meta.get("evidence_version") or ("selection_evidence.v1" if evidence_items else "")),
+                "evidence_tickers": list(selection_meta.get("evidence_tickers") or []),
                 "evidence_omitted_count": int(evidence_omitted_count),
                 "tuning_feedback_rule_version": tuning_feedback_meta.get("rule_version", ""),
                 "tuning_feedback_applied": bool(tuning_feedback_meta),

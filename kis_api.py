@@ -409,6 +409,14 @@ def _response_is_token_expired(resp) -> bool:
     return body.get("msg_cd") == "EGW00123"
 
 
+def _ensure_kis_response_utf8(resp):
+    try:
+        resp.encoding = "utf-8"
+    except Exception:
+        pass
+    return resp
+
+
 def _kis_request(method: str, url: str, **kwargs):
     _rate_limit_wait()
     timeout = kwargs.pop("timeout", KIS_HTTP_TIMEOUT)
@@ -427,7 +435,7 @@ def _kis_request(method: str, url: str, **kwargs):
         old_token = ""
         request_market = "KR"
     requester = requests.get if method == "GET" else requests.post
-    resp = requester(url, timeout=timeout, **kwargs)
+    resp = _ensure_kis_response_utf8(requester(url, timeout=timeout, **kwargs))
     if old_token and "/oauth2/tokenP" not in url and _response_is_token_expired(resp):
         fresh_token = get_access_token(force_refresh=True, market=request_market)
         with _TOKEN_ALIAS_LOCK:
@@ -437,7 +445,7 @@ def _kis_request(method: str, url: str, **kwargs):
         _set_bearer(retry_headers, fresh_token)
         kwargs["headers"] = retry_headers
         _rate_limit_wait()
-        resp = requester(url, timeout=timeout, **kwargs)
+        resp = _ensure_kis_response_utf8(requester(url, timeout=timeout, **kwargs))
     return resp
 
 

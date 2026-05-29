@@ -224,7 +224,7 @@ def score_candidate_for_trainer(
     trainer_config = _trainer_threshold_config()
 
     if market_key == "KR":
-        if _env_bool("CANDIDATE_TRAINER_QUALITY_SCORE_ENABLED", False):
+        if _env_bool("CANDIDATE_TRAINER_QUALITY_SCORE_ENABLED", True):
             quality_score = _first_present(row, "candidate_quality_score", default=None)
             if quality_score not in (None, ""):
                 gaps_raw = row.get("quality_data_gaps") or []

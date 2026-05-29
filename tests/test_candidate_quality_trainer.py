@@ -168,7 +168,7 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         self.assertLess(stale["trainer_prompt_score"], base["trainer_prompt_score"])
         self.assertIn("repeated_failed_ready_count=3", analysts._candidate_trainer_hint(stale))
 
-    def test_kr_candidate_quality_score_bonus_is_env_gated_and_gap_adjusted(self) -> None:
+    def test_kr_candidate_quality_score_bonus_is_default_on_env_gated_and_gap_adjusted(self) -> None:
         candidate = {
             "ticker": "123456",
             "market": "KR",
@@ -178,7 +178,9 @@ class CandidateQualityTrainerTests(unittest.TestCase):
             "change_pct": 4.0,
             "candidate_quality_score": 80,
         }
-        disabled = score_candidate_for_trainer(candidate, market="KR")
+        default_enabled = score_candidate_for_trainer(candidate, market="KR")
+        with patch.dict("os.environ", {"CANDIDATE_TRAINER_QUALITY_SCORE_ENABLED": "false"}, clear=False):
+            disabled = score_candidate_for_trainer(candidate, market="KR")
         with patch.dict(
             "os.environ",
             {
@@ -193,6 +195,7 @@ class CandidateQualityTrainerTests(unittest.TestCase):
                 market="KR",
             )
 
+        self.assertEqual(default_enabled["trainer_score_components"]["prompt"]["kr_quality_score_bonus"], 9.0)
         self.assertNotIn("kr_quality_score_bonus", disabled["trainer_score_components"]["prompt"])
         self.assertEqual(enabled["trainer_score_components"]["prompt"]["kr_quality_score_bonus"], 9.0)
         self.assertEqual(partial["trainer_score_components"]["prompt"]["kr_quality_score_bonus"], 4.5)
@@ -423,6 +426,119 @@ class CandidateQualityTrainerTests(unittest.TestCase):
             self.assertIn(f"evidence_{idx}", prompt)
         self.assertNotIn("evidence_5", prompt)
         self.assertNotIn("evidence_6", prompt)
+
+    def test_select_tickers_prompt_marks_selection_evidence_ceiling(self) -> None:
+        from minority_report import analysts
+
+        captured: dict[str, str] = {}
+
+        def fake_create(**kwargs):
+            captured["prompt"] = kwargs["messages"][0]["content"]
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"watchlist":["AAPL"],"trade_ready":[],"reasons":{},"veto":{}}')],
+                usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+                stop_reason="end_turn",
+            )
+
+        prompt_rows = [
+            {
+                "ticker": "AAPL",
+                "market": "US",
+                "price": 100,
+                "evidence_class": "COMPACT_ONLY",
+                "selection_evidence_action_ceiling": "WATCH",
+                "selection_evidence_missing_reason": "not_in_intraday_prefetch",
+            }
+        ]
+        env = {
+            "CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS_SHADOW": "false",
+        }
+
+        with patch.dict("os.environ", env, clear=False), \
+             patch.object(analysts.client.messages, "create", side_effect=fake_create), \
+             patch.object(analysts, "save_raw_call", lambda **_kwargs: None), \
+             patch.object(analysts, "build_active_lesson_context", return_value={"section": "", "metadata": {}}):
+            analysts.select_tickers(
+                "US",
+                "digest",
+                "NEUTRAL",
+                prompt_rows,
+                prompt_pool_override=prompt_rows,
+                prompt_pool_meta_override={"prompt_pool": prompt_rows, "prompt_pool_count": 1},
+            )
+
+        self.assertIn("ev=COMPACT_ONLY,ceil=WATCH", captured["prompt"])
+        self.assertIn("ev=COMPACT_ONLY or ev=MISSING_OR_STALE", captured["prompt"])
+
+    def test_select_tickers_compact_evidence_pack_keeps_multiple_items_under_char_cap(self) -> None:
+        from minority_report import analysts
+
+        captured: dict[str, str] = {}
+
+        def fake_create(**kwargs):
+            captured["prompt"] = kwargs["messages"][0]["content"]
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"watchlist":["T0"],"trade_ready":[],"reasons":{},"veto":{}}')],
+                usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+                stop_reason="end_turn",
+            )
+
+        def fake_save_raw_call(**kwargs):
+            captured["raw_extra"] = kwargs.get("extra") or {}
+
+        candidates = [{"ticker": f"T{idx}", "market": "US", "price": 100 + idx} for idx in range(5)]
+        evidence = {}
+        for idx in range(5):
+            evidence[f"T{idx}"] = {
+                "ticker": f"T{idx}",
+                "evidence_class": "FULL_PACK",
+                "selection_evidence_action_ceiling": "BUY_READY",
+                "live_evidence": {
+                    "data_state": "confirmed",
+                    "action_ceiling": "BUY_READY",
+                    "missing_fields": [],
+                    "post_open_confirmation": {
+                        "ret_3m_pct": 0.1,
+                        "ret_5m_pct": 0.2,
+                        "ret_10m_pct": 0.3,
+                        "ret_30m_pct": 0.4,
+                        "opening_range_break": True,
+                        "vwap_distance_pct": 0.5,
+                        "volume_ratio_open": 1.2,
+                        "momentum_state": "sustained",
+                    },
+                    "risk_control_view": {"hard_blocks": [], "soft_gates": [], "action_ceiling": "BUY_READY"},
+                },
+            }
+        env = {
+            "SELECTION_FULL_EVIDENCE_MAX": "5",
+            "SELECTION_EVIDENCE_MAX_CHARS": "3500",
+            "SELECTION_COMPACT_EVIDENCE_PACK_ENABLED": "true",
+            "CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS_SHADOW": "false",
+        }
+
+        with patch.dict("os.environ", env, clear=False), \
+             patch.object(analysts.client.messages, "create", side_effect=fake_create), \
+             patch.object(analysts, "save_raw_call", side_effect=fake_save_raw_call), \
+             patch.object(analysts, "build_active_lesson_context", return_value={"section": "", "metadata": {}}):
+            analysts.select_tickers("US", "digest", "NEUTRAL", candidates, evidence_by_ticker=evidence)
+
+        prompt = captured["prompt"]
+        self.assertIn('"t":"T0"', prompt)
+        self.assertIn('"t":"T4"', prompt)
+        self.assertNotIn("post_open_confirmation", prompt)
+        meta = analysts.get_last_selection_meta()
+        self.assertTrue(meta["compact_evidence_pack_enabled"])
+        self.assertEqual(meta["compact_evidence_pack_included_count"], 5)
+        self.assertTrue(meta["compact_evidence_shadow_enabled"])
+        self.assertEqual(meta["compact_evidence_shadow_count"], 5)
+        self.assertEqual(meta["compact_evidence_shadow_tickers"], ["T0", "T1", "T2", "T3", "T4"])
+        self.assertEqual(captured["raw_extra"]["evidence_version"], "selection_evidence.compact_v1")
+        self.assertEqual(captured["raw_extra"]["evidence_tickers"], ["T0", "T1", "T2", "T3", "T4"])
 
     def test_select_tickers_uses_live_trainer_prompt_order_when_enabled(self) -> None:
         from minority_report import analysts
