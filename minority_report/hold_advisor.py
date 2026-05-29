@@ -216,6 +216,650 @@ def _coerce_vote(result: dict, decision_stage: str = "TP_REVIEW", default_policy
     }
 
 
+TRIAGE_CATEGORIES = {"STOP_LOSS", "HOLD", "SELL"}
+TRIAGE_EXIT_DRIVERS = {
+    "invalid_if",
+    "loss_cap",
+    "hard_stop",
+    "failed_recovery",
+    "profit_protection",
+    "time_carry",
+    "bounded_hold",
+    "other",
+}
+TRIAGE_CLEAR_STOP_DRIVERS = {"invalid_if", "loss_cap", "hard_stop", "failed_recovery"}
+TRIAGE_PROMPT_VERSION = "hold_advisor_triage_v1"
+CHALLENGE_PROMPT_VERSION = "hold_advisor_challenge_v1"
+_TRIAGE_SHADOW_CALLS = 0
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)) or default)
+    except Exception:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(float(os.getenv(name, str(default)) or default))
+    except Exception:
+        return default
+
+
+def _triage_stage_allowlist() -> set[str]:
+    raw = os.getenv("HOLD_ADVISOR_TRIAGE_STAGE_ALLOWLIST", "AUTO_SELL_REVIEW")
+    stages = set()
+    for part in str(raw or "").replace(";", ",").split(","):
+        stage = str(part or "").strip().upper()
+        if stage in HOLD_DECISION_STAGES:
+            stages.add(stage)
+    return stages or {"AUTO_SELL_REVIEW"}
+
+
+def _triage_stage_allowed(decision_stage: str) -> bool:
+    return _normalize_stage(decision_stage) in _triage_stage_allowlist()
+
+
+def _triage_production_enabled(decision_stage: str) -> bool:
+    return _env_bool("HOLD_ADVISOR_TRIAGE_ENABLED", False) and _triage_stage_allowed(decision_stage)
+
+
+def _triage_shadow_allowed(decision_stage: str) -> bool:
+    global _TRIAGE_SHADOW_CALLS
+    if not _env_bool("HOLD_ADVISOR_TRIAGE_SHADOW", False):
+        return False
+    if not _triage_stage_allowed(decision_stage):
+        return False
+    max_calls = _env_int("HOLD_ADVISOR_TRIAGE_LIVE_SHADOW_MAX_CALLS", 0)
+    if max_calls <= 0 or _TRIAGE_SHADOW_CALLS >= max_calls:
+        return False
+    _TRIAGE_SHADOW_CALLS += 1
+    return True
+
+
+def _as_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _as_int(value, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except Exception:
+        return default
+
+
+def _normalize_triage_category(value) -> str:
+    category = str(value or "").strip().upper()
+    if category in TRIAGE_CATEGORIES:
+        return category
+    aliases = {
+        "STOP": "STOP_LOSS",
+        "LOSS_CUT": "STOP_LOSS",
+        "CUT_LOSS": "STOP_LOSS",
+        "TAKE_PROFIT": "SELL",
+        "PROFIT_TAKE": "SELL",
+    }
+    return aliases.get(category, "HOLD")
+
+
+def _normalize_exit_driver(value) -> str:
+    driver = str(value or "").strip().lower()
+    return driver if driver in TRIAGE_EXIT_DRIVERS else "other"
+
+
+_TRIAGE_PROMPT_EXCLUDED_KEYS = {
+    "messages",
+    "parsed",
+    "prior_votes",
+    "prompt",
+    "raw_prompt",
+    "raw_response",
+    "votes",
+}
+
+
+def _scrub_triage_prompt_value(value, depth: int = 0):
+    if depth > 4:
+        return str(value)[:500] if value is not None else None
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if key_text.strip().lower() in _TRIAGE_PROMPT_EXCLUDED_KEYS:
+                continue
+            cleaned[key_text] = _scrub_triage_prompt_value(item, depth + 1)
+        return cleaned
+    if isinstance(value, (list, tuple)):
+        return [_scrub_triage_prompt_value(item, depth + 1) for item in list(value)[:20]]
+    if isinstance(value, str):
+        return value[:1000]
+    return value
+
+
+def _derive_hold_mode(pos: dict, exit_driver: str) -> str:
+    mode = _normalize_hold_mode(pos.get("hold_mode"))
+    if mode:
+        return mode
+    text = " ".join(
+        str(pos.get(key, "") or "").lower()
+        for key in ("auto_sell_reason", "auto_sell_close_reason", "default_policy")
+    )
+    if exit_driver in {"invalid_if", "loss_cap", "hard_stop", "failed_recovery"}:
+        return "stop_recovery"
+    if any(token in text for token in ("profit", "trail", "ladder", "floor")):
+        return "profit_pullback"
+    if any(token in text for token in ("target", "tp")):
+        return "target_extension"
+    if any(token in text for token in ("loss", "stop")):
+        return "stop_recovery"
+    return "profit_pullback"
+
+
+def _triage_case_payload(
+    pos: dict,
+    market: str,
+    digest_prompt: str,
+    rt_context: str,
+    decision_stage: str,
+    default_policy: str,
+    minutes_to_close: Optional[float],
+    force_exit_window: bool,
+) -> dict:
+    entry = _as_float(pos.get("entry") or pos.get("avg_price") or pos.get("display_avg_price"), 0.0)
+    current = _as_float(pos.get("current_price") or pos.get("display_current_price") or pos.get("exit_price"), 0.0)
+    display_entry = _as_float(pos.get("display_avg_price"), 0.0)
+    display_current = _as_float(pos.get("display_current_price"), 0.0)
+    native_entry = display_entry if str(market or "").upper() == "US" and display_entry > 0 else entry
+    native_current = display_current if str(market or "").upper() == "US" and display_current > 0 else current
+    pnl_pct = _as_float(pos.get("pnl_pct"), 0.0)
+    if not pnl_pct and native_entry > 0 and native_current > 0:
+        pnl_pct = (native_current / native_entry - 1.0) * 100.0
+    advisor_ctx = pos.get("advisor_context_v2") if isinstance(pos.get("advisor_context_v2"), dict) else {}
+    pathb_exit_signal = pos.get("pathb_exit_signal") if isinstance(pos.get("pathb_exit_signal"), dict) else {}
+    return {
+        "ticker": pos.get("ticker", "-"),
+        "market": market,
+        "strategy": pos.get("strategy", ""),
+        "decision_stage": decision_stage,
+        "default_policy": default_policy,
+        "minutes_to_close": minutes_to_close if minutes_to_close is not None else "unknown",
+        "force_exit_window": bool(force_exit_window),
+        "entry": native_entry,
+        "current": native_current,
+        "pnl_pct": round(pnl_pct, 4),
+        "peak_pnl_pct": _as_float(pos.get("peak_pnl_pct"), 0.0),
+        "held_days": pos.get("held_days", 0),
+        "entry_time": pos.get("entry_time", ""),
+        "tp": pos.get("tp", pos.get("display_tp_price", 0)),
+        "sl": pos.get("sl", 0),
+        "trail_sl": pos.get("trail_sl", 0),
+        "trailing": bool(pos.get("trailing", False)),
+        "tp_triggered": bool(pos.get("tp_triggered", False)),
+        "auto_sell_reason": pos.get("auto_sell_reason", ""),
+        "auto_sell_close_reason": pos.get("auto_sell_close_reason", ""),
+        "pathb_exit_signal": _scrub_triage_prompt_value(pathb_exit_signal),
+        "advisor_context_v2": _scrub_triage_prompt_value(advisor_ctx),
+        "market_context": (rt_context or digest_prompt or "")[:1800],
+    }
+
+
+def _build_triage_prompt(
+    pos: dict,
+    market: str,
+    digest_prompt: str,
+    rt_context: str,
+    decision_stage: str,
+    default_policy: str,
+    minutes_to_close: Optional[float],
+    force_exit_window: bool,
+) -> str:
+    payload = _triage_case_payload(
+        pos,
+        market,
+        digest_prompt,
+        rt_context,
+        decision_stage,
+        default_policy,
+        minutes_to_close,
+        force_exit_window,
+    )
+    payload_text = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+    return f"""You are a decision-support model for an automated trading system.
+You do not execute orders and you do not decide final order quantity.
+Use only the supplied position and market data. Do not invent missing facts.
+
+Classify the advisor category:
+- STOP_LOSS: exit because loss, stop, loss_cap, hard_stop, invalid_if, failed recovery, or thesis invalidation is valid now.
+- HOLD: keep the position only if thesis is intact and risk is bounded by protective_stop, invalid_if, and next_review_min.
+- SELL: exit for non-stop reasons such as profit taking, target/profit protection, time decay, pre-close/carry risk, or poor remaining reward.
+
+Important:
+- category is the exit reason class, not just the final order action.
+- Catastrophic broker truth, emergency, operator kill, force exit, and hard system exits are owned by the system.
+- A HOLD is advisory only and never overrides broker truth, emergency, force exit, or hard risk rules.
+- For HOLD, protective_stop, invalid_if, and next_review_min are mandatory.
+
+Case data:
+{payload_text}
+
+Return strict JSON only:
+{{
+  "category": "STOP_LOSS|HOLD|SELL",
+  "confidence": 0.0,
+  "urgency": "now|next_open|wait",
+  "exit_driver": "invalid_if|loss_cap|hard_stop|failed_recovery|profit_protection|time_carry|bounded_hold|other",
+  "hold_mode": "target_extension|profit_pullback|stop_recovery|loss_deferral",
+  "protective_stop": null,
+  "hard_stop": null,
+  "recover_above": null,
+  "valid_for_min": 0,
+  "reask_after_min": 0,
+  "next_review_min": null,
+  "invalid_if": "",
+  "needs_second_opinion": false,
+  "primary_evidence": ["", ""],
+  "counter_evidence": ["", ""],
+  "reason": ""
+}}"""
+
+
+def _build_challenge_prompt(
+    pos: dict,
+    market: str,
+    digest_prompt: str,
+    rt_context: str,
+    decision_stage: str,
+    default_policy: str,
+    minutes_to_close: Optional[float],
+    force_exit_window: bool,
+    triage: dict,
+) -> str:
+    payload = _triage_case_payload(
+        pos,
+        market,
+        digest_prompt,
+        rt_context,
+        decision_stage,
+        default_policy,
+        minutes_to_close,
+        force_exit_window,
+    )
+    payload_text = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+    triage_text = json.dumps(
+        {
+            "category": triage.get("exit_category", ""),
+            "action": triage.get("action", ""),
+            "confidence": triage.get("confidence", 0.0),
+            "exit_driver": triage.get("exit_driver", ""),
+            "protective_stop": triage.get("protective_stop", 0.0),
+            "next_review_min": triage.get("next_review_min", 0),
+            "invalid_if": triage.get("invalid_if", ""),
+            "reason": triage.get("reason", ""),
+        },
+        ensure_ascii=False,
+        indent=2,
+        default=str,
+    )
+    return f"""You are challenging a first-pass hold-advisor decision.
+This is advisory only. Do not execute orders or decide final order quantity.
+
+Challenge focus:
+- If first pass is SELL, check whether this is premature profit-taking or time/carry overreaction.
+- If first pass is HOLD, check whether risk is actually bounded.
+- If first pass is STOP_LOSS, check whether invalid_if, failed recovery, loss_cap, or hard_stop is truly triggered.
+
+Case data:
+{payload_text}
+
+First-pass result:
+{triage_text}
+
+Return strict JSON only:
+{{
+  "confirm": true,
+  "final_category": "STOP_LOSS|HOLD|SELL",
+  "confidence": 0.0,
+  "risk_if_wrong": "",
+  "minimum_condition_to_hold": "",
+  "reason": ""
+}}"""
+
+
+def _coerce_challenge_vote(result: dict) -> dict:
+    return {
+        "confirm": bool((result or {}).get("confirm", False)),
+        "final_category": _normalize_triage_category((result or {}).get("final_category")),
+        "confidence": max(0.0, min(1.0, _as_float((result or {}).get("confidence"), 0.0))),
+        "risk_if_wrong": str((result or {}).get("risk_if_wrong", "") or "")[:500],
+        "minimum_condition_to_hold": str((result or {}).get("minimum_condition_to_hold", "") or "")[:500],
+        "reason": str((result or {}).get("reason", "") or "")[:500],
+        "challenge_prompt_version": CHALLENGE_PROMPT_VERSION,
+        "parse_error": bool((result or {}).get("parse_error", False)),
+    }
+
+
+def _ask_challenge(
+    pos: dict,
+    market: str,
+    digest_prompt: str,
+    rt_context: str,
+    decision_stage: str,
+    default_policy: str,
+    minutes_to_close: Optional[float],
+    force_exit_window: bool,
+    triage: dict,
+) -> dict:
+    prompt = _build_challenge_prompt(
+        pos,
+        market,
+        digest_prompt,
+        rt_context,
+        decision_stage,
+        default_policy,
+        minutes_to_close,
+        force_exit_window,
+        triage,
+    )
+    call_started = time.perf_counter()
+    try:
+        resp = client.messages.create(
+            model=MODEL,
+            max_tokens=700,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
+        raw = resp.content[0].text.strip()
+        result = extract_json(raw)
+        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor_challenge", model=MODEL)
+        save_raw_call(
+            label="hold_advisor_challenge",
+            prompt=prompt,
+            raw_response=raw,
+            parsed=result,
+            input_tokens=resp.usage.input_tokens,
+            output_tokens=resp.usage.output_tokens,
+            market=market,
+            model=MODEL,
+            prompt_version=CHALLENGE_PROMPT_VERSION,
+            duration_ms=duration_ms,
+            extra={
+                "decision_stage": decision_stage,
+                "default_policy": default_policy,
+                "triage_category": triage.get("exit_category", ""),
+                "triage_driver": triage.get("exit_driver", ""),
+            },
+        )
+        vote = _coerce_challenge_vote(result)
+        vote["duration_ms"] = duration_ms
+        return vote
+    except Exception as exc:
+        duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
+        log.warning(f"[hold_advisor:challenge] error -> legacy fallback: {exc}")
+        return {
+            "confirm": False,
+            "final_category": "HOLD",
+            "confidence": 0.0,
+            "risk_if_wrong": "",
+            "minimum_condition_to_hold": "",
+            "reason": "challenge_error",
+            "challenge_prompt_version": CHALLENGE_PROMPT_VERSION,
+            "parse_error": True,
+            "duration_ms": duration_ms,
+            "error": str(exc)[:200],
+        }
+
+
+def _coerce_triage_vote(result: dict, pos: dict, decision_stage: str, default_policy: str) -> dict:
+    stage = _normalize_stage(decision_stage)
+    category = _normalize_triage_category((result or {}).get("category"))
+    exit_driver = _normalize_exit_driver((result or {}).get("exit_driver"))
+    action = "HOLD" if category == "HOLD" else "SELL"
+    confidence = max(0.0, min(1.0, _as_float((result or {}).get("confidence"), 0.0)))
+    urgency = str((result or {}).get("urgency", "") or "").strip().lower()
+    if urgency not in {"now", "next_open", "wait"}:
+        urgency = "wait" if action == "HOLD" else "now"
+    protective_stop = max(0.0, _as_float((result or {}).get("protective_stop"), 0.0))
+    hard_stop = max(0.0, _as_float((result or {}).get("hard_stop"), 0.0))
+    recover_above = max(0.0, _as_float((result or {}).get("recover_above"), 0.0))
+    valid_for_min = max(0, min(30, _as_int((result or {}).get("valid_for_min"), 0)))
+    reask_after_min = max(0, min(30, _as_int((result or {}).get("reask_after_min"), 0)))
+    next_review_min = max(5, min(240, _as_int((result or {}).get("next_review_min"), 30)))
+    hold_mode = _normalize_hold_mode((result or {}).get("hold_mode")) or _derive_hold_mode(pos, exit_driver)
+    return {
+        "action": action,
+        "hold_mode": hold_mode if action == "HOLD" else "",
+        "confidence": confidence,
+        "trail_pct": 0.03,
+        "sell_urgency": urgency,
+        "revised_sell_target": max(0.0, _as_float((result or {}).get("revised_sell_target"), 0.0)),
+        "protective_stop": protective_stop,
+        "hard_stop": hard_stop,
+        "recover_above": recover_above,
+        "recovery_watch_min": 0,
+        "valid_for_min": valid_for_min,
+        "reask_after_min": reask_after_min,
+        "reask_drawdown_from_peak_pct": 0.0,
+        "reask_if_price_above": 0.0,
+        "max_rechecks": 0,
+        "next_review_min": next_review_min,
+        "invalid_if": str((result or {}).get("invalid_if", "") or "")[:240],
+        "reason": str((result or {}).get("reason", "") or "")[:500],
+        "fallback": bool((result or {}).get("fallback", False)),
+        "decision_stage": stage,
+        "default_policy": default_policy or _stage_policy(stage),
+        "exit_category": category,
+        "exit_driver": exit_driver,
+        "triage_confidence": confidence,
+        "needs_second_opinion_model": bool((result or {}).get("needs_second_opinion", False)),
+        "primary_evidence": list((result or {}).get("primary_evidence") or [])[:4],
+        "counter_evidence": list((result or {}).get("counter_evidence") or [])[:4],
+        "triage_prompt_version": TRIAGE_PROMPT_VERSION,
+        "triage_parse_error": bool((result or {}).get("parse_error", False)),
+    }
+
+
+def _fallback_triage(reason: str, decision_stage: str, default_policy: str) -> dict:
+    vote = _fallback_vote(reason, decision_stage=decision_stage, default_policy=default_policy)
+    vote.update(
+        {
+            "exit_category": "HOLD",
+            "exit_driver": "other",
+            "triage_confidence": 0.0,
+            "needs_second_opinion_model": True,
+            "primary_evidence": [],
+            "counter_evidence": [],
+            "triage_prompt_version": TRIAGE_PROMPT_VERSION,
+            "triage_parse_error": True,
+        }
+    )
+    return vote
+
+
+def _triage_hold_boundary_valid(triage: dict) -> bool:
+    if str((triage or {}).get("exit_category") or "") != "HOLD":
+        return True
+    return (
+        _as_float((triage or {}).get("protective_stop"), 0.0) > 0
+        and bool(str((triage or {}).get("invalid_if") or "").strip())
+        and 5 <= _as_int((triage or {}).get("next_review_min"), 0) <= 240
+    )
+
+
+def _triage_second_opinion_reason(triage: dict, decision_stage: str) -> str:
+    category = str((triage or {}).get("exit_category") or "")
+    driver = str((triage or {}).get("exit_driver") or "other")
+    confidence = _as_float((triage or {}).get("confidence"), 0.0)
+    if bool((triage or {}).get("triage_parse_error", False)):
+        return "parse_error"
+    if category == "HOLD" and not _triage_hold_boundary_valid(triage):
+        return "hold_boundary_missing"
+    if category == "SELL" and driver in {"profit_protection", "time_carry", "other"}:
+        return "non_stop_sell_escalation"
+    if category == "SELL" and confidence < _env_float("HOLD_ADVISOR_TRIAGE_MIN_SELL_CONFIDENCE", 0.85):
+        return "sell_confidence_below_threshold"
+    if category == "HOLD" and confidence < _env_float("HOLD_ADVISOR_TRIAGE_MIN_HOLD_CONFIDENCE", 0.72):
+        return "hold_confidence_below_threshold"
+    if category == "STOP_LOSS" and driver not in TRIAGE_CLEAR_STOP_DRIVERS:
+        return "stop_loss_driver_not_clear"
+    if category == "STOP_LOSS" and confidence < _env_float("HOLD_ADVISOR_TRIAGE_MIN_STOP_CONFIDENCE", 0.72):
+        return "stop_loss_confidence_below_threshold"
+    if _normalize_stage(decision_stage) == "PRE_CLOSE_CARRY":
+        return "pre_close_carry_shadow_only"
+    return ""
+
+
+def _triage_direct_allowed(triage: dict, decision_stage: str) -> bool:
+    if not triage or bool(triage.get("fallback")):
+        return False
+    category = str(triage.get("exit_category") or "")
+    reason = _triage_second_opinion_reason(triage, decision_stage)
+    if category == "STOP_LOSS" and not reason:
+        return True
+    if (
+        category == "HOLD"
+        and _env_bool("HOLD_ADVISOR_TRIAGE_BOUNDED_HOLD_ENABLED", False)
+        and not reason
+    ):
+        return True
+    if (
+        category == "SELL"
+        and _env_bool("HOLD_ADVISOR_TRIAGE_NON_STOP_SELL_ENABLED", False)
+        and not reason
+    ):
+        return True
+    return False
+
+
+def _ask_triage(
+    pos: dict,
+    market: str,
+    digest_prompt: str,
+    rt_context: str,
+    decision_stage: str,
+    default_policy: str,
+    minutes_to_close: Optional[float],
+    force_exit_window: bool,
+    prompt_mode: str = "production",
+) -> dict:
+    prompt = _build_triage_prompt(
+        pos,
+        market,
+        digest_prompt,
+        rt_context,
+        decision_stage,
+        default_policy,
+        minutes_to_close,
+        force_exit_window,
+    )
+    call_started = time.perf_counter()
+    try:
+        resp = client.messages.create(
+            model=MODEL,
+            max_tokens=900,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
+        raw = resp.content[0].text.strip()
+        result = extract_json(raw)
+        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor_triage", model=MODEL)
+        save_raw_call(
+            label="hold_advisor_triage",
+            prompt=prompt,
+            raw_response=raw,
+            parsed=result,
+            input_tokens=resp.usage.input_tokens,
+            output_tokens=resp.usage.output_tokens,
+            market=market,
+            model=MODEL,
+            prompt_version=TRIAGE_PROMPT_VERSION,
+            duration_ms=duration_ms,
+            extra={
+                "decision_stage": decision_stage,
+                "default_policy": default_policy,
+                "prompt_mode": prompt_mode,
+            },
+        )
+        vote = _coerce_triage_vote(result, pos, decision_stage, default_policy)
+        vote["duration_ms"] = duration_ms
+        vote["prompt_mode"] = prompt_mode
+        return vote
+    except Exception as exc:
+        duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
+        log.warning(f"[hold_advisor:triage] error -> legacy fallback: {exc}")
+        vote = _fallback_triage("triage_error", decision_stage, default_policy)
+        vote["duration_ms"] = duration_ms
+        vote["prompt_mode"] = prompt_mode
+        vote["error"] = str(exc)[:200]
+        return vote
+
+
+def _result_from_triage(
+    ticker: str,
+    market: str,
+    pos: dict,
+    triage: dict,
+    decision_stage: str,
+    default_policy: str,
+    duration_ms: int,
+) -> dict:
+    action = str(triage.get("action") or "HOLD").upper()
+    votes = {"triage": triage}
+    _log_decision(
+        ticker,
+        market,
+        pos,
+        action,
+        float(triage.get("trail_pct", 0.03) or 0.03),
+        votes,
+        decision_stage,
+        default_policy,
+        duration_ms=duration_ms,
+        triage=triage,
+    )
+    return {
+        "action": action,
+        "hold_mode": str(triage.get("hold_mode", "") or "") if action == "HOLD" else "",
+        "trail_pct": round(float(triage.get("trail_pct", 0.03) or 0.03), 3),
+        "votes": votes,
+        "confidence": round(float(triage.get("confidence", 0.0) or 0.0), 4),
+        "sell_urgency": str(triage.get("sell_urgency", "wait") or "wait"),
+        "revised_sell_target": float(triage.get("revised_sell_target", 0.0) or 0.0),
+        "protective_stop": float(triage.get("protective_stop", 0.0) or 0.0),
+        "hard_stop": float(triage.get("hard_stop", 0.0) or 0.0),
+        "recover_above": float(triage.get("recover_above", 0.0) or 0.0),
+        "recovery_watch_min": int(triage.get("recovery_watch_min", 0) or 0),
+        "valid_for_min": int(triage.get("valid_for_min", 0) or 0),
+        "reask_after_min": int(triage.get("reask_after_min", 0) or 0),
+        "reask_drawdown_from_peak_pct": float(triage.get("reask_drawdown_from_peak_pct", 0.0) or 0.0),
+        "reask_if_price_above": float(triage.get("reask_if_price_above", 0.0) or 0.0),
+        "max_rechecks": int(triage.get("max_rechecks", 0) or 0),
+        "next_review_min": int(triage.get("next_review_min", 30) or 30),
+        "reason": str(triage.get("reason", "") or "")[:500],
+        "invalid_if": str(triage.get("invalid_if", "") or "")[:240],
+        "decision_stage": decision_stage,
+        "default_policy": default_policy,
+        "duration_ms": duration_ms,
+        "exit_category": str(triage.get("exit_category", "") or ""),
+        "exit_driver": str(triage.get("exit_driver", "") or ""),
+        "triage_confidence": round(float(triage.get("triage_confidence", triage.get("confidence", 0.0)) or 0.0), 4),
+        "second_opinion_used": False,
+        "second_opinion_reason": "",
+        "triage_prompt_version": TRIAGE_PROMPT_VERSION,
+        "triage_parse_error": bool(triage.get("triage_parse_error", False)),
+    }
+
+
 def _ask_one(analyst_type: str, pos: dict, market: str,
              digest_prompt: str, rt_context: str = "",
              decision_stage: str = "TP_REVIEW",
@@ -512,6 +1156,50 @@ def ask(
             pass
 
     advisor_started = time.perf_counter()
+    triage_vote = None
+    if _triage_production_enabled(decision_stage):
+        triage_vote = _ask_triage(
+            pos,
+            market,
+            digest_prompt,
+            rt_ctx,
+            decision_stage,
+            default_policy_text,
+            minutes_to_close,
+            force_exit_window,
+            prompt_mode="production",
+        )
+        if _triage_direct_allowed(triage_vote, decision_stage):
+            advisor_duration_ms = int(max(0.0, (time.perf_counter() - advisor_started) * 1000.0))
+            log.info(
+                f"[hold_advisor triage] {ticker} -> {triage_vote.get('exit_category')} "
+                f"action={triage_vote.get('action')} driver={triage_vote.get('exit_driver')} "
+                f"conf={float(triage_vote.get('confidence', 0.0) or 0.0):.2f}"
+            )
+            return _result_from_triage(
+                ticker,
+                market,
+                pos,
+                triage_vote,
+                decision_stage,
+                default_policy_text,
+                advisor_duration_ms,
+            )
+
+    shadow_triage = None
+    if triage_vote is None and _triage_shadow_allowed(decision_stage):
+        shadow_triage = _ask_triage(
+            pos,
+            market,
+            digest_prompt,
+            rt_ctx,
+            decision_stage,
+            default_policy_text,
+            minutes_to_close,
+            force_exit_window,
+            prompt_mode="shadow",
+        )
+
     votes   = {}
     for atype in ("bull", "bear", "neutral"):
         votes[atype] = _ask_one(
@@ -611,9 +1299,11 @@ def ask(
         decision_stage,
         default_policy_text,
         duration_ms=advisor_duration_ms,
+        triage=triage_vote,
+        shadow_triage=shadow_triage,
     )
 
-    return {
+    result_payload = {
         "action": action,
         "hold_mode": hold_mode if action == "HOLD" else "",
         "trail_pct": round(trail_pct, 3),
@@ -637,13 +1327,21 @@ def ask(
         "default_policy": default_policy_text,
         "duration_ms": advisor_duration_ms,
     }
+    if triage_vote is not None:
+        result_payload["triage"] = triage_vote
+        result_payload["second_opinion_reason"] = _triage_second_opinion_reason(triage_vote, decision_stage)
+    if shadow_triage is not None:
+        result_payload["triage_shadow"] = shadow_triage
+    return result_payload
 
 
 def _log_decision(ticker: str, market: str, pos: dict,
                   action: str, trail_pct: float, votes: dict,
                   decision_stage: str = "TP_REVIEW",
                   default_policy: str = "",
-                  duration_ms: int = 0):
+                  duration_ms: int = 0,
+                  triage: Optional[dict] = None,
+                  shadow_triage: Optional[dict] = None):
     """hold_advisor 결정을 JSONL 파일에 기록"""
     try:
         log_dir = get_runtime_path("logs", "hold_advisor", make_parents=False)
@@ -706,6 +1404,26 @@ def _log_decision(ticker: str, market: str, pos: dict,
             },
             "outcome":    None,   # 청산 후 채워짐
         }
+        if triage is not None:
+            entry["triage"] = {
+                "action": triage.get("action", ""),
+                "exit_category": triage.get("exit_category", ""),
+                "exit_driver": triage.get("exit_driver", ""),
+                "confidence": triage.get("confidence", 0.0),
+                "second_opinion_reason": _triage_second_opinion_reason(triage, decision_stage),
+                "prompt_version": triage.get("triage_prompt_version", TRIAGE_PROMPT_VERSION),
+                "parse_error": bool(triage.get("triage_parse_error", False)),
+            }
+        if shadow_triage is not None:
+            entry["triage_shadow"] = {
+                "action": shadow_triage.get("action", ""),
+                "exit_category": shadow_triage.get("exit_category", ""),
+                "exit_driver": shadow_triage.get("exit_driver", ""),
+                "confidence": shadow_triage.get("confidence", 0.0),
+                "second_opinion_reason": _triage_second_opinion_reason(shadow_triage, decision_stage),
+                "prompt_version": shadow_triage.get("triage_prompt_version", TRIAGE_PROMPT_VERSION),
+                "parse_error": bool(shadow_triage.get("triage_parse_error", False)),
+            }
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as e:

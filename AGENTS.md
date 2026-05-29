@@ -40,7 +40,7 @@ This file is the shared operating guide for agentic coding tools working in this
 - broker truth 우선순위와 `_sync_runtime_with_broker()`의 시장별 quarantine, stale position 정리, HALT/daily_return 시장별 baseline 계산을 보존합니다.
 - `state/brain.json`은 정책 메모리일 뿐 runtime truth가 아닙니다. 승인형 워크플로우 없이 자동 정책 메모리 승격이나 직접 수정 경로를 추가하지 않습니다.
 
-보호 영역을 피할 수 없이 수정해야 하는 경우, 작업 설명/커밋 메시지/PR 본문 중 하나에 반드시 `MD 위반 사항` 섹션을 남깁니다. 이 섹션은 보호 계약 예외를 운영자가 알아볼 수 있게 하는 보고 형식이며, 아래 내용을 포함해야 합니다.
+보호 영역을 피할 수 없이 수정해야 하는 경우, 작업 설명/커밋 메시지/PR 본문 중 하나에 반드시 `MD 위반 사항` 섹션을 남깁니다. 이 섹션은 보호 계약 예외를 운영자가 알아볼 수 있게 하는 보고 형식이며, 자동으로 부적합하다는 뜻이 아닙니다. 예외가 직접 원인에 한정되고, 보호 계약을 완화하지 않으며, 집중 테스트와 전체 QA로 검증될 때만 적합한 예외로 봅니다. 아래 내용을 포함해야 합니다.
 
 - 어떤 보호 영역을 건드렸는지
 - 왜 우회할 수 없었는지
@@ -49,7 +49,49 @@ This file is the shared operating guide for agentic coding tools working in this
 - 대체 안전장치 또는 반복호출/오염 방지책
 - 실행한 테스트와 남은 위험
 
+### MD 위반 사항
+
+기록 일자: 2026-05-29
+대상 작업: broker sync metadata integrity / PathB attribution 보존
+
+- 건드린 보호 영역: broker truth 우선순위와 `TradingBot._sync_runtime_with_broker()`의 stale position 정리 흐름, PathB sell/fill reconcile의 broker fill 판정 흐름.
+- 우회할 수 없었던 이유: EL/IREN 사례에서 한투 broker truth 자체는 맞았지만, 일시적/부분 broker snapshot 누락과 과거 sell fill 재사용 때문에 로컬 PathB 메타데이터가 삭제되거나 `broker_sync`로 오염됐다. 원인이 보호 영역인 broker sync/reconcile 경로였으므로 대시보드 표시만 수정해서는 재발을 막을 수 없었다.
+- 변경 전 동작: 한 번의 broker balance 누락으로 로컬 포지션이 stale 제거되고, 이후 broker에 다시 나타나면 saved template 없이 `broker_sync`로 재주입될 수 있었다. 일부 PathB sell reconcile 경로는 ticker/order evidence가 entry fill 이후인지 일관되게 제한하지 않았다.
+- 변경 후 동작: broker 누락 1회는 `broker_missing_unconfirmed` protected 상태로 보존하고, 독립 fresh snapshot 반복 또는 안전한 zero-holding evidence가 있어야 제거한다. broker 재주입 시 단일 호환 PathB run이 있으면 event store에서 `pathb_path_run_id`/`path_type`/`strategy`를 복구한다. PathB sell fill은 entry fill 이후 causal evidence만 인정한다.
+- 주문/리스크/브로커 truth/Claude/config/env 영향: 주문 수량, 주문금액, PathB live gate, hard stop, sizing policy, Claude 호출량, `.env*`, `config/v2_start_config.json`, `state/brain.json` 변경 없음. broker holdings/open orders/fills는 계속 1차 truth이며, 로컬/event store는 전략 메타데이터 truth로만 사용한다.
+- 대체 안전장치: `broker_missing_unconfirmed`, `management_protected`, `manual_reconciliation_required`, 2회 독립 zero-holding 확인, PathB event-store 단일 매칭 복구, 충돌 시 자동 복구 금지, causal sell-fill filter.
+- 실행한 테스트: `python -m pytest tests/test_live_sell_pending_reconcile.py tests/test_pathb_sell_reconcile.py tests/test_broker_sync_metadata_integrity.py tests/test_dashboard_broker_integrity.py -q`, `python -m pytest tests/test_pathb_runtime.py tests/test_pathb_sell_reconcile.py tests/test_broker_sync_metadata_integrity.py -q`, `python -m pytest tests/test_dashboard_broker_integrity.py tests/test_dashboard_pathb.py tests/test_dashboard_refresh_performance.py -q`, 보호 주변 테스트 3건, `python -m py_compile trading_bot.py runtime/pathb_runtime.py dashboard/dashboard_server.py`, `python tools/live_preflight.py --mode live --skip-dashboard --json`.
+- 남은 위험: 운영 DB에 이미 존재하는 과거 stale active / ORDER_UNKNOWN PathB row는 별도 remediation 대상이다. 이번 변경은 신규 broker sync 메타 오염과 과거 sell fill 재사용 재발 방지 범위다.
+
+### MD 위반 사항
+
+기록 일자: 2026-05-29
+대상 작업: KR/US 운영 품질 QA 후속 / PathB sizing 및 partial sell reconcile
+
+- 건드린 보호 영역: `PathBRuntime._pathb_qty_with_context()`의 PathB sizing reason split, `runtime/pathb_runtime.py`의 PathB pending sell / exit `ORDER_UNKNOWN` partial-fill reconcile.
+- 우회할 수 없었던 이유: 전체 QA에서 early-gate one-share sizing과 partial sell reconcile 보호 영역 테스트가 직접 실패했다. 실패 원인이 PathB 보호 경로 자체였으므로 문서/리포트 표시만으로는 런타임 동작을 정상화할 수 없었다.
+- 변경 전 동작: early soft gate 적용 중 effective budget이 부족해도 1주 floor가 다시 살아나 MRVL형 case가 `ORDER_SIZE_TOO_SMALL_GATE`가 아니라 `qty=1`로 진행될 수 있었다. exact order partial sell fill은 partial 상태를 유지하지 못하고 ACK/open-order 처리로 떨어질 수 있었다.
+- 변경 후 동작: early-gate floor는 원래 예산 안이면서 최소주문금액 허용 폭 이내의 작은 shortfall일 때만 허용한다. 큰 shortfall은 `qty=0`, `ORDER_SIZE_TOO_SMALL_GATE`로 유지한다. exact execution partial sell fill은 `SELL_PARTIAL_FILLED`와 남은 수량으로 보존하고 session-end에서는 retryable 상태로 남긴다.
+- 주문/리스크/브로커 truth/Claude/config/env 영향: PathB live gate, 주문금액, hard stop, loss cap, slippage cap, max positions, daily cap, confidence gate, Claude 호출량, `.env*`, `config/v2_start_config.json` 변경 없음. broker holdings/open orders/fills는 계속 1차 truth이며 broker-truth fail-closed 조건은 완화하지 않았다.
+- 대체 안전장치: minimum-order shortfall tolerance, exact-execution partial-fill evidence, `remaining_qty` 보존, session-end retryable 처리, sizing/partial-sell 집중 회귀 테스트.
+- 실행한 테스트: 보호 영역 집중 4건, `python -m pytest tests/test_live_order_safety.py tests/test_pathb_runtime.py tests/test_pathb_sell_reconcile.py -q` (`146 passed`), 관련 `py_compile`, `python -m pytest -q` (`2020 passed, 2 skipped`), read-only `python tools/live_preflight.py --mode live --skip-dashboard --json`.
+- 남은 위험: 과거 stale active / previous-session `ORDER_UNKNOWN` PathB row는 운영자 audited remediation 대상이다. paper preflight token/config 실패는 별도 paper 운영 정리 대상이다.
+
 코드 수정 전에는 이번 이슈의 직접 수정 범위, 건드리지 않을 보호 영역, 수정 예정 파일, 실행할 검증 명령을 먼저 명시합니다.
+
+### MD 위반 사항
+
+기록 일자: 2026-05-29
+대상 작업: hold-advisor triage 구현 재검토 / PathB early gate one-share floor 복구
+
+- 건드린 보호 영역: `runtime/pathb_runtime.py::_pathb_qty_with_context()`의 PathB sizing reason split 중 early soft gate one-share floor 경로입니다. `execution/safety_gate.py`, live submit 정책, broker truth, 주문 라우팅은 변경하지 않았습니다.
+- 우회할 수 없었던 이유: 재검토 중 보호 sizing 테스트가 실패했습니다. US early soft gate에서 full fixed budget으로는 1주 매수가 가능하고 축소된 early-gate budget 초과분이 최소주문금액 허용 폭 이내인데도 `qty=0`으로 막히는 문제가 직접 확인됐습니다.
+- 변경 전 동작: early gate로 effective budget이 225,000 KRW로 줄고 1주 가격이 270,000 KRW인 경우, full fixed budget, 현금, minimum-order shortfall tolerance가 허용해도 `_pathb_qty_with_context()`가 `qty=0`을 반환할 수 있었습니다.
+- 변경 후 동작: `can_buy_1_share`가 true이고 축소 예산이 1주를 커버하거나 `early_gate_shortfall <= min_order`이면 early gate floor가 `qty=1`을 복구하고 `sizing_reason="early_gate_floor_one_share"`를 유지합니다.
+- 주문/리스크/broker truth/Claude/config/env 영향: 보호된 early-gate floor tolerance 케이스에서만 주문 수량이 `0`에서 `1`로 달라질 수 있습니다. 주문 제출 정책, broker truth, hard stop, PathB live gate, Claude 호출량, `.env*`, `config/v2_start_config.json`, `state/brain.json` 영향은 없습니다.
+- 대체 안전장치 또는 오염 방지책: 새 broad path를 만들지 않았고 `can_buy_1_share`와 `price <= budget` 또는 `early_gate_shortfall <= min_order`를 안전 경계로 유지했습니다. `INVALID_PRICE`, `ORDER_SIZE_TOO_SMALL_GATE`, `HIGH_PRICE_BUDGET_BLOCK`, one-share-over-budget, early-gate sizing reason 분리는 보존했습니다.
+- 실행한 테스트: `python -m pytest tests/test_pathb_runtime.py::EarlyGateFloorOneShareTests::test_early_gate_floor_gives_qty_one_when_reduced_budget_is_too_small -q`; `python -m pytest tests/test_pathb_runtime.py::EarlyGateFloorOneShareTests -q`; `python -m py_compile runtime/pathb_runtime.py minority_report/hold_advisor.py`; `python -m pytest tests/test_trading_decision_contract_improvements.py tests/test_auto_sell_claude_gate.py::AutoSellClaudeGateTests::test_pathb_loss_cap_hold_respects_reask_cooldown -q`; `python -m pytest tests/test_auto_sell_claude_gate.py tests/test_pathb_profit_protection.py tests/test_claude_quality_contracts.py tests/test_plan_a_hold_policy.py tests/test_price_unit_normalization.py -q`.
+- 남은 위험: `tests/test_pathb_runtime.py` 전체 실행에는 `test_previous_session_local_pathb_holding_is_included_in_exit_scan`, `test_cached_carry_does_not_block_hard_target_exit` 2개 실패가 별도로 남아 있습니다. 이는 PathB exit-scan price truth 동작과 연결된 별도 축이며 이번 hold-advisor/sizing 예외에서는 수정하지 않았습니다.
 
 ## Data, Memory, and Logging Contracts
 

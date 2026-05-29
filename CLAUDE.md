@@ -52,6 +52,8 @@ These areas are treated as completed/protected behavior. Do not refactor, rename
 
 If a protected area must be changed, the work note, commit message, PR body, or final response must include a section titled exactly `MD 위반 사항`. This is the required operator-visible exception report for protected-contract changes.
 
+`MD 위반 사항` means a protected-area exception record, not that the change is automatically unsafe or unsuitable. A change is suitable only when the exception is unavoidable, narrowly scoped, does not weaken the protected contract, and is backed by focused tests plus broader QA.
+
 The `MD 위반 사항` section must include:
 
 - protected area touched
@@ -62,6 +64,48 @@ The `MD 위반 사항` section must include:
 - tests run and remaining risk
 
 If the protected change is discovered during implementation, stop broad editing and record `MD 위반 사항` before continuing beyond the minimum fix.
+
+### MD 위반 사항
+
+Recorded date: 2026-05-29
+Work item: broker sync metadata integrity / PathB attribution preservation
+
+- Protected area touched: broker truth priority and `TradingBot._sync_runtime_with_broker()` stale-position reconciliation, plus PathB sell/fill broker-evidence matching.
+- Why unavoidable: the EL/IREN incidents were caused by the protected broker sync/reconcile path itself. A transient or partial broker snapshot could delete local PathB metadata, and stale sell-fill evidence could be reused against a newer PathB run. Dashboard-only changes would hide the issue without preventing recurrence.
+- Before behavior: one broker balance omission could remove a local position, then later broker reappearance could re-inject it as `broker_sync` without the original PathB metadata. Some PathB sell reconcile paths did not consistently require sell-fill evidence to be causal after the entry fill.
+- After behavior: a first broker omission keeps the position protected as `broker_missing_unconfirmed`; removal requires repeated independent fresh zero-holding evidence or safe zero-holding proof. Broker re-injection recovers PathB metadata from a single compatible event-store run. PathB sell fills must be causal after the entry fill unless exact execution evidence is still valid.
+- Order/risk/broker truth/Claude/config/env impact: no order quantity, order amount, PathB live gate, hard stop, sizing policy, Claude-call volume, `.env*`, `config/v2_start_config.json`, or `state/brain.json` changes. Broker holdings/open orders/fills remain first truth; local/event-store data is used only for strategy metadata attribution.
+- Replacement guard: `broker_missing_unconfirmed`, `management_protected`, `manual_reconciliation_required`, two independent zero-holding confirmations, single-match PathB metadata recovery, conflict-to-manual-review behavior, and causal sell-fill filtering.
+- Tests run: `python -m pytest tests/test_live_sell_pending_reconcile.py tests/test_pathb_sell_reconcile.py tests/test_broker_sync_metadata_integrity.py tests/test_dashboard_broker_integrity.py -q`; `python -m pytest tests/test_pathb_runtime.py tests/test_pathb_sell_reconcile.py tests/test_broker_sync_metadata_integrity.py -q`; `python -m pytest tests/test_dashboard_broker_integrity.py tests/test_dashboard_pathb.py tests/test_dashboard_refresh_performance.py -q`; three protected zero-holding/insufficient-holding tests; `python -m py_compile trading_bot.py runtime/pathb_runtime.py dashboard/dashboard_server.py`; `python tools/live_preflight.py --mode live --skip-dashboard --json`.
+- Remaining risk: already-existing historical stale active / ORDER_UNKNOWN PathB rows in the live DB remain separate remediation work. This change prevents new broker-sync metadata contamination and stale sell-fill reuse.
+
+### MD 위반 사항
+
+Recorded date: 2026-05-29
+Work item: KR/US operation-quality QA follow-up / PathB sizing and partial-sell reconcile
+
+- Protected area touched: PathB sizing reason split in `PathBRuntime._pathb_qty_with_context()` and PathB pending sell / exit `ORDER_UNKNOWN` partial-fill reconcile in `runtime/pathb_runtime.py`.
+- Why unavoidable: full QA directly failed protected-area tests for early-gate one-share sizing and partial sell reconciliation. The failures were in the protected PathB paths themselves, so documentation or report-only changes could not make the runtime behavior correct.
+- Before behavior: an early soft gate could still revive a one-share floor when the effective budget was too small, causing MRVL-style cases to size `qty=1` instead of remaining blocked as `ORDER_SIZE_TOO_SMALL_GATE`. Exact-order partial sell fills could fall through to ACK/open-order handling instead of staying `SELL_PARTIAL_FILLED` or session-end retryable with remaining quantity.
+- After behavior: the early-gate floor is allowed only when the one-share shortfall is within the minimum-order tolerance and still within the original budget; large shortfall cases remain `qty=0` with `ORDER_SIZE_TOO_SMALL_GATE`. Exact execution partial sell fills are preserved as partial evidence, update local remaining quantity, and remain retryable at session end rather than being treated as fully closed.
+- Order/risk/broker truth/Claude/config/env impact: no PathB live gate, order amount, hard stop, loss cap, slippage cap, max positions, daily cap, confidence gate, Claude-call volume, `.env*`, or `config/v2_start_config.json` changes. Broker holdings/open orders/fills remain first truth, and broker-truth fail-closed behavior is not weakened.
+- Replacement guard: minimum-order shortfall tolerance for early-gate one-share floor, exact-execution partial-fill evidence, retained `remaining_qty`, session-end retryability, and focused regression tests for both sizing and partial-sell paths.
+- Tests run: focused 4-test protected-area regression; `python -m pytest tests/test_live_order_safety.py tests/test_pathb_runtime.py tests/test_pathb_sell_reconcile.py -q` (`146 passed`); relevant `py_compile`; `python -m pytest -q` (`2020 passed, 2 skipped`); read-only `python tools/live_preflight.py --mode live --skip-dashboard --json`.
+- Remaining risk: historical stale active / previous-session `ORDER_UNKNOWN` PathB rows remain operator audited-remediation work. Paper preflight token/config failures remain separate paper-ops work.
+
+### MD 위반 사항
+
+Recorded date: 2026-05-29
+Work item: hold-advisor triage implementation re-review / PathB early gate one-share floor recovery
+
+- Protected area touched: PathB sizing reason split in `runtime/pathb_runtime.py::_pathb_qty_with_context()`, specifically the early soft gate one-share floor path. `execution/safety_gate.py`, live submit policy, broker truth, and order routing were not changed.
+- Why unavoidable: the re-review found a failing protected sizing test. During the US early soft gate, a one-share order that was affordable under the full fixed budget and only slightly above the reduced early-gate budget could be blocked. The failing test directly identified the protected sizing behavior as the root cause.
+- Before behavior: if early gate reduced the effective budget to 225,000 KRW and one share cost 270,000 KRW, `_pathb_qty_with_context()` could return `qty=0` even though the full fixed budget, account cash, and minimum-order shortfall tolerance allowed one share.
+- After behavior: when `can_buy_1_share` is true and either the reduced budget covers the share or `early_gate_shortfall <= min_order`, the early gate floor restores `qty=1` and keeps `sizing_reason="early_gate_floor_one_share"`.
+- Order/risk/broker truth/Claude/config/env impact: order quantity can change only for the protected early-gate floor tolerance case from `0` to `1`. No order submission policy, broker-truth logic, risk hard stop, PathB live gate, Claude call volume, `.env*`, `config/v2_start_config.json`, or `state/brain.json` changes.
+- Replacement guard or contamination prevention: no new broad path was added. The safety boundary remains `can_buy_1_share` plus `price <= budget` or `early_gate_shortfall <= min_order`; `INVALID_PRICE`, `ORDER_SIZE_TOO_SMALL_GATE`, `HIGH_PRICE_BUDGET_BLOCK`, one-share-over-budget, and early-gate sizing reason separation are preserved.
+- Tests run: `python -m pytest tests/test_pathb_runtime.py::EarlyGateFloorOneShareTests::test_early_gate_floor_gives_qty_one_when_reduced_budget_is_too_small -q`; `python -m pytest tests/test_pathb_runtime.py::EarlyGateFloorOneShareTests -q`; `python -m py_compile runtime/pathb_runtime.py minority_report/hold_advisor.py`; `python -m pytest tests/test_trading_decision_contract_improvements.py tests/test_auto_sell_claude_gate.py::AutoSellClaudeGateTests::test_pathb_loss_cap_hold_respects_reask_cooldown -q`; `python -m pytest tests/test_auto_sell_claude_gate.py tests/test_pathb_profit_protection.py tests/test_claude_quality_contracts.py tests/test_plan_a_hold_policy.py tests/test_price_unit_normalization.py -q`.
+- Remaining risk: `tests/test_pathb_runtime.py` full-file run still has separate failures in `test_previous_session_local_pathb_holding_is_included_in_exit_scan` and `test_cached_carry_does_not_block_hard_target_exit`. Those failures are tied to PathB exit-scan price truth behavior and were not changed in this hold-advisor/sizing exception.
 
 ### Commit, PR, and Security Standards
 

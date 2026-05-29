@@ -181,6 +181,247 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
         self.assertEqual(len(captured), 3)
         self.assertTrue(all(call["decision_stage"] == "INTRADAY_REVIEW" for call in captured))
 
+    def test_triage_flags_disabled_keep_legacy_three_role_path(self) -> None:
+        captured = []
+
+        def _fake_ask_one(*args, **kwargs):
+            captured.append(kwargs)
+            return {
+                "action": "HOLD",
+                "confidence": 0.6,
+                "trail_pct": 0.03,
+                "sell_urgency": "wait",
+                "protective_stop": 98.0,
+                "next_review_min": 30,
+                "reason": "legacy hold",
+                "invalid_if": "breaks support",
+            }
+
+        pos = {"ticker": "TEST", "entry": 100.0, "current_price": 101.0}
+        with patch.dict(
+            os.environ,
+            {
+                "HOLD_ADVISOR_TRIAGE_ENABLED": "false",
+                "HOLD_ADVISOR_TRIAGE_SHADOW": "false",
+            },
+            clear=False,
+        ), patch.object(hold_advisor, "_ask_triage", side_effect=AssertionError("triage disabled")), patch.object(
+            hold_advisor, "_ask_one", side_effect=_fake_ask_one
+        ):
+            result = hold_advisor.ask(pos, "KR", delay=0, decision_stage="AUTO_SELL_REVIEW")
+
+        self.assertEqual(result["action"], "HOLD")
+        self.assertEqual(len(captured), 3)
+        self.assertNotIn("triage", result)
+
+    def test_triage_stage_allowlist_keeps_non_auto_sell_review_legacy(self) -> None:
+        captured = []
+
+        def _fake_ask_one(*args, **kwargs):
+            captured.append(kwargs)
+            return {
+                "action": "HOLD",
+                "confidence": 0.7,
+                "trail_pct": 0.03,
+                "sell_urgency": "wait",
+                "protective_stop": 98.0,
+                "next_review_min": 30,
+                "reason": "manual legacy",
+                "invalid_if": "breaks support",
+            }
+
+        pos = {"ticker": "TEST", "entry": 100.0, "current_price": 101.0}
+        with patch.dict(
+            os.environ,
+            {
+                "HOLD_ADVISOR_TRIAGE_ENABLED": "true",
+                "HOLD_ADVISOR_TRIAGE_STAGE_ALLOWLIST": "AUTO_SELL_REVIEW",
+            },
+            clear=False,
+        ), patch.object(hold_advisor, "_ask_triage", side_effect=AssertionError("stage not allowed")), patch.object(
+            hold_advisor, "_ask_one", side_effect=_fake_ask_one
+        ):
+            result = hold_advisor.ask(pos, "KR", delay=0, decision_stage="MANUAL_REVIEW")
+
+        self.assertEqual(result["action"], "HOLD")
+        self.assertEqual(len(captured), 3)
+        self.assertEqual(result["decision_stage"], "MANUAL_REVIEW")
+
+    def test_clear_stop_loss_triage_maps_to_sell_without_three_role_calls(self) -> None:
+        triage = hold_advisor._coerce_triage_vote(
+            {
+                "category": "STOP_LOSS",
+                "confidence": 0.82,
+                "urgency": "now",
+                "exit_driver": "failed_recovery",
+                "protective_stop": 96.0,
+                "hard_stop": 95.0,
+                "next_review_min": 10,
+                "invalid_if": "failed reclaim",
+                "reason": "failed recovery window",
+            },
+            {"ticker": "TEST"},
+            "AUTO_SELL_REVIEW",
+            "policy",
+        )
+        pos = {"ticker": "TEST", "entry": 100.0, "current_price": 97.0}
+        with patch.dict(os.environ, {"HOLD_ADVISOR_TRIAGE_ENABLED": "true"}, clear=False), patch.object(
+            hold_advisor, "_ask_triage", return_value=triage
+        ) as ask_triage, patch.object(hold_advisor, "_ask_one", side_effect=AssertionError("legacy should be skipped")):
+            result = hold_advisor.ask(pos, "KR", delay=0, decision_stage="AUTO_SELL_REVIEW", default_policy="policy")
+
+        ask_triage.assert_called_once()
+        self.assertEqual(result["action"], "SELL")
+        self.assertEqual(result["exit_category"], "STOP_LOSS")
+        self.assertEqual(result["exit_driver"], "failed_recovery")
+        self.assertEqual(set(result["votes"]), {"triage"})
+
+    def test_non_stop_sell_triage_falls_back_to_legacy_by_default(self) -> None:
+        triage = hold_advisor._coerce_triage_vote(
+            {
+                "category": "SELL",
+                "confidence": 0.9,
+                "urgency": "now",
+                "exit_driver": "time_carry",
+                "reason": "carry risk",
+            },
+            {"ticker": "TEST"},
+            "AUTO_SELL_REVIEW",
+            "policy",
+        )
+        legacy_calls = []
+
+        def _fake_ask_one(*args, **kwargs):
+            legacy_calls.append(kwargs)
+            return {
+                "action": "HOLD",
+                "confidence": 0.7,
+                "trail_pct": 0.03,
+                "sell_urgency": "wait",
+                "protective_stop": 98.0,
+                "next_review_min": 30,
+                "reason": "bounded hold",
+                "invalid_if": "breaks support",
+            }
+
+        pos = {"ticker": "TEST", "entry": 100.0, "current_price": 101.0}
+        with patch.dict(os.environ, {"HOLD_ADVISOR_TRIAGE_ENABLED": "true"}, clear=False), patch.object(
+            hold_advisor, "_ask_triage", return_value=triage
+        ), patch.object(hold_advisor, "_ask_one", side_effect=_fake_ask_one):
+            result = hold_advisor.ask(pos, "KR", delay=0, decision_stage="AUTO_SELL_REVIEW", default_policy="policy")
+
+        self.assertEqual(result["action"], "HOLD")
+        self.assertEqual(len(legacy_calls), 3)
+        self.assertEqual(result["second_opinion_reason"], "non_stop_sell_escalation")
+
+    def test_shadow_requires_positive_call_cap(self) -> None:
+        hold_advisor._TRIAGE_SHADOW_CALLS = 0
+        legacy_calls = []
+
+        def _fake_ask_one(*args, **kwargs):
+            legacy_calls.append(kwargs)
+            return {
+                "action": "HOLD",
+                "confidence": 0.7,
+                "trail_pct": 0.03,
+                "sell_urgency": "wait",
+                "protective_stop": 98.0,
+                "next_review_min": 30,
+                "reason": "bounded hold",
+                "invalid_if": "breaks support",
+            }
+
+        pos = {"ticker": "TEST", "entry": 100.0, "current_price": 101.0}
+        with patch.dict(
+            os.environ,
+            {
+                "HOLD_ADVISOR_TRIAGE_SHADOW": "true",
+                "HOLD_ADVISOR_TRIAGE_LIVE_SHADOW_MAX_CALLS": "0",
+            },
+            clear=False,
+        ), patch.object(hold_advisor, "_ask_triage", side_effect=AssertionError("shadow cap blocks triage")), patch.object(
+            hold_advisor, "_ask_one", side_effect=_fake_ask_one
+        ):
+            result = hold_advisor.ask(pos, "KR", delay=0, decision_stage="AUTO_SELL_REVIEW")
+
+        self.assertEqual(result["action"], "HOLD")
+        self.assertEqual(len(legacy_calls), 3)
+        self.assertNotIn("triage_shadow", result)
+
+    def test_triage_prompt_excludes_prior_votes_and_raw_response(self) -> None:
+        prompt = hold_advisor._build_triage_prompt(
+            {
+                "ticker": "TEST",
+                "entry": 100.0,
+                "current_price": 99.0,
+                "votes": {"bear": {"action": "SELL", "confidence": 0.99}},
+                "raw_response": "previous claude response",
+                "advisor_context_v2": {
+                    "invalid_if": "breaks 98",
+                    "raw_response": "nested raw answer",
+                    "votes": {"old": "SELL"},
+                },
+                "pathb_exit_signal": {
+                    "reason": "loss cap",
+                    "raw_prompt": "nested prior prompt",
+                    "messages": [{"role": "user", "content": "older prompt"}],
+                },
+            },
+            "KR",
+            "digest",
+            "",
+            "AUTO_SELL_REVIEW",
+            "policy",
+            120.0,
+            False,
+        )
+
+        self.assertNotIn("previous claude response", prompt)
+        self.assertNotIn("nested raw answer", prompt)
+        self.assertNotIn("nested prior prompt", prompt)
+        self.assertNotIn("older prompt", prompt)
+        self.assertNotIn('"votes"', prompt)
+        self.assertIn("category is the exit reason class", prompt)
+
+    def test_challenge_prompt_uses_structured_first_pass_without_raw_response(self) -> None:
+        triage = {
+            "exit_category": "SELL",
+            "action": "SELL",
+            "confidence": 0.8,
+            "exit_driver": "time_carry",
+            "reason": "pre-close risk",
+            "raw_response": "previous raw answer",
+        }
+        prompt = hold_advisor._build_challenge_prompt(
+            {
+                "ticker": "TEST",
+                "entry": 100.0,
+                "current_price": 101.0,
+                "votes": {"bear": {"action": "SELL"}},
+                "raw_response": "older raw response",
+                "advisor_context_v2": {
+                    "invalid_if": "breaks 98",
+                    "raw_response": "nested challenge raw answer",
+                    "votes": {"old": "SELL"},
+                },
+            },
+            "KR",
+            "digest",
+            "",
+            "AUTO_SELL_REVIEW",
+            "policy",
+            15.0,
+            False,
+            triage,
+        )
+
+        self.assertIn("First-pass result", prompt)
+        self.assertIn("final_category", prompt)
+        self.assertNotIn("older raw response", prompt)
+        self.assertNotIn("nested challenge raw answer", prompt)
+        self.assertNotIn("previous raw answer", prompt)
+        self.assertNotIn('"votes"', prompt)
+
     def test_decision_log_preserves_vote_price_policy_fields(self) -> None:
         votes = {
             "bull": {
