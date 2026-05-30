@@ -1484,6 +1484,8 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertNotIn("small_sample", not_in_prompt)
             self.assertIn("outcome_coverage", result)
             self.assertEqual(result["outcome_coverage"]["30"]["audit_sparse"], 2)
+            self.assertIn("classification_counts", result["outcome_coverage"]["30"])
+            self.assertIn("coverage_gap_reasons", result["outcome_coverage"]["30"])
             self.assertIn("route_shadow_summary", result)
             top_not_in_prompt = result["top_mfe"]["not_in_prompt"][0]
             self.assertIn("thin_price_sample", top_not_in_prompt)
@@ -1761,7 +1763,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(result["freshness"]["max_lag_sec"], 300)
             self.assertEqual(result["outcome_coverage"]["30"]["maturity"], "ready")
             self.assertEqual(result["missed_winners"][0]["ticker"], "AAA")
-            self.assertEqual(result["missed_winners"][0]["miss_stage"], "claude_watch")
+            self.assertEqual(result["missed_winners"][0]["miss_stage"], "claude_not_selected")
             self.assertEqual(result["routing_delta"]["raw_trade_ready_count"], 2)
             self.assertEqual(result["routing_delta"]["applied_trade_ready_count"], 1)
             self.assertEqual(result["routing_delta"]["dropped_after_raw"], ["BBB"])

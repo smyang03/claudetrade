@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -773,6 +774,67 @@ def _pathb_recoverable_entry_holding(item: dict[str, Any]) -> bool:
     local_qty = _safe_int(item.get("local_position_qty"))
     broker_qty = _safe_int(item.get("broker_position_qty"))
     return bool(local_qty > 0 and broker_qty > 0 and local_qty == broker_qty)
+
+
+def _order_unknown_remediation_command(mode: str, market: str, session_before: str) -> str:
+    market_arg = str(market or "").upper() or "KR"
+    return (
+        "python tools/order_unknown_remediation.py "
+        f"--mode {mode} --market {market_arg} --session-before {session_before} --dry-run --json"
+    )
+
+
+def _order_unknown_remediation_blockers(
+    item: dict[str, Any],
+    *,
+    previous_session: bool,
+) -> list[str]:
+    blockers: list[str] = []
+    if str(item.get("status") or "").upper() != "ORDER_UNKNOWN":
+        blockers.append("status_not_order_unknown")
+    if not previous_session:
+        blockers.append("current_session_order_unknown")
+    if bool(item.get("broker_truth_unavailable")):
+        blockers.append("broker_truth_unavailable")
+    if bool(item.get("local_exposure")) or _safe_int(item.get("local_position_qty")) > 0:
+        blockers.append("local_exposure_present")
+    if str(item.get("local_pending_sell_order_id") or item.get("local_sell_order_id") or "").strip():
+        blockers.append("local_sell_order_present")
+    if _safe_int(item.get("broker_position_qty")) > 0:
+        blockers.append("broker_position_present")
+    if bool(item.get("broker_open_order_evidence")):
+        blockers.append("broker_open_order_present")
+    if bool(item.get("broker_sell_fill_evidence")):
+        blockers.append("broker_sell_fill_present")
+    if not str(item.get("path_run_id") or "").strip():
+        blockers.append("path_run_id_missing")
+    return blockers
+
+
+def _mark_order_unknown_remediation_hint(
+    item: dict[str, Any],
+    *,
+    mode: str,
+    previous_session: bool,
+    session_before: str,
+) -> dict[str, Any]:
+    blockers = _order_unknown_remediation_blockers(item, previous_session=previous_session)
+    allowed = not blockers
+    item["remediation_allowed"] = allowed
+    item["audited_remediation_allowed"] = allowed
+    item["remediation_blockers"] = blockers
+    item["remediation_tool"] = _order_unknown_remediation_command(
+        mode,
+        str(item.get("market") or ""),
+        session_before,
+    )
+    if allowed:
+        item["suggested_action"] = "run audited ORDER_UNKNOWN dry-run, then apply only after report review"
+    elif previous_session:
+        item["suggested_action"] = "manual broker-truth reconciliation required before closing this row"
+    else:
+        item["suggested_action"] = "current-session ORDER_UNKNOWN blocks PathB entry until reconciled"
+    return item
 
 
 def _broker_rows_for_ticker(rows: list[Any], market: str, ticker: str) -> list[dict[str, Any]]:
@@ -2051,8 +2113,16 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
             item["order_unknown_age_sec"] = plan.get("order_unknown_age_sec")
             item["order_unknown_reconcile_attempts"] = plan.get("order_unknown_reconcile_attempts")
             _attach_exposure_evidence(item, exposure_by_path, broker_snapshot)
-            session_for_market = current_sessions.get(str(item.get("market") or ""))
-            if item.get("session_date") == session_for_market:
+            market_key = str(item.get("market") or "").upper()
+            session_for_market = current_sessions.get(market_key, "")
+            current_session_row = item.get("session_date") == session_for_market
+            _mark_order_unknown_remediation_hint(
+                item,
+                mode=mode,
+                previous_session=not current_session_row,
+                session_before=session_for_market,
+            )
+            if current_session_row:
                 current_unknown.append(item)
             else:
                 previous_unknown.append(item)
@@ -2065,6 +2135,33 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
             if bool(item.get("local_exposure")) and not bool(item.get("pathb_recoverable_still_held"))
         ]
         previous_no_local_exposure = [item for item in previous_unknown if not bool(item.get("local_exposure"))]
+        previous_audited_remediation_available = [
+            item for item in previous_no_local_exposure if bool(item.get("remediation_allowed"))
+        ]
+        previous_no_local_exposure_blocked = [
+            item for item in previous_no_local_exposure if not bool(item.get("remediation_allowed"))
+        ]
+        blocking_unknown_count = (
+            len(current_unknown)
+            + len(previous_with_local_exposure)
+            + len(previous_recoverable_still_held)
+            + len(previous_no_local_exposure_blocked)
+        )
+        accepted_historical_only = bool(unknown_rows) and blocking_unknown_count == 0
+        order_unknown_warning = _warning_meta(
+            "pathb_order_unknown_historical_no_exposure",
+            accepted=accepted_historical_only,
+            action=(
+                "resolve current/local-exposure ORDER_UNKNOWN rows before live start"
+                if blocking_unknown_count
+                else (
+                    "review audited remediation dry-run output before applying historical no-exposure cleanup"
+                    if unknown_rows
+                    else "none"
+                )
+            ),
+            blocked_if_live_start=bool(blocking_unknown_count),
+        )
         checks.append(
             CheckResult(
                 "db.order_unknown_unresolved",
@@ -2072,23 +2169,35 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                 f"unresolved ORDER_UNKNOWN rows={len(unknown_rows)}" if unknown_rows else "no unresolved Path B ORDER_UNKNOWN rows",
                 {
                     "current_session": current_unknown,
+                    "current_session_blocking": current_unknown,
                     "previous_session": previous_unknown,
                     "previous_session_with_local_exposure": previous_with_local_exposure,
                     "previous_session_no_local_exposure": previous_no_local_exposure,
+                    "previous_session_no_local_exposure_blocked": previous_no_local_exposure_blocked,
                     "previous_session_recoverable_still_held": previous_recoverable_still_held,
+                    "previous_session_audited_remediation_available": previous_audited_remediation_available,
                     "current_session_count": len(current_unknown),
+                    "current_session_blocking_count": len(current_unknown),
                     "previous_session_count": len(previous_unknown),
                     "previous_session_with_local_exposure_count": len(previous_with_local_exposure),
                     "previous_session_no_local_exposure_count": len(previous_no_local_exposure),
+                    "previous_session_no_local_exposure_blocked_count": len(previous_no_local_exposure_blocked),
                     "previous_session_recoverable_still_held_count": len(previous_recoverable_still_held),
-                    "accepted_exception": False,
-                    "remediation_required": bool(unknown_rows),
+                    "previous_session_audited_remediation_available_count": len(previous_audited_remediation_available),
+                    "audited_remediation_available_count": len(previous_audited_remediation_available),
+                    "blocking_unknown_count": blocking_unknown_count,
+                    **order_unknown_warning,
+                    "remediation_required": bool(unknown_rows) and not accepted_historical_only,
                     "auto_remediation": False,
                     "auto_remediation_allowed": False,
                     "recoverable_hint_count": len(previous_recoverable_still_held),
-                    "remediation_tool": "python tools/pathb_legacy_remediation.py --mode live --write-report",
+                    "remediation_tools": {
+                        market: _order_unknown_remediation_command(mode, market, session)
+                        for market, session in current_sessions.items()
+                    },
+                    "remediation_tool": _order_unknown_remediation_command(mode, "US", current_sessions.get("US", "")),
                     "operator_action": (
-                        "read-only: verify broker open orders/fills first, then run the PathB legacy remediation report; do not override broker truth from local DB only"
+                        order_unknown_warning.get("operator_action")
                         if unknown_rows
                         else "none"
                     ),
@@ -2557,6 +2666,123 @@ def _open_positions_market_metadata_check(mode: str) -> CheckResult:
     )
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fp:
+        for chunk in iter(lambda: fp.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _git_porcelain_for_path(path: Path) -> tuple[list[str], str]:
+    try:
+        rel = str(path.resolve().relative_to(ROOT.resolve()))
+    except Exception:
+        rel = str(path)
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain", "--", rel],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception as exc:
+        return [], f"{type(exc).__name__}: {exc}"
+    if proc.returncode != 0:
+        return [], (proc.stderr or proc.stdout or f"git status exited {proc.returncode}").strip()
+    lines = [line for line in proc.stdout.splitlines() if line.strip()]
+    return lines, ""
+
+
+def _jsonl_row_count(path: Path) -> int:
+    if not path.exists():
+        return 0
+    count = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        count += 1
+    return count
+
+
+def _brain_memory_change_check(
+    mode: str,
+    *,
+    brain_path: Path | None = None,
+    approval_queue_path: Path | None = None,
+) -> CheckResult:
+    path = brain_path or (ROOT / "state" / "brain.json")
+    data: dict[str, Any] = {
+        "mode": mode,
+        "path": str(path),
+        "exists": path.exists(),
+        "pending_approval_count": 0,
+    }
+    parse_error = ""
+    if path.exists():
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(parsed, dict):
+                parse_error = "root is not object"
+            else:
+                data["sha256"] = _file_sha256(path)
+                data["version"] = parsed.get("version") or parsed.get("schema_version") or ""
+                data["last_updated"] = (
+                    parsed.get("last_updated")
+                    or parsed.get("updated_at")
+                    or parsed.get("generated_at")
+                    or ""
+                )
+        except Exception as exc:
+            parse_error = f"{type(exc).__name__}: {exc}"
+    git_status, git_error = _git_porcelain_for_path(path)
+    data["git_status"] = git_status
+    data["git_dirty"] = bool(git_status)
+    if git_error:
+        data["git_error"] = git_error
+    try:
+        queue_path = approval_queue_path or (ROOT / "state" / "brain_approval_queue.jsonl")
+        data["approval_queue_path"] = str(queue_path)
+        data["pending_approval_count"] = _jsonl_row_count(queue_path)
+    except Exception as exc:
+        data["approval_queue_error"] = f"{type(exc).__name__}: {exc}"
+
+    if parse_error:
+        return CheckResult(
+            "state.brain_memory_change_guard",
+            "FAIL",
+            f"brain.json unreadable: {parse_error}",
+            data,
+        )
+    if data["git_dirty"]:
+        data.update(
+            _warning_meta(
+                "brain_memory_dirty",
+                accepted=False,
+                action="review and explicitly commit or revert state/brain.json before treating policy memory as approved",
+                blocked_if_live_start=False,
+            )
+        )
+        return CheckResult(
+            "state.brain_memory_change_guard",
+            "WARN",
+            "state/brain.json has uncommitted changes",
+            data,
+        )
+    data.update(_warning_meta("brain_memory_clean", accepted=True))
+    return CheckResult(
+        "state.brain_memory_change_guard",
+        "PASS",
+        "state/brain.json has no git-visible changes",
+        data,
+    )
+
+
 def _state_checks(config: dict[str, Any], mode: str) -> list[CheckResult]:
     checks: list[CheckResult] = []
     effective: dict[str, str] = config.get("effective", {})
@@ -2614,6 +2840,7 @@ def _state_checks(config: dict[str, Any], mode: str) -> list[CheckResult]:
             {"parsed": parsed_brains, "errors": brain_errors, "fresh_brain_start": fresh_brain},
         )
     )
+    checks.append(_brain_memory_change_check(mode))
 
     control_path = ROOT / "state" / f"{mode}_pathb_control.json"
     if not control_path.exists():
@@ -3136,7 +3363,10 @@ def _ops_summary_checks(mode: str) -> list[CheckResult]:
             readiness = pathb.get("readiness") if isinstance(pathb.get("readiness"), dict) else {}
             live_truth = pathb.get("live_truth_verdict") if isinstance(pathb.get("live_truth_verdict"), dict) else {}
             capacity = pathb.get("execution_capacity") if isinstance(pathb.get("execution_capacity"), dict) else {}
-            unknown = lifecycle.get("order_unknown") or []
+            # lifecycle.order_unknown is a raw event history; recovered rows can
+            # still have an old ORDER_UNKNOWN event. For preflight review, use
+            # unresolved Path B rows from the Path B summary.
+            unknown = pathb.get("order_unknown") or []
             closed = lifecycle.get("closed") or []
             checks.append(
                 CheckResult(
@@ -3422,7 +3652,7 @@ def _candidate_audit_outcome_checks(mode: str) -> list[CheckResult]:
     return [CheckResult("candidate_audit.outcome_update", status, detail, {"path": str(path), "rows": int(total or 0), "latest": latest or ""})]
 
 
-def _ml_db_health_checks() -> list[CheckResult]:
+def _ml_db_health_checks(mode: str) -> list[CheckResult]:
     path = ROOT / "data" / "ml" / "decisions.db"
     try:
         from ml import db_health
@@ -3435,7 +3665,13 @@ def _ml_db_health_checks() -> list[CheckResult]:
     gaps = result.get("gaps", {}) if isinstance(result.get("gaps"), dict) else {}
     warnings = [str(item) for item in result.get("warnings", [])]
     errors = [str(item) for item in result.get("errors", [])]
-    status = "FAIL" if errors else ("WARN" if warnings else "PASS")
+    try:
+        from ml.db_writer import schema_missing_columns
+
+        schema_missing = schema_missing_columns(path)
+    except Exception as exc:
+        schema_missing = {"schema_check": [f"{type(exc).__name__}: {exc}"]}
+    status = "FAIL" if errors else ("WARN" if warnings or schema_missing else "PASS")
     detail = (
         f"rows={result.get('total_rows')} live={result.get('live_rows')} "
         f"known_gaps={len(gaps.get('known_unrecoverable_ranges') or [])} "
@@ -3443,10 +3679,22 @@ def _ml_db_health_checks() -> list[CheckResult]:
     )
     if errors:
         detail = f"{detail}; errors={', '.join(errors)}"
+    elif schema_missing:
+        detail = f"{detail}; missing_schema_columns={schema_missing}"
     elif warnings:
         detail = f"{detail}; warnings={', '.join(warnings)}"
-    if status == "WARN":
-        result = dict(result)
+    result = dict(result)
+    result["schema_missing_columns"] = schema_missing
+    if schema_missing:
+        result.update(
+            _warning_meta(
+                "ml_schema_missing",
+                accepted=False,
+                action="run python -c \"from ml.db_writer import init_db; init_db()\" before live start",
+                blocked_if_live_start=(mode == "live"),
+            )
+        )
+    elif status == "WARN":
         result.update(_warning_meta("known_data_gap", accepted=True))
     return [CheckResult("ml.decisions_db_health", status, detail, result)]
 
@@ -3515,7 +3763,7 @@ def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, i
         checks.extend(_dashboard_checks())
     checks.extend(_telegram_checks())
     checks.extend(_price_csv_checks())
-    checks.extend(_ml_db_health_checks())
+    checks.extend(_ml_db_health_checks(mode))
     checks.extend(_external_data_readiness_checks(config))
     checks.extend(_candidate_audit_outcome_checks(mode))
     checks.extend(_ops_summary_checks(mode))

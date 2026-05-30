@@ -168,6 +168,8 @@ class V2Phase6Tests(unittest.TestCase):
             )
 
         self.assertEqual(summary["system_health"]["order_unknown_count"], 1)
+        self.assertEqual(summary["system_health"]["order_unknown_event_history_count"], 1)
+        self.assertEqual(summary["system_health"]["current_order_unknown_count"], 1)
         self.assertEqual(len(summary["claude_picks"]), 1)
         self.assertEqual(summary["claude_picks"][0]["path_a"], "timing_adapter")
         self.assertEqual(summary["claude_picks"][0]["path_b"], "claude_price")
@@ -182,6 +184,7 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(summary["path_b_live"]["path_comparison"]["path_a"]["avg_pnl_pct"], 1.25)
         self.assertEqual(summary["path_b_live"]["path_comparison"]["path_b"]["avg_pnl_pct"], 3.73)
         self.assertEqual(summary["lifecycle"]["event_counts"]["ORDER_UNKNOWN"], 1)
+        self.assertEqual(summary["lifecycle"]["order_unknown_event_history_count"], 1)
         self.assertTrue(summary["path_b_live"]["order_unknown"][0]["manual_reconciliation_required"])
 
     def test_ops_summary_counts_carried_pathb_close_in_today_comparison(self):

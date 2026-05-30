@@ -49,7 +49,30 @@ class CandidatePostRankAndUsQualityTests(unittest.TestCase):
         self.assertTrue(row["us_quality_shadow_only"])
         self.assertIn("us_quality_score_shadow", row)
         self.assertIn("us_rs20_shadow", row)
+        self.assertGreater(row["candidate_quality_score"], 0)
+        self.assertIn(row["candidate_quality_grade"], {"A", "B", "C", "D"})
+        self.assertEqual(row["quality_source"], "us_runtime_quality_fallback:v1")
         self.assertNotIn("trainer_prompt_score", row)
+
+    def test_us_quality_fallback_ignores_forward_outcome_fields(self) -> None:
+        base = enrich_us_quality_shadow(
+            {
+                "ticker": "NVDA",
+                "market": "US",
+                "price": 169,
+                "turnover": 200_000_000,
+                "volume_ratio": 2.0,
+                "primary_bucket": "momentum_now",
+                "history_usable_rows": 80,
+                "history_required_rows": 65,
+                "ret_5m_pct": 1.2,
+            }
+        )
+        leaked = enrich_us_quality_shadow({**base, "candidate_quality_score": "", "forward_1d": -99, "pnl_pct": -99})
+
+        self.assertEqual(base["candidate_quality_score"], leaked["candidate_quality_score"])
+        self.assertIn("future_fields_ignored", leaked["candidate_quality_flags"])
+        self.assertIn("forward_1d", leaked["candidate_quality_components"]["ignored_future_fields"])
 
 
 if __name__ == "__main__":

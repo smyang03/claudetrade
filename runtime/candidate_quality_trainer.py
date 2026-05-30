@@ -262,6 +262,19 @@ def score_candidate_for_trainer(
         elif liquidity == "high":
             components["kr_high_liquidity_chase_penalty"] = _trainer_weight("KR_HIGH_LIQUIDITY_CHASE_PENALTY", -2.0)
     else:
+        if _env_bool("CANDIDATE_TRAINER_US_QUALITY_SCORE_ENABLED", False):
+            quality_score = _first_present(row, "candidate_quality_score", default=None)
+            if quality_score not in (None, ""):
+                gaps_raw = row.get("quality_data_gaps") or []
+                if isinstance(gaps_raw, str):
+                    gaps = {gaps_raw}
+                else:
+                    gaps = {str(item) for item in gaps_raw if str(item)}
+                weight = _env_float("CANDIDATE_TRAINER_US_QUALITY_SCORE_WEIGHT", 0.2)
+                gap_multiplier = 0.5 if "history_incomplete" in gaps else 1.0
+                if "ohlcv_missing" in gaps or "history_unavailable" in gaps:
+                    gap_multiplier = 0.0
+                components["us_quality_score_bonus"] = (_as_float(quality_score, 50.0) - 50.0) * weight * gap_multiplier
         if liquidity == "high":
             components["us_high_liquidity"] = _trainer_weight("US_HIGH_LIQUIDITY", 14.0)
         elif liquidity == "mid":

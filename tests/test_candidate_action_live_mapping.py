@@ -400,6 +400,49 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertFalse(throttled)
         self.assertEqual(stale_pathb.refresh_calls, [("KR", True, 120)])
 
+    def test_universe_filter_bypass_writes_structured_diagnostics(self) -> None:
+        bot = _make_bot()
+        rows = [
+            {"ticker": f"OUT{idx}", "market": "US", "source": "yf", "primary_bucket": "momentum_now", "category": "day_gainers"}
+            for idx in range(10)
+        ] + [
+            {"ticker": "IN0", "market": "US", "source": "kis", "primary_bucket": "liquidity_leader", "category": "most_actives"}
+        ]
+
+        with patch.dict(os.environ, {"UNIVERSE_FILTER_MIN_KEEP": "5", "UNIVERSE_FILTER_MIN_RATIO": "0.80"}):
+            filtered = TradingBot._restrict_candidates_to_universe(bot, rows, allowed_tickers=["IN0"])
+
+        self.assertEqual(filtered, rows)
+        self.assertTrue(bot._last_universe_filter_bypass["bypassed"])
+        self.assertEqual(bot._last_universe_filter_bypass["filtered_by_source"]["yf"], 10)
+        self.assertEqual(bot._last_universe_filter_bypass["filtered_by_primary_bucket"]["momentum_now"], 10)
+        event = [item for item in bot._gate_events if item[0] == "universe_filter_bypass"][0]
+        self.assertEqual(event[1], "US")
+        self.assertEqual(event[2]["sample_filtered_tickers"][0], "OUT0")
+
+    def test_us_quality_fallback_is_not_tied_to_shadow_flag(self) -> None:
+        bot = _make_bot()
+        with patch.dict(os.environ, {"US_QUALITY_SHADOW_ENABLED": "false"}, clear=False):
+            row = TradingBot._enrich_us_candidate_quality_shadow(
+                bot,
+                "US",
+                {
+                    "ticker": "NVDA",
+                    "market": "US",
+                    "price": 169,
+                    "turnover": 200_000_000,
+                    "volume_ratio": 2.0,
+                    "primary_bucket": "momentum_now",
+                    "history_usable_rows": 80,
+                    "history_required_rows": 65,
+                },
+                None,
+            )
+
+        self.assertEqual(row["quality_source"], "us_runtime_quality_fallback:v1")
+        self.assertIn("candidate_quality_score", row)
+        self.assertNotIn("us_quality_score_shadow", row)
+
     def test_screener_filter_audit_writes_data_insufficient_shadow_row(self) -> None:
         bot = _make_bot()
         bot.is_paper = False
@@ -452,6 +495,11 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(row["history_status"], "DATA_INSUFFICIENT")
         self.assertEqual(row["history_usable_rows"], 23)
         self.assertEqual(row["history_required_rows"], 65)
+        payload = json.loads(row["payload_json"])
+        self.assertEqual(payload["failure_kind"], "")
+        self.assertEqual(payload["usable_rows"], 23)
+        self.assertEqual(payload["required_rows"], 65)
+        self.assertEqual(payload["prompt_excluded_reason"], "data_insufficient(23usable)")
 
     def test_v2_fixed_sizing_applies_us_early_entry_budget_multiplier(self) -> None:
         fixed = FixedSizingResult(

@@ -141,6 +141,28 @@ class KrOhlcvFallbackTests(unittest.TestCase):
         self.assertEqual(row["data_quality"], "DATA_INSUFFICIENT_SHADOW")
         self.assertEqual(row["history_status"], "DATA_INSUFFICIENT")
         self.assertEqual(payload["phase"], "session_open")
+        self.assertEqual(payload["failure_kind"], "too_few_rows")
+        self.assertEqual(payload["usable_rows"], 0)
+        self.assertEqual(payload["required_rows"], bot._MIN_SIGNAL_ROWS)
+        self.assertEqual(payload["failure_count"], 1)
+        self.assertEqual(payload["prompt_excluded_reason"], "data_insufficient(0usable)")
+
+    def test_repeated_history_insufficient_candidate_enters_prompt_cooldown(self) -> None:
+        bot = self._bot()
+        bot._get_ohlcv_cached = lambda ticker, market: _daily_frame(100)
+
+        with patch.dict(os.environ, {"DATA_INSUFFICIENT_WATCH_MIN_USABLE": "40"}):
+            first = bot._filter_candidates_by_history([{"ticker": "439960", "price": 120.0}], "KR")
+            second = bot._filter_candidates_by_history([{"ticker": "439960", "price": 120.0}], "KR")
+
+        self.assertEqual(len(first), 1)
+        self.assertEqual(first[0]["selection_bias"], "watch_only")
+        self.assertEqual(second, [])
+        shadow = bot._last_data_insufficient_candidates["KR"][0]
+        self.assertEqual(shadow["selection_bias"], "shadow_only")
+        self.assertEqual(shadow["history_status"], "DATA_INSUFFICIENT_COOLDOWN")
+        self.assertEqual(shadow["failure_count"], 2)
+        self.assertTrue(shadow["cooldown_until"])
 
     def test_get_ohlcv_cached_uses_fresh_csv_without_on_demand(self) -> None:
         bot = self._bot()

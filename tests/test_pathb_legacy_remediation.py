@@ -188,7 +188,17 @@ class PathBLegacyRemediationTests(unittest.TestCase):
             self.assertEqual(plan["summary"]["stale_active_items"], 2)
             self.assertGreaterEqual(plan["summary"]["missing_lifecycle_event_items"], 2)
             self.assertEqual(plan["summary"]["event_payload_link_items"], 1)
+            self.assertIn("apply_eligible_items", plan["summary"])
             self.assertFalse(plan["order_unknown"][0]["production_write"])
+            by_path = {item["path_run_id"]: item for item in plan["order_unknown"] + plan["stale_active"]}
+            self.assertFalse(by_path["path_current_unknown"]["apply_eligible"])
+            self.assertEqual(
+                by_path["path_current_unknown"]["apply_block_reason"],
+                "current_session_operator_review_required",
+            )
+            self.assertFalse(by_path["path_prev_unknown"]["apply_eligible"])
+            self.assertEqual(by_path["path_prev_unknown"]["apply_block_reason"], "broker_exposure_or_fill_found")
+            self.assertTrue(by_path["path_prev_filled"]["apply_eligible"])
             self.assertEqual(store.find_path_run("path_prev_unknown")["status"], "ORDER_UNKNOWN")
             self.assertEqual(store.find_path_run("path_prev_filled")["status"], "FILLED")
 

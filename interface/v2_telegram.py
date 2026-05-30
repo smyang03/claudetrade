@@ -122,13 +122,15 @@ def _format_health(summary: dict[str, Any]) -> str:
     health = summary.get("system_health") or {}
     broker_truth = summary.get("broker_truth") or {}
     markets = broker_truth.get("markets") if isinstance(broker_truth.get("markets"), dict) else {}
+    current_order_unknown = health.get("current_order_unknown_count", health.get("order_unknown_count", 0))
+    event_history_order_unknown = health.get("order_unknown_event_history_count", health.get("order_unknown_count", 0))
     lines = [
         "<b>V2 상태 점검</b>",
         f"봇 실행: {_ko_bool(health.get('bot_alive'))}",
         f"브로커: KR={_ko_health_status(health.get('broker_status', {}).get('KR'))} US={_ko_health_status(health.get('broker_status', {}).get('US'))}",
         f"웹소켓: {_ko_health_status(health.get('websocket_status'))}",
-        f"주문상태 불명: {health.get('order_unknown_count', 0)}",
-        f"ORDER_UNKNOWN: {health.get('order_unknown_count', 0)}",
+        f"주문상태 불명: {current_order_unknown}",
+        f"ORDER_UNKNOWN: {current_order_unknown} (event_history={event_history_order_unknown})",
         f"미해결 주문: {health.get('unresolved_pending_orders', 0)}",
         f"마지막 생명주기 이벤트: {health.get('last_lifecycle_event_time') or '-'}",
         f"broker_truth: KR={_ko_bool('KR' in markets)} US={_ko_bool('US' in markets)}",

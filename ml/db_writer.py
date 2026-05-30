@@ -13,6 +13,8 @@ ml/db_writer.py — ML 의사결정 로그 DB 인터페이스
   - 진단 데이터 오버플로우는 diag_json TEXT에 직렬화
   - DB 오류는 예외를 삼키고 -1 반환 (봇 중단 방지)
 """
+from __future__ import annotations
+
 import sqlite3
 import json
 import os
@@ -40,6 +42,18 @@ _V2_LEARNING_PERFORMANCE_MIGRATIONS = {
     "discovery_reason": "TEXT",
     "discovery_overlay_rank": "INTEGER",
     "quality_reasons_json": "TEXT NOT NULL DEFAULT '[]'",
+}
+
+_DECISIONS_MIGRATIONS = {
+    "strategy_used": "TEXT",
+    "data_source": "TEXT DEFAULT 'live'",
+    "is_simulated": "INTEGER DEFAULT 0",
+    "entry_priority_score": "REAL",
+}
+
+_REQUIRED_SCHEMA_COLUMNS = {
+    "v2_learning_performance": _V2_LEARNING_PERFORMANCE_MIGRATIONS,
+    "decisions": _DECISIONS_MIGRATIONS,
 }
 
 # ── logger ────────────────────────────────────────────────────────────────────
@@ -98,6 +112,30 @@ def _ensure_existing_table_columns(
             _log.info("[ml.db] %s.%s 컬럼 마이그레이션 완료", table, name)
 
 
+def required_schema_columns() -> dict[str, dict[str, str]]:
+    """Return DB columns that init_db() can add to older production databases."""
+    return {table: dict(columns) for table, columns in _REQUIRED_SCHEMA_COLUMNS.items()}
+
+
+def schema_missing_columns(path: str | Path | None = None) -> dict[str, list[str]]:
+    """Read-only schema check for preflight; does not create or migrate tables."""
+    db_path = Path(path).expanduser().resolve() if path else _resolve_db_path()
+    if not db_path.exists():
+        return {}
+    missing: dict[str, list[str]] = {}
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)
+    try:
+        for table, required in required_schema_columns().items():
+            rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+            found = {str(row[1]) for row in rows}
+            table_missing = [name for name in required if name not in found]
+            if table_missing:
+                missing[table] = table_missing
+    finally:
+        conn.close()
+    return missing
+
+
 def init_db():
     """DB 초기화 — schema.sql 실행 + 기존 DB 컬럼 마이그레이션."""
     sql = _SCHEMA_PATH.read_text(encoding="utf-8")
@@ -110,20 +148,7 @@ def init_db():
             _V2_LEARNING_PERFORMANCE_MIGRATIONS,
         )
         conn.executescript(sql)
-        # 기존 DB에 strategy_used 컬럼 없으면 추가 (ALTER TABLE은 IF NOT EXISTS 미지원)
-        existing = {row[1] for row in conn.execute("PRAGMA table_info(decisions)")}
-        if "strategy_used" not in existing:
-            conn.execute("ALTER TABLE decisions ADD COLUMN strategy_used TEXT")
-            _log.info("[ml.db] strategy_used 컬럼 마이그레이션 완료")
-        if "data_source" not in existing:
-            conn.execute("ALTER TABLE decisions ADD COLUMN data_source TEXT DEFAULT 'live'")
-            _log.info("[ml.db] data_source 컬럼 마이그레이션 완료")
-        if "is_simulated" not in existing:
-            conn.execute("ALTER TABLE decisions ADD COLUMN is_simulated INTEGER DEFAULT 0")
-            _log.info("[ml.db] is_simulated 컬럼 마이그레이션 완료")
-        if "entry_priority_score" not in existing:
-            conn.execute("ALTER TABLE decisions ADD COLUMN entry_priority_score REAL")
-            _log.info("[ml.db] entry_priority_score 컬럼 마이그레이션 완료")
+        _ensure_existing_table_columns(conn, "decisions", _DECISIONS_MIGRATIONS)
 
     # param_sessions 테이블 (Claude 파라미터 검토 레이어)
     try:

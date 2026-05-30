@@ -108,6 +108,26 @@ class MLDbWriterPathTests(unittest.TestCase):
             self.assertIn("quality_reasons_json", columns)
             self.assertIn("idx_v2_learning_perf_experiment", indexes)
 
+    def test_schema_missing_columns_is_read_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_db = Path(tmp) / "decisions.db"
+            conn = sqlite3.connect(str(temp_db))
+            try:
+                conn.execute("CREATE TABLE decisions (id INTEGER PRIMARY KEY)")
+                conn.execute("CREATE TABLE v2_learning_performance (v2_decision_id TEXT PRIMARY KEY)")
+                conn.commit()
+            finally:
+                conn.close()
+
+            before = temp_db.stat().st_mtime_ns
+            missing = db_writer.schema_missing_columns(temp_db)
+            after = temp_db.stat().st_mtime_ns
+
+            self.assertIn("data_source", missing["decisions"])
+            self.assertIn("entry_priority_score", missing["decisions"])
+            self.assertIn("candidate_pool_role", missing["v2_learning_performance"])
+            self.assertEqual(before, after)
+
     def test_load_for_ml_defaults_to_live_non_sim_outside_known_gap(self):
         with tempfile.TemporaryDirectory() as tmp:
             temp_db = Path(tmp) / "decisions.db"

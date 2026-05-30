@@ -441,20 +441,20 @@ def _top_by_mfe(
 
 def _miss_stage(classification: str) -> str:
     mapping = {
-        "not_in_prompt": "prompt",
-        "in_prompt_not_selected": "claude",
-        "watch_only": "claude_watch",
-        "ready_no_signal": "signal",
+        "not_in_prompt": "selection_not_in_prompt",
+        "in_prompt_not_selected": "claude_not_selected",
+        "watch_only": "claude_not_selected",
+        "ready_no_signal": "strategy_no_signal",
     }
     return mapping.get(classification, "unknown")
 
 
 def _miss_type(classification: str) -> str:
     mapping = {
-        "not_in_prompt": "not_in_prompt",
+        "not_in_prompt": "selection_not_in_prompt",
         "in_prompt_not_selected": "claude_not_selected",
-        "watch_only": "watch_only",
-        "ready_no_signal": "ready_no_signal",
+        "watch_only": "claude_not_selected",
+        "ready_no_signal": "strategy_no_signal",
     }
     return mapping.get(classification, classification or "unknown")
 
@@ -485,6 +485,25 @@ def missed_winners(
             sample_count = payload.get("sample_count")
         except Exception:
             sample_count = None
+        miss_stage = _miss_stage(classification)
+        miss_type = _miss_type(classification)
+        if classification in {"watch_only", "ready_no_signal"}:
+            try:
+                bucket, _reason = _watch_only_primary_bucket(row)
+                bucket_map = {
+                    "not_in_prompt": "selection_not_in_prompt",
+                    "claude_not_selected": "claude_not_selected",
+                    "risk_or_affordability": "risk_or_affordability_block",
+                    "strategy_no_signal": "strategy_no_signal",
+                    "pathb_zone_or_plan": "pathb_zone_or_plan",
+                    "routing_demotion": "risk_or_affordability_block",
+                    "data_insufficient": "prompt_trim_miss",
+                    "evidence_ceiling": "prompt_trim_miss",
+                }
+                miss_stage = bucket_map.get(bucket, miss_stage)
+                miss_type = bucket
+            except Exception:
+                pass
         items.append(
             {
                 "candidate_key": row.get("candidate_key"),
@@ -494,8 +513,8 @@ def missed_winners(
                 "known_at": row.get("known_at"),
                 "ticker": row.get("ticker"),
                 "classification": classification,
-                "miss_type": _miss_type(classification),
-                "miss_stage": _miss_stage(classification),
+                "miss_type": miss_type,
+                "miss_stage": miss_stage,
                 "return_pct": _round(_to_float(row.get("return_pct"))),
                 "max_runup_pct": _round(mfe),
                 "max_drawdown_pct": _round(mae),
@@ -600,11 +619,15 @@ def _outcome_coverage(
         dict(row)
         for row in conn.execute(
             f"""
-            SELECT o.horizon_min, COALESCE(o.status, 'unknown') AS status, COUNT(*) AS rows
+            SELECT o.horizon_min,
+                   COALESCE(o.status, 'unknown') AS status,
+                   COALESCE(r.classification, 'unknown') AS classification,
+                   o.payload_json,
+                   COUNT(*) AS rows
             FROM audit_candidate_rows r
             JOIN audit_candidate_outcomes o ON o.candidate_key = r.candidate_key
             WHERE {where}
-            GROUP BY o.horizon_min, COALESCE(o.status, 'unknown')
+            GROUP BY o.horizon_min, COALESCE(o.status, 'unknown'), COALESCE(r.classification, 'unknown'), o.payload_json
             ORDER BY o.horizon_min ASC, rows DESC
             """,
             params,
@@ -615,16 +638,34 @@ def _outcome_coverage(
         horizon = str(int(row.get("horizon_min") or 0))
         item = by_horizon.setdefault(
             horizon,
-            {"total": 0, "audit_sparse": 0, "insufficient_samples": 0, "status_counts": {}},
+            {
+                "total": 0,
+                "audit_sparse": 0,
+                "insufficient_samples": 0,
+                "status_counts": {},
+                "classification_counts": {},
+                "coverage_gap_reasons": {},
+            },
         )
         status = str(row.get("status") or "unknown")
+        classification = str(row.get("classification") or "unknown")
         count = int(row.get("rows") or 0)
         item["total"] += count
-        item["status_counts"][status] = count
+        item["status_counts"][status] = item["status_counts"].get(status, 0) + count
+        item["classification_counts"][classification] = item["classification_counts"].get(classification, 0) + count
         if status == "audit_sparse":
-            item["audit_sparse"] = count
+            item["audit_sparse"] = item.get("audit_sparse", 0) + count
         elif status == "insufficient_samples":
-            item["insufficient_samples"] = count
+            item["insufficient_samples"] = item.get("insufficient_samples", 0) + count
+        if status != "audit_sparse":
+            reason = status
+            try:
+                payload = json.loads(str(row.get("payload_json") or "{}"))
+                reason = str(payload.get("reason") or payload.get("quote_invalid_reason") or status)
+            except Exception:
+                reason = status
+            reason_map = item["coverage_gap_reasons"]
+            reason_map[reason] = reason_map.get(reason, 0) + count
     for item in by_horizon.values():
         total = int(item.get("total") or 0)
         audit_sparse = int(item.get("audit_sparse") or 0)
@@ -981,6 +1022,7 @@ def routing_delta_summary(*, session_date: str = "", market: str = "") -> dict[s
     raw = stages.get("raw") if isinstance(stages.get("raw"), dict) else {}
     normalized = stages.get("normalized") if isinstance(stages.get("normalized"), dict) else {}
     applied = stages.get("applied") if isinstance(stages.get("applied"), dict) else {}
+    selection_delta = latest.get("selection_delta") if isinstance(latest.get("selection_delta"), dict) else {}
     routes = latest.get("candidate_action_routes") if isinstance(latest.get("candidate_action_routes"), list) else []
     reason_counts: Counter[str] = Counter()
     final_action_counts: Counter[str] = Counter()
@@ -1002,9 +1044,39 @@ def routing_delta_summary(*, session_date: str = "", market: str = "") -> dict[s
                     "reason": reason,
                 }
             )
-    raw_ready = [str(t).upper() for t in raw.get("trade_ready") or []]
-    normalized_ready = [str(t).upper() for t in normalized.get("trade_ready") or []]
-    applied_ready = [str(t).upper() for t in applied.get("trade_ready") or []]
+    raw_ready = [
+        str(t).upper()
+        for t in (
+            selection_delta.get("raw_trade_ready")
+            or latest.get("raw_trade_ready")
+            or raw.get("trade_ready")
+            or []
+        )
+    ]
+    normalized_ready = [
+        str(t).upper()
+        for t in (
+            selection_delta.get("normalized_trade_ready")
+            or latest.get("normalized_trade_ready")
+            or normalized.get("trade_ready")
+            or []
+        )
+    ]
+    applied_ready = [
+        str(t).upper()
+        for t in (
+            selection_delta.get("applied_trade_ready")
+            or latest.get("applied_trade_ready")
+            or applied.get("trade_ready")
+            or []
+        )
+    ]
+    runtime_filtered = latest.get("runtime_filtered") or selection_delta.get("runtime_filtered") or {}
+    runtime_filtered_reason_counts = (
+        latest.get("runtime_filtered_reason_counts")
+        or selection_delta.get("runtime_filtered_reason_counts")
+        or dict(Counter(str(value) for value in runtime_filtered.values()).most_common())
+    )
     return {
         "exists": True,
         "status": "ok",
@@ -1020,9 +1092,12 @@ def routing_delta_summary(*, session_date: str = "", market: str = "") -> dict[s
         "raw_trade_ready": raw_ready,
         "normalized_trade_ready": normalized_ready,
         "applied_trade_ready": applied_ready,
-        "dropped_after_raw": sorted(set(raw_ready) - set(applied_ready)),
-        "runtime_filtered": latest.get("runtime_filtered") or {},
+        "dropped_after_raw": list(selection_delta.get("dropped_after_raw") or latest.get("dropped_after_raw") or sorted(set(raw_ready) - set(applied_ready))),
+        "runtime_filtered": runtime_filtered,
+        "runtime_filtered_reason_counts": runtime_filtered_reason_counts,
         "runtime_filtered_count": int(latest.get("runtime_filtered_count") or 0),
+        "selection_delta": selection_delta,
+        "universe_filter_bypass": latest.get("universe_filter_bypass") or {},
         "pathb_wait_tickers": latest.get("pathb_wait_tickers") or [],
         "route_reason_counts": dict(reason_counts.most_common()),
         "final_action_counts": dict(final_action_counts.most_common()),

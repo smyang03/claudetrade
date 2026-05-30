@@ -15659,7 +15659,10 @@ function renderCandidateAuditRoutingDelta(summary) {
   const dropped = summary.dropped_after_raw || [];
   const runtimeFiltered = summary.runtime_filtered || {};
   const reasons = summary.route_reason_counts || {};
+  const runtimeReasons = summary.runtime_filtered_reason_counts || {};
+  const universe = summary.universe_filter_bypass || {};
   const reasonRows = Object.keys(reasons).sort((a, b) => Number(reasons[b] || 0) - Number(reasons[a] || 0)).slice(0, 8);
+  const runtimeReasonRows = Object.keys(runtimeReasons).sort((a, b) => Number(runtimeReasons[b] || 0) - Number(runtimeReasons[a] || 0)).slice(0, 8);
   el.innerHTML = `<div class="audit-note" style="margin-bottom:8px">
     ${auditLabel(auditShortTime(summary.latest_at))} · raw ${auditInt(summary.raw_trade_ready_count)} → normalized ${auditInt(summary.normalized_trade_ready_count)} → applied ${auditInt(summary.applied_trade_ready_count)}
   </div>
@@ -15668,6 +15671,8 @@ function renderCandidateAuditRoutingDelta(summary) {
     <tbody>
       <tr><td>dropped</td><td class="audit-reason">${auditLabel(dropped.join(', '))}</td></tr>
       <tr><td>runtime filtered</td><td class="audit-reason">${auditLabel(Object.keys(runtimeFiltered).map(k => `${k}:${runtimeFiltered[k]}`).join(', '))}</td></tr>
+      <tr><td>runtime reasons</td><td class="audit-reason">${auditLabel(runtimeReasonRows.map(k => `${k}:${runtimeReasons[k]}`).join(', '))}</td></tr>
+      <tr><td>universe bypass</td><td class="audit-reason">${auditLabel(universe.bypassed ? `bypassed ${auditInt(universe.filtered_count)}/${auditInt(universe.candidate_count)}` : 'none')}</td></tr>
       <tr><td>PathB wait</td><td class="audit-reason">${auditLabel((summary.pathb_wait_tickers || []).join(', '))}</td></tr>
       <tr><td>route reasons</td><td class="audit-reason">${auditLabel(reasonRows.map(k => `${k}:${reasons[k]}`).join(', '))}</td></tr>
     </tbody>

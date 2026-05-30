@@ -341,6 +341,36 @@ def _risk_axes(latest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _pathb_remediation_snapshot(mode: str) -> dict[str, Any]:
+    try:
+        from tools.pathb_legacy_remediation import build_report
+
+        report = build_report(mode=mode, limit=200)
+    except Exception as exc:
+        return {"available": False, "error": str(exc)[:300]}
+    plan = report.get("remediation_plan") if isinstance(report.get("remediation_plan"), dict) else {}
+    plan_rows = list(plan.get("order_unknown") or []) + list(plan.get("stale_active") or [])
+    current_rows = [
+        row for row in plan_rows
+        if isinstance(row, dict) and str(row.get("category") or "").startswith("current_")
+    ]
+    previous_rows = [
+        row for row in plan_rows
+        if isinstance(row, dict) and not str(row.get("category") or "").startswith("current_")
+    ]
+    return {
+        "available": True,
+        "dry_run": bool(report.get("dry_run")),
+        "write_supported": bool(report.get("write_supported")),
+        "current_order_unknown_count": int((report.get("order_unknown") or {}).get("current_count") or 0),
+        "previous_order_unknown_count": int((report.get("order_unknown") or {}).get("previous_count") or 0),
+        "stale_active_count": int((report.get("stale_active") or {}).get("count") or 0),
+        "apply_eligible_items": int((plan.get("summary") or {}).get("apply_eligible_items") or 0),
+        "current_session_rows": current_rows[:20],
+        "previous_session_cleanup_candidates": previous_rows[:30],
+    }
+
+
 class OvernightMonitor:
     def __init__(
         self,
@@ -671,6 +701,7 @@ class OvernightMonitor:
             "api_usage_today": api_usage,
             "api_usage_delta_since_start": _usage_delta(api_usage, self.baseline_usage),
             "order_unknown_event_count_us_total": len(recent_unknown),
+            "pathb_remediation": _pathb_remediation_snapshot(self.mode),
             "pid_state": [
                 _pid_state("trading_bot", get_runtime_path("state", f"{self.mode}_trading_bot.pid")),
                 _pid_state("dashboard", get_runtime_path("state", "dashboard_server.pid")),
@@ -747,6 +778,7 @@ class OvernightMonitor:
         latest = report.get("latest_snapshot") or {}
         broker = latest.get("broker_truth") or {}
         guardian = latest.get("guardian") or {}
+        pathb_remediation = latest.get("pathb_remediation") or {}
         usage = latest.get("api_usage_delta_since_start") or {}
         claude = report.get("claude_usage_since_start") or {}
         hold_cost = report.get("hold_advisor_cost_observation") or {}
@@ -776,9 +808,26 @@ class OvernightMonitor:
             f"- local_unresolved_state: protected={risk_axes.get('protected_positions')} order_unknown_events={risk_axes.get('order_unknown_events')}",
             f"- manual_action_required: {risk_axes.get('manual_action_required')}",
             "",
+            "## PathB Remediation Separation",
+            "",
+            f"- available: {pathb_remediation.get('available')} dry_run={pathb_remediation.get('dry_run')} write_supported={pathb_remediation.get('write_supported')}",
+            f"- current_session_order_unknown: {pathb_remediation.get('current_order_unknown_count')} rows={len(pathb_remediation.get('current_session_rows') or [])}",
+            f"- previous_session_order_unknown: {pathb_remediation.get('previous_order_unknown_count')}",
+            f"- previous_session_stale_active: {pathb_remediation.get('stale_active_count')}",
+            f"- apply_eligible_items: {pathb_remediation.get('apply_eligible_items')}",
+            "",
             "## Trading Events Since Monitor Start",
             "",
         ]
+        cleanup_rows = pathb_remediation.get("previous_session_cleanup_candidates") or []
+        if cleanup_rows:
+            lines.extend(["", "### Previous-Session Cleanup Candidates", ""])
+            for row in cleanup_rows[:12]:
+                lines.append(
+                    f"- {row.get('market')} {row.get('ticker')} {row.get('status')} "
+                    f"action={row.get('recommended_action')} apply={row.get('apply_eligible')} "
+                    f"block={row.get('apply_block_reason')}"
+                )
         decisions = report.get("decision_events_since_start") or []
         if decisions:
             for row in decisions[-40:]:

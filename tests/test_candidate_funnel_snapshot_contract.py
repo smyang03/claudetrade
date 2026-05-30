@@ -179,6 +179,45 @@ class CandidateFunnelSnapshotContractTests(unittest.TestCase):
             "trainer_replacement_delta_blocked",
         )
 
+    def test_snapshot_exposes_raw_to_applied_trade_ready_delta(self) -> None:
+        class DummyBot:
+            def __init__(self) -> None:
+                self.events: list[tuple[str, str, dict]] = []
+                self._last_universe_filter_bypass = {"bypassed": True, "filtered_count": 2}
+
+            def _write_funnel_event(self, event_type: str, market: str, payload: dict) -> None:
+                self.events.append((event_type, market, payload))
+
+        bot = DummyBot()
+
+        TradingBot._record_candidate_funnel_snapshot(
+            bot,
+            "US",
+            selected=["CRWD", "HOOD"],
+            meta={
+                "watchlist": ["CRWD", "HOOD"],
+                "trade_ready": ["CRWD"],
+                "_runtime_filtered_trade_ready": {"HOOD": "already_holding"},
+                "_candidate_action_routes": [
+                    {"ticker": "HOOD", "original_action": "BUY_READY", "final_action": "WATCH", "reason": "already_holding"}
+                ],
+            },
+            stages={
+                "raw": {"trade_ready": ["CRWD", "HOOD"]},
+                "normalized": {"trade_ready": ["CRWD", "HOOD"]},
+                "applied": {"trade_ready": ["CRWD"]},
+            },
+        )
+
+        payload = bot.events[0][2]
+        self.assertEqual(payload["raw_trade_ready"], ["CRWD", "HOOD"])
+        self.assertEqual(payload["applied_trade_ready"], ["CRWD"])
+        self.assertEqual(payload["dropped_after_raw"], ["HOOD"])
+        self.assertEqual(payload["runtime_filtered_reason_counts"], {"already_holding": 1})
+        self.assertEqual(payload["candidate_action_routes"][0]["drop_stage"], "runtime_filter")
+        self.assertEqual(payload["candidate_action_routes"][0]["drop_reason"], "already_holding")
+        self.assertTrue(payload["universe_filter_bypass"]["bypassed"])
+
 
 if __name__ == "__main__":
     unittest.main()

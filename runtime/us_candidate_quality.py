@@ -4,6 +4,25 @@ from typing import Any
 
 
 US_QUALITY_SHADOW_VERSION = "us_quality_shadow_v1"
+US_RUNTIME_QUALITY_VERSION = "us_runtime_quality_fallback:v1"
+
+FUTURE_LABEL_FIELDS = {
+    "forward_1d",
+    "forward_3d",
+    "forward_5d",
+    "forward_30m_from_bucket",
+    "forward_60m_from_bucket",
+    "forward_close_from_bucket",
+    "return_pct",
+    "max_runup_pct",
+    "max_drawdown_pct",
+    "mfe30",
+    "mfe60",
+    "mae30",
+    "mae60",
+    "pnl_pct",
+    "filled_count",
+}
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
@@ -26,6 +45,170 @@ def _series_value(frame: Any, column: str, index: int) -> float:
         return _as_float(frame.iloc[index][column])
     except Exception:
         return 0.0
+
+
+def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
+    return max(low, min(high, float(value)))
+
+
+def _as_list(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, dict):
+        return [str(key) for key, enabled in value.items() if enabled and str(key).strip()]
+    try:
+        return [str(item) for item in value if str(item).strip()]
+    except Exception:
+        return [str(value)]
+
+
+def _grade(score: float) -> str:
+    if score >= 80.0:
+        return "A"
+    if score >= 65.0:
+        return "B"
+    if score >= 50.0:
+        return "C"
+    return "D"
+
+
+def _bucket_score(bucket: str) -> float:
+    value = str(bucket or "").strip().lower()
+    if value in {"momentum_now", "opening_range_pullback", "liquidity_leader"}:
+        return 82.0
+    if value in {"gap_pullback", "volume_surge", "most_active", "most_actives"}:
+        return 68.0
+    if value in {"day_gainer", "day_gainers", "gainers"}:
+        return 62.0
+    if value in {"unclassified", "unknown", ""}:
+        return 45.0
+    return 55.0
+
+
+def _liquidity_score(row: dict[str, Any], gaps: list[str]) -> float:
+    turnover = _as_float(row.get("turnover") or row.get("dollar_volume") or row.get("dollar_vol"), 0.0)
+    price = _as_float(row.get("price") or row.get("current_price"), 0.0)
+    volume = _as_float(row.get("volume"), 0.0)
+    if turnover <= 0 and price > 0 and volume > 0:
+        turnover = price * volume
+    volume_ratio = _as_float(row.get("volume_ratio") or row.get("vol_ratio"), 0.0)
+    score = 45.0
+    if turnover > 0:
+        if turnover >= 100_000_000:
+            score += 32.0
+        elif turnover >= 25_000_000:
+            score += 24.0
+        elif turnover >= 5_000_000:
+            score += 14.0
+        else:
+            score += 4.0
+    else:
+        gaps.append("turnover_missing")
+    if volume_ratio > 0:
+        score += max(-8.0, min(18.0, (volume_ratio - 1.0) * 7.0))
+    else:
+        gaps.append("volume_ratio_missing")
+    return _clamp(score)
+
+
+def _momentum_score(row: dict[str, Any], gaps: list[str]) -> float:
+    values: list[float] = []
+    for key in ("ret_3m_pct", "ret_5m_pct", "ret_10m_pct", "ret_30m_pct"):
+        if row.get(key) not in (None, ""):
+            values.append(_as_float(row.get(key), 0.0))
+    for key in ("us_rs20_shadow", "us_rs60_shadow", "change_pct", "change_rate"):
+        if row.get(key) not in (None, ""):
+            values.append(_as_float(row.get(key), 0.0))
+    if not values:
+        gaps.append("recent_momentum_missing")
+        return 48.0
+    avg = sum(values) / max(1, len(values))
+    return _clamp(52.0 + avg * 4.0)
+
+
+def _history_score(row: dict[str, Any], gaps: list[str]) -> float:
+    required = int(_as_float(row.get("history_required_rows"), 0.0))
+    usable = int(_as_float(row.get("history_usable_rows"), 0.0))
+    if required <= 0:
+        gaps.append("history_required_rows_missing")
+        return 58.0
+    ratio = _clamp(usable / max(1, required), 0.0, 1.0)
+    if ratio < 1.0:
+        gaps.append("history_incomplete")
+    return _clamp(35.0 + ratio * 65.0)
+
+
+def enrich_us_runtime_quality_fallback(
+    candidate: dict[str, Any],
+    candles: Any = None,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Attach a live-known common candidate quality score for US rows."""
+
+    row = dict(candidate or {})
+    if not overwrite and row.get("candidate_quality_score") not in (None, ""):
+        return row
+    gaps = _as_list(row.get("quality_data_gaps")) + _as_list(row.get("bucket_data_gaps"))
+    gaps += _as_list(row.get("us_quality_data_gaps"))
+
+    if candles is not None and not row.get("history_usable_rows"):
+        try:
+            row["history_usable_rows"] = int(len(candles))
+        except Exception:
+            pass
+
+    liquidity = _liquidity_score(row, gaps)
+    momentum = _momentum_score(row, gaps)
+    history = _history_score(row, gaps)
+    bucket = _bucket_score(str(row.get("primary_bucket") or row.get("category") or ""))
+
+    data_gap_count = len({gap for gap in gaps if gap})
+    risk_penalty = min(18.0, data_gap_count * 2.5)
+    data_quality = str(row.get("data_quality") or row.get("history_status") or "").strip().lower()
+    if data_quality in {"bad", "missing", "invalid", "history_unavailable", "data_insufficient"}:
+        risk_penalty += 10.0
+
+    score = (
+        liquidity * 0.25
+        + momentum * 0.30
+        + history * 0.20
+        + bucket * 0.15
+        + 10.0
+        - risk_penalty
+    )
+    score = _clamp(score)
+    ignored_future = sorted(key for key in FUTURE_LABEL_FIELDS if key in row)
+    flags: list[str] = []
+    if data_gap_count:
+        flags.append("quality_data_gap")
+    if "history_incomplete" in gaps:
+        flags.append("history_incomplete")
+    if ignored_future:
+        flags.append("future_fields_ignored")
+
+    components = {
+        "version": US_RUNTIME_QUALITY_VERSION,
+        "liquidity_turnover": round(liquidity, 4),
+        "recent_momentum": round(momentum, 4),
+        "history_completeness": round(history, 4),
+        "bucket_support": round(bucket, 4),
+        "risk_data_gap_penalty": round(-risk_penalty, 4),
+        "ignored_future_fields": ignored_future,
+    }
+    row.update(
+        {
+            "candidate_quality_score": round(score, 4),
+            "candidate_quality_grade": _grade(score),
+            "candidate_quality_components": components,
+            "candidate_quality_flags": sorted(set(_as_list(row.get("candidate_quality_flags")) + flags)),
+            "quality_data_gaps": sorted({gap for gap in gaps if gap}),
+            "quality_source": US_RUNTIME_QUALITY_VERSION,
+        }
+    )
+    return row
 
 
 def enrich_us_quality_shadow(candidate: dict[str, Any], candles: Any = None) -> dict[str, Any]:
@@ -98,4 +281,4 @@ def enrich_us_quality_shadow(candidate: dict[str, Any], candles: Any = None) -> 
     row["us_quality_score_shadow"] = round(max(0.0, min(100.0, score)), 4)
     row["us_quality_data_gaps"] = sorted(set(gaps))
     row["us_quality_shadow_only"] = True
-    return row
+    return enrich_us_runtime_quality_fallback(row, candles)

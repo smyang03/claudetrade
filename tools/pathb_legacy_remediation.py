@@ -259,7 +259,27 @@ def _status_action(status: str) -> str:
     return "manual_review"
 
 
+def _apply_gate(row: dict[str, Any], *, category: str) -> tuple[bool, str]:
+    evidence = row.get("broker_truth_evidence") if isinstance(row.get("broker_truth_evidence"), dict) else {}
+    if str(category or "").startswith("current_"):
+        return False, "current_session_operator_review_required"
+    if not evidence.get("snapshot_loaded") or not evidence.get("market_present"):
+        return False, "broker_truth_unavailable"
+    if evidence.get("fresh") is not True or evidence.get("trusted") is not True:
+        return False, "broker_truth_not_fresh_trusted"
+    if str(evidence.get("evidence_state") or "") == "missing_broker_truth":
+        return False, "broker_truth_unavailable"
+    if (
+        float(evidence.get("position_qty") or 0.0) > 0
+        or float(evidence.get("open_remaining_qty") or 0.0) > 0
+        or int(evidence.get("today_fill_count") or 0) > 0
+    ):
+        return False, "broker_exposure_or_fill_found"
+    return True, "audited_previous_session_resolution_candidate"
+
+
 def _remediation_item(row: dict[str, Any], *, category: str, recommended_action: str) -> dict[str, Any]:
+    apply_eligible, apply_block_reason = _apply_gate(row, category=category)
     return {
         "category": category,
         "market": row.get("market"),
@@ -272,6 +292,8 @@ def _remediation_item(row: dict[str, Any], *, category: str, recommended_action:
         "broker_truth_evidence": row.get("broker_truth_evidence") or {},
         "do_not_start": bool(row.get("do_not_start")),
         "do_not_start_reason": row.get("do_not_start_reason", ""),
+        "apply_eligible": bool(apply_eligible),
+        "apply_block_reason": "" if apply_eligible else apply_block_reason,
         "source_of_truth_required": ["broker_fills", "broker_open_orders", "broker_positions"],
         "production_write": False,
     }
@@ -328,6 +350,11 @@ def _build_remediation_plan(
         }
         for row in events_missing_path_run_id
     ]
+    apply_eligible_count = sum(
+        1
+        for item in [*order_unknown_items, *stale_items]
+        if bool(item.get("apply_eligible"))
+    )
     return {
         "dry_run_only": True,
         "production_writes_supported": False,
@@ -337,6 +364,7 @@ def _build_remediation_plan(
             "stale_active_items": len(stale_items),
             "missing_lifecycle_event_items": len(lifecycle_items),
             "event_payload_link_items": len(payload_items),
+            "apply_eligible_items": apply_eligible_count,
         },
         "order_unknown": order_unknown_items,
         "stale_active": stale_items,

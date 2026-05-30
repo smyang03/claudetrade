@@ -139,6 +139,16 @@ def build_v2_ops_summary(
     brain_pending = BrainApprovalQueue().read_all()
     latest_review = _latest_daily_review(runtime_key)
     live_truth_verdict = _broker_truth_verdict(broker_truth)
+    path_b_live = _path_b_live_summary(
+        store,
+        market_key,
+        runtime_key,
+        session_key,
+        events=events,
+        broker_truth=broker_truth,
+        live_truth_verdict=live_truth_verdict,
+        bot=bot,
+    )
 
     return {
         "ok": True,
@@ -154,6 +164,8 @@ def build_v2_ops_summary(
             "websocket_status": getattr(bot, "websocket_status", "unknown") if bot is not None else "unknown",
             "rate_limit_state": _rate_limit_state(bot),
             "order_unknown_count": len(order_unknown),
+            "order_unknown_event_history_count": len(order_unknown),
+            "current_order_unknown_count": len(path_b_live.get("order_unknown") or []),
             "unresolved_pending_orders": len(pending_orders),
             "last_market_data_time": getattr(bot, "last_market_data_time", "") if bot is not None else "",
             "last_claude_call_time": getattr(bot, "last_claude_call_time", "") if bot is not None else "",
@@ -173,20 +185,13 @@ def build_v2_ops_summary(
             session_date=session_key,
         ),
         "bucket_monitor": build_bucket_summary(market=market_key, session_date=session_key, runtime_mode=runtime_key),
-        "path_b_live": _path_b_live_summary(
-            store,
-            market_key,
-            runtime_key,
-            session_key,
-            events=events,
-            broker_truth=broker_truth,
-            live_truth_verdict=live_truth_verdict,
-            bot=bot,
-        ),
+        "path_b_live": path_b_live,
         "lifecycle": {
             "event_counts": dict(counts),
             "last_event": last_event,
             "order_unknown": _compact_events(order_unknown),
+            "order_unknown_event_history": _compact_events(order_unknown),
+            "order_unknown_event_history_count": len(order_unknown),
             "safety_blocked": _compact_events(safety_blocked),
             "timing_expired": _compact_events(timing_expired),
             "timing_unsupported": _compact_events(timing_unsupported),
@@ -1582,6 +1587,7 @@ def _broker_evidence_for_path_run(run: dict[str, Any], broker_truth: dict[str, A
     positions = matching(data.get("positions", [])) if status in openish_statuses else []
     open_orders = matching_orders(data.get("open_orders", []), fallback_to_ticker=status in openish_statuses)
     fills = matching_orders(data.get("today_fills", []), fallback_to_ticker=status in openish_statuses)
+    broker_position_qty = sum(float(_to_float(row.get("qty")) or 0.0) for row in positions)
     return {
         "broker_position_evidence": bool(positions),
         "broker_open_order_evidence": bool(open_orders),
@@ -1590,6 +1596,7 @@ def _broker_evidence_for_path_run(run: dict[str, Any], broker_truth: dict[str, A
         "broker_truth_stale": bool(data.get("stale")),
         "broker_truth_error": str(data.get("error", "") or ""),
         "broker_position_count": len(positions),
+        "broker_position_qty": broker_position_qty,
         "broker_open_order_count": len(open_orders),
         "broker_today_fill_count": len(fills),
     }
@@ -2696,8 +2703,17 @@ def _compact_path_runs(
                 "broker_truth_stale": bool(broker_evidence.get("broker_truth_stale", False)),
                 "broker_truth_error": broker_evidence.get("broker_truth_error", ""),
                 "broker_position_count": broker_evidence.get("broker_position_count", 0),
+                "broker_position_qty": plan.get("broker_position_qty", broker_evidence.get("broker_position_qty", 0)),
                 "broker_open_order_count": broker_evidence.get("broker_open_order_count", 0),
                 "broker_today_fill_count": broker_evidence.get("broker_today_fill_count", 0),
+                "local_exposure": bool(plan.get("local_exposure", False)),
+                "local_position_qty": plan.get("local_position_qty", 0),
+                "remediation_allowed": bool(
+                    plan.get("remediation_allowed", False)
+                    or plan.get("order_unknown_remediation_allowed", False)
+                ),
+                "remediation_blockers": plan.get("remediation_blockers", []),
+                "audited_remediation": bool(plan.get("audited_remediation", False)),
                 "session_end_unresolved": bool(plan.get("session_end_unresolved", False)),
                 "manual_reconciliation_required": bool(plan.get("manual_reconciliation_required", False)),
                 "created_at": run.get("created_at", ""),

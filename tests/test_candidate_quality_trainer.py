@@ -201,6 +201,35 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         self.assertEqual(partial["trainer_score_components"]["prompt"]["kr_quality_score_bonus"], 4.5)
         self.assertGreater(enabled["trainer_prompt_score"], disabled["trainer_prompt_score"])
 
+    def test_us_candidate_quality_score_bonus_is_env_gated(self) -> None:
+        candidate = {
+            "ticker": "NVDA",
+            "market": "US",
+            "primary_bucket": "momentum_now",
+            "liquidity_bucket": "high",
+            "change_pct": 5.0,
+            "candidate_quality_score": 80,
+        }
+        default_disabled = score_candidate_for_trainer(candidate, market="US")
+        with patch.dict(
+            "os.environ",
+            {
+                "CANDIDATE_TRAINER_US_QUALITY_SCORE_ENABLED": "true",
+                "CANDIDATE_TRAINER_US_QUALITY_SCORE_WEIGHT": "0.2",
+            },
+            clear=False,
+        ):
+            enabled = score_candidate_for_trainer(candidate, market="US")
+            partial = score_candidate_for_trainer(
+                {**candidate, "quality_data_gaps": ["history_incomplete"]},
+                market="US",
+            )
+
+        self.assertNotIn("us_quality_score_bonus", default_disabled["trainer_score_components"]["prompt"])
+        self.assertEqual(enabled["trainer_score_components"]["prompt"]["us_quality_score_bonus"], 6.0)
+        self.assertEqual(partial["trainer_score_components"]["prompt"]["us_quality_score_bonus"], 3.0)
+        self.assertGreater(enabled["trainer_prompt_score"], default_disabled["trainer_prompt_score"])
+
     def test_prompt_pool_reorders_and_excludes_with_reason(self) -> None:
         result = build_trainer_prompt_pool(
             [

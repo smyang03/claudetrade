@@ -17,7 +17,7 @@ import queue as _queue_mod
 import argparse
 import threading
 import schedule
-from collections import deque
+from collections import Counter, deque
 from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
 from datetime import date, datetime, timedelta, time as dt_time
@@ -10675,13 +10675,36 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         min_ratio = max(0.0, min(1.0, min_ratio))
         keep_ratio = len(filtered) / max(1, len(rows))
         if len(rows) >= min_keep and (len(filtered) < min_keep or keep_ratio < min_ratio):
+            outside_rows = [
+                row for row in rows
+                if isinstance(row, dict) and str(row.get("ticker", "") or "").strip().upper() not in allowed_set
+            ]
+            market_key = ""
+            for row in rows:
+                if isinstance(row, dict) and str(row.get("market") or "").strip():
+                    market_key = "US" if str(row.get("market")).upper() == "US" else "KR"
+                    break
+            if not market_key:
+                market_key = "US" if any(any(ch.isalpha() for ch in str((row or {}).get("ticker", ""))) for row in rows if isinstance(row, dict)) else "KR"
+            filtered_by_source = Counter(str(row.get("source") or row.get("candidate_source") or "unknown") for row in outside_rows)
+            filtered_by_primary_bucket = Counter(str(row.get("primary_bucket") or "unclassified") for row in outside_rows)
+            filtered_by_category = Counter(str(row.get("category") or "unknown") for row in outside_rows)
             self._last_universe_filter_bypass = {
                 "bypassed": True,
                 "at": datetime.now(KST).isoformat(timespec="seconds"),
+                "market": market_key,
+                "session_date": self._current_session_date_str(market_key) if hasattr(self, "_current_session_date_str") else "",
                 "candidate_count": len(rows),
                 "filtered_count": len(filtered),
                 "min_keep": min_keep,
                 "min_ratio": min_ratio,
+                "filtered_by_source": dict(filtered_by_source.most_common()),
+                "filtered_by_primary_bucket": dict(filtered_by_primary_bucket.most_common()),
+                "filtered_by_category": dict(filtered_by_category.most_common()),
+                "sample_filtered_tickers": [
+                    str(row.get("ticker", "") or "").strip().upper()
+                    for row in outside_rows[:20]
+                ],
                 "allowed_sample": allowed[:20],
                 "candidate_sample": [
                     str(row.get("ticker", "") or "").strip().upper()
@@ -10693,8 +10716,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 f"[universe filter bypass] candidates={len(rows)} filtered={len(filtered)} "
                 f"min_keep={min_keep} min_ratio={min_ratio:.2f}"
             )
+            try:
+                writer = getattr(self, "_write_funnel_event", None)
+                if callable(writer):
+                    writer("universe_filter_bypass", market_key, dict(self._last_universe_filter_bypass))
+            except Exception:
+                pass
             return rows
-        self._last_universe_filter_bypass = {"bypassed": False, "at": datetime.now(KST).isoformat(timespec="seconds")}
+        self._last_universe_filter_bypass = {
+            "bypassed": False,
+            "at": datetime.now(KST).isoformat(timespec="seconds"),
+            "candidate_count": len(rows),
+            "filtered_count": len(filtered),
+            "min_keep": min_keep,
+            "min_ratio": min_ratio,
+        }
         return filtered
     @staticmethod
     def _candidate_health_num(value: Any, default: float = 0.0) -> float:
@@ -13472,6 +13508,118 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         watchlist = list((meta or {}).get("watchlist") or selected or [])
         trade_ready = list((meta or {}).get("trade_ready") or [])
         runtime_filtered = dict((meta or {}).get("_runtime_filtered_trade_ready") or {})
+        stages_dict = stages if isinstance(stages, dict) else {}
+        raw_stage = stages_dict.get("raw") if isinstance(stages_dict.get("raw"), dict) else {}
+        normalized_stage = stages_dict.get("normalized") if isinstance(stages_dict.get("normalized"), dict) else {}
+        applied_stage = stages_dict.get("applied") if isinstance(stages_dict.get("applied"), dict) else {}
+
+        def _key(raw: Any) -> str:
+            text = str(raw or "").strip()
+            return text.upper() if str(market or "").upper() == "US" else text
+
+        def _unique_keys(values: Any) -> list[str]:
+            seen: set[str] = set()
+            out: list[str] = []
+            for item in list(values or []):
+                key = _key(item)
+                if key and key not in seen:
+                    seen.add(key)
+                    out.append(key)
+            return out
+
+        raw_trade_ready_source = raw_stage.get("trade_ready") if "trade_ready" in raw_stage else (
+            (meta or {}).get("_raw_trade_ready")
+            or (meta or {}).get("_candidate_action_plan_a_ready")
+            or trade_ready
+        )
+        normalized_trade_ready_source = (
+            normalized_stage.get("trade_ready") if "trade_ready" in normalized_stage else (
+                (meta or {}).get("_candidate_action_plan_a_ready") or trade_ready
+            )
+        )
+        applied_trade_ready_source = applied_stage.get("trade_ready") if "trade_ready" in applied_stage else trade_ready
+        raw_trade_ready = _unique_keys(raw_trade_ready_source)
+        normalized_trade_ready = _unique_keys(normalized_trade_ready_source)
+        applied_trade_ready = _unique_keys(applied_trade_ready_source)
+        runtime_filtered = {_key(key): str(value or "runtime_filtered") for key, value in runtime_filtered.items() if _key(key)}
+        runtime_filtered_reason_counts = dict(Counter(runtime_filtered.values()).most_common())
+        raw_ready_set = set(raw_trade_ready)
+        normalized_ready_set = set(normalized_trade_ready)
+        applied_ready_set = set(applied_trade_ready)
+        dropped_after_raw = sorted(raw_ready_set - applied_ready_set)
+        selection_delta = {
+            "raw_trade_ready": raw_trade_ready,
+            "normalized_trade_ready": normalized_trade_ready,
+            "applied_trade_ready": applied_trade_ready,
+            "dropped_after_raw": dropped_after_raw,
+            "runtime_filtered": runtime_filtered,
+            "runtime_filtered_reason_counts": runtime_filtered_reason_counts,
+        }
+
+        def _route_with_delta(route: dict) -> dict:
+            item = dict(route or {})
+            key = _key(item.get("ticker"))
+            raw_action = str(
+                item.get("raw_action")
+                or item.get("original_action")
+                or item.get("requested_action")
+                or item.get("action")
+                or ("BUY_READY" if key in raw_ready_set else "")
+            ).strip()
+            normalized_action = str(
+                item.get("normalized_action")
+                or ("BUY_READY" if key in normalized_ready_set else item.get("final_action") or raw_action)
+            ).strip()
+            if key in applied_ready_set:
+                applied_action = str(item.get("applied_action") or item.get("final_action") or "BUY_READY").strip()
+            elif key in runtime_filtered:
+                applied_action = "FILTERED"
+            else:
+                applied_action = str(item.get("applied_action") or item.get("final_action") or "").strip()
+            drop_stage = str(item.get("drop_stage") or "").strip()
+            drop_reason = str(item.get("drop_reason") or "").strip()
+            if not drop_stage and key in raw_ready_set and key not in applied_ready_set:
+                if key in runtime_filtered:
+                    drop_stage = "runtime_filter"
+                    drop_reason = runtime_filtered.get(key, "")
+                elif key not in normalized_ready_set:
+                    drop_stage = "normalization"
+                    drop_reason = str(item.get("reason") or item.get("runtime_gate_reason") or "normalized_out")
+                else:
+                    drop_stage = "applied"
+                    drop_reason = str(item.get("reason") or item.get("runtime_gate_reason") or "applied_out")
+            item.update(
+                {
+                    "raw_action": raw_action,
+                    "normalized_action": normalized_action,
+                    "applied_action": applied_action,
+                    "drop_stage": drop_stage,
+                    "drop_reason": drop_reason,
+                }
+            )
+            return item
+
+        candidate_action_routes = [
+            _route_with_delta(route)
+            for route in list((meta or {}).get("_candidate_action_routes") or [])
+            if isinstance(route, dict)
+        ]
+        route_keys = {_key(route.get("ticker")) for route in candidate_action_routes}
+        for key, reason in sorted(runtime_filtered.items()):
+            if key in route_keys:
+                continue
+            candidate_action_routes.append(
+                {
+                    "ticker": key,
+                    "raw_action": "BUY_READY" if key in raw_ready_set else "",
+                    "normalized_action": "BUY_READY" if key in normalized_ready_set else "",
+                    "applied_action": "FILTERED",
+                    "drop_stage": "runtime_filter",
+                    "drop_reason": reason,
+                    "reason": reason,
+                    "final_action": "FILTERED",
+                }
+            )
         coverage = dict((meta or {}).get("_price_target_coverage") or {})
         candidate_actions = list((meta or {}).get("candidate_actions") or [])
         full_pool_count = (meta or {}).get("_full_pool_count")
@@ -13529,15 +13677,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "execution_pool_count": len(trade_ready),
             "watchlist_count": len(watchlist),
             "trade_ready_count": len(trade_ready),
+            "raw_trade_ready": raw_trade_ready,
+            "normalized_trade_ready": normalized_trade_ready,
+            "applied_trade_ready": applied_trade_ready,
+            "dropped_after_raw": dropped_after_raw,
+            "selection_delta": selection_delta,
             "candidate_action_counts": action_counts(candidate_actions),
             "candidate_actions_source": (meta or {}).get("_candidate_actions_source", ""),
             "runtime_filtered_count": len(runtime_filtered),
             "runtime_filtered": runtime_filtered,
+            "runtime_filtered_reason_counts": runtime_filtered_reason_counts,
             "price_target_coverage": coverage,
-            "candidate_action_routes": list((meta or {}).get("_candidate_action_routes") or []),
+            "candidate_action_routes": candidate_action_routes,
             "one_share_affordability": dict((meta or {}).get("_one_share_affordability") or {}),
             "pathb_wait_tickers": list((meta or {}).get("_pathb_wait_tickers") or []),
             "partial_reselect": dict((meta or {}).get("_partial_reselect_replacement") or {}),
+            "universe_filter_bypass": dict((meta or {}).get("universe_filter_bypass") or getattr(self, "_last_universe_filter_bypass", {}) or {}),
             "live_evidence": live_evidence_summary,
             "selection_trace_id": (meta or {}).get("selection_trace_id", ""),
             "visibility_contract_version": (meta or {}).get("visibility_contract_version", ""),
@@ -14642,6 +14797,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "history_status": row.get("history_status") or "",
                     "history_usable_rows": row.get("history_usable_rows"),
                     "history_required_rows": row.get("history_required_rows"),
+                    "failure_kind": row.get("failure_kind") or "",
+                    "usable_rows": row.get("usable_rows", row.get("history_usable_rows")),
+                    "required_rows": row.get("required_rows", row.get("history_required_rows")),
+                    "first_failed_at": row.get("first_failed_at") or "",
+                    "last_failed_at": row.get("last_failed_at") or "",
+                    "failure_count": row.get("failure_count") or 0,
+                    "cooldown_until": row.get("cooldown_until") or "",
+                    "prompt_excluded_reason": reason,
                 }
                 store.upsert_candidate(
                     {
@@ -15173,12 +15336,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _enrich_us_candidate_quality_shadow(self, market: str, candidate: dict, candles) -> dict:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         row = dict(candidate or {})
-        if market_key != "US" or not _env_bool("US_QUALITY_SHADOW_ENABLED", False):
+        if market_key != "US":
             return row
         try:
-            from runtime.us_candidate_quality import enrich_us_quality_shadow
+            from runtime.us_candidate_quality import enrich_us_runtime_quality_fallback, enrich_us_quality_shadow
 
-            return enrich_us_quality_shadow(row, candles)
+            if _env_bool("US_QUALITY_SHADOW_ENABLED", False):
+                return enrich_us_quality_shadow(row, candles)
+            return enrich_us_runtime_quality_fallback(row, candles)
         except Exception as exc:
             gaps = row.get("us_quality_data_gaps")
             if isinstance(gaps, list):
@@ -15219,22 +15384,77 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         ticker_key = self._selection_ticker_key(market_key, ticker)
         if not ticker_key:
             return {}
+        try:
+            session_date = self._current_session_date_str(market_key)
+        except Exception:
+            session_date = datetime.now(KST).date().isoformat()
         state = getattr(self, "_data_insufficient_failure_state", None)
         if not isinstance(state, dict):
             state = {}
             self._data_insufficient_failure_state = state
-        key = f"{market_key}:{ticker_key}:{failure_kind}"
+        key = f"{session_date}:{market_key}:{ticker_key}:{failure_kind}"
         now_iso = datetime.now(KST).isoformat(timespec="seconds")
         row = dict(state.get(key) or {})
         row.setdefault("market", market_key)
         row.setdefault("ticker", ticker_key)
+        row.setdefault("session_date", session_date)
         row.setdefault("failure_kind", str(failure_kind or "data_insufficient"))
         row.setdefault("first_seen_at", now_iso)
+        row.setdefault("first_failed_at", row.get("first_seen_at") or now_iso)
         row["last_seen_at"] = now_iso
+        row["last_failed_at"] = now_iso
         row["count"] = int(row.get("count", 0) or 0) + 1
+        row["failure_count"] = int(row["count"])
         row["last_detail"] = str(detail or "")[:300]
+        row["prompt_excluded_reason"] = str(detail or failure_kind or "data_insufficient")[:300]
+        if "/" in str(detail or ""):
+            left, _, right = str(detail).partition("/")
+            try:
+                row["usable_rows"] = int(float(left))
+            except Exception:
+                pass
+            try:
+                row["required_rows"] = int(float(right))
+            except Exception:
+                pass
         state[key] = row
         return row
+
+    def _data_insufficient_failure_fields(
+        self,
+        market: str,
+        ticker: str,
+        failure_kind: str,
+        *,
+        usable_rows: int = 0,
+        required_rows: int = 0,
+        prompt_excluded_reason: str = "",
+    ) -> dict[str, Any]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = self._selection_ticker_key(market_key, ticker)
+        try:
+            session_date = self._current_session_date_str(market_key)
+        except Exception:
+            session_date = datetime.now(KST).date().isoformat()
+        key = f"{session_date}:{market_key}:{ticker_key}:{failure_kind}"
+        state = getattr(self, "_data_insufficient_failure_state", {}) or {}
+        row = dict(state.get(key) or {})
+        return {
+            "failure_kind": str(row.get("failure_kind") or failure_kind or "data_insufficient"),
+            "usable_rows": int(row.get("usable_rows") or usable_rows or 0),
+            "required_rows": int(row.get("required_rows") or required_rows or 0),
+            "first_failed_at": str(row.get("first_failed_at") or row.get("first_seen_at") or ""),
+            "last_failed_at": str(row.get("last_failed_at") or row.get("last_seen_at") or ""),
+            "failure_count": int(row.get("failure_count") or row.get("count") or 0),
+            "cooldown_until": str(row.get("cooldown_until") or ""),
+            "prompt_excluded_reason": str(
+                prompt_excluded_reason
+                or row.get("prompt_excluded_reason")
+                or row.get("last_detail")
+                or failure_kind
+                or "data_insufficient"
+            ),
+        }
 
     def _hist_fill_enqueue_data_insufficient(
         self,
@@ -15254,6 +15474,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             max_attempts = 3
         count = int((row or {}).get("count", 0) or 0)
+        if cooldown_min > 0 and count > 1:
+            try:
+                row["cooldown_until"] = (datetime.now(KST) + timedelta(minutes=cooldown_min)).isoformat(timespec="seconds")
+            except Exception:
+                row["cooldown_until"] = ""
         if count > max_attempts:
             log.info(
                 f"[data_insufficient backfill cooldown] {market} {ticker} "
@@ -15320,6 +15545,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         failure_kind="no_candles",
                         detail=reason,
                     )
+                    shadow_candidate.update(
+                        self._data_insufficient_failure_fields(
+                            market,
+                            ticker,
+                            "no_candles",
+                            usable_rows=0,
+                            required_rows=self._MIN_SIGNAL_ROWS,
+                            prompt_excluded_reason=reason,
+                        )
+                    )
                     continue
                 sig_df = calc_all(candles)
                 usable_rows = len(sig_df)
@@ -15330,6 +15565,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         failure_kind="too_few_rows",
                         detail=f"{usable_rows}/{self._MIN_SIGNAL_ROWS}",
                     )
+                    failure_fields = self._data_insufficient_failure_fields(
+                        market,
+                        ticker,
+                        "too_few_rows",
+                        usable_rows=usable_rows,
+                        required_rows=self._MIN_SIGNAL_ROWS,
+                        prompt_excluded_reason=f"data_insufficient({usable_rows}usable)",
+                    )
+                    cooldown_active = False
+                    cooldown_raw = str(failure_fields.get("cooldown_until") or "").strip()
+                    if cooldown_raw:
+                        try:
+                            cooldown_dt = datetime.fromisoformat(cooldown_raw.replace("Z", "+00:00"))
+                            if cooldown_dt.tzinfo is None:
+                                cooldown_dt = cooldown_dt.replace(tzinfo=KST)
+                            cooldown_active = datetime.now(KST) < cooldown_dt.astimezone(KST)
+                        except Exception:
+                            cooldown_active = False
                     if usable_rows >= watch_min_usable:
                         watch_candidate = self._enrich_candidate_with_history(candidate, candles, sig_df)
                         watch_candidate = self._enrich_kr_candidate_quality(market_key, watch_candidate, candles)
@@ -15340,6 +15593,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         watch_candidate["history_required_rows"] = self._MIN_SIGNAL_ROWS
                         watch_candidate["selection_bias"] = "watch_only"
                         watch_candidate["trade_policy"] = "watch_only_history_insufficient"
+                        watch_candidate.update(failure_fields)
+                        if cooldown_active:
+                            reason = f"data_insufficient_cooldown({usable_rows}usable)"
+                            watch_candidate["data_quality"] = "DATA_INSUFFICIENT_COOLDOWN"
+                            watch_candidate["history_status"] = "DATA_INSUFFICIENT_COOLDOWN"
+                            watch_candidate["selection_bias"] = "shadow_only"
+                            watch_candidate["trade_policy"] = "watch_only_history_insufficient_cooldown"
+                            watch_candidate["prompt_excluded_reason"] = reason
+                            insufficient_shadow.append(watch_candidate)
+                            removed_v2.append((ticker, reason))
+                            insufficient_shadow_reasons[self._selection_ticker_key(market_key, ticker)] = reason
+                            continue
                         raw_tags = watch_candidate.get("risk_tags") or []
                         if isinstance(raw_tags, dict):
                             tag_list = [str(k) for k, value in raw_tags.items() if value]
@@ -15362,6 +15627,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     shadow_candidate["history_usable_rows"] = usable_rows
                     shadow_candidate["history_required_rows"] = self._MIN_SIGNAL_ROWS
                     shadow_candidate["selection_bias"] = "shadow_only"
+                    shadow_candidate.update(
+                        self._data_insufficient_failure_fields(
+                            market,
+                            ticker,
+                            "too_few_rows",
+                            usable_rows=usable_rows,
+                            required_rows=self._MIN_SIGNAL_ROWS,
+                            prompt_excluded_reason=f"data_insufficient({usable_rows}usable)",
+                        )
+                    )
                     insufficient_shadow.append(shadow_candidate)
                     reason = f"data_insufficient({usable_rows}usable)"
                     removed_v2.append((ticker, reason))
