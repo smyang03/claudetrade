@@ -27,6 +27,38 @@ This file is the shared operating guide for agentic coding tools working in this
 - 매수 차단 조건에는 브로커 상태 불신, affordability fail, hard risk block, same-day reentry block, late-session/blackout, watch_only 유지가 포함됩니다.
 - `_sync_runtime_with_broker()` 변경 시 보유 종목과 미체결 주문 기준 stale 포지션 정리, 시장별 quarantine, HALT/daily_return의 시장별 baseline 계산을 반드시 확인하세요.
 
+## Revenue Structure — Critical Do-Not-Break Paths
+
+아래 경로는 실제 수익을 만들고 있는 구조다. 코드 개선, 리팩터링, 실험적 변경 시에도 이 경로를 우발적으로 건드리지 않도록 반드시 확인한다.
+
+### US PathB claude_price (핵심 수익 엔진)
+
+live 누적 수익의 대부분을 담당한다. 아래 경로 중 하나라도 바꾸면 MD 위반 사항을 작성해야 한다.
+
+- **profit ladder**: `runtime/pathb_runtime.py::_pathb_profit_ladder_floor()`, `_pathb_profit_ladder_signal()` — CLOSED_PROFIT_LADDER 경로. `PATHB_LADDER_TIER*_PEAK_GIVEBACK_PCT` 환경변수 값은 운영자 확인 전 변경 금지.
+- **pre-close 청산**: `CLOSED_CLAUDE_PRICE_PRE_CLOSE` 경로 — 건당 평균 수익 최상위. 장마감 타이밍 로직과 hold advisor pre-close 판단을 함께 건드리면 이 경로가 깨진다.
+- **hold advisor 연동**: AUTO_SELL_REVIEW, protective hold, target extension 정책 — hold advisor triage/challenge/boundary 변경 시 US PathB 포지션에 조기 SELL이 강제될 수 있다.
+- **buy zone hit 진입 경로**: `_pathb_entry_scan_live()` 흐름 — PULLBACK_WAIT → PathB.wait → 진입. evidence gate, routing, broker-truth gate는 완화하지 않는다.
+
+### US strategy live allowlist
+
+`trading_bot.py::_live_strategy_allowed()`의 기본값은 False다. 누락 설정 = 수익 전략 차단.
+
+| 설정 | 상태 | 영향 |
+|---|---|---|
+| `US_MOMENTUM_LIVE_ENABLED=true` | 활성 필수 | false시 US PathB momentum 후보 생성 안 됨 (누적 +7%) |
+| `US_VOLATILITY_BREAKOUT_LIVE_ENABLED` | 미설정=false | VB 성과 미확인, 현행 유지 |
+
+새 전략을 US live allowlist에 추가하거나 제거할 때는 반드시 v2_learning_performance 성과 데이터를 먼저 확인한다.
+
+### KR/US 전략 성과 분리
+
+같은 전략 이름이라도 KR/US 성과가 반대인 경우가 있다.
+- KR momentum/gap_pullback → 현재 손실 기록 중
+- US momentum/gap_pullback → 현재 수익 기록 중
+
+KR 전략 개선 작업에서 `strategy/momentum.py`, `strategy/gap_pullback.py` 등 공유 전략 파일을 변경할 때는 US PathB 성과에 영향이 없는지 별도로 확인한다.
+
 ## Protected Completed Areas & MD Violation Reporting
 
 아래 동작은 완료/보호 영역입니다. 특정 이슈가 해당 영역을 직접 지목하거나, 실패 테스트/로그/운영 장애가 이 영역을 원인으로 가리킬 때만 최소 범위로 수정합니다. 단순 리팩터링, 이름 변경, 구조 재배치, 테스트 기대값 임의 변경, safety guard 완화는 금지합니다.

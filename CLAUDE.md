@@ -35,6 +35,31 @@ This repository is a Python-based KR/US automated trading system. `trading_bot.p
 - The protected flow is `runtime/pathb_runtime.py` `_pathb_auto_sell_review_cooldown_payload()` and `_run_pathb_sell_review_gate()`, with coverage in `tests/test_auto_sell_claude_gate.py::test_pathb_loss_cap_hold_respects_reask_cooldown`.
 - If this guard or related knobs (`CLAUDE_REVIEW_ALL_AUTOMATED_SELLS`, `AUTO_SELL_REVIEW_HOLD_COOLDOWN_MINUTES`, `PATHB_AUTO_SELL_REVIEW_HOLD_REASK_DROP_PCT`) must change, state the reason, expected Claude call/token impact, replacement duplicate-call protection, and tests run in the work note, commit message, or PR body.
 
+### Revenue Structure — Do Not Break
+
+아래는 실제 수익을 만드는 경로다. 실행 안전성 보호 영역과 별개로, 이 경로를 변경하면 즉시 수익 감소로 이어진다.
+
+**US PathB claude_price** — 누적 수익의 핵심 엔진 (live 기준 누적 +71%+, avg +1.4%)
+
+- `runtime/pathb_runtime.py::_pathb_profit_ladder_floor()` / `_pathb_profit_ladder_signal()`: CLOSED_PROFIT_LADDER 경로. tier 파라미터(`PATHB_LADDER_TIER*_PEAK_GIVEBACK_PCT`)와 floor 계산 로직은 운영자 확인 전 변경 금지.
+- `CLOSED_CLAUDE_PRICE_PRE_CLOSE` 청산 경로: 건당 평균 +2.65%, 장마감 전 자동 청산 로직. hold advisor 또는 pre-close 타이밍 변경 시 이 경로가 깨질 수 있다.
+- PathB → hold advisor 연동 (`AUTO_SELL_REVIEW`, protective hold, target extension): hold advisor 내부 로직(triage, challenge, boundary 검사) 변경 시 US PathB 포지션의 HOLD/SELL 판단에 직접 영향. R-01/R-02 유형 변경은 live US PathB 포지션에 SELL을 강제할 수 있으므로 변경 전 US PathB 성과 데이터를 확인한다.
+
+**US strategy live allowlist** — 잘못된 기본값이 수익 전략을 전면 차단한다
+
+- `trading_bot.py::_live_strategy_allowed()`의 기본값은 False다. 설정이 누락되면 수익 전략이 조용히 차단된다.
+- 현재 활성화된 수익 전략:
+  - `US_MOMENTUM_LIVE_ENABLED=true` (US PathB momentum: 누적 +7.2%)
+  - `US_VOLATILITY_BREAKOUT_LIVE_ENABLED` — 미설정(=false), VB 성과 미확인, 현행 유지
+- 이 allowlist를 변경하거나 새 전략을 추가할 때는 반드시 v2_learning_performance 성과 데이터를 확인한다.
+- `US_MOMENTUM_LIVE_ENABLED`를 false로 되돌리거나 제거하면 US momentum PathB 후보가 생성되지 않는다.
+
+**KR/US 전략 성과 분리 원칙**
+
+- KR과 US는 같은 전략 이름이라도 성과가 반대인 경우가 있다. KR momentum/gap_pullback은 현재 손실 기록 중이고, US momentum/gap_pullback은 수익 기록 중이다.
+- KR 전략 개선 작업이 US 전략 로직(`strategy/momentum.py`, `strategy/gap_pullback.py`)을 함께 바꾸면 안 된다. KR 전용 파라미터와 US 전용 파라미터를 분리해서 처리한다.
+- KR PathB 손실 기록 전략(momentum, gap_pullback, opening_range_pullback)을 개선할 때 US PathB의 같은 전략 경로를 건드리는 것을 금지한다.
+
 ### Protected Completed Areas
 
 These areas are treated as completed/protected behavior. Do not refactor, rename, reorganize, loosen safety checks, or rewrite tests around them unless the current task directly targets the area or failing tests/logs/operational evidence identify it as the root cause.
@@ -465,6 +490,10 @@ until more data is available or a human explicitly approves the change.
 | `US_REENTRY_COOLDOWN_MINUTES` | `60` | US 재진입 쿨다운(분) |
 | `KR_EARLY_ENTRY_SOFT_GATE_ENABLED` | `true` | KR 장 초반 진입 사이즈 축소 게이트 활성 여부 |
 | `PATHB_KR_SHADOW_PLAN_ENABLED` | `false` | KR PathB shadow 플랜 활성 여부. false = shadow 비활성 |
+| `US_MOMENTUM_LIVE_ENABLED` | `true` | US momentum 전략 live 활성. **false로 바꾸면 US PathB momentum 후보가 생성되지 않는다 (누적 수익 경로)** |
+| `US_VOLATILITY_BREAKOUT_LIVE_ENABLED` | 미설정(=false) | US VB 전략 live 활성. VB 성과 미확인 상태이므로 현행 유지 |
+| `KR_PLANA_HOLD_POLICY_MODE` | `enforce` | KR Plan A hold advisor 정책 강제 적용 여부 |
+| `US_PLANA_HOLD_POLICY_MODE` | `enforce` | US Plan A hold advisor 정책 강제 적용 여부 |
 
 이 설정들은 `.env.live`와 `config/v2_start_config.json` 두 곳에 존재한다. 한 곳만 바꾸면 반영이 안 될 수 있으므로 두 파일을 동시에 확인한다.
 
