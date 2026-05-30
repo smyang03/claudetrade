@@ -39,6 +39,11 @@ KST = ZoneInfo("Asia/Seoul") if ZoneInfo is not None else None
 from bot.session_date import resolve_session_date
 from runtime.market_resolver import infer_ticker_market
 from runtime_paths import get_runtime_path
+from tools.order_unknown_evidence import (
+    attach_exposure_evidence as _shared_attach_order_unknown_exposure_evidence,
+    mark_order_unknown_remediation_hint as _shared_mark_order_unknown_remediation_hint,
+    pathb_local_exposure_index as _shared_pathb_local_exposure_index,
+)
 
 LIVE_CONFIG_KEYS = {
     "ENABLED_MARKETS",
@@ -55,6 +60,10 @@ LIVE_CONFIG_KEYS = {
     "KR_CONFIRMATION_GATE_ENABLED",
     "KR_CONFIRMATION_GATE_SHADOW",
     "KR_CONFIRMATION_GATE_MODE",
+    "ENABLE_CLAUDE_CANDIDATE_ACTIONS",
+    "ENABLE_ACTION_ROUTING",
+    "CANDIDATE_ACTIONS_V2_ENABLED",
+    "ALLOW_LEGACY_SELECTION_AUTO_READY",
     "KR_FAST_TRIGGER_WINDOW_MIN",
     "WATCH_TRIGGER_INITIAL_THRESHOLD",
     "KR_MICROSTRUCTURE_CONTEXT_ENABLED",
@@ -489,65 +498,7 @@ def _pathb_lifecycle_window_check_result(
 
 
 def _pathb_local_exposure_index(mode: str) -> tuple[dict[str, dict[str, Any]], dict[tuple[str, str], list[dict[str, Any]]]]:
-    positions = _read_json_list(get_runtime_path("state", f"{mode}_open_positions.json", make_parents=False))
-    pending_orders = _read_json_list(get_runtime_path("state", f"{mode}_pending_orders.json", make_parents=False))
-    by_path: dict[str, dict[str, Any]] = {}
-    by_ticker: dict[tuple[str, str], list[dict[str, Any]]] = {}
-
-    def add(item: dict[str, Any], source: str) -> None:
-        plan = item.get("pathb_plan") if isinstance(item.get("pathb_plan"), dict) else {}
-        market = str(item.get("market") or plan.get("market") or "").strip().upper()
-        ticker = _ticker_key(market, item.get("ticker") or plan.get("ticker"))
-        if not market or not ticker:
-            return
-        path_run_id = str(
-            item.get("pathb_path_run_id")
-            or item.get("path_run_id")
-            or plan.get("path_run_id")
-            or ""
-        ).strip()
-        sell_order_id = str(
-            item.get("pathb_pending_sell_order_no")
-            or item.get("pending_sell_order_no")
-            or item.get("sell_order_id")
-            or ""
-        ).strip()
-        exposure = {
-            "source": source,
-            "sources": [source],
-            "market": market,
-            "ticker": ticker,
-            "path_run_id": path_run_id,
-            "qty": _safe_int(item.get("qty", item.get("pathb_pending_sell_qty", item.get("order_qty", 0)))),
-            "local_position_qty": _safe_int(item.get("qty", 0)) if source == "local_position" else 0,
-            "local_pending_sell_order_id": sell_order_id if source == "local_pending_order" else "",
-            "local_sell_order_id": sell_order_id,
-            "raw": item,
-        }
-        by_ticker.setdefault((market, ticker), []).append(exposure)
-        if path_run_id:
-            existing = by_path.get(path_run_id)
-            if existing:
-                existing["sources"] = sorted(set(list(existing.get("sources") or []) + [source]))
-                existing["qty"] = max(_safe_int(existing.get("qty")), _safe_int(exposure.get("qty")))
-                existing["local_position_qty"] = max(
-                    _safe_int(existing.get("local_position_qty")),
-                    _safe_int(exposure.get("local_position_qty")),
-                )
-                if exposure.get("local_pending_sell_order_id"):
-                    existing["local_pending_sell_order_id"] = exposure.get("local_pending_sell_order_id")
-                if exposure.get("local_sell_order_id"):
-                    existing["local_sell_order_id"] = exposure.get("local_sell_order_id")
-            else:
-                by_path[path_run_id] = exposure
-
-    for pos in positions:
-        if pos.get("pathb_path_run_id") or pos.get("path_run_id") or pos.get("pathb_pending_sell_order_no"):
-            add(pos, "local_position")
-    for order in pending_orders:
-        if order.get("pathb_path_run_id") or order.get("path_run_id") or order.get("pathb_pending_sell_order_no"):
-            add(order, "local_pending_order")
-    return by_path, by_ticker
+    return _shared_pathb_local_exposure_index(mode)
 
 
 def _broker_evidence_for_ticker(
@@ -559,35 +510,63 @@ def _broker_evidence_for_ticker(
 ) -> dict[str, Any]:
     markets = broker_snapshot.get("markets") if isinstance(broker_snapshot, dict) else {}
     market_data = markets.get(market) if isinstance(markets, dict) else {}
-    if not isinstance(market_data, dict) or bool(market_data.get("missing")) or bool(market_data.get("stale")) or str(market_data.get("error") or ""):
+    snapshot_error = str(broker_snapshot.get("load_error") or "") if isinstance(broker_snapshot, dict) else ""
+    market_present = isinstance(market_data, dict) and bool(market_data)
+    stale = bool((market_data or {}).get("stale")) if isinstance(market_data, dict) else False
+    missing = bool((market_data or {}).get("missing")) if isinstance(market_data, dict) else True
+    error = str((market_data or {}).get("error") or snapshot_error or "") if isinstance(market_data, dict) else snapshot_error
+    last_success_at = str((market_data or {}).get("last_success_at") or "") if isinstance(market_data, dict) else ""
+    if not market_present or missing or stale or error:
         return {
             "broker_truth_unavailable": True,
+            "broker_truth_market_present": bool(market_present),
+            "broker_truth_stale": bool(stale),
+            "broker_truth_error": error,
             "broker_position_qty": None,
+            "broker_position_count": 0,
+            "broker_open_order_count": 0,
+            "broker_fill_count": 0,
             "broker_open_order_evidence": False,
+            "broker_any_open_order_evidence": False,
             "broker_sell_fill_evidence": False,
-            "broker_truth_last_success_at": str(market_data.get("last_success_at") or "") if isinstance(market_data, dict) else "",
+            "broker_any_fill_evidence": False,
+            "broker_truth_last_success_at": last_success_at,
         }
     positions = _broker_rows_for_ticker(list(market_data.get("positions") or []), market, ticker)
     open_orders = _broker_rows_for_ticker(list(market_data.get("open_orders") or []), market, ticker)
     fills = _broker_rows_for_ticker(list(market_data.get("today_fills") or []), market, ticker)
-    open_sell = [
+    active_open_orders = [
         row for row in open_orders
+        if _safe_int(row.get("remaining_qty", row.get("order_qty", row.get("qty", 0)))) > 0
+    ]
+    filled_rows = [
+        row for row in fills
+        if _safe_int(row.get("filled_qty", row.get("qty", 0))) > 0
+    ]
+    open_sell = [
+        row for row in active_open_orders
         if (not local_sell_order_id or _broker_order_id(row) == local_sell_order_id)
         and (not _row_side(row) or _row_side(row) == "sell")
-        and _safe_int(row.get("remaining_qty", row.get("order_qty", row.get("qty", 0)))) > 0
     ]
     sell_fills = [
-        row for row in fills
+        row for row in filled_rows
         if (not local_sell_order_id or _broker_order_id(row) == local_sell_order_id)
         and (not _row_side(row) or _row_side(row) == "sell")
-        and _safe_int(row.get("filled_qty", row.get("qty", 0))) > 0
     ]
     return {
         "broker_truth_unavailable": False,
+        "broker_truth_market_present": True,
+        "broker_truth_stale": False,
+        "broker_truth_error": "",
         "broker_position_qty": sum(_safe_int(row.get("qty")) for row in positions),
+        "broker_position_count": len(positions),
+        "broker_open_order_count": len(active_open_orders),
+        "broker_fill_count": len(filled_rows),
         "broker_open_order_evidence": bool(open_sell),
+        "broker_any_open_order_evidence": bool(active_open_orders),
         "broker_sell_fill_evidence": bool(sell_fills),
-        "broker_truth_last_success_at": str(market_data.get("last_success_at") or ""),
+        "broker_any_fill_evidence": bool(filled_rows),
+        "broker_truth_last_success_at": last_success_at,
     }
 
 
@@ -728,25 +707,7 @@ def _attach_exposure_evidence(
     exposure_by_path: dict[str, dict[str, Any]],
     broker_snapshot: dict[str, Any],
 ) -> None:
-    path_run_id = str(item.get("path_run_id") or "")
-    exposure = exposure_by_path.get(path_run_id) if path_run_id else None
-    item["local_exposure"] = bool(exposure)
-    item["local_position_qty"] = _safe_int((exposure or {}).get("local_position_qty"))
-    item["local_pending_sell_order_id"] = str((exposure or {}).get("local_pending_sell_order_id") or "")
-    item["local_sell_order_id"] = str((exposure or {}).get("local_sell_order_id") or "")
-    item["local_exposure_sources"] = list((exposure or {}).get("sources") or [])
-    market = str(item.get("market") or (exposure or {}).get("market") or "").upper()
-    ticker = _ticker_key(market, item.get("ticker") or (exposure or {}).get("ticker"))
-    item.update(
-        _broker_evidence_for_ticker(
-            broker_snapshot,
-            market,
-            ticker,
-            local_sell_order_id=item["local_sell_order_id"],
-        )
-    )
-    item["pathb_recoverable_still_held"] = _pathb_recoverable_still_held(item)
-    item["pathb_recoverable_entry_holding"] = _pathb_recoverable_entry_holding(item)
+    _shared_attach_order_unknown_exposure_evidence(item, exposure_by_path, broker_snapshot)
 
 
 def _pathb_recoverable_still_held(item: dict[str, Any]) -> bool:
@@ -759,7 +720,9 @@ def _pathb_recoverable_still_held(item: dict[str, Any]) -> bool:
     broker_qty = _safe_int(item.get("broker_position_qty"))
     if local_qty <= 0 or broker_qty <= 0 or local_qty != broker_qty:
         return False
-    if bool(item.get("broker_open_order_evidence")) or bool(item.get("broker_sell_fill_evidence")):
+    if bool(item.get("broker_any_open_order_evidence", item.get("broker_open_order_evidence"))) or bool(
+        item.get("broker_any_fill_evidence", item.get("broker_sell_fill_evidence"))
+    ):
         return False
     local_sell_order_id = str(item.get("local_sell_order_id") or item.get("local_pending_sell_order_id") or "").strip()
     return bool(local_sell_order_id)
@@ -792,20 +755,24 @@ def _order_unknown_remediation_blockers(
     blockers: list[str] = []
     if str(item.get("status") or "").upper() != "ORDER_UNKNOWN":
         blockers.append("status_not_order_unknown")
+    if str(item.get("path_type") or "") != "claude_price":
+        blockers.append("not_pathb_claude_price")
     if not previous_session:
         blockers.append("current_session_order_unknown")
     if bool(item.get("broker_truth_unavailable")):
         blockers.append("broker_truth_unavailable")
+    if not str(item.get("broker_truth_last_success_at") or "").strip():
+        blockers.append("broker_truth_timestamp_missing")
     if bool(item.get("local_exposure")) or _safe_int(item.get("local_position_qty")) > 0:
         blockers.append("local_exposure_present")
     if str(item.get("local_pending_sell_order_id") or item.get("local_sell_order_id") or "").strip():
         blockers.append("local_sell_order_present")
     if _safe_int(item.get("broker_position_qty")) > 0:
         blockers.append("broker_position_present")
-    if bool(item.get("broker_open_order_evidence")):
+    if bool(item.get("broker_any_open_order_evidence", item.get("broker_open_order_evidence"))):
         blockers.append("broker_open_order_present")
-    if bool(item.get("broker_sell_fill_evidence")):
-        blockers.append("broker_sell_fill_present")
+    if bool(item.get("broker_any_fill_evidence", item.get("broker_sell_fill_evidence"))):
+        blockers.append("broker_fill_present")
     if not str(item.get("path_run_id") or "").strip():
         blockers.append("path_run_id_missing")
     return blockers
@@ -818,23 +785,12 @@ def _mark_order_unknown_remediation_hint(
     previous_session: bool,
     session_before: str,
 ) -> dict[str, Any]:
-    blockers = _order_unknown_remediation_blockers(item, previous_session=previous_session)
-    allowed = not blockers
-    item["remediation_allowed"] = allowed
-    item["audited_remediation_allowed"] = allowed
-    item["remediation_blockers"] = blockers
-    item["remediation_tool"] = _order_unknown_remediation_command(
-        mode,
-        str(item.get("market") or ""),
-        session_before,
+    return _shared_mark_order_unknown_remediation_hint(
+        item,
+        mode=mode,
+        previous_session=previous_session,
+        session_before=session_before,
     )
-    if allowed:
-        item["suggested_action"] = "run audited ORDER_UNKNOWN dry-run, then apply only after report review"
-    elif previous_session:
-        item["suggested_action"] = "manual broker-truth reconciliation required before closing this row"
-    else:
-        item["suggested_action"] = "current-session ORDER_UNKNOWN blocks PathB entry until reconciled"
-    return item
 
 
 def _broker_rows_for_ticker(rows: list[Any], market: str, ticker: str) -> list[dict[str, Any]]:
@@ -1300,6 +1256,36 @@ def _pathb_market_live_gate_check(effective: dict[str, Any]) -> CheckResult:
             "operator_action": "set PATHB_KR_LIVE_ENABLED=true and PATHB_US_LIVE_ENABLED=true",
             "market_live_gate_source": gate_source,
         },
+    )
+
+
+def _candidate_actions_live_config_check(effective: dict[str, str], mode: str) -> CheckResult:
+    keys = (
+        "ENABLE_CLAUDE_CANDIDATE_ACTIONS",
+        "ENABLE_ACTION_ROUTING",
+        "CANDIDATE_ACTIONS_V2_ENABLED",
+    )
+    values = {key: str(effective.get(key, "")) for key in keys}
+    disabled = [key for key in keys if not _truthy(effective.get(key))]
+    legacy_auto_ready = _truthy(effective.get("ALLOW_LEGACY_SELECTION_AUTO_READY"))
+    data = {
+        "values": values,
+        "disabled": disabled,
+        "allow_legacy_auto_ready": legacy_auto_ready,
+        "mode": mode,
+    }
+    if str(mode or "").lower() == "live" and disabled:
+        return CheckResult(
+            "config.candidate_actions_live_contract",
+            "FAIL",
+            "live candidate action routing must be enabled; legacy watchlist auto-ready is blocked",
+            data,
+        )
+    return CheckResult(
+        "config.candidate_actions_live_contract",
+        "PASS",
+        "candidate action routing config checked",
+        data,
     )
 
 
@@ -1831,6 +1817,7 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
     checks.append(CheckResult("config.effective_values", "PASS", "effective live values captured", {"values": important}))
     checks.append(_kr_cap40_confirmation_enforce_check(effective))
     checks.append(_runtime_config_drift_check(config, mode))
+    checks.append(_candidate_actions_live_config_check(effective, mode))
     if _truthy(effective.get("PATHB_INTRADAY_ONLY")):
         checks.append(
             CheckResult(
@@ -2092,7 +2079,7 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
             broker_snapshot = {}
         unknown_rows = conn.execute(
             """
-            SELECT market, runtime_mode, session_date, ticker, path_run_id, status, updated_at, plan_json
+            SELECT market, runtime_mode, session_date, ticker, path_run_id, path_type, status, updated_at, plan_json
             FROM v2_path_runs
             WHERE runtime_mode=? AND status='ORDER_UNKNOWN'
             ORDER BY updated_at DESC

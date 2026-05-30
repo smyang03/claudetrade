@@ -2546,6 +2546,7 @@ Rules:
         },
         prompt_candidates,
         market,
+        allow_legacy_auto_ready=_env_bool_flag("ALLOW_LEGACY_SELECTION_AUTO_READY", False),
     )
 
     def _attach_prompt_pool_meta(meta: dict) -> dict:
@@ -2707,6 +2708,7 @@ Rules:
             stop_reason=stop_reason,
             reference_prices=selection_reference_prices,
             source_prompt_id="selection_rank_v3+compact_v1" if compact_selection_enabled else "selection_rank_v3+execution_plan_v1",
+            allow_legacy_auto_ready=_env_bool_flag("ALLOW_LEGACY_SELECTION_AUTO_READY", False),
         )
         selection_meta = _attach_prompt_pool_meta(selection_meta)
         if evidence_items:
@@ -2815,7 +2817,12 @@ Rules:
                         retry_watch = list(retry_result.get("watchlist") or []) if isinstance(retry_result.get("watchlist"), list) else []
                         retry_result["watchlist"] = list(dict.fromkeys(retry_watch + retry_trade_ready))
                     retry_result["trade_ready"] = []
-                    retry_meta = normalize_selection_result(retry_result, retry_candidates, market)
+                    retry_meta = normalize_selection_result(
+                        retry_result,
+                        retry_candidates,
+                        market,
+                        allow_legacy_auto_ready=_env_bool_flag("ALLOW_LEGACY_SELECTION_AUTO_READY", False),
+                    )
                     credit_record(retry_resp.usage.input_tokens, retry_resp.usage.output_tokens, "select_tickers_retry", model=MODEL)
                     save_raw_call(
                         label="select_tickers_retry",

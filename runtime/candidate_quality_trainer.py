@@ -4,26 +4,12 @@ import os
 from datetime import datetime
 from typing import Any
 
+from runtime.candidate_quality_labels import FUTURE_LABEL_FIELDS
+
 
 TRAINER_SCORE_VERSION = "trainer_quality_v1"
 
 TRAINER_STATES = ("PLAN_A", "PLAN_B", "WATCH", "BENCH", "QUARANTINE")
-
-FUTURE_LABEL_FIELDS = {
-    "forward_1d",
-    "forward_3d",
-    "forward_5d",
-    "ret30",
-    "ret60",
-    "mfe30",
-    "mfe60",
-    "mae30",
-    "mae60",
-    "return_pct",
-    "max_runup_pct",
-    "max_drawdown_pct",
-    "pnl_pct",
-}
 
 
 def _text(value: Any) -> str:

@@ -2,27 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from runtime.candidate_quality_labels import FUTURE_LABEL_FIELDS
+
 
 US_QUALITY_SHADOW_VERSION = "us_quality_shadow_v1"
 US_RUNTIME_QUALITY_VERSION = "us_runtime_quality_fallback:v1"
-
-FUTURE_LABEL_FIELDS = {
-    "forward_1d",
-    "forward_3d",
-    "forward_5d",
-    "forward_30m_from_bucket",
-    "forward_60m_from_bucket",
-    "forward_close_from_bucket",
-    "return_pct",
-    "max_runup_pct",
-    "max_drawdown_pct",
-    "mfe30",
-    "mfe60",
-    "mae30",
-    "mae60",
-    "pnl_pct",
-    "filled_count",
-}
+US_RUNTIME_QUALITY_REQUIRED_HISTORY_ROWS = 65
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
@@ -154,11 +139,15 @@ def enrich_us_runtime_quality_fallback(
     gaps = _as_list(row.get("quality_data_gaps")) + _as_list(row.get("bucket_data_gaps"))
     gaps += _as_list(row.get("us_quality_data_gaps"))
 
-    if candles is not None and not row.get("history_usable_rows"):
+    if candles is not None:
         try:
-            row["history_usable_rows"] = int(len(candles))
+            candle_rows = int(len(candles))
         except Exception:
-            pass
+            candle_rows = 0
+        if row.get("history_usable_rows") in (None, ""):
+            row["history_usable_rows"] = candle_rows
+        if row.get("history_required_rows") in (None, ""):
+            row["history_required_rows"] = US_RUNTIME_QUALITY_REQUIRED_HISTORY_ROWS
 
     liquidity = _liquidity_score(row, gaps)
     momentum = _momentum_score(row, gaps)

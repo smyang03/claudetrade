@@ -5,6 +5,7 @@ goto :main
 :kill_pid_file
 set "PID_FILE=%~1"
 set "LABEL=%~2"
+set "SCRIPT_NEEDLE=%~3"
 if not exist "%PID_FILE%" (
   echo [SKIP] %LABEL% pid file not found: %PID_FILE%
   exit /b 0
@@ -17,6 +18,27 @@ if not defined PID (
   echo [WARN] %LABEL% pid file has no pid: %PID_FILE%
   exit /b 0
 )
+call :pid_owner_ok "%PID%" "%SCRIPT_NEEDLE%" "%LABEL%"
+if errorlevel 2 (
+  if "%DRY_RUN%"=="1" (
+    echo [DRY-RUN] would remove stale pid file for missing process: %PID_FILE%
+  ) else (
+    del /f /q "%PID_FILE%" >nul 2>nul
+    echo [OK] removed stale pid file for missing process: %PID_FILE%
+  )
+  exit /b 0
+)
+if errorlevel 1 (
+  echo [WARN] %LABEL% pid=%PID% is not owned by this project/script; taskkill skipped.
+  if "%DRY_RUN%"=="1" (
+    echo [DRY-RUN] would move foreign/stale pid file to %PID_FILE%.stale
+  ) else (
+    move /Y "%PID_FILE%" "%PID_FILE%.stale" >nul 2>nul
+    if errorlevel 1 echo [WARN] failed to mark stale pid file: %PID_FILE%
+    if not errorlevel 1 echo [OK] moved stale pid file: %PID_FILE%.stale
+  )
+  exit /b 0
+)
 call :kill_pid_tree "%PID%" "%LABEL%"
 if "%DRY_RUN%"=="1" exit /b 0
 tasklist /FI "PID eq %PID%" 2>nul | findstr /r /c:"[ ]%PID%[ ]" >nul
@@ -27,6 +49,15 @@ if errorlevel 1 (
   echo [WARN] %LABEL% pid %PID% is still alive; pid file kept.
 )
 exit /b 0
+
+:pid_owner_ok
+set "CHECK_PID=%~1"
+set "CHECK_NEEDLE=%~2"
+set "CHECK_LABEL=%~3"
+if "%CHECK_PID%"=="" exit /b 1
+if "%CHECK_NEEDLE%"=="" exit /b 1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$pidValue = [int]'%CHECK_PID%'; $root = '%PROJECT_DIR%'; $needle = '%CHECK_NEEDLE%'; $me = $PID; $p = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $pidValue) -ErrorAction SilentlyContinue; if (-not $p) { exit 2 }; $cmd = [string]$p.CommandLine; if ($p.ProcessId -eq $me -or -not $cmd -or $cmd -notlike ('*' + $root + '*') -or $cmd -notlike ('*' + $needle + '*')) { exit 1 }; Write-Output ('[PID-OWNER] ' + '%CHECK_LABEL%' + ' pid=' + $pidValue + ' cmd=' + $cmd); exit 0"
+exit /b %ERRORLEVEL%
 
 :kill_matching
 set "SCRIPT_NEEDLE=%~1"
@@ -68,8 +99,8 @@ if not exist "%PROJECT_DIR%\trading_bot.py" (
 )
 
 echo [STOP] stopping existing live stack processes...
-call :kill_pid_file "%STATE_DIR%\live_trading_bot.pid" "live trading_bot"
-call :kill_pid_file "%STATE_DIR%\dashboard_server.pid" "dashboard"
+call :kill_pid_file "%STATE_DIR%\live_trading_bot.pid" "live trading_bot" "trading_bot.py --live"
+call :kill_pid_file "%STATE_DIR%\dashboard_server.pid" "dashboard" "dashboard\dashboard_server.py"
 call :kill_matching "trading_bot.py --live" "live trading_bot"
 call :kill_matching "dashboard\dashboard_server.py" "dashboard"
 call :kill_matching "tools\live_guardian.py" "live_guardian"

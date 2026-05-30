@@ -12,7 +12,7 @@ from unittest.mock import patch
 from bot.candidate_policy import normalize_selection_result
 from decision.claude_price_plan import parse_plan_from_claude
 from minority_report import hold_advisor, postmortem
-from trading_bot import TradingBot
+from trading_bot import TradingBot, _analyst_strategy_vote, _average_analyst_confidence
 
 
 class SelectionSizingContractTests(unittest.TestCase):
@@ -133,6 +133,17 @@ class PricePlanContractTests(unittest.TestCase):
 
 
 class HoldAdvisorStageContractTests(unittest.TestCase):
+    def assertTriageShimVotes(self, result: dict, expected_source: str) -> None:
+        self.assertEqual(set(result["votes"]), {"bull", "bear", "neutral"})
+        for role, vote in result["votes"].items():
+            self.assertEqual(vote["source"], "triage_shim")
+            self.assertTrue(vote["triage_shim"])
+            self.assertEqual(vote["triage_vote_source"], expected_source)
+            self.assertEqual(vote["analyst_role"], role)
+            self.assertEqual(vote["triage_shim_role"], role)
+        self.assertIn("triage", result)
+        self.assertIn("triage_vote_trace", result)
+
     def test_coerce_vote_preserves_stage_fields(self) -> None:
         vote = hold_advisor._coerce_vote(
             {
@@ -276,7 +287,7 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
         self.assertEqual(result["action"], "SELL")
         self.assertEqual(result["exit_category"], "STOP_LOSS")
         self.assertEqual(result["exit_driver"], "failed_recovery")
-        self.assertEqual(set(result["votes"]), {"triage"})
+        self.assertTriageShimVotes(result, "triage")
 
     def test_non_stop_sell_triage_uses_conditional_challenge_by_default(self) -> None:
         triage = hold_advisor._coerce_triage_vote(
@@ -321,12 +332,60 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
         ask_challenge.assert_called_once()
         self.assertIs(ask_challenge.call_args.args[-1], triage)
         self.assertEqual(result["action"], "HOLD")
-        self.assertEqual(set(result["votes"]), {"triage", "challenge"})
         self.assertTrue(result["second_opinion_used"])
         self.assertEqual(result["second_opinion_reason"], "non_stop_sell_escalation")
         self.assertEqual(result["exit_category"], "HOLD")
         self.assertEqual(result["protective_stop"], 98.5)
         self.assertEqual(result["invalid_if"], "loses 98.5")
+        self.assertTriageShimVotes(result, "triage_challenge")
+        self.assertEqual(result["triage_vote_trace"]["challenge"], challenge)
+
+    def test_challenge_hold_without_boundary_keeps_auto_sell_trigger(self) -> None:
+        triage = hold_advisor._coerce_triage_vote(
+            {
+                "category": "SELL",
+                "confidence": 0.9,
+                "urgency": "now",
+                "exit_driver": "time_carry",
+                "reason": "carry risk",
+            },
+            {"ticker": "TEST"},
+            "AUTO_SELL_REVIEW",
+            "policy",
+        )
+        challenge = {
+            "confirm": False,
+            "final_category": "HOLD",
+            "confidence": 0.8,
+            "hold_mode": "profit_pullback",
+            "sell_urgency": "wait",
+            "protective_stop": 0.0,
+            "hard_stop": 0.0,
+            "recover_above": 0.0,
+            "next_review_min": 20,
+            "invalid_if": "",
+            "risk_if_wrong": "missed time exit",
+            "minimum_condition_to_hold": "",
+            "reason": "hold but no boundary",
+            "challenge_prompt_version": hold_advisor.CHALLENGE_PROMPT_VERSION,
+            "parse_error": False,
+            "duration_ms": 12,
+        }
+
+        pos = {"ticker": "TEST", "entry": 100.0, "current_price": 101.0}
+        with patch.dict(os.environ, {"HOLD_ADVISOR_TRIAGE_ENABLED": "true"}, clear=False), patch.object(
+            hold_advisor, "_ask_triage", return_value=triage
+        ), patch.object(hold_advisor, "_ask_challenge", return_value=challenge), patch.object(
+            hold_advisor, "_ask_one", side_effect=AssertionError("legacy should be skipped")
+        ):
+            result = hold_advisor.ask(pos, "KR", delay=0, decision_stage="AUTO_SELL_REVIEW", default_policy="policy")
+
+        self.assertEqual(result["action"], "SELL")
+        self.assertEqual(result["sell_urgency"], "now")
+        self.assertEqual(result["reason"], "hold_boundary_invalid")
+        self.assertEqual(result["exit_category"], "SELL")
+        self.assertTrue(result["hold_boundary_invalid"])
+        self.assertTriageShimVotes(result, "triage_challenge")
 
     def test_model_requested_second_opinion_uses_challenge_even_for_stop_loss(self) -> None:
         triage = hold_advisor._coerce_triage_vote(
@@ -373,9 +432,9 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
         self.assertEqual(result["action"], "SELL")
         self.assertEqual(result["second_opinion_reason"], "model_requested_second_opinion")
         self.assertEqual(result["challenge_final_category"], "STOP_LOSS")
-        self.assertEqual(set(result["votes"]), {"triage", "challenge"})
+        self.assertTriageShimVotes(result, "triage_challenge")
 
-    def test_challenge_parse_error_returns_safe_hold_without_legacy_by_default(self) -> None:
+    def test_challenge_parse_error_cannot_override_auto_sell_without_hold_boundary(self) -> None:
         triage = hold_advisor._coerce_triage_vote(
             {
                 "category": "SELL",
@@ -411,11 +470,13 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
         ), patch.object(hold_advisor, "_ask_one", side_effect=AssertionError("legacy should be skipped")):
             result = hold_advisor.ask(pos, "KR", delay=0, decision_stage="AUTO_SELL_REVIEW", default_policy="policy")
 
-        self.assertEqual(result["action"], "HOLD")
+        self.assertEqual(result["action"], "SELL")
+        self.assertEqual(result["sell_urgency"], "now")
+        self.assertEqual(result["reason"], "hold_boundary_invalid")
+        self.assertTrue(result["hold_boundary_invalid"])
         self.assertTrue(result["second_opinion_used"])
         self.assertTrue(result["challenge_parse_error"])
-        self.assertEqual(result["reason"], "challenge_error")
-        self.assertEqual(set(result["votes"]), {"triage", "challenge"})
+        self.assertTriageShimVotes(result, "triage_challenge")
 
     def test_triage_parse_error_can_opt_into_legacy_fallback(self) -> None:
         triage = hold_advisor._fallback_triage("triage_error", "AUTO_SELL_REVIEW", "policy")
@@ -519,6 +580,64 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
         self.assertNotIn("older prompt", prompt)
         self.assertNotIn('"votes"', prompt)
         self.assertIn("category is the exit reason class", prompt)
+
+    def test_triage_shim_votes_do_not_create_three_analyst_strategy_majority(self) -> None:
+        judgments = {
+            role: {
+                "source": "triage_shim",
+                "triage_shim": True,
+                "confidence": 0.82,
+                "suggested_strategy": "momentum",
+            }
+            for role in ("bull", "bear", "neutral")
+        }
+
+        self.assertEqual(_analyst_strategy_vote(judgments), "")
+        self.assertAlmostEqual(_average_analyst_confidence(judgments), 0.82)
+
+    def test_real_analyst_votes_still_drive_strategy_majority(self) -> None:
+        judgments = {
+            "bull": {"confidence": 0.8, "suggested_strategy": "momentum"},
+            "bear": {"confidence": 0.6, "suggested_strategy": "momentum"},
+            "neutral": {"confidence": 0.7, "suggested_strategy": "mean_reversion"},
+        }
+
+        self.assertEqual(_analyst_strategy_vote(judgments), "momentum")
+        self.assertAlmostEqual(_average_analyst_confidence(judgments), 0.7)
+
+    def test_result_from_triage_handles_missing_triage_payload(self) -> None:
+        pos = {"ticker": "TEST", "entry": 100.0, "current_price": 101.0}
+        with patch.object(hold_advisor, "_log_decision"):
+            result = hold_advisor._result_from_triage(
+                "TEST",
+                "KR",
+                pos,
+                None,
+                "AUTO_SELL_REVIEW",
+                "policy",
+                0,
+            )
+
+        self.assertEqual(result["action"], "HOLD")
+        self.assertTrue(result["triage_missing"])
+        self.assertTrue(result["triage_parse_error"])
+        self.assertTriageShimVotes(result, "triage")
+
+    def test_challenge_coerce_reports_missing_boundary_fields(self) -> None:
+        vote = hold_advisor._coerce_challenge_vote(
+            {
+                "confirm": False,
+                "final_category": "HOLD",
+                "confidence": 0.8,
+                "reason": "hold but no boundary",
+            }
+        )
+
+        self.assertEqual(vote["sell_urgency"], "wait")
+        self.assertIn("challenge_missing_hold_mode", vote["challenge_field_gaps"])
+        self.assertIn("challenge_missing_sell_urgency", vote["challenge_field_gaps"])
+        self.assertIn("challenge_missing_protective_stop", vote["challenge_field_gaps"])
+        self.assertIn("challenge_missing_invalid_if", vote["challenge_field_gaps"])
 
     def test_challenge_prompt_uses_structured_first_pass_without_raw_response(self) -> None:
         triage = {

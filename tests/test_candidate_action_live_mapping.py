@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import builtins
 from datetime import date, datetime
 from pathlib import Path
 import tempfile
@@ -10,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from audit.candidate_audit_store import CandidateAuditStore
+from bot.candidate_policy import normalize_selection_result
 from execution.sizing import FixedSizingResult
 from runtime.candidate_quality_trainer import score_candidate_for_trainer
 from runtime.tuning_bounds import RUNTIME_ADJUSTMENT_BOUNDS
@@ -443,6 +445,101 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertIn("candidate_quality_score", row)
         self.assertNotIn("us_quality_score_shadow", row)
 
+    def test_legacy_single_list_selection_does_not_auto_promote_without_opt_in(self) -> None:
+        candidates = [{"ticker": "AAPL"}, {"ticker": "MSFT"}]
+
+        with patch.dict(os.environ, {"CANDIDATE_ACTIONS_V2_ENABLED": "false"}, clear=False):
+            blocked = normalize_selection_result({"watchlist": ["AAPL", "MSFT"]}, candidates, "US")
+            allowed = normalize_selection_result(
+                {"watchlist": ["AAPL", "MSFT"]},
+                candidates,
+                "US",
+                allow_legacy_auto_ready=True,
+            )
+
+        self.assertEqual(blocked["trade_ready"], [])
+        self.assertTrue(blocked["_legacy_auto_ready_blocked"])
+        self.assertFalse(blocked["_legacy_auto_ready_promoted"])
+        self.assertEqual(allowed["trade_ready"], ["AAPL", "MSFT"])
+        self.assertTrue(allowed["_legacy_auto_ready_promoted"])
+
+    def test_empty_selection_meta_fallback_is_watch_only_by_default(self) -> None:
+        bot = _make_bot()
+
+        with patch("trading_bot.get_last_selection_meta", return_value={}):
+            meta = TradingBot._apply_selection_meta(bot, "US", ["AAPL", "MSFT"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertTrue(meta["_legacy_auto_ready_blocked"])
+        self.assertEqual(meta["_fallback_mode"], "empty_selection_meta_watch_only")
+
+    def test_us_quality_runtime_error_keeps_score_schema(self) -> None:
+        bot = _make_bot()
+        with patch(
+            "runtime.us_candidate_quality.enrich_us_runtime_quality_fallback",
+            side_effect=RuntimeError("boom"),
+        ):
+            row = TradingBot._enrich_us_candidate_quality_shadow(
+                bot,
+                "US",
+                {"ticker": "NVDA", "market": "US"},
+                None,
+            )
+
+        self.assertEqual(row["candidate_quality_score"], 0.0)
+        self.assertEqual(row["candidate_quality_grade"], "D")
+        self.assertEqual(row["quality_source"], "us_quality_enrichment_error")
+        self.assertIn("quality_enrichment_error", row["candidate_quality_flags"])
+        self.assertIn("quality_enrichment_error", row["quality_data_gaps"])
+        self.assertIn("us_quality_shadow_error", row["us_quality_data_gaps"])
+
+    def test_us_quality_import_error_keeps_score_schema(self) -> None:
+        bot = _make_bot()
+        real_import = builtins.__import__
+
+        def _fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "runtime.us_candidate_quality":
+                raise ImportError("missing quality module")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=_fake_import):
+            row = TradingBot._enrich_us_candidate_quality_shadow(
+                bot,
+                "US",
+                {"ticker": "NVDA", "market": "US"},
+                None,
+            )
+
+        self.assertEqual(row["candidate_quality_score"], 0.0)
+        self.assertEqual(row["candidate_quality_grade"], "D")
+        self.assertEqual(row["quality_source"], "us_quality_import_error")
+        self.assertIn("quality_enrichment_error", row["candidate_quality_flags"])
+
+    def test_data_insufficient_failure_fields_preserve_stored_zero(self) -> None:
+        bot = _make_bot()
+        bot._current_session_date_str = lambda market: "2026-05-30"
+        bot._data_insufficient_failure_state = {
+            "2026-05-30:US:AAPL:too_few_rows": {
+                "usable_rows": 0,
+                "required_rows": 0,
+                "failure_count": 0,
+                "count": 3,
+            }
+        }
+
+        fields = TradingBot._data_insufficient_failure_fields(
+            bot,
+            "US",
+            "AAPL",
+            "too_few_rows",
+            usable_rows=65,
+            required_rows=65,
+        )
+
+        self.assertEqual(fields["usable_rows"], 0)
+        self.assertEqual(fields["required_rows"], 0)
+        self.assertEqual(fields["failure_count"], 0)
+
     def test_screener_filter_audit_writes_data_insufficient_shadow_row(self) -> None:
         bot = _make_bot()
         bot.is_paper = False
@@ -680,6 +777,10 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(meta["_pathb_wait_tickers"], ["GXO"])
         self.assertEqual(meta["_pathb_wait_origins"]["GXO"]["origin_action"], "PULLBACK_WAIT")
         self.assertTrue(meta["_pathb_wait_origins"]["GXO"]["not_patha_trade_ready"])
+        self.assertFalse(meta["_pathb_wait_origins"]["GXO"]["patha_trade_ready"])
+        self.assertTrue(meta["_pathb_wait_origins"]["GXO"]["pathb_live_executable_wait"])
+        self.assertTrue(meta["_candidate_action_routes"][0]["pathb_live_executable_wait"])
+        self.assertFalse(meta["_candidate_action_routes"][0]["patha_trade_ready"])
         self.assertEqual(bot.pathb.registered_meta["_pathb_registration_scope"], "candidate_actions_wait_only")
         self.assertEqual(bot.pathb.registered_meta["_pathb_wait_tickers"], ["GXO"])
         self.assertEqual(
@@ -688,6 +789,15 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         )
         self.assertIn("GXO", bot.v2.registered_meta["trade_ready"])
         self.assertEqual(bot.v2.registered_meta["_pathb_wait_origins"]["GXO"]["origin_action"], "PULLBACK_WAIT")
+
+    def test_us_disabled_momentum_is_not_active_or_voted(self) -> None:
+        bot = _make_bot()
+
+        self.assertFalse(TradingBot._live_strategy_allowed(bot, "US", "momentum", "MODERATE_BULL"))
+        self.assertNotIn("momentum", TradingBot._selection_active_strategies(bot, "US", "MODERATE_BULL"))
+        bot.runtime_config.values["US_MOMENTUM_LIVE_ENABLED"] = True
+        self.assertTrue(TradingBot._live_strategy_allowed(bot, "US", "momentum", "MODERATE_BULL"))
+        self.assertIn("momentum", TradingBot._selection_active_strategies(bot, "US", "MODERATE_BULL"))
 
     def test_discovery_buy_ready_demoted_to_watch_by_default(self) -> None:
         bot = _make_bot()

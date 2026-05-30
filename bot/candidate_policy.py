@@ -211,6 +211,7 @@ def normalize_selection_result(
     stop_reason: str = "",
     reference_prices: dict[str, float] | None = None,
     source_prompt_id: str = "",
+    allow_legacy_auto_ready: bool = False,
 ) -> dict:
     """Normalize Claude output into WATCH and TRADE_READY lists.
 
@@ -267,10 +268,12 @@ def normalize_selection_result(
         trade_ready = _valid_list(parsed.get("trade_ready"), valid_order, market, limits["trade_max"])
     elif v2_requested:
         trade_ready = []
-    else:
+    elif allow_legacy_auto_ready:
         # Legacy output had one list only; preserve order but cap order permission.
         trade_ready = watchlist[: limits["trade_max"]]
         legacy_auto_ready_promoted = bool(trade_ready)
+    else:
+        trade_ready = []
 
     if not watchlist and trade_ready:
         watchlist = list(trade_ready)
@@ -349,6 +352,8 @@ def normalize_selection_result(
         "_fallback_mode": str(parsed.get("_fallback_mode", "") or ""),
         "_candidate_actions_v2_requested": bool(v2_requested),
         "_legacy_auto_ready_promoted": bool(legacy_auto_ready_promoted),
+        "_legacy_auto_ready_blocked": bool(not allow_legacy_auto_ready and not parse_recovered and "trade_ready" not in parsed and not v2_requested),
+        "_legacy_auto_ready_allowed_source": "explicit_opt_in" if allow_legacy_auto_ready else "",
         "_selection_raw_schema": "legacy",
         "_selection_stop_reason": str(stop_reason or ""),
         "_candidate_actions_present": bool(candidate_actions_present),

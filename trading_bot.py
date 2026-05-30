@@ -610,6 +610,48 @@ def _normalize_strategy_name(raw: str) -> str:
     if normalized is not None:
         return normalized
     return ""
+
+
+_ANALYST_ROLES = ("bull", "bear", "neutral")
+
+
+def _is_triage_shim_vote(vote: dict) -> bool:
+    return isinstance(vote, dict) and bool(vote.get("triage_shim"))
+
+
+def _analyst_role_votes(judgments: dict) -> list[tuple[str, dict]]:
+    if not isinstance(judgments, dict):
+        return []
+    return [
+        (role, vote)
+        for role in _ANALYST_ROLES
+        if isinstance((vote := judgments.get(role)), dict)
+    ]
+
+
+def _average_analyst_confidence(judgments: dict, default: float = 0.5) -> float:
+    role_votes = _analyst_role_votes(judgments)
+    if not role_votes:
+        return default
+
+    real_conf = [
+        float(vote.get("confidence", default) or 0.0)
+        for _, vote in role_votes
+        if not _is_triage_shim_vote(vote)
+    ]
+    if real_conf:
+        return sum(real_conf) / len(real_conf)
+
+    shim_conf = [
+        float(vote.get("confidence", default) or 0.0)
+        for _, vote in role_votes
+        if _is_triage_shim_vote(vote)
+    ]
+    if shim_conf:
+        return sum(shim_conf) / len(shim_conf)
+    return default
+
+
 def _analyst_strategy_vote(judgments: dict) -> str:
     """
     3명 분석가 suggested_strategy 다수결 → 코드 전략명.
@@ -617,8 +659,9 @@ def _analyst_strategy_vote(judgments: dict) -> str:
     """
     from collections import Counter
     votes = [
-        _normalize_strategy_name(judgments.get(a, {}).get("suggested_strategy", ""))
-        for a in ("bull", "bear", "neutral")
+        _normalize_strategy_name(vote.get("suggested_strategy", ""))
+        for _, vote in _analyst_role_votes(judgments)
+        if not _is_triage_shim_vote(vote)
     ]
     valid = [v for v in votes if v]
     if not valid:
@@ -6725,6 +6768,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             route_payload["pathb_status"] = route_state.get("status", "")
             route_payload["pathb_waiting"] = bool(route_state.get("waiting"))
             route_payload["pathb_active_order"] = bool(route_state.get("active_order"))
+            route_payload["pathb_live_executable_wait"] = bool(decision.final_action == "PULLBACK_WAIT")
+            route_payload["patha_trade_ready"] = bool(decision.final_action in {"PROBE_READY", "BUY_READY", "ADD_READY"})
             route_payload["strategy"] = str(
                 (action or {}).get("strategy")
                 or (action or {}).get("recommended_strategy")
@@ -6903,6 +6948,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "origin_route": "pathb_wait_only",
                     "registration_scope": "candidate_actions_wait_only",
                     "not_patha_trade_ready": True,
+                    "patha_trade_ready": False,
+                    "pathb_live_executable_wait": True,
                     "reason": reason,
                     "source_prompt_id": str((action or {}).get("source_prompt_id") or ""),
                 }
@@ -8496,9 +8543,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         meta = dict(raw_meta)
         if not meta.get("watchlist"):
             v2_contract_enabled = self._runtime_bool("CANDIDATE_ACTIONS_V2_ENABLED", False)
+            legacy_auto_ready_allowed = self._runtime_bool("ALLOW_LEGACY_SELECTION_AUTO_READY", False)
             meta = {
                 "watchlist": list(selected or []),
-                "trade_ready": [] if v2_contract_enabled else list(selected or [])[:10],
+                "trade_ready": list(selected or [])[:10] if legacy_auto_ready_allowed else [],
                 "reasons": {},
                 "veto": {},
                 "risk_tags": {},
@@ -8508,8 +8556,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "max_order_cap_pct": {},
                 "risk_budget_pct": {},
                 "size_reason": {},
-                "_fallback_mode": "empty_selection_meta_watch_only" if v2_contract_enabled else "legacy_empty_selection_meta",
-                "_legacy_auto_ready_promoted": not v2_contract_enabled and bool(selected),
+                "_fallback_mode": (
+                    "legacy_empty_selection_meta_auto_ready"
+                    if legacy_auto_ready_allowed
+                    else "empty_selection_meta_watch_only"
+                ),
+                "_legacy_auto_ready_promoted": bool(legacy_auto_ready_allowed and selected),
+                "_legacy_auto_ready_blocked": bool(not legacy_auto_ready_allowed and selected),
+                "_legacy_auto_ready_allowed_source": "ALLOW_LEGACY_SELECTION_AUTO_READY" if legacy_auto_ready_allowed else "",
             }
         route_source = str(source or "").strip()
         if route_source and not str(meta.get("_entry_route_source") or "").strip():
@@ -11112,7 +11166,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             active = [s for s in active if s != "mean_reversion"]
         if not self.enable_continuation_live:
             active = [s for s in active if s != "continuation"]
+        active = [s for s in active if self._live_strategy_allowed(market_key, s, mode_value)]
         return active
+    def _live_strategy_allowed(self, market: str, strategy: str, mode: str = "") -> bool:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        strategy_name = _normalize_strategy_name(strategy)
+        if market_key == "US" and strategy_name == "momentum":
+            return self._runtime_bool("US_MOMENTUM_LIVE_ENABLED", False)
+        if market_key == "US" and strategy_name == "volatility_breakout":
+            return self._runtime_bool("US_VOLATILITY_BREAKOUT_LIVE_ENABLED", False)
+        return True
     def _selection_session_phase(self, market: str) -> dict:
         market_key = "US" if str(market).upper() == "US" else "KR"
         elapsed = float(self._market_elapsed_min(market_key))
@@ -15290,6 +15353,36 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             _add_quality_gap("kr_candidate_quality_error")
             row["candidate_quality_error"] = str(exc)[:160]
             return row
+    def _us_quality_error_row(self, row: dict, exc: Exception, source: str) -> dict:
+        out = dict(row or {})
+
+        def _listify(value: Any) -> list[str]:
+            if value in (None, ""):
+                return []
+            if isinstance(value, str):
+                return [value] if value.strip() else []
+            if isinstance(value, dict):
+                return [str(key) for key, enabled in value.items() if enabled and str(key).strip()]
+            try:
+                return [str(item) for item in value if str(item).strip()]
+            except Exception:
+                return [str(value)]
+
+        quality_gaps = _listify(out.get("quality_data_gaps"))
+        us_gaps = _listify(out.get("us_quality_data_gaps"))
+        flags = _listify(out.get("candidate_quality_flags"))
+        quality_gaps.append("quality_enrichment_error")
+        us_gaps.append("us_quality_shadow_error")
+        flags.append("quality_enrichment_error")
+        out.setdefault("candidate_quality_score", 0.0)
+        out.setdefault("candidate_quality_grade", "D")
+        out["candidate_quality_flags"] = sorted(set(flags))
+        out["quality_data_gaps"] = sorted(set(gap for gap in quality_gaps if gap))
+        out["us_quality_data_gaps"] = sorted(set(gap for gap in us_gaps if gap))
+        out["quality_source"] = source
+        out["us_quality_shadow_error"] = str(exc)[:160]
+        out["us_quality_shadow_only"] = True
+        return out
     def _prefetch_kr_candidate_flow(self, candidates: list, market: str) -> dict:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         if market_key != "KR" or not _env_bool("ENABLE_KR_CANDIDATE_FLOW_PREFETCH", False):
@@ -15340,23 +15433,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return row
         try:
             from runtime.us_candidate_quality import enrich_us_runtime_quality_fallback, enrich_us_quality_shadow
+        except ImportError as exc:
+            log.warning(f"[US quality] import failed: {exc}")
+            return self._us_quality_error_row(row, exc, "us_quality_import_error")
 
+        try:
             if _env_bool("US_QUALITY_SHADOW_ENABLED", False):
                 return enrich_us_quality_shadow(row, candles)
             return enrich_us_runtime_quality_fallback(row, candles)
         except Exception as exc:
-            gaps = row.get("us_quality_data_gaps")
-            if isinstance(gaps, list):
-                gap_list = list(gaps)
-            elif gaps:
-                gap_list = [str(gaps)]
-            else:
-                gap_list = []
-            gap_list.append("us_quality_shadow_error")
-            row["us_quality_data_gaps"] = sorted(set(gap_list))
-            row["us_quality_shadow_error"] = str(exc)[:160]
-            row["us_quality_shadow_only"] = True
-            return row
+            log.warning(f"[US quality] enrichment failed: {exc}")
+            return self._us_quality_error_row(row, exc, "us_quality_enrichment_error")
     def _apply_candidate_post_rank_shadow(self, market: str, candidates: list[dict]) -> list[dict]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         if market_key != "KR" or not _env_bool("KR_CANDIDATE_POST_RANK_ENABLED", False):
@@ -15439,13 +15526,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         key = f"{session_date}:{market_key}:{ticker_key}:{failure_kind}"
         state = getattr(self, "_data_insufficient_failure_state", {}) or {}
         row = dict(state.get(key) or {})
+        def _int_field_preserve_zero(field: str, fallback: object = 0) -> int:
+            value = row.get(field)
+            if value is None or value == "":
+                value = fallback
+            if value is None or value == "":
+                value = 0
+            return int(float(value))
+        failure_count_fallback = row.get("count")
+        if failure_count_fallback in (None, ""):
+            failure_count_fallback = 0
         return {
             "failure_kind": str(row.get("failure_kind") or failure_kind or "data_insufficient"),
-            "usable_rows": int(row.get("usable_rows") or usable_rows or 0),
-            "required_rows": int(row.get("required_rows") or required_rows or 0),
+            "usable_rows": _int_field_preserve_zero("usable_rows", usable_rows),
+            "required_rows": _int_field_preserve_zero("required_rows", required_rows),
             "first_failed_at": str(row.get("first_failed_at") or row.get("first_seen_at") or ""),
             "last_failed_at": str(row.get("last_failed_at") or row.get("last_seen_at") or ""),
-            "failure_count": int(row.get("failure_count") or row.get("count") or 0),
+            "failure_count": _int_field_preserve_zero("failure_count", failure_count_fallback),
             "cooldown_until": str(row.get("cooldown_until") or ""),
             "prompt_excluded_reason": str(
                 prompt_excluded_reason
@@ -25534,10 +25631,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # 분석가 평균 confidence 계산 — 신뢰도 낮으면 신규 진입 차단
         log.info(f"[runtime gates {market}] source=run_cycle {self._runtime_gate_state_text(market)}")
         _judgments = self.today_judgment.get("judgments", {})
-        _avg_conf = (
-            sum(_judgments.get(a, {}).get("confidence", 0.5) for a in ("bull", "bear", "neutral")) / 3.0
-            if _judgments else 0.5
-        )
+        _avg_conf = _average_analyst_confidence(_judgments, default=0.5)
         _low_conf = _avg_conf < _MIN_ENTRY_CONF
         if _low_conf:
             log.info(f"[{market}] 낮은 분석가 confidence ({_avg_conf:.2f} < {_MIN_ENTRY_CONF}) — 신규 진입 전 사이클 스킵")
@@ -25586,12 +25680,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # momentum/VB 모두 disabled이므로 base는 mean_reversion, gap_pullback 고정
         if market == "US":
             _us_base = ["opening_range_pullback", "mean_reversion", "gap_pullback"]
-            if _voted_strat and _voted_strat not in _us_base:
-                _us_strat_list = [_voted_strat] + _us_base
-            elif _voted_strat:
-                _us_strat_list = [_voted_strat] + [s for s in _us_base if s != _voted_strat]
+            _us_voted_strat = _voted_strat
+            if _us_voted_strat and not self._live_strategy_allowed("US", _us_voted_strat, mode):
+                self.today_judgment.setdefault("strategy_policy", {})["voted_strategy_ignored"] = _us_voted_strat
+                self.today_judgment.setdefault("strategy_policy", {})[
+                    "voted_strategy_ignored_reason"
+                ] = "strategy_disabled_for_market"
+                log.info(f"[US strategy policy] voted_strategy ignored: {_us_voted_strat} disabled for live")
+                _us_voted_strat = ""
+            if _us_voted_strat and _us_voted_strat not in _us_base:
+                _us_strat_list = [_us_voted_strat] + _us_base
+            elif _us_voted_strat:
+                _us_strat_list = [_us_voted_strat] + [s for s in _us_base if s != _us_voted_strat]
             else:
                 _us_strat_list = _us_base
+            _us_strat_list = [s for s in _us_strat_list if self._live_strategy_allowed("US", s, mode)]
             log.debug(f"[US 전략] 투표={_voted_strat} 시도순서={_us_strat_list}")
         else:
             _us_strat_list = []

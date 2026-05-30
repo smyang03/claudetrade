@@ -276,13 +276,22 @@ class PathBClaudeContractTests(unittest.TestCase):
         self.assertEqual(recovered["price_targets"], {})
 
         legacy = normalize_selection_result({"tickers": ["005930"]}, candidates, "KR")
-        self.assertEqual(legacy["trade_ready"], ["005930"])
-        self.assertEqual(legacy["price_targets"], {})
+        self.assertEqual(legacy["trade_ready"], [])
+        self.assertTrue(legacy["_legacy_auto_ready_blocked"])
+
+        legacy_allowed = normalize_selection_result(
+            {"tickers": ["005930"]},
+            candidates,
+            "KR",
+            allow_legacy_auto_ready=True,
+        )
+        self.assertEqual(legacy_allowed["trade_ready"], ["005930"])
+        self.assertEqual(legacy_allowed["price_targets"], {})
 
         with tempfile.TemporaryDirectory() as tmp:
             bot = _Bot()
             runtime = _runtime(bot, EventStore(Path(tmp) / "events.db"))
-            self.assertEqual(runtime.register_from_selection_meta("KR", legacy), [])
+            self.assertEqual(runtime.register_from_selection_meta("KR", legacy_allowed), [])
 
 
 if __name__ == "__main__":

@@ -7,7 +7,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from runtime.candidate_prompt_pool import build_trainer_prompt_pool
+from runtime.candidate_quality_labels import FUTURE_LABEL_FIELDS
+from runtime.candidate_quality_trainer import FUTURE_LABEL_FIELDS as TRAINER_FUTURE_LABEL_FIELDS
 from runtime.candidate_quality_trainer import score_candidate_for_trainer
+from runtime.us_candidate_quality import FUTURE_LABEL_FIELDS as RUNTIME_FUTURE_LABEL_FIELDS
 
 
 class CandidateQualityTrainerTests(unittest.TestCase):
@@ -82,6 +85,12 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         self.assertIn("forward_1d", ignored)
         self.assertIn("ret60", ignored)
         self.assertGreater(scored["trainer_prompt_score"], 0)
+
+    def test_runtime_and_trainer_share_future_label_fields(self) -> None:
+        self.assertIs(TRAINER_FUTURE_LABEL_FIELDS, FUTURE_LABEL_FIELDS)
+        self.assertIs(RUNTIME_FUTURE_LABEL_FIELDS, FUTURE_LABEL_FIELDS)
+        self.assertIn("ret30", FUTURE_LABEL_FIELDS)
+        self.assertIn("forward_30m_from_bucket", FUTURE_LABEL_FIELDS)
 
     def test_trainer_penalty_defaults_are_env_overridable_without_changing_default(self) -> None:
         base = score_candidate_for_trainer(

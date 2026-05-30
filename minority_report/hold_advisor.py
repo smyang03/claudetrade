@@ -491,7 +491,7 @@ def _build_challenge_prompt(
     default_policy: str,
     minutes_to_close: Optional[float],
     force_exit_window: bool,
-    triage: dict,
+    triage: Optional[dict],
 ) -> str:
     payload = _triage_case_payload(
         pos,
@@ -553,25 +553,40 @@ Return strict JSON only:
 
 
 def _coerce_challenge_vote(result: dict) -> dict:
-    urgency = str((result or {}).get("sell_urgency", "") or "").strip().lower()
+    raw = result or {}
+    gaps: list[str] = []
+    raw_hold_mode = str(raw.get("hold_mode", "") or "").strip()
+    hold_mode = _normalize_hold_mode(raw.get("hold_mode"))
+    if not raw_hold_mode or not hold_mode:
+        gaps.append("challenge_missing_hold_mode")
+    raw_urgency = str(raw.get("sell_urgency", "") or "").strip().lower()
+    urgency = raw_urgency
     if urgency not in {"now", "next_open", "wait"}:
+        gaps.append("challenge_missing_sell_urgency")
         urgency = "wait"
+    protective_stop = max(0.0, _as_float(raw.get("protective_stop"), 0.0))
+    invalid_if = str(raw.get("invalid_if", "") or "")[:240]
+    if protective_stop <= 0:
+        gaps.append("challenge_missing_protective_stop")
+    if not invalid_if.strip() and not str(raw.get("minimum_condition_to_hold", "") or "").strip():
+        gaps.append("challenge_missing_invalid_if")
     return {
-        "confirm": bool((result or {}).get("confirm", False)),
-        "final_category": _normalize_triage_category((result or {}).get("final_category")),
-        "confidence": max(0.0, min(1.0, _as_float((result or {}).get("confidence"), 0.0))),
-        "hold_mode": _normalize_hold_mode((result or {}).get("hold_mode")),
+        "confirm": bool(raw.get("confirm", False)),
+        "final_category": _normalize_triage_category(raw.get("final_category")),
+        "confidence": max(0.0, min(1.0, _as_float(raw.get("confidence"), 0.0))),
+        "hold_mode": hold_mode,
         "sell_urgency": urgency,
-        "protective_stop": max(0.0, _as_float((result or {}).get("protective_stop"), 0.0)),
-        "hard_stop": max(0.0, _as_float((result or {}).get("hard_stop"), 0.0)),
-        "recover_above": max(0.0, _as_float((result or {}).get("recover_above"), 0.0)),
-        "next_review_min": max(5, min(240, _as_int((result or {}).get("next_review_min"), 30))),
-        "invalid_if": str((result or {}).get("invalid_if", "") or "")[:240],
-        "risk_if_wrong": str((result or {}).get("risk_if_wrong", "") or "")[:500],
-        "minimum_condition_to_hold": str((result or {}).get("minimum_condition_to_hold", "") or "")[:500],
-        "reason": str((result or {}).get("reason", "") or "")[:500],
+        "protective_stop": protective_stop,
+        "hard_stop": max(0.0, _as_float(raw.get("hard_stop"), 0.0)),
+        "recover_above": max(0.0, _as_float(raw.get("recover_above"), 0.0)),
+        "next_review_min": max(5, min(240, _as_int(raw.get("next_review_min"), 30))),
+        "invalid_if": invalid_if,
+        "risk_if_wrong": str(raw.get("risk_if_wrong", "") or "")[:500],
+        "minimum_condition_to_hold": str(raw.get("minimum_condition_to_hold", "") or "")[:500],
+        "reason": str(raw.get("reason", "") or "")[:500],
+        "challenge_field_gaps": sorted(set(gaps)),
         "challenge_prompt_version": CHALLENGE_PROMPT_VERSION,
-        "parse_error": bool((result or {}).get("parse_error", False)),
+        "parse_error": bool(raw.get("parse_error", False)),
     }
 
 
@@ -646,6 +661,7 @@ def _ask_challenge(
             "risk_if_wrong": "",
             "minimum_condition_to_hold": "",
             "reason": "challenge_error",
+            "challenge_field_gaps": ["challenge_parse_error"],
             "challenge_prompt_version": CHALLENGE_PROMPT_VERSION,
             "parse_error": True,
             "duration_ms": duration_ms,
@@ -720,12 +736,15 @@ def _fallback_triage(reason: str, decision_stage: str, default_policy: str) -> d
 
 
 def _triage_hold_boundary_valid(triage: dict) -> bool:
-    if str((triage or {}).get("exit_category") or "") != "HOLD":
+    payload = triage or {}
+    category = str(payload.get("exit_category") or "").upper()
+    action = str(payload.get("action") or "").upper()
+    if category != "HOLD" and action != "HOLD":
         return True
     return (
-        _as_float((triage or {}).get("protective_stop"), 0.0) > 0
-        and bool(str((triage or {}).get("invalid_if") or "").strip())
-        and 5 <= _as_int((triage or {}).get("next_review_min"), 0) <= 240
+        _as_float(payload.get("protective_stop"), 0.0) > 0
+        and bool(str(payload.get("invalid_if") or "").strip())
+        and 5 <= _as_int(payload.get("next_review_min"), 0) <= 240
     )
 
 
@@ -873,6 +892,53 @@ def _challenge_action_vote(challenge: dict, final_vote: dict, decision_stage: st
     return vote
 
 
+def _triage_compatibility_votes(
+    final_vote: dict,
+    triage: dict,
+    challenge: Optional[dict],
+    decision_stage: str,
+    default_policy: str,
+) -> dict:
+    source = "triage_challenge" if challenge is not None else "triage"
+    vote = _fallback_vote("triage_shim", decision_stage=decision_stage, default_policy=default_policy)
+    vote.update(
+        {
+            "action": str((final_vote or {}).get("action") or "HOLD").upper(),
+            "hold_mode": str((final_vote or {}).get("hold_mode", "") or ""),
+            "confidence": max(0.0, min(1.0, _as_float((final_vote or {}).get("confidence"), 0.0))),
+            "trail_pct": float((final_vote or {}).get("trail_pct", 0.03) or 0.03),
+            "sell_urgency": str((final_vote or {}).get("sell_urgency", "wait") or "wait"),
+            "revised_sell_target": float((final_vote or {}).get("revised_sell_target", 0.0) or 0.0),
+            "protective_stop": float((final_vote or {}).get("protective_stop", 0.0) or 0.0),
+            "hard_stop": float((final_vote or {}).get("hard_stop", 0.0) or 0.0),
+            "recover_above": float((final_vote or {}).get("recover_above", 0.0) or 0.0),
+            "recovery_watch_min": int((final_vote or {}).get("recovery_watch_min", 0) or 0),
+            "valid_for_min": int((final_vote or {}).get("valid_for_min", 0) or 0),
+            "reask_after_min": int((final_vote or {}).get("reask_after_min", 0) or 0),
+            "reask_drawdown_from_peak_pct": float((final_vote or {}).get("reask_drawdown_from_peak_pct", 0.0) or 0.0),
+            "reask_if_price_above": float((final_vote or {}).get("reask_if_price_above", 0.0) or 0.0),
+            "max_rechecks": int((final_vote or {}).get("max_rechecks", 0) or 0),
+            "next_review_min": int((final_vote or {}).get("next_review_min", 30) or 30),
+            "invalid_if": str((final_vote or {}).get("invalid_if", "") or "")[:240],
+            "reason": str((final_vote or {}).get("reason", "") or "")[:500],
+            "fallback": bool((final_vote or {}).get("fallback", False)),
+            "duration_ms": int((final_vote or {}).get("duration_ms", 0) or 0),
+            "exit_category": str((final_vote or {}).get("exit_category", "") or ""),
+            "exit_driver": str((final_vote or {}).get("exit_driver", "") or ""),
+            "source": "triage_shim",
+            "triage_shim": True,
+            "triage_vote_source": source,
+            "triage_confidence": max(0.0, min(1.0, _as_float((triage or {}).get("confidence"), 0.0))),
+            "challenge_confidence": max(0.0, min(1.0, _as_float((challenge or {}).get("confidence"), 0.0))) if challenge is not None else 0.0,
+            "challenge_field_gaps": list((final_vote or {}).get("challenge_field_gaps") or []),
+        }
+    )
+    return {
+        role: {**vote, "analyst_role": role, "triage_shim_role": role}
+        for role in ("bull", "bear", "neutral")
+    }
+
+
 def _merge_triage_challenge_vote(
     triage: dict,
     challenge: Optional[dict],
@@ -897,6 +963,7 @@ def _merge_triage_challenge_vote(
                 "challenge_confidence": 0.0,
                 "challenge_prompt_version": (challenge or {}).get("challenge_prompt_version", CHALLENGE_PROMPT_VERSION),
                 "challenge_parse_error": True,
+                "challenge_field_gaps": list((challenge or {}).get("challenge_field_gaps") or ["challenge_parse_error"]),
                 "challenge_reason": str((challenge or {}).get("reason", "") or "")[:500],
                 "triage": triage,
                 "challenge": challenge,
@@ -940,6 +1007,7 @@ def _merge_triage_challenge_vote(
             "challenge_confidence": challenge_confidence,
             "challenge_prompt_version": (challenge or {}).get("challenge_prompt_version", CHALLENGE_PROMPT_VERSION),
             "challenge_parse_error": False,
+            "challenge_field_gaps": list((challenge or {}).get("challenge_field_gaps") or []),
             "challenge_reason": str((challenge or {}).get("reason", "") or "")[:500],
             "risk_if_wrong": str((challenge or {}).get("risk_if_wrong", "") or "")[:500],
             "minimum_condition_to_hold": str((challenge or {}).get("minimum_condition_to_hold", "") or "")[:500],
@@ -948,6 +1016,42 @@ def _merge_triage_challenge_vote(
         }
     )
     return final_vote
+
+
+def _origin_sell_category(final_vote: dict) -> str:
+    triage_payload = (final_vote or {}).get("triage")
+    if not isinstance(triage_payload, dict):
+        triage_payload = {}
+    category = str(triage_payload.get("exit_category") or "").upper()
+    action = str(triage_payload.get("action") or "").upper()
+    if category in {"SELL", "STOP_LOSS"}:
+        return category
+    if action == "SELL":
+        return "SELL"
+    return ""
+
+
+def _hold_boundary_invalid_fallback(final_vote: dict, decision_stage: str, default_policy: str) -> dict:
+    guarded = dict(final_vote or {})
+    triage_payload = guarded.get("triage") if isinstance(guarded.get("triage"), dict) else {}
+    original_reason = str(guarded.get("reason", "") or "")[:500]
+    origin_category = _origin_sell_category(guarded) or "SELL"
+    guarded.update(
+        {
+            "action": "SELL",
+            "hold_mode": "",
+            "sell_urgency": "now",
+            "exit_category": origin_category,
+            "exit_driver": str(triage_payload.get("exit_driver") or guarded.get("exit_driver") or "other"),
+            "reason": "hold_boundary_invalid",
+            "hold_boundary_invalid": True,
+            "boundary_invalid_original_action": "HOLD",
+            "boundary_invalid_original_reason": original_reason,
+            "decision_stage": _normalize_stage(decision_stage),
+            "default_policy": default_policy or _stage_policy(decision_stage),
+        }
+    )
+    return guarded
 
 
 def _result_from_triage(
@@ -961,11 +1065,27 @@ def _result_from_triage(
     challenge: Optional[dict] = None,
     second_opinion_reason: str = "",
 ) -> dict:
-    final_vote = _merge_triage_challenge_vote(triage, challenge, decision_stage, default_policy, second_opinion_reason)
+    triage_missing = triage is None
+    triage_payload = dict(triage or {})
+    if triage_missing:
+        triage_payload = _fallback_triage("triage_missing", decision_stage, default_policy)
+        triage_payload["triage_missing"] = True
+    challenge_payload = dict(challenge or {}) if challenge is not None else None
+    final_vote = _merge_triage_challenge_vote(
+        triage_payload,
+        challenge_payload,
+        decision_stage,
+        default_policy,
+        second_opinion_reason,
+    )
+    if (
+        _normalize_stage(decision_stage) == "AUTO_SELL_REVIEW"
+        and not _triage_hold_boundary_valid(final_vote)
+        and (_origin_sell_category(final_vote) or not bool(final_vote.get("triage_parse_error", False)))
+    ):
+        final_vote = _hold_boundary_invalid_fallback(final_vote, decision_stage, default_policy)
     action = str(final_vote.get("action") or "HOLD").upper()
-    votes = {"triage": triage}
-    if challenge is not None:
-        votes["challenge"] = _challenge_action_vote(challenge, final_vote, decision_stage, default_policy)
+    votes = _triage_compatibility_votes(final_vote, triage_payload, challenge_payload, decision_stage, default_policy)
     _log_decision(
         ticker,
         market,
@@ -1003,17 +1123,27 @@ def _result_from_triage(
         "duration_ms": duration_ms,
         "exit_category": str(final_vote.get("exit_category", "") or ""),
         "exit_driver": str(final_vote.get("exit_driver", "") or ""),
-        "triage_confidence": round(float(final_vote.get("triage_confidence", triage.get("confidence", 0.0)) or 0.0), 4),
+        "triage_confidence": round(float(final_vote.get("triage_confidence", triage_payload.get("confidence", 0.0)) or 0.0), 4),
         "second_opinion_used": bool(final_vote.get("second_opinion_used", False)),
         "second_opinion_reason": str(final_vote.get("second_opinion_reason", "") or ""),
         "triage_prompt_version": TRIAGE_PROMPT_VERSION,
-        "triage_parse_error": bool(triage.get("triage_parse_error", False)),
-        "challenge": challenge,
+        "triage_parse_error": bool(triage_payload.get("triage_parse_error", False)),
+        "challenge": challenge_payload,
         "challenge_prompt_version": final_vote.get("challenge_prompt_version", ""),
         "challenge_parse_error": bool(final_vote.get("challenge_parse_error", False)),
         "challenge_final_category": final_vote.get("challenge_final_category", ""),
         "challenge_confidence": round(float(final_vote.get("challenge_confidence", 0.0) or 0.0), 4),
-        "triage": triage,
+        "challenge_field_gaps": list(final_vote.get("challenge_field_gaps") or []),
+        "triage": triage_payload,
+        "triage_missing": bool(final_vote.get("triage_missing", triage_payload.get("triage_missing", False))),
+        "triage_vote_trace": {
+            "vote_contract": "triage_shim_v1",
+            "triage": triage_payload,
+            "challenge": challenge_payload,
+            "final": final_vote,
+        },
+        "hold_boundary_invalid": bool(final_vote.get("hold_boundary_invalid", False)),
+        "boundary_invalid_original_reason": str(final_vote.get("boundary_invalid_original_reason", "") or "")[:500],
     }
 
 

@@ -13,14 +13,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from runtime_paths import get_runtime_path
-from tools.live_preflight import (
-    _attach_exposure_evidence,
-    _load_broker_truth_snapshot_for_db,
-    _mark_order_unknown_remediation_hint,
-    _pathb_local_exposure_index,
-    _pathb_operator_context,
-    _safe_json_object,
-    _session_date_guess,
+from tools.order_unknown_evidence import (
+    attach_exposure_evidence,
+    load_broker_truth_snapshot_for_db,
+    mark_order_unknown_remediation_hint,
+    pathb_local_exposure_index,
+    pathb_operator_context,
+    safe_json_object,
+    session_date_guess,
 )
 
 
@@ -57,7 +57,7 @@ def _load_broker_snapshot(mode: str, path: Path | None) -> dict[str, Any]:
         except Exception as exc:
             return {"markets": {}, "load_error": f"{type(exc).__name__}: {exc}"}
     try:
-        return _load_broker_truth_snapshot_for_db(mode)
+        return load_broker_truth_snapshot_for_db(mode)
     except Exception as exc:
         return {"markets": {}, "load_error": f"{type(exc).__name__}: {exc}"}
 
@@ -76,6 +76,7 @@ def _scan_rows(
         "runtime_mode=?",
         "market=?",
         "status='ORDER_UNKNOWN'",
+        "path_type='claude_price'",
         "session_date < ?",
     ]
     params: list[Any] = [mode, market, session_before]
@@ -83,7 +84,7 @@ def _scan_rows(
         where.append("path_run_id=?")
         params.append(path_run_id)
     query = f"""
-        SELECT market, runtime_mode, session_date, ticker, path_run_id, status, updated_at, plan_json
+        SELECT market, runtime_mode, session_date, ticker, path_run_id, path_type, status, updated_at, plan_json
         FROM v2_path_runs
         WHERE {' AND '.join(where)}
         ORDER BY updated_at DESC
@@ -102,22 +103,22 @@ def evaluate_rows(
     broker_snapshot: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     if exposure_by_path is None:
-        exposure_by_path, _by_ticker = _pathb_local_exposure_index(mode)
+        exposure_by_path, _by_ticker = pathb_local_exposure_index(mode)
     if broker_snapshot is None:
         broker_snapshot = _load_broker_snapshot(mode, None)
     evaluated: list[dict[str, Any]] = []
     for row in rows:
         item = dict(row)
-        plan = _safe_json_object(item.pop("plan_json", {}))
+        plan = safe_json_object(item.pop("plan_json", {}))
         plan_keys = sorted(plan.keys())
         item["plan_key_count"] = len(plan_keys)
         item["plan_keys_sample"] = plan_keys[:20]
-        item.update(_pathb_operator_context(item, plan))
+        item.update(pathb_operator_context(item, plan))
         item["order_unknown_phase"] = str(plan.get("order_unknown_phase") or "")
         item["order_unknown_age_sec"] = plan.get("order_unknown_age_sec")
         item["order_unknown_reconcile_attempts"] = plan.get("order_unknown_reconcile_attempts")
-        _attach_exposure_evidence(item, exposure_by_path, broker_snapshot)
-        _mark_order_unknown_remediation_hint(
+        attach_exposure_evidence(item, exposure_by_path, broker_snapshot)
+        mark_order_unknown_remediation_hint(
             item,
             mode=mode,
             previous_session=True,
@@ -155,18 +156,18 @@ def apply_remediation(db_path: Path, rows: list[dict[str, Any]]) -> list[dict[st
             if not path_run_id:
                 continue
             current = conn.execute(
-                "SELECT status, plan_json FROM v2_path_runs WHERE path_run_id=?",
+                "SELECT status, path_type, plan_json FROM v2_path_runs WHERE path_run_id=? AND path_type='claude_price'",
                 (path_run_id,),
             ).fetchone()
             if current is None or str(current["status"] or "").upper() != "ORDER_UNKNOWN":
                 continue
-            current_plan = _safe_json_object(current["plan_json"])
+            current_plan = safe_json_object(current["plan_json"])
             next_plan = {**current_plan, **_plan_updates(item)}
             conn.execute(
                 """
                 UPDATE v2_path_runs
                 SET status=?, plan_json=?, updated_at=?
-                WHERE path_run_id=? AND status='ORDER_UNKNOWN'
+                WHERE path_run_id=? AND status='ORDER_UNKNOWN' AND path_type='claude_price'
                 """,
                 ("CANCELLED", json.dumps(next_plan, ensure_ascii=False, sort_keys=True), now, path_run_id),
             )
@@ -177,6 +178,7 @@ def apply_remediation(db_path: Path, rows: list[dict[str, Any]]) -> list[dict[st
                     "after_status": "CANCELLED",
                     "ticker": item.get("ticker"),
                     "market": item.get("market"),
+                    "path_type": current["path_type"],
                     "session_date": item.get("session_date"),
                 }
             )
@@ -249,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     mode = str(args.mode)
     market = str(args.market).upper()
-    session_before = str(args.session_before or _session_date_guess(market))
+    session_before = str(args.session_before or session_date_guess(market))
     db_path = Path(args.db_path).expanduser().resolve() if args.db_path else _default_db_path()
     broker_snapshot_path = Path(args.broker_snapshot).expanduser().resolve() if args.broker_snapshot else None
     report_dir = Path(args.report_dir).expanduser().resolve() if args.report_dir else get_runtime_path("data", "v2_reports")
@@ -261,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
         session_before=session_before,
         path_run_id=str(args.path_run_id or "").strip(),
     )
-    exposure_by_path, _by_ticker = _pathb_local_exposure_index(mode)
+    exposure_by_path, _by_ticker = pathb_local_exposure_index(mode)
     broker_snapshot = _load_broker_snapshot(mode, broker_snapshot_path)
     rows = evaluate_rows(
         raw_rows,

@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from tools.live_preflight import (
     _heartbeat_checks,
+    _candidate_actions_live_config_check,
     _config_checks,
     _kr_cap40_confirmation_enforce_check,
     _pathb_lifecycle_window_check_result,
@@ -115,6 +116,20 @@ class LiveConfigSourceTests(unittest.TestCase):
         )
 
         self.assertEqual(check.status, "PASS")
+
+    def test_candidate_actions_live_contract_fails_closed_when_disabled(self) -> None:
+        check = _candidate_actions_live_config_check(
+            {
+                "ENABLE_CLAUDE_CANDIDATE_ACTIONS": "true",
+                "ENABLE_ACTION_ROUTING": "false",
+                "CANDIDATE_ACTIONS_V2_ENABLED": "false",
+            },
+            "live",
+        )
+
+        self.assertEqual(check.status, "FAIL")
+        self.assertIn("ENABLE_ACTION_ROUTING", check.data["disabled"])
+        self.assertIn("CANDIDATE_ACTIONS_V2_ENABLED", check.data["disabled"])
 
     def test_pathb_market_live_gate_accepts_current_kr_on_us_on_policy(self) -> None:
         check = _pathb_market_live_gate_check(
