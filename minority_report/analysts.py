@@ -1700,8 +1700,10 @@ JSON으로만 응답 (다른 텍스트 없이):
 
     try:
         r1_max_tokens = _env_int_bound("CLAUDE_ANALYST_R1_MAX_TOKENS", 700, 200, 2000)
+        _t0 = time.perf_counter()
         resp = client.messages.create(model=_r1_model, max_tokens=r1_max_tokens,
                                       messages=[{"role": "user", "content": prompt}])
+        _duration_ms = int((time.perf_counter() - _t0) * 1000)
         raw = resp.content[0].text.strip()
         result = _sanitize_analyst_result(_extract_json(raw), analyst_type)
         credit_record(resp.usage.input_tokens, resp.usage.output_tokens,
@@ -1712,6 +1714,7 @@ JSON으로만 응답 (다른 텍스트 없이):
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
             market=market,
             model=_r1_model,
+            duration_ms=_duration_ms,
             prompt_version="market_judgment_v4_slim",
             extra={
                 "lesson_context": _merge_lesson_context_meta(lesson_meta, lesson_context_meta),
@@ -1828,8 +1831,10 @@ JSON으로만 응답:
 
     try:
         r2_max_tokens = _env_int_bound("CLAUDE_ANALYST_R2_MAX_TOKENS", 900, 300, 2500)
+        _t0 = time.perf_counter()
         resp = client.messages.create(model=MODEL, max_tokens=r2_max_tokens,
                                       messages=[{"role": "user", "content": prompt}])
+        _duration_ms = int((time.perf_counter() - _t0) * 1000)
         raw = resp.content[0].text.strip()
         result = _extract_json(raw)
         merged = _merge_debate_result(my_r1, result)
@@ -1839,6 +1844,7 @@ JSON으로만 응답:
             label=f"analyst_{analyst_type}_r2",
             prompt=prompt, raw_response=raw, parsed={**result, "_merged": merged},
             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
+            duration_ms=_duration_ms,
             market=market,
             model=MODEL,
             prompt_version="market_debate_v3_sizing",
@@ -2647,11 +2653,13 @@ Rules:
                 if compressed_output or throttle.get("tier") == "warn"
                 else _env_int_bound("CLAUDE_SELECTION_MAX_TOKENS", 3200, 1024, 6000)
             )
+            _t0 = time.perf_counter()
             resp = client.messages.create(
                 model=MODEL,
                 max_tokens=selection_max_tokens,
                 messages=[{"role": "user", "content": prompt}],
             )
+            _select_duration_ms = int((time.perf_counter() - _t0) * 1000)
             last_err = None
             break
         except Exception as _e:
@@ -2767,6 +2775,7 @@ Rules:
             parsed={**result, "_normalized": selection_meta},
             input_tokens=resp.usage.input_tokens,
             output_tokens=resp.usage.output_tokens,
+            duration_ms=_select_duration_ms if "_select_duration_ms" in dir() else None,
             market=market,
             model=MODEL,
             parse_error=parse_error,

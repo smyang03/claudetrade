@@ -30,6 +30,9 @@ log    = get_trading_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 MODEL  = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
+_HOLD_ADVISOR_CACHE_ENABLED = os.getenv("HOLD_ADVISOR_PROMPT_CACHE_ENABLED", "true").lower() == "true"
+_HOLD_ADVISOR_SYSTEM = COMMON_DECISION_CONTRACT + "\n\n" + HARD_SOFT_RULE_CONTRACT
+
 PERSONAS = {
     "bull": "당신은 15년 경력의 성장주 모멘텀 트레이더입니다. 추세가 살아있으면 보유를 선호합니다.",
     "bear": "당신은 헤지펀드 리스크 매니저입니다. 이익 실현 타이밍을 중시하고 욕심을 경계합니다.",
@@ -614,11 +617,10 @@ def _ask_challenge(
     )
     call_started = time.perf_counter()
     try:
-        resp = client.messages.create(
-            model=MODEL,
-            max_tokens=700,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        _create_kwargs: dict = {"model": MODEL, "max_tokens": 700, "messages": [{"role": "user", "content": prompt}]}
+        if _HOLD_ADVISOR_CACHE_ENABLED:
+            _create_kwargs["system"] = [{"type": "text", "text": _HOLD_ADVISOR_SYSTEM, "cache_control": {"type": "ephemeral"}}]
+        resp = client.messages.create(**_create_kwargs)
         duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
         raw = resp.content[0].text.strip()
         result = extract_json(raw)
@@ -758,10 +760,11 @@ def _triage_second_opinion_reason(triage: dict, decision_stage: str) -> str:
         return "hold_boundary_missing"
     if bool((triage or {}).get("needs_second_opinion_model", False)):
         return "model_requested_second_opinion"
-    if category == "SELL" and driver in {"profit_protection", "time_carry", "other"}:
-        return "non_stop_sell_escalation"
     if category == "SELL" and confidence < _env_float("HOLD_ADVISOR_TRIAGE_MIN_SELL_CONFIDENCE", 0.85):
         return "sell_confidence_below_threshold"
+    if category == "SELL" and driver in {"profit_protection", "time_carry", "other"}:
+        if not _env_bool("HOLD_ADVISOR_TRIAGE_NON_STOP_SELL_ENABLED", False):
+            return "non_stop_sell_escalation"
     if category == "HOLD" and confidence < _env_float("HOLD_ADVISOR_TRIAGE_MIN_HOLD_CONFIDENCE", 0.72):
         return "hold_confidence_below_threshold"
     if category == "STOP_LOSS" and driver not in TRIAGE_CLEAR_STOP_DRIVERS:
@@ -818,11 +821,10 @@ def _ask_triage(
     )
     call_started = time.perf_counter()
     try:
-        resp = client.messages.create(
-            model=MODEL,
-            max_tokens=900,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        _create_kwargs: dict = {"model": MODEL, "max_tokens": 900, "messages": [{"role": "user", "content": prompt}]}
+        if _HOLD_ADVISOR_CACHE_ENABLED:
+            _create_kwargs["system"] = [{"type": "text", "text": _HOLD_ADVISOR_SYSTEM, "cache_control": {"type": "ephemeral"}}]
+        resp = client.messages.create(**_create_kwargs)
         duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
         raw = resp.content[0].text.strip()
         result = extract_json(raw)
