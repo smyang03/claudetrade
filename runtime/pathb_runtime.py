@@ -8305,6 +8305,41 @@ class PathBRuntime:
         except Exception as exc:
             log.warning(f"[PathB blocked record failed] {market} {ticker} {reason_code}: {exc}")
         try:
+            bot = getattr(self, "bot", None)
+            recorder = getattr(bot, "_record_trade_ready_no_submit", None)
+            if callable(recorder) and not path_run_id:
+                recorder(
+                    market,
+                    ticker,
+                    decision_id=decision_id,
+                    reason=str(reason_code or "PATHB_REGISTRATION_SKIPPED"),
+                    reason_detail=str((payload or {}).get("reason_detail") or (payload or {}).get("message") or reason_code or ""),
+                    source_action="PULLBACK_WAIT",
+                    final_action="PULLBACK_WAIT",
+                    route="PathB.wait",
+                    strategy_hint="claude_price",
+                    price_krw=float(
+                        (payload or {}).get("buy_zone_low_krw")
+                        or (payload or {}).get("price_krw")
+                        or (payload or {}).get("max_entry_krw")
+                        or 0.0
+                    ),
+                    fixed_order_krw=float(getattr(self.config, "pathb_fixed_order_krw", 0.0) or 0.0),
+                    cash_krw=0.0,
+                    available_budget_krw=0.0,
+                    qty=0,
+                    order_cost_krw=0.0,
+                    signal_flags={},
+                    block_meta={
+                        **(payload or {}),
+                        "stage": "pathb_registration",
+                        "local_reason": str(reason_code or ""),
+                        "path_type": "claude_price",
+                    },
+                )
+        except Exception as exc:
+            log.debug(f"[PathB no-submit audit failed] {market} {ticker} {reason_code}: {exc}")
+        try:
             self._emit_risk_event(
                 str(reason_code or "PATHB_SAFETY_BLOCKED"),
                 market,

@@ -129,6 +129,7 @@ class LivePathBStuckTests(unittest.TestCase):
                     "display_avg_price": 52_100,
                     "display_current_price": 54_600,
                     "current_price": 54_600,
+                    "current_price_source": "broker_balance",
                     "sl": 51_000,
                     "path_type": "claude_price",
                     "pathb_path_run_id": plan.path_run_id,
@@ -145,6 +146,9 @@ class LivePathBStuckTests(unittest.TestCase):
             ), patch(
                 "runtime.pathb_runtime.place_order",
                 return_value={"success": True, "order_no": "sell1"},
+            ), patch(
+                "runtime.pathb_runtime.get_price",
+                side_effect=AssertionError("broker-sourced position price should drive this unit test"),
             ):
                 runtime.scan_exits("KR", force=True)
 

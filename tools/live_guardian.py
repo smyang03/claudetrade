@@ -615,6 +615,13 @@ def run_guardian_once(
     action_fail = [action for action in actions if action.status == "FAIL"]
     allow_start = not hard_fail and not action_fail
     active_bot_lock = _active_bot_lock(preflight, mode) if ensure_bot else {}
+    current_blockers = [asdict(finding) for finding in hard_fail]
+    historical_remediation_items = [
+        asdict(finding)
+        for finding in findings
+        if finding.classification != "hard_fail"
+        and bool((finding.data or {}).get("remediation_commands"))
+    ]
 
     if allow_start and bot_start_requested and (active_bot_lock or active_bot_process):
         actions.append(
@@ -663,7 +670,11 @@ def run_guardian_once(
             "auto_fixable": len(auto_fixable),
             "actions": len(actions),
             "action_fail": len(action_fail),
+            "current_blockers": len(current_blockers),
+            "historical_remediation_items": len(historical_remediation_items),
         },
+        "current_blockers": current_blockers,
+        "historical_remediation_items": historical_remediation_items,
         "findings": [asdict(finding) for finding in findings],
         "actions": [asdict(action) for action in actions],
         "preflight": {
@@ -702,11 +713,37 @@ def _write_guardian_report(report: dict[str, Any]) -> tuple[Path, Path]:
         f"- soft_fail: {report['counts']['soft_fail']}",
         f"- accepted_exception: {report['counts'].get('accepted_exception', 0)}",
         f"- auto_fixable: {report['counts']['auto_fixable']}",
+        f"- current_blockers: {report['counts'].get('current_blockers', 0)}",
+        f"- historical_remediation_items: {report['counts'].get('historical_remediation_items', 0)}",
         f"- actions: {report['counts']['actions']}",
+        "",
+        "## Current Blockers",
+        "",
+    ]
+    for finding in report.get("current_blockers") or []:
+        lines.append(
+            f"- `{finding.get('name')}` ({finding.get('status')}): {finding.get('detail')}"
+        )
+    if not report.get("current_blockers"):
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Historical Remediation Items",
+        "",
+    ])
+    for finding in report.get("historical_remediation_items") or []:
+        lines.append(
+            f"- `{finding.get('name')}` ({finding.get('status')}): {finding.get('detail')}"
+        )
+        for command in (finding.get("data") or {}).get("remediation_commands") or []:
+            lines.append(f"  - remediation: `{command}`")
+    if not report.get("historical_remediation_items"):
+        lines.append("- none")
+    lines.extend([
         "",
         "## Findings",
         "",
-    ]
+    ])
     for finding in report.get("findings", []):
         if finding.get("classification") == "pass":
             continue

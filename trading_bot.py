@@ -1220,6 +1220,84 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     f"— 다음 주기 밀림 가능 (임계={_TASK_SLOW_WARN_SEC:.0f}s)"
                 )
             self._market_task_owner[market] = None
+
+    @staticmethod
+    def _judgment_size_value(judgment: dict) -> float:
+        consensus = dict((judgment or {}).get("consensus") or {})
+        try:
+            return float(consensus.get("size") or 0.0)
+        except Exception:
+            return 0.0
+
+    def _audit_judgment_size_direction(self, market: str, previous: dict, current: dict) -> None:
+        if not isinstance(current, dict):
+            return
+        consensus = dict(current.get("consensus") or {})
+        prev_consensus = dict((previous or {}).get("consensus") or {})
+        trigger = str(
+            current.get("trigger")
+            or current.get("last_trigger_source")
+            or (getattr(self, "claude_control", {}) or {}).get("last_trigger_source")
+            or ""
+        ).strip()
+        reason_blob = " ".join(
+            str(value or "")
+            for value in (
+                trigger,
+                current.get("trigger_reason"),
+                current.get("emergency_reason"),
+                current.get("operator_reason"),
+                consensus.get("reason"),
+            )
+        ).lower()
+        if not any(token in reason_blob for token in ("reduce", "avoid", "protect", "breadth", "악화", "자제", "보호")):
+            return
+        previous_size = self._judgment_size_value(previous)
+        new_size = self._judgment_size_value(current)
+        previous_mode = str(prev_consensus.get("mode") or "")
+        new_mode = str(consensus.get("mode") or "")
+        previous_family = self._param_review_mode_family(previous_mode)
+        new_family = self._param_review_mode_family(new_mode)
+        family_rank = {"risk_off": 0, "neutral": 1, "bull": 2}
+        direction_conflict = bool(
+            (previous_size > 0 and new_size >= previous_size)
+            or family_rank.get(new_family, 1) > family_rank.get(previous_family, 1)
+        )
+        if not direction_conflict:
+            return
+        event = {
+            "event": "judgment_size_direction_conflict",
+            "market": "US" if str(market).upper() == "US" else "KR",
+            "trigger": trigger or "unknown",
+            "previous_mode": previous_mode,
+            "new_mode": new_mode,
+            "previous_size": previous_size,
+            "new_size": new_size,
+            "direction_conflict": True,
+            "why_size_not_reduced": str(consensus.get("why_size_not_reduced") or consensus.get("reason") or ""),
+            "bypass_reason": str(current.get("bypass_reason") or ""),
+            "recorded_at": datetime.now(KST).isoformat(timespec="seconds"),
+        }
+        for existing in list(current.get("judgment_size_audit_events") or []):
+            if not isinstance(existing, dict):
+                continue
+            if (
+                existing.get("trigger") == event["trigger"]
+                and existing.get("previous_mode") == previous_mode
+                and existing.get("new_mode") == new_mode
+                and float(existing.get("previous_size") or 0.0) == previous_size
+                and float(existing.get("new_size") or 0.0) == new_size
+            ):
+                return
+        current.setdefault("judgment_size_audit_events", [])
+        if isinstance(current["judgment_size_audit_events"], list):
+            current["judgment_size_audit_events"].append(event)
+        log.warning(
+            f"[judgment size audit] {market} trigger={event['trigger']} "
+            f"mode={previous_mode}->{new_mode} size={previous_size:g}->{new_size:g} "
+            f"why={event['why_size_not_reduced'] or 'missing'}"
+        )
+
     def _persist_live_judgment(self, market: str):
         """장중 판단 변경을 즉시 저장해 재시작/대시보드가 최신 상태를 보게 한다."""
         if not self.today_judgment or self.today_judgment.get("market") != market:
@@ -1228,6 +1306,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         market_key = "US" if str(market).upper() == "US" else "KR"
         persisted_overrides = dict(self.today_judgment.get("claude_runtime_overrides") or {})
         persisted_overrides[market_key] = self._runtime_overrides(market_key)
+        previous_judgment = {}
+        try:
+            if live_path.exists():
+                previous_raw = json.loads(live_path.read_text(encoding="utf-8"))
+                if isinstance(previous_raw, dict):
+                    previous_judgment = previous_raw
+        except Exception:
+            previous_judgment = {}
+        self._audit_judgment_size_direction(market_key, previous_judgment, self.today_judgment)
         try:
             with open(live_path, "w", encoding="utf-8") as f:
                 json.dump({
@@ -7456,6 +7543,175 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 reason_code=reason_code,
                 payload=payload,
             )
+
+    @staticmethod
+    def _trade_ready_no_submit_reason_code(reason: str) -> str:
+        normalized = str(reason or "").strip()
+        key = normalized.lower()
+        mapping = {
+            "no_signal": "NO_SIGNAL",
+            "entry_blackout": "ENTRY_BLACKOUT",
+            "market_closed": "MARKET_CLOSED",
+            "one_share_over_budget_max_krw": "ONE_SHARE_OVER_BUDGET_MAX_KRW",
+            "unaffordable_high_price": "ONE_SHARE_OVER_BUDGET_MAX_KRW",
+            "insufficient_cash": "INSUFFICIENT_CASH",
+            "cash_too_low": "INSUFFICIENT_CASH",
+            "budget_too_small": "BUDGET_TOO_SMALL",
+            "min_order_not_met": "BUDGET_TOO_SMALL",
+            "order_size_too_small": "BUDGET_TOO_SMALL",
+            "market_budget_exceeded": "PLAN_A_MARKET_BUDGET_EXCEEDED",
+            "plan_a_market_budget_exceeded": "PLAN_A_MARKET_BUDGET_EXCEEDED",
+            "pathb_high_price_budget_block": "PATHB_HIGH_PRICE_BUDGET_BLOCK",
+            "high_price_budget_block": "PATHB_HIGH_PRICE_BUDGET_BLOCK",
+            "claude_price_missing": "PATHB_PRICE_TARGET_MISSING",
+            "pathb_registration_skipped": "PATHB_REGISTRATION_SKIPPED",
+            "broker_truth_blocked": "BROKER_TRUTH_BLOCKED",
+            "risk_blocked": "RISK_BLOCKED",
+        }
+        return mapping.get(key, normalized.upper() if normalized else "UNKNOWN")
+
+    @staticmethod
+    def _plan_a_signal_flags(
+        sig_row: Optional[dict],
+        *,
+        signal_fired: bool = False,
+        strategy: str = "",
+        plan_a_signal_allowed: bool = True,
+    ) -> dict:
+        row = dict(sig_row or {})
+
+        def _truthy_signal(*keys: str) -> bool:
+            for key in keys:
+                value = row.get(key)
+                if isinstance(value, bool):
+                    return value
+                if value in (None, ""):
+                    continue
+                try:
+                    return float(value) != 0.0
+                except Exception:
+                    return str(value).strip().lower() in {"true", "yes", "on", "ready"}
+            return False
+
+        raw = {
+            "mom": row.get("mom", row.get("momentum", row.get("momentum_signal"))),
+            "gap": row.get("gap", row.get("gap_pullback", row.get("gap_signal"))),
+            "vb": row.get("vb", row.get("volatility_breakout", row.get("vb_signal"))),
+            "mr": row.get("mr", row.get("mean_reversion", row.get("mr_signal"))),
+        }
+        strategy_key = str(strategy or "").strip().lower()
+        return {
+            "momentum": _truthy_signal("mom", "momentum", "momentum_signal") or strategy_key == "momentum" and bool(signal_fired),
+            "gap_pullback": _truthy_signal("gap", "gap_pullback", "gap_signal") or strategy_key == "gap_pullback" and bool(signal_fired),
+            "opening_range_pullback": _truthy_signal("orp", "opening_range_pullback", "orp_signal") or strategy_key == "opening_range_pullback" and bool(signal_fired),
+            "volume_surge": _truthy_signal("vb", "volatility_breakout", "vb_signal") or strategy_key == "volatility_breakout" and bool(signal_fired),
+            "mean_reversion": _truthy_signal("mr", "mean_reversion", "mr_signal") or strategy_key == "mean_reversion" and bool(signal_fired),
+            "strategy_signal": bool(signal_fired),
+            "plan_a_signal_allowed": bool(plan_a_signal_allowed),
+            "raw": raw,
+        }
+
+    def _record_trade_ready_no_submit(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        reason: str,
+        reason_detail: str = "",
+        decision_id: str = "",
+        source_action: str = "",
+        final_action: str = "",
+        route: str = "",
+        strategy_hint: str = "",
+        price_krw: float = 0.0,
+        fixed_order_krw: float = 0.0,
+        cash_krw: float = 0.0,
+        available_budget_krw: float = 0.0,
+        qty: int = 0,
+        order_cost_krw: float = 0.0,
+        signal_flags: Optional[dict] = None,
+        block_meta: Optional[dict] = None,
+    ) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = str(ticker or "").strip().upper() if market_key == "US" else str(ticker or "").strip()
+        reason_code = self._trade_ready_no_submit_reason_code(reason)
+        if not decision_id:
+            decision_id = self._v2_decision_id_for_ticker(market_key, ticker_key)
+        payload = {
+            "market": market_key,
+            "ticker": ticker_key,
+            "decision_id": decision_id,
+            "source_action": source_action or self._selection_meta_value(market_key, ticker_key, "source_action") or "",
+            "final_action": final_action or self._selection_meta_value(market_key, ticker_key, "final_action") or "",
+            "route": route or self._selection_meta_value(market_key, ticker_key, "route") or "",
+            "strategy_hint": strategy_hint or self._selection_meta_value(market_key, ticker_key, "recommended_strategy") or "",
+            "price_krw": float(price_krw or 0.0),
+            "fixed_order_krw": float(fixed_order_krw or 0.0),
+            "cash_krw": float(cash_krw or 0.0),
+            "available_budget_krw": float(available_budget_krw or 0.0),
+            "market_available_budget_krw": float(available_budget_krw or 0.0),
+            "qty": int(qty or 0),
+            "order_cost_krw": float(order_cost_krw or 0.0),
+            "reason_code": reason_code,
+            "reason_detail": str(reason_detail or ""),
+            "signal_flags": dict(signal_flags or {}),
+            "block_meta": dict(block_meta or {}),
+        }
+        try:
+            self._v2_record_lifecycle_event(
+                "TRADE_READY_NO_SUBMIT",
+                market_key,
+                ticker_key,
+                decision_id=decision_id,
+                reason_code=reason_code,
+                payload=payload,
+            )
+        except Exception as exc:
+            log.debug(f"[trade_ready no-submit] lifecycle record failed {market_key} {ticker_key}: {exc}")
+        try:
+            store = self._candidate_audit_store()
+            if store is not None:
+                values = {
+                    "execution_link_source": "trading_bot.trade_ready_no_submit",
+                    "execution_decision_id": decision_id,
+                    "last_lifecycle_event": "TRADE_READY_NO_SUBMIT",
+                    "no_submit_reason_code": reason_code,
+                    "no_submit_reason_detail": payload["reason_detail"],
+                    "no_submit_signal_flags_json": payload["signal_flags"],
+                    "no_submit_block_meta_json": payload["block_meta"],
+                }
+                if reason_code == "NO_SIGNAL":
+                    values["no_signal_count"] = 1
+                store.update_execution_by_ticker(
+                    session_date=self._current_session_date_str(market_key),
+                    market=market_key,
+                    runtime_mode=getattr(self, "_mode", "live"),
+                    ticker=ticker_key,
+                    values=values,
+                    latest_only=True,
+                )
+        except Exception as exc:
+            log.debug(f"[trade_ready no-submit] candidate audit update failed {market_key} {ticker_key}: {exc}")
+        return payload
+
+    def _plan_a_no_submit_reason(
+        self,
+        *,
+        local_reason: str = "",
+        affordability_diag: Optional[dict] = None,
+        one_share_over_budget_meta: Optional[dict] = None,
+    ) -> str:
+        one_share_reason = str((one_share_over_budget_meta or {}).get("reason") or "")
+        if one_share_reason == "one_share_over_budget_max_krw":
+            return "one_share_over_budget_max_krw"
+        if one_share_reason == "market_budget_exceeded":
+            return "plan_a_market_budget_exceeded"
+        if one_share_reason == "insufficient_cash":
+            return "insufficient_cash"
+        reason = str(local_reason or (affordability_diag or {}).get("affordability_reason") or "").strip()
+        if reason == "market_budget_exceeded":
+            return "plan_a_market_budget_exceeded"
+        return reason or "affordability"
     def _mark_v2_decision_quality_once(self, decision_id: str) -> None:
         decision_key = str(decision_id or "").strip()
         if not decision_key:
@@ -25147,13 +25403,125 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
         # ── Claude 파라미터 검토 (4th layer) — session_open 1회 ──────────────
         try:
-            _param_tuner.reset_session(market)
             self._run_param_review(market, trigger="session_open")
         except Exception as _pt_e:
             log.warning(f"[param_tuner session_open] {market}: {_pt_e}")
         # session_open 완료 즉시 대시보드 강제 갱신 — stale live_status 방지
         self._maybe_push_dashboard(force=True)
         self._leave_market_task(market, "session_open")
+
+    def _param_review_cooldown_path(self) -> Path:
+        return get_runtime_path("state", f"{getattr(self, '_mode', 'live')}_param_review_cooldown.json")
+
+    def _load_param_review_cooldown_state(self) -> dict:
+        path = self._param_review_cooldown_path()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _save_param_review_cooldown_state(self, state: dict) -> None:
+        path = self._param_review_cooldown_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(state or {}, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception as exc:
+            log.debug(f"[param_review cooldown] save failed: {exc}")
+
+    @staticmethod
+    def _param_review_mode_family(mode: str) -> str:
+        normalized = str(mode or "").strip().upper()
+        if normalized in {"BULL", "MILD_BULL", "CAUTIOUS_BULL", "RISK_ON", "AGGRESSIVE", "MODERATE_BULL"}:
+            return "bull"
+        if normalized in {"BEAR", "CAUTIOUS_BEAR", "RISK_OFF", "DEFENSIVE", "HALT"}:
+            return "risk_off"
+        return "neutral"
+
+    def _param_review_cooldown_bypass(self, market: str, trigger: str, mode: str, previous: dict) -> str:
+        trigger_key = str(trigger or "").strip().lower()
+        if any(token in trigger_key for token in ("emergency", "risk_emergency", "broker_quarantine", "halt", "manual_override", "reverse", "mode_change")):
+            return f"trigger:{trigger_key}"
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        broker_state = dict((getattr(self, "_broker_state", {}) or {}).get(market_key, {}) or {})
+        broker_status = str(
+            broker_state.get("status")
+            or broker_state.get("truth_status")
+            or broker_state.get("broker_truth_status")
+            or ""
+        ).lower()
+        if any(token in broker_status for token in ("stale", "error", "unavailable", "quarantine")):
+            return f"broker_truth:{broker_status}"
+        previous_mode = str((previous or {}).get("mode") or "")
+        if previous_mode and self._param_review_mode_family(previous_mode) != self._param_review_mode_family(mode):
+            return f"mode_family_change:{previous_mode}->{mode}"
+        try:
+            daily_pnl = float(self._daily_pnl_pct(market_key))
+        except Exception:
+            daily_pnl = 0.0
+        if daily_pnl <= float(os.getenv("PARAM_REVIEW_COOLDOWN_BYPASS_DAILY_PNL_PCT", "-3.0")):
+            return f"daily_pnl:{daily_pnl:.2f}"
+        return ""
+
+    def _param_review_cooldown_skip_reason(self, market: str, trigger: str, mode: str) -> str:
+        trigger_key = str(trigger or "session_open").strip().lower()
+        if trigger_key != "session_open":
+            return ""
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            cooldown_min = float(
+                os.getenv(f"{market_key}_SESSION_OPEN_PARAM_REVIEW_COOLDOWN_MIN")
+                or os.getenv("SESSION_OPEN_PARAM_REVIEW_COOLDOWN_MIN")
+                or "120"
+            )
+        except Exception:
+            cooldown_min = 120.0
+        if cooldown_min <= 0:
+            return ""
+        state = self._load_param_review_cooldown_state()
+        session_date = self._current_session_date_str(market_key)
+        key = f"{market_key}|{session_date}|session_open"
+        previous = dict((state.get("reviews") or {}).get(key) or {})
+        bypass = self._param_review_cooldown_bypass(market_key, trigger_key, mode, previous)
+        if bypass:
+            return ""
+        if str(previous.get("mode") or "") != str(mode or ""):
+            return ""
+        raw_ts = str(previous.get("reviewed_at") or "")
+        if not raw_ts:
+            return ""
+        try:
+            reviewed_at = datetime.fromisoformat(raw_ts)
+            if reviewed_at.tzinfo is None:
+                reviewed_at = reviewed_at.replace(tzinfo=KST)
+            age_min = (datetime.now(KST) - reviewed_at.astimezone(KST)).total_seconds() / 60.0
+        except Exception:
+            return ""
+        if age_min < cooldown_min:
+            return f"session_open_param_review_cooldown age={age_min:.1f}m<{cooldown_min:.0f}m"
+        return ""
+
+    def _record_param_review_cooldown_state(self, market: str, trigger: str, mode: str) -> None:
+        trigger_key = str(trigger or "session_open").strip().lower()
+        if trigger_key != "session_open":
+            return
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        session_date = self._current_session_date_str(market_key)
+        key = f"{market_key}|{session_date}|session_open"
+        state = self._load_param_review_cooldown_state()
+        reviews = state.setdefault("reviews", {})
+        reviews[key] = {
+            "market": market_key,
+            "session_date": session_date,
+            "trigger": "session_open",
+            "mode": str(mode or ""),
+            "mode_family": self._param_review_mode_family(mode),
+            "reviewed_at": datetime.now(KST).isoformat(timespec="seconds"),
+        }
+        state["updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
+        self._save_param_review_cooldown_state(state)
 
     # ── Claude 파라미터 검토 헬퍼 ─────────────────────────────────────────────
     def _run_param_review(self, market: str, trigger: str = "session_open") -> None:
@@ -25165,6 +25533,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         consensus  = self.today_judgment.get("consensus", {})
         mode       = consensus.get("mode", "NEUTRAL")
         conf       = float(consensus.get("confidence", 0.6) or 0.6)
+        cooldown_skip = self._param_review_cooldown_skip_reason(market, trigger, mode)
+        if cooldown_skip:
+            log.info(f"[param_tuner cooldown] {market} trigger={trigger} mode={mode} skip: {cooldown_skip}")
+            return
+        if str(trigger or "").strip().lower() == "session_open":
+            _param_tuner.reset_session(market)
         ctx        = (
             getattr(self, "_ca_context_last", None)
             or (self.today_judgment.get("digest_raw", {}) or {}).get("context", {})
@@ -25201,6 +25575,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             trigger=trigger,
             force=(trigger in ("reverse", "mode_change")),
         )
+        self._record_param_review_cooldown_state(market, trigger, mode)
     def _on_tick(self, data: dict):
         ticker = data["ticker"]
         market = self._ticker_market(ticker)
@@ -27575,6 +27950,38 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         mode=mode,
                         detail=none_detail,
                     )
+                    _trade_ready_lookup = str(ticker).upper() if market == "US" else str(ticker)
+                    if _trade_ready_lookup in self._trade_ready_set(market):
+                        try:
+                            _no_signal_row = sig_df.iloc[i].to_dict()
+                        except Exception:
+                            _no_signal_row = {}
+                        self._record_trade_ready_no_submit(
+                            market,
+                            ticker,
+                            reason="no_signal",
+                            reason_detail=none_detail,
+                            final_action="BUY_READY",
+                            route="PlanA.buy",
+                            strategy_hint=strategy_name or str(self._selection_meta_value(market, ticker, "recommended_strategy") or ""),
+                            price_krw=float(price),
+                            cash_krw=float(getattr(self.risk, "cash", 0.0) or 0.0),
+                            available_budget_krw=float(self._market_budget_available(market)),
+                            signal_flags=self._plan_a_signal_flags(
+                                _no_signal_row,
+                                signal_fired=False,
+                                strategy=strategy_name,
+                                plan_a_signal_allowed=not bool(_blocked_plan_a_signals),
+                            ),
+                            block_meta={
+                                "stage": "plan_a_signal_check",
+                                "local_reason": "no_signal",
+                                "rejection_reason": _rej_reason,
+                                "volume_state": _vol_state,
+                                "strategy_order": list(_ticker_kr_strat_list or []),
+                                "blocked_plan_a_signals": list(_blocked_plan_a_signals or []),
+                            },
+                        )
                     if _intraday_log_row_id:
                         isdb.update_outcome(
                             _intraday_log_row_id,
@@ -28606,6 +29013,37 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 diag["micro_probe_adjusted_order_cost_krw"] = float(probe.get("adjusted_order_cost_krw") or 0.0)
                             if "oversize_ratio" in probe:
                                 diag["micro_probe_oversize_ratio"] = float(probe.get("oversize_ratio") or 0.0)
+                        _no_submit_reason = self._plan_a_no_submit_reason(
+                            local_reason="order_size_too_small",
+                            affordability_diag=affordability_diag,
+                            one_share_over_budget_meta=_one_share_over_budget_meta,
+                        )
+                        self._record_trade_ready_no_submit(
+                            market,
+                            _s_tk,
+                            reason=_no_submit_reason,
+                            reason_detail=(
+                                f"cost={order_cost:,.0f} budget={order_budget:,.0f} "
+                                f"min={min_effective_order:,.0f}"
+                            ),
+                            final_action="BUY_READY",
+                            route="PlanA.buy",
+                            strategy_hint=_s_strat,
+                            price_krw=float(_s_rpx),
+                            fixed_order_krw=float(order_budget),
+                            cash_krw=float(self.risk.cash),
+                            available_budget_krw=float(avail),
+                            qty=int(qty),
+                            order_cost_krw=float(order_cost),
+                            signal_flags=self._plan_a_signal_flags(_s_row, signal_fired=True, strategy=_s_strat),
+                            block_meta={
+                                "stage": "plan_a_affordability",
+                                "local_reason": "order_size_too_small",
+                                "affordability": affordability_diag,
+                                "one_share_over_budget": _one_share_over_budget_meta,
+                                "micro_probe": probe,
+                            },
+                        )
                         self._bump_runtime_reason(market, _s_tk, "order_size_too_small")
                         self._bump_runtime_reason(market, _s_tk, "affordability_fail")
                         self._record_decision_event(
@@ -28651,8 +29089,34 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         )
                         continue
                     if qty <= 0:
-                        _qty_zero_reason = str(affordability_diag.get("affordability_reason") or "qty_zero")
+                        _qty_zero_reason = self._plan_a_no_submit_reason(
+                            local_reason=str(affordability_diag.get("affordability_reason") or "qty_zero"),
+                            affordability_diag=affordability_diag,
+                            one_share_over_budget_meta=_one_share_over_budget_meta,
+                        )
                         _qty_zero_reason = _qty_zero_reason if _qty_zero_reason else "qty_zero"
+                        self._record_trade_ready_no_submit(
+                            market,
+                            _s_tk,
+                            reason=_qty_zero_reason,
+                            reason_detail="risk engine returned zero quantity",
+                            final_action="BUY_READY",
+                            route="PlanA.buy",
+                            strategy_hint=_s_strat,
+                            price_krw=float(_s_rpx),
+                            fixed_order_krw=float(order_budget),
+                            cash_krw=float(self.risk.cash),
+                            available_budget_krw=float(avail),
+                            qty=0,
+                            order_cost_krw=float(order_cost),
+                            signal_flags=self._plan_a_signal_flags(_s_row, signal_fired=True, strategy=_s_strat),
+                            block_meta={
+                                "stage": "plan_a_affordability",
+                                "local_reason": str(affordability_diag.get("affordability_reason") or "qty_zero"),
+                                "affordability": affordability_diag,
+                                "one_share_over_budget": _one_share_over_budget_meta,
+                            },
+                        )
                         self._bump_runtime_reason(market, _s_tk, "affordability_fail")
                         self._bump_runtime_reason(market, _s_tk, _qty_zero_reason)
                         self._record_decision_event(
@@ -28677,6 +29141,33 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         log.debug(f"  [{_s_tk}] order price/qty invalid 0")
                         continue
                     if order_cost > avail:
+                        _budget_reason = self._plan_a_no_submit_reason(
+                            local_reason="market_budget_exceeded",
+                            affordability_diag=affordability_diag,
+                            one_share_over_budget_meta=_one_share_over_budget_meta,
+                        )
+                        self._record_trade_ready_no_submit(
+                            market,
+                            _s_tk,
+                            reason=_budget_reason,
+                            reason_detail=f"cost={order_cost:,.0f} available={avail:,.0f}",
+                            final_action="BUY_READY",
+                            route="PlanA.buy",
+                            strategy_hint=_s_strat,
+                            price_krw=float(_s_rpx),
+                            fixed_order_krw=float(order_budget),
+                            cash_krw=float(self.risk.cash),
+                            available_budget_krw=float(avail),
+                            qty=int(qty),
+                            order_cost_krw=float(order_cost),
+                            signal_flags=self._plan_a_signal_flags(_s_row, signal_fired=True, strategy=_s_strat),
+                            block_meta={
+                                "stage": "plan_a_affordability",
+                                "local_reason": "market_budget_exceeded",
+                                "affordability": affordability_diag,
+                                "one_share_over_budget": _one_share_over_budget_meta,
+                            },
+                        )
                         self._bump_runtime_reason(market, _s_tk, "affordability_fail")
                         self._record_decision_event(
                             market,
@@ -28686,7 +29177,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             qty=int(qty),
                             price_native=float(_s_px),
                             price_krw=float(_s_rpx),
-                            reason="market_budget_exceeded",
+                            reason=_budget_reason,
                             reason_family="affordability",
                             detail=f"cost={order_cost:,.0f} available={avail:,.0f}",
                             selected_reason=_s_sr,
@@ -28694,12 +29185,39 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         )
                         if _ML_DB_ENABLED:
                             _ml_write_eval(_s_tk, _s_px, _s_row, "SKIPPED",
-                                           block_reason_="market_budget_exceeded",
+                                           block_reason_=_budget_reason,
                                            diag_json_={"order_cost_krw": float(order_cost), "available_budget_krw": float(avail), **affordability_diag})
-                        tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at, "market_budget_exceeded")
+                        tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at, _budget_reason)
                         log.debug(f"  [{_s_tk}] 시장 예산 초과 ({order_cost:,.0f}원 > {avail:,.0f}원) → 스킵")
                         continue
                     if order_cost > self.risk.cash:
+                        _cash_reason = self._plan_a_no_submit_reason(
+                            local_reason="insufficient_cash",
+                            affordability_diag=affordability_diag,
+                            one_share_over_budget_meta=_one_share_over_budget_meta,
+                        )
+                        self._record_trade_ready_no_submit(
+                            market,
+                            _s_tk,
+                            reason=_cash_reason,
+                            reason_detail=f"cost={order_cost:,.0f} cash={self.risk.cash:,.0f}",
+                            final_action="BUY_READY",
+                            route="PlanA.buy",
+                            strategy_hint=_s_strat,
+                            price_krw=float(_s_rpx),
+                            fixed_order_krw=float(order_budget),
+                            cash_krw=float(self.risk.cash),
+                            available_budget_krw=float(avail),
+                            qty=int(qty),
+                            order_cost_krw=float(order_cost),
+                            signal_flags=self._plan_a_signal_flags(_s_row, signal_fired=True, strategy=_s_strat),
+                            block_meta={
+                                "stage": "plan_a_affordability",
+                                "local_reason": "insufficient_cash",
+                                "affordability": affordability_diag,
+                                "one_share_over_budget": _one_share_over_budget_meta,
+                            },
+                        )
                         self._bump_runtime_reason(market, _s_tk, "affordability_fail")
                         self._record_decision_event(
                             market,
@@ -28709,7 +29227,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             qty=int(qty),
                             price_native=float(_s_px),
                             price_krw=float(_s_rpx),
-                            reason="insufficient_cash",
+                            reason=_cash_reason,
                             reason_family="affordability",
                             detail=f"cost={order_cost:,.0f} cash={self.risk.cash:,.0f}",
                             selected_reason=_s_sr,
@@ -28717,9 +29235,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         )
                         if _ML_DB_ENABLED:
                             _ml_write_eval(_s_tk, _s_px, _s_row, "SKIPPED",
-                                           block_reason_="insufficient_cash",
+                                           block_reason_=_cash_reason,
                                            diag_json_={"order_cost_krw": float(order_cost), "cash_krw": float(self.risk.cash), **affordability_diag})
-                        tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at, "insufficient_cash")
+                        tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at, _cash_reason)
                         log.debug(f"  [{_s_tk}] 현금 부족 ({order_cost:,.0f}원 > {self.risk.cash:,.0f}원) → 스킵")
                         continue
                     _selection_cap_pct, _selection_cap_reasons = self._selection_size_cap_pct(market, _s_tk)

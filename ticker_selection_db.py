@@ -173,6 +173,9 @@ def init() -> None:
                 pnl_pct                  REAL,
                 pnl_krw                  REAL,
                 exit_reason              TEXT,
+                experiment_bucket        TEXT,
+                entry_source             TEXT,
+                exit_horizon_min         INTEGER,
                 created_at               TEXT DEFAULT (datetime('now'))
             )
         """)
@@ -196,6 +199,9 @@ def init() -> None:
             ("pnl_pct", "REAL"),
             ("pnl_krw", "REAL"),
             ("exit_reason", "TEXT"),
+            ("experiment_bucket", "TEXT"),
+            ("entry_source", "TEXT"),
+            ("exit_horizon_min", "INTEGER"),
         ):
             if col_name not in existing_probe:
                 conn.execute(f"ALTER TABLE micro_probe_log ADD COLUMN {col_name} {col_type}")
@@ -491,6 +497,9 @@ def log_micro_probe_entry(
     min_effective_order_krw: float,
     oversize_ratio: float,
     entered_at: str,
+    experiment_bucket: str = "",
+    entry_source: str = "",
+    exit_horizon_min: int = 0,
 ) -> None:
     """MICRO_PROBE 진입을 일반 전략 성과와 분리해 기록한다."""
     with _conn() as conn:
@@ -501,8 +510,8 @@ def log_micro_probe_entry(
                  reason, entry_priority_score, original_qty, adjusted_qty,
                  original_order_cost_krw, adjusted_order_cost_krw,
                  order_budget_krw, min_effective_order_krw, oversize_ratio,
-                 status, entered_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 status, entered_at, experiment_bucket, entry_source, exit_horizon_min)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 _BOT_MODE,
@@ -522,6 +531,9 @@ def log_micro_probe_entry(
                 float(oversize_ratio or 0.0),
                 "ORDERED",
                 entered_at,
+                str(experiment_bucket or ""),
+                str(entry_source or ""),
+                int(exit_horizon_min or 0),
             ),
         )
 
@@ -570,13 +582,16 @@ def update_micro_probe_outcome(
         )
 
 
-def micro_probe_performance_report(market: Optional[str] = None) -> dict[str, Any]:
+def micro_probe_performance_report(market: Optional[str] = None, experiment_bucket: str = "") -> dict[str, Any]:
     """MICRO_PROBE 성과를 별도 리포트로 반환한다."""
     where = "WHERE pnl_pct IS NOT NULL"
     params: list[object] = []
     if market:
         where += " AND market=?"
         params.append(market)
+    if experiment_bucket:
+        where += " AND COALESCE(experiment_bucket, '')=?"
+        params.append(experiment_bucket)
     with _conn() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
@@ -587,7 +602,10 @@ def micro_probe_performance_report(market: Optional[str] = None) -> dict[str, An
                 AVG(pnl_pct) AS avg_pnl_pct,
                 SUM(pnl_krw) AS total_pnl_krw,
                 MIN(pnl_pct) AS max_loss_pct,
-                MAX(pnl_pct) AS max_gain_pct
+                MAX(pnl_pct) AS max_gain_pct,
+                SUM(CASE WHEN pnl_pct > 0 THEN pnl_pct ELSE 0 END) AS gross_win_pct,
+                SUM(CASE WHEN pnl_pct < 0 THEN ABS(pnl_pct) ELSE 0 END) AS gross_loss_pct,
+                COUNT(DISTINCT session_date) AS days
             FROM micro_probe_log
             {where}
             """,
@@ -598,13 +616,20 @@ def micro_probe_performance_report(market: Optional[str] = None) -> dict[str, An
     wins = int(row["wins"] or 0) if row else 0
     return {
         "market": market or "ALL",
+        "experiment_bucket": experiment_bucket or "ALL",
         "trades": trades,
+        "days": int(row["days"] or 0) if row else 0,
         "wins": wins,
         "win_rate_pct": round((wins / trades * 100.0), 2) if trades else 0.0,
         "avg_pnl_pct": round(float(row["avg_pnl_pct"] or 0.0), 4) if row else 0.0,
         "total_pnl_krw": round(float(row["total_pnl_krw"] or 0.0), 2) if row else 0.0,
         "max_loss_pct": round(float(row["max_loss_pct"] or 0.0), 4) if row else 0.0,
         "max_gain_pct": round(float(row["max_gain_pct"] or 0.0), 4) if row else 0.0,
+        "profit_factor": (
+            round(float(row["gross_win_pct"] or 0.0) / float(row["gross_loss_pct"] or 0.0), 6)
+            if row and float(row["gross_loss_pct"] or 0.0) > 0
+            else ("INF" if row and float(row["gross_win_pct"] or 0.0) > 0 else None)
+        ),
     }
 
 

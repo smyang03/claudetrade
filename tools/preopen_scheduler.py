@@ -10,6 +10,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+try:
+    import psutil
+except Exception:  # pragma: no cover - optional dependency
+    psutil = None
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -32,6 +37,88 @@ def _scheduler_heartbeat_path(mode: str) -> Path:
     runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
     name = "preopen_scheduler_heartbeat.json" if runtime_mode == "live" else f"{runtime_mode}_preopen_scheduler_heartbeat.json"
     return scheduler_state_path(runtime_mode).with_name(name)
+
+
+def _scheduler_lock_path(mode: str) -> Path:
+    runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+    name = "preopen_scheduler.lock.json" if runtime_mode == "live" else f"{runtime_mode}_preopen_scheduler.lock.json"
+    return scheduler_state_path(runtime_mode).with_name(name)
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if psutil is not None:
+        try:
+            return bool(psutil.pid_exists(pid))
+        except Exception:
+            pass
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def _read_lock(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _acquire_scheduler_lock(mode: str) -> tuple[bool, Path, str]:
+    runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+    path = _scheduler_lock_path(runtime_mode)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    current_pid = os.getpid()
+    payload = {
+        "process": "preopen_scheduler",
+        "pid": current_pid,
+        "mode": runtime_mode,
+        "started_at": _now_iso(),
+        "lock_path": str(path),
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    while True:
+        try:
+            fd = os.open(str(path), flags)
+        except FileExistsError:
+            existing = _read_lock(path)
+            existing_pid = int(existing.get("pid") or 0)
+            if existing_pid and existing_pid != current_pid and _pid_alive(existing_pid):
+                return False, path, f"another preopen scheduler is already running pid={existing_pid}"
+            try:
+                path.unlink()
+            except Exception:
+                return False, path, f"failed to remove stale scheduler lock pid={existing_pid}"
+            continue
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(encoded)
+            return True, path, "acquired"
+        except Exception:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+            try:
+                if path.exists():
+                    path.unlink()
+            except Exception:
+                pass
+            raise
+
+
+def _release_scheduler_lock(path: Path) -> None:
+    try:
+        data = _read_lock(path)
+        if int(data.get("pid") or 0) == os.getpid() and path.exists():
+            path.unlink()
+    except Exception:
+        pass
 
 
 def _write_scheduler_heartbeat(
@@ -309,25 +396,31 @@ def main() -> int:
         args.once = True
     markets = _parse_markets(args.markets)
     collector_interval = args.collector_interval_min if args.collector_interval_min > 0 else None
-
-    while True:
-        summary = run_scheduler_once(
-            mode=args.mode,
-            markets=markets,
-            dry_run=args.dry_run,
-            force=args.force,
-            timeout_sec=args.timeout_sec,
-            interval_sec=args.interval_sec,
-            collector_interval_min=collector_interval,
-            outcome_catchup_min=args.outcome_catchup_min,
-        )
-        print(
-            f"[preopen scheduler] mode={summary['mode']} markets={','.join(summary['markets'])} "
-            f"due={summary['due']} ran={summary['ran']} dry_run={summary['dry_run']}"
-        )
-        if not args.loop:
-            return 0
-        time.sleep(max(10, int(args.interval_sec)))
+    locked, lock_path, lock_detail = _acquire_scheduler_lock(args.mode)
+    if not locked:
+        print(f"[preopen scheduler] single-instance lock blocked: {lock_detail}", file=sys.stderr)
+        return 2
+    try:
+        while True:
+            summary = run_scheduler_once(
+                mode=args.mode,
+                markets=markets,
+                dry_run=args.dry_run,
+                force=args.force,
+                timeout_sec=args.timeout_sec,
+                interval_sec=args.interval_sec,
+                collector_interval_min=collector_interval,
+                outcome_catchup_min=args.outcome_catchup_min,
+            )
+            print(
+                f"[preopen scheduler] mode={summary['mode']} markets={','.join(summary['markets'])} "
+                f"due={summary['due']} ran={summary['ran']} dry_run={summary['dry_run']}"
+            )
+            if not args.loop:
+                return 0
+            time.sleep(max(10, int(args.interval_sec)))
+    finally:
+        _release_scheduler_lock(lock_path)
 
 
 if __name__ == "__main__":
