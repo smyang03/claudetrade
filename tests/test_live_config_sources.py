@@ -384,6 +384,29 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertIn("PATHB_KR_LIVE_ENABLED", check.data["critical_drift"])
         self.assertIn("restart", check.data["operator_action"])
 
+    def test_runtime_config_drift_check_fails_when_kr_redesign_key_missing_from_snapshot(self) -> None:
+        config = {
+            "effective": {
+                "KR_PLAN_A_MOMENTUM_SIGNAL_ENABLED": "false",
+                "KR_PATHB_BULL_MODE_GATE_SHADOW": "true",
+            }
+        }
+        snapshot = {
+            "written_at": "2026-06-01T12:00:00+09:00",
+            "runtime_mode": "live",
+            "effective": {},
+        }
+
+        with patch(
+            "tools.live_preflight._latest_runtime_config_snapshot",
+            return_value=(Path("effective_config_live.redacted.json"), snapshot),
+        ):
+            check = _runtime_config_drift_check(config, "live")
+
+        self.assertEqual(check.status, "FAIL")
+        self.assertIn("KR_PLAN_A_MOMENTUM_SIGNAL_ENABLED", check.data["critical_drift"])
+        self.assertIn("KR_PATHB_BULL_MODE_GATE_SHADOW", check.data["drift"])
+
     def test_heartbeat_checks_use_runtime_mode_specific_names(self) -> None:
         with patch(
             "tools.live_preflight._heartbeat_check",

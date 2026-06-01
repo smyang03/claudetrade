@@ -142,6 +142,18 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(env_overrides.get("DISCOVERY_ALLOW_BUY_READY"), "false")
         self.assertEqual(env_overrides.get("DISCOVERY_ALLOW_PROBE_READY"), "false")
         self.assertEqual(env_overrides.get("DISCOVERY_ALLOW_PULLBACK_WAIT"), "false")
+        self.assertEqual(env_overrides.get("KR_PLAN_A_MOMENTUM_SIGNAL_ENABLED"), "false")
+        self.assertEqual(env_overrides.get("KR_PLAN_A_GAP_PULLBACK_SIGNAL_ENABLED"), "false")
+        self.assertEqual(env_overrides.get("KR_PLAN_A_ORP_SIGNAL_ENABLED"), "false")
+        self.assertEqual(env_overrides.get("KR_PATHB_BULL_MODE_GATE_ENABLED"), "false")
+        self.assertEqual(env_overrides.get("KR_PATHB_BULL_MODE_GATE_SHADOW"), "true")
+        self.assertEqual(
+            env_overrides.get("KR_PATHB_BULL_MODE_GATE_ALLOWED_MODES"),
+            "BULL,MILD_BULL,CAUTIOUS_BULL",
+        )
+        self.assertEqual(env_overrides.get("KR_PATHB_STRATEGY_FILTER_ENABLED"), "false")
+        self.assertEqual(env_overrides.get("KR_PATHB_STRATEGY_FILTER_SHADOW"), "true")
+        self.assertEqual(env_overrides.get("KR_PATHB_STRATEGY_ALLOWLIST"), "claude_price,gap_pullback")
 
     def test_balanced_mode_family_is_not_risk_off(self) -> None:
         self.assertEqual(_mode_family("BALANCED"), "BALANCED")
@@ -1074,6 +1086,313 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(route["final_action"], "WATCH")
         self.assertEqual(route["reason"], "pullback_wait_blocked_negative_context")
         self.assertEqual(route["runtime_gate_reason"], "negative_pullback_context")
+
+    def test_kr_healthy_pullback_shadow_does_not_register_pathb_wait(self) -> None:
+        bot = _make_bot()
+        raw_meta = {
+            "watchlist": ["208710"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {
+                    "ticker": "208710",
+                    "action": "PULLBACK_WAIT",
+                    "confidence": 0.72,
+                    "reason": "fade risk but recovered",
+                    "price_targets": {
+                        "buy_zone_low": 4950.0,
+                        "buy_zone_high": 5300.0,
+                        "sell_target": 5700.0,
+                        "stop_loss": 4800.0,
+                        "hold_days": 1,
+                        "confidence": 0.72,
+                    },
+                }
+            ],
+            "_post_open_features_by_ticker": {
+                "208710": {
+                    "ticker": "208710",
+                    "market": "KR",
+                    "current_price": 5010.0,
+                    "data_quality": "minute_complete",
+                    "ret_3m_pct": 12.13,
+                    "ret_5m_pct": 13.60,
+                    "opening_range_break": False,
+                    "vwap_distance_pct": 0.2,
+                    "volume_ratio_open": 10.0,
+                    "momentum_state": "sustained",
+                    "pullback_from_high_pct": -3.0,
+                    "vi_active": False,
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["208710"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["_pathb_wait_tickers"], [])
+        self.assertEqual(bot.pathb.registered_meta["_pathb_wait_tickers"], [])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "WATCH")
+        self.assertNotIn("kr_healthy_pullback_shadow", route.get("warnings") or [])
+        shadow = route["runtime_gate"]["kr_healthy_pullback_shadow"]
+        self.assertEqual(shadow["shadow_decision"], "accepted")
+        self.assertFalse(shadow["pathb_wait_registration"])
+        self.assertFalse(shadow["v2_path_run_created"])
+        self.assertFalse(shadow["order_created"])
+        events = [payload for event_type, _, payload in bot._gate_events if event_type == "kr_healthy_pullback_shadow"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["shadow_decision"], "accepted")
+
+    def test_kr_plan_a_no_signal_shadow_logs_without_execution_registration(self) -> None:
+        bot = _make_bot()
+        bot.selection_meta["KR"] = {
+            "_candidate_action_routes": [
+                {
+                    "ticker": "208710",
+                    "requested_action": "BUY_READY",
+                    "final_action": "BUY_READY",
+                    "route": "PlanA.buy",
+                    "runtime_gate": {
+                        "entry_price_cap": 5300.0,
+                        "evidence_data_state": "confirmed",
+                        "data_quality": "minute_complete",
+                    },
+                }
+            ],
+            "price_targets": {
+                "208710": {
+                    "buy_zone_low": 4950.0,
+                    "buy_zone_high": 5300.0,
+                    "sell_target": 5700.0,
+                    "stop_loss": 4800.0,
+                }
+            },
+        }
+
+        payload = TradingBot._log_kr_plan_a_no_signal_pathb_shadow(
+            bot,
+            "KR",
+            "208710",
+            price=5010.0,
+            mode="BALANCED",
+            detail="OR pullback: reason=orp_range_too_high",
+            rejection_reason="orp_range_too_high",
+            volume_state="ok",
+            strategy_order=["opening_range_pullback", "gap_pullback"],
+        )
+
+        self.assertEqual(payload["event"], "kr_plan_a_no_signal_pathb_shadow")
+        self.assertTrue(payload["shadow_only"])
+        self.assertFalse(payload["pathb_wait_registration"])
+        self.assertFalse(payload["v2_path_run_created"])
+        self.assertFalse(payload["order_created"])
+        events = [item for item in bot._gate_events if item[0] == "kr_plan_a_no_signal_pathb_shadow"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(bot.v2.registered_meta, None)
+        self.assertEqual(bot.pathb.registered_meta, None)
+
+    def test_kr_plan_a_no_signal_shadow_accepts_plan_a_route_degraded_after_requested_buy_ready(self) -> None:
+        bot = _make_bot()
+        bot.selection_meta["KR"] = {
+            "_candidate_action_routes": [
+                {
+                    "ticker": "208710",
+                    "requested_action": "BUY_READY",
+                    "final_action": "WATCH",
+                    "route": "PlanA.buy",
+                    "runtime_gate": {
+                        "entry_price_cap": 5300.0,
+                        "evidence_data_state": "confirmed",
+                        "data_quality": "minute_complete",
+                    },
+                }
+            ],
+        }
+
+        payload = TradingBot._log_kr_plan_a_no_signal_pathb_shadow(
+            bot,
+            "KR",
+            "208710",
+            price=5010.0,
+            mode="CAUTIOUS",
+            detail="momentum_wait_window(12m<45m)",
+            rejection_reason="no_signal",
+            volume_state="ok",
+            strategy_order=["momentum"],
+        )
+
+        self.assertEqual(payload["event"], "kr_plan_a_no_signal_pathb_shadow")
+        self.assertEqual(payload["final_action"], "WATCH")
+        self.assertEqual(payload["route"], "PlanA.buy")
+        events = [item for item in bot._gate_events if item[0] == "kr_plan_a_no_signal_pathb_shadow"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(bot.v2.registered_meta, None)
+        self.assertEqual(bot.pathb.registered_meta, None)
+
+    def test_kr_plan_a_signal_helper_blocks_only_kr_immediate_signals(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_PLAN_A_MOMENTUM_SIGNAL_ENABLED": False,
+                "KR_PLAN_A_GAP_PULLBACK_SIGNAL_ENABLED": False,
+                "KR_PLAN_A_ORP_SIGNAL_ENABLED": False,
+                "US_MOMENTUM_LIVE_ENABLED": True,
+            }
+        )
+
+        self.assertFalse(TradingBot._live_plan_a_signal_allowed(bot, "KR", "momentum"))
+        self.assertFalse(TradingBot._live_plan_a_signal_allowed(bot, "KR", "gap_pullback"))
+        self.assertFalse(TradingBot._live_plan_a_signal_allowed(bot, "KR", "opening_range_pullback"))
+        self.assertTrue(TradingBot._live_plan_a_signal_allowed(bot, "KR", "mean_reversion"))
+        self.assertTrue(TradingBot._live_plan_a_signal_allowed(bot, "US", "momentum"))
+
+    def test_kr_pathb_mode_gate_blocks_wait_registration_when_enabled(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_PATHB_BULL_MODE_GATE_ENABLED": True,
+                "KR_PATHB_BULL_MODE_GATE_SHADOW": True,
+            }
+        )
+        bot.today_judgment = {
+            "market": "KR",
+            "consensus": {"mode": "CAUTIOUS"},
+            "judgment_context_basis": {"updated_at": "2026-05-07T09:30:00+09:00"},
+        }
+        raw_meta = {
+            "watchlist": ["208710"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {
+                    "ticker": "208710",
+                    "action": "PULLBACK_WAIT",
+                    "strategy": "gap_pullback",
+                    "confidence": 0.72,
+                    "price_targets": {
+                        "buy_zone_low": 4950.0,
+                        "buy_zone_high": 5300.0,
+                        "sell_target": 5700.0,
+                        "stop_loss": 4800.0,
+                        "hold_days": 1,
+                        "confidence": 0.72,
+                    },
+                }
+            ],
+            "_post_open_features_by_ticker": {
+                "208710": {
+                    "current_price": 5010.0,
+                    "data_quality": "minute_complete",
+                    "opening_range_break": True,
+                    "vwap_reclaim": True,
+                    "momentum_state": "sustained",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["208710"], mode="CAUTIOUS")
+
+        self.assertEqual(meta["_pathb_wait_tickers"], [])
+        self.assertTrue(meta["_kr_pathb_mode_gate_blocked"])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "WATCH")
+        self.assertEqual(route["reason"], "kr_pathb_mode_gate_blocked")
+        self.assertFalse(route["pathb_live_executable_wait"])
+        self.assertEqual(bot.pathb.registered_meta["_pathb_wait_tickers"], [])
+        events = [payload for event_type, _, payload in bot._gate_events if event_type == "kr_pathb_mode_gate_shadow"]
+        self.assertEqual(len(events), 1)
+        self.assertTrue(events[0]["would_block_pathb_wait"])
+        self.assertTrue(events[0]["lookahead_safe"])
+
+    def test_kr_pathb_strategy_filter_blocks_momentum_when_enabled(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_PATHB_STRATEGY_FILTER_ENABLED": True,
+                "KR_PATHB_STRATEGY_FILTER_SHADOW": True,
+                "KR_PATHB_STRATEGY_ALLOWLIST": "claude_price,gap_pullback",
+            }
+        )
+        raw_meta = {
+            "watchlist": ["208710"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {
+                    "ticker": "208710",
+                    "action": "PULLBACK_WAIT",
+                    "strategy": "momentum",
+                    "confidence": 0.72,
+                    "price_targets": {
+                        "buy_zone_low": 4950.0,
+                        "buy_zone_high": 5300.0,
+                        "sell_target": 5700.0,
+                        "stop_loss": 4800.0,
+                        "hold_days": 1,
+                        "confidence": 0.72,
+                    },
+                }
+            ],
+            "_post_open_features_by_ticker": {
+                "208710": {
+                    "current_price": 5010.0,
+                    "data_quality": "minute_complete",
+                    "opening_range_break": True,
+                    "vwap_reclaim": True,
+                    "momentum_state": "sustained",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["208710"], mode="BULL")
+
+        self.assertEqual(meta["_pathb_wait_tickers"], [])
+        shadow = meta["_kr_pathb_strategy_filter_shadow"]
+        self.assertEqual(shadow["blocked"][0]["ticker"], "208710")
+        self.assertEqual(shadow["blocked"][0]["strategy"], "momentum")
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "WATCH")
+        self.assertEqual(route["reason"], "kr_pathb_strategy_filter_blocked")
+        self.assertFalse(route["pathb_live_executable_wait"])
+        self.assertEqual(bot.pathb.registered_meta["_pathb_wait_tickers"], [])
+
+    def test_us_pathb_wait_unaffected_by_kr_pathb_filters(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_PATHB_BULL_MODE_GATE_ENABLED": True,
+                "KR_PATHB_STRATEGY_FILTER_ENABLED": True,
+                "KR_PATHB_STRATEGY_ALLOWLIST": "claude_price,gap_pullback",
+            }
+        )
+        raw_meta = {
+            "watchlist": ["AAPL"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {
+                    "ticker": "AAPL",
+                    "action": "PULLBACK_WAIT",
+                    "strategy": "momentum",
+                    "confidence": 0.72,
+                    "price_targets": {
+                        "buy_zone_low": 190.0,
+                        "buy_zone_high": 195.0,
+                        "sell_target": 205.0,
+                        "stop_loss": 185.0,
+                        "hold_days": 2,
+                        "confidence": 0.72,
+                    },
+                }
+            ],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "US", ["AAPL"], mode="DEFENSIVE")
+
+        self.assertEqual(meta["_pathb_wait_tickers"], ["AAPL"])
+        self.assertNotIn("_kr_pathb_strategy_filter_shadow", meta)
+        self.assertEqual(bot.pathb.registered_meta["_pathb_wait_tickers"], ["AAPL"])
 
     def test_buy_ready_records_passing_gate_evaluation(self) -> None:
         bot = _make_bot()

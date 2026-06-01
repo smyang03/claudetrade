@@ -66,6 +66,9 @@ class PostOpenFeatureSnapshot:
             "vwap_distance_pct": self.vwap_distance_pct,
             "momentum_state": self.momentum_state,
             "data_quality": self.data_quality,
+            "feature_surface": "post_open_feature_builder",
+            "evidence_surface": "post_open_feature_snapshot",
+            "runtime_gate_evidence_preferred": True,
         }
 
 

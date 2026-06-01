@@ -584,6 +584,34 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertEqual(coverage["requested"], 30)
         self.assertEqual(len(result), 30)
 
+    def test_intraday_evidence_coverage_records_timeout_diagnostics(self) -> None:
+        events: list[tuple[str, str, dict]] = []
+
+        def _provider(**kwargs):
+            if kwargs.get("ticker") == "005930":
+                raise TimeoutError("provider_timeout")
+            return _candles()
+
+        bot = _make_bot(_provider)
+        bot._write_funnel_event = lambda event, market_key, payload: events.append((event, market_key, payload))
+
+        TradingBot._prefetch_selection_intraday_evidence(
+            bot,
+            "KR",
+            [
+                {"ticker": "005930", "market": "KR", "price": 100.0},
+                {"ticker": "000660", "market": "KR", "price": 100.0},
+            ],
+            phase={"phase": "mid"},
+        )
+
+        coverage = next(payload for event, _market, payload in events if event == "selection_intraday_evidence_coverage")
+        self.assertEqual(coverage["provider_timeout_count"], 1)
+        self.assertEqual(coverage["prefetch_timeout_count"], 0)
+        self.assertEqual(coverage["worker_count"], 1)
+        self.assertEqual(coverage["timeout_seconds"], 4.0)
+        self.assertIn("elapsed_seconds", coverage)
+
     def test_cached_intraday_evidence_replaces_stale_row_feature_with_missing_state(self) -> None:
         bot = _make_bot(lambda **kwargs: _candles())
         bot._current_session_date_str = lambda _market: "2026-05-13"

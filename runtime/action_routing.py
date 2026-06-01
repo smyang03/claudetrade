@@ -568,6 +568,146 @@ def route_candidate_action(
         )
         return any(keyword in reason_text for keyword in negative_keywords)
 
+    def _kr_healthy_pullback_shadow_payload() -> dict[str, Any]:
+        if market_text != "KR" or str(original_requested or "").upper() != "PULLBACK_WAIT":
+            return {}
+
+        def _context_bool(key: str) -> bool:
+            return _boolish(context.get(key))
+
+        def _feature_bool(key: str) -> bool:
+            value = context.get(key)
+            if isinstance(value, bool):
+                return value
+            return _boolish(value)
+
+        evidence_pack = context.get("evidence_pack") if isinstance(context.get("evidence_pack"), dict) else {}
+        fade_checks = (
+            evidence_pack.get("fade_recovered_checks")
+            if isinstance(evidence_pack.get("fade_recovered_checks"), dict)
+            else {}
+        )
+        risk_view = (
+            evidence_pack.get("risk_control_view")
+            if isinstance(evidence_pack.get("risk_control_view"), dict)
+            else {}
+        )
+        hard_blocks = context.get("hard_blocks")
+        if not isinstance(hard_blocks, (list, tuple, set)):
+            hard_blocks = risk_view.get("hard_blocks") if isinstance(risk_view.get("hard_blocks"), list) else []
+        target_complete = has_pullback_target(price_targets)
+        cap = buy_zone_high if buy_zone_high > 0 else _positive_float(price_targets.get("buy_zone_high"))
+        evidence_state = str(context.get("evidence_data_state") or "").strip().lower()
+        quality = str(data_quality or context.get("data_quality") or "").strip().lower()
+        fail_closed = _context_bool("evidence_fail_closed") or _context_bool("fail_closed")
+        vi_active = _context_bool("vi_active") or str(context.get("vi_state") or "").strip().upper() in {
+            "VI_ACTIVE",
+            "HALT",
+            "SUSPENDED",
+        }
+        halted = any(
+            _context_bool(key)
+            for key in ("halted", "trading_halt", "suspended", "trade_suspended", "market_halt")
+        )
+        repeated_failed = int(_num_or_none(context.get("repeated_failed_ready_count")) or 0)
+        pullback = _num_or_none(
+            context.get("pullback_from_high_pct")
+            if context.get("pullback_from_high_pct") not in (None, "")
+            else context.get("pullback_from_high")
+        )
+        spread_ok = True
+        if context.get("spread_ok") not in (None, ""):
+            spread_ok = _context_bool("spread_ok")
+        elif fade_checks.get("spread_ok") is not None:
+            spread_ok = bool(fade_checks.get("spread_ok"))
+        momentum = str(context.get("momentum_state") or "").strip().lower()
+        vwap_reclaim = _feature_bool("vwap_reclaim")
+        opening_range_break = _feature_bool("opening_range_break")
+        recovery_signals = {
+            "vwap_reclaim": bool(vwap_reclaim),
+            "opening_range_break": bool(opening_range_break),
+            "momentum_sustained": momentum == "sustained",
+        }
+        # These three recovery signals are intentionally OR: at least one is
+        # enough for shadow classification, but overextended never auto-accepts.
+        recovery_ok = any(recovery_signals.values())
+        overextended_momentum = bool(overextended) or momentum == "overextended"
+        deep_fade = pullback is not None and pullback <= -8.0
+        reasons: list[str] = []
+        if not target_complete:
+            reasons.append("missing_complete_price_targets")
+        if cap <= 0:
+            reasons.append("missing_buy_zone_cap")
+        if current_price <= 0:
+            reasons.append("missing_current_price")
+        elif cap > 0 and current_price > cap:
+            reasons.append("price_above_buy_zone_cap")
+        if evidence_state != "confirmed":
+            reasons.append("evidence_not_confirmed")
+        if quality != "minute_complete":
+            reasons.append("data_quality_not_minute_complete")
+        if fail_closed:
+            reasons.append("evidence_fail_closed")
+        if hard_blocks:
+            reasons.append("hard_blocks_present")
+        if vi_active:
+            reasons.append("vi_active")
+        if halted:
+            reasons.append("halt_or_suspended")
+        if not spread_ok:
+            reasons.append("spread_not_confirmed")
+        if repeated_failed > 0:
+            reasons.append("repeated_failed_ready")
+        if deep_fade:
+            reasons.append("deep_fade")
+        if not recovery_ok:
+            reasons.append("missing_recovery_signal")
+        if overextended_momentum:
+            reasons.append("overextended_needs_review")
+
+        base_ok = not any(reason != "overextended_needs_review" for reason in reasons)
+        if base_ok and overextended_momentum:
+            decision = "needs_review_overextended"
+        elif base_ok:
+            decision = "accepted"
+        else:
+            decision = "rejected"
+        return {
+            "event": "kr_healthy_pullback_shadow",
+            "shadow_only": True,
+            "no_main_execution": True,
+            "pathb_wait_registration": False,
+            "v2_path_run_created": False,
+            "order_created": False,
+            "would_have_pathb_wait": decision == "accepted",
+            "shadow_decision": decision,
+            "shadow_reason": "healthy_pullback_candidate" if decision == "accepted" else ",".join(reasons),
+            "checks": {
+                "price_targets_complete": bool(target_complete),
+                "current_price_inside_cap": bool(current_price > 0 and cap > 0 and current_price <= cap),
+                "evidence_confirmed": evidence_state == "confirmed",
+                "data_quality_minute_complete": quality == "minute_complete",
+                "fail_closed_clear": not fail_closed,
+                "hard_blocks_clear": not bool(hard_blocks),
+                "vi_safe": not vi_active,
+                "halt_clear": not halted,
+                "spread_ok": bool(spread_ok),
+                "repeated_failed_ready_clear": repeated_failed <= 0,
+                "deep_fade_clear": not deep_fade,
+                "recovery_signal": recovery_ok,
+                "overextended": bool(overextended_momentum),
+            },
+            "recovery_signals": recovery_signals,
+            "current_price": current_price if current_price > 0 else None,
+            "buy_zone_high": cap if cap > 0 else None,
+            "momentum_state": momentum,
+            "pullback_from_high_pct": pullback,
+            "evidence_data_state": evidence_state,
+            "data_quality": quality,
+            "repeated_failed_ready_count": repeated_failed,
+            "reasons": reasons,
+        }
+
     def _pathb_negative_watch_suspend_decision() -> tuple[bool, str, str]:
         if not pathb_waiting:
             return False, "", ""
@@ -794,6 +934,9 @@ def route_candidate_action(
         if not has_pullback_target(price_targets):
             return _decision("WATCH", reason="missing_pullback_target")
         if _negative_watch_context():
+            kr_healthy_shadow = _kr_healthy_pullback_shadow_payload()
+            if kr_healthy_shadow:
+                gate_context["kr_healthy_pullback_shadow"] = kr_healthy_shadow
             suspend_pathb, _, hysteresis_reason = _pathb_negative_watch_suspend_decision()
             return _decision(
                 "WATCH",

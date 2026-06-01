@@ -88,6 +88,8 @@ class PostOpenFeatureTests(unittest.TestCase):
                 path = Path(tmpdir) / "logs" / "funnel" / "post_open_features_20260506_KR.jsonl"
                 payload = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
                 self.assertEqual(payload["ticker"], "001440")
+                self.assertEqual(payload["feature_surface"], "post_open_feature_builder")
+                self.assertTrue(payload["runtime_gate_evidence_preferred"])
 
     def test_returns_from_history_are_future_blind_and_lag_limited(self) -> None:
         returns = returns_from_price_history(

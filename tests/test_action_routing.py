@@ -63,6 +63,82 @@ class ActionRoutingTests(unittest.TestCase):
         self.assertEqual(decision.runtime_gate_reason, "negative_pullback_context")
         self.assertEqual(decision.demoted_to, "WATCH")
 
+    def test_kr_pullback_negative_context_records_healthy_shadow_without_route_change(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "208710",
+                "action": "PULLBACK_WAIT",
+                "confidence": 0.72,
+                "reason": "fade risk but recovered",
+                "price_targets": {
+                    "buy_zone_low": 4950,
+                    "buy_zone_high": 5300,
+                    "sell_target": 5700,
+                    "stop_loss": 4800,
+                    "hold_days": 1,
+                    "confidence": 0.72,
+                },
+            },
+            market="KR",
+            execution_context={
+                "current_price": 5010,
+                "momentum_state": "sustained",
+                "data_quality": "minute_complete",
+                "evidence_data_state": "confirmed",
+                "evidence_fail_closed": False,
+                "vi_active": False,
+                "pullback_from_high_pct": -3.0,
+                "repeated_failed_ready_count": 0,
+            },
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertIsNone(decision.route)
+        self.assertFalse(decision.cancel_pathb)
+        self.assertFalse(decision.suspend_pathb)
+        self.assertNotIn("kr_healthy_pullback_shadow", decision.warnings)
+        shadow = decision.runtime_gate["kr_healthy_pullback_shadow"]
+        self.assertEqual(shadow["shadow_decision"], "accepted")
+        self.assertTrue(shadow["would_have_pathb_wait"])
+        self.assertFalse(shadow["pathb_wait_registration"])
+        self.assertFalse(shadow["v2_path_run_created"])
+        self.assertFalse(shadow["order_created"])
+
+    def test_kr_pullback_overextended_shadow_requires_review(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "126730",
+                "action": "PULLBACK_WAIT",
+                "confidence": 0.72,
+                "reason": "fade risk",
+                "price_targets": {
+                    "buy_zone_low": 35000,
+                    "buy_zone_high": 37000,
+                    "sell_target": 39000,
+                    "stop_loss": 34000,
+                    "hold_days": 1,
+                    "confidence": 0.72,
+                },
+            },
+            market="KR",
+            execution_context={
+                "current_price": 35200,
+                "momentum_state": "overextended",
+                "opening_range_break": True,
+                "data_quality": "minute_complete",
+                "evidence_data_state": "confirmed",
+                "evidence_fail_closed": False,
+                "vi_active": False,
+                "pullback_from_high_pct": -3.56,
+                "repeated_failed_ready_count": 0,
+            },
+        )
+
+        shadow = decision.runtime_gate["kr_healthy_pullback_shadow"]
+        self.assertEqual(shadow["shadow_decision"], "needs_review_overextended")
+        self.assertFalse(shadow["would_have_pathb_wait"])
+        self.assertIn("overextended_needs_review", shadow["reasons"])
+
     def test_buy_ready_can_cancel_pathb_when_confident_and_not_extended(self) -> None:
         decision = route_candidate_action(
             {"ticker": "AAPL", "action": "BUY_READY", "confidence": 0.8},
