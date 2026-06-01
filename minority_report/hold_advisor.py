@@ -31,7 +31,7 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 MODEL  = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
 _HOLD_ADVISOR_CACHE_ENABLED = os.getenv("HOLD_ADVISOR_PROMPT_CACHE_ENABLED", "true").lower() == "true"
-_HOLD_ADVISOR_SYSTEM = COMMON_DECISION_CONTRACT + "\n\n" + HARD_SOFT_RULE_CONTRACT
+_HOLD_ADVISOR_SYSTEM = COMMON_DECISION_CONTRACT + "\n\n" + HARD_SOFT_RULE_CONTRACT + "\n\n모든 응답은 한국어로 작성하세요."
 
 PERSONAS = {
     "bull": "당신은 15년 경력의 성장주 모멘텀 트레이더입니다. 추세가 살아있으면 보유를 선호합니다.",
