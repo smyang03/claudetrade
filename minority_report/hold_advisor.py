@@ -1460,10 +1460,15 @@ def ask(
         )
         if _triage_direct_allowed(triage_vote, decision_stage):
             advisor_duration_ms = int(max(0.0, (time.perf_counter() - advisor_started) * 1000.0))
+            _skip_reason = "non_stop_sell_high_conf" if (
+                str(triage_vote.get("exit_category") or "") == "SELL"
+                and str(triage_vote.get("exit_driver") or "") in {"profit_protection", "time_carry", "other"}
+                and _env_bool("HOLD_ADVISOR_TRIAGE_NON_STOP_SELL_ENABLED", False)
+            ) else "direct_allowed"
             log.info(
-                f"[hold_advisor triage] {ticker} -> {triage_vote.get('exit_category')} "
+                f"[hold_advisor triage direct] {ticker} -> {triage_vote.get('exit_category')} "
                 f"action={triage_vote.get('action')} driver={triage_vote.get('exit_driver')} "
-                f"conf={float(triage_vote.get('confidence', 0.0) or 0.0):.2f}"
+                f"conf={float(triage_vote.get('confidence', 0.0) or 0.0):.2f} skip_reason={_skip_reason}"
             )
             return _result_from_triage(
                 ticker,
