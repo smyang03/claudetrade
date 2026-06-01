@@ -11447,6 +11447,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             signals.append("hot_move")
         return signals
     def _market_position_count(self, market: str) -> int:
+        # 리스크-오프 진입 게이트용 카운트. qty=0 포지션도 포함해 보수적으로 센다.
+        # 표시/로그용 시장별 카운트는 _positions_for_market(qty>0 필터)를 쓴다. 의미가 다르므로 합치지 말 것.
         market_key = "US" if str(market).upper() == "US" else "KR"
         count = 0
         for pos in getattr(self.risk, "positions", []) or []:
@@ -17761,10 +17763,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             key = ticker.upper() if market == "US" else ticker
             normalized[key] = stock
         return normalized
-    def _position_count_by_market(self, market: str, positions: Optional[list[dict]] = None) -> int:
+    def _positions_for_market(self, market: str, positions: Optional[list[dict]] = None) -> list[dict]:
+        # 표시/로그용 시장별 보유 목록. qty>0만 포함한다.
+        # 리스크 게이트 카운트는 의미가 다른 _market_position_count를 쓴다(qty=0 포함).
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         items = list(positions if positions is not None else getattr(self.risk, "positions", []) or [])
-        count = 0
+        filtered: list[dict] = []
         for pos in items:
             if not isinstance(pos, dict):
                 continue
@@ -17774,8 +17778,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception:
                 pos_market = ""
             if pos_market == market_key and int(pos.get("qty", 0) or 0) > 0:
-                count += 1
-        return count
+                filtered.append(pos)
+        return filtered
+
+    def _position_count_by_market(self, market: str, positions: Optional[list[dict]] = None) -> int:
+        return len(self._positions_for_market(market, positions=positions))
     def _broker_empty_holdings_unreliable(
         self,
         market: str,
@@ -26079,7 +26086,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         now_str = datetime.now(KST).strftime("%H:%M")
         log.info(
             f"[{market} 사이클 {now_str}] 모드:{mode} size:{size_pct}% | "
-            f"tickers:{tickers} | positions:{len(self.risk.positions)}"
+            f"tickers:{tickers} | positions:{self._position_count_by_market(market)}"
         )
         # 분석가 평균 confidence 계산 — 신뢰도 낮으면 신규 진입 차단
         log.info(f"[runtime gates {market}] source=run_cycle {self._runtime_gate_state_text(market)}")
@@ -29751,7 +29758,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 log.exception("[KR Tier2 sector_play] loop error")
         # ── Tier 2 섹터 플레이 ──────────────────────────────────────────────
         log.info(
-            f"[{market} 사이클 완료] 포지션:{len(self.risk.positions)}개 | "
+            f"[{market} 사이클 완료] 포지션:{self._position_count_by_market(market)}개 | "
             f"cash:{self.risk.cash:,.0f} KRW"
         )
         self._write_live_status(market)
@@ -31299,7 +31306,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
         market  = self.current_market
         mode    = self.today_judgment.get("consensus", {}).get("mode", "?")
-        pos_txt = ", ".join(f"{p['ticker']}({p['qty']}주)" for p in self.risk.positions) or "없음"
+        # heartbeat는 시간당 포트폴리오 요약이므로 KR/US 보유를 모두 보여주되 시장별로 라벨을 분리한다.
+        pos_segments = []
+        for seg_market in ("KR", "US"):
+            seg_positions = self._positions_for_market(seg_market)
+            if not seg_positions:
+                continue
+            seg_txt = ", ".join(
+                f"{p.get('ticker', '?')}({p.get('qty', 0)}주)" for p in seg_positions
+            )
+            pos_segments.append(f"[{seg_market}] {seg_txt}")
+        pos_txt = " | ".join(pos_segments) or "없음"
         now_str = datetime.now(KST).strftime("%H:%M")
         log.info(f"[Heartbeat {now_str}] {market} | 모드:{mode} | 포지션:{pos_txt}")
         self._maybe_push_dashboard(force=True)  # 1시간마다 강제 전송

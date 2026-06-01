@@ -416,6 +416,23 @@ class EntryRiskControlTests(unittest.TestCase):
         self.assertEqual(TradingBot._market_position_count(bot, "US"), 1)
         self.assertEqual(TradingBot._market_position_count(bot, "KR"), 0)
 
+    def test_trading_bot_positions_for_market_filters_display_positions(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.risk = SimpleNamespace(
+            positions=[
+                {"ticker": "005930", "market": "KR", "qty": 2},
+                {"ticker": "EL", "market": "US", "qty": 1},
+                {"ticker": "SOFI", "qty": 16, "display_currency": "USD"},
+                {"ticker": "000660", "market": "KR", "qty": 0},
+            ]
+        )
+
+        kr_positions = TradingBot._positions_for_market(bot, "KR")
+        us_positions = TradingBot._positions_for_market(bot, "US")
+
+        self.assertEqual([p["ticker"] for p in kr_positions], ["005930"])
+        self.assertEqual([p["ticker"] for p in us_positions], ["EL", "SOFI"])
+
     def test_trading_bot_new_buy_gate_blocks_us_broker_quarantine(self) -> None:
         bot = TradingBot.__new__(TradingBot)
         bot.v2 = None
