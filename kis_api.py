@@ -3425,7 +3425,7 @@ def _place_order_kr(ticker, qty, price, side, token):
 # 미국 거래소 코드 매핑. 미확인 종목을 기본 NASD로 보내지 않고 명시적으로 막는다.
 _US_EXCHANGE_MAP = {
     "NASD": [
-        "AAPL", "ADBE", "AMD", "AMZN", "AVGO", "COST", "CRM", "CSCO", "GOOG",
+        "AAPL", "ADBE", "AMD", "AMZN", "AVGO", "COST", "CSCO", "GOOG",
         "GOOGL", "INTC", "META", "MSFT", "NFLX", "NVDA", "ORCL", "PEP", "PLTR",
         "QCOM", "QQQ", "SBUX", "SMCI", "SNOW", "TSLA", "TXN", "UBER",
         "ARM", "BRZE", "CORT", "PAYS", "SRPT",
@@ -3433,7 +3433,7 @@ _US_EXCHANGE_MAP = {
     "NYSE": ["BRK.B","JPM","BAC","WFC","GS","MS","C","USB","BLK","AXP",
              "XOM","CVX","COP","SLB","WMT","HD","MCD","NKE","PG","KO",
              "PFE","JNJ","MRK","ABT","UNH","V","MA","HIMS",
-             "LLY","ABBV","CAT","GE","NOK"],
+             "LLY","ABBV","CAT","GE","NOK","CRM"],
     "AMEX": ["SPY","IWM","GLD","SLV","USO"],
 }
 
