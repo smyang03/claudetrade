@@ -59,14 +59,25 @@ class KrCandidateFeaturesTests(unittest.TestCase):
                 "individual": 0,
                 "flow_data_quality": "bad_zero_flow_cluster",
                 "flow_quality_flags": ["kr_investor_flow_all_zero_cluster"],
+                "flow_source_date": "2026-05-29",
+                "requested_session_date": "2026-06-01",
+                "flow_age_trading_days": 1,
             },
         )
 
         self.assertEqual(features["flow_data_quality"], "bad_zero_flow_cluster")
         self.assertEqual(features["investor_flow_quality"], "bad_zero_flow_cluster")
+        self.assertEqual(features["flow_source_date"], "2026-05-29")
+        self.assertEqual(features["requested_session_date"], "2026-06-01")
+        self.assertEqual(features["flow_age_trading_days"], 1)
         self.assertIn("kr_investor_flow_all_zero_cluster", features["flow_quality_flags"])
         self.assertIn("flow_invalid_all_zero_cluster", features["quality_data_gaps"])
+        self.assertIn("flow_missing", features["quality_data_gaps"])
         self.assertFalse(features["flow_values_trusted"])
+        self.assertNotIn("foreign_net_qty_1d", features)
+        self.assertNotIn("institution_net_qty_1d", features)
+        self.assertEqual(features["candidate_quality_components"]["flow_support"], 45.0)
+        self.assertIn("flow_missing", features["candidate_quality_flags"])
 
     def test_short_history_marks_gaps_without_zero_placeholders(self) -> None:
         features = build_kr_candidate_features({"ticker": "123456"}, _frame(10))

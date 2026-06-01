@@ -30,6 +30,12 @@ QUALITY_FEATURE_KEYS: tuple[str, ...] = (
     "flow_data_quality",
     "investor_flow_quality",
     "flow_quality_flags",
+    "flow_source_date",
+    "requested_session_date",
+    "effective_flow_source_date",
+    "flow_age_trading_days",
+    "flow_values_trusted",
+    "flow_unavailable_reason",
     "candidate_quality_score",
     "candidate_quality_grade",
     "candidate_quality_components",
@@ -363,6 +369,39 @@ def _relative_strength_features(close: pd.Series, index_ohlcv: Any, gaps: list[s
 
 
 def _apply_flow(features: dict[str, Any], flow: dict[str, Any]) -> None:
+    quality = str(flow.get("flow_data_quality") or flow.get("investor_flow_quality") or "").strip()
+    if quality:
+        features["flow_data_quality"] = quality
+        features["investor_flow_quality"] = quality
+    for key in ("flow_source_date", "requested_session_date", "effective_flow_source_date"):
+        value = flow.get(key)
+        if value not in (None, ""):
+            features[key] = str(value)
+    flow_age = _optional_float(flow.get("flow_age_trading_days"))
+    if flow_age is not None:
+        features["flow_age_trading_days"] = int(flow_age)
+    flags = flow.get("flow_quality_flags")
+    if isinstance(flags, (list, tuple, set)):
+        clean_flags = [str(flag).strip() for flag in flags if str(flag).strip()]
+        if clean_flags:
+            features["flow_quality_flags"] = clean_flags
+    reason = str(flow.get("flow_unavailable_reason") or "").strip()
+    trusted = flow.get("flow_values_trusted") is not False and quality != "bad_zero_flow_cluster"
+    if not trusted:
+        gaps = _gap_list(features.get("quality_data_gaps"))
+        gaps.append("flow_missing")
+        if quality == "bad_zero_flow_cluster" or reason == "all_zero_cluster":
+            gaps.append("flow_invalid_all_zero_cluster")
+            reason = reason or "all_zero_cluster"
+        else:
+            gaps.append("flow_untrusted")
+            reason = reason or "untrusted"
+        features["quality_data_gaps"] = sorted(set(gaps))
+        features["flow_values_trusted"] = False
+        features["flow_unavailable_reason"] = reason
+        return
+    if flow.get("flow_values_trusted") is True or quality:
+        features["flow_values_trusted"] = True
     mapping = {
         "foreign": "foreign_net_qty_1d",
         "institution": "institution_net_qty_1d",
@@ -375,21 +414,6 @@ def _apply_flow(features: dict[str, Any], flow: dict[str, Any]) -> None:
         value = _optional_float(flow.get(raw_key))
         if value is not None:
             features[out_key] = value
-    quality = str(flow.get("flow_data_quality") or flow.get("investor_flow_quality") or "").strip()
-    if quality:
-        features["flow_data_quality"] = quality
-        features["investor_flow_quality"] = quality
-        if quality == "bad_zero_flow_cluster":
-            gaps = _gap_list(features.get("quality_data_gaps"))
-            gaps.append("flow_invalid_all_zero_cluster")
-            features["quality_data_gaps"] = sorted(set(gaps))
-            features["flow_values_trusted"] = False
-            features["flow_unavailable_reason"] = "all_zero_cluster"
-    flags = flow.get("flow_quality_flags")
-    if isinstance(flags, (list, tuple, set)):
-        clean_flags = [str(flag).strip() for flag in flags if str(flag).strip()]
-        if clean_flags:
-            features["flow_quality_flags"] = clean_flags
 
 
 def _score_log_scale(value: float, *, low: float, high: float) -> float:

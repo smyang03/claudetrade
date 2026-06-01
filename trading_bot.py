@@ -16053,9 +16053,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     row["candidate_quality_index_error"] = str(index_exc)[:160]
             if _env_bool("ENABLE_KR_CANDIDATE_FLOW_SHADOW", False):
                 try:
-                    from bot.kr_investor_flow_cache import flow_for_ticker, load_flow_cache
+                    from bot.kr_investor_flow_cache import flow_for_ticker, load_effective_flow_cache
                     session_date = self._current_session_date_str(market_key)
-                    flow = flow_for_ticker(load_flow_cache(session_date), row.get("ticker"))
+                    flow = flow_for_ticker(load_effective_flow_cache(session_date), row.get("ticker"))
                 except Exception as flow_exc:
                     _add_quality_gap("flow_cache_error")
                     row["candidate_quality_flow_error"] = str(flow_exc)[:160]
@@ -16114,11 +16114,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "max_tickers": max_tickers,
         }
         try:
-            from bot.kr_investor_flow_cache import update_candidate_flow_cache
+            from bot.kr_investor_flow_cache import effective_flow_source_date, update_candidate_flow_cache
+
+            session_date = self._current_session_date_str(market_key)
+            flow_source_date = effective_flow_source_date(session_date)
+            summary.update({
+                "session_date": session_date,
+                "flow_source_date": flow_source_date,
+                "flow_source_policy": "previous_completed_trading_day",
+            })
 
             cache = update_candidate_flow_cache(
                 tickers,
-                session_date=self._current_session_date_str(market_key),
+                session_date=session_date,
+                flow_source_date=flow_source_date,
                 token=self._token_for_market("KR"),
                 max_tickers=max_tickers,
                 sleep_sec=max(0.0, sleep_sec),
@@ -16130,6 +16139,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "records": len(records),
                 "ok": ok,
                 "error": error,
+                "data_quality": cache.get("data_quality", ""),
+                "zero_flow_record_count": cache.get("zero_flow_record_count", 0),
+                "untrusted_flow_record_count": cache.get("untrusted_flow_record_count", 0),
                 "updated_at": cache.get("updated_at", ""),
             })
         except Exception as exc:

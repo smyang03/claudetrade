@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -11,6 +11,7 @@ from runtime_paths import get_runtime_path
 
 
 FlowFetchFn = Callable[[str, str, str], dict[str, Any]]
+_KR_CALENDAR: Any | None = None
 
 
 def normalize_kr_ticker(ticker: Any) -> str:
@@ -46,6 +47,28 @@ def load_flow_cache(session_date: str | date, *, path: str | Path | None = None)
     return payload
 
 
+def effective_flow_source_date(session_date: str | date, *, lag_trading_days: int = 1) -> str:
+    """Return the completed KR trading day used for investor-flow enrichment."""
+    cursor = _parse_date(session_date)
+    remaining = max(0, int(lag_trading_days or 0))
+    while remaining > 0:
+        cursor -= timedelta(days=1)
+        if _is_kr_trading_day(cursor):
+            remaining -= 1
+    return cursor.isoformat()
+
+
+def load_effective_flow_cache(session_date: str | date, *, path: str | Path | None = None) -> dict[str, Any]:
+    source_date = effective_flow_source_date(session_date)
+    cache = load_flow_cache(source_date, path=path)
+    cache["requested_session_date"] = _date_key(session_date)
+    cache["effective_flow_source_date"] = source_date
+    cache["flow_age_trading_days"] = _trading_day_distance(source_date, session_date)
+    cache.setdefault("flow_source_date", source_date)
+    cache.setdefault("flow_source_policy", "previous_completed_trading_day")
+    return cache
+
+
 def save_flow_cache(cache: dict[str, Any], *, path: str | Path | None = None) -> Path:
     session_date = cache.get("date") or date.today().isoformat()
     _annotate_flow_cache_quality(cache)
@@ -62,6 +85,7 @@ def update_candidate_flow_cache(
     tickers: list[Any],
     *,
     session_date: str | date,
+    flow_source_date: str | date | None = None,
     token: str,
     fetch_fn: FlowFetchFn | None = None,
     max_tickers: int = 30,
@@ -74,7 +98,14 @@ def update_candidate_flow_cache(
     This function is designed for pre-session or shadow enrichment. It never
     raises on a ticker-level fetch failure; failures are stored per record.
     """
-    cache = load_flow_cache(session_date, path=path)
+    target_date = _date_key(flow_source_date or session_date)
+    session_day = _date_key(session_date)
+    cache = load_flow_cache(target_date, path=path)
+    cache["date"] = target_date
+    cache["requested_session_date"] = session_day
+    cache["flow_source_date"] = target_date
+    cache["flow_age_trading_days"] = _trading_day_distance(target_date, session_day)
+    cache.setdefault("flow_source_policy", "explicit_source_date")
     records = cache.setdefault("records", {})
     fetch = fetch_fn or _default_fetch_fn()
     fetched_at = (now or datetime.now()).isoformat(timespec="seconds")
@@ -83,29 +114,42 @@ def update_candidate_flow_cache(
     changed = False
     for idx, ticker in enumerate(selected):
         existing = records.get(ticker)
-        if isinstance(existing, dict) and existing.get("status") == "ok":
+        if (
+            isinstance(existing, dict)
+            and existing.get("status") == "ok"
+            and _record_flow_values_trusted(existing, cache)
+        ):
             continue
         try:
-            flow = fetch(ticker, _date_key(session_date), token) or {}
+            flow = fetch(ticker, target_date, token) or {}
             if not isinstance(flow, dict):
                 flow = {}
             records[ticker] = {
                 "ticker": ticker,
-                "date": _date_key(session_date),
+                "date": target_date,
+                "flow_source_date": target_date,
+                "flow_age_trading_days": cache.get("flow_age_trading_days", 0),
                 "fetched_at": fetched_at,
                 "status": "ok" if flow else "missing",
                 "foreign": _optional_int(flow.get("foreign")),
                 "institution": _optional_int(flow.get("institution")),
                 "individual": _optional_int(flow.get("individual")),
+                "flow_values_trusted": bool(flow),
                 "source": "kis:inquire-investor",
             }
+            if not flow:
+                records[ticker]["flow_unavailable_reason"] = "missing"
         except Exception as exc:
             records[ticker] = {
                 "ticker": ticker,
-                "date": _date_key(session_date),
+                "date": target_date,
+                "flow_source_date": target_date,
+                "flow_age_trading_days": cache.get("flow_age_trading_days", 0),
                 "fetched_at": fetched_at,
                 "status": "error",
                 "error": str(exc)[:200],
+                "flow_values_trusted": False,
+                "flow_unavailable_reason": "fetch_error",
                 "source": "kis:inquire-investor",
             }
         changed = True
@@ -127,12 +171,26 @@ def flow_for_ticker(cache: dict[str, Any], ticker: Any) -> dict[str, Any]:
         return {}
     out = dict(record or {})
     quality = str((cache or {}).get("data_quality") or "").strip()
+    source_date = out.get("flow_source_date") or (cache or {}).get("flow_source_date") or (cache or {}).get("date")
+    if source_date:
+        out["flow_source_date"] = str(source_date)
+    requested_session_date = (cache or {}).get("requested_session_date")
+    if requested_session_date:
+        out["requested_session_date"] = str(requested_session_date)
+    effective_source_date = (cache or {}).get("effective_flow_source_date")
+    if effective_source_date:
+        out["effective_flow_source_date"] = str(effective_source_date)
+    flow_age = out.get("flow_age_trading_days", (cache or {}).get("flow_age_trading_days"))
+    if flow_age not in (None, ""):
+        out["flow_age_trading_days"] = _optional_int(flow_age)
     if quality:
         out["flow_data_quality"] = quality
         out["investor_flow_quality"] = quality
         if quality == "bad_zero_flow_cluster":
             out["flow_values_trusted"] = False
             out["flow_unavailable_reason"] = "all_zero_cluster"
+    if out.get("flow_values_trusted") is False:
+        out.setdefault("flow_unavailable_reason", "untrusted")
     flags = (cache or {}).get("quality_flags") or (cache or {}).get("data_quality_flags") or []
     if isinstance(flags, (list, tuple, set)):
         out["flow_quality_flags"] = [str(flag) for flag in flags if str(flag).strip()]
@@ -144,7 +202,7 @@ def rolling_flow_from_caches(caches: list[dict[str, Any]], ticker: Any) -> dict[
     records = []
     for cache in sorted(caches or [], key=lambda item: str((item or {}).get("date") or "")):
         record = flow_for_ticker(cache, key)
-        if record:
+        if record and record.get("flow_values_trusted") is not False:
             records.append(record)
     from bot.kr_candidate_features import rolling_flow_features
 
@@ -158,9 +216,11 @@ def _default_fetch_fn() -> FlowFetchFn:
 
 
 def _empty_cache(session_date: str | date) -> dict[str, Any]:
+    day = _date_key(session_date)
     return {
         "schema_version": 1,
-        "date": _date_key(session_date),
+        "date": day,
+        "flow_source_date": day,
         "records": {},
         "data_quality": "empty",
         "quality_flags": [],
@@ -168,6 +228,7 @@ def _empty_cache(session_date: str | date) -> dict[str, Any]:
         "record_count": 0,
         "ok_record_count": 0,
         "zero_flow_record_count": 0,
+        "untrusted_flow_record_count": 0,
     }
 
 
@@ -181,6 +242,7 @@ def _annotate_flow_cache_quality(cache: dict[str, Any]) -> bool:
             "record_count",
             "ok_record_count",
             "zero_flow_record_count",
+            "untrusted_flow_record_count",
         )
     }
     records = cache.get("records") if isinstance(cache.get("records"), dict) else {}
@@ -213,12 +275,34 @@ def _annotate_flow_cache_quality(cache: dict[str, Any]) -> bool:
         quality = "ok"
         if zero_records:
             flags.append("kr_investor_flow_partial_zero_records")
+    record_changed = False
+    if quality == "bad_zero_flow_cluster":
+        for record in zero_records:
+            record_changed = _set_if_changed(record, "flow_values_trusted", False) or record_changed
+            record_changed = _set_if_changed(record, "flow_unavailable_reason", "all_zero_cluster") or record_changed
+            record_changed = _set_if_changed(record, "availability", "untrusted_all_zero_cluster") or record_changed
+    else:
+        for record in ok_records:
+            if "flow_values_trusted" not in record:
+                record["flow_values_trusted"] = True
+                record_changed = True
+            if record.get("flow_values_trusted") is not False and record.get("flow_unavailable_reason") == "all_zero_cluster":
+                record.pop("flow_unavailable_reason", None)
+                if record.get("availability") == "untrusted_all_zero_cluster":
+                    record.pop("availability", None)
+                record_changed = True
+    untrusted_records = [
+        record
+        for record in record_values
+        if isinstance(record, dict) and record.get("flow_values_trusted") is False
+    ]
     cache["data_quality"] = quality
     cache["quality_flags"] = flags
     cache["data_quality_flags"] = list(flags)
     cache["record_count"] = len(record_values)
     cache["ok_record_count"] = len(ok_records)
     cache["zero_flow_record_count"] = len(zero_records)
+    cache["untrusted_flow_record_count"] = len(untrusted_records)
     after = {
         key: cache.get(key)
         for key in (
@@ -228,9 +312,27 @@ def _annotate_flow_cache_quality(cache: dict[str, Any]) -> bool:
             "record_count",
             "ok_record_count",
             "zero_flow_record_count",
+            "untrusted_flow_record_count",
         )
     }
-    return before != after
+    return before != after or record_changed
+
+
+def _record_flow_values_trusted(record: dict[str, Any], cache: dict[str, Any]) -> bool:
+    if str((cache or {}).get("data_quality") or "").strip() == "bad_zero_flow_cluster":
+        return False
+    if record.get("flow_values_trusted") is False:
+        return False
+    if str(record.get("flow_unavailable_reason") or "").strip() == "all_zero_cluster":
+        return False
+    return True
+
+
+def _set_if_changed(record: dict[str, Any], key: str, value: Any) -> bool:
+    if record.get(key) == value:
+        return False
+    record[key] = value
+    return True
 
 
 def _unique_tickers(tickers: list[Any]) -> list[str]:
@@ -254,6 +356,46 @@ def _date_key(value: str | date) -> str:
     if len(text) == 8 and text.isdigit():
         return f"{text[:4]}-{text[4:6]}-{text[6:8]}"
     return text or date.today().isoformat()
+
+
+def _parse_date(value: str | date) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = _date_key(value)
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except Exception:
+        return date.today()
+
+
+def _is_kr_trading_day(day: date) -> bool:
+    if day.weekday() >= 5:
+        return False
+    global _KR_CALENDAR
+    try:
+        import exchange_calendars as ec
+
+        if _KR_CALENDAR is None:
+            _KR_CALENDAR = ec.get_calendar("XKRX")
+        return bool(_KR_CALENDAR.is_session(day.isoformat()))
+    except Exception:
+        return day.weekday() < 5
+
+
+def _trading_day_distance(source_date: str | date, session_date: str | date) -> int:
+    source = _parse_date(source_date)
+    session = _parse_date(session_date)
+    if source >= session:
+        return 0
+    count = 0
+    cursor = source
+    while cursor < session:
+        cursor += timedelta(days=1)
+        if _is_kr_trading_day(cursor):
+            count += 1
+    return count
 
 
 def _optional_int(value: Any) -> int | None:

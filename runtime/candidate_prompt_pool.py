@@ -92,6 +92,24 @@ def _ticker_key(row: dict[str, Any], market_key: str) -> str:
     return normalize_ticker((row or {}).get("ticker"), market_key)
 
 
+def _pool_mix(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    board_counts: Counter[str] = Counter()
+    liquidity_counts: Counter[str] = Counter()
+    high_liquidity_by_board: Counter[str] = Counter()
+    for row in rows or []:
+        board = str((row or {}).get("market_type") or "UNKNOWN").strip().upper() or "UNKNOWN"
+        liquidity = str((row or {}).get("liquidity_bucket") or "unknown").strip().lower() or "unknown"
+        board_counts[board] += 1
+        liquidity_counts[liquidity] += 1
+        if liquidity == "high":
+            high_liquidity_by_board[board] += 1
+    return {
+        "board_counts": dict(board_counts),
+        "liquidity_counts": dict(liquidity_counts),
+        "high_liquidity_by_board": dict(high_liquidity_by_board),
+    }
+
+
 def _dedupe_by_ticker(rows: list[dict[str, Any]], *, market_key: str) -> list[dict[str, Any]]:
     seen: set[str] = set()
     deduped: list[dict[str, Any]] = []
@@ -318,6 +336,10 @@ def build_trainer_prompt_pool(
         )
 
     states = Counter(str(row.get("trainer_candidate_state") or "UNKNOWN").upper() for row in scored_pool)
+    excluded_candidates = [dict(row.get("candidate") or {}) for row in excluded]
+    full_pool_mix = _pool_mix(scored_pool)
+    prompt_pool_mix = _pool_mix(prompt_pool)
+    excluded_pool_mix = _pool_mix(excluded_candidates)
     return {
         "version": PROMPT_POOL_VERSION,
         "score_version": TRAINER_SCORE_VERSION,
@@ -336,5 +358,10 @@ def build_trainer_prompt_pool(
             "legacy_order": legacy_order[:cap],
             "trainer_order": [str(row.get("ticker") or "") for row in prompt_pool],
             "reorder_enabled": bool(reorder_enabled),
+            "full_pool_mix": full_pool_mix,
+            "prompt_pool_mix": prompt_pool_mix,
+            "excluded_pool_mix": excluded_pool_mix,
+            "prompt_pool_board_mix": prompt_pool_mix["board_counts"],
+            "prompt_pool_excluded_board_mix": excluded_pool_mix["board_counts"],
         },
     }

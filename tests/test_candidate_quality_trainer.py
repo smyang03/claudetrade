@@ -121,6 +121,52 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         self.assertEqual(overridden["trainer_score_components"]["prompt"]["kr_chase_change_penalty"], 0.0)
         self.assertGreater(overridden["trainer_prompt_score"], base["trainer_prompt_score"])
 
+    def test_kr_board_prior_overrides_use_candidate_trainer_env_prefix(self) -> None:
+        env = {
+            "CANDIDATE_TRAINER_KR_KOSDAQ_PRIOR": "0",
+            "CANDIDATE_TRAINER_KR_KOSPI_PENALTY": "0",
+            "CANDIDATE_TRAINER_KR_HIGH_LIQUIDITY_CHASE_PENALTY": "0",
+        }
+        with patch.dict("os.environ", env, clear=False):
+            kosdaq = score_candidate_for_trainer(
+                {
+                    "ticker": "123456",
+                    "market": "KR",
+                    "market_type": "KOSDAQ",
+                    "primary_bucket": "liquidity_leader",
+                    "liquidity_bucket": "high",
+                    "change_pct": 4.0,
+                },
+                market="KR",
+            )
+            kospi = score_candidate_for_trainer(
+                {
+                    "ticker": "005930",
+                    "market": "KR",
+                    "market_type": "KOSPI",
+                    "primary_bucket": "liquidity_leader",
+                    "liquidity_bucket": "high",
+                    "change_pct": 4.0,
+                },
+                market="KR",
+            )
+            us = score_candidate_for_trainer(
+                {
+                    "ticker": "NVDA",
+                    "market": "US",
+                    "primary_bucket": "momentum_now",
+                    "liquidity_bucket": "high",
+                    "change_pct": 4.0,
+                },
+                market="US",
+            )
+
+        self.assertEqual(kosdaq["trainer_score_components"]["prompt"]["kr_kosdaq_prior"], 0.0)
+        self.assertEqual(kospi["trainer_score_components"]["prompt"]["kr_kospi_penalty"], 0.0)
+        self.assertEqual(kospi["trainer_score_components"]["prompt"]["kr_high_liquidity_chase_penalty"], 0.0)
+        self.assertNotIn("kr_kosdaq_prior", us["trainer_score_components"]["prompt"])
+        self.assertIn("us_high_liquidity", us["trainer_score_components"]["prompt"])
+
     def test_trainer_threshold_and_kr_weak_bucket_config_follow_contract_names(self) -> None:
         candidate = {
             "ticker": "005930",
@@ -256,6 +302,46 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         excluded = {row["ticker"]: row["reason"] for row in result["excluded_from_prompt"]}
         self.assertEqual(excluded["BAD"], "trainer_quarantine")
         self.assertEqual(excluded["MID"], "prompt_cap")
+
+    def test_kr_prompt_pool_records_board_and_liquidity_mix_metrics(self) -> None:
+        result = build_trainer_prompt_pool(
+            [
+                {
+                    "ticker": "005930",
+                    "market": "KR",
+                    "market_type": "KOSPI",
+                    "primary_bucket": "liquidity_leader",
+                    "liquidity_bucket": "high",
+                    "change_pct": 4.0,
+                },
+                {
+                    "ticker": "000660",
+                    "market": "KR",
+                    "market_type": "KOSPI",
+                    "primary_bucket": "liquidity_leader",
+                    "liquidity_bucket": "high",
+                    "change_pct": 3.0,
+                },
+                {
+                    "ticker": "123456",
+                    "market": "KR",
+                    "market_type": "KOSDAQ",
+                    "primary_bucket": "liquidity_leader",
+                    "liquidity_bucket": "mid",
+                    "change_pct": 3.0,
+                },
+            ],
+            market="KR",
+            target=2,
+            hard_cap=2,
+            reorder_enabled=False,
+        )
+
+        metrics = result["metrics"]
+        self.assertEqual(metrics["prompt_pool_board_mix"], {"KOSPI": 2})
+        self.assertEqual(metrics["prompt_pool_excluded_board_mix"], {"KOSDAQ": 1})
+        self.assertEqual(metrics["prompt_pool_mix"]["liquidity_counts"], {"high": 2})
+        self.assertEqual(metrics["full_pool_mix"]["high_liquidity_by_board"], {"KOSPI": 2})
 
     def test_prompt_pool_defers_same_day_stopped_after_trainer_reorder(self) -> None:
         result = build_trainer_prompt_pool(
@@ -420,6 +506,14 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         self.assertEqual(config["env_overrides"]["FINAL_PROMPT_EVIDENCE_ALIGNMENT_ENABLED"], "true")
         self.assertEqual(config["env_overrides"]["FINAL_PROMPT_EVIDENCE_ALIGNMENT_WARN_OVERLAP_MIN"], "0.80")
         self.assertEqual(config["env_overrides"]["FINAL_PROMPT_EVIDENCE_ALIGNMENT_WARN_EXEC_MISSING_MAX"], "0.50")
+
+    def test_live_config_neutralizes_kr_board_prior_with_runtime_env_names(self) -> None:
+        config_path = Path(__file__).resolve().parents[1] / "config" / "v2_start_config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(config["env_overrides"]["CANDIDATE_TRAINER_KR_KOSDAQ_PRIOR"], "0")
+        self.assertEqual(config["env_overrides"]["CANDIDATE_TRAINER_KR_KOSPI_PENALTY"], "0")
+        self.assertEqual(config["env_overrides"]["CANDIDATE_TRAINER_KR_HIGH_LIQUIDITY_CHASE_PENALTY"], "0")
 
     def test_select_tickers_evidence_pack_honors_item_count_cap(self) -> None:
         from minority_report import analysts

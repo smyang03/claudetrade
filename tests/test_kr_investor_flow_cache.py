@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from bot.kr_investor_flow_cache import (
+    effective_flow_source_date,
     flow_for_ticker,
     load_flow_cache,
     rolling_flow_from_caches,
@@ -87,13 +88,16 @@ class KrInvestorFlowCacheTests(unittest.TestCase):
             self.assertEqual(cache["data_quality"], "bad_zero_flow_cluster")
             self.assertEqual(cache["ok_record_count"], 10)
             self.assertEqual(cache["zero_flow_record_count"], 10)
+            self.assertEqual(cache["untrusted_flow_record_count"], 10)
             self.assertIn("kr_investor_flow_all_zero_cluster", cache["quality_flags"])
             self.assertEqual(flow_for_ticker(cache, "001000")["flow_data_quality"], "bad_zero_flow_cluster")
+            self.assertFalse(flow_for_ticker(cache, "001000")["flow_values_trusted"])
+            self.assertEqual(flow_for_ticker(cache, "001000")["flow_unavailable_reason"], "all_zero_cluster")
             self.assertIn("kr_investor_flow_all_zero_cluster", flow_for_ticker(cache, "001000")["flow_quality_flags"])
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(saved["data_quality"], "bad_zero_flow_cluster")
 
-    def test_existing_all_zero_cache_is_annotated_without_refetch(self) -> None:
+    def test_existing_all_zero_cache_is_untrusted_and_refetched(self) -> None:
         records = {
             str(100000 + idx): {
                 "status": "ok",
@@ -110,9 +114,11 @@ class KrInvestorFlowCacheTests(unittest.TestCase):
                 json.dumps({"date": "2026-05-10", "records": records}),
                 encoding="utf-8",
             )
+            calls: list[str] = []
 
-            def fetch(_ticker: str, _target_date: str, _token: str) -> dict:
-                raise AssertionError("cache hit should not refetch")
+            def fetch(ticker: str, _target_date: str, _token: str) -> dict:
+                calls.append(ticker)
+                return {"foreign": 5, "institution": -1, "individual": -4}
 
             cache = update_candidate_flow_cache(
                 list(records),
@@ -123,9 +129,13 @@ class KrInvestorFlowCacheTests(unittest.TestCase):
                 path=path,
             )
 
-            self.assertEqual(cache["data_quality"], "bad_zero_flow_cluster")
+            self.assertEqual(calls, list(records))
+            self.assertEqual(cache["data_quality"], "ok")
+            self.assertEqual(cache["untrusted_flow_record_count"], 0)
+            self.assertTrue(flow_for_ticker(cache, "100000")["flow_values_trusted"])
+            self.assertEqual(flow_for_ticker(cache, "100000")["foreign"], 5)
             saved = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(saved["data_quality"], "bad_zero_flow_cluster")
+            self.assertEqual(saved["data_quality"], "ok")
 
     def test_nonzero_flow_keeps_quality_ok(self) -> None:
         def fetch(ticker: str, _target_date: str, _token: str) -> dict:
@@ -179,6 +189,35 @@ class KrInvestorFlowCacheTests(unittest.TestCase):
 
             self.assertEqual(cache["date"], "2026-05-10")
             self.assertEqual(seen_dates, ["2026-05-10"])
+
+    def test_effective_flow_source_date_uses_previous_completed_kr_trading_day(self) -> None:
+        self.assertEqual(effective_flow_source_date("2026-06-01"), "2026-05-29")
+
+    def test_explicit_flow_source_date_is_fetch_target_and_cache_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "flow.json"
+            seen_dates: list[str] = []
+
+            def fetch(_ticker: str, target_date: str, _token: str) -> dict:
+                seen_dates.append(target_date)
+                return {"foreign": 1}
+
+            cache = update_candidate_flow_cache(
+                ["005930"],
+                session_date="2026-06-01",
+                flow_source_date="2026-05-29",
+                token="token",
+                fetch_fn=fetch,
+                sleep_sec=0,
+                path=path,
+            )
+
+            self.assertEqual(cache["date"], "2026-05-29")
+            self.assertEqual(cache["flow_source_date"], "2026-05-29")
+            self.assertEqual(cache["requested_session_date"], "2026-06-01")
+            self.assertEqual(cache["flow_age_trading_days"], 1)
+            self.assertEqual(seen_dates, ["2026-05-29"])
+            self.assertEqual(flow_for_ticker(cache, "005930")["flow_age_trading_days"], 1)
 
     def test_rolling_flow_from_caches_orders_by_date(self) -> None:
         caches = [

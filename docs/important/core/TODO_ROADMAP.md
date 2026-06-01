@@ -44,6 +44,7 @@ Active work is ordered by category and impact: 수익성 P0 first, then live 운
 | 운영 | Intraday evidence alignment review | code/test fix exists, but provider/cache/KR timeout pressure remains an operational risk. | remaining warnings are attributed to provider/cache/coverage rather than structural target shortage. |
 | 데이터베이스 | Residual degraded/FMP source-quality observability | degraded/FMP outcome grouping can be confused with P0 audit contract. | source-quality grouping is queryable after the P0 bucket/source/score contract is covered. |
 | 데이터베이스 | US Yahoo/KIS provider role split and intraday shadow | KIS-only conversion could reduce US coverage and compete with broker truth API capacity. | KIS intraday/ranking stays smoke/shadow until source, fallback, overlap, latency, and outcome evidence supports staged promotion. |
+| 후보품질 | US universe filter bypass / unclassified bucket | screener universe 3건 vs 후보 75건 → keep_ratio 37% < min_ratio 50% → bypass 발동, unclassified 18건이 bucket 없이 prompt 진입. 거래 안전에 영향 없으나 prompt 슬롯 낭비. | ① `UNIVERSE_FILTER_MIN_RATIO` config 조정 (50%→30%), ② unclassified prompt pool 후순위 penalty 추가. KR trainer prior 작업과 같은 사이클에 묶어 처리. |
 
 ## Observe Gates
 
