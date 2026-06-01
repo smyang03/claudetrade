@@ -7,6 +7,18 @@ from runtime.pathb_runtime import PathBRuntime
 
 
 class OrderFailureClassificationTests(unittest.TestCase):
+    def test_trading_halt_is_permanent_failure(self) -> None:
+        samples = [
+            "거래정지종목(주식)은 취소주문만 가능(정정불가)합니다.",
+            "거래정지종목",
+        ]
+
+        for detail in samples:
+            with self.subTest(detail=detail):
+                self.assertTrue(is_permanent_order_failure(detail))
+                self.assertEqual(broker_reject_reason(detail), "permanent_order_reject")
+                self.assertTrue(PathBRuntime._is_permanent_order_failure(detail))
+
     def test_buying_power_rejects_are_common_permanent_failures(self) -> None:
         samples = [
             "주문가능금액을 초과 했습니다",

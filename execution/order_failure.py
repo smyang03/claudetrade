@@ -3,6 +3,7 @@ from __future__ import annotations
 
 PERMANENT_ORDER_FAILURE_MARKERS: tuple[str, ...] = (
     "해당종목정보가 없습니다",
+    "거래정지종목",
     "주문가능금액을 초과",
     "주문가능금액 초과",
     "매수가능금액 부족",
