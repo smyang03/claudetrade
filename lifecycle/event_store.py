@@ -10,6 +10,12 @@ from runtime_paths import get_runtime_path
 from lifecycle.models import LifecycleEvent, normalize_event_type, utc_now_iso
 
 
+NON_STATUS_EVENT_TYPES = {
+    "QUALITY_MARKED",
+    "EXECUTION_ADVISOR_DECISION",
+}
+
+
 class ClosingConnection(sqlite3.Connection):
     def __exit__(self, exc_type, exc_value, traceback) -> bool:
         try:
@@ -201,7 +207,7 @@ class EventStore:
                     utc_now_iso(),
                 ),
             )
-            if evt.event_type != "QUALITY_MARKED":
+            if evt.event_type not in NON_STATUS_EVENT_TYPES:
                 conn.execute(
                     """
                     UPDATE v2_decisions
@@ -247,7 +253,7 @@ class EventStore:
                     ),
                 )
                 ids.append(int(cur.lastrowid))
-                if evt.event_type != "QUALITY_MARKED":
+                if evt.event_type not in NON_STATUS_EVENT_TYPES:
                     conn.execute(
                         "UPDATE v2_decisions SET status=?, updated_at=? WHERE decision_id=?",
                         (evt.event_type, utc_now_iso(), evt.decision_id),

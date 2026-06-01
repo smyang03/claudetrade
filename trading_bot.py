@@ -244,6 +244,12 @@ except Exception as _pathb_import_err:
     _PathBRuntime = None
     _PATHB_RUNTIME_AVAILABLE = False
 try:
+    from runtime.execution_advisor_runtime import ExecutionAdvisorRuntime as _ExecutionAdvisorRuntime
+    _EXECUTION_ADVISOR_AVAILABLE = True
+except Exception as _execution_advisor_import_err:
+    _ExecutionAdvisorRuntime = None
+    _EXECUTION_ADVISOR_AVAILABLE = False
+try:
     from execution.path_arbiter import build_late_entry_payload as _build_late_entry_payload
 except Exception:
     def _build_late_entry_payload(**kwargs):
@@ -1103,6 +1109,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self.pathb.recover_on_startup()
             except Exception as _pathb_recover_e:
                 log.error(f"[PathB] startup recovery failed: {_pathb_recover_e}", exc_info=True)
+        self.execution_advisor = (
+            _ExecutionAdvisorRuntime(self, is_paper=is_paper) if _EXECUTION_ADVISOR_AVAILABLE else None
+        )
+        if self.execution_advisor is not None and _env_bool("EXEC_ADVISOR_ENABLED", False):
+            log.info("[ExecutionAdvisor] read-only runtime enabled")
         # API 연결 상태 점검
         self._startup_health_check()
         # Phase1 학습 상태 경고
@@ -26005,6 +26016,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def run_entry_scan(self, market: str):
         if not self.session_active or self.current_market != market:
             return
+        advisor = getattr(self, "execution_advisor", None)
+        if advisor is not None:
+            try:
+                advisor.scan_market(market)
+            except Exception as _exec_advisor_e:
+                log.warning(f"[ExecutionAdvisor] read-only scan skipped {market}: {_exec_advisor_e}", exc_info=True)
         now_ts = time.time()
         interval_sec = self._entry_scan_interval_sec(market)
         last_ts = float(self._last_entry_scan_at.get(market, 0.0) or 0.0)
