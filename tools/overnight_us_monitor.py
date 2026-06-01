@@ -18,7 +18,18 @@ if str(ROOT) not in sys.path:
 from runtime_paths import get_runtime_path
 
 KST = timezone(timedelta(hours=9))
-LOG_DIRS = ("system", "risk", "normal", "analysis", "daily_judgment", "hold_advisor")
+LOG_DIRS = (
+    "system",
+    "risk",
+    "normal",
+    "analysis",
+    "daily_judgment",
+    "hold_advisor",
+    "preopen",
+    "screener",
+    "flow",
+    "funnel",
+)
 KEYWORD_KINDS = {
     "ORDER_UNKNOWN": "order_unknown",
     "broker sync protected": "broker_sync_protected",
@@ -152,6 +163,212 @@ def _compact_fill(row: dict[str, Any]) -> dict[str, Any]:
         "avg_price",
     )
     return {key: row.get(key) for key in keys if key in row}
+
+
+def _file_summary(path: Path) -> dict[str, Any]:
+    exists = path.exists()
+    out: dict[str, Any] = {
+        "path": _tail_value(path),
+        "exists": exists,
+        "bytes": 0,
+        "last_write_at": "",
+        "age_min": None,
+    }
+    if not exists:
+        return out
+    try:
+        stat = path.stat()
+        mtime = datetime.fromtimestamp(stat.st_mtime, tz=KST)
+        out.update(
+            {
+                "bytes": int(stat.st_size),
+                "last_write_at": mtime.isoformat(timespec="seconds"),
+                "age_min": round((_now_kst() - mtime).total_seconds() / 60.0, 2),
+            }
+        )
+    except Exception as exc:
+        out["error"] = str(exc)[:240]
+    return out
+
+
+def _latest_file_summaries(base: Path, pattern: str, *, limit: int = 10) -> dict[str, Any]:
+    files: list[Path] = []
+    if base.exists():
+        try:
+            files = [path for path in base.glob(pattern) if path.is_file()]
+        except Exception:
+            files = []
+    files = sorted(files, key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
+    return {
+        "dir": _tail_value(base),
+        "pattern": pattern,
+        "count": len(files),
+        "latest": [_file_summary(path) for path in files[:limit]],
+    }
+
+
+def _line_count(path: Path, *, max_bytes: int = 5_000_000) -> int | None:
+    try:
+        if not path.exists() or path.stat().st_size > max_bytes:
+            return None
+        with path.open("rb") as f:
+            return sum(1 for _ in f)
+    except Exception:
+        return None
+
+
+def _news_payload_summary(path: Path) -> dict[str, Any]:
+    summary = _file_summary(path)
+    if not summary.get("exists"):
+        return summary
+    payload = _read_json(path, {})
+    if not isinstance(payload, dict):
+        summary["parse_status"] = "not_object"
+        return summary
+    corp_news = payload.get("corp_news") if isinstance(payload.get("corp_news"), dict) else {}
+    market_news = payload.get("market_news") if isinstance(payload.get("market_news"), list) else []
+    coverage = payload.get("news_coverage") if isinstance(payload.get("news_coverage"), dict) else {}
+    corp_news_total = 0
+    for value in corp_news.values():
+        if not isinstance(value, dict):
+            continue
+        items = value.get("items") if isinstance(value.get("items"), list) else []
+        corp_news_total += max(_safe_int(value.get("count")), len(items))
+    summary.update(
+        {
+            "parse_status": "ok",
+            "preopen_snapshot": bool(payload.get("preopen_snapshot")),
+            "corp_news_total": corp_news_total,
+            "corp_news_tickers": len(corp_news),
+            "market_news_count": len(market_news),
+            "covered_ticker_count": coverage.get("covered_ticker_count", 0),
+            "coverage_ratio": coverage.get("coverage_ratio", 0.0),
+            "snapshot_written_at": payload.get("snapshot_written_at", ""),
+        }
+    )
+    return summary
+
+
+def _json_digest_summary(path: Path) -> dict[str, Any]:
+    summary = _file_summary(path)
+    if not summary.get("exists"):
+        return summary
+    payload = _read_json(path, {})
+    if not isinstance(payload, dict):
+        summary["parse_status"] = "not_object"
+        return summary
+    summary.update(
+        {
+            "parse_status": "ok",
+            "top_news_count": len(payload.get("top_news") or []) if isinstance(payload.get("top_news"), list) else 0,
+            "market_news_count": len(payload.get("market_news") or []) if isinstance(payload.get("market_news"), list) else 0,
+            "corp_news_tickers": len(payload.get("corp_news") or {}) if isinstance(payload.get("corp_news"), dict) else 0,
+        }
+    )
+    return summary
+
+
+def _expected_preopen_times(market: str, session_date: str) -> dict[str, Any]:
+    try:
+        from preopen.scheduler import regular_open_dt
+
+        open_dt = regular_open_dt(market.upper(), session_date)
+        if open_dt.tzinfo is None:
+            open_dt = open_dt.replace(tzinfo=KST)
+        open_dt = open_dt.astimezone(KST)
+        news_due_at = open_dt - timedelta(minutes=20)
+        return {
+            "regular_open_at": open_dt.isoformat(timespec="seconds"),
+            "preopen_news_due_at": news_due_at.isoformat(timespec="seconds"),
+        }
+    except Exception as exc:
+        return {"error": str(exc)[:240]}
+
+
+def _data_collection_snapshot(mode: str, market: str, session_date: str) -> dict[str, Any]:
+    market_key = market.upper()
+    market_lower = market_key.lower()
+    compact_day = str(session_date or "").replace("-", "")[:8]
+    day = str(session_date or "").strip()[:10]
+    preopen_dir = get_runtime_path("logs", "preopen")
+    screener_dir = get_runtime_path("logs", "screener")
+    expectations = _expected_preopen_times(market_key, day)
+    now = _now_kst()
+
+    preopen_candidates = preopen_dir / f"{compact_day}_{market_key}_candidates.jsonl"
+    preopen_outcome = preopen_dir / f"{compact_day}_{market_key}_outcome.jsonl"
+    preopen_rank_diff = preopen_dir / f"{compact_day}_{market_key}_rank_diff.jsonl"
+    scheduler_log = preopen_dir / f"{compact_day}_scheduler_{mode}.jsonl"
+    screener_shadow = screener_dir / f"{compact_day}_{market_key}_projected_dollar_volume_shadow.jsonl"
+    news_regular = ROOT / "data" / "news" / market_lower / f"{day}.json"
+    news_preopen = ROOT / "data" / "news" / market_lower / f"{day}_preopen.json"
+    digest = ROOT / "data" / "daily_digest" / f"{day}_{market_key}.json"
+
+    preopen_files = {
+        "candidates": _file_summary(preopen_candidates),
+        "outcome": _file_summary(preopen_outcome),
+        "rank_diff": _file_summary(preopen_rank_diff),
+        "scheduler": _file_summary(scheduler_log),
+        "screener_projected_volume": _file_summary(screener_shadow),
+    }
+    for key, path in (
+        ("candidates", preopen_candidates),
+        ("outcome", preopen_outcome),
+        ("rank_diff", preopen_rank_diff),
+        ("scheduler", scheduler_log),
+        ("screener_projected_volume", screener_shadow),
+    ):
+        count = _line_count(path)
+        if count is not None:
+            preopen_files[key]["line_count"] = count
+
+    price_minute = _latest_file_summaries(
+        ROOT / "data" / "price" / "minute" / market_lower,
+        f"{market_lower}_*.csv",
+        limit=12,
+    )
+    price_daily = _latest_file_summaries(
+        ROOT / "data" / "price" / market_lower,
+        f"{market_lower}_*.csv",
+        limit=12,
+    )
+    news = {
+        "preopen": _news_payload_summary(news_preopen),
+        "regular": _news_payload_summary(news_regular),
+        "digest": _json_digest_summary(digest),
+    }
+
+    issues: list[dict[str, Any]] = []
+    news_due = _parse_dt(expectations.get("preopen_news_due_at")) if expectations.get("preopen_news_due_at") else None
+    open_at = _parse_dt(expectations.get("regular_open_at")) if expectations.get("regular_open_at") else None
+    if not preopen_files["candidates"].get("exists"):
+        issues.append({"kind": "preopen_candidates_missing", "message": f"{market_key} preopen candidates file is missing"})
+    if news_due and now >= news_due + timedelta(minutes=5) and not news["preopen"].get("exists"):
+        issues.append({"kind": "preopen_news_missing", "message": f"{market_key} preopen news snapshot missing after due time"})
+    if news["preopen"].get("exists") and _safe_int(news["preopen"].get("corp_news_total")) <= 0:
+        issues.append({"kind": "preopen_news_empty", "message": f"{market_key} preopen news snapshot has zero corp news"})
+    if not news["regular"].get("exists"):
+        issues.append({"kind": "regular_news_missing", "message": f"{market_key} regular news file is missing"})
+    if not news["digest"].get("exists") and news_due and now >= news_due + timedelta(minutes=10):
+        issues.append({"kind": "daily_digest_missing", "message": f"{market_key} daily digest missing after news due time"})
+    latest_minute = (price_minute.get("latest") or [{}])[0] if price_minute.get("latest") else {}
+    if open_at and now >= open_at + timedelta(minutes=15):
+        minute_age = latest_minute.get("age_min")
+        if minute_age is None or float(minute_age) > 15:
+            issues.append({"kind": "minute_price_stale", "message": f"{market_key} minute price CSV did not update within 15 minutes after open"})
+
+    return {
+        "market": market_key,
+        "session_date": day,
+        "expected_times": expectations,
+        "price": {
+            "minute": price_minute,
+            "daily": price_daily,
+        },
+        "preopen": preopen_files,
+        "news": news,
+        "issues": issues,
+    }
 
 
 def _process_alive(pid: int) -> bool:
@@ -700,6 +917,7 @@ class OvernightMonitor:
             },
             "api_usage_today": api_usage,
             "api_usage_delta_since_start": _usage_delta(api_usage, self.baseline_usage),
+            "data_collection": _data_collection_snapshot(self.mode, self.market, self.session_date),
             "order_unknown_event_count_us_total": len(recent_unknown),
             "pathb_remediation": _pathb_remediation_snapshot(self.mode),
             "pid_state": [
@@ -725,6 +943,12 @@ class OvernightMonitor:
             self._record_issue("pending_sell_local_state", f"{len(pending_sells)} {self.market} positions have pending sell fields")
         if snapshot["guardian"]["gate"] == "BLOCK_START":
             self._record_issue("guardian_block_start", "live guardian gate=BLOCK_START")
+        for row in (snapshot.get("data_collection") or {}).get("issues") or []:
+            if isinstance(row, dict):
+                self._record_issue(
+                    f"data_collection_{row.get('kind') or 'issue'}",
+                    str(row.get("message") or row),
+                )
         self.snapshots.append(snapshot)
         self.snapshots = self.snapshots[-200:]
         _append_jsonl(self.events_path, {"type": "snapshot", **snapshot})
@@ -779,10 +1003,17 @@ class OvernightMonitor:
         broker = latest.get("broker_truth") or {}
         guardian = latest.get("guardian") or {}
         pathb_remediation = latest.get("pathb_remediation") or {}
+        data_collection = latest.get("data_collection") or {}
+        data_price = data_collection.get("price") or {}
+        data_news = data_collection.get("news") or {}
+        data_preopen = data_collection.get("preopen") or {}
+        data_times = data_collection.get("expected_times") or {}
         usage = latest.get("api_usage_delta_since_start") or {}
         claude = report.get("claude_usage_since_start") or {}
         hold_cost = report.get("hold_advisor_cost_observation") or {}
         risk_axes = report.get("risk_axes") or {}
+        minute_latest = ((data_price.get("minute") or {}).get("latest") or [{}])[0]
+        daily_latest = ((data_price.get("daily") or {}).get("latest") or [{}])[0]
         lines = [
             "# US Overnight Monitor Report",
             "",
@@ -800,6 +1031,18 @@ class OvernightMonitor:
             f"- open_positions_count: {latest.get('open_positions_count')}",
             f"- protected_positions: {len(latest.get('protected_positions') or [])}",
             f"- pending_sells: {len(latest.get('pending_sells') or [])}",
+            "",
+            "## Data Collection",
+            "",
+            f"- expected_open/news_due: {data_times.get('regular_open_at')} / {data_times.get('preopen_news_due_at')}",
+            f"- minute_price_latest: {minute_latest.get('path')} age_min={minute_latest.get('age_min')} files={(data_price.get('minute') or {}).get('count')}",
+            f"- daily_price_latest: {daily_latest.get('path')} age_min={daily_latest.get('age_min')} files={(data_price.get('daily') or {}).get('count')}",
+            f"- preopen_candidates: exists={(data_preopen.get('candidates') or {}).get('exists')} lines={(data_preopen.get('candidates') or {}).get('line_count')} age_min={(data_preopen.get('candidates') or {}).get('age_min')}",
+            f"- preopen_scheduler: exists={(data_preopen.get('scheduler') or {}).get('exists')} lines={(data_preopen.get('scheduler') or {}).get('line_count')} age_min={(data_preopen.get('scheduler') or {}).get('age_min')}",
+            f"- screener_projected_volume: exists={(data_preopen.get('screener_projected_volume') or {}).get('exists')} lines={(data_preopen.get('screener_projected_volume') or {}).get('line_count')} age_min={(data_preopen.get('screener_projected_volume') or {}).get('age_min')}",
+            f"- preopen_news: exists={(data_news.get('preopen') or {}).get('exists')} corp_news_total={(data_news.get('preopen') or {}).get('corp_news_total')} coverage={(data_news.get('preopen') or {}).get('coverage_ratio')} age_min={(data_news.get('preopen') or {}).get('age_min')}",
+            f"- regular_news: exists={(data_news.get('regular') or {}).get('exists')} corp_news_total={(data_news.get('regular') or {}).get('corp_news_total')} coverage={(data_news.get('regular') or {}).get('coverage_ratio')} age_min={(data_news.get('regular') or {}).get('age_min')}",
+            f"- daily_digest: exists={(data_news.get('digest') or {}).get('exists')} top_news={(data_news.get('digest') or {}).get('top_news_count')} age_min={(data_news.get('digest') or {}).get('age_min')}",
             "",
             "## Risk Axes",
             "",

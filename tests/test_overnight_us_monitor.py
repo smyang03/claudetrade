@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from tools.overnight_us_monitor import (
     _guardian_block_start_causes,
     _hold_advisor_cost_observation,
+    _json_digest_summary,
+    _news_payload_summary,
     _risk_axes,
 )
 
@@ -65,6 +69,54 @@ class OvernightUsMonitorReportTests(unittest.TestCase):
         self.assertEqual(axes["broker_open_orders"], 1)
         self.assertEqual(axes["protected_positions"], 2)
         self.assertEqual(axes["manual_action_required"], 3)
+
+    def test_news_payload_summary_counts_corp_news_and_coverage(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "2026-06-01_preopen.json"
+            path.write_text(
+                """
+                {
+                  "preopen_snapshot": true,
+                  "corp_news": {
+                    "NVDA": {"count": 2, "items": [{"title": "A"}, {"title": "B"}]},
+                    "TSLA": {"items": [{"title": "C"}]}
+                  },
+                  "market_news": [{"title": "Market"}],
+                  "news_coverage": {"covered_ticker_count": 2, "coverage_ratio": 0.5}
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            summary = _news_payload_summary(path)
+
+        self.assertTrue(summary["exists"])
+        self.assertTrue(summary["preopen_snapshot"])
+        self.assertEqual(summary["corp_news_total"], 3)
+        self.assertEqual(summary["corp_news_tickers"], 2)
+        self.assertEqual(summary["market_news_count"], 1)
+        self.assertEqual(summary["coverage_ratio"], 0.5)
+
+    def test_digest_summary_counts_top_news(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "2026-06-01_US.json"
+            path.write_text(
+                """
+                {
+                  "top_news": [{"title": "A"}, {"title": "B"}],
+                  "corp_news": {"NVDA": {}, "TSLA": {}},
+                  "market_news": [{"title": "Market"}]
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            summary = _json_digest_summary(path)
+
+        self.assertTrue(summary["exists"])
+        self.assertEqual(summary["top_news_count"], 2)
+        self.assertEqual(summary["corp_news_tickers"], 2)
+        self.assertEqual(summary["market_news_count"], 1)
 
 
 if __name__ == "__main__":
