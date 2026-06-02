@@ -1,0 +1,2237 @@
+{
+  "claude_usage_since_start": {
+    "by_label": {
+      "hold_advisor_bear": 60,
+      "hold_advisor_bull": 60,
+      "hold_advisor_neutral": 60,
+      "postmortem": 1,
+      "select_tickers": 7,
+      "tune_120min": 1,
+      "tune_150min": 1,
+      "tune_180min": 1,
+      "tune_210min": 1,
+      "tune_240min": 1,
+      "tune_30min": 1,
+      "tune_60min": 1,
+      "tune_90min": 1
+    },
+    "by_model": {
+      "claude-sonnet-4-6": 196
+    },
+    "calls_since_start_observed_from_raw_files": 196,
+    "samples": [
+      {
+        "duration_ms": 8719,
+        "input_tokens": 1588,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 452,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_034651770436_1fb490a35b.json",
+        "timestamp": "2026-05-29T03:46:51.770436"
+      },
+      {
+        "duration_ms": 6883,
+        "input_tokens": 1584,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 391,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_034708476628_73bcb78d28.json",
+        "timestamp": "2026-05-29T03:47:08.476628"
+      },
+      {
+        "duration_ms": 9117,
+        "input_tokens": 1606,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 437,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_035232036917_32f92b3f37.json",
+        "timestamp": "2026-05-29T03:52:32.036917"
+      },
+      {
+        "duration_ms": 8051,
+        "input_tokens": 1604,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 411,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_035222395608_7d506d550c.json",
+        "timestamp": "2026-05-29T03:52:22.395608"
+      },
+      {
+        "duration_ms": 8417,
+        "input_tokens": 1600,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 416,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_035240972072_4149310c6f.json",
+        "timestamp": "2026-05-29T03:52:40.972072"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 10616,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1659,
+        "path": "logs\\raw_calls\\20260529_US_select_tickers_035620875939_08ba0c9f8a.json",
+        "timestamp": "2026-05-29T03:56:20.875939"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1896,
+        "label": "tune_210min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 345,
+        "path": "logs\\raw_calls\\20260529_US_tune_210min_035633008998_a392ebe002.json",
+        "timestamp": "2026-05-29T03:56:33.008998"
+      },
+      {
+        "duration_ms": 7948,
+        "input_tokens": 1590,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 386,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_040806086389_388d72fb6b.json",
+        "timestamp": "2026-05-29T04:08:06.086389"
+      },
+      {
+        "duration_ms": 7449,
+        "input_tokens": 1588,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 391,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_040757612798_8fb72da59e.json",
+        "timestamp": "2026-05-29T04:07:57.612798"
+      },
+      {
+        "duration_ms": 7139,
+        "input_tokens": 1584,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 374,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_040813737339_23d2e76a22.json",
+        "timestamp": "2026-05-29T04:08:13.737339"
+      },
+      {
+        "duration_ms": 7810,
+        "input_tokens": 1600,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 404,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_041335679145_93cd712fd2.json",
+        "timestamp": "2026-05-29T04:13:35.679145"
+      },
+      {
+        "duration_ms": 7598,
+        "input_tokens": 1598,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 382,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_041327344462_062685da16.json",
+        "timestamp": "2026-05-29T04:13:27.344462"
+      },
+      {
+        "duration_ms": 7679,
+        "input_tokens": 1594,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 396,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_041343877782_c67b1c60c3.json",
+        "timestamp": "2026-05-29T04:13:43.877782"
+      },
+      {
+        "duration_ms": 6252,
+        "input_tokens": 1620,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 357,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_042408114706_779b6e389e.json",
+        "timestamp": "2026-05-29T04:24:08.114706"
+      },
+      {
+        "duration_ms": 10567,
+        "input_tokens": 1618,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 381,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_042401338287_f6c608329e.json",
+        "timestamp": "2026-05-29T04:24:01.338287"
+      },
+      {
+        "duration_ms": 5791,
+        "input_tokens": 1614,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 344,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_042414425947_aea81ffee4.json",
+        "timestamp": "2026-05-29T04:24:14.425947"
+      },
+      {
+        "duration_ms": 5923,
+        "input_tokens": 1500,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 400,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_042554620753_af2ae5057e.json",
+        "timestamp": "2026-05-29T04:25:54.620753"
+      },
+      {
+        "duration_ms": 7298,
+        "input_tokens": 1564,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 400,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_042622062064_4d60a03acd.json",
+        "timestamp": "2026-05-29T04:26:22.062064"
+      },
+      {
+        "duration_ms": 6363,
+        "input_tokens": 1498,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 409,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_042548168612_8712f772ba.json",
+        "timestamp": "2026-05-29T04:25:48.168612"
+      },
+      {
+        "duration_ms": 8890,
+        "input_tokens": 1562,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 426,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_042614238714_1feb49b052.json",
+        "timestamp": "2026-05-29T04:26:14.238714"
+      },
+      {
+        "duration_ms": 6272,
+        "input_tokens": 1585,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 398,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_042639584914_ad54e49917.json",
+        "timestamp": "2026-05-29T04:26:39.584914"
+      },
+      {
+        "duration_ms": 7298,
+        "input_tokens": 1494,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 430,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_042602436657_8191b23fc4.json",
+        "timestamp": "2026-05-29T04:26:02.436657"
+      },
+      {
+        "duration_ms": 7762,
+        "input_tokens": 1558,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 402,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_042630351672_1480672d10.json",
+        "timestamp": "2026-05-29T04:26:30.351672"
+      },
+      {
+        "duration_ms": 6955,
+        "input_tokens": 1587,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 444,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_042647058281_1804f552e3.json",
+        "timestamp": "2026-05-29T04:26:47.058281"
+      },
+      {
+        "duration_ms": 6991,
+        "input_tokens": 1559,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 379,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_042713638706_4c4615abf6.json",
+        "timestamp": "2026-05-29T04:27:13.638706"
+      },
+      {
+        "duration_ms": 8546,
+        "input_tokens": 1566,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 454,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_042742286988_25b7376c2f.json",
+        "timestamp": "2026-05-29T04:27:42.286988"
+      },
+      {
+        "duration_ms": 7713,
+        "input_tokens": 1557,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 415,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_042706126437_7ec17c5b05.json",
+        "timestamp": "2026-05-29T04:27:06.126437"
+      },
+      {
+        "duration_ms": 8537,
+        "input_tokens": 1564,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 427,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_042733212895_0bce0db0f9.json",
+        "timestamp": "2026-05-29T04:27:33.212895"
+      },
+      {
+        "duration_ms": 7942,
+        "input_tokens": 1581,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 469,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_042655529724_520a42df40.json",
+        "timestamp": "2026-05-29T04:26:55.529724"
+      },
+      {
+        "duration_ms": 7599,
+        "input_tokens": 1553,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 426,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_042721761717_08b325c95e.json",
+        "timestamp": "2026-05-29T04:27:21.761717"
+      },
+      {
+        "duration_ms": 8201,
+        "input_tokens": 1571,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 445,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_042809316374_264ffc132d.json",
+        "timestamp": "2026-05-29T04:28:09.316374"
+      },
+      {
+        "duration_ms": 8853,
+        "input_tokens": 1569,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 398,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_042836237930_499bd7770d.json",
+        "timestamp": "2026-05-29T04:28:36.237930"
+      },
+      {
+        "duration_ms": 6705,
+        "input_tokens": 1569,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 383,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_042800593187_bb7636e8b8.json",
+        "timestamp": "2026-05-29T04:28:00.593187"
+      },
+      {
+        "duration_ms": 7185,
+        "input_tokens": 1567,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 388,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_042826855887_dac7f9aee6.json",
+        "timestamp": "2026-05-29T04:28:26.855887"
+      },
+      {
+        "duration_ms": 8138,
+        "input_tokens": 1560,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 443,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_042750944751_1974751f54.json",
+        "timestamp": "2026-05-29T04:27:50.944751"
+      },
+      {
+        "duration_ms": 6898,
+        "input_tokens": 1565,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 404,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_042816735501_11869224a9.json",
+        "timestamp": "2026-05-29T04:28:16.735501"
+      },
+      {
+        "duration_ms": 7155,
+        "input_tokens": 1572,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 392,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_042903885993_f7833a4040.json",
+        "timestamp": "2026-05-29T04:29:03.885993"
+      },
+      {
+        "duration_ms": 6578,
+        "input_tokens": 1590,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 371,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_042936212373_7ef4533c6a.json",
+        "timestamp": "2026-05-29T04:29:36.212373"
+      },
+      {
+        "duration_ms": 8030,
+        "input_tokens": 1570,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 425,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_042856203424_ae8af959f1.json",
+        "timestamp": "2026-05-29T04:28:56.203424"
+      },
+      {
+        "duration_ms": 6757,
+        "input_tokens": 1588,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 378,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_042929108276_d166328efd.json",
+        "timestamp": "2026-05-29T04:29:29.108276"
+      },
+      {
+        "duration_ms": 8275,
+        "input_tokens": 1563,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 428,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_042845032867_ef26ed60cb.json",
+        "timestamp": "2026-05-29T04:28:45.032867"
+      },
+      {
+        "duration_ms": 8959,
+        "input_tokens": 1566,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 429,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_042913369125_7eeac3f92b.json",
+        "timestamp": "2026-05-29T04:29:13.369125"
+      },
+      {
+        "duration_ms": 8201,
+        "input_tokens": 1584,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 435,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_042944933449_27c20940d0.json",
+        "timestamp": "2026-05-29T04:29:44.933449"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 10547,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1768,
+        "path": "logs\\raw_calls\\20260529_US_select_tickers_043032896288_9acc99afce.json",
+        "timestamp": "2026-05-29T04:30:32.896288"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1896,
+        "label": "tune_240min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 289,
+        "path": "logs\\raw_calls\\20260529_US_tune_240min_042957467971_c1a4958cd0.json",
+        "timestamp": "2026-05-29T04:29:57.467971"
+      },
+      {
+        "duration_ms": 6134,
+        "input_tokens": 1600,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 342,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_043509371729_484a178e9d.json",
+        "timestamp": "2026-05-29T04:35:09.371729"
+      },
+      {
+        "duration_ms": 7261,
+        "input_tokens": 1598,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 387,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_043502719765_a31ef2a39f.json",
+        "timestamp": "2026-05-29T04:35:02.719765"
+      },
+      {
+        "duration_ms": 8204,
+        "input_tokens": 1594,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 414,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_043518102507_f5089a9793.json",
+        "timestamp": "2026-05-29T04:35:18.102507"
+      },
+      {
+        "duration_ms": 6808,
+        "input_tokens": 1596,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 355,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_044541490170_160893b786.json",
+        "timestamp": "2026-05-29T04:45:41.490170"
+      },
+      {
+        "duration_ms": 7111,
+        "input_tokens": 1598,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 374,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_044549119276_be37f508a0.json",
+        "timestamp": "2026-05-29T04:45:49.119276"
+      },
+      {
+        "duration_ms": 8418,
+        "input_tokens": 1592,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 372,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_044558063531_4236da9f55.json",
+        "timestamp": "2026-05-29T04:45:58.063531"
+      },
+      {
+        "duration_ms": 5792,
+        "input_tokens": 1590,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 316,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_045122281226_37d2008758.json",
+        "timestamp": "2026-05-29T04:51:22.281226"
+      },
+      {
+        "duration_ms": 7295,
+        "input_tokens": 1588,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 351,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_045115969383_864eadad89.json",
+        "timestamp": "2026-05-29T04:51:15.969383"
+      },
+      {
+        "duration_ms": 5863,
+        "input_tokens": 1584,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 329,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_045128670659_4db91d9237.json",
+        "timestamp": "2026-05-29T04:51:28.670659"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 10805,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1871,
+        "path": "logs\\raw_calls\\20260529_US_select_tickers_050034353746_ca9b52495a.json",
+        "timestamp": "2026-05-29T05:00:34.353746"
+      },
+      {
+        "duration_ms": 6547,
+        "input_tokens": 1527,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 402,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_050058035250_b69a046c09.json",
+        "timestamp": "2026-05-29T05:00:58.035250"
+      },
+      {
+        "duration_ms": 7919,
+        "input_tokens": 1591,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 415,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_050123898222_bb8b539b3a.json",
+        "timestamp": "2026-05-29T05:01:23.898222"
+      },
+      {
+        "duration_ms": 7058,
+        "input_tokens": 1525,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 419,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_050050960768_ffc288f6bf.json",
+        "timestamp": "2026-05-29T05:00:50.960768"
+      },
+      {
+        "duration_ms": 7000,
+        "input_tokens": 1589,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 361,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_050115453715_c353c635f4.json",
+        "timestamp": "2026-05-29T05:01:15.453715"
+      },
+      {
+        "duration_ms": 11081,
+        "input_tokens": 1629,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 470,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_050146622015_f046478436.json",
+        "timestamp": "2026-05-29T05:01:46.622015"
+      },
+      {
+        "duration_ms": 6883,
+        "input_tokens": 1521,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 412,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_050105437005_fea0155489.json",
+        "timestamp": "2026-05-29T05:01:05.437005"
+      },
+      {
+        "duration_ms": 8140,
+        "input_tokens": 1585,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 440,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_050132556288_0fa8a5dd64.json",
+        "timestamp": "2026-05-29T05:01:32.556288"
+      },
+      {
+        "duration_ms": 9604,
+        "input_tokens": 1631,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 485,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_050156740412_41255a2ca2.json",
+        "timestamp": "2026-05-29T05:01:56.740412"
+      },
+      {
+        "duration_ms": 8176,
+        "input_tokens": 1597,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 454,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_050223617205_95308c6765.json",
+        "timestamp": "2026-05-29T05:02:23.617205"
+      },
+      {
+        "duration_ms": 6785,
+        "input_tokens": 1595,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 369,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_050214913796_2c0d52d296.json",
+        "timestamp": "2026-05-29T05:02:14.913796"
+      },
+      {
+        "duration_ms": 6630,
+        "input_tokens": 1527,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 395,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_050245030896_bf4e36fff6.json",
+        "timestamp": "2026-05-29T05:02:45.030896"
+      },
+      {
+        "duration_ms": 7701,
+        "input_tokens": 1625,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 424,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_050204972921_b0d2d66202.json",
+        "timestamp": "2026-05-29T05:02:04.972921"
+      },
+      {
+        "duration_ms": 9595,
+        "input_tokens": 1591,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 522,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_050233737148_c288b6cc0c.json",
+        "timestamp": "2026-05-29T05:02:33.737148"
+      },
+      {
+        "duration_ms": 6744,
+        "input_tokens": 1529,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 390,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_050252287669_fc0e491f1c.json",
+        "timestamp": "2026-05-29T05:02:52.287669"
+      },
+      {
+        "duration_ms": 7358,
+        "input_tokens": 1589,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 413,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_050317675562_05f317a24d.json",
+        "timestamp": "2026-05-29T05:03:17.675562"
+      },
+      {
+        "duration_ms": 8608,
+        "input_tokens": 1633,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 462,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_050347988550_3ba2f34b18.json",
+        "timestamp": "2026-05-29T05:03:47.988550"
+      },
+      {
+        "duration_ms": 7079,
+        "input_tokens": 1587,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 392,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_050309793548_a3dd6b7d41.json",
+        "timestamp": "2026-05-29T05:03:09.793548"
+      },
+      {
+        "duration_ms": 8772,
+        "input_tokens": 1631,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 451,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_050338855050_6c6ae64da5.json",
+        "timestamp": "2026-05-29T05:03:38.855050"
+      },
+      {
+        "duration_ms": 6964,
+        "input_tokens": 1523,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 401,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_050259778610_224339d3c3.json",
+        "timestamp": "2026-05-29T05:02:59.778610"
+      },
+      {
+        "duration_ms": 8929,
+        "input_tokens": 1583,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 416,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_050327124467_d6187ce8b4.json",
+        "timestamp": "2026-05-29T05:03:27.124467"
+      },
+      {
+        "duration_ms": 7577,
+        "input_tokens": 1597,
+        "label": "hold_advisor_bear",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 438,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bear_050415631787_93d36b6683.json",
+        "timestamp": "2026-05-29T05:04:15.631787"
+      },
+      {
+        "duration_ms": 7779,
+        "input_tokens": 1595,
+        "label": "hold_advisor_bull",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 420,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_bull_050407535960_a87fba3b42.json",
+        "timestamp": "2026-05-29T05:04:07.535960"
+      },
+      {
+        "duration_ms": 8307,
+        "input_tokens": 1627,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 454,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_050356815374_cfb6e01679.json",
+        "timestamp": "2026-05-29T05:03:56.815374"
+      },
+      {
+        "duration_ms": 8184,
+        "input_tokens": 1591,
+        "label": "hold_advisor_neutral",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 454,
+        "path": "logs\\raw_calls\\20260529_US_hold_advisor_neutral_050424337655_a49b5abb97.json",
+        "timestamp": "2026-05-29T05:04:24.337655"
+      },
+      {
+        "duration_ms": 45391,
+        "input_tokens": 7751,
+        "label": "postmortem",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 2500,
+        "path": "logs\\raw_calls\\20260528_US_postmortem_postmortem_US_2026-05-28_9b4f5fb0ff.json",
+        "timestamp": "2026-05-29T05:05:11.532635"
+      }
+    ],
+    "tokens_observed_from_raw_files": {
+      "duration_ms": 1433550,
+      "input_tokens": 380634,
+      "output_tokens": 89807
+    }
+  },
+  "decision_events_since_start": [
+    {
+      "broker_fill_confirmed": true,
+      "broker_fill_source": "pathb_broker_truth",
+      "entry_price_native": 27.02,
+      "exit_price_native": null,
+      "exit_reason": null,
+      "hold_action": null,
+      "market": "US",
+      "order_no": "0031339851",
+      "pnl_krw": null,
+      "pnl_pct": null,
+      "qty": 11,
+      "queued_sell": null,
+      "strategy": "claude_price",
+      "ticker": "RGTI",
+      "timestamp": "2026-05-29T00:50:19+09:00",
+      "type": "entry"
+    },
+    {
+      "broker_fill_confirmed": true,
+      "broker_fill_source": "pathb_broker_truth",
+      "entry_price_native": 226.2995,
+      "exit_price_native": null,
+      "exit_reason": null,
+      "hold_action": null,
+      "market": "US",
+      "order_no": "0031381366",
+      "pnl_krw": null,
+      "pnl_pct": null,
+      "qty": 1,
+      "queued_sell": null,
+      "strategy": "claude_price",
+      "ticker": "NBIS",
+      "timestamp": "2026-05-29T02:58:25+09:00",
+      "type": "entry"
+    }
+  ],
+  "end_at": "2026-05-29T08:00:00+09:00",
+  "generated_at": "2026-05-29T08:00:00+09:00",
+  "latest_snapshot": {
+    "api_usage_delta_since_start": {
+      "calls": 196,
+      "cost_usd": 2.489007,
+      "input_tokens": 380634,
+      "output_tokens": 89807
+    },
+    "api_usage_today": {
+      "by_model": {
+        "claude-sonnet-4-6": {
+          "calls": 213,
+          "cost_usd": 2.71671,
+          "input_tokens": 416120,
+          "output_tokens": 97890
+        }
+      },
+      "calls": 213,
+      "cost_usd": 2.71671,
+      "input_tokens": 416120,
+      "output_tokens": 97890
+    },
+    "at": "2026-05-29T08:00:00+09:00",
+    "broker_truth": {
+      "error": "",
+      "last_attempt_at": "2026-05-28T20:00:39+00:00",
+      "last_success_at": "2026-05-28T20:00:40+00:00",
+      "missing": false,
+      "open_orders": [],
+      "open_orders_count": 0,
+      "positions": [
+        {
+          "market": "US",
+          "pnl_pct": 1.76,
+          "qty": 2,
+          "ticker": "BBY"
+        },
+        {
+          "market": "US",
+          "pnl_pct": 3.5,
+          "qty": 1,
+          "ticker": "EL"
+        },
+        {
+          "market": "US",
+          "pnl_pct": 0.01,
+          "qty": 4,
+          "ticker": "IREN"
+        },
+        {
+          "market": "US",
+          "pnl_pct": 0.49,
+          "qty": 1,
+          "ticker": "MSFT"
+        },
+        {
+          "market": "US",
+          "pnl_pct": 0.45,
+          "qty": 1,
+          "ticker": "TSLA"
+        }
+      ],
+      "positions_count": 5,
+      "stale": true,
+      "today_fills": [
+        {
+          "avg_price": 47.95,
+          "fill_time": "225452",
+          "filled_qty": 3,
+          "market": "US",
+          "order_no": "0031227231",
+          "order_price": 48.02,
+          "order_qty": 3,
+          "order_status": "filled",
+          "order_time": "225452",
+          "remaining_qty": 0,
+          "side": "buy",
+          "ticker": "APLD"
+        },
+        {
+          "avg_price": 73.44,
+          "fill_time": "225458",
+          "filled_qty": 2,
+          "market": "US",
+          "order_no": "0031227409",
+          "order_price": 73.44,
+          "order_qty": 2,
+          "order_status": "filled",
+          "order_time": "225458",
+          "remaining_qty": 0,
+          "side": "buy",
+          "ticker": "BBY"
+        },
+        {
+          "avg_price": 221.37,
+          "fill_time": "233052",
+          "filled_qty": 1,
+          "market": "US",
+          "order_no": "0031273641",
+          "order_price": 222.48,
+          "order_qty": 1,
+          "order_status": "filled",
+          "order_time": "233052",
+          "remaining_qty": 0,
+          "side": "buy",
+          "ticker": "NBIS"
+        },
+        {
+          "avg_price": 328.15,
+          "fill_time": "233054",
+          "filled_qty": 1,
+          "market": "US",
+          "order_no": "0031273662",
+          "order_price": 328.97,
+          "order_qty": 1,
+          "order_status": "filled",
+          "order_time": "233054",
+          "remaining_qty": 0,
+          "side": "buy",
+          "ticker": "MDB"
+        },
+        {
+          "avg_price": 424.94,
+          "fill_time": "233056",
+          "filled_qty": 1,
+          "market": "US",
+          "order_no": "0031273686",
+          "order_price": 427.6,
+          "order_qty": 1,
+          "order_status": "filled",
+          "order_time": "233056",
+          "remaining_qty": 0,
+          "side": "buy",
+          "ticker": "MSFT"
+        },
+        {
+          "avg_price": 321.18,
+          "fill_time": "001024",
+          "filled_qty": 1,
+          "market": "US",
+          "order_no": "0031312511",
+          "order_price": 321.12,
+          "order_qty": 1,
+          "order_status": "filled",
+          "order_time": "001024",
+          "remaining_qty": 0,
+          "side": "sell",
+          "ticker": "MDB"
+        },
+        {
+          "avg_price": 212.26,
+          "fill_time": "001517",
+          "filled_qty": 1,
+          "market": "US",
+          "order_no": "0031316855",
+          "order_price": 212.71,
+          "order_qty": 1,
+          "order_status": "filled",
+          "order_time": "001517",
+          "remaining_qty": 0,
+          "side": "buy",
+          "ticker": "NVDA"
+        },
+        {
+          "avg_price": 230.8827,
+          "fill_time": "002227",
+          "filled_qty": 1,
+          "market": "US",
+          "order_no": "0031323229",
+          "order_price": 230.07,
+          "order_qty": 1,
+          "order_status": "filled",
+          "order_time": "002227",
+          "remaining_qty": 0,
+          "side": "sell",
+          "ticker": "NBIS"
+        },
+        {
+          "avg_price": 27.02,
+          "fill_time": "004621",
+          "filled_qty": 11,
+          "market": "US",
+          "order_no": "0031339851",
+          "order_price": 27.02,
+          "order_qty": 11,
+          "order_status": "filled",
+          "order_time": "004621",
+          "remaining_qty": 0,
+          "side": "buy",
+          "ticker": "RGTI"
+        },
+        {
+          "avg_price": 26.05,
+          "fill_time": "023101",
+          "filled_qty": 11,
+          "market": "US",
+          "order_no": "0031376125",
+          "order_price": 26.05,
+          "order_qty": 11,
+          "order_status": "filled",
+          "order_time": "023101",
+          "remaining_qty": 0,
+          "side": "sell",
+          "ticker": "RGTI"
+        },
+        {
+          "avg_price": 226.2995,
+          "fill_time": "025346",
+          "filled_qty": 1,
+          "market": "US",
+          "order_no": "0031381366",
+          "order_price": 226.63,
+          "order_qty": 1,
+          "order_status": "filled",
+          "order_time": "025346",
+          "remaining_qty": 0,
+          "side": "buy",
+          "ticker": "NBIS"
+        },
+        {
+          "avg_price": 226.07,
+          "fill_time": "042415",
+          "filled_qty": 1,
+          "market": "US",
+          "order_no": "0031397622",
+          "order_price": 226.07,
+          "order_qty": 1,
+          "order_status": "filled",
+          "order_time": "042415",
+          "remaining_qty": 0,
+          "side": "sell",
+          "ticker": "NBIS"
+        },
+        {
+          "avg_price": 214.39,
+          "fill_time": "044605",
+          "filled_qty": 1,
+          "market": "US",
+          "order_no": "0031401849",
+          "order_price": 214.39,
+          "order_qty": 1,
+          "order_status": "filled",
+          "order_time": "044605",
+          "remaining_qty": 0,
+          "side": "sell",
+          "ticker": "NVDA"
+        },
+        {
+          "avg_price": 49.91,
+          "fill_time": "045135",
+          "filled_qty": 3,
+          "market": "US",
+          "order_no": "0031403103",
+          "order_price": 49.91,
+          "order_qty": 3,
+          "order_status": "filled",
+          "order_time": "045135",
+          "remaining_qty": 0,
+          "side": "sell",
+          "ticker": "APLD"
+        }
+      ],
+      "today_fills_count": 14,
+      "ttl_sec": 30
+    },
+    "guardian": {
+      "alert": {
+        "fingerprint": "[{\"classification\": \"hard_fail\", \"detail\": \"previous-session active Path B rows=12\", \"kind\": \"finding\", \"name\": \"db.pathb_stale_active_runs\", \"status\": \"WARN\"}, {\"classification\": \"hard_fail\", \"detail\": \"KR snapshot stale\", \"kind\": \"finding\", \"name\": \"broker_truth.kr_stale_state\", \"status\": \"WARN\"}, {\"classification\": \"hard_fail\", \"detail\": \"US snapshot stale\", \"kind\": \"finding\", \"name\": \"broker_truth.us_stale_state\", \"status\": \"WARN\"}]",
+        "gate": "BLOCK_START",
+        "updated_at": "2026-05-29T05:05:35+09:00"
+      },
+      "counts": null,
+      "findings": [],
+      "gate": null,
+      "heartbeat": {
+        "healthy": true,
+        "last_error": "",
+        "last_error_at": "",
+        "last_started_at": "2026-05-29T07:59:44+09:00",
+        "last_success_at": "",
+        "last_tick_at": "2026-05-29T07:59:44+09:00",
+        "next_expected_at": "",
+        "pid": 55472,
+        "process": "live_guardian",
+        "report_path": "",
+        "status": "running"
+      },
+      "ok": null
+    },
+    "open_positions": [
+      {
+        "display_avg_price": 87.8,
+        "display_currency": "USD",
+        "display_current_price": 90.87,
+        "entry": 131230.27,
+        "entry_date": "2026-05-26",
+        "entry_time": "",
+        "management_protected": true,
+        "market": "US",
+        "peak_pnl_pct": 4.829,
+        "position_mae_pct": -1.367,
+        "position_mfe_pct": 4.829,
+        "qty": 1,
+        "strategy": "broker_sync",
+        "ticker": "EL",
+        "tp_triggered": false,
+        "trail_sl_usd": 0.0,
+        "trailing": false
+      },
+      {
+        "display_avg_price": 440.1656,
+        "display_currency": "USD",
+        "display_current_price": 442.15,
+        "entry": 658170.818368,
+        "entry_date": "2026-05-27",
+        "entry_route": "path_b",
+        "entry_time": "2026-05-28T00:21:33.373936+09:00",
+        "management_protected": false,
+        "market": "US",
+        "path_type": "claude_price",
+        "peak_pnl_pct": 0.81,
+        "position_mae_pct": -0.917,
+        "position_mfe_pct": 0.658,
+        "qty": 1,
+        "strategy": "claude_price",
+        "ticker": "TSLA",
+        "tp_triggered": false,
+        "trail_sl_usd": 0.0,
+        "trailing": false
+      },
+      {
+        "display_avg_price": 64.03,
+        "display_currency": "USD",
+        "display_current_price": 64.035,
+        "entry": 95702.43950000001,
+        "entry_date": "2026-05-28",
+        "entry_time": "",
+        "management_protected": true,
+        "market": "US",
+        "peak_pnl_pct": 5.9503,
+        "position_mae_pct": 0.0,
+        "position_mfe_pct": 5.9503,
+        "qty": 4,
+        "strategy": "broker_sync",
+        "ticker": "IREN",
+        "tp_triggered": false,
+        "trail_sl_usd": 0.0,
+        "trailing": false
+      },
+      {
+        "display_avg_price": 73.44,
+        "display_currency": "USD",
+        "display_current_price": 74.73,
+        "entry": 110300.27040000001,
+        "entry_date": "2026-05-28",
+        "entry_route": "plan_a",
+        "entry_time": "2026-05-28T22:54:59.554709+09:00",
+        "management_protected": false,
+        "market": "US",
+        "path_type": "",
+        "peak_pnl_pct": 1.9063,
+        "position_mae_pct": -0.586,
+        "position_mfe_pct": 1.9063,
+        "qty": 2,
+        "strategy": "gap_pullback",
+        "ticker": "BBY",
+        "tp_triggered": false,
+        "trail_sl_usd": 0.0,
+        "trailing": false
+      },
+      {
+        "display_avg_price": 424.94,
+        "display_currency": "USD",
+        "display_current_price": 427.02,
+        "entry": 638221.6354,
+        "entry_date": "2026-05-28",
+        "entry_route": "path_b",
+        "entry_time": "2026-05-28T23:30:56.544256+09:00",
+        "management_protected": false,
+        "market": "US",
+        "path_type": "claude_price",
+        "peak_pnl_pct": 0.826,
+        "position_mae_pct": -0.525,
+        "position_mfe_pct": 0.7954,
+        "qty": 1,
+        "strategy": "claude_price",
+        "ticker": "MSFT",
+        "tp_triggered": false,
+        "trail_sl_usd": 0.0,
+        "trailing": false
+      }
+    ],
+    "open_positions_count": 5,
+    "order_unknown_event_count_us_total": 3,
+    "pending_sells": [],
+    "pid_state": [
+      {
+        "alive": true,
+        "name": "trading_bot",
+        "path": "E:\\code\\claudetrade\\state\\live_trading_bot.pid",
+        "pid": 29952,
+        "raw": {
+          "command": [
+            "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe",
+            "E:\\code\\claudetrade\\trading_bot.py",
+            "--live"
+          ],
+          "mode": "live",
+          "pid": 29952,
+          "started_at": "2026-05-29T00:14:18.346265+09:00"
+        }
+      },
+      {
+        "alive": true,
+        "name": "dashboard",
+        "path": "E:\\code\\claudetrade\\state\\dashboard_server.pid",
+        "pid": 9956,
+        "raw": {
+          "command": [
+            "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe",
+            "E:\\code\\claudetrade\\dashboard\\dashboard_server.py"
+          ],
+          "pid": 9956,
+          "process": "dashboard_server",
+          "started_at": "2026-05-29T00:14:16.540195+09:00"
+        }
+      },
+      {
+        "alive": true,
+        "name": "guardian",
+        "path": "E:\\code\\claudetrade\\state\\live_guardian_heartbeat.json",
+        "pid": 55472,
+        "raw": {
+          "healthy": true,
+          "last_error": "",
+          "last_error_at": "",
+          "last_started_at": "2026-05-29T07:59:44+09:00",
+          "last_success_at": "",
+          "last_tick_at": "2026-05-29T07:59:44+09:00",
+          "next_expected_at": "",
+          "pid": 55472,
+          "process": "live_guardian",
+          "report_path": "",
+          "status": "running"
+        }
+      },
+      {
+        "alive": true,
+        "name": "preopen_scheduler",
+        "path": "E:\\code\\claudetrade\\state\\preopen_scheduler_heartbeat.json",
+        "pid": 55644,
+        "raw": {
+          "healthy": true,
+          "last_error": "",
+          "last_error_at": "",
+          "last_job": {},
+          "last_started_at": "2026-05-29T07:59:17+09:00",
+          "last_success_at": "2026-05-29T07:59:17+09:00",
+          "last_tick_at": "2026-05-29T07:59:17+09:00",
+          "mode": "live",
+          "next_expected_at": "2026-05-29T08:00:17+09:00",
+          "pid": 55644,
+          "process": "preopen_scheduler",
+          "status": "idle"
+        }
+      }
+    ],
+    "protected_positions": [
+      {
+        "display_avg_price": 87.8,
+        "display_currency": "USD",
+        "display_current_price": 90.87,
+        "entry": 131230.27,
+        "entry_date": "2026-05-26",
+        "entry_time": "",
+        "management_protected": true,
+        "market": "US",
+        "peak_pnl_pct": 4.829,
+        "position_mae_pct": -1.367,
+        "position_mfe_pct": 4.829,
+        "qty": 1,
+        "strategy": "broker_sync",
+        "ticker": "EL",
+        "tp_triggered": false,
+        "trail_sl_usd": 0.0,
+        "trailing": false
+      },
+      {
+        "display_avg_price": 64.03,
+        "display_currency": "USD",
+        "display_current_price": 64.035,
+        "entry": 95702.43950000001,
+        "entry_date": "2026-05-28",
+        "entry_time": "",
+        "management_protected": true,
+        "market": "US",
+        "peak_pnl_pct": 5.9503,
+        "position_mae_pct": 0.0,
+        "position_mfe_pct": 5.9503,
+        "qty": 4,
+        "strategy": "broker_sync",
+        "ticker": "IREN",
+        "tp_triggered": false,
+        "trail_sl_usd": 0.0,
+        "trailing": false
+      }
+    ]
+  },
+  "log_issue_counts_since_start": {
+    "broker_sync_protected": 8,
+    "broker_truth": 202,
+    "broker_truth_untrusted": 404,
+    "guardian_block_start": 404,
+    "log_warning": 180,
+    "order_unknown": 56,
+    "pending_sell_local_state": 33,
+    "protected_position": 444
+  },
+  "log_issue_samples": [
+    {
+      "at": "2026-05-29T01:22:00+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:22:00+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:23:00+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:23:00+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:23:00+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:24:01+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "[PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:24:01+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "2026-05-29 01:23:27 [INFO    ] reconcile_filled_positions:5600 | [PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:24:01+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:24:01+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:24:01+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:25:01+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:25:01+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:25:01+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:26:01+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:26:01+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:27:01+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:27:01+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:27:01+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:28:01+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:28:01+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:28:01+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:29:02+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "[PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:29:02+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "2026-05-29 01:28:35 [INFO    ] reconcile_filled_positions:5600 | [PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:29:02+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:29:02+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:30:02+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:30:02+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:30:02+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:31:02+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:31:02+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:31:02+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:32:02+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:32:02+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:32:02+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:33:02+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:33:02+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:33:02+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:34:03+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "[PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:34:03+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "2026-05-29 01:33:43 [INFO    ] reconcile_filled_positions:5600 | [PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:34:03+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:34:03+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:35:03+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB auto sell review HOLD] US RGTI reason=loss_cap detail=NASDAQ +0.69% / MILD_BULL 환경에서 OR 상단(25.41) 대비 여전히 충분한 이격을 유지 중이며 SL($25.00)까지 거리가 +5.5%로 손실이 제한적이나, 진입가 미회복 시 즉시 재판단이 필요한 손실 유예 구간임.",
+      "path": "logs\\system\\live_trading_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:35:03+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "[PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:35:03+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-05-29 01:34:09 [WARNING ] _run_pathb_sell_review_gate:4671 | [PathB auto sell review HOLD] US RGTI reason=loss_cap detail=NASDAQ +0.69% / MILD_BULL 환경에서 OR 상단(25.41) 대비 여전히 충분한 이격을 유지 중이며 SL($25.00)까지 거리가 +5.5%로 손실이 제한적이나, 진입가 미회복 시 즉시 재판단이 필요한 손실 유예 구간임.",
+      "path": "logs\\system\\live_trading_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:35:03+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "2026-05-29 01:34:17 [INFO    ] reconcile_filled_positions:5600 | [PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:35:03+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:35:03+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:35:03+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:36:03+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:36:03+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:36:03+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:37:03+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:37:03+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:38:04+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:38:04+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:38:04+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:39:04+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:39:04+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:39:04+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:40:04+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "[PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:40:04+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "2026-05-29 01:39:17 [INFO    ] reconcile_filled_positions:5600 | [PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:40:04+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:40:04+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:40:04+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:41:04+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:41:04+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:41:04+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:42:04+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:42:04+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:42:04+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:43:05+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:43:05+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:43:05+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:44:05+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:44:05+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:44:05+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:45:05+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "[PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:45:05+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB protective_hold SET] US APLD ps=48.75 hs=45.65 valid_until=2026-05-29T02:14:55+09:00",
+      "path": "logs\\system\\live_trading_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:45:05+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB profit_review TRIGGERED] US APLD peak_pnl=+4.44% current=49.74 bridge=policy_set",
+      "path": "logs\\system\\live_trading_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:45:05+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "[PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:45:05+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "2026-05-29 01:44:26 [INFO    ] reconcile_filled_positions:5600 | [PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:45:05+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-05-29 01:44:55 [WARNING ] apply_general_hold_advice_policy:3626 | [PathB protective_hold SET] US APLD ps=48.75 hs=45.65 valid_until=2026-05-29T02:14:55+09:00",
+      "path": "logs\\system\\live_trading_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:45:05+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-05-29 01:44:55 [WARNING ] _maybe_trigger_profit_protection_review:4435 | [PathB profit_review TRIGGERED] US APLD peak_pnl=+4.44% current=49.74 bridge=policy_set",
+      "path": "logs\\system\\live_trading_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:45:05+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "2026-05-29 01:45:03 [INFO    ] reconcile_filled_positions:5600 | [PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:45:05+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:45:05+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:46:05+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:46:05+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:46:05+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:47:06+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:47:06+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:47:06+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:48:06+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:48:06+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:49:06+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[universe filter bypass] candidates=67 filtered=25 min_keep=12 min_ratio=0.50",
+      "path": "logs\\system\\live_trading_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:49:06+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-05-29 01:48:59 [WARNING ] _restrict_candidates_to_universe:10316 | [universe filter bypass] candidates=67 filtered=25 min_keep=12 min_ratio=0.50",
+      "path": "logs\\system\\live_trading_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:49:06+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:49:06+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:49:06+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:50:06+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "[PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:50:06+09:00",
+      "kind": "broker_truth",
+      "level": "INFO",
+      "message": "2026-05-29 01:50:06 [INFO    ] reconcile_filled_positions:5600 | [PathB FILLED reconcile] {'market': 'US', 'checked': 4, 'kept_open': 4, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+      "path": "logs\\system\\live_trading_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:50:06+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:50:06+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:51:06+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[risk event] BROKER_UNTRUSTED US HOOD reason=BROKER_UNTRUSTED",
+      "path": "logs\\risk\\live_risk_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:51:06+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[risk event] BROKER_UNTRUSTED US NBIS reason=BROKER_UNTRUSTED",
+      "path": "logs\\risk\\live_risk_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:51:06+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-05-29 01:50:10 [WARNING ] _split_log:297 | [risk event] BROKER_UNTRUSTED US HOOD reason=BROKER_UNTRUSTED",
+      "path": "logs\\risk\\live_risk_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:51:06+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-05-29 01:50:10 [WARNING ] _split_log:297 | [risk event] BROKER_UNTRUSTED US NBIS reason=BROKER_UNTRUSTED",
+      "path": "logs\\risk\\live_risk_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:51:06+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[risk event] BROKER_UNTRUSTED US HOOD reason=BROKER_UNTRUSTED",
+      "path": "logs\\system\\live_trading_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:51:06+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[risk event] BROKER_UNTRUSTED US NBIS reason=BROKER_UNTRUSTED",
+      "path": "logs\\system\\live_trading_20260529.jsonl"
+    },
+    {
+      "at": "2026-05-29T01:51:06+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-05-29 01:50:10 [WARNING ] _split_log:296 | [risk event] BROKER_UNTRUSTED US HOOD reason=BROKER_UNTRUSTED",
+      "path": "logs\\system\\live_trading_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:51:06+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-05-29 01:50:10 [WARNING ] _split_log:296 | [risk event] BROKER_UNTRUSTED US NBIS reason=BROKER_UNTRUSTED",
+      "path": "logs\\system\\live_trading_20260529.log"
+    },
+    {
+      "at": "2026-05-29T01:51:06+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:51:06+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:51:06+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:52:07+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:52:07+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:52:07+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:53:07+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "US broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:53:07+09:00",
+      "kind": "protected_position",
+      "level": "WARNING",
+      "message": "2 protected US positions",
+      "path": ""
+    },
+    {
+      "at": "2026-05-29T01:53:07+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    }
+  ],
+  "market": "US",
+  "mode": "live",
+  "output_dir": "docs\\reports\\overnight_us_monitor_20260529_0800",
+  "read_only": true,
+  "session_date": "2026-05-28",
+  "snapshots_recorded": 200,
+  "start_at": "2026-05-29T00:35:49+09:00",
+  "status": "running"
+}

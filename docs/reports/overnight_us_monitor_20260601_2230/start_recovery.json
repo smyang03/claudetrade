@@ -1,0 +1,14 @@
+﻿{
+    "checked_at":  "2026-06-01T22:40:00.4257581+09:00",
+    "monitor_pid":  56356,
+    "monitor_alive":  true,
+    "progress_exists":  true,
+    "events_exists":  true,
+    "final_report_exists":  false,
+    "quality_report_exists":  false,
+    "should_recover":  false,
+    "recovered":  false,
+    "recover_exit_code":  null,
+    "read_only_monitor":  true,
+    "recovery_condition":  "only_if_original_monitor_dead_and_no_progress_events_or_final_report"
+}

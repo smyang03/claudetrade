@@ -1,0 +1,11 @@
+﻿{
+    "out_dir":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2050_to_20260602_0700",
+    "started_at_kst":  "2026-06-01T20:50:39+09:00",
+    "captures_data_collection":  true,
+    "stdout":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2050_to_20260602_0700\\monitor_stdout.log",
+    "end_at_kst":  "2026-06-02T07:00:00+09:00",
+    "command":  "C:\\Users\\Unknown\\anaconda3\\python.exe tools\\overnight_us_monitor.py --mode live --market US --session-date 2026-06-01 --end-at 2026-06-02T07:00:00+09:00 --interval-sec 60 --out-dir E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2050_to_20260602_0700",
+    "stderr":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2050_to_20260602_0700\\monitor_stderr.log",
+    "read_only":  true,
+    "pid":  45244
+}

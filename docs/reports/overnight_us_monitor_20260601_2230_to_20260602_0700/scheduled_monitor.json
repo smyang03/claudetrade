@@ -1,0 +1,8 @@
+﻿{
+    "end_at_kst":  "2026-06-02T07:00:00+09:00",
+    "out_dir":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230_to_20260602_0700",
+    "scheduler_pid":  37896,
+    "note":  "Starts tools/overnight_us_monitor.py at the US regular open window.",
+    "read_only":  true,
+    "scheduled_start_kst":  "2026-06-01T22:30:00+09:00"
+}

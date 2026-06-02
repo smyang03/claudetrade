@@ -1,0 +1,9 @@
+{
+  "pid": 50264,
+  "process": "dashboard_server",
+  "started_at": "2026-06-02T00:57:51.024098+09:00",
+  "command": [
+    "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe",
+    "E:\\code\\claudetrade\\dashboard\\dashboard_server.py"
+  ]
+}

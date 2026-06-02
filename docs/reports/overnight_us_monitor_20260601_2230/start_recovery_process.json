@@ -1,0 +1,11 @@
+﻿{
+    "pid":  48080,
+    "started_at":  "2026-06-01T21:44:39.8502920+09:00",
+    "scheduled_check":  "2026-06-01T22:40:00+09:00",
+    "out_dir":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230",
+    "stdout":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\start_recovery_stdout.log",
+    "stderr":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\start_recovery_stderr.log",
+    "result":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\start_recovery.json",
+    "behavior":  "if_original_monitor_dead_before_any_progress_then_run_read_only_monitor_to_07",
+    "read_only":  true
+}

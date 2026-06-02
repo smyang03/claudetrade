@@ -1,0 +1,15 @@
+﻿{
+    "pid":  8408,
+    "started_at":  "2026-06-01T21:05:52.2892986+09:00",
+    "scheduled_start":  "2026-06-02T07:02:00+09:00",
+    "deadline":  "2026-06-02T07:20:00+09:00",
+    "out_dir":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230",
+    "stdout":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\morning_review_stdout.log",
+    "stderr":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\morning_review_stderr.log",
+    "morning_report":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\morning_review.md",
+    "morning_report_json":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\morning_review.json",
+    "read_only_inputs":  [
+                             "final_report.json",
+                             "claude_io_quality.json"
+                         ]
+}

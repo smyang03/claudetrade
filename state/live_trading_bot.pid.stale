@@ -1,0 +1,10 @@
+{
+  "pid": 16848,
+  "mode": "live",
+  "started_at": "2026-06-02T21:34:46.526648+09:00",
+  "command": [
+    "C:\\Users\\Unknown\\anaconda3\\python.exe",
+    "E:\\code\\claudetrade\\trading_bot.py",
+    "--live"
+  ]
+}

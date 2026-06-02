@@ -1,0 +1,587 @@
+{
+  "claude_io_quality": {
+    "avg_duration_ms": 11804.1,
+    "avg_input_tokens": 4544.1,
+    "avg_output_tokens": 508.9,
+    "by_label": [
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 11816.0,
+        "avg_output_tokens": 1619.7,
+        "calls": 6,
+        "duration_missing_calls": 6,
+        "duration_observed_calls": 0,
+        "input_issues": {
+          "prompt_input_tokens_ge_12000": 3,
+          "prompt_input_tokens_ge_8000": 3
+        },
+        "input_tokens": 70896,
+        "label": "select_tickers",
+        "output_issues": {
+          "duplicate_candidate_action": 1,
+          "duplicate_watchlist_ticker": 1,
+          "response_fenced_json": 4,
+          "response_has_preamble_or_wrapper": 4,
+          "response_not_strict_json": 4
+        },
+        "output_tokens": 9718,
+        "parse_errors": 0,
+        "total_tokens": 80614
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 6869.5,
+        "avg_output_tokens": 222.8,
+        "calls": 4,
+        "duration_missing_calls": 4,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 27478,
+        "label": "analyst_bear_r1",
+        "output_issues": {},
+        "output_tokens": 891,
+        "parse_errors": 0,
+        "total_tokens": 28369
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 6754.5,
+        "avg_output_tokens": 224.0,
+        "calls": 4,
+        "duration_missing_calls": 4,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 27018,
+        "label": "analyst_bull_r1",
+        "output_issues": {},
+        "output_tokens": 896,
+        "parse_errors": 0,
+        "total_tokens": 27914
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 6746.5,
+        "avg_output_tokens": 182.8,
+        "calls": 4,
+        "duration_missing_calls": 4,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 26986,
+        "label": "analyst_neutral_r1",
+        "output_issues": {},
+        "output_tokens": 731,
+        "parse_errors": 0,
+        "total_tokens": 27717
+      },
+      {
+        "avg_duration_ms": 11525.8,
+        "avg_input_tokens": 1167.8,
+        "avg_output_tokens": 550.2,
+        "calls": 8,
+        "duration_missing_calls": 0,
+        "duration_observed_calls": 8,
+        "input_issues": {},
+        "input_tokens": 9342,
+        "label": "hold_advisor_triage",
+        "output_issues": {
+          "response_fenced_json": 8,
+          "response_has_preamble_or_wrapper": 8,
+          "response_not_strict_json": 8
+        },
+        "output_tokens": 4402,
+        "parse_errors": 0,
+        "total_tokens": 13744
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 2547.5,
+        "avg_output_tokens": 238.5,
+        "calls": 4,
+        "duration_missing_calls": 4,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 10190,
+        "label": "analyst_bear_r2",
+        "output_issues": {},
+        "output_tokens": 954,
+        "parse_errors": 0,
+        "total_tokens": 11144
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 2432.5,
+        "avg_output_tokens": 266.8,
+        "calls": 4,
+        "duration_missing_calls": 4,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 9730,
+        "label": "analyst_bull_r2",
+        "output_issues": {},
+        "output_tokens": 1067,
+        "parse_errors": 0,
+        "total_tokens": 10797
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 2424.5,
+        "avg_output_tokens": 237.0,
+        "calls": 4,
+        "duration_missing_calls": 4,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 9698,
+        "label": "analyst_neutral_r2",
+        "output_issues": {},
+        "output_tokens": 948,
+        "parse_errors": 0,
+        "total_tokens": 10646
+      },
+      {
+        "avg_duration_ms": 12546.3,
+        "avg_input_tokens": 1267.0,
+        "avg_output_tokens": 553.0,
+        "calls": 3,
+        "duration_missing_calls": 0,
+        "duration_observed_calls": 3,
+        "input_issues": {},
+        "input_tokens": 3801,
+        "label": "hold_advisor_challenge",
+        "output_issues": {
+          "response_fenced_json": 3,
+          "response_has_preamble_or_wrapper": 3,
+          "response_not_strict_json": 3
+        },
+        "output_tokens": 1659,
+        "parse_errors": 0,
+        "total_tokens": 5460
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 1461.0,
+        "avg_output_tokens": 677.0,
+        "calls": 1,
+        "duration_missing_calls": 1,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 1461,
+        "label": "param_tuner",
+        "output_issues": {},
+        "output_tokens": 677,
+        "parse_errors": 0,
+        "total_tokens": 2138
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 1713.0,
+        "avg_output_tokens": 231.0,
+        "calls": 1,
+        "duration_missing_calls": 1,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 1713,
+        "label": "tune_30min",
+        "output_issues": {},
+        "output_tokens": 231,
+        "parse_errors": 0,
+        "total_tokens": 1944
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 1628.0,
+        "avg_output_tokens": 219.0,
+        "calls": 1,
+        "duration_missing_calls": 1,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 1628,
+        "label": "tune_60min",
+        "output_issues": {},
+        "output_tokens": 219,
+        "parse_errors": 0,
+        "total_tokens": 1847
+      }
+    ],
+    "duration_missing_calls": 33,
+    "duration_observed_calls": 11,
+    "input_issue_counts": {
+      "prompt_input_tokens_ge_12000": 3,
+      "prompt_input_tokens_ge_8000": 3
+    },
+    "output_issue_counts": {
+      "duplicate_candidate_action": 1,
+      "duplicate_watchlist_ticker": 1,
+      "response_fenced_json": 15,
+      "response_has_preamble_or_wrapper": 15,
+      "response_not_strict_json": 15
+    },
+    "quality_calls": 44,
+    "quality_input_tokens": 199941,
+    "quality_output_tokens": 22393,
+    "quality_parse_errors": 0
+  },
+  "claude_usage": {
+    "api_usage_delta": {
+      "calls": 44,
+      "cost_usd": 0.935718,
+      "input_tokens": 199941,
+      "output_tokens": 22393
+    },
+    "hold_advisor_by_label": {
+      "hold_advisor_challenge": 3,
+      "hold_advisor_triage": 8
+    },
+    "hold_advisor_calls": 11,
+    "raw_by_label": {
+      "analyst_bear_r1": 4,
+      "analyst_bear_r2": 4,
+      "analyst_bull_r1": 4,
+      "analyst_bull_r2": 4,
+      "analyst_neutral_r1": 4,
+      "analyst_neutral_r2": 4,
+      "hold_advisor_challenge": 3,
+      "hold_advisor_triage": 8,
+      "param_tuner": 1,
+      "select_tickers": 6,
+      "tune_30min": 1,
+      "tune_60min": 1
+    },
+    "raw_by_model": {
+      "claude-sonnet-4-6": 44
+    },
+    "raw_call_files": 44,
+    "raw_duration_ms": 129845,
+    "raw_input_tokens": 199941,
+    "raw_output_tokens": 22393
+  },
+  "consistency_checks": {
+    "calls": {
+      "api": 44,
+      "quality": 44,
+      "raw": 44
+    },
+    "calls_match": true,
+    "input_tokens": {
+      "api": 199941,
+      "quality": 199941,
+      "raw": 199941
+    },
+    "input_tokens_match": true,
+    "output_tokens": {
+      "api": 22393,
+      "quality": 22393,
+      "raw": 22393
+    },
+    "output_tokens_match": true
+  },
+  "evidence_samples": {
+    "guardian_block_causes": [
+      {
+        "code": "config.runtime_snapshot_drift",
+        "message": "runtime config snapshot predates current pid",
+        "risk_level": "P2"
+      },
+      {
+        "code": "db.pathb_stale_active_runs",
+        "message": "previous-session active Path B rows=1",
+        "risk_level": "P1"
+      },
+      {
+        "code": "db.pathb_lifecycle_window_consistency",
+        "message": "recent-window Path B lifecycle diagnostic warnings: recent_window_missing_events_count=1 recent_window_size_events=1000 recent_window_size_runs=500; PathB post-run lifecycle events missing payload_json.path_run_id=0",
+        "risk_level": "P2"
+      },
+      {
+        "code": "db.pathb_lifecycle_full_consistency",
+        "message": "full terminal lifecycle missing events=1",
+        "risk_level": "P2"
+      },
+      {
+        "code": "kis.balance_probe",
+        "message": "default preflight avoids direct balance APIs; broker-truth snapshot and live smoke cover read-only balance checks",
+        "risk_level": "P2"
+      },
+      {
+        "code": "runtime.bot_pid_lock",
+        "message": "pid lock is active; expected process appears alive",
+        "risk_level": "P2"
+      },
+      {
+        "code": "runtime.dashboard_pid_lock",
+        "message": "pid lock is active; expected process appears alive",
+        "risk_level": "P2"
+      },
+      {
+        "code": "state.brain_memory_change_guard",
+        "message": "state/brain.json has uncommitted changes",
+        "risk_level": "P2"
+      },
+      {
+        "code": "broker_truth.kr_stale_state",
+        "message": "KR snapshot stale",
+        "risk_level": "P1"
+      },
+      {
+        "code": "broker_truth.us_stale_state",
+        "message": "US snapshot stale",
+        "risk_level": "P1"
+      }
+    ],
+    "log_issue_samples": [
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "[pending sell reconcile] US EL BROKER_POSITION_GONE_ASSUME_SOLD order=0030326720",
+        "path": "logs\\system\\live_trading_20260601.jsonl"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "[pending sell reconcile] US BBY BROKER_OPEN_ORDER_FOUND_KEEP_PENDING order=0030328268",
+        "path": "logs\\system\\live_trading_20260601.jsonl"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "[pending sell broker sync reconcile] US {'market': 'US', 'checked': 2, 'closed': 1, 'partial': 0, 'kept_pending': 1, 'cleared_stale': 0, 'broker_truth_unavailable': False, 'errors': [], 'audit_trail': [{'market': 'US', 'ticker': 'EL', 'order_no': '0030326720', 'requested_qty': 1, 'local_position_qty': 1, 'stage': 'pending_sell_reconcile', 'resolution': 'BROKER_POSITION_GONE_ASSUME_SOLD', 'broker_fill_confirmed': True, 'filled_qty': 0, 'remaining_qty': 1, 'broker_position_qty': 0, 'open_order_rem",
+        "path": "logs\\system\\live_trading_20260601.jsonl"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "broker_truth",
+        "level": "WARNING",
+        "message": "[pending sell broker sync reconcile] US {'market': 'US', 'checked': 2, 'closed': 1, 'partial': 0, 'kept_pending': 1, 'cleared_stale': 0, 'broker_truth_unavailable': False, 'errors': [], 'audit_trail': [{'market': 'US', 'ticker': 'EL', 'order_no': '0030326720', 'requested_qty': 1, 'local_position_qty': 1, 'stage': 'pending_sell_reconcile', 'resolution': 'BROKER_POSITION_GONE_ASSUME_SOLD', 'broker_fill_confirmed': True, 'filled_qty': 0, 'remaining_qty': 1, 'broker_position_qty': 0, 'open_order_rem",
+        "path": "logs\\system\\live_trading_20260601.jsonl"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "broker_truth",
+        "level": "INFO",
+        "message": "[PathB FILLED reconcile] {'market': 'US', 'checked': 1, 'kept_open': 1, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+        "path": "logs\\system\\live_trading_20260601.jsonl"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "[PathB profit_review TRIGGERED] US HPE peak_pnl=+1.88% current=45.455 bridge=protective_stop_not_tighter_than_plan_stop",
+        "path": "logs\\system\\live_trading_20260601.jsonl"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "2026-06-01 23:31:59 [WARNING ] _reconcile_pending_sell_confirmations:23041 | [pending sell reconcile] US EL BROKER_POSITION_GONE_ASSUME_SOLD order=0030326720",
+        "path": "logs\\system\\live_trading_20260601.log"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "2026-06-01 23:31:59 [WARNING ] _reconcile_pending_sell_confirmations:23016 | [pending sell reconcile] US BBY BROKER_OPEN_ORDER_FOUND_KEEP_PENDING order=0030328268",
+        "path": "logs\\system\\live_trading_20260601.log"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "2026-06-01 23:32:00 [WARNING ] _sync_runtime_with_broker:19184 | [pending sell broker sync reconcile] US {'market': 'US', 'checked': 2, 'closed': 1, 'partial': 0, 'kept_pending': 1, 'cleared_stale': 0, 'broker_truth_unavailable': False, 'errors': [], 'audit_trail': [{'market': 'US', 'ticker': 'EL', 'order_no': '0030326720', 'requested_qty': 1, 'local_position_qty': 1, 'stage': 'pending_sell_reconcile', 'resolution': 'BROKER_POSITION_GONE_ASSUME_SOLD', 'broker_fill_confirmed': True, 'filled_qty':",
+        "path": "logs\\system\\live_trading_20260601.log"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "broker_truth",
+        "level": "WARNING",
+        "message": "2026-06-01 23:32:00 [WARNING ] _sync_runtime_with_broker:19184 | [pending sell broker sync reconcile] US {'market': 'US', 'checked': 2, 'closed': 1, 'partial': 0, 'kept_pending': 1, 'cleared_stale': 0, 'broker_truth_unavailable': False, 'errors': [], 'audit_trail': [{'market': 'US', 'ticker': 'EL', 'order_no': '0030326720', 'requested_qty': 1, 'local_position_qty': 1, 'stage': 'pending_sell_reconcile', 'resolution': 'BROKER_POSITION_GONE_ASSUME_SOLD', 'broker_fill_confirmed': True, 'filled_qty':",
+        "path": "logs\\system\\live_trading_20260601.log"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "broker_truth",
+        "level": "INFO",
+        "message": "2026-06-01 23:32:00 [INFO    ] reconcile_filled_positions:5601 | [PathB FILLED reconcile] {'market': 'US', 'checked': 1, 'kept_open': 1, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+        "path": "logs\\system\\live_trading_20260601.log"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "2026-06-01 23:32:13 [WARNING ] _maybe_trigger_profit_protection_review:4436 | [PathB profit_review TRIGGERED] US HPE peak_pnl=+1.88% current=45.455 bridge=protective_stop_not_tighter_than_plan_stop",
+        "path": "logs\\system\\live_trading_20260601.log"
+      }
+    ],
+    "quality_issue_samples": [
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_challenge",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_challenge_224118358377_efbb17d08e.json",
+        "timestamp": "2026-06-01T22:41:18+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_challenge",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_challenge_230701217366_6d9b6116d3.json",
+        "timestamp": "2026-06-01T23:07:01+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_challenge",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_challenge_230730483021_ccf7488cf4.json",
+        "timestamp": "2026-06-01T23:07:30+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_223215504466_93c57c4bb8.json",
+        "timestamp": "2026-06-01T22:32:15+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_224107658782_feec3ac1e6.json",
+        "timestamp": "2026-06-01T22:41:07+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230610475882_249cccc373.json",
+        "timestamp": "2026-06-01T23:06:10+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230623132482_d72b1a5c0a.json",
+        "timestamp": "2026-06-01T23:06:23+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230648721973_43f664accd.json",
+        "timestamp": "2026-06-01T23:06:48+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230715984097_1eb2dca8ff.json",
+        "timestamp": "2026-06-01T23:07:15+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230755549047_fd95a678b4.json",
+        "timestamp": "2026-06-01T23:07:55+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_233213909730_56b1087512.json",
+        "timestamp": "2026-06-01T23:32:13+09:00"
+      },
+      {
+        "input_issues": "[\"prompt_input_tokens_ge_8000\"]",
+        "label": "select_tickers",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_select_tickers_223549265559_93a82c8add.json",
+        "timestamp": "2026-06-01T22:35:49+09:00"
+      }
+    ],
+    "quality_slow_call_samples": []
+  },
+  "generated_at": "2026-06-01T23:34:30+09:00",
+  "monitor_window": {
+    "end_at": "2026-06-02T07:00:00+09:00",
+    "market": "US",
+    "mode": "live",
+    "session_date": "2026-06-01",
+    "start_at": "2026-06-01T22:30:00+09:00"
+  },
+  "operations": {
+    "broker_fills": 7,
+    "broker_open_orders": 1,
+    "broker_positions": 3,
+    "broker_truth_error": "",
+    "broker_truth_missing": false,
+    "broker_truth_stale": true,
+    "decision_events": 4,
+    "guardian_gate": "BLOCK_START",
+    "guardian_ok": false,
+    "log_issue_counts": {
+      "broker_sync_protected": 6,
+      "broker_truth": 30,
+      "broker_truth_untrusted": 45,
+      "data_collection_minute_price_stale": 2,
+      "guardian_block_start": 56,
+      "log_error": 12,
+      "log_warning": 146,
+      "order_unknown": 2,
+      "pending_sell_local_state": 5,
+      "telegram": 4
+    },
+    "monitor_status": "running"
+  },
+  "out_dir": "docs\\reports\\overnight_us_monitor_20260601_2230\\interim_2246",
+  "recommendations": [
+    {
+      "area": "output_contract",
+      "priority": "P1",
+      "recommendation": "Tighten JSON-only enforcement for affected labels or route non-strict responses through a bounded retry; parser recovery should remain fail-safe."
+    },
+    {
+      "area": "selection_schema",
+      "priority": "P2",
+      "recommendation": "Add a compact-schema self-check or post-parse warning for duplicate watchlist entries and candidate-action coverage gaps."
+    },
+    {
+      "area": "token_cost",
+      "priority": "P2",
+      "recommendation": "Reduce high-token prompts by trimming repeated calibration blocks and limiting evidence pack rows before model invocation; review labels with 8k+ input tokens even when the session average looks acceptable."
+    },
+    {
+      "area": "operations",
+      "priority": "P1",
+      "recommendation": "Resolve guardian BLOCK_START causes before treating the session as operationally clean; include any repeated block events observed during the window, not just the final snapshot."
+    },
+    {
+      "area": "broker_truth",
+      "priority": "P1",
+      "recommendation": "Refresh broker truth and keep new entries fail-closed while snapshot freshness is untrusted; review repeated stale/untrusted snapshots from the full window."
+    },
+    {
+      "area": "reconciliation",
+      "priority": "P1",
+      "recommendation": "Review manual-action-required local state before the next live start window."
+    },
+    {
+      "area": "runtime_errors",
+      "priority": "P1",
+      "recommendation": "Inspect error samples and confirm they did not affect broker truth, order routing, or Claude fallback behavior."
+    },
+    {
+      "area": "order_state",
+      "priority": "P2",
+      "recommendation": "Separate current-session unresolved ORDER_UNKNOWN from historical event noise in the morning review."
+    }
+  ],
+  "sample_paths": {
+    "monitor_report": "docs\\reports\\overnight_us_monitor_20260601_2230\\interim_2246\\final_report.md",
+    "quality_report": "docs\\reports\\overnight_us_monitor_20260601_2230\\interim_2246\\claude_io_quality.md"
+  },
+  "sources": {
+    "monitor_json": "docs\\reports\\overnight_us_monitor_20260601_2230\\interim_2246\\final_report.json",
+    "quality_json": "docs\\reports\\overnight_us_monitor_20260601_2230\\interim_2246\\claude_io_quality.json"
+  }
+}

@@ -1,0 +1,10 @@
+﻿{
+    "pid":  38640,
+    "started_at":  "2026-06-01T21:17:06.2893948+09:00",
+    "scheduled_check":  "2026-06-01T22:36:00+09:00",
+    "out_dir":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230",
+    "stdout":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\start_watchdog_stdout.log",
+    "stderr":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\start_watchdog_stderr.log",
+    "result":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\start_watchdog.json",
+    "read_only":  true
+}

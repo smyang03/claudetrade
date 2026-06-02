@@ -1,0 +1,11 @@
+﻿{
+    "pid":  16444,
+    "out_dir":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2042_to_20260602_0700",
+    "stdout":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2042_to_20260602_0700\\post_reporter_stdout.log",
+    "stderr":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2042_to_20260602_0700\\post_reporter_stderr.log",
+    "restarted_at_kst":  "2026-06-01T21:17:43+09:00",
+    "wait_until_kst":  "2026-06-02T07:00:00+09:00",
+    "expected_report":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2042_to_20260602_0700\\us_session_profitability_report_20260602_0700.md",
+    "command":  "python E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2042_to_20260602_0700\\post_session_reporter.py --out-dir E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2042_to_20260602_0700 --session-date 2026-06-01 --wait-until 2026-06-02T07:00:00+09:00 --timeout-sec 3600",
+    "read_only":  true
+}

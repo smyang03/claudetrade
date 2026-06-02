@@ -621,7 +621,100 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
         self.assertEqual(result["action"], "HOLD")
         self.assertTrue(result["triage_missing"])
         self.assertTrue(result["triage_parse_error"])
+        self.assertTrue(result["fallback"])
+        self.assertTrue(result["hold_advisor_fallback"])
+        self.assertEqual(result["decision_source"], "hold_advisor_fallback")
         self.assertTriageShimVotes(result, "triage")
+
+    def test_triage_and_challenge_use_expanded_token_budget_and_compact_json_contract(self) -> None:
+        captured: list[dict] = []
+
+        def _fake_create(**kwargs):
+            captured.append(kwargs)
+            if kwargs["max_tokens"] == 1400:
+                text = json.dumps(
+                    {
+                        "category": "SELL",
+                        "confidence": 0.72,
+                        "urgency": "next_open",
+                        "exit_driver": "time_carry",
+                        "hold_mode": "",
+                        "protective_stop": None,
+                        "hard_stop": 95.0,
+                        "recover_above": None,
+                        "valid_for_min": 0,
+                        "reask_after_min": 0,
+                        "next_review_min": 30,
+                        "invalid_if": "carry risk remains",
+                        "needs_second_opinion": True,
+                        "primary_evidence": ["pre-close carry risk"],
+                        "counter_evidence": [],
+                        "reason": "carry risk",
+                    }
+                )
+            else:
+                text = json.dumps(
+                    {
+                        "confirm": True,
+                        "final_category": "SELL",
+                        "confidence": 0.74,
+                        "hold_mode": "",
+                        "sell_urgency": "next_open",
+                        "protective_stop": None,
+                        "hard_stop": 95.0,
+                        "recover_above": None,
+                        "next_review_min": 30,
+                        "invalid_if": "carry risk remains",
+                        "risk_if_wrong": "missed exit",
+                        "minimum_condition_to_hold": "",
+                        "reason": "challenge confirms",
+                    }
+                )
+            return SimpleNamespace(
+                content=[SimpleNamespace(text=text)],
+                usage=SimpleNamespace(input_tokens=10, output_tokens=100),
+            )
+
+        pos = {"ticker": "TEST", "entry": 100.0, "current_price": 101.0}
+        with patch.dict(
+            os.environ,
+            {
+                "HOLD_ADVISOR_TRIAGE_MAX_TOKENS": "",
+                "HOLD_ADVISOR_CHALLENGE_MAX_TOKENS": "",
+            },
+            clear=False,
+        ), patch.object(hold_advisor.client.messages, "create", side_effect=_fake_create), patch.object(
+            hold_advisor, "credit_record", lambda *args, **kwargs: None
+        ), patch.object(hold_advisor, "save_raw_call", lambda **kwargs: None):
+            triage = hold_advisor._ask_triage(
+                pos,
+                "US",
+                "digest",
+                "",
+                "AUTO_SELL_REVIEW",
+                "policy",
+                12.0,
+                False,
+            )
+            challenge = hold_advisor._ask_challenge(
+                pos,
+                "US",
+                "digest",
+                "",
+                "AUTO_SELL_REVIEW",
+                "policy",
+                12.0,
+                False,
+                triage,
+            )
+
+        self.assertEqual(captured[0]["max_tokens"], 1400)
+        self.assertEqual(captured[1]["max_tokens"], 1100)
+        self.assertIn("No markdown fences", captured[0]["messages"][0]["content"])
+        self.assertIn("primary_evidence and counter_evidence: max 2 strings", captured[0]["messages"][0]["content"])
+        self.assertIn("No markdown fences", captured[1]["messages"][0]["content"])
+        self.assertEqual(triage["action"], "SELL")
+        self.assertEqual(challenge["final_category"], "SELL")
 
     def test_challenge_coerce_reports_missing_boundary_fields(self) -> None:
         vote = hold_advisor._coerce_challenge_vote(

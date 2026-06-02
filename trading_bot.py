@@ -15248,13 +15248,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if quality_text:
                 fields["data_quality"] = quality_text
 
+            _MISSING_QUALITY_VALUES = {
+                "missing", "unknown", "none", "null",
+                "minute_missing", "data_insufficient", "data_insufficient_shadow",
+            }
+            _quality_implies_missing = bool(quality_text and quality_text.lower() in _MISSING_QUALITY_VALUES)
             if gate.get("data_quality_missing") not in (None, ""):
-                fields["data_quality_missing"] = _audit_boolish(gate.get("data_quality_missing"))
+                gate_flag = _audit_boolish(gate.get("data_quality_missing"))
+                # Missing-quality text wins over stale explicit false from runtime_gate.
+                fields["data_quality_missing"] = gate_flag or _quality_implies_missing
             elif quality_text:
-                fields["data_quality_missing"] = quality_text.lower() in {
-                    "missing", "unknown", "none", "null",
-                    "minute_missing", "data_insufficient", "data_insufficient_shadow",
-                }
+                fields["data_quality_missing"] = _quality_implies_missing
 
             if post_open_features:
                 fields["post_open_features_json"] = post_open_features

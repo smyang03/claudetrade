@@ -1,0 +1,11 @@
+﻿{
+    "pid":  43828,
+    "started_at":  "2026-06-01T21:37:41.2658571+09:00",
+    "scheduled_check":  "2026-06-02T07:25:00+09:00",
+    "out_dir":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230",
+    "stdout":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\morning_guard_stdout.log",
+    "stderr":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\morning_guard_stderr.log",
+    "result":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\morning_guard.json",
+    "behavior":  "fallback_generate_quality_and_morning_report_if_missing_or_empty",
+    "read_only_inputs":  true
+}

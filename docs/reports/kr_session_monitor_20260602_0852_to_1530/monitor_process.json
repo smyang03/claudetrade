@@ -1,0 +1,11 @@
+﻿{
+    "pid":  55228,
+    "started_at":  "2026-06-02T08:51:53+09:00",
+    "command":  "C:\\Users\\Unknown\\anaconda3\\python.exe tools\\overnight_us_monitor.py --mode live --market KR --session-date 2026-06-02 --end-at 2026-06-02T15:30:00+09:00 --interval-sec 60 --out-dir E:\\code\\claudetrade\\docs\\reports\\kr_session_monitor_20260602_0852_to_1530",
+    "out_dir":  "E:\\code\\claudetrade\\docs\\reports\\kr_session_monitor_20260602_0852_to_1530",
+    "stdout":  "E:\\code\\claudetrade\\docs\\reports\\kr_session_monitor_20260602_0852_to_1530\\monitor_stdout.log",
+    "stderr":  "E:\\code\\claudetrade\\docs\\reports\\kr_session_monitor_20260602_0852_to_1530\\monitor_stderr.log",
+    "end_at":  "2026-06-02T15:30:00+09:00",
+    "market":  "KR",
+    "session_date":  "2026-06-02"
+}

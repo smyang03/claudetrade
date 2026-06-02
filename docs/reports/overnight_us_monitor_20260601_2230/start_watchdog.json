@@ -1,0 +1,11 @@
+﻿{
+    "checked_at":  "2026-06-01T22:36:00.9005875+09:00",
+    "status":  "started",
+    "monitor_pid":  56356,
+    "monitor_alive":  true,
+    "progress_exists":  true,
+    "events_exists":  true,
+    "monitor_stdout_length":  0,
+    "monitor_stderr_length":  11,
+    "read_only":  true
+}

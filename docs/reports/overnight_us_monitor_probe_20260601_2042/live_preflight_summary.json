@@ -1,0 +1,95 @@
+{
+  "action_required_warn_count": 4,
+  "blocked_if_live_start_warn_count": 0,
+  "fail_count": 0,
+  "fails": [],
+  "generated_at": "2026-06-01T21:17:06+09:00",
+  "ok": true,
+  "warn_count": 14,
+  "warns": [
+    {
+      "blocked_if_live_start": null,
+      "detail": "previous-session active Path B rows=6",
+      "name": "db.pathb_stale_active_runs",
+      "operator_action_required": null
+    },
+    {
+      "blocked_if_live_start": null,
+      "detail": "recent-window Path B lifecycle diagnostic warnings: recent_window_missing_events_count=1 recent_window_size_events=1000 recent_window_size_runs=500; PathB post-run lifecycle events missing payload_json.path_run_id=0",
+      "name": "db.pathb_lifecycle_window_consistency",
+      "operator_action_required": null
+    },
+    {
+      "blocked_if_live_start": null,
+      "detail": "full terminal lifecycle missing events=1",
+      "name": "db.pathb_lifecycle_full_consistency",
+      "operator_action_required": null
+    },
+    {
+      "blocked_if_live_start": null,
+      "detail": "default preflight avoids direct balance APIs; broker-truth snapshot and live smoke cover read-only balance checks",
+      "name": "kis.balance_probe",
+      "operator_action_required": null
+    },
+    {
+      "blocked_if_live_start": null,
+      "detail": "pid lock is active; expected process appears alive",
+      "name": "runtime.bot_pid_lock",
+      "operator_action_required": null
+    },
+    {
+      "blocked_if_live_start": null,
+      "detail": "pid lock is active; expected process appears alive",
+      "name": "runtime.dashboard_pid_lock",
+      "operator_action_required": null
+    },
+    {
+      "blocked_if_live_start": false,
+      "detail": "state/brain.json has uncommitted changes",
+      "name": "state.brain_memory_change_guard",
+      "operator_action_required": true
+    },
+    {
+      "blocked_if_live_start": null,
+      "detail": "KR snapshot stale",
+      "name": "broker_truth.kr_stale_state",
+      "operator_action_required": null
+    },
+    {
+      "blocked_if_live_start": null,
+      "detail": "US snapshot stale",
+      "name": "broker_truth.us_stale_state",
+      "operator_action_required": null
+    },
+    {
+      "blocked_if_live_start": false,
+      "detail": "process inventory findings=1",
+      "name": "runtime.process_inventory",
+      "operator_action_required": false
+    },
+    {
+      "blocked_if_live_start": false,
+      "detail": "total=793 malformed=0 missing=0 ohlc_error_csv=0 ohlc_error_rows=0 latest_ohlc_error_csv=0 flat_ohlc_zero_volume_csv=242 flat_ohlc_zero_volume_rows=5126 latest_flat_ohlc_zero_volume_csv=8 too_few_rows_csv=4 active_blocking_issues=0 active_latest_flat_zero=0 active_too_few_rows=0",
+      "name": "data.price_csv_integrity.kr",
+      "operator_action_required": null
+    },
+    {
+      "blocked_if_live_start": false,
+      "detail": "total=1046 malformed=0 missing=0 ohlc_error_csv=0 ohlc_error_rows=0 latest_ohlc_error_csv=0 flat_ohlc_zero_volume_csv=29 flat_ohlc_zero_volume_rows=248 latest_flat_ohlc_zero_volume_csv=11 too_few_rows_csv=4 active_blocking_issues=0 active_latest_flat_zero=0 active_too_few_rows=0",
+      "name": "data.price_csv_integrity.us",
+      "operator_action_required": null
+    },
+    {
+      "blocked_if_live_start": false,
+      "detail": "rows=47004 live=26097 known_gaps=1 rows_inside_known_gap=0; warnings=accepted_known_gap",
+      "name": "ml.decisions_db_health",
+      "operator_action_required": false
+    },
+    {
+      "blocked_if_live_start": false,
+      "detail": "production_ready=False total_data_rows=0 latest_api_run_at=2026-05-10T02:58:45",
+      "name": "external_data.readiness",
+      "operator_action_required": false
+    }
+  ]
+}

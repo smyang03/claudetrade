@@ -1,0 +1,2105 @@
+{
+  "candidate_analysis": {
+    "buckets": [
+      {
+        "classification": "not_in_prompt",
+        "labeled_rows": 0,
+        "mae_minus2pct_rate": null,
+        "mean_mfe_pct": null,
+        "mean_return_pct": null,
+        "median_mfe_pct": null,
+        "median_return_pct": null,
+        "mfe_2pct_rate": null,
+        "mfe_3pct_rate": null,
+        "mfe_5pct_rate": null,
+        "p75_return_pct": null,
+        "p90_mfe_pct": null,
+        "p90_return_pct": null,
+        "p95_return_pct": null,
+        "positive_return_rate": null,
+        "rows": 99,
+        "small_bucket_sample": true,
+        "unique_tickers": 99
+      },
+      {
+        "classification": "in_prompt_not_selected",
+        "labeled_rows": 0,
+        "mae_minus2pct_rate": null,
+        "mean_mfe_pct": null,
+        "mean_return_pct": null,
+        "median_mfe_pct": null,
+        "median_return_pct": null,
+        "mfe_2pct_rate": null,
+        "mfe_3pct_rate": null,
+        "mfe_5pct_rate": null,
+        "p75_return_pct": null,
+        "p90_mfe_pct": null,
+        "p90_return_pct": null,
+        "p95_return_pct": null,
+        "positive_return_rate": null,
+        "rows": 36,
+        "small_bucket_sample": true,
+        "unique_tickers": 36
+      },
+      {
+        "classification": "unknown",
+        "labeled_rows": 0,
+        "mae_minus2pct_rate": null,
+        "mean_mfe_pct": null,
+        "mean_return_pct": null,
+        "median_mfe_pct": null,
+        "median_return_pct": null,
+        "mfe_2pct_rate": null,
+        "mfe_3pct_rate": null,
+        "mfe_5pct_rate": null,
+        "p75_return_pct": null,
+        "p90_mfe_pct": null,
+        "p90_return_pct": null,
+        "p95_return_pct": null,
+        "positive_return_rate": null,
+        "rows": 23,
+        "small_bucket_sample": true,
+        "unique_tickers": 23
+      },
+      {
+        "classification": "data_insufficient",
+        "labeled_rows": 0,
+        "mae_minus2pct_rate": null,
+        "mean_mfe_pct": null,
+        "mean_return_pct": null,
+        "median_mfe_pct": null,
+        "median_return_pct": null,
+        "mfe_2pct_rate": null,
+        "mfe_3pct_rate": null,
+        "mfe_5pct_rate": null,
+        "p75_return_pct": null,
+        "p90_mfe_pct": null,
+        "p90_return_pct": null,
+        "p95_return_pct": null,
+        "positive_return_rate": null,
+        "rows": 4,
+        "small_bucket_sample": true,
+        "unique_tickers": 4
+      }
+    ],
+    "candidate_rows": 162,
+    "consistency": {
+      "action_family_counts": {
+        "blocked_family": 2,
+        "trade_ready_family": 3,
+        "unknown_family": 145,
+        "watch_family": 12
+      },
+      "actual_prompt_mismatch": [],
+      "actual_prompt_mismatch_count": 0,
+      "actual_prompt_unmeasured": [],
+      "actual_prompt_unmeasured_count": 0,
+      "input_reported_not_in_prompt": [],
+      "input_reported_not_in_prompt_count": 0,
+      "invalid_price": [],
+      "invalid_price_count": 0,
+      "invalid_price_reason_counts": {},
+      "latest_rows_checked": 162,
+      "legacy_input_reported_mismatch": [],
+      "legacy_input_reported_mismatch_count": 0,
+      "trace_join_missing": [],
+      "trace_join_missing_count": 0,
+      "trade_ready_family_mismatch": [],
+      "trade_ready_family_mismatch_count": 0
+    },
+    "db_path": "E:\\code\\claudetrade\\data\\audit\\candidate_audit.db",
+    "freshness": {
+      "db_latest_at": "2026-06-02T04:37:48+09:00",
+      "max_lag_sec": 1107,
+      "sources": {
+        "candidate_funnel_snapshot": {
+          "lag_sec": 0,
+          "latest_at": "2026-06-02T04:37:48+09:00",
+          "path": "E:\\code\\claudetrade\\logs\\funnel\\candidate_funnel_snapshot_20260601_US.jsonl",
+          "stale": false
+        },
+        "raw_calls": {
+          "lag_sec": 0,
+          "latest_at": "2026-06-01T23:47:05+09:00",
+          "path": "E:\\code\\claudetrade\\logs\\raw_calls\\20260601_US_select_tickers_234705841825_a73d8742d2.json",
+          "stale": false
+        },
+        "screener_quality": {
+          "lag_sec": 0,
+          "latest_at": "2026-06-01T23:47:07+09:00",
+          "path": "E:\\code\\claudetrade\\logs\\screener_quality\\20260601_US_candidates.jsonl",
+          "stale": false
+        },
+        "watch_trigger_not_evaluated": {
+          "lag_sec": 1107,
+          "latest_at": "2026-06-02T04:56:15+09:00",
+          "path": "E:\\code\\claudetrade\\logs\\funnel\\watch_trigger_not_evaluated_20260601_US.jsonl",
+          "stale": true
+        },
+        "watch_trigger_shadow": {
+          "lag_sec": 1103,
+          "latest_at": "2026-06-02T04:56:11+09:00",
+          "path": "E:\\code\\claudetrade\\logs\\funnel\\watch_trigger_shadow_20260601_US.jsonl",
+          "stale": true
+        }
+      },
+      "stale_sources": [
+        "watch_trigger_shadow",
+        "watch_trigger_not_evaluated"
+      ],
+      "status": "stale",
+      "warn_threshold_sec": 120
+    },
+    "horizon_min": 60,
+    "latency_sla": {
+      "alert_count": 16,
+      "avg_ms": 14665.974,
+      "critical_threshold_ms": 60000,
+      "exists": true,
+      "max_ms": 98188.19,
+      "p95_ms": 37598.101,
+      "rows": 83,
+      "status": "critical",
+      "warn_threshold_ms": 25000
+    },
+    "latest_only": true,
+    "market": "US",
+    "missed_winners": [],
+    "outcome_coverage": {
+      "30": {
+        "audit_sparse": 313,
+        "classification_counts": {
+          "data_insufficient": 11,
+          "in_prompt_not_selected": 273,
+          "not_in_prompt": 508,
+          "unknown": 218
+        },
+        "coverage_gap_reasons": {
+          "missing_base": 1,
+          "too_few_future_samples": 696
+        },
+        "coverage_rate": 0.3099,
+        "insufficient_samples": 697,
+        "interpretation": "reference_only",
+        "maturity": "partial",
+        "status_counts": {
+          "audit_sparse": 313,
+          "insufficient_samples": 697
+        },
+        "total": 1010
+      },
+      "60": {
+        "audit_sparse": 370,
+        "classification_counts": {
+          "data_insufficient": 11,
+          "in_prompt_not_selected": 273,
+          "not_in_prompt": 508,
+          "unknown": 218
+        },
+        "coverage_gap_reasons": {
+          "missing_base": 1,
+          "too_few_future_samples": 639
+        },
+        "coverage_rate": 0.3663,
+        "insufficient_samples": 640,
+        "interpretation": "reference_only",
+        "maturity": "partial",
+        "status_counts": {
+          "audit_sparse": 370,
+          "insufficient_samples": 640
+        },
+        "total": 1010
+      }
+    },
+    "route_shadow_summary": {
+      "reason_counts": {},
+      "route_cancel_pathb_rows": 0,
+      "route_suspend_pathb_rows": 0,
+      "tickers_by_reason": {}
+    },
+    "routing_delta": {
+      "applied_trade_ready": [
+        "NVDA",
+        "DDOG",
+        "NET"
+      ],
+      "applied_trade_ready_count": 3,
+      "demoted_routes": [],
+      "dropped_after_raw": [],
+      "execution_pool_count": 3,
+      "exists": true,
+      "final_action_counts": {
+        "BUY_READY": 3,
+        "PULLBACK_WAIT": 4,
+        "WATCH": 8
+      },
+      "full_pool_count": 15,
+      "latest_at": "2026-06-02T04:37:48",
+      "normalized_trade_ready": [
+        "NVDA",
+        "DDOG",
+        "NET"
+      ],
+      "normalized_trade_ready_count": 3,
+      "pathb_wait_tickers": [
+        "NOK",
+        "HPE",
+        "CRWV",
+        "MRVL"
+      ],
+      "prompt_pool_count": 15,
+      "raw_trade_ready": [
+        "NVDA",
+        "DDOG",
+        "NET"
+      ],
+      "raw_trade_ready_count": 3,
+      "route_reason_counts": {
+        "buy_ready": 3,
+        "pullback_wait": 4,
+        "watch": 8
+      },
+      "runtime_filtered": {},
+      "runtime_filtered_count": 0,
+      "runtime_filtered_reason_counts": {},
+      "selection_delta": {
+        "applied_trade_ready": [
+          "NVDA",
+          "DDOG",
+          "NET"
+        ],
+        "dropped_after_raw": [],
+        "normalized_trade_ready": [
+          "NVDA",
+          "DDOG",
+          "NET"
+        ],
+        "raw_trade_ready": [
+          "NVDA",
+          "DDOG",
+          "NET"
+        ],
+        "runtime_filtered": {},
+        "runtime_filtered_reason_counts": {}
+      },
+      "status": "ok",
+      "trade_ready_count": 3,
+      "universe_filter_bypass": {
+        "allowed_sample": [
+          "NVDA",
+          "TSLA",
+          "AAPL",
+          "NFLX",
+          "GOOGL",
+          "TMHC",
+          "MDB",
+          "AAOI",
+          "HUBS",
+          "NBIS",
+          "ARM",
+          "SAIC",
+          "TWLO",
+          "MGM",
+          "KVYO",
+          "SKM",
+          "EWTX",
+          "MNDY",
+          "CRWV",
+          "ERAS"
+        ],
+        "at": "2026-06-02T04:07:10+09:00",
+        "bypassed": true,
+        "candidate_count": 80,
+        "candidate_sample": [
+          "NVDA",
+          "NOK",
+          "INTC",
+          "SOFI",
+          "F",
+          "ONDS",
+          "RGTI",
+          "AAL",
+          "NIO",
+          "PATH",
+          "HPE",
+          "IREN",
+          "CRWV",
+          "MARA",
+          "QBTS",
+          "SMCI",
+          "KEEL",
+          "MSFT",
+          "POET",
+          "BB"
+        ],
+        "filtered_by_category": {
+          "day_gainers": 19,
+          "day_losers": 3,
+          "most_actives": 31
+        },
+        "filtered_by_primary_bucket": {
+          "unclassified": 53
+        },
+        "filtered_by_source": {
+          "unknown": 53
+        },
+        "filtered_count": 27,
+        "market": "US",
+        "min_keep": 12,
+        "min_ratio": 0.5,
+        "sample_filtered_tickers": [
+          "NOK",
+          "INTC",
+          "SOFI",
+          "F",
+          "ONDS",
+          "RGTI",
+          "AAL",
+          "NIO",
+          "PATH",
+          "HPE",
+          "IREN",
+          "MARA",
+          "QBTS",
+          "SMCI",
+          "KEEL",
+          "MSFT",
+          "POET",
+          "BB",
+          "AMZN",
+          "ORCL"
+        ],
+        "session_date": "2026-06-01"
+      },
+      "watchlist_count": 15
+    },
+    "row_uniqueness": {
+      "call_level_rows": 1313,
+      "duplicate_group_count": 155,
+      "latest_session_ticker_rows": 162
+    },
+    "runtime_mode": "live",
+    "session_date": "2026-06-01",
+    "strategy_mismatch": {
+      "filled_strategy_rows": 0,
+      "match_count": 0,
+      "mismatch_count": 0,
+      "mismatch_rate": null,
+      "pairs": [],
+      "unclassified_count": 0
+    },
+    "top_mfe": {
+      "avoid_watch": [],
+      "in_prompt_not_selected": [],
+      "not_in_prompt": [],
+      "ready_no_signal": []
+    },
+    "watch_only_bucket_decomposition": {
+      "bucket_count": 5,
+      "buckets": [
+        {
+          "bucket": "not_in_prompt",
+          "labeled_rows": 0,
+          "mae_minus2pct_rate": null,
+          "mean_mfe_pct": null,
+          "mean_return_pct": null,
+          "median_mfe_pct": null,
+          "median_return_pct": null,
+          "mfe_2pct_rate": null,
+          "mfe_3pct_rate": null,
+          "mfe_5pct_rate": null,
+          "missed_runup_rate": 0.0,
+          "missed_runup_rows": 0,
+          "p75_return_pct": null,
+          "p90_mfe_pct": null,
+          "p90_return_pct": null,
+          "p95_return_pct": null,
+          "positive_return_rate": null,
+          "reason": "candidate never reached Claude prompt",
+          "rows": 99,
+          "small_bucket_sample": true,
+          "unique_tickers": 99
+        },
+        {
+          "bucket": "claude_not_selected",
+          "labeled_rows": 0,
+          "mae_minus2pct_rate": null,
+          "mean_mfe_pct": null,
+          "mean_return_pct": null,
+          "median_mfe_pct": null,
+          "median_return_pct": null,
+          "mfe_2pct_rate": null,
+          "mfe_3pct_rate": null,
+          "mfe_5pct_rate": null,
+          "missed_runup_rate": 0.0,
+          "missed_runup_rows": 0,
+          "p75_return_pct": null,
+          "p90_mfe_pct": null,
+          "p90_return_pct": null,
+          "p95_return_pct": null,
+          "positive_return_rate": null,
+          "reason": "candidate was in prompt but not selected",
+          "rows": 36,
+          "small_bucket_sample": true,
+          "unique_tickers": 36
+        },
+        {
+          "bucket": "claude_watch_conservative",
+          "labeled_rows": 0,
+          "mae_minus2pct_rate": null,
+          "mean_mfe_pct": null,
+          "mean_return_pct": null,
+          "median_mfe_pct": null,
+          "median_return_pct": null,
+          "mfe_2pct_rate": null,
+          "mfe_3pct_rate": null,
+          "mfe_5pct_rate": null,
+          "missed_runup_rate": 0.0,
+          "missed_runup_rows": 0,
+          "p75_return_pct": null,
+          "p90_mfe_pct": null,
+          "p90_return_pct": null,
+          "p95_return_pct": null,
+          "positive_return_rate": null,
+          "reason": "Claude or route left candidate in watch state",
+          "rows": 9,
+          "small_bucket_sample": true,
+          "unique_tickers": 9
+        },
+        {
+          "bucket": "data_insufficient",
+          "labeled_rows": 0,
+          "mae_minus2pct_rate": null,
+          "mean_mfe_pct": null,
+          "mean_return_pct": null,
+          "median_mfe_pct": null,
+          "median_return_pct": null,
+          "mfe_2pct_rate": null,
+          "mfe_3pct_rate": null,
+          "mfe_5pct_rate": null,
+          "missed_runup_rate": 0.0,
+          "missed_runup_rows": 0,
+          "p75_return_pct": null,
+          "p90_mfe_pct": null,
+          "p90_return_pct": null,
+          "p95_return_pct": null,
+          "positive_return_rate": null,
+          "reason": "candidate data was insufficient before prompt/execution",
+          "rows": 4,
+          "small_bucket_sample": true,
+          "unique_tickers": 4
+        },
+        {
+          "bucket": "pathb_zone_or_plan",
+          "labeled_rows": 0,
+          "mae_minus2pct_rate": null,
+          "mean_mfe_pct": null,
+          "mean_return_pct": null,
+          "median_mfe_pct": null,
+          "median_return_pct": null,
+          "mfe_2pct_rate": null,
+          "mfe_3pct_rate": null,
+          "mfe_5pct_rate": null,
+          "missed_runup_rate": 0.0,
+          "missed_runup_rows": 0,
+          "p75_return_pct": null,
+          "p90_mfe_pct": null,
+          "p90_return_pct": null,
+          "p95_return_pct": null,
+          "positive_return_rate": null,
+          "reason": "PathB zone/plan state prevented immediate entry",
+          "rows": 3,
+          "small_bucket_sample": true,
+          "unique_tickers": 3
+        }
+      ],
+      "examples": {
+        "claude_not_selected": [
+          {
+            "classification": "in_prompt_not_selected",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "AMBA"
+          },
+          {
+            "classification": "in_prompt_not_selected",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "AMD"
+          },
+          {
+            "classification": "in_prompt_not_selected",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "ASTS"
+          },
+          {
+            "classification": "in_prompt_not_selected",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "BAC"
+          },
+          {
+            "classification": "in_prompt_not_selected",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "BRZE"
+          },
+          {
+            "classification": "in_prompt_not_selected",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "CLBT"
+          },
+          {
+            "classification": "in_prompt_not_selected",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "DOCN"
+          },
+          {
+            "classification": "in_prompt_not_selected",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "EC"
+          },
+          {
+            "classification": "in_prompt_not_selected",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "ERAS"
+          },
+          {
+            "classification": "in_prompt_not_selected",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "GOOG"
+          }
+        ],
+        "claude_watch_conservative": [
+          {
+            "classification": "",
+            "claude_action": "WATCH",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "WATCH",
+            "route_reason": "watch",
+            "session_date": "2026-06-01",
+            "ticker": "AAPL"
+          },
+          {
+            "classification": "",
+            "claude_action": "WATCH",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "WATCH",
+            "route_reason": "watch",
+            "session_date": "2026-06-01",
+            "ticker": "AMZN"
+          },
+          {
+            "classification": "",
+            "claude_action": "WATCH",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "WATCH",
+            "route_reason": "watch",
+            "session_date": "2026-06-01",
+            "ticker": "CRM"
+          },
+          {
+            "classification": "",
+            "claude_action": "WATCH",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "WATCH",
+            "route_reason": "watch",
+            "session_date": "2026-06-01",
+            "ticker": "IBM"
+          },
+          {
+            "classification": "",
+            "claude_action": "WATCH",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "WATCH",
+            "route_reason": "watch",
+            "session_date": "2026-06-01",
+            "ticker": "IREN"
+          },
+          {
+            "classification": "",
+            "claude_action": "WATCH",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "WATCH",
+            "route_reason": "watch",
+            "session_date": "2026-06-01",
+            "ticker": "ORCL"
+          },
+          {
+            "classification": "",
+            "claude_action": "WATCH",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "WATCH",
+            "route_reason": "watch",
+            "session_date": "2026-06-01",
+            "ticker": "SMCI"
+          },
+          {
+            "classification": "",
+            "claude_action": "WATCH",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "WATCH",
+            "route_reason": "watch",
+            "session_date": "2026-06-01",
+            "ticker": "SNDK"
+          },
+          {
+            "classification": "",
+            "claude_action": "WATCH",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "WATCH",
+            "route_reason": "watch",
+            "session_date": "2026-06-01",
+            "ticker": "WDC"
+          }
+        ],
+        "data_insufficient": [
+          {
+            "classification": "data_insufficient",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "EQPT"
+          },
+          {
+            "classification": "data_insufficient",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "FPS"
+          },
+          {
+            "classification": "data_insufficient",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "INFQ"
+          },
+          {
+            "classification": "data_insufficient",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "WSE"
+          }
+        ],
+        "not_in_prompt": [
+          {
+            "classification": "not_in_prompt",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "AAL"
+          },
+          {
+            "classification": "not_in_prompt",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "AAOI"
+          },
+          {
+            "classification": "not_in_prompt",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "ADEA"
+          },
+          {
+            "classification": "not_in_prompt",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "AEO"
+          },
+          {
+            "classification": "not_in_prompt",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "ALHC"
+          },
+          {
+            "classification": "not_in_prompt",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "AMPX"
+          },
+          {
+            "classification": "not_in_prompt",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "ANET"
+          },
+          {
+            "classification": "not_in_prompt",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "ARM"
+          },
+          {
+            "classification": "not_in_prompt",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "AXTI"
+          },
+          {
+            "classification": "not_in_prompt",
+            "claude_action": "",
+            "execution_decision_id": "",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "",
+            "route_reason": "",
+            "session_date": "2026-06-01",
+            "ticker": "BB"
+          }
+        ],
+        "pathb_zone_or_plan": [
+          {
+            "classification": "",
+            "claude_action": "PULLBACK_WAIT",
+            "execution_decision_id": "dec_20260601_US_CRWV_a173d9eb",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "PULLBACK_WAIT",
+            "route_reason": "pullback_wait",
+            "session_date": "2026-06-01",
+            "ticker": "CRWV"
+          },
+          {
+            "classification": "",
+            "claude_action": "PULLBACK_WAIT",
+            "execution_decision_id": "dec_20260601_US_HPE_a150d02b",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "PULLBACK_WAIT",
+            "route_reason": "pullback_wait",
+            "session_date": "2026-06-01",
+            "ticker": "HPE"
+          },
+          {
+            "classification": "",
+            "claude_action": "PULLBACK_WAIT",
+            "execution_decision_id": "dec_20260601_US_MRVL_03df0cce",
+            "market": "US",
+            "max_drawdown_pct": null,
+            "max_runup_pct": null,
+            "return_pct": null,
+            "route_final_action": "PULLBACK_WAIT",
+            "route_reason": "pullback_wait",
+            "session_date": "2026-06-01",
+            "ticker": "MRVL"
+          }
+        ]
+      },
+      "interpretation": "Use this to choose the next narrow fix. Do not open global gates from a high blocked ratio alone.",
+      "missed_runup_threshold_pct": 2.0,
+      "rows_considered": 151
+    },
+    "watch_trigger_shadow_outcomes": {
+      "blocked": {
+        "labeled_rows": 0,
+        "mae_minus2pct_rate": null,
+        "matched_outcomes": 121,
+        "mean_mfe_pct": null,
+        "mean_return_pct": null,
+        "median_mfe_pct": null,
+        "median_return_pct": null,
+        "mfe_2pct_rate": null,
+        "mfe_3pct_rate": null,
+        "mfe_5pct_rate": null,
+        "p75_return_pct": null,
+        "p90_mfe_pct": null,
+        "p90_return_pct": null,
+        "p95_return_pct": null,
+        "positive_return_rate": null,
+        "rows": 121,
+        "shadow_events": 121,
+        "small_bucket_sample": true,
+        "unique_tickers": 6
+      },
+      "no_signal": {
+        "labeled_rows": 0,
+        "mae_minus2pct_rate": null,
+        "matched_outcomes": 118,
+        "mean_mfe_pct": null,
+        "mean_return_pct": null,
+        "median_mfe_pct": null,
+        "median_return_pct": null,
+        "mfe_2pct_rate": null,
+        "mfe_3pct_rate": null,
+        "mfe_5pct_rate": null,
+        "p75_return_pct": null,
+        "p90_mfe_pct": null,
+        "p90_return_pct": null,
+        "p95_return_pct": null,
+        "positive_return_rate": null,
+        "rows": 118,
+        "shadow_events": 118,
+        "small_bucket_sample": true,
+        "unique_tickers": 14
+      },
+      "would_promote": {
+        "labeled_rows": 0,
+        "mae_minus2pct_rate": null,
+        "matched_outcomes": 1,
+        "mean_mfe_pct": null,
+        "mean_return_pct": null,
+        "median_mfe_pct": null,
+        "median_return_pct": null,
+        "mfe_2pct_rate": null,
+        "mfe_3pct_rate": null,
+        "mfe_5pct_rate": null,
+        "p75_return_pct": null,
+        "p90_mfe_pct": null,
+        "p90_return_pct": null,
+        "p95_return_pct": null,
+        "positive_return_rate": null,
+        "rows": 1,
+        "shadow_events": 1,
+        "small_bucket_sample": true,
+        "unique_tickers": 1
+      }
+    },
+    "watch_trigger_shadow_summary": {
+      "blocked_reason_counts": {
+        "SAME_DAY_REENTRY_AFTER_STOP": 12,
+        "SAME_DAY_REENTRY_COOLDOWN": 3,
+        "already_holding": 81,
+        "entry_blackout": 3,
+        "entry_blocked": 4,
+        "same_day_reentry_blocked": 15,
+        "strategy_unavailable": 3
+      },
+      "data_gap_dominant": false,
+      "missing_strategy_count": 0,
+      "missing_strategy_rate": 0.0,
+      "not_evaluated_reason_counts": {
+        "shadow_cycle_cap_exceeded": 770
+      },
+      "shadow_result_counts": {
+        "blocked": 121,
+        "no_signal": 118,
+        "would_promote": 1
+      },
+      "strategy_counts": {
+        "gap_pullback": 105,
+        "momentum": 7,
+        "opening_range_pullback": 128
+      },
+      "strategy_source_counts": {
+        "_final_prompt_pool.category": 3,
+        "recommended_strategy": 237
+      },
+      "tickers_by_result": {
+        "blocked": [
+          "CRM",
+          "CRWV",
+          "DELL",
+          "HPE",
+          "MSFT",
+          "NOK"
+        ],
+        "no_signal": [
+          "AAOI",
+          "ARM",
+          "CRM",
+          "CRWV",
+          "DELL",
+          "HPE",
+          "IBM",
+          "MDB",
+          "MSFT",
+          "NBIS",
+          "NOK",
+          "NVDA",
+          "ORCL",
+          "SMCI"
+        ],
+        "would_promote": [
+          "CRWV"
+        ]
+      },
+      "watch_trigger_blocked_count": 121,
+      "watch_trigger_no_signal_count": 118,
+      "watch_trigger_not_evaluated_count": 770,
+      "watch_trigger_shadow_count": 240,
+      "watch_trigger_would_promote_count": 1
+    }
+  },
+  "candidate_bucket_source_score_coverage": {
+    "available": true,
+    "blank_primary_bucket": 16,
+    "db_path": "E:\\code\\claudetrade\\data\\audit\\candidate_audit.db",
+    "empty_data_quality_flags": 1313,
+    "empty_source_tags": 16,
+    "invalid_price_reason_counts": {},
+    "null_raw_score_current": 16,
+    "null_trainer_score_rank": 16,
+    "performance_conclusion_allowed": false,
+    "rows": 1313
+  },
+  "gate_summary": {
+    "actual_prompt_visibility": {
+      "action_family_counts": {
+        "blocked_family": 2,
+        "trade_ready_family": 3,
+        "unknown_family": 145,
+        "watch_family": 12
+      },
+      "actual_prompt_mismatch": [],
+      "actual_prompt_mismatch_count": 0,
+      "actual_prompt_unmeasured": [],
+      "actual_prompt_unmeasured_count": 0,
+      "input_reported_not_in_prompt": [],
+      "input_reported_not_in_prompt_count": 0,
+      "invalid_price": [],
+      "invalid_price_count": 0,
+      "invalid_price_reason_counts": {},
+      "latest_rows_checked": 162,
+      "legacy_input_reported_mismatch": [],
+      "legacy_input_reported_mismatch_count": 0,
+      "trace_join_missing": [],
+      "trace_join_missing_count": 0,
+      "trade_ready_family_mismatch": [],
+      "trade_ready_family_mismatch_count": 0
+    },
+    "bucket_source_score_performance_allowed": false,
+    "learning_policy_change_allowed": false,
+    "pead_policy_change_allowed": false,
+    "watch_trigger_policy_change_allowed": false
+  },
+  "generated_at": "2026-06-02T07:01:13+09:00",
+  "hold_advisor_cache_shadow": {
+    "cache_enable_allowed": false,
+    "decision_dir": "E:\\code\\claudetrade\\logs\\hold_advisor",
+    "estimated_request_reduction": 0,
+    "missing_time": 0,
+    "policy_change_allowed": false,
+    "requests": 12,
+    "ttl_minutes": 10,
+    "would_expire": 1,
+    "would_hit": 0
+  },
+  "hold_advisor_latency": {
+    "decision_requests": {
+      "by_market": [
+        {
+          "avg_ms": 17703.167,
+          "calls": 12,
+          "duration_count": 12,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 26125.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 16884.0,
+          "p95_ms": 26061.75
+        }
+      ],
+      "by_market_stage_decision": [
+        {
+          "avg_ms": 21702.5,
+          "calls": 6,
+          "decision": "SELL",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_count": 6,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 26125.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 23782.0,
+          "p95_ms": 26096.25
+        },
+        {
+          "avg_ms": 11528.5,
+          "calls": 4,
+          "decision": "HOLD",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_count": 4,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 12610.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 11513.5,
+          "p95_ms": 12494.95
+        },
+        {
+          "avg_ms": 18054.5,
+          "calls": 2,
+          "decision": "SELL",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_count": 2,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 25720.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 18054.5,
+          "p95_ms": 24953.45
+        }
+      ],
+      "by_stage": [
+        {
+          "avg_ms": 21702.5,
+          "calls": 6,
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_count": 6,
+          "input_tokens": 0,
+          "max_ms": 26125.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 23782.0,
+          "p95_ms": 26096.25
+        },
+        {
+          "avg_ms": 13703.833,
+          "calls": 6,
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_count": 6,
+          "input_tokens": 0,
+          "max_ms": 25720.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 11513.5,
+          "p95_ms": 22442.5
+        }
+      ],
+      "by_symbol": [
+        {
+          "avg_ms": 17674.5,
+          "calls": 2,
+          "duration_count": 2,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 24165.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 17674.5,
+          "p95_ms": 23515.95,
+          "ticker": "AVGO"
+        },
+        {
+          "avg_ms": 9873.5,
+          "calls": 2,
+          "duration_count": 2,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 10389.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 9873.5,
+          "p95_ms": 10337.45,
+          "ticker": "EL"
+        },
+        {
+          "avg_ms": 25922.5,
+          "calls": 2,
+          "duration_count": 2,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 26125.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 25922.5,
+          "p95_ms": 26104.75,
+          "ticker": "BBY"
+        },
+        {
+          "avg_ms": 11160.0,
+          "calls": 2,
+          "duration_count": 2,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 11843.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 11160.0,
+          "p95_ms": 11774.7,
+          "ticker": "HPE"
+        },
+        {
+          "avg_ms": 26010.0,
+          "calls": 1,
+          "duration_count": 1,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 26010.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 26010.0,
+          "p95_ms": 26010.0,
+          "ticker": "MSFT"
+        },
+        {
+          "avg_ms": 21158.0,
+          "calls": 1,
+          "duration_count": 1,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 21158.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 21158.0,
+          "p95_ms": 21158.0,
+          "ticker": "RBRK"
+        },
+        {
+          "avg_ms": 23399.0,
+          "calls": 1,
+          "duration_count": 1,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 23399.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 23399.0,
+          "p95_ms": 23399.0,
+          "ticker": "SOFI"
+        },
+        {
+          "avg_ms": 12610.0,
+          "calls": 1,
+          "duration_count": 1,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 12610.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 12610.0,
+          "p95_ms": 12610.0,
+          "ticker": "HPQ"
+        }
+      ],
+      "slowest": [
+        {
+          "analyst_type": "",
+          "date": "2026-06-01",
+          "decision": "SELL",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 26125,
+          "market": "US",
+          "review_reason": "SELL only if this automatic sell signal is still valid after fresh review. Retur",
+          "source": "hold_advisor_decision",
+          "ticker": "BBY"
+        },
+        {
+          "analyst_type": "",
+          "date": "2026-06-01",
+          "decision": "SELL",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 26010,
+          "market": "US",
+          "review_reason": "SELL only if this PathB automatic sell signal remains valid after fresh review. ",
+          "source": "hold_advisor_decision",
+          "ticker": "MSFT"
+        },
+        {
+          "analyst_type": "",
+          "date": "2026-06-01",
+          "decision": "SELL",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_ms": 25720,
+          "market": "US",
+          "review_reason": "HOLD unless risk/reward has deteriorated or thesis is invalid.",
+          "source": "hold_advisor_decision",
+          "ticker": "BBY"
+        },
+        {
+          "analyst_type": "",
+          "date": "2026-06-01",
+          "decision": "SELL",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 24165,
+          "market": "US",
+          "review_reason": "SELL only if this PathB automatic sell signal remains valid after fresh review. ",
+          "source": "hold_advisor_decision",
+          "ticker": "AVGO"
+        },
+        {
+          "analyst_type": "",
+          "date": "2026-06-01",
+          "decision": "SELL",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 23399,
+          "market": "US",
+          "review_reason": "This profit-protection sell is reviewable. SELL if giveback risk now outweighs r",
+          "source": "hold_advisor_decision",
+          "ticker": "SOFI"
+        },
+        {
+          "analyst_type": "",
+          "date": "2026-06-01",
+          "decision": "SELL",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 21158,
+          "market": "US",
+          "review_reason": "SELL only if this PathB automatic sell signal remains valid after fresh review. ",
+          "source": "hold_advisor_decision",
+          "ticker": "RBRK"
+        },
+        {
+          "analyst_type": "",
+          "date": "2026-06-01",
+          "decision": "HOLD",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_ms": 12610,
+          "market": "US",
+          "review_reason": "HOLD unless risk/reward has deteriorated or thesis is invalid.",
+          "source": "hold_advisor_decision",
+          "ticker": "HPQ"
+        },
+        {
+          "analyst_type": "",
+          "date": "2026-06-01",
+          "decision": "HOLD",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_ms": 11843,
+          "market": "US",
+          "review_reason": "This PathB position has open profit. Prefer HOLD only with explicit protective_s",
+          "source": "hold_advisor_decision",
+          "ticker": "HPE"
+        },
+        {
+          "analyst_type": "",
+          "date": "2026-06-01",
+          "decision": "HOLD",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_ms": 11184,
+          "market": "US",
+          "review_reason": "This PathB position has open profit. Prefer HOLD only with explicit protective_s",
+          "source": "hold_advisor_decision",
+          "ticker": "AVGO"
+        },
+        {
+          "analyst_type": "",
+          "date": "2026-06-01",
+          "decision": "HOLD",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_ms": 10477,
+          "market": "US",
+          "review_reason": "This PathB position has open profit. Prefer HOLD only with explicit protective_s",
+          "source": "hold_advisor_decision",
+          "ticker": "HPE"
+        },
+        {
+          "analyst_type": "",
+          "date": "2026-06-01",
+          "decision": "SELL",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_ms": 10389,
+          "market": "US",
+          "review_reason": "HOLD unless risk/reward has deteriorated or thesis is invalid.",
+          "source": "hold_advisor_decision",
+          "ticker": "EL"
+        },
+        {
+          "analyst_type": "",
+          "date": "2026-06-01",
+          "decision": "SELL",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 9358,
+          "market": "US",
+          "review_reason": "SELL only if this automatic sell signal is still valid after fresh review. Retur",
+          "source": "hold_advisor_decision",
+          "ticker": "EL"
+        }
+      ],
+      "summary": {
+        "avg_ms": 17703.167,
+        "calls": 12,
+        "duration_count": 12,
+        "input_tokens": 0,
+        "max_ms": 26125.0,
+        "missing_duration_count": 0,
+        "output_tokens": 0,
+        "p50_ms": 16884.0,
+        "p95_ms": 26061.75
+      }
+    },
+    "decision_votes": {
+      "by_analyst": [
+        {
+          "analyst_type": "bull",
+          "avg_ms": 11638.25,
+          "calls": 12,
+          "duration_count": 12,
+          "input_tokens": 0,
+          "max_ms": 13450.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 11723.0,
+          "p95_ms": 13319.1
+        },
+        {
+          "analyst_type": "bear",
+          "avg_ms": 11638.25,
+          "calls": 12,
+          "duration_count": 12,
+          "input_tokens": 0,
+          "max_ms": 13450.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 11723.0,
+          "p95_ms": 13319.1
+        },
+        {
+          "analyst_type": "neutral",
+          "avg_ms": 11638.25,
+          "calls": 12,
+          "duration_count": 12,
+          "input_tokens": 0,
+          "max_ms": 13450.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 11723.0,
+          "p95_ms": 13319.1
+        }
+      ],
+      "by_market_stage_analyst": [
+        {
+          "analyst_type": "bull",
+          "avg_ms": 11670.167,
+          "calls": 6,
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_count": 6,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 13450.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 11869.0,
+          "p95_ms": 13263.25
+        },
+        {
+          "analyst_type": "bear",
+          "avg_ms": 11670.167,
+          "calls": 6,
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_count": 6,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 13450.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 11869.0,
+          "p95_ms": 13263.25
+        },
+        {
+          "analyst_type": "neutral",
+          "avg_ms": 11670.167,
+          "calls": 6,
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_count": 6,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 13450.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 11869.0,
+          "p95_ms": 13263.25
+        },
+        {
+          "analyst_type": "bull",
+          "avg_ms": 11606.333,
+          "calls": 6,
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_count": 6,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 13212.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 11498.0,
+          "p95_ms": 13057.75
+        },
+        {
+          "analyst_type": "bear",
+          "avg_ms": 11606.333,
+          "calls": 6,
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_count": 6,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 13212.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 11498.0,
+          "p95_ms": 13057.75
+        },
+        {
+          "analyst_type": "neutral",
+          "avg_ms": 11606.333,
+          "calls": 6,
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_count": 6,
+          "input_tokens": 0,
+          "market": "US",
+          "max_ms": 13212.0,
+          "missing_duration_count": 0,
+          "output_tokens": 0,
+          "p50_ms": 11498.0,
+          "p95_ms": 13057.75
+        }
+      ],
+      "summary": {
+        "avg_ms": 11638.25,
+        "calls": 36,
+        "duration_count": 36,
+        "input_tokens": 0,
+        "max_ms": 13450.0,
+        "missing_duration_count": 0,
+        "output_tokens": 0,
+        "p50_ms": 11723.0,
+        "p95_ms": 13450.0
+      }
+    },
+    "generated_at": "2026-06-02T07:01:13+09:00",
+    "scope": {
+      "db_path": "E:\\code\\claudetrade\\data\\audit\\agent_call_events.db",
+      "decision_dir": "E:\\code\\claudetrade\\logs\\hold_advisor",
+      "end_date": "2026-06-01",
+      "market": "US",
+      "raw_dir": "E:\\code\\claudetrade\\logs\\raw_calls",
+      "single_call_source": "agent_call_events",
+      "source": "auto",
+      "start_date": "2026-06-01"
+    },
+    "single_calls": {
+      "by_analyst": [
+        {
+          "analyst_type": "triage",
+          "avg_ms": 11638.25,
+          "calls": 12,
+          "duration_count": 12,
+          "input_tokens": 14437,
+          "max_ms": 13450.0,
+          "missing_duration_count": 0,
+          "output_tokens": 6729,
+          "p50_ms": 11723.0,
+          "p95_ms": 13319.1
+        },
+        {
+          "analyst_type": "challenge",
+          "avg_ms": 12079.333,
+          "calls": 6,
+          "duration_count": 6,
+          "input_tokens": 7817,
+          "max_ms": 14472.0,
+          "missing_duration_count": 0,
+          "output_tokens": 3117,
+          "p50_ms": 11861.0,
+          "p95_ms": 14172.25
+        }
+      ],
+      "by_market": [
+        {
+          "avg_ms": 11785.278,
+          "calls": 18,
+          "duration_count": 18,
+          "input_tokens": 22254,
+          "market": "US",
+          "max_ms": 14472.0,
+          "missing_duration_count": 0,
+          "output_tokens": 9846,
+          "p50_ms": 11723.0,
+          "p95_ms": 13603.3
+        }
+      ],
+      "by_market_stage_analyst": [
+        {
+          "analyst_type": "triage",
+          "avg_ms": 11670.167,
+          "calls": 6,
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_count": 6,
+          "input_tokens": 7496,
+          "market": "US",
+          "max_ms": 13450.0,
+          "missing_duration_count": 0,
+          "output_tokens": 3378,
+          "p50_ms": 11869.0,
+          "p95_ms": 13263.25
+        },
+        {
+          "analyst_type": "triage",
+          "avg_ms": 11606.333,
+          "calls": 6,
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_count": 6,
+          "input_tokens": 6941,
+          "market": "US",
+          "max_ms": 13212.0,
+          "missing_duration_count": 0,
+          "output_tokens": 3351,
+          "p50_ms": 11498.0,
+          "p95_ms": 13057.75
+        },
+        {
+          "analyst_type": "challenge",
+          "avg_ms": 11999.2,
+          "calls": 5,
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_count": 5,
+          "input_tokens": 6584,
+          "market": "US",
+          "max_ms": 14472.0,
+          "missing_duration_count": 0,
+          "output_tokens": 2573,
+          "p50_ms": 11242.0,
+          "p95_ms": 14232.2
+        },
+        {
+          "analyst_type": "challenge",
+          "avg_ms": 12480.0,
+          "calls": 1,
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_count": 1,
+          "input_tokens": 1233,
+          "market": "US",
+          "max_ms": 12480.0,
+          "missing_duration_count": 0,
+          "output_tokens": 544,
+          "p50_ms": 12480.0,
+          "p95_ms": 12480.0
+        }
+      ],
+      "by_stage": [
+        {
+          "avg_ms": 11819.727,
+          "calls": 11,
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_count": 11,
+          "input_tokens": 14080,
+          "max_ms": 14472.0,
+          "missing_duration_count": 0,
+          "output_tokens": 5951,
+          "p50_ms": 11615.0,
+          "p95_ms": 13961.0
+        },
+        {
+          "avg_ms": 11731.143,
+          "calls": 7,
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_count": 7,
+          "input_tokens": 8174,
+          "max_ms": 13212.0,
+          "missing_duration_count": 0,
+          "output_tokens": 3895,
+          "p50_ms": 11831.0,
+          "p95_ms": 13026.9
+        }
+      ],
+      "slowest": [
+        {
+          "analyst_type": "challenge",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 14472,
+          "market": "US",
+          "review_reason": "SELL only if this automatic sell signal is still valid after fresh review. Retur",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "triage",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 13450,
+          "market": "US",
+          "review_reason": "SELL only if this PathB automatic sell signal remains valid after fresh review. ",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "challenge",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 13273,
+          "market": "US",
+          "review_reason": "SELL only if this PathB automatic sell signal remains valid after fresh review. ",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "triage",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_ms": 13212,
+          "market": "US",
+          "review_reason": "HOLD unless risk/reward has deteriorated or thesis is invalid.",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "triage",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 12703,
+          "market": "US",
+          "review_reason": "SELL only if this PathB automatic sell signal remains valid after fresh review. ",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "triage",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_ms": 12595,
+          "market": "US",
+          "review_reason": "HOLD unless risk/reward has deteriorated or thesis is invalid.",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "challenge",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_ms": 12480,
+          "market": "US",
+          "review_reason": "HOLD unless risk/reward has deteriorated or thesis is invalid.",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "triage",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 12123,
+          "market": "US",
+          "review_reason": "This profit-protection sell is reviewable. SELL if giveback risk now outweighs r",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "triage",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_ms": 11831,
+          "market": "US",
+          "review_reason": "This PathB position has open profit. Prefer HOLD only with explicit protective_s",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "triage",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 11615,
+          "market": "US",
+          "review_reason": "SELL only if this automatic sell signal is still valid after fresh review. Retur",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "challenge",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 11242,
+          "market": "US",
+          "review_reason": "This profit-protection sell is reviewable. SELL if giveback risk now outweighs r",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "triage",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_ms": 11165,
+          "market": "US",
+          "review_reason": "This PathB position has open profit. Prefer HOLD only with explicit protective_s",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "triage",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 10796,
+          "market": "US",
+          "review_reason": "SELL only if this PathB automatic sell signal remains valid after fresh review. ",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "challenge",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 10687,
+          "market": "US",
+          "review_reason": "SELL only if this PathB automatic sell signal remains valid after fresh review. ",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "triage",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_ms": 10465,
+          "market": "US",
+          "review_reason": "This PathB position has open profit. Prefer HOLD only with explicit protective_s",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "triage",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "INTRADAY_REVIEW",
+          "duration_ms": 10370,
+          "market": "US",
+          "review_reason": "HOLD unless risk/reward has deteriorated or thesis is invalid.",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "challenge",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 10322,
+          "market": "US",
+          "review_reason": "SELL only if this PathB automatic sell signal remains valid after fresh review. ",
+          "source": "agent_call_events",
+          "ticker": ""
+        },
+        {
+          "analyst_type": "triage",
+          "date": "2026-06-01",
+          "decision": "unknown",
+          "decision_stage": "AUTO_SELL_REVIEW",
+          "duration_ms": 9334,
+          "market": "US",
+          "review_reason": "SELL only if this automatic sell signal is still valid after fresh review. Retur",
+          "source": "agent_call_events",
+          "ticker": ""
+        }
+      ],
+      "summary": {
+        "avg_ms": 11785.278,
+        "calls": 18,
+        "duration_count": 18,
+        "input_tokens": 22254,
+        "max_ms": 14472.0,
+        "missing_duration_count": 0,
+        "output_tokens": 9846,
+        "p50_ms": 11723.0,
+        "p95_ms": 13603.3
+      }
+    }
+  },
+  "horizon_min": 60,
+  "kis_token_status": {
+    "available": true,
+    "checks": [
+      {
+        "data": {
+          "context": {
+            "app_key_fingerprint": "c11ee55f678f",
+            "base_url": "https://openapi.koreainvestment.com:9443",
+            "credential_mode": "primary",
+            "is_paper": false,
+            "market": "KR"
+          },
+          "expires_at": "2026-06-03T02:03:43.537449",
+          "issued_at": "2026-06-02T02:03:43.537449",
+          "minutes_left": 1142.5,
+          "path": "E:\\code\\claudetrade\\state\\live_kis_token.json"
+        },
+        "detail": "token expires_at=2026-06-03T02:03:43.537449, minutes_left=1142.5",
+        "name": "kis.token_expiry",
+        "status": "PASS"
+      },
+      {
+        "data": {
+          "helper": true,
+          "minutes_left": 1142.5
+        },
+        "detail": "token valid and forced refresh helper is present",
+        "name": "kis.kr_token_refresh",
+        "status": "PASS"
+      },
+      {
+        "data": {
+          "helper": true,
+          "minutes_left": 1142.5
+        },
+        "detail": "token valid and forced refresh helper is present",
+        "name": "kis.us_token_refresh",
+        "status": "PASS"
+      },
+      {
+        "data": {
+          "accepted_exception": true,
+          "operator_action": "none if live guardian smoke and broker-truth snapshots are passing",
+          "read_only_check": "run live guardian/smoke or KIS read-only precheck before live trading",
+          "reason": "network/order side effects intentionally avoided in default preflight",
+          "remediation_required": false
+        },
+        "detail": "default preflight avoids direct balance APIs; broker-truth snapshot and live smoke cover read-only balance checks",
+        "name": "kis.balance_probe",
+        "status": "WARN"
+      }
+    ]
+  },
+  "market": "US",
+  "mode": "live",
+  "pead_manual_review": {
+    "log_dir": "E:\\code\\claudetrade\\logs\\pead",
+    "manual_review_checklist": {},
+    "policy_change_allowed": false,
+    "promotion_gate_state": "blocked_manual_review",
+    "prompt_applied_count": 0,
+    "prompt_leak_candidates": [],
+    "prompt_surprise_enabled": false,
+    "required_trading_days": 5,
+    "shadow_rows": 829,
+    "state_found": true,
+    "state_path": "E:\\code\\claudetrade\\state\\pead_shadow_state.json",
+    "surprise_known_count": 207,
+    "trading_days_observed": 0
+  },
+  "report_paths": {
+    "json": "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2042_to_20260602_0700\\ops_report\\monitoring_ops_report_20260602_070113.json",
+    "md": "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2042_to_20260602_0700\\ops_report\\monitoring_ops_report_20260602_070113.md"
+  },
+  "session_date": "2026-06-01",
+  "v2_learning_gate": {
+    "available": true,
+    "db_path": "E:\\code\\claudetrade\\data\\ml\\decisions.db",
+    "last_synced_at": "2026-05-27T10:48:11+00:00",
+    "learning_allowed": 5,
+    "learning_excluded": 280,
+    "policy_change_allowed": false,
+    "rows_by_quality_grade": {
+      "CLEAN": 58,
+      "DIRTY": 2,
+      "LEGACY_UNKNOWN": 138,
+      "SUSPECT": 87
+    },
+    "top_quality_reasons": {
+      "CLOSED_WITHOUT_FILL": 2,
+      "FORWARD_NOT_MEASURED": 138,
+      "FORWARD_PENDING_DATA": 70,
+      "ORDER_UNKNOWN_UNRESOLVED": 24
+    }
+  }
+}

@@ -1,0 +1,10 @@
+﻿{
+    "pid":  24180,
+    "started_at":  "2026-05-29T00:35:49+09:00",
+    "end_at":  "2026-05-29T08:00:00+09:00",
+    "out_dir":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260529_0800",
+    "stdout":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260529_0800\\monitor_stdout.log",
+    "stderr":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260529_0800\\monitor_stderr.log",
+    "command":  "python tools/overnight_us_monitor.py --mode live --market US --session-date 2026-05-28 --end-at 2026-05-29T08:00:00+09:00 --interval-sec 60 --out-dir docs/reports/overnight_us_monitor_20260529_0800",
+    "read_only":  true
+}

@@ -1,0 +1,2478 @@
+{
+  "claude_usage_since_start": {
+    "by_label": {
+      "analyst_bear_r1": 11,
+      "analyst_bear_r2": 11,
+      "analyst_bull_r1": 11,
+      "analyst_bull_r2": 11,
+      "analyst_neutral_r1": 11,
+      "analyst_neutral_r2": 11,
+      "param_tuner": 3,
+      "select_tickers": 20,
+      "tune_120min": 2,
+      "tune_150min": 1,
+      "tune_180min": 1,
+      "tune_210min": 1,
+      "tune_240min": 1,
+      "tune_30min": 2,
+      "tune_60min": 2,
+      "tune_90min": 2
+    },
+    "by_model": {
+      "claude-sonnet-4-6": 101
+    },
+    "calls_since_start_observed_from_raw_files": 101,
+    "samples": [
+      {
+        "duration_ms": 18875,
+        "input_tokens": 12485,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1324,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_090653837697_36cdac2260.json",
+        "timestamp": "2026-06-02T09:06:53.837697"
+      },
+      {
+        "duration_ms": 6941,
+        "input_tokens": 5598,
+        "label": "analyst_bull_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 247,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r1_090936562837_3f35341deb.json",
+        "timestamp": "2026-06-02T09:09:36.562837"
+      },
+      {
+        "duration_ms": 7124,
+        "input_tokens": 5751,
+        "label": "analyst_bear_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 237,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r1_090945216944_4c8ce87383.json",
+        "timestamp": "2026-06-02T09:09:45.216944"
+      },
+      {
+        "duration_ms": 6118,
+        "input_tokens": 2603,
+        "label": "analyst_bear_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 270,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r2_091007784073_d37e8016e2.json",
+        "timestamp": "2026-06-02T09:10:07.784073"
+      },
+      {
+        "duration_ms": 5581,
+        "input_tokens": 2460,
+        "label": "analyst_bull_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 249,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r2_091000142688_3859f4eb5c.json",
+        "timestamp": "2026-06-02T09:10:00.142688"
+      },
+      {
+        "duration_ms": 6288,
+        "input_tokens": 5595,
+        "label": "analyst_neutral_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 214,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r1_090953032334_1b59193bca.json",
+        "timestamp": "2026-06-02T09:09:53.032334"
+      },
+      {
+        "duration_ms": 3826,
+        "input_tokens": 2452,
+        "label": "analyst_neutral_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 224,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r2_091013124792_2b1002dd29.json",
+        "timestamp": "2026-06-02T09:10:13.124792"
+      },
+      {
+        "duration_ms": 20418,
+        "input_tokens": 12470,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1472,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_091104415744_c55faca3a8.json",
+        "timestamp": "2026-06-02T09:11:04.415744"
+      },
+      {
+        "duration_ms": 22445,
+        "input_tokens": 12568,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1520,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_091624216716_6adb9870b2.json",
+        "timestamp": "2026-06-02T09:16:24.216716"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1701,
+        "label": "tune_30min",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 346,
+        "path": "logs\\raw_calls\\20260602_KR_tune_30min_091637431450_b8dee3c2a6.json",
+        "timestamp": "2026-06-02T09:16:37.431450"
+      },
+      {
+        "duration_ms": 7094,
+        "input_tokens": 5751,
+        "label": "analyst_bear_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 234,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r1_092506238566_129a817234.json",
+        "timestamp": "2026-06-02T09:25:06.238566"
+      },
+      {
+        "duration_ms": 6546,
+        "input_tokens": 5598,
+        "label": "analyst_bull_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 221,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r1_092457615995_f37a80f532.json",
+        "timestamp": "2026-06-02T09:24:57.615995"
+      },
+      {
+        "duration_ms": 4638,
+        "input_tokens": 2587,
+        "label": "analyst_bear_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 278,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r2_092527405531_9d4de2102d.json",
+        "timestamp": "2026-06-02T09:25:27.405531"
+      },
+      {
+        "duration_ms": 5241,
+        "input_tokens": 2444,
+        "label": "analyst_bull_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 258,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r2_092521243716_318958c5f6.json",
+        "timestamp": "2026-06-02T09:25:21.243716"
+      },
+      {
+        "duration_ms": 6714,
+        "input_tokens": 5595,
+        "label": "analyst_neutral_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 226,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r1_092514472880_96ab98cfc0.json",
+        "timestamp": "2026-06-02T09:25:14.472880"
+      },
+      {
+        "duration_ms": 6218,
+        "input_tokens": 2436,
+        "label": "analyst_neutral_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 278,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r2_092535143627_d01fe07a4b.json",
+        "timestamp": "2026-06-02T09:25:35.143627"
+      },
+      {
+        "duration_ms": 18520,
+        "input_tokens": 12593,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1346,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_092620593247_c0272b27fe.json",
+        "timestamp": "2026-06-02T09:26:20.593247"
+      },
+      {
+        "duration_ms": 7874,
+        "input_tokens": 5751,
+        "label": "analyst_bear_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 260,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r1_094415339041_5380fba70b.json",
+        "timestamp": "2026-06-02T09:44:15.339041"
+      },
+      {
+        "duration_ms": 4657,
+        "input_tokens": 2629,
+        "label": "analyst_bear_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 283,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r2_094436018064_1acdd50a56.json",
+        "timestamp": "2026-06-02T09:44:36.018064"
+      },
+      {
+        "duration_ms": 8145,
+        "input_tokens": 5598,
+        "label": "analyst_bull_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 268,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r1_094405945163_4947fcde04.json",
+        "timestamp": "2026-06-02T09:44:05.945163"
+      },
+      {
+        "duration_ms": 5436,
+        "input_tokens": 2486,
+        "label": "analyst_bull_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 268,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r2_094429838145_bb8bc8c381.json",
+        "timestamp": "2026-06-02T09:44:29.838145"
+      },
+      {
+        "duration_ms": 6002,
+        "input_tokens": 5595,
+        "label": "analyst_neutral_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 195,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r1_094422871496_af04abde0c.json",
+        "timestamp": "2026-06-02T09:44:22.871496"
+      },
+      {
+        "duration_ms": 4785,
+        "input_tokens": 2478,
+        "label": "analyst_neutral_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 251,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r2_094442323568_b3ee239b55.json",
+        "timestamp": "2026-06-02T09:44:42.323568"
+      },
+      {
+        "duration_ms": 19455,
+        "input_tokens": 12847,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1389,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_094530259544_5c2555d1db.json",
+        "timestamp": "2026-06-02T09:45:30.259544"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1736,
+        "label": "tune_60min",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 349,
+        "path": "logs\\raw_calls\\20260602_KR_tune_60min_094651632205_2596d06dc1.json",
+        "timestamp": "2026-06-02T09:46:51.632205"
+      },
+      {
+        "duration_ms": 7162,
+        "input_tokens": 5751,
+        "label": "analyst_bear_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 255,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r1_100002746812_cf04451982.json",
+        "timestamp": "2026-06-02T10:00:02.746812"
+      },
+      {
+        "duration_ms": 6190,
+        "input_tokens": 2654,
+        "label": "analyst_bear_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 283,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r2_100025939663_fb7a8dc203.json",
+        "timestamp": "2026-06-02T10:00:25.939663"
+      },
+      {
+        "duration_ms": 8043,
+        "input_tokens": 5598,
+        "label": "analyst_bull_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 300,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r1_095954056537_8d2ce30680.json",
+        "timestamp": "2026-06-02T09:59:54.056537"
+      },
+      {
+        "duration_ms": 5908,
+        "input_tokens": 2511,
+        "label": "analyst_bull_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 276,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r2_100018227620_d3324c31db.json",
+        "timestamp": "2026-06-02T10:00:18.227620"
+      },
+      {
+        "duration_ms": 6507,
+        "input_tokens": 5595,
+        "label": "analyst_neutral_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 193,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r1_100010783225_67324bcfb4.json",
+        "timestamp": "2026-06-02T10:00:10.783225"
+      },
+      {
+        "duration_ms": 5118,
+        "input_tokens": 2503,
+        "label": "analyst_neutral_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 226,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r2_100032577571_01be446b8e.json",
+        "timestamp": "2026-06-02T10:00:32.577571"
+      },
+      {
+        "duration_ms": 21936,
+        "input_tokens": 12787,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1478,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_100123965391_5397083287.json",
+        "timestamp": "2026-06-02T10:01:23.965391"
+      },
+      {
+        "duration_ms": 29055,
+        "input_tokens": 12777,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1746,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_101725777210_ae2ff5681b.json",
+        "timestamp": "2026-06-02T10:17:25.777210"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1744,
+        "label": "tune_90min",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 285,
+        "path": "logs\\raw_calls\\20260602_KR_tune_90min_101739219131_f14c341b33.json",
+        "timestamp": "2026-06-02T10:17:39.219131"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1742,
+        "label": "tune_120min",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 271,
+        "path": "logs\\raw_calls\\20260602_KR_tune_120min_104803251704_da403d5062.json",
+        "timestamp": "2026-06-02T10:48:03.251704"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1631,
+        "label": "param_tuner",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 697,
+        "path": "logs\\raw_calls\\20260602_KR_param_tuner_104901365420_15365d9235.json",
+        "timestamp": "2026-06-02T10:49:01.365420"
+      },
+      {
+        "duration_ms": 19172,
+        "input_tokens": 12684,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1461,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_104850829936_713dbb2296.json",
+        "timestamp": "2026-06-02T10:48:50.829936"
+      },
+      {
+        "duration_ms": 21153,
+        "input_tokens": 12728,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1427,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_111822399760_f410a3d205.json",
+        "timestamp": "2026-06-02T11:18:22.399760"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1740,
+        "label": "tune_150min",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 355,
+        "path": "logs\\raw_calls\\20260602_KR_tune_150min_111913859587_a4d40bc792.json",
+        "timestamp": "2026-06-02T11:19:13.859587"
+      },
+      {
+        "duration_ms": 11031,
+        "input_tokens": 5749,
+        "label": "analyst_bear_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 227,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r1_114954138655_170c6d1afa.json",
+        "timestamp": "2026-06-02T11:49:54.138655"
+      },
+      {
+        "duration_ms": 7678,
+        "input_tokens": 5596,
+        "label": "analyst_bull_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 241,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r1_114941578156_7f8405aa60.json",
+        "timestamp": "2026-06-02T11:49:41.578156"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1742,
+        "label": "tune_180min",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 316,
+        "path": "logs\\raw_calls\\20260602_KR_tune_180min_114927163773_6a996cb2d2.json",
+        "timestamp": "2026-06-02T11:49:27.163773"
+      },
+      {
+        "duration_ms": 6011,
+        "input_tokens": 2579,
+        "label": "analyst_bear_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 281,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r2_115016374215_5d18b334ab.json",
+        "timestamp": "2026-06-02T11:50:16.374215"
+      },
+      {
+        "duration_ms": 5006,
+        "input_tokens": 2436,
+        "label": "analyst_bull_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 274,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r2_115008834774_aed83a029c.json",
+        "timestamp": "2026-06-02T11:50:08.834774"
+      },
+      {
+        "duration_ms": 6611,
+        "input_tokens": 5593,
+        "label": "analyst_neutral_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 205,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r1_115002279348_6f95d82479.json",
+        "timestamp": "2026-06-02T11:50:02.279348"
+      },
+      {
+        "duration_ms": 8735,
+        "input_tokens": 2428,
+        "label": "analyst_neutral_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 234,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r2_115026634742_3d4384d9b2.json",
+        "timestamp": "2026-06-02T11:50:26.634742"
+      },
+      {
+        "duration_ms": 17245,
+        "input_tokens": 12847,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1279,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_121915661909_1cf13ee728.json",
+        "timestamp": "2026-06-02T12:19:15.661909"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1739,
+        "label": "tune_210min",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 340,
+        "path": "logs\\raw_calls\\20260602_KR_tune_210min_122041784127_a1e699d339.json",
+        "timestamp": "2026-06-02T12:20:41.784127"
+      },
+      {
+        "duration_ms": 18214,
+        "input_tokens": 12633,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1303,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_125149901637_6af50ac869.json",
+        "timestamp": "2026-06-02T12:51:49.901637"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1739,
+        "label": "tune_240min",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 291,
+        "path": "logs\\raw_calls\\20260602_KR_tune_240min_125055355601_32496041af.json",
+        "timestamp": "2026-06-02T12:50:55.355601"
+      },
+      {
+        "duration_ms": 5879,
+        "input_tokens": 5204,
+        "label": "analyst_bear_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 210,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r1_131606582015_6107d72cda.json",
+        "timestamp": "2026-06-02T13:16:06.582015"
+      },
+      {
+        "duration_ms": 5495,
+        "input_tokens": 2942,
+        "label": "analyst_bear_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 254,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r2_131628135373_304baaeedf.json",
+        "timestamp": "2026-06-02T13:16:28.135373"
+      },
+      {
+        "duration_ms": 8157,
+        "input_tokens": 5051,
+        "label": "analyst_bull_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 258,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r1_131559166531_90eaf19da0.json",
+        "timestamp": "2026-06-02T13:15:59.166531"
+      },
+      {
+        "duration_ms": 5103,
+        "input_tokens": 2799,
+        "label": "analyst_bull_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 292,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r2_131621109636_da3da24f20.json",
+        "timestamp": "2026-06-02T13:16:21.109636"
+      },
+      {
+        "duration_ms": 6331,
+        "input_tokens": 5048,
+        "label": "analyst_neutral_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 210,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r1_131614460110_66fee6a9ae.json",
+        "timestamp": "2026-06-02T13:16:14.460110"
+      },
+      {
+        "duration_ms": 6751,
+        "input_tokens": 2791,
+        "label": "analyst_neutral_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 311,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r2_131636414479_181555f125.json",
+        "timestamp": "2026-06-02T13:16:36.414479"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1581,
+        "label": "param_tuner",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 603,
+        "path": "logs\\raw_calls\\20260602_KR_param_tuner_131741756640_89e5a05db2.json",
+        "timestamp": "2026-06-02T13:17:41.756640"
+      },
+      {
+        "duration_ms": 17965,
+        "input_tokens": 11959,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1423,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_131729870073_12ad248d87.json",
+        "timestamp": "2026-06-02T13:17:29.870073"
+      },
+      {
+        "duration_ms": 20689,
+        "input_tokens": 12395,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1493,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_134328337826_5d266c6a8d.json",
+        "timestamp": "2026-06-02T13:43:28.337826"
+      },
+      {
+        "duration_ms": 5748,
+        "input_tokens": 5535,
+        "label": "analyst_bear_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 212,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r1_134359546762_3ae4511218.json",
+        "timestamp": "2026-06-02T13:43:59.546762"
+      },
+      {
+        "duration_ms": 5666,
+        "input_tokens": 2609,
+        "label": "analyst_bear_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 266,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r2_134422731364_aa8f4ce11f.json",
+        "timestamp": "2026-06-02T13:44:22.731364"
+      },
+      {
+        "duration_ms": 7378,
+        "input_tokens": 5382,
+        "label": "analyst_bull_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 259,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r1_134352267641_a48312e927.json",
+        "timestamp": "2026-06-02T13:43:52.267641"
+      },
+      {
+        "duration_ms": 6861,
+        "input_tokens": 2466,
+        "label": "analyst_bull_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 278,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r2_134415541577_ec159eda50.json",
+        "timestamp": "2026-06-02T13:44:15.541577"
+      },
+      {
+        "duration_ms": 6057,
+        "input_tokens": 5379,
+        "label": "analyst_neutral_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 198,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r1_134407139306_9c1e798a5d.json",
+        "timestamp": "2026-06-02T13:44:07.139306"
+      },
+      {
+        "duration_ms": 5628,
+        "input_tokens": 2458,
+        "label": "analyst_neutral_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 252,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r2_134429883153_ba3ce225df.json",
+        "timestamp": "2026-06-02T13:44:29.883153"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1585,
+        "label": "tune_30min",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 351,
+        "path": "logs\\raw_calls\\20260602_KR_tune_30min_134340195613_e1f38b636b.json",
+        "timestamp": "2026-06-02T13:43:40.195613"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1579,
+        "label": "tune_60min",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 250,
+        "path": "logs\\raw_calls\\20260602_KR_tune_60min_141441917817_0a48818816.json",
+        "timestamp": "2026-06-02T14:14:41.917817"
+      },
+      {
+        "duration_ms": 20408,
+        "input_tokens": 11388,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1531,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_144423451927_724579db4f.json",
+        "timestamp": "2026-06-02T14:44:23.451927"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1579,
+        "label": "tune_90min",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 299,
+        "path": "logs\\raw_calls\\20260602_KR_tune_90min_144452070288_deacec8b3f.json",
+        "timestamp": "2026-06-02T14:44:52.070288"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1579,
+        "label": "tune_120min",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 321,
+        "path": "logs\\raw_calls\\20260602_KR_tune_120min_151501947032_ae82ac6cd1.json",
+        "timestamp": "2026-06-02T15:15:01.947032"
+      },
+      {
+        "duration_ms": 24570,
+        "input_tokens": 12084,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1650,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_151558621195_7e76aa3463.json",
+        "timestamp": "2026-06-02T15:15:58.621195"
+      },
+      {
+        "duration_ms": 9764,
+        "input_tokens": 5949,
+        "label": "analyst_bear_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 360,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r1_152523865445_22ab1f91a0.json",
+        "timestamp": "2026-06-02T15:25:23.865445"
+      },
+      {
+        "duration_ms": 8404,
+        "input_tokens": 5658,
+        "label": "analyst_bull_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 283,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r1_152512572895_c6507fa909.json",
+        "timestamp": "2026-06-02T15:25:12.572895"
+      },
+      {
+        "duration_ms": 7010,
+        "input_tokens": 5779,
+        "label": "analyst_neutral_r1",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 239,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r1_152532403509_5c83926378.json",
+        "timestamp": "2026-06-02T15:25:32.403509"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1581,
+        "label": "param_tuner",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 617,
+        "path": "logs\\raw_calls\\20260602_KR_param_tuner_152458711505_e81bb7bce9.json",
+        "timestamp": "2026-06-02T15:24:58.711505"
+      },
+      {
+        "duration_ms": 17743,
+        "input_tokens": 12000,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1404,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_152447294901_a07ad5a109.json",
+        "timestamp": "2026-06-02T15:24:47.294901"
+      },
+      {
+        "duration_ms": 8665,
+        "input_tokens": 3034,
+        "label": "analyst_bear_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 470,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bear_r2_152554178316_21d4b1f049.json",
+        "timestamp": "2026-06-02T15:25:54.178316"
+      },
+      {
+        "duration_ms": 10062,
+        "input_tokens": 2796,
+        "label": "analyst_bull_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 458,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_bull_r2_152543996526_1d269ac1c1.json",
+        "timestamp": "2026-06-02T15:25:43.996526"
+      },
+      {
+        "duration_ms": 9408,
+        "input_tokens": 2912,
+        "label": "analyst_neutral_r2",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 436,
+        "path": "logs\\raw_calls\\20260602_KR_analyst_neutral_r2_152605117049_c1f89a788f.json",
+        "timestamp": "2026-06-02T15:26:05.117049"
+      },
+      {
+        "duration_ms": 17974,
+        "input_tokens": 12176,
+        "label": "select_tickers",
+        "market": "KR",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1426,
+        "path": "logs\\raw_calls\\20260602_KR_select_tickers_152658235378_8c899d366b.json",
+        "timestamp": "2026-06-02T15:26:58.235378"
+      }
+    ],
+    "tokens_observed_from_raw_files": {
+      "duration_ms": 894223,
+      "input_tokens": 546345,
+      "output_tokens": 53706
+    }
+  },
+  "decision_events_since_start": [],
+  "end_at": "2026-06-02T15:30:00+09:00",
+  "generated_at": "2026-06-02T15:30:03+09:00",
+  "hold_advisor_cost_observation": {
+    "by_label": {},
+    "cache_enabled": false,
+    "observed_calls": 0,
+    "safety_critical_cache_bypass": [
+      "hard_stop",
+      "broker_truth_untrusted",
+      "stale_or_error_truth",
+      "order_failure",
+      "pathb_auto_sell_hold_cooldown_guard"
+    ],
+    "saved_calls_estimate": 0
+  },
+  "latest_snapshot": {
+    "api_usage_delta_since_start": {
+      "calls": 101,
+      "cost_usd": 2.444625,
+      "input_tokens": 546345,
+      "output_tokens": 53706
+    },
+    "api_usage_today": {
+      "by_model": {
+        "claude-sonnet-4-6": {
+          "calls": 161,
+          "cost_usd": 3.709317,
+          "input_tokens": 728064,
+          "output_tokens": 101675
+        }
+      },
+      "calls": 161,
+      "cost_usd": 3.709317,
+      "input_tokens": 728064,
+      "output_tokens": 101675
+    },
+    "at": "2026-06-02T15:30:00+09:00",
+    "broker_truth": {
+      "error": "",
+      "last_attempt_at": "2026-06-02T06:28:50+00:00",
+      "last_success_at": "2026-06-02T06:28:51+00:00",
+      "missing": false,
+      "open_orders": [],
+      "open_orders_count": 0,
+      "positions": [],
+      "positions_count": 0,
+      "stale": true,
+      "today_fills": [],
+      "today_fills_count": 0,
+      "ttl_sec": 60
+    },
+    "data_collection": {
+      "expected_times": {
+        "preopen_news_due_at": "2026-06-02T08:40:00+09:00",
+        "regular_open_at": "2026-06-02T09:00:00+09:00"
+      },
+      "issues": [],
+      "market": "KR",
+      "news": {
+        "digest": {
+          "age_min": 134.17,
+          "bytes": 24669,
+          "corp_news_tickers": 0,
+          "exists": true,
+          "last_write_at": "2026-06-02T13:15:50+09:00",
+          "market_news_count": 0,
+          "parse_status": "ok",
+          "path": "data\\daily_digest\\2026-06-02_KR.json",
+          "top_news_count": 5
+        },
+        "preopen": {
+          "age_min": 398.14,
+          "bytes": 33733,
+          "corp_news_tickers": 60,
+          "corp_news_total": 40,
+          "coverage_ratio": 0.15,
+          "covered_ticker_count": 9,
+          "exists": true,
+          "last_write_at": "2026-06-02T08:51:52+09:00",
+          "market_news_count": 3,
+          "parse_status": "ok",
+          "path": "data\\news\\kr\\2026-06-02_preopen.json",
+          "preopen_snapshot": true,
+          "snapshot_written_at": "2026-06-02T08:51:52+09:00"
+        },
+        "regular": {
+          "age_min": 342.93,
+          "bytes": 28352,
+          "corp_news_tickers": 6,
+          "corp_news_total": 44,
+          "coverage_ratio": 1.0,
+          "covered_ticker_count": 6,
+          "exists": true,
+          "last_write_at": "2026-06-02T09:47:05+09:00",
+          "market_news_count": 4,
+          "parse_status": "ok",
+          "path": "data\\news\\kr\\2026-06-02.json",
+          "preopen_snapshot": false,
+          "snapshot_written_at": ""
+        }
+      },
+      "preopen": {
+        "candidates": {
+          "age_min": 402.1,
+          "bytes": 436481,
+          "exists": true,
+          "last_write_at": "2026-06-02T08:47:54+09:00",
+          "line_count": 220,
+          "path": "logs\\preopen\\20260602_KR_candidates.jsonl"
+        },
+        "outcome": {
+          "age_min": 29.84,
+          "bytes": 3935663,
+          "exists": true,
+          "last_write_at": "2026-06-02T15:00:09+09:00",
+          "line_count": 1320,
+          "path": "logs\\preopen\\20260602_KR_outcome.jsonl"
+        },
+        "rank_diff": {
+          "age_min": 396.28,
+          "bytes": 39429,
+          "exists": true,
+          "last_write_at": "2026-06-02T08:53:43+09:00",
+          "line_count": 60,
+          "path": "logs\\preopen\\20260602_KR_rank_diff.jsonl"
+        },
+        "scheduler": {
+          "age_min": 0.36,
+          "bytes": 251341,
+          "exists": true,
+          "last_write_at": "2026-06-02T15:29:38+09:00",
+          "line_count": 1879,
+          "path": "logs\\preopen\\20260602_scheduler_live.jsonl"
+        },
+        "screener_projected_volume": {
+          "age_min": null,
+          "bytes": 0,
+          "exists": false,
+          "last_write_at": "",
+          "path": "logs\\screener\\20260602_KR_projected_dollar_volume_shadow.jsonl"
+        }
+      },
+      "price": {
+        "daily": {
+          "count": 804,
+          "dir": "data\\price\\kr",
+          "latest": [
+            {
+              "age_min": 158.88,
+              "bytes": 13014,
+              "exists": true,
+              "last_write_at": "2026-06-02T12:51:07+09:00",
+              "path": "data\\price\\kr\\kr_001520.csv"
+            },
+            {
+              "age_min": 281.81,
+              "bytes": 14305,
+              "exists": true,
+              "last_write_at": "2026-06-02T10:48:12+09:00",
+              "path": "data\\price\\kr\\kr_082800.csv"
+            },
+            {
+              "age_min": 313.53,
+              "bytes": 17676,
+              "exists": true,
+              "last_write_at": "2026-06-02T10:16:29+09:00",
+              "path": "data\\price\\kr\\kr_090150.csv"
+            },
+            {
+              "age_min": 313.53,
+              "bytes": 17803,
+              "exists": true,
+              "last_write_at": "2026-06-02T10:16:28+09:00",
+              "path": "data\\price\\kr\\kr_204210.csv"
+            },
+            {
+              "age_min": 329.4,
+              "bytes": 19463,
+              "exists": true,
+              "last_write_at": "2026-06-02T10:00:36+09:00",
+              "path": "data\\price\\kr\\kr_021080.csv"
+            },
+            {
+              "age_min": 343.05,
+              "bytes": 14404,
+              "exists": true,
+              "last_write_at": "2026-06-02T09:46:58+09:00",
+              "path": "data\\price\\kr\\kr_900300.csv"
+            },
+            {
+              "age_min": 343.14,
+              "bytes": 14638,
+              "exists": true,
+              "last_write_at": "2026-06-02T09:46:52+09:00",
+              "path": "data\\price\\kr\\kr_900100.csv"
+            },
+            {
+              "age_min": 343.23,
+              "bytes": 16594,
+              "exists": true,
+              "last_write_at": "2026-06-02T09:46:47+09:00",
+              "path": "data\\price\\kr\\kr_498400.csv"
+            },
+            {
+              "age_min": 343.41,
+              "bytes": 23906,
+              "exists": true,
+              "last_write_at": "2026-06-02T09:46:36+09:00",
+              "path": "data\\price\\kr\\kr_488770.csv"
+            },
+            {
+              "age_min": 343.57,
+              "bytes": 15288,
+              "exists": true,
+              "last_write_at": "2026-06-02T09:46:26+09:00",
+              "path": "data\\price\\kr\\kr_481850.csv"
+            },
+            {
+              "age_min": 343.67,
+              "bytes": 13845,
+              "exists": true,
+              "last_write_at": "2026-06-02T09:46:20+09:00",
+              "path": "data\\price\\kr\\kr_480370.csv"
+            },
+            {
+              "age_min": 343.76,
+              "bytes": 15283,
+              "exists": true,
+              "last_write_at": "2026-06-02T09:46:15+09:00",
+              "path": "data\\price\\kr\\kr_478560.csv"
+            }
+          ],
+          "pattern": "kr_*.csv"
+        },
+        "minute": {
+          "count": 127,
+          "dir": "data\\price\\minute\\kr",
+          "latest": [
+            {
+              "age_min": 0.84,
+              "bytes": 39174,
+              "exists": true,
+              "last_write_at": "2026-06-02T15:29:10+09:00",
+              "path": "data\\price\\minute\\kr\\kr_454910.csv"
+            },
+            {
+              "age_min": 0.85,
+              "bytes": 107864,
+              "exists": true,
+              "last_write_at": "2026-06-02T15:29:09+09:00",
+              "path": "data\\price\\minute\\kr\\kr_396300.csv"
+            },
+            {
+              "age_min": 0.86,
+              "bytes": 138528,
+              "exists": true,
+              "last_write_at": "2026-06-02T15:29:09+09:00",
+              "path": "data\\price\\minute\\kr\\kr_357880.csv"
+            },
+            {
+              "age_min": 0.87,
+              "bytes": 35574,
+              "exists": true,
+              "last_write_at": "2026-06-02T15:29:08+09:00",
+              "path": "data\\price\\minute\\kr\\kr_355390.csv"
+            },
+            {
+              "age_min": 0.88,
+              "bytes": 150303,
+              "exists": true,
+              "last_write_at": "2026-06-02T15:29:07+09:00",
+              "path": "data\\price\\minute\\kr\\kr_332570.csv"
+            },
+            {
+              "age_min": 0.89,
+              "bytes": 91739,
+              "exists": true,
+              "last_write_at": "2026-06-02T15:29:07+09:00",
+              "path": "data\\price\\minute\\kr\\kr_290690.csv"
+            },
+            {
+              "age_min": 0.9,
+              "bytes": 18621,
+              "exists": true,
+              "last_write_at": "2026-06-02T15:29:06+09:00",
+              "path": "data\\price\\minute\\kr\\kr_290660.csv"
+            },
+            {
+              "age_min": 0.91,
+              "bytes": 6500,
+              "exists": true,
+              "last_write_at": "2026-06-02T15:29:06+09:00",
+              "path": "data\\price\\minute\\kr\\kr_267320.csv"
+            },
+            {
+              "age_min": 0.92,
+              "bytes": 128023,
+              "exists": true,
+              "last_write_at": "2026-06-02T15:29:05+09:00",
+              "path": "data\\price\\minute\\kr\\kr_261780.csv"
+            },
+            {
+              "age_min": 0.93,
+              "bytes": 102753,
+              "exists": true,
+              "last_write_at": "2026-06-02T15:29:04+09:00",
+              "path": "data\\price\\minute\\kr\\kr_246690.csv"
+            },
+            {
+              "age_min": 0.94,
+              "bytes": 181967,
+              "exists": true,
+              "last_write_at": "2026-06-02T15:29:04+09:00",
+              "path": "data\\price\\minute\\kr\\kr_242040.csv"
+            },
+            {
+              "age_min": 0.95,
+              "bytes": 69494,
+              "exists": true,
+              "last_write_at": "2026-06-02T15:29:03+09:00",
+              "path": "data\\price\\minute\\kr\\kr_241520.csv"
+            }
+          ],
+          "pattern": "kr_*.csv"
+        }
+      },
+      "session_date": "2026-06-02"
+    },
+    "guardian": {
+      "alert": {
+        "fingerprint": "[{\"classification\": \"hard_fail\", \"detail\": \"previous-session active Path B rows=6\", \"kind\": \"finding\", \"name\": \"db.pathb_stale_active_runs\", \"status\": \"WARN\"}, {\"classification\": \"hard_fail\", \"detail\": \"KR snapshot stale\", \"kind\": \"finding\", \"name\": \"broker_truth.kr_stale_state\", \"status\": \"WARN\"}, {\"classification\": \"hard_fail\", \"detail\": \"US snapshot stale\", \"kind\": \"finding\", \"name\": \"broker_truth.us_stale_state\", \"status\": \"WARN\"}]",
+        "gate": "BLOCK_START",
+        "updated_at": "2026-06-02T14:57:28+09:00"
+      },
+      "block_start_causes": [],
+      "counts": null,
+      "findings": [],
+      "gate": null,
+      "heartbeat": {
+        "healthy": true,
+        "last_error": "",
+        "last_error_at": "",
+        "last_started_at": "2026-06-02T15:29:19+09:00",
+        "last_success_at": "",
+        "last_tick_at": "2026-06-02T15:29:19+09:00",
+        "next_expected_at": "",
+        "pid": 60976,
+        "process": "live_guardian",
+        "report_path": "",
+        "status": "running"
+      },
+      "ok": null
+    },
+    "open_positions": [],
+    "open_positions_count": 0,
+    "order_unknown_event_count_us_total": 14,
+    "pathb_remediation": {
+      "apply_eligible_items": 0,
+      "available": true,
+      "current_order_unknown_count": 0,
+      "current_session_rows": [],
+      "dry_run": true,
+      "previous_order_unknown_count": 3,
+      "previous_session_cleanup_candidates": [
+        {
+          "apply_block_reason": "broker_truth_not_fresh_trusted",
+          "apply_eligible": false,
+          "broker_truth_evidence": {
+            "evidence_state": "no_broker_exposure_found",
+            "fill_sides": [],
+            "fresh": null,
+            "market_present": true,
+            "open_order_count": 0,
+            "open_remaining_qty": 0,
+            "position_count": 0,
+            "position_qty": 0,
+            "snapshot_error": "",
+            "snapshot_generated_at": "2026-06-02T06:28:52+00:00",
+            "snapshot_loaded": true,
+            "snapshot_path": "E:\\code\\claudetrade\\state\\live_broker_truth_snapshot.json",
+            "ticker": "IBM",
+            "today_fill_count": 0,
+            "trusted": null
+          },
+          "category": "previous_order_unknown",
+          "do_not_start": true,
+          "do_not_start_reason": "requires_operator_broker_reconcile",
+          "market": "US",
+          "path_run_id": "path_20260601_US_IBM_claude_price_c319e396",
+          "production_write": false,
+          "recommended_action": "broker_reconcile_then_append_audited_resolution",
+          "runtime_mode": "live",
+          "session_date": "2026-06-01",
+          "source_of_truth_required": [
+            "broker_fills",
+            "broker_open_orders",
+            "broker_positions"
+          ],
+          "status": "ORDER_UNKNOWN",
+          "ticker": "IBM"
+        },
+        {
+          "apply_block_reason": "broker_truth_not_fresh_trusted",
+          "apply_eligible": false,
+          "broker_truth_evidence": {
+            "evidence_state": "no_broker_exposure_found",
+            "fill_sides": [],
+            "fresh": null,
+            "market_present": true,
+            "open_order_count": 0,
+            "open_remaining_qty": 0,
+            "position_count": 0,
+            "position_qty": 0,
+            "snapshot_error": "",
+            "snapshot_generated_at": "2026-06-02T06:28:52+00:00",
+            "snapshot_loaded": true,
+            "snapshot_path": "E:\\code\\claudetrade\\state\\live_broker_truth_snapshot.json",
+            "ticker": "HPE",
+            "today_fill_count": 0,
+            "trusted": null
+          },
+          "category": "previous_order_unknown",
+          "do_not_start": true,
+          "do_not_start_reason": "requires_operator_broker_reconcile",
+          "market": "US",
+          "path_run_id": "path_20260601_US_HPE_claude_price_ff0d05f4",
+          "production_write": false,
+          "recommended_action": "broker_reconcile_then_append_audited_resolution",
+          "runtime_mode": "live",
+          "session_date": "2026-06-01",
+          "source_of_truth_required": [
+            "broker_fills",
+            "broker_open_orders",
+            "broker_positions"
+          ],
+          "status": "ORDER_UNKNOWN",
+          "ticker": "HPE"
+        },
+        {
+          "apply_block_reason": "broker_truth_not_fresh_trusted",
+          "apply_eligible": false,
+          "broker_truth_evidence": {
+            "evidence_state": "no_broker_exposure_found",
+            "fill_sides": [],
+            "fresh": null,
+            "market_present": true,
+            "open_order_count": 0,
+            "open_remaining_qty": 0,
+            "position_count": 0,
+            "position_qty": 0,
+            "snapshot_error": "",
+            "snapshot_generated_at": "2026-06-02T06:28:52+00:00",
+            "snapshot_loaded": true,
+            "snapshot_path": "E:\\code\\claudetrade\\state\\live_broker_truth_snapshot.json",
+            "ticker": "CRWV",
+            "today_fill_count": 0,
+            "trusted": null
+          },
+          "category": "previous_order_unknown",
+          "do_not_start": true,
+          "do_not_start_reason": "requires_operator_broker_reconcile",
+          "market": "US",
+          "path_run_id": "path_20260601_US_CRWV_claude_price_167e1c76",
+          "production_write": false,
+          "recommended_action": "broker_reconcile_then_append_audited_resolution",
+          "runtime_mode": "live",
+          "session_date": "2026-06-01",
+          "source_of_truth_required": [
+            "broker_fills",
+            "broker_open_orders",
+            "broker_positions"
+          ],
+          "status": "ORDER_UNKNOWN",
+          "ticker": "CRWV"
+        },
+        {
+          "apply_block_reason": "broker_truth_not_fresh_trusted",
+          "apply_eligible": false,
+          "broker_truth_evidence": {
+            "evidence_state": "no_broker_exposure_found",
+            "fill_sides": [],
+            "fresh": null,
+            "market_present": true,
+            "open_order_count": 0,
+            "open_remaining_qty": 0,
+            "position_count": 0,
+            "position_qty": 0,
+            "snapshot_error": "",
+            "snapshot_generated_at": "2026-06-02T06:28:52+00:00",
+            "snapshot_loaded": true,
+            "snapshot_path": "E:\\code\\claudetrade\\state\\live_broker_truth_snapshot.json",
+            "ticker": "IBM",
+            "today_fill_count": 0,
+            "trusted": null
+          },
+          "category": "previous_session_active_pathb",
+          "do_not_start": true,
+          "do_not_start_reason": "requires_operator_broker_reconcile",
+          "market": "US",
+          "path_run_id": "path_20260601_US_IBM_claude_price_c319e396",
+          "production_write": false,
+          "recommended_action": "broker_reconcile_required",
+          "runtime_mode": "live",
+          "session_date": "2026-06-01",
+          "source_of_truth_required": [
+            "broker_fills",
+            "broker_open_orders",
+            "broker_positions"
+          ],
+          "status": "ORDER_UNKNOWN",
+          "ticker": "IBM"
+        },
+        {
+          "apply_block_reason": "broker_truth_not_fresh_trusted",
+          "apply_eligible": false,
+          "broker_truth_evidence": {
+            "evidence_state": "no_broker_exposure_found",
+            "fill_sides": [],
+            "fresh": null,
+            "market_present": true,
+            "open_order_count": 0,
+            "open_remaining_qty": 0,
+            "position_count": 0,
+            "position_qty": 0,
+            "snapshot_error": "",
+            "snapshot_generated_at": "2026-06-02T06:28:52+00:00",
+            "snapshot_loaded": true,
+            "snapshot_path": "E:\\code\\claudetrade\\state\\live_broker_truth_snapshot.json",
+            "ticker": "HPE",
+            "today_fill_count": 0,
+            "trusted": null
+          },
+          "category": "previous_session_active_pathb",
+          "do_not_start": true,
+          "do_not_start_reason": "requires_operator_broker_reconcile",
+          "market": "US",
+          "path_run_id": "path_20260601_US_HPE_claude_price_ff0d05f4",
+          "production_write": false,
+          "recommended_action": "broker_reconcile_required",
+          "runtime_mode": "live",
+          "session_date": "2026-06-01",
+          "source_of_truth_required": [
+            "broker_fills",
+            "broker_open_orders",
+            "broker_positions"
+          ],
+          "status": "ORDER_UNKNOWN",
+          "ticker": "HPE"
+        },
+        {
+          "apply_block_reason": "broker_truth_not_fresh_trusted",
+          "apply_eligible": false,
+          "broker_truth_evidence": {
+            "evidence_state": "no_broker_exposure_found",
+            "fill_sides": [],
+            "fresh": null,
+            "market_present": true,
+            "open_order_count": 0,
+            "open_remaining_qty": 0,
+            "position_count": 0,
+            "position_qty": 0,
+            "snapshot_error": "",
+            "snapshot_generated_at": "2026-06-02T06:28:52+00:00",
+            "snapshot_loaded": true,
+            "snapshot_path": "E:\\code\\claudetrade\\state\\live_broker_truth_snapshot.json",
+            "ticker": "CRWV",
+            "today_fill_count": 0,
+            "trusted": null
+          },
+          "category": "previous_session_active_pathb",
+          "do_not_start": true,
+          "do_not_start_reason": "requires_operator_broker_reconcile",
+          "market": "US",
+          "path_run_id": "path_20260601_US_CRWV_claude_price_167e1c76",
+          "production_write": false,
+          "recommended_action": "broker_reconcile_required",
+          "runtime_mode": "live",
+          "session_date": "2026-06-01",
+          "source_of_truth_required": [
+            "broker_fills",
+            "broker_open_orders",
+            "broker_positions"
+          ],
+          "status": "ORDER_UNKNOWN",
+          "ticker": "CRWV"
+        },
+        {
+          "apply_block_reason": "broker_truth_not_fresh_trusted",
+          "apply_eligible": false,
+          "broker_truth_evidence": {
+            "evidence_state": "broker_exposure_or_fill_found",
+            "fill_sides": [],
+            "fresh": null,
+            "market_present": true,
+            "open_order_count": 0,
+            "open_remaining_qty": 0,
+            "position_count": 1,
+            "position_qty": 18.0,
+            "snapshot_error": "",
+            "snapshot_generated_at": "2026-06-02T06:28:52+00:00",
+            "snapshot_loaded": true,
+            "snapshot_path": "E:\\code\\claudetrade\\state\\live_broker_truth_snapshot.json",
+            "ticker": "NOK",
+            "today_fill_count": 0,
+            "trusted": null
+          },
+          "category": "previous_session_active_pathb",
+          "do_not_start": true,
+          "do_not_start_reason": "broker_truth_has_position_order_or_fill",
+          "market": "US",
+          "path_run_id": "path_20260601_US_NOK_claude_price_b1e701a4",
+          "production_write": false,
+          "recommended_action": "verify_position_or_close_event_before_marking_resolved",
+          "runtime_mode": "live",
+          "session_date": "2026-06-01",
+          "source_of_truth_required": [
+            "broker_fills",
+            "broker_open_orders",
+            "broker_positions"
+          ],
+          "status": "FILLED",
+          "ticker": "NOK"
+        },
+        {
+          "apply_block_reason": "broker_truth_not_fresh_trusted",
+          "apply_eligible": false,
+          "broker_truth_evidence": {
+            "evidence_state": "broker_exposure_or_fill_found",
+            "fill_sides": [],
+            "fresh": null,
+            "market_present": true,
+            "open_order_count": 0,
+            "open_remaining_qty": 0,
+            "position_count": 1,
+            "position_qty": 1.0,
+            "snapshot_error": "",
+            "snapshot_generated_at": "2026-06-02T06:28:52+00:00",
+            "snapshot_loaded": true,
+            "snapshot_path": "E:\\code\\claudetrade\\state\\live_broker_truth_snapshot.json",
+            "ticker": "MRVL",
+            "today_fill_count": 0,
+            "trusted": null
+          },
+          "category": "previous_session_active_pathb",
+          "do_not_start": true,
+          "do_not_start_reason": "broker_truth_has_position_order_or_fill",
+          "market": "US",
+          "path_run_id": "path_20260601_US_MRVL_claude_price_2606ab17",
+          "production_write": false,
+          "recommended_action": "verify_position_or_close_event_before_marking_resolved",
+          "runtime_mode": "live",
+          "session_date": "2026-06-01",
+          "source_of_truth_required": [
+            "broker_fills",
+            "broker_open_orders",
+            "broker_positions"
+          ],
+          "status": "FILLED",
+          "ticker": "MRVL"
+        },
+        {
+          "apply_block_reason": "broker_truth_not_fresh_trusted",
+          "apply_eligible": false,
+          "broker_truth_evidence": {
+            "evidence_state": "no_broker_exposure_found",
+            "fill_sides": [],
+            "fresh": null,
+            "market_present": true,
+            "open_order_count": 0,
+            "open_remaining_qty": 0,
+            "position_count": 0,
+            "position_qty": 0,
+            "snapshot_error": "",
+            "snapshot_generated_at": "2026-06-02T06:28:52+00:00",
+            "snapshot_loaded": true,
+            "snapshot_path": "E:\\code\\claudetrade\\state\\live_broker_truth_snapshot.json",
+            "ticker": "EL",
+            "today_fill_count": 0,
+            "trusted": null
+          },
+          "category": "previous_session_active_pathb",
+          "do_not_start": true,
+          "do_not_start_reason": "requires_operator_broker_reconcile",
+          "market": "US",
+          "path_run_id": "path_20260526_US_EL_claude_price_1f8be6e8",
+          "production_write": false,
+          "recommended_action": "verify_position_or_close_event_before_marking_resolved",
+          "runtime_mode": "live",
+          "session_date": "2026-05-26",
+          "source_of_truth_required": [
+            "broker_fills",
+            "broker_open_orders",
+            "broker_positions"
+          ],
+          "status": "FILLED",
+          "ticker": "EL"
+        }
+      ],
+      "stale_active_count": 6,
+      "write_supported": false
+    },
+    "pending_sells": [],
+    "pid_state": [
+      {
+        "alive": true,
+        "name": "trading_bot",
+        "path": "E:\\code\\claudetrade\\state\\live_trading_bot.pid",
+        "pid": 50252,
+        "raw": {
+          "command": [
+            "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe",
+            "E:\\code\\claudetrade\\trading_bot.py",
+            "--live"
+          ],
+          "mode": "live",
+          "pid": 50252,
+          "started_at": "2026-06-02T15:23:36.869165+09:00"
+        }
+      },
+      {
+        "alive": true,
+        "name": "dashboard",
+        "path": "E:\\code\\claudetrade\\state\\dashboard_server.pid",
+        "pid": 58100,
+        "raw": {
+          "command": [
+            "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe",
+            "E:\\code\\claudetrade\\dashboard\\dashboard_server.py"
+          ],
+          "pid": 58100,
+          "process": "dashboard_server",
+          "started_at": "2026-06-02T15:23:35.138615+09:00"
+        }
+      },
+      {
+        "alive": true,
+        "name": "guardian",
+        "path": "E:\\code\\claudetrade\\state\\live_guardian_heartbeat.json",
+        "pid": 60976,
+        "raw": {
+          "healthy": true,
+          "last_error": "",
+          "last_error_at": "",
+          "last_started_at": "2026-06-02T15:29:19+09:00",
+          "last_success_at": "",
+          "last_tick_at": "2026-06-02T15:29:19+09:00",
+          "next_expected_at": "",
+          "pid": 60976,
+          "process": "live_guardian",
+          "report_path": "",
+          "status": "running"
+        }
+      },
+      {
+        "alive": true,
+        "name": "preopen_scheduler",
+        "path": "E:\\code\\claudetrade\\state\\preopen_scheduler_heartbeat.json",
+        "pid": 58896,
+        "raw": {
+          "healthy": true,
+          "last_error": "",
+          "last_error_at": "",
+          "last_job": {},
+          "last_started_at": "2026-06-02T15:29:38+09:00",
+          "last_success_at": "2026-06-02T15:29:38+09:00",
+          "last_tick_at": "2026-06-02T15:29:38+09:00",
+          "mode": "live",
+          "next_expected_at": "2026-06-02T15:30:38+09:00",
+          "pid": 58896,
+          "process": "preopen_scheduler",
+          "status": "idle"
+        }
+      }
+    ],
+    "protected_positions": []
+  },
+  "log_issue_counts_since_start": {
+    "broker_truth_untrusted": 290,
+    "guardian_block_start": 334,
+    "log_warning": 238,
+    "order_unknown": 4,
+    "telegram": 8
+  },
+  "log_issue_samples": [
+    {
+      "at": "2026-06-02T10:06:41+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:07:43+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:08:46+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:08:46+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:09:49+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:09:49+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:10:51+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:11:53+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:11:53+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:12:55+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:13:57+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:13:57+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:15:00+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:15:00+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:17:05+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:17:05+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:18:05+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[universe filter bypass] candidates=60 filtered=15 min_keep=12 min_ratio=0.50",
+      "path": "logs\\system\\live_trading_20260602.jsonl"
+    },
+    {
+      "at": "2026-06-02T10:18:05+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-02 10:17:31 [WARNING ] _restrict_candidates_to_universe:11439 | [universe filter bypass] candidates=60 filtered=15 min_keep=12 min_ratio=0.50",
+      "path": "logs\\system\\live_trading_20260602.log"
+    },
+    {
+      "at": "2026-06-02T10:18:07+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:19:09+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:19:09+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:20:11+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:20:11+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:21:14+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:22:16+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:22:16+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:23:18+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:24:20+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:24:20+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:25:23+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:25:23+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:26:25+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:27:27+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:28:29+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:29:32+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:29:32+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:30:34+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:30:34+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:31:37+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:32:39+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:33:42+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:34:44+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:34:44+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:35:46+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:35:46+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:36:49+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:36:49+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:37:51+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:37:51+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:38:53+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:39:56+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:39:56+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:40:58+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:40:58+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:42:00+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:42:00+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:43:03+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:43:03+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:44:06+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:45:08+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:45:08+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:46:11+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:46:11+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:47:14+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:47:14+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:48:14+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[universe filter bypass] candidates=60 filtered=16 min_keep=12 min_ratio=0.50",
+      "path": "logs\\system\\live_trading_20260602.jsonl"
+    },
+    {
+      "at": "2026-06-02T10:48:14+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-02 10:47:56 [WARNING ] _restrict_candidates_to_universe:11439 | [universe filter bypass] candidates=60 filtered=16 min_keep=12 min_ratio=0.50",
+      "path": "logs\\system\\live_trading_20260602.log"
+    },
+    {
+      "at": "2026-06-02T10:48:17+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:48:17+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:49:19+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:50:22+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:50:22+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:51:24+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:51:24+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:52:27+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:52:27+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:53:29+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:54:32+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:54:32+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:55:34+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:56:37+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:56:37+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:57:39+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:57:39+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:58:42+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:59:44+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T10:59:44+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:00:48+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:01:50+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:02:53+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:02:53+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:03:55+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:04:57+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:04:57+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:06:00+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:06:00+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:07:02+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:08:05+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:08:05+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:09:07+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:09:07+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:10:08+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[risk event] BLOCKED_BROKER_TRUTH KR * reason=BLOCKED_BROKER_TRUTH",
+      "path": "logs\\risk\\live_risk_20260602.jsonl"
+    },
+    {
+      "at": "2026-06-02T11:10:08+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-02 11:09:17 [WARNING ] _split_log:303 | [risk event] BLOCKED_BROKER_TRUTH KR * reason=BLOCKED_BROKER_TRUTH",
+      "path": "logs\\risk\\live_risk_20260602.log"
+    },
+    {
+      "at": "2026-06-02T11:10:08+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[브로커 런타임 동기화] KR 잔고 조회 실패(1회): 500 Server Error: Internal Server Error for url: https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/trading/inquire-balance?CANO=44197573&ACNT_PRDT_CD=01&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=02&UNPR_DVSN=01&FUND_STTL_ICLD_YN=N&FNCG_AMT_AUTO_RDPT_YN=N&PRCS_DVSN=00&PDNO=&ORD_UNPR=&ORD_DVSN=&CMA_EVLU_AMT_ICLD_YN=N&OVRS_ICLD_YN=N&CTX_AREA_FK100=&CTX_AREA_NK100=",
+      "path": "logs\\system\\live_trading_20260602.jsonl"
+    },
+    {
+      "at": "2026-06-02T11:10:08+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[broker sync partial] keep pre-sync cash because broker truth degraded enabled=['KR', 'US'] ok=['US']",
+      "path": "logs\\system\\live_trading_20260602.jsonl"
+    },
+    {
+      "at": "2026-06-02T11:10:08+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[risk event] BLOCKED_BROKER_TRUTH KR * reason=BLOCKED_BROKER_TRUTH",
+      "path": "logs\\system\\live_trading_20260602.jsonl"
+    },
+    {
+      "at": "2026-06-02T11:10:08+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] KR BLOCKED_BROKER_TRUTH scope=market",
+      "path": "logs\\system\\live_trading_20260602.jsonl"
+    },
+    {
+      "at": "2026-06-02T11:10:08+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-02 11:09:14 [WARNING ] _sync_runtime_with_broker:18983 | [브로커 런타임 동기화] KR 잔고 조회 실패(1회): 500 Server Error: Internal Server Error for url: https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/trading/inquire-balance?CANO=44197573&ACNT_PRDT_CD=01&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=02&UNPR_DVSN=01&FUND_STTL_ICLD_YN=N&FNCG_AMT_AUTO_RDPT_YN=N&PRCS_DVSN=00&PDNO=&ORD_UNPR=&ORD_DVSN=&CMA_EVLU_AMT_ICLD_YN=N&OVRS_ICLD_YN=N&CTX_AREA_FK100=&CTX_AREA_NK100=",
+      "path": "logs\\system\\live_trading_20260602.log"
+    },
+    {
+      "at": "2026-06-02T11:10:08+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-02 11:09:15 [WARNING ] _sync_runtime_with_broker:19241 | [broker sync partial] keep pre-sync cash because broker truth degraded enabled=['KR', 'US'] ok=['US']",
+      "path": "logs\\system\\live_trading_20260602.log"
+    },
+    {
+      "at": "2026-06-02T11:10:08+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-02 11:09:17 [WARNING ] _split_log:302 | [risk event] BLOCKED_BROKER_TRUTH KR * reason=BLOCKED_BROKER_TRUTH",
+      "path": "logs\\system\\live_trading_20260602.log"
+    },
+    {
+      "at": "2026-06-02T11:10:08+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-02 11:09:17 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] KR BLOCKED_BROKER_TRUTH scope=market",
+      "path": "logs\\system\\live_trading_20260602.log"
+    },
+    {
+      "at": "2026-06-02T11:10:10+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:11:13+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:11:13+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:12:15+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:12:15+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:13:18+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:13:18+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:14:20+09:00",
+      "kind": "broker_truth_untrusted",
+      "level": "WARNING",
+      "message": "KR broker truth missing=False stale=True error=",
+      "path": ""
+    },
+    {
+      "at": "2026-06-02T11:14:20+09:00",
+      "kind": "guardian_block_start",
+      "level": "WARNING",
+      "message": "live guardian gate=BLOCK_START",
+      "path": ""
+    }
+  ],
+  "market": "KR",
+  "mode": "live",
+  "output_dir": "E:\\code\\claudetrade\\docs\\reports\\kr_session_monitor_20260602_0852_to_1530",
+  "read_only": true,
+  "risk_axes": {
+    "broker_open_orders": 0,
+    "broker_positions": 0,
+    "local_open_positions": 0,
+    "manual_action_required": 1,
+    "order_unknown_events": 14,
+    "pending_sells": 0,
+    "protected_positions": 0
+  },
+  "session_date": "2026-06-02",
+  "snapshots_recorded": 200,
+  "start_at": "2026-06-02T08:51:53+09:00",
+  "state_observation_counts_since_start": {},
+  "state_observation_samples": [],
+  "status": "running"
+}

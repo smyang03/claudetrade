@@ -1,0 +1,2988 @@
+{
+  "avg_duration_ms": 14753.1,
+  "avg_input_tokens": 3850.4,
+  "avg_output_tokens": 671.4,
+  "by_label": [
+    {
+      "avg_duration_ms": 24175.7,
+      "avg_input_tokens": 11863.0,
+      "avg_output_tokens": 1678.5,
+      "calls": 16,
+      "duration_missing_calls": 9,
+      "duration_observed_calls": 7,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 11,
+        "prompt_input_tokens_ge_8000": 5
+      },
+      "input_tokens": 189808,
+      "label": "select_tickers",
+      "output_issues": {
+        "candidate_actions_not_one_per_watchlist": 1,
+        "duplicate_candidate_action": 2,
+        "duplicate_watchlist_ticker": 1,
+        "response_fenced_json": 5,
+        "response_has_preamble_or_wrapper": 5,
+        "response_not_strict_json": 5,
+        "trade_ready_action_not_buy_or_probe": 1
+      },
+      "output_tokens": 26856,
+      "parse_errors": 0,
+      "total_tokens": 216664
+    },
+    {
+      "avg_duration_ms": 14269.3,
+      "avg_input_tokens": 1464.8,
+      "avg_output_tokens": 724.0,
+      "calls": 42,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 42,
+      "input_issues": {},
+      "input_tokens": 61522,
+      "label": "hold_advisor_triage",
+      "output_issues": {
+        "response_fenced_json": 42,
+        "response_has_preamble_or_wrapper": 42,
+        "response_not_strict_json": 42
+      },
+      "output_tokens": 30406,
+      "parse_errors": 0,
+      "total_tokens": 91928
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 6868.6,
+      "avg_output_tokens": 223.6,
+      "calls": 5,
+      "duration_missing_calls": 5,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 34343,
+      "label": "analyst_bear_r1",
+      "output_issues": {},
+      "output_tokens": 1118,
+      "parse_errors": 0,
+      "total_tokens": 35461
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 6753.6,
+      "avg_output_tokens": 230.8,
+      "calls": 5,
+      "duration_missing_calls": 5,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 33768,
+      "label": "analyst_bull_r1",
+      "output_issues": {},
+      "output_tokens": 1154,
+      "parse_errors": 0,
+      "total_tokens": 34922
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 6745.6,
+      "avg_output_tokens": 184.2,
+      "calls": 5,
+      "duration_missing_calls": 5,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 33728,
+      "label": "analyst_neutral_r1",
+      "output_issues": {},
+      "output_tokens": 921,
+      "parse_errors": 0,
+      "total_tokens": 34649
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 2556.6,
+      "avg_output_tokens": 247.0,
+      "calls": 5,
+      "duration_missing_calls": 5,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 12783,
+      "label": "analyst_bear_r2",
+      "output_issues": {},
+      "output_tokens": 1235,
+      "parse_errors": 0,
+      "total_tokens": 14018
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 2441.6,
+      "avg_output_tokens": 269.8,
+      "calls": 5,
+      "duration_missing_calls": 5,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 12208,
+      "label": "analyst_bull_r2",
+      "output_issues": {},
+      "output_tokens": 1349,
+      "parse_errors": 0,
+      "total_tokens": 13557
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 2433.6,
+      "avg_output_tokens": 241.4,
+      "calls": 5,
+      "duration_missing_calls": 5,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 12168,
+      "label": "analyst_neutral_r2",
+      "output_issues": {},
+      "output_tokens": 1207,
+      "parse_errors": 0,
+      "total_tokens": 13375
+    },
+    {
+      "avg_duration_ms": 47750.0,
+      "avg_input_tokens": 7858.0,
+      "avg_output_tokens": 2500.0,
+      "calls": 1,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 1,
+      "input_issues": {},
+      "input_tokens": 7858,
+      "label": "postmortem",
+      "output_issues": {
+        "output_tokens_ge_2000": 1,
+        "response_fenced_json": 1,
+        "response_has_preamble_or_wrapper": 1,
+        "response_not_strict_json": 1,
+        "slow_call_30s": 1
+      },
+      "output_tokens": 2500,
+      "parse_errors": 0,
+      "total_tokens": 10358
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1756.5,
+      "avg_output_tokens": 239.8,
+      "calls": 4,
+      "duration_missing_calls": 4,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 7026,
+      "label": "tune_30min",
+      "output_issues": {},
+      "output_tokens": 959,
+      "parse_errors": 0,
+      "total_tokens": 7985
+    },
+    {
+      "avg_duration_ms": 12739.0,
+      "avg_input_tokens": 1367.8,
+      "avg_output_tokens": 558.5,
+      "calls": 4,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 4,
+      "input_issues": {},
+      "input_tokens": 5471,
+      "label": "hold_advisor_challenge",
+      "output_issues": {
+        "response_fenced_json": 4,
+        "response_has_preamble_or_wrapper": 4,
+        "response_not_strict_json": 4
+      },
+      "output_tokens": 2234,
+      "parse_errors": 0,
+      "total_tokens": 7705
+    },
+    {
+      "avg_duration_ms": 7245.0,
+      "avg_input_tokens": 1408.0,
+      "avg_output_tokens": 394.7,
+      "calls": 3,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 3,
+      "input_issues": {},
+      "input_tokens": 4224,
+      "label": "hold_advisor_bear",
+      "output_issues": {
+        "response_fenced_json": 3,
+        "response_has_preamble_or_wrapper": 3,
+        "response_not_strict_json": 3
+      },
+      "output_tokens": 1184,
+      "parse_errors": 0,
+      "total_tokens": 5408
+    },
+    {
+      "avg_duration_ms": 6816.3,
+      "avg_input_tokens": 1402.0,
+      "avg_output_tokens": 376.7,
+      "calls": 3,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 3,
+      "input_issues": {},
+      "input_tokens": 4206,
+      "label": "hold_advisor_neutral",
+      "output_issues": {
+        "response_fenced_json": 3,
+        "response_has_preamble_or_wrapper": 3,
+        "response_not_strict_json": 3
+      },
+      "output_tokens": 1130,
+      "parse_errors": 0,
+      "total_tokens": 5336
+    },
+    {
+      "avg_duration_ms": 6671.7,
+      "avg_input_tokens": 1406.0,
+      "avg_output_tokens": 358.3,
+      "calls": 3,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 3,
+      "input_issues": {},
+      "input_tokens": 4218,
+      "label": "hold_advisor_bull",
+      "output_issues": {
+        "response_fenced_json": 3,
+        "response_has_preamble_or_wrapper": 3,
+        "response_not_strict_json": 3
+      },
+      "output_tokens": 1075,
+      "parse_errors": 0,
+      "total_tokens": 5293
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1461.0,
+      "avg_output_tokens": 675.0,
+      "calls": 2,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 2922,
+      "label": "param_tuner",
+      "output_issues": {},
+      "output_tokens": 1350,
+      "parse_errors": 0,
+      "total_tokens": 4272
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1734.0,
+      "avg_output_tokens": 206.5,
+      "calls": 2,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 3468,
+      "label": "tune_60min",
+      "output_issues": {},
+      "output_tokens": 413,
+      "parse_errors": 0,
+      "total_tokens": 3881
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1791.0,
+      "avg_output_tokens": 303.0,
+      "calls": 1,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 1791,
+      "label": "tune_120min",
+      "output_issues": {},
+      "output_tokens": 303,
+      "parse_errors": 0,
+      "total_tokens": 2094
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1840.0,
+      "avg_output_tokens": 202.0,
+      "calls": 1,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 1840,
+      "label": "tune_90min",
+      "output_issues": {},
+      "output_tokens": 202,
+      "parse_errors": 0,
+      "total_tokens": 2042
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1740.0,
+      "avg_output_tokens": 274.0,
+      "calls": 1,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 1740,
+      "label": "tune_150min",
+      "output_issues": {},
+      "output_tokens": 274,
+      "parse_errors": 0,
+      "total_tokens": 2014
+    }
+  ],
+  "by_model": {
+    "claude-sonnet-4-6": 113
+  },
+  "by_time_bucket": [
+    {
+      "avg_duration_ms": 11767.3,
+      "avg_input_tokens": 5203.2,
+      "avg_output_tokens": 475.4,
+      "bucket_start": "2026-06-01T22:30+09:00",
+      "calls": 26,
+      "duration_missing_calls": 23,
+      "duration_observed_calls": 3,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1,
+        "prompt_input_tokens_ge_8000": 3
+      },
+      "input_tokens": 135283,
+      "output_issues": {
+        "duplicate_candidate_action": 1,
+        "duplicate_watchlist_ticker": 1,
+        "response_fenced_json": 5,
+        "response_has_preamble_or_wrapper": 5,
+        "response_not_strict_json": 5
+      },
+      "output_tokens": 12361,
+      "parse_errors": 0,
+      "top_labels": {
+        "analyst_bear_r1": 3,
+        "analyst_bear_r2": 3,
+        "analyst_bull_r1": 3,
+        "analyst_bull_r2": 3,
+        "select_tickers": 4
+      },
+      "total_tokens": 147644
+    },
+    {
+      "avg_duration_ms": 12011.1,
+      "avg_input_tokens": 3734.5,
+      "avg_output_tokens": 559.7,
+      "bucket_start": "2026-06-01T23:00+09:00",
+      "calls": 17,
+      "duration_missing_calls": 10,
+      "duration_observed_calls": 7,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 2
+      },
+      "input_tokens": 63487,
+      "output_issues": {
+        "response_fenced_json": 9,
+        "response_has_preamble_or_wrapper": 9,
+        "response_not_strict_json": 9
+      },
+      "output_tokens": 9515,
+      "parse_errors": 0,
+      "top_labels": {
+        "analyst_bear_r1": 1,
+        "analyst_bear_r2": 1,
+        "hold_advisor_challenge": 2,
+        "hold_advisor_triage": 5,
+        "select_tickers": 2
+      },
+      "total_tokens": 73002
+    },
+    {
+      "avg_duration_ms": 11148.0,
+      "avg_input_tokens": 5460.3,
+      "avg_output_tokens": 602.5,
+      "bucket_start": "2026-06-01T23:30+09:00",
+      "calls": 10,
+      "duration_missing_calls": 8,
+      "duration_observed_calls": 2,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 2
+      },
+      "input_tokens": 54603,
+      "output_issues": {
+        "candidate_actions_not_one_per_watchlist": 1,
+        "duplicate_candidate_action": 1,
+        "response_fenced_json": 2,
+        "response_has_preamble_or_wrapper": 2,
+        "response_not_strict_json": 2
+      },
+      "output_tokens": 6025,
+      "parse_errors": 0,
+      "top_labels": {
+        "analyst_bear_r1": 1,
+        "analyst_bear_r2": 1,
+        "analyst_bull_r1": 1,
+        "hold_advisor_triage": 2,
+        "select_tickers": 2
+      },
+      "total_tokens": 60628
+    },
+    {
+      "avg_duration_ms": 8844.4,
+      "avg_input_tokens": 2941.0,
+      "avg_output_tokens": 572.3,
+      "bucket_start": "2026-06-02T00:00+09:00",
+      "calls": 7,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 5,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 20587,
+      "output_issues": {
+        "response_fenced_json": 5,
+        "response_has_preamble_or_wrapper": 5,
+        "response_not_strict_json": 5,
+        "trade_ready_action_not_buy_or_probe": 1
+      },
+      "output_tokens": 4006,
+      "parse_errors": 0,
+      "top_labels": {
+        "hold_advisor_bear": 1,
+        "hold_advisor_bull": 1,
+        "hold_advisor_neutral": 1,
+        "hold_advisor_triage": 2,
+        "select_tickers": 1
+      },
+      "total_tokens": 24593
+    },
+    {
+      "avg_duration_ms": 10313.4,
+      "avg_input_tokens": 2506.7,
+      "avg_output_tokens": 574.4,
+      "bucket_start": "2026-06-02T00:30+09:00",
+      "calls": 10,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 10,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 25067,
+      "output_issues": {
+        "response_fenced_json": 9,
+        "response_has_preamble_or_wrapper": 9,
+        "response_not_strict_json": 9
+      },
+      "output_tokens": 5744,
+      "parse_errors": 0,
+      "top_labels": {
+        "hold_advisor_bear": 2,
+        "hold_advisor_bull": 2,
+        "hold_advisor_neutral": 2,
+        "hold_advisor_triage": 3,
+        "select_tickers": 1
+      },
+      "total_tokens": 30811
+    },
+    {
+      "avg_duration_ms": 14811.0,
+      "avg_input_tokens": 3344.5,
+      "avg_output_tokens": 799.7,
+      "bucket_start": "2026-06-02T01:00+09:00",
+      "calls": 6,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 5,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 20067,
+      "output_issues": {
+        "response_fenced_json": 4,
+        "response_has_preamble_or_wrapper": 4,
+        "response_not_strict_json": 4
+      },
+      "output_tokens": 4798,
+      "parse_errors": 0,
+      "top_labels": {
+        "hold_advisor_challenge": 1,
+        "hold_advisor_triage": 3,
+        "param_tuner": 1,
+        "select_tickers": 1
+      },
+      "total_tokens": 24865
+    },
+    {
+      "avg_duration_ms": 23749.0,
+      "avg_input_tokens": 6930.5,
+      "avg_output_tokens": 985.5,
+      "bucket_start": "2026-06-02T01:30+09:00",
+      "calls": 2,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 1,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 13861,
+      "output_issues": {},
+      "output_tokens": 1971,
+      "parse_errors": 0,
+      "top_labels": {
+        "select_tickers": 1,
+        "tune_30min": 1
+      },
+      "total_tokens": 15832
+    },
+    {
+      "avg_duration_ms": 15579.3,
+      "avg_input_tokens": 1557.7,
+      "avg_output_tokens": 782.7,
+      "bucket_start": "2026-06-02T02:00+09:00",
+      "calls": 3,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 3,
+      "input_issues": {},
+      "input_tokens": 4673,
+      "output_issues": {
+        "response_fenced_json": 3,
+        "response_has_preamble_or_wrapper": 3,
+        "response_not_strict_json": 3
+      },
+      "output_tokens": 2348,
+      "parse_errors": 0,
+      "top_labels": {
+        "hold_advisor_triage": 3
+      },
+      "total_tokens": 7021
+    },
+    {
+      "avg_duration_ms": 18784.0,
+      "avg_input_tokens": 4283.0,
+      "avg_output_tokens": 933.8,
+      "bucket_start": "2026-06-02T02:30+09:00",
+      "calls": 4,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 3,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 17132,
+      "output_issues": {
+        "response_fenced_json": 2,
+        "response_has_preamble_or_wrapper": 2,
+        "response_not_strict_json": 2
+      },
+      "output_tokens": 3735,
+      "parse_errors": 0,
+      "top_labels": {
+        "hold_advisor_triage": 2,
+        "select_tickers": 1,
+        "tune_30min": 1
+      },
+      "total_tokens": 20867
+    },
+    {
+      "avg_duration_ms": 17134.3,
+      "avg_input_tokens": 1603.6,
+      "avg_output_tokens": 768.0,
+      "bucket_start": "2026-06-02T03:00+09:00",
+      "calls": 7,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 6,
+      "input_issues": {},
+      "input_tokens": 11225,
+      "output_issues": {
+        "response_fenced_json": 6,
+        "response_has_preamble_or_wrapper": 6,
+        "response_not_strict_json": 6
+      },
+      "output_tokens": 5376,
+      "parse_errors": 0,
+      "top_labels": {
+        "hold_advisor_triage": 6,
+        "tune_60min": 1
+      },
+      "total_tokens": 16601
+    },
+    {
+      "avg_duration_ms": 17764.2,
+      "avg_input_tokens": 3176.3,
+      "avg_output_tokens": 886.3,
+      "bucket_start": "2026-06-02T03:30+09:00",
+      "calls": 6,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 5,
+      "input_issues": {
+        "prompt_input_tokens_ge_8000": 1
+      },
+      "input_tokens": 19058,
+      "output_issues": {
+        "response_fenced_json": 4,
+        "response_has_preamble_or_wrapper": 4,
+        "response_not_strict_json": 4
+      },
+      "output_tokens": 5318,
+      "parse_errors": 0,
+      "top_labels": {
+        "hold_advisor_triage": 4,
+        "select_tickers": 1,
+        "tune_90min": 1
+      },
+      "total_tokens": 24376
+    },
+    {
+      "avg_duration_ms": 17505.7,
+      "avg_input_tokens": 3092.6,
+      "avg_output_tokens": 897.6,
+      "bucket_start": "2026-06-02T04:00+09:00",
+      "calls": 7,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 6,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 21648,
+      "output_issues": {
+        "response_fenced_json": 5,
+        "response_has_preamble_or_wrapper": 5,
+        "response_not_strict_json": 5
+      },
+      "output_tokens": 6283,
+      "parse_errors": 0,
+      "top_labels": {
+        "hold_advisor_triage": 5,
+        "select_tickers": 1,
+        "tune_120min": 1
+      },
+      "total_tokens": 27931
+    },
+    {
+      "avg_duration_ms": 16368.0,
+      "avg_input_tokens": 3164.3,
+      "avg_output_tokens": 856.7,
+      "bucket_start": "2026-06-02T04:30+09:00",
+      "calls": 6,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 5,
+      "input_issues": {
+        "prompt_input_tokens_ge_8000": 1
+      },
+      "input_tokens": 18986,
+      "output_issues": {
+        "response_fenced_json": 5,
+        "response_has_preamble_or_wrapper": 5,
+        "response_not_strict_json": 5
+      },
+      "output_tokens": 5140,
+      "parse_errors": 0,
+      "top_labels": {
+        "hold_advisor_triage": 4,
+        "select_tickers": 1,
+        "tune_150min": 1
+      },
+      "total_tokens": 24126
+    },
+    {
+      "avg_duration_ms": 30510.0,
+      "avg_input_tokens": 4707.5,
+      "avg_output_tokens": 1625.0,
+      "bucket_start": "2026-06-02T05:00+09:00",
+      "calls": 2,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 2,
+      "input_issues": {},
+      "input_tokens": 9415,
+      "output_issues": {
+        "output_tokens_ge_2000": 1,
+        "response_fenced_json": 2,
+        "response_has_preamble_or_wrapper": 2,
+        "response_not_strict_json": 2,
+        "slow_call_30s": 1
+      },
+      "output_tokens": 3250,
+      "parse_errors": 0,
+      "top_labels": {
+        "hold_advisor_triage": 1,
+        "postmortem": 1
+      },
+      "total_tokens": 12665
+    }
+  ],
+  "calls": 113,
+  "duration_missing_calls": 50,
+  "duration_observed_calls": 63,
+  "end_at": "2026-06-02T07:00:00+09:00",
+  "generated_at": "2026-06-02T07:01:05+09:00",
+  "input_issue_counts": {
+    "prompt_input_tokens_ge_12000": 11,
+    "prompt_input_tokens_ge_8000": 5
+  },
+  "input_tokens": 435092,
+  "issue_samples": [
+    {
+      "duration_ms": 10687,
+      "input_issues": [],
+      "input_tokens": 1314,
+      "label": "hold_advisor_challenge",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 497,
+      "path": "logs\\raw_calls\\20260601_US_hold_advisor_challenge_224118358377_efbb17d08e.json",
+      "timestamp": "2026-06-01T22:41:18+09:00"
+    },
+    {
+      "duration_ms": 12480,
+      "input_issues": [],
+      "input_tokens": 1233,
+      "label": "hold_advisor_challenge",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 544,
+      "path": "logs\\raw_calls\\20260601_US_hold_advisor_challenge_230701217366_6d9b6116d3.json",
+      "timestamp": "2026-06-01T23:07:01+09:00"
+    },
+    {
+      "duration_ms": 14472,
+      "input_issues": [],
+      "input_tokens": 1254,
+      "label": "hold_advisor_challenge",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 618,
+      "path": "logs\\raw_calls\\20260601_US_hold_advisor_challenge_230730483021_ccf7488cf4.json",
+      "timestamp": "2026-06-01T23:07:30+09:00"
+    },
+    {
+      "duration_ms": 11165,
+      "input_issues": [],
+      "input_tokens": 1177,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 560,
+      "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_223215504466_93c57c4bb8.json",
+      "timestamp": "2026-06-01T22:32:15+09:00"
+    },
+    {
+      "duration_ms": 13450,
+      "input_issues": [],
+      "input_tokens": 1269,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 580,
+      "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_224107658782_feec3ac1e6.json",
+      "timestamp": "2026-06-01T22:41:07+09:00"
+    },
+    {
+      "duration_ms": 10370,
+      "input_issues": [],
+      "input_tokens": 1097,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 513,
+      "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230610475882_249cccc373.json",
+      "timestamp": "2026-06-01T23:06:10+09:00"
+    },
+    {
+      "duration_ms": 9334,
+      "input_issues": [],
+      "input_tokens": 1128,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 491,
+      "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230623132482_d72b1a5c0a.json",
+      "timestamp": "2026-06-01T23:06:23+09:00"
+    },
+    {
+      "duration_ms": 13212,
+      "input_issues": [],
+      "input_tokens": 1166,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 606,
+      "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230648721973_43f664accd.json",
+      "timestamp": "2026-06-01T23:06:48+09:00"
+    },
+    {
+      "duration_ms": 11615,
+      "input_issues": [],
+      "input_tokens": 1197,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 595,
+      "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230715984097_1eb2dca8ff.json",
+      "timestamp": "2026-06-01T23:07:15+09:00"
+    },
+    {
+      "duration_ms": 12595,
+      "input_issues": [],
+      "input_tokens": 1137,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 540,
+      "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230755549047_fd95a678b4.json",
+      "timestamp": "2026-06-01T23:07:55+09:00"
+    },
+    {
+      "duration_ms": 10465,
+      "input_issues": [],
+      "input_tokens": 1171,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 517,
+      "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_233213909730_56b1087512.json",
+      "timestamp": "2026-06-01T23:32:13+09:00"
+    },
+    {
+      "duration_ms": 11831,
+      "input_issues": [],
+      "input_tokens": 1193,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 615,
+      "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_234232327304_339a1119c2.json",
+      "timestamp": "2026-06-01T23:42:32+09:00"
+    },
+    {
+      "duration_ms": 47750,
+      "input_issues": [],
+      "input_tokens": 7858,
+      "label": "postmortem",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "output_tokens_ge_2000",
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json",
+        "slow_call_30s"
+      ],
+      "output_tokens": 2500,
+      "path": "logs\\raw_calls\\20260601_US_postmortem_postmortem_US_2026-06-01_d35af0fb6f.json",
+      "timestamp": "2026-06-02T05:03:35+09:00"
+    },
+    {
+      "duration_ms": 0,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 11751,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1588,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_223549265559_93a82c8add.json",
+      "timestamp": "2026-06-01T22:35:49+09:00"
+    },
+    {
+      "duration_ms": 0,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 11956,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1475,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_223633986190_0e770481aa.json",
+      "timestamp": "2026-06-01T22:36:33+09:00"
+    },
+    {
+      "duration_ms": 0,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 10774,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1674,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_224047537688_6844d63c4a.json",
+      "timestamp": "2026-06-01T22:40:47+09:00"
+    },
+    {
+      "duration_ms": 0,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12031,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "duplicate_candidate_action",
+        "duplicate_watchlist_ticker",
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1670,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_225651877435_9aac36f802.json",
+      "timestamp": "2026-06-01T22:56:51+09:00"
+    },
+    {
+      "duration_ms": 0,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12207,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1641,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_231537596887_805d7ac836.json",
+      "timestamp": "2026-06-01T23:15:37+09:00"
+    },
+    {
+      "duration_ms": 0,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12177,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1670,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_232240535354_9df50b8770.json",
+      "timestamp": "2026-06-01T23:22:40+09:00"
+    },
+    {
+      "duration_ms": 0,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12173,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "candidate_actions_not_one_per_watchlist",
+        "duplicate_candidate_action"
+      ],
+      "output_tokens": 1773,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_234001616777_be624c5a9c.json",
+      "timestamp": "2026-06-01T23:40:01+09:00"
+    },
+    {
+      "duration_ms": 0,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12168,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1623,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_234705841825_a73d8742d2.json",
+      "timestamp": "2026-06-01T23:47:05+09:00"
+    },
+    {
+      "duration_ms": 7024,
+      "input_issues": [],
+      "input_tokens": 1443,
+      "label": "hold_advisor_bear",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 392,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_bear_002814252933_ee813d026a.json",
+      "timestamp": "2026-06-02T00:28:14+09:00"
+    },
+    {
+      "duration_ms": 6507,
+      "input_issues": [],
+      "input_tokens": 1373,
+      "label": "hold_advisor_bear",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 376,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_bear_005026449865_c3c9b6e0dc.json",
+      "timestamp": "2026-06-02T00:50:26+09:00"
+    },
+    {
+      "duration_ms": 8204,
+      "input_issues": [],
+      "input_tokens": 1408,
+      "label": "hold_advisor_bear",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 416,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_bear_005047263917_5d56995dc5.json",
+      "timestamp": "2026-06-02T00:50:47+09:00"
+    },
+    {
+      "duration_ms": 6616,
+      "input_issues": [],
+      "input_tokens": 1441,
+      "label": "hold_advisor_bull",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 344,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_bull_002806694410_e320dd3187.json",
+      "timestamp": "2026-06-02T00:28:06+09:00"
+    },
+    {
+      "duration_ms": 6471,
+      "input_issues": [],
+      "input_tokens": 1371,
+      "label": "hold_advisor_bull",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 363,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_bull_005019397981_8a62a2fb5e.json",
+      "timestamp": "2026-06-02T00:50:19+09:00"
+    },
+    {
+      "duration_ms": 6928,
+      "input_issues": [],
+      "input_tokens": 1406,
+      "label": "hold_advisor_bull",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 368,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_bull_005038554645_14e3d2aaad.json",
+      "timestamp": "2026-06-02T00:50:38+09:00"
+    },
+    {
+      "duration_ms": 13317,
+      "input_issues": [],
+      "input_tokens": 1670,
+      "label": "hold_advisor_challenge",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 575,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_challenge_010107504988_e1430d5dac.json",
+      "timestamp": "2026-06-02T01:01:07+09:00"
+    },
+    {
+      "duration_ms": 6967,
+      "input_issues": [],
+      "input_tokens": 1437,
+      "label": "hold_advisor_neutral",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 384,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_neutral_002821766256_14126f1f73.json",
+      "timestamp": "2026-06-02T00:28:21+09:00"
+    },
+    {
+      "duration_ms": 6546,
+      "input_issues": [],
+      "input_tokens": 1367,
+      "label": "hold_advisor_neutral",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 367,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_neutral_005033507785_4afc12b09c.json",
+      "timestamp": "2026-06-02T00:50:33+09:00"
+    },
+    {
+      "duration_ms": 6936,
+      "input_issues": [],
+      "input_tokens": 1402,
+      "label": "hold_advisor_neutral",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 379,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_neutral_005054704954_552e393287.json",
+      "timestamp": "2026-06-02T00:50:54+09:00"
+    },
+    {
+      "duration_ms": 12112,
+      "input_issues": [],
+      "input_tokens": 1171,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 520,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_001326241708_a9a2e5eb3b.json",
+      "timestamp": "2026-06-02T00:13:26+09:00"
+    },
+    {
+      "duration_ms": 11503,
+      "input_issues": [],
+      "input_tokens": 1158,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 554,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_001731782458_1d60a5b965.json",
+      "timestamp": "2026-06-02T00:17:31+09:00"
+    },
+    {
+      "duration_ms": 13406,
+      "input_issues": [],
+      "input_tokens": 1538,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 634,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_004703925338_42f3626171.json",
+      "timestamp": "2026-06-02T00:47:03+09:00"
+    },
+    {
+      "duration_ms": 12051,
+      "input_issues": [],
+      "input_tokens": 1540,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 560,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_004826100664_ea456de5ab.json",
+      "timestamp": "2026-06-02T00:48:26+09:00"
+    },
+    {
+      "duration_ms": 12695,
+      "input_issues": [],
+      "input_tokens": 1542,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 600,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_005817546769_e19ba78af1.json",
+      "timestamp": "2026-06-02T00:58:17+09:00"
+    },
+    {
+      "duration_ms": 11128,
+      "input_issues": [],
+      "input_tokens": 1630,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 512,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_010054167377_5f2e96a9f7.json",
+      "timestamp": "2026-06-02T01:00:54+09:00"
+    },
+    {
+      "duration_ms": 11702,
+      "input_issues": [],
+      "input_tokens": 1636,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 552,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_011318856373_b2f3d1cfc1.json",
+      "timestamp": "2026-06-02T01:13:18+09:00"
+    },
+    {
+      "duration_ms": 15333,
+      "input_issues": [],
+      "input_tokens": 1555,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 833,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_011749226380_c48b0279c7.json",
+      "timestamp": "2026-06-02T01:17:49+09:00"
+    },
+    {
+      "duration_ms": 14010,
+      "input_issues": [],
+      "input_tokens": 1558,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 754,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_020017358741_bc5052f19f.json",
+      "timestamp": "2026-06-02T02:00:17+09:00"
+    },
+    {
+      "duration_ms": 18833,
+      "input_issues": [],
+      "input_tokens": 1557,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 836,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_020408656326_d5b144d0d7.json",
+      "timestamp": "2026-06-02T02:04:08+09:00"
+    },
+    {
+      "duration_ms": 13895,
+      "input_issues": [],
+      "input_tokens": 1558,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 758,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_020430275202_2dc6b6a4c9.json",
+      "timestamp": "2026-06-02T02:04:30+09:00"
+    },
+    {
+      "duration_ms": 15608,
+      "input_issues": [],
+      "input_tokens": 1583,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 858,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_023616235674_5f75cd973e.json",
+      "timestamp": "2026-06-02T02:36:16+09:00"
+    },
+    {
+      "duration_ms": 15762,
+      "input_issues": [],
+      "input_tokens": 1577,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 884,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_024537115836_cd4ee41a89.json",
+      "timestamp": "2026-06-02T02:45:37+09:00"
+    },
+    {
+      "duration_ms": 15689,
+      "input_issues": [],
+      "input_tokens": 1580,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 852,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_030121895138_7463ccefb6.json",
+      "timestamp": "2026-06-02T03:01:21+09:00"
+    },
+    {
+      "duration_ms": 16584,
+      "input_issues": [],
+      "input_tokens": 1533,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 873,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_030401863332_caf82941dc.json",
+      "timestamp": "2026-06-02T03:04:01+09:00"
+    },
+    {
+      "duration_ms": 15587,
+      "input_issues": [],
+      "input_tokens": 1556,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 846,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_030439068683_8f4139c79e.json",
+      "timestamp": "2026-06-02T03:04:39+09:00"
+    },
+    {
+      "duration_ms": 14543,
+      "input_issues": [],
+      "input_tokens": 1550,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 844,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_030456114631_4787ef2d52.json",
+      "timestamp": "2026-06-02T03:04:56+09:00"
+    },
+    {
+      "duration_ms": 21904,
+      "input_issues": [],
+      "input_tokens": 1586,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 887,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_030648356106_9c34c204d5.json",
+      "timestamp": "2026-06-02T03:06:48+09:00"
+    },
+    {
+      "duration_ms": 18499,
+      "input_issues": [],
+      "input_tokens": 1580,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 880,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_030813852947_df2850fd51.json",
+      "timestamp": "2026-06-02T03:08:13+09:00"
+    },
+    {
+      "duration_ms": 17590,
+      "input_issues": [],
+      "input_tokens": 1585,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 894,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_033855004595_b4db35f19c.json",
+      "timestamp": "2026-06-02T03:38:55+09:00"
+    },
+    {
+      "duration_ms": 15260,
+      "input_issues": [],
+      "input_tokens": 1583,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 837,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_034415280771_3a966e0965.json",
+      "timestamp": "2026-06-02T03:44:15+09:00"
+    },
+    {
+      "duration_ms": 16347,
+      "input_issues": [],
+      "input_tokens": 1571,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 869,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_035205449669_f9a9b8e2ee.json",
+      "timestamp": "2026-06-02T03:52:05+09:00"
+    },
+    {
+      "duration_ms": 15728,
+      "input_issues": [],
+      "input_tokens": 1586,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 806,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_035733267693_22576091d2.json",
+      "timestamp": "2026-06-02T03:57:33+09:00"
+    },
+    {
+      "duration_ms": 16546,
+      "input_issues": [],
+      "input_tokens": 1533,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 900,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_040556122763_f58daa4e0c.json",
+      "timestamp": "2026-06-02T04:05:56+09:00"
+    },
+    {
+      "duration_ms": 15320,
+      "input_issues": [],
+      "input_tokens": 1544,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 823,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_040631585763_45a2b14f73.json",
+      "timestamp": "2026-06-02T04:06:31+09:00"
+    },
+    {
+      "duration_ms": 13373,
+      "input_issues": [],
+      "input_tokens": 1552,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 764,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_040647477518_dba0f56b51.json",
+      "timestamp": "2026-06-02T04:06:47+09:00"
+    },
+    {
+      "duration_ms": 16985,
+      "input_issues": [],
+      "input_tokens": 1583,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 864,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_041506909851_0fe0ec4009.json",
+      "timestamp": "2026-06-02T04:15:06+09:00"
+    },
+    {
+      "duration_ms": 16264,
+      "input_issues": [],
+      "input_tokens": 1584,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 803,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_042927405411_59606cd57a.json",
+      "timestamp": "2026-06-02T04:29:27+09:00"
+    },
+    {
+      "duration_ms": 14384,
+      "input_issues": [],
+      "input_tokens": 1571,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 791,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_043512754605_5fa9029661.json",
+      "timestamp": "2026-06-02T04:35:12+09:00"
+    },
+    {
+      "duration_ms": 15111,
+      "input_issues": [],
+      "input_tokens": 1577,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 745,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_044555063132_fa4483b556.json",
+      "timestamp": "2026-06-02T04:45:55+09:00"
+    },
+    {
+      "duration_ms": 15179,
+      "input_issues": [],
+      "input_tokens": 1586,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 817,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_045033505053_3ac61e7ab4.json",
+      "timestamp": "2026-06-02T04:50:33+09:00"
+    },
+    {
+      "duration_ms": 13074,
+      "input_issues": [],
+      "input_tokens": 1587,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 689,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_045610590655_768f2577a1.json",
+      "timestamp": "2026-06-02T04:56:10+09:00"
+    },
+    {
+      "duration_ms": 13270,
+      "input_issues": [],
+      "input_tokens": 1557,
+      "label": "hold_advisor_triage",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 750,
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_050213613293_67df433e6a.json",
+      "timestamp": "2026-06-02T05:02:13+09:00"
+    },
+    {
+      "duration_ms": 0,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12201,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "trade_ready_action_not_buy_or_probe"
+      ],
+      "output_tokens": 1569,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_001701587242_bb0b2458bc.json",
+      "timestamp": "2026-06-02T00:17:01+09:00"
+    },
+    {
+      "duration_ms": 23390,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12120,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1681,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_005902872170_95be3921f4.json",
+      "timestamp": "2026-06-02T00:59:02+09:00"
+    },
+    {
+      "duration_ms": 22575,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12115,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1653,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_012413411746_f4c43b45d4.json",
+      "timestamp": "2026-06-02T01:24:13+09:00"
+    },
+    {
+      "duration_ms": 23749,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12124,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1753,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_015406187108_9bc8825af8.json",
+      "timestamp": "2026-06-02T01:54:06+09:00"
+    },
+    {
+      "duration_ms": 24982,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12132,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1726,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_023423921136_66e00acf02.json",
+      "timestamp": "2026-06-02T02:34:23+09:00"
+    },
+    {
+      "duration_ms": 23896,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 10893,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1710,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_033618077800_c3eaceca58.json",
+      "timestamp": "2026-06-02T03:36:18+09:00"
+    },
+    {
+      "duration_ms": 26546,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12061,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1826,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_040755223717_64310bb0d1.json",
+      "timestamp": "2026-06-02T04:07:55+09:00"
+    },
+    {
+      "duration_ms": 24092,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 10925,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1824,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_043747812053_b8605e2f57.json",
+      "timestamp": "2026-06-02T04:37:47+09:00"
+    }
+  ],
+  "market": "US",
+  "output_issue_counts": {
+    "candidate_actions_not_one_per_watchlist": 1,
+    "duplicate_candidate_action": 2,
+    "duplicate_watchlist_ticker": 1,
+    "output_tokens_ge_2000": 1,
+    "response_fenced_json": 61,
+    "response_has_preamble_or_wrapper": 61,
+    "response_not_strict_json": 61,
+    "slow_call_30s": 1,
+    "trade_ready_action_not_buy_or_probe": 1
+  },
+  "output_tokens": 75870,
+  "parse_errors": 0,
+  "prompt_warning_samples": [
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 28,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12207,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1641,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_231537596887_805d7ac836.json",
+      "prompt_chars": 26564,
+      "timestamp": "2026-06-01T23:15:37+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14578,
+          "lines": 37,
+          "section": "candidates"
+        },
+        {
+          "chars": 3562,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2349,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 28,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12201,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1569,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_001701587242_bb0b2458bc.json",
+      "prompt_chars": 26561,
+      "timestamp": "2026-06-02T00:17:01+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14558,
+          "lines": 37,
+          "section": "candidates"
+        },
+        {
+          "chars": 3566,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2362,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 28,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12177,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1670,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_232240535354_9df50b8770.json",
+      "prompt_chars": 26560,
+      "timestamp": "2026-06-01T23:22:40+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14551,
+          "lines": 37,
+          "section": "candidates"
+        },
+        {
+          "chars": 3573,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2361,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 28,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12173,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1773,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_234001616777_be624c5a9c.json",
+      "prompt_chars": 26531,
+      "timestamp": "2026-06-01T23:40:01+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14535,
+          "lines": 37,
+          "section": "candidates"
+        },
+        {
+          "chars": 3573,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2348,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 28,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12168,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1623,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_234705841825_a73d8742d2.json",
+      "prompt_chars": 26526,
+      "timestamp": "2026-06-01T23:47:05+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14551,
+          "lines": 37,
+          "section": "candidates"
+        },
+        {
+          "chars": 3552,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2348,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 28,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12132,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1726,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_023423921136_66e00acf02.json",
+      "prompt_chars": 26497,
+      "timestamp": "2026-06-02T02:34:23+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14466,
+          "lines": 37,
+          "section": "candidates"
+        },
+        {
+          "chars": 3582,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2374,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 28,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12124,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1753,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_015406187108_9bc8825af8.json",
+      "prompt_chars": 26504,
+      "timestamp": "2026-06-02T01:54:06+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14489,
+          "lines": 37,
+          "section": "candidates"
+        },
+        {
+          "chars": 3578,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2362,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 28,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12120,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1681,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_005902872170_95be3921f4.json",
+      "prompt_chars": 26467,
+      "timestamp": "2026-06-02T00:59:02+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14463,
+          "lines": 37,
+          "section": "candidates"
+        },
+        {
+          "chars": 3555,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2374,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 28,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12115,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1653,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_012413411746_f4c43b45d4.json",
+      "prompt_chars": 26487,
+      "timestamp": "2026-06-02T01:24:13+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14495,
+          "lines": 37,
+          "section": "candidates"
+        },
+        {
+          "chars": 3555,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2362,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 28,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12061,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1826,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_040755223717_64310bb0d1.json",
+      "prompt_chars": 26275,
+      "timestamp": "2026-06-02T04:07:55+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14362,
+          "lines": 37,
+          "section": "candidates"
+        },
+        {
+          "chars": 3463,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2375,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 28,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12031,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1670,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_225651877435_9aac36f802.json",
+      "prompt_chars": 26377,
+      "timestamp": "2026-06-01T22:56:51+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14429,
+          "lines": 37,
+          "section": "candidates"
+        },
+        {
+          "chars": 3522,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2349,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 30,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 11956,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1475,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_223633986190_0e770481aa.json",
+      "prompt_chars": 26586,
+      "timestamp": "2026-06-01T22:36:33+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14577,
+          "lines": 37,
+          "section": "candidates"
+        },
+        {
+          "chars": 3569,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2363,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 30,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 11751,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1588,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_223549265559_93a82c8add.json",
+      "prompt_chars": 26145,
+      "timestamp": "2026-06-01T22:35:49+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14152,
+          "lines": 37,
+          "section": "candidates"
+        },
+        {
+          "chars": 3553,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2363,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 5,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 28,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 10925,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1824,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_043747812053_b8605e2f57.json",
+      "prompt_chars": 22823,
+      "timestamp": "2026-06-02T04:37:47+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14457,
+          "lines": 38,
+          "section": "candidates"
+        },
+        {
+          "chars": 2363,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        },
+        {
+          "chars": 699,
+          "lines": 9,
+          "section": "selection_feedback"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 5,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 28,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 10893,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1710,
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_033618077800_c3eaceca58.json",
+      "prompt_chars": 22770,
+      "timestamp": "2026-06-02T03:36:18+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14394,
+          "lines": 38,
+          "section": "candidates"
+        },
+        {
+          "chars": 2373,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        },
+        {
+          "chars": 699,
+          "lines": 9,
+          "section": "selection_feedback"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 35,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 5,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 30,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 10774,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1674,
+      "path": "logs\\raw_calls\\20260601_US_select_tickers_224047537688_6844d63c4a.json",
+      "prompt_chars": 22978,
+      "timestamp": "2026-06-01T22:40:47+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14609,
+          "lines": 38,
+          "section": "candidates"
+        },
+        {
+          "chars": 2364,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        },
+        {
+          "chars": 699,
+          "lines": 9,
+          "section": "selection_feedback"
+        }
+      ]
+    }
+  ],
+  "raw_dir": "E:\\code\\claudetrade\\logs\\raw_calls",
+  "recommendations": [
+    {
+      "area": "output_contract",
+      "priority": "P1",
+      "recommendation": "Tighten JSON-only enforcement for affected labels or route non-strict responses through a bounded retry; parser recovery should remain fail-safe."
+    },
+    {
+      "area": "selection_schema",
+      "priority": "P2",
+      "recommendation": "Add a compact-schema self-check or post-parse warning for duplicate watchlist entries and candidate-action coverage gaps."
+    },
+    {
+      "area": "latency_cost",
+      "priority": "P2",
+      "recommendation": "Separate timeout-prone labels from normal review flow and keep cache/cooldown guards active for repeated HOLD reviews."
+    },
+    {
+      "area": "token_cost",
+      "priority": "P2",
+      "recommendation": "Reduce high-token prompts by trimming repeated calibration blocks and limiting evidence pack rows before model invocation; review labels with 8k+ input tokens even when the session average looks acceptable."
+    }
+  ],
+  "slow_call_samples": [
+    {
+      "duration_ms": 47750,
+      "label": "postmortem",
+      "path": "logs\\raw_calls\\20260601_US_postmortem_postmortem_US_2026-06-01_d35af0fb6f.json",
+      "timestamp": "2026-06-02T05:03:35+09:00"
+    },
+    {
+      "duration_ms": 15333,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_011749226380_c48b0279c7.json",
+      "timestamp": "2026-06-02T01:17:49+09:00"
+    },
+    {
+      "duration_ms": 18833,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_020408656326_d5b144d0d7.json",
+      "timestamp": "2026-06-02T02:04:08+09:00"
+    },
+    {
+      "duration_ms": 15608,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_023616235674_5f75cd973e.json",
+      "timestamp": "2026-06-02T02:36:16+09:00"
+    },
+    {
+      "duration_ms": 15762,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_024537115836_cd4ee41a89.json",
+      "timestamp": "2026-06-02T02:45:37+09:00"
+    },
+    {
+      "duration_ms": 15689,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_030121895138_7463ccefb6.json",
+      "timestamp": "2026-06-02T03:01:21+09:00"
+    },
+    {
+      "duration_ms": 16584,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_030401863332_caf82941dc.json",
+      "timestamp": "2026-06-02T03:04:01+09:00"
+    },
+    {
+      "duration_ms": 15587,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_030439068683_8f4139c79e.json",
+      "timestamp": "2026-06-02T03:04:39+09:00"
+    },
+    {
+      "duration_ms": 21904,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_030648356106_9c34c204d5.json",
+      "timestamp": "2026-06-02T03:06:48+09:00"
+    },
+    {
+      "duration_ms": 18499,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_030813852947_df2850fd51.json",
+      "timestamp": "2026-06-02T03:08:13+09:00"
+    },
+    {
+      "duration_ms": 17590,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_033855004595_b4db35f19c.json",
+      "timestamp": "2026-06-02T03:38:55+09:00"
+    },
+    {
+      "duration_ms": 15260,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_034415280771_3a966e0965.json",
+      "timestamp": "2026-06-02T03:44:15+09:00"
+    },
+    {
+      "duration_ms": 16347,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_035205449669_f9a9b8e2ee.json",
+      "timestamp": "2026-06-02T03:52:05+09:00"
+    },
+    {
+      "duration_ms": 15728,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_035733267693_22576091d2.json",
+      "timestamp": "2026-06-02T03:57:33+09:00"
+    },
+    {
+      "duration_ms": 16546,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_040556122763_f58daa4e0c.json",
+      "timestamp": "2026-06-02T04:05:56+09:00"
+    },
+    {
+      "duration_ms": 15320,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_040631585763_45a2b14f73.json",
+      "timestamp": "2026-06-02T04:06:31+09:00"
+    },
+    {
+      "duration_ms": 16985,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_041506909851_0fe0ec4009.json",
+      "timestamp": "2026-06-02T04:15:06+09:00"
+    },
+    {
+      "duration_ms": 16264,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_042927405411_59606cd57a.json",
+      "timestamp": "2026-06-02T04:29:27+09:00"
+    },
+    {
+      "duration_ms": 15111,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_044555063132_fa4483b556.json",
+      "timestamp": "2026-06-02T04:45:55+09:00"
+    },
+    {
+      "duration_ms": 15179,
+      "label": "hold_advisor_triage",
+      "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_045033505053_3ac61e7ab4.json",
+      "timestamp": "2026-06-02T04:50:33+09:00"
+    },
+    {
+      "duration_ms": 23390,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_005902872170_95be3921f4.json",
+      "timestamp": "2026-06-02T00:59:02+09:00"
+    },
+    {
+      "duration_ms": 22575,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_012413411746_f4c43b45d4.json",
+      "timestamp": "2026-06-02T01:24:13+09:00"
+    },
+    {
+      "duration_ms": 23749,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_015406187108_9bc8825af8.json",
+      "timestamp": "2026-06-02T01:54:06+09:00"
+    },
+    {
+      "duration_ms": 24982,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_023423921136_66e00acf02.json",
+      "timestamp": "2026-06-02T02:34:23+09:00"
+    },
+    {
+      "duration_ms": 23896,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_033618077800_c3eaceca58.json",
+      "timestamp": "2026-06-02T03:36:18+09:00"
+    },
+    {
+      "duration_ms": 26546,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_040755223717_64310bb0d1.json",
+      "timestamp": "2026-06-02T04:07:55+09:00"
+    },
+    {
+      "duration_ms": 24092,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_US_select_tickers_043747812053_b8605e2f57.json",
+      "timestamp": "2026-06-02T04:37:47+09:00"
+    }
+  ],
+  "start_at": "2026-06-01T22:30:00+09:00",
+  "total_tokens": 510962
+}

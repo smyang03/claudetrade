@@ -1,0 +1,342 @@
+{
+  "candidate_analysis": {
+    "buckets": [],
+    "candidate_rows": 0,
+    "consistency": {
+      "action_family_counts": {},
+      "actual_prompt_mismatch": [],
+      "actual_prompt_mismatch_count": 0,
+      "actual_prompt_unmeasured": [],
+      "actual_prompt_unmeasured_count": 0,
+      "input_reported_not_in_prompt": [],
+      "input_reported_not_in_prompt_count": 0,
+      "invalid_price": [],
+      "invalid_price_count": 0,
+      "invalid_price_reason_counts": {},
+      "latest_rows_checked": 0,
+      "legacy_input_reported_mismatch": [],
+      "legacy_input_reported_mismatch_count": 0,
+      "trace_join_missing": [],
+      "trace_join_missing_count": 0,
+      "trade_ready_family_mismatch": [],
+      "trade_ready_family_mismatch_count": 0
+    },
+    "db_path": "E:\\code\\claudetrade\\data\\audit\\candidate_audit.db",
+    "freshness": {
+      "db_latest_at": "",
+      "max_lag_sec": null,
+      "sources": {
+        "candidate_funnel_snapshot": {
+          "lag_sec": null,
+          "latest_at": "",
+          "path": "",
+          "stale": false
+        },
+        "raw_calls": {
+          "lag_sec": null,
+          "latest_at": "",
+          "path": "",
+          "stale": false
+        },
+        "screener_quality": {
+          "lag_sec": null,
+          "latest_at": "",
+          "path": "",
+          "stale": false
+        },
+        "watch_trigger_not_evaluated": {
+          "lag_sec": null,
+          "latest_at": "",
+          "path": "",
+          "stale": false
+        },
+        "watch_trigger_shadow": {
+          "lag_sec": null,
+          "latest_at": "",
+          "path": "",
+          "stale": false
+        }
+      },
+      "stale_sources": [],
+      "status": "missing_db",
+      "warn_threshold_sec": 120
+    },
+    "horizon_min": 60,
+    "latency_sla": {
+      "alert_count": 0,
+      "avg_ms": null,
+      "critical_threshold_ms": 60000,
+      "exists": false,
+      "max_ms": null,
+      "p95_ms": null,
+      "rows": 0,
+      "status": "missing",
+      "warn_threshold_ms": 25000
+    },
+    "latest_only": true,
+    "market": "US",
+    "missed_winners": [],
+    "outcome_coverage": {},
+    "route_shadow_summary": {
+      "reason_counts": {},
+      "route_cancel_pathb_rows": 0,
+      "route_suspend_pathb_rows": 0,
+      "tickers_by_reason": {}
+    },
+    "routing_delta": {
+      "exists": false,
+      "status": "missing"
+    },
+    "row_uniqueness": {
+      "call_level_rows": 0,
+      "duplicate_group_count": 0,
+      "latest_session_ticker_rows": 0
+    },
+    "runtime_mode": "live",
+    "session_date": "2026-06-01",
+    "strategy_mismatch": {
+      "filled_strategy_rows": 0,
+      "match_count": 0,
+      "mismatch_count": 0,
+      "mismatch_rate": null,
+      "pairs": [],
+      "unclassified_count": 0
+    },
+    "top_mfe": {
+      "avoid_watch": [],
+      "in_prompt_not_selected": [],
+      "not_in_prompt": [],
+      "ready_no_signal": []
+    },
+    "watch_only_bucket_decomposition": {
+      "bucket_count": 0,
+      "buckets": [],
+      "examples": {},
+      "interpretation": "Use this to choose the next narrow fix. Do not open global gates from a high blocked ratio alone.",
+      "missed_runup_threshold_pct": 2.0,
+      "rows_considered": 0
+    },
+    "watch_trigger_shadow_outcomes": {},
+    "watch_trigger_shadow_summary": {
+      "blocked_reason_counts": {},
+      "data_gap_dominant": false,
+      "missing_strategy_count": 0,
+      "missing_strategy_rate": null,
+      "not_evaluated_reason_counts": {},
+      "shadow_result_counts": {},
+      "strategy_counts": {},
+      "strategy_source_counts": {},
+      "tickers_by_result": {},
+      "watch_trigger_blocked_count": 0,
+      "watch_trigger_no_signal_count": 0,
+      "watch_trigger_not_evaluated_count": 0,
+      "watch_trigger_shadow_count": 0,
+      "watch_trigger_would_promote_count": 0
+    }
+  },
+  "candidate_bucket_source_score_coverage": {
+    "available": true,
+    "blank_primary_bucket": 0,
+    "db_path": "E:\\code\\claudetrade\\data\\audit\\candidate_audit.db",
+    "empty_data_quality_flags": 0,
+    "empty_source_tags": 0,
+    "invalid_price_reason_counts": {},
+    "null_raw_score_current": 0,
+    "null_trainer_score_rank": 0,
+    "performance_conclusion_allowed": false,
+    "rows": 0
+  },
+  "gate_summary": {
+    "actual_prompt_visibility": {
+      "action_family_counts": {},
+      "actual_prompt_mismatch": [],
+      "actual_prompt_mismatch_count": 0,
+      "actual_prompt_unmeasured": [],
+      "actual_prompt_unmeasured_count": 0,
+      "input_reported_not_in_prompt": [],
+      "input_reported_not_in_prompt_count": 0,
+      "invalid_price": [],
+      "invalid_price_count": 0,
+      "invalid_price_reason_counts": {},
+      "latest_rows_checked": 0,
+      "legacy_input_reported_mismatch": [],
+      "legacy_input_reported_mismatch_count": 0,
+      "trace_join_missing": [],
+      "trace_join_missing_count": 0,
+      "trade_ready_family_mismatch": [],
+      "trade_ready_family_mismatch_count": 0
+    },
+    "bucket_source_score_performance_allowed": false,
+    "learning_policy_change_allowed": false,
+    "pead_policy_change_allowed": false,
+    "watch_trigger_policy_change_allowed": false
+  },
+  "generated_at": "2026-06-01T21:13:25+09:00",
+  "hold_advisor_cache_shadow": {
+    "cache_enable_allowed": false,
+    "decision_dir": "E:\\code\\claudetrade\\logs\\hold_advisor",
+    "estimated_request_reduction": 0,
+    "missing_time": 0,
+    "policy_change_allowed": false,
+    "requests": 0,
+    "ttl_minutes": 10,
+    "would_expire": 0,
+    "would_hit": 0
+  },
+  "hold_advisor_latency": {
+    "decision_requests": {
+      "by_market": [],
+      "by_market_stage_decision": [],
+      "by_stage": [],
+      "by_symbol": [],
+      "slowest": [],
+      "summary": {
+        "avg_ms": null,
+        "calls": 0,
+        "duration_count": 0,
+        "input_tokens": 0,
+        "max_ms": null,
+        "missing_duration_count": 0,
+        "output_tokens": 0,
+        "p50_ms": null,
+        "p95_ms": null
+      }
+    },
+    "decision_votes": {
+      "by_analyst": [],
+      "by_market_stage_analyst": [],
+      "summary": {
+        "avg_ms": null,
+        "calls": 0,
+        "duration_count": 0,
+        "input_tokens": 0,
+        "max_ms": null,
+        "missing_duration_count": 0,
+        "output_tokens": 0,
+        "p50_ms": null,
+        "p95_ms": null
+      }
+    },
+    "generated_at": "2026-06-01T21:13:25+09:00",
+    "scope": {
+      "db_path": "E:\\code\\claudetrade\\data\\audit\\agent_call_events.db",
+      "decision_dir": "E:\\code\\claudetrade\\logs\\hold_advisor",
+      "end_date": "2026-06-01",
+      "market": "US",
+      "raw_dir": "E:\\code\\claudetrade\\logs\\raw_calls",
+      "single_call_source": "raw_calls",
+      "source": "auto",
+      "start_date": "2026-06-01"
+    },
+    "single_calls": {
+      "by_analyst": [],
+      "by_market": [],
+      "by_market_stage_analyst": [],
+      "by_stage": [],
+      "slowest": [],
+      "summary": {
+        "avg_ms": null,
+        "calls": 0,
+        "duration_count": 0,
+        "input_tokens": 0,
+        "max_ms": null,
+        "missing_duration_count": 0,
+        "output_tokens": 0,
+        "p50_ms": null,
+        "p95_ms": null
+      }
+    }
+  },
+  "horizon_min": 60,
+  "kis_token_status": {
+    "available": true,
+    "checks": [
+      {
+        "data": {
+          "context": {
+            "app_key_fingerprint": "c11ee55f678f",
+            "base_url": "https://openapi.koreainvestment.com:9443",
+            "credential_mode": "primary",
+            "is_paper": false,
+            "market": "KR"
+          },
+          "expires_at": "2026-06-02T14:46:54.031770",
+          "issued_at": "2026-06-01T14:46:54.031770",
+          "minutes_left": 1053.5,
+          "path": "E:\\code\\claudetrade\\state\\live_kis_token.json"
+        },
+        "detail": "token expires_at=2026-06-02T14:46:54.031770, minutes_left=1053.5",
+        "name": "kis.token_expiry",
+        "status": "PASS"
+      },
+      {
+        "data": {
+          "helper": true,
+          "minutes_left": 1053.5
+        },
+        "detail": "token valid and forced refresh helper is present",
+        "name": "kis.kr_token_refresh",
+        "status": "PASS"
+      },
+      {
+        "data": {
+          "helper": true,
+          "minutes_left": 1053.5
+        },
+        "detail": "token valid and forced refresh helper is present",
+        "name": "kis.us_token_refresh",
+        "status": "PASS"
+      },
+      {
+        "data": {
+          "accepted_exception": true,
+          "operator_action": "none if live guardian smoke and broker-truth snapshots are passing",
+          "read_only_check": "run live guardian/smoke or KIS read-only precheck before live trading",
+          "reason": "network/order side effects intentionally avoided in default preflight",
+          "remediation_required": false
+        },
+        "detail": "default preflight avoids direct balance APIs; broker-truth snapshot and live smoke cover read-only balance checks",
+        "name": "kis.balance_probe",
+        "status": "WARN"
+      }
+    ]
+  },
+  "market": "US",
+  "mode": "live",
+  "pead_manual_review": {
+    "log_dir": "E:\\code\\claudetrade\\logs\\pead",
+    "manual_review_checklist": {},
+    "policy_change_allowed": false,
+    "promotion_gate_state": "blocked_manual_review",
+    "prompt_applied_count": 0,
+    "prompt_leak_candidates": [],
+    "prompt_surprise_enabled": false,
+    "required_trading_days": 5,
+    "shadow_rows": 799,
+    "state_found": true,
+    "state_path": "E:\\code\\claudetrade\\state\\pead_shadow_state.json",
+    "surprise_known_count": 201,
+    "trading_days_observed": 0
+  },
+  "session_date": "2026-06-01",
+  "v2_learning_gate": {
+    "available": true,
+    "db_path": "E:\\code\\claudetrade\\data\\ml\\decisions.db",
+    "last_synced_at": "2026-05-27T10:48:11+00:00",
+    "learning_allowed": 5,
+    "learning_excluded": 280,
+    "policy_change_allowed": false,
+    "rows_by_quality_grade": {
+      "CLEAN": 58,
+      "DIRTY": 2,
+      "LEGACY_UNKNOWN": 138,
+      "SUSPECT": 87
+    },
+    "top_quality_reasons": {
+      "CLOSED_WITHOUT_FILL": 2,
+      "FORWARD_NOT_MEASURED": 138,
+      "FORWARD_PENDING_DATA": 70,
+      "ORDER_UNKNOWN_UNRESOLVED": 24
+    }
+  }
+}

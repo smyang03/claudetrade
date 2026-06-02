@@ -231,8 +231,8 @@ TRIAGE_EXIT_DRIVERS = {
     "other",
 }
 TRIAGE_CLEAR_STOP_DRIVERS = {"invalid_if", "loss_cap", "hard_stop", "failed_recovery"}
-TRIAGE_PROMPT_VERSION = "hold_advisor_triage_v1"
-CHALLENGE_PROMPT_VERSION = "hold_advisor_challenge_v1"
+TRIAGE_PROMPT_VERSION = "hold_advisor_triage_v1_1"
+CHALLENGE_PROMPT_VERSION = "hold_advisor_challenge_v1_1"
 _TRIAGE_SHADOW_CALLS = 0
 
 
@@ -255,6 +255,19 @@ def _env_int(name: str, default: int) -> int:
         return int(float(os.getenv(name, str(default)) or default))
     except Exception:
         return default
+
+
+def _env_int_bound(name: str, default: int, min_value: int, max_value: int) -> int:
+    value = _env_int(name, default)
+    return max(min_value, min(max_value, value))
+
+
+def _triage_max_tokens() -> int:
+    return _env_int_bound("HOLD_ADVISOR_TRIAGE_MAX_TOKENS", 1400, 900, 2500)
+
+
+def _challenge_max_tokens() -> int:
+    return _env_int_bound("HOLD_ADVISOR_CHALLENGE_MAX_TOKENS", 1100, 700, 2000)
 
 
 def _triage_stage_allowlist() -> set[str]:
@@ -465,6 +478,9 @@ Case data:
 {payload_text}
 
 Return strict JSON only:
+- Return one compact JSON object only. No markdown fences, no prose, no comments.
+- Keep reason and invalid_if <= 120 chars.
+- primary_evidence and counter_evidence: max 2 strings each, <= 80 chars per string.
 {{
   "category": "STOP_LOSS|HOLD|SELL",
   "confidence": 0.0,
@@ -538,6 +554,8 @@ First-pass result:
 {triage_text}
 
 Return strict JSON only:
+- Return one compact JSON object only. No markdown fences, no prose, no comments.
+- Keep reason, invalid_if, risk_if_wrong, and minimum_condition_to_hold <= 120 chars.
 {{
   "confirm": true,
   "final_category": "STOP_LOSS|HOLD|SELL",
@@ -617,7 +635,8 @@ def _ask_challenge(
     )
     call_started = time.perf_counter()
     try:
-        _create_kwargs: dict = {"model": MODEL, "max_tokens": 700, "messages": [{"role": "user", "content": prompt}]}
+        max_tokens = _challenge_max_tokens()
+        _create_kwargs: dict = {"model": MODEL, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
         if _HOLD_ADVISOR_CACHE_ENABLED:
             _create_kwargs["system"] = [{"type": "text", "text": _HOLD_ADVISOR_SYSTEM, "cache_control": {"type": "ephemeral"}}]
         resp = client.messages.create(**_create_kwargs)
@@ -641,6 +660,7 @@ def _ask_challenge(
                 "default_policy": default_policy,
                 "triage_category": triage.get("exit_category", ""),
                 "triage_driver": triage.get("exit_driver", ""),
+                "token_budget": {"max_tokens": max_tokens},
             },
         )
         vote = _coerce_challenge_vote(result)
@@ -821,7 +841,8 @@ def _ask_triage(
     )
     call_started = time.perf_counter()
     try:
-        _create_kwargs: dict = {"model": MODEL, "max_tokens": 900, "messages": [{"role": "user", "content": prompt}]}
+        max_tokens = _triage_max_tokens()
+        _create_kwargs: dict = {"model": MODEL, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
         if _HOLD_ADVISOR_CACHE_ENABLED:
             _create_kwargs["system"] = [{"type": "text", "text": _HOLD_ADVISOR_SYSTEM, "cache_control": {"type": "ephemeral"}}]
         resp = client.messages.create(**_create_kwargs)
@@ -844,6 +865,7 @@ def _ask_triage(
                 "decision_stage": decision_stage,
                 "default_policy": default_policy,
                 "prompt_mode": prompt_mode,
+                "token_budget": {"max_tokens": max_tokens},
             },
         )
         vote = _coerce_triage_vote(result, pos, decision_stage, default_policy)
@@ -1088,6 +1110,22 @@ def _result_from_triage(
         final_vote = _hold_boundary_invalid_fallback(final_vote, decision_stage, default_policy)
     action = str(final_vote.get("action") or "HOLD").upper()
     votes = _triage_compatibility_votes(final_vote, triage_payload, challenge_payload, decision_stage, default_policy)
+    advisor_fallback = bool(
+        final_vote.get("fallback", False)
+        or triage_payload.get("fallback", False)
+        or triage_payload.get("triage_parse_error", False)
+        or final_vote.get("triage_parse_error", False)
+        or final_vote.get("challenge_parse_error", False)
+        or (challenge_payload is not None and bool(challenge_payload.get("parse_error", False)))
+        or triage_missing
+    )
+    decision_source = (
+        "hold_advisor_fallback"
+        if advisor_fallback
+        else "hold_advisor_triage_challenge"
+        if challenge_payload is not None
+        else "hold_advisor_triage"
+    )
     _log_decision(
         ticker,
         market,
@@ -1138,6 +1176,11 @@ def _result_from_triage(
         "challenge_field_gaps": list(final_vote.get("challenge_field_gaps") or []),
         "triage": triage_payload,
         "triage_missing": bool(final_vote.get("triage_missing", triage_payload.get("triage_missing", False))),
+        "fallback": advisor_fallback,
+        "hold_advisor_fallback": advisor_fallback,
+        "decision_source": decision_source,
+        "hold_advisor_decision_source": decision_source,
+        "fallback_reason": str(final_vote.get("reason", "") or "")[:200] if advisor_fallback else "",
         "triage_vote_trace": {
             "vote_contract": "triage_shim_v1",
             "triage": triage_payload,

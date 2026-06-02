@@ -646,6 +646,74 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                 "or_formed",
             )
 
+    def test_runtime_evidence_backfill_corrects_false_missing_quality_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            base = {
+                "runtime_mode": "live",
+                "market": "KR",
+                "session_date": "2026-06-02",
+                "known_at": "2026-06-02T15:54:00+09:00",
+                "source_file": "trading_bot.selection_meta",
+            }
+            for ticker, quality in (
+                ("005930", "minute_missing"),
+                ("131400", "DATA_INSUFFICIENT_SHADOW"),
+                ("000660", "minute_complete"),
+            ):
+                store.upsert_candidate(
+                    {
+                        **base,
+                        "call_id": f"call_{ticker}",
+                        "ticker": ticker,
+                        "data_quality": quality,
+                        "data_quality_missing": False,
+                        "evidence_data_state": "missing" if quality != "minute_complete" else "confirmed",
+                        "evidence_missing_fields_json": ["current_price"] if quality != "minute_complete" else [],
+                        "payload": {
+                            "runtime_gate": {
+                                "data_quality": quality,
+                                "data_quality_missing": False,
+                                "evidence_data_state": "missing" if quality != "minute_complete" else "confirmed",
+                                "evidence_missing_fields": ["current_price"] if quality != "minute_complete" else [],
+                            }
+                        },
+                    }
+                )
+
+            plan = build_runtime_evidence_backfill_plan(
+                db_path=db_path,
+                runtime_mode="live",
+                market="KR",
+                session_date="2026-06-02",
+            )
+
+            self.assertEqual(plan["conflict_count"], 0)
+            self.assertEqual(plan["eligible_count"], 2)
+            eligible_by_ticker = {item["ticker"]: item["updates"] for item in plan["eligible"]}
+            self.assertEqual(eligible_by_ticker["005930"]["data_quality_missing"], 1)
+            self.assertEqual(eligible_by_ticker["131400"]["data_quality_missing"], 1)
+            self.assertNotIn("000660", eligible_by_ticker)
+
+            applied = apply_runtime_evidence_backfill(db_path, plan)
+            self.assertEqual(applied, 2)
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = {
+                    row["ticker"]: row["data_quality_missing"]
+                    for row in conn.execute(
+                        "SELECT ticker, data_quality_missing FROM audit_candidate_rows ORDER BY ticker"
+                    ).fetchall()
+                }
+            finally:
+                conn.close()
+            self.assertEqual(rows["005930"], 1)
+            self.assertEqual(rows["131400"], 1)
+            self.assertEqual(rows["000660"], 0)
+
     def test_runtime_evidence_backfill_does_not_overwrite_non_empty_columns_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "candidate_audit.db"

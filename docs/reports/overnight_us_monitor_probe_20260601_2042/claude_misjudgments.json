@@ -1,0 +1,27 @@
+{
+  "db_path": "E:\\code\\claudetrade\\data\\ml\\claude_decision_facts.db",
+  "end_date": "2026-06-01",
+  "generated_at": "2026-06-01T12:17:17+00:00",
+  "latest_only": false,
+  "market": "US",
+  "runtime_mode": "live",
+  "start_date": "2026-06-01",
+  "status": "OK",
+  "summary": {
+    "by_market_label": {},
+    "by_market_owner": {},
+    "data_quality_issue_count_by_reason": {},
+    "data_quality_issue_examples": [],
+    "execution_issue": [],
+    "false_negative": [],
+    "kr_false_positive": [],
+    "kr_overextended_false_positive": [],
+    "lesson_candidate_blocked_count": 0,
+    "lesson_candidate_blocked_examples": [],
+    "lesson_candidate_eligible_count": 0,
+    "lesson_candidate_eligible_examples": [],
+    "risk_justified_miss": [],
+    "total_rows": 0,
+    "us_correct_positive": []
+  }
+}

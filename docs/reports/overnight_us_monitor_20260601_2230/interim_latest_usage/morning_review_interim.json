@@ -1,0 +1,1400 @@
+{
+  "claude_io_quality": {
+    "avg_duration_ms": 14753.1,
+    "avg_input_tokens": 3850.4,
+    "avg_output_tokens": 671.4,
+    "by_label": [
+      {
+        "avg_duration_ms": 24175.7,
+        "avg_input_tokens": 11863.0,
+        "avg_output_tokens": 1678.5,
+        "calls": 16,
+        "duration_missing_calls": 9,
+        "duration_observed_calls": 7,
+        "input_issues": {
+          "prompt_input_tokens_ge_12000": 11,
+          "prompt_input_tokens_ge_8000": 5
+        },
+        "input_tokens": 189808,
+        "label": "select_tickers",
+        "output_issues": {
+          "candidate_actions_not_one_per_watchlist": 1,
+          "duplicate_candidate_action": 2,
+          "duplicate_watchlist_ticker": 1,
+          "response_fenced_json": 5,
+          "response_has_preamble_or_wrapper": 5,
+          "response_not_strict_json": 5,
+          "trade_ready_action_not_buy_or_probe": 1
+        },
+        "output_tokens": 26856,
+        "parse_errors": 0,
+        "total_tokens": 216664
+      },
+      {
+        "avg_duration_ms": 14269.3,
+        "avg_input_tokens": 1464.8,
+        "avg_output_tokens": 724.0,
+        "calls": 42,
+        "duration_missing_calls": 0,
+        "duration_observed_calls": 42,
+        "input_issues": {},
+        "input_tokens": 61522,
+        "label": "hold_advisor_triage",
+        "output_issues": {
+          "response_fenced_json": 42,
+          "response_has_preamble_or_wrapper": 42,
+          "response_not_strict_json": 42
+        },
+        "output_tokens": 30406,
+        "parse_errors": 0,
+        "total_tokens": 91928
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 6868.6,
+        "avg_output_tokens": 223.6,
+        "calls": 5,
+        "duration_missing_calls": 5,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 34343,
+        "label": "analyst_bear_r1",
+        "output_issues": {},
+        "output_tokens": 1118,
+        "parse_errors": 0,
+        "total_tokens": 35461
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 6753.6,
+        "avg_output_tokens": 230.8,
+        "calls": 5,
+        "duration_missing_calls": 5,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 33768,
+        "label": "analyst_bull_r1",
+        "output_issues": {},
+        "output_tokens": 1154,
+        "parse_errors": 0,
+        "total_tokens": 34922
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 6745.6,
+        "avg_output_tokens": 184.2,
+        "calls": 5,
+        "duration_missing_calls": 5,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 33728,
+        "label": "analyst_neutral_r1",
+        "output_issues": {},
+        "output_tokens": 921,
+        "parse_errors": 0,
+        "total_tokens": 34649
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 2556.6,
+        "avg_output_tokens": 247.0,
+        "calls": 5,
+        "duration_missing_calls": 5,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 12783,
+        "label": "analyst_bear_r2",
+        "output_issues": {},
+        "output_tokens": 1235,
+        "parse_errors": 0,
+        "total_tokens": 14018
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 2441.6,
+        "avg_output_tokens": 269.8,
+        "calls": 5,
+        "duration_missing_calls": 5,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 12208,
+        "label": "analyst_bull_r2",
+        "output_issues": {},
+        "output_tokens": 1349,
+        "parse_errors": 0,
+        "total_tokens": 13557
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 2433.6,
+        "avg_output_tokens": 241.4,
+        "calls": 5,
+        "duration_missing_calls": 5,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 12168,
+        "label": "analyst_neutral_r2",
+        "output_issues": {},
+        "output_tokens": 1207,
+        "parse_errors": 0,
+        "total_tokens": 13375
+      },
+      {
+        "avg_duration_ms": 47750.0,
+        "avg_input_tokens": 7858.0,
+        "avg_output_tokens": 2500.0,
+        "calls": 1,
+        "duration_missing_calls": 0,
+        "duration_observed_calls": 1,
+        "input_issues": {},
+        "input_tokens": 7858,
+        "label": "postmortem",
+        "output_issues": {
+          "output_tokens_ge_2000": 1,
+          "response_fenced_json": 1,
+          "response_has_preamble_or_wrapper": 1,
+          "response_not_strict_json": 1,
+          "slow_call_30s": 1
+        },
+        "output_tokens": 2500,
+        "parse_errors": 0,
+        "total_tokens": 10358
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 1756.5,
+        "avg_output_tokens": 239.8,
+        "calls": 4,
+        "duration_missing_calls": 4,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 7026,
+        "label": "tune_30min",
+        "output_issues": {},
+        "output_tokens": 959,
+        "parse_errors": 0,
+        "total_tokens": 7985
+      },
+      {
+        "avg_duration_ms": 12739.0,
+        "avg_input_tokens": 1367.8,
+        "avg_output_tokens": 558.5,
+        "calls": 4,
+        "duration_missing_calls": 0,
+        "duration_observed_calls": 4,
+        "input_issues": {},
+        "input_tokens": 5471,
+        "label": "hold_advisor_challenge",
+        "output_issues": {
+          "response_fenced_json": 4,
+          "response_has_preamble_or_wrapper": 4,
+          "response_not_strict_json": 4
+        },
+        "output_tokens": 2234,
+        "parse_errors": 0,
+        "total_tokens": 7705
+      },
+      {
+        "avg_duration_ms": 7245.0,
+        "avg_input_tokens": 1408.0,
+        "avg_output_tokens": 394.7,
+        "calls": 3,
+        "duration_missing_calls": 0,
+        "duration_observed_calls": 3,
+        "input_issues": {},
+        "input_tokens": 4224,
+        "label": "hold_advisor_bear",
+        "output_issues": {
+          "response_fenced_json": 3,
+          "response_has_preamble_or_wrapper": 3,
+          "response_not_strict_json": 3
+        },
+        "output_tokens": 1184,
+        "parse_errors": 0,
+        "total_tokens": 5408
+      }
+    ],
+    "duration_missing_calls": 50,
+    "duration_observed_calls": 63,
+    "input_issue_counts": {
+      "prompt_input_tokens_ge_12000": 11,
+      "prompt_input_tokens_ge_8000": 5
+    },
+    "output_issue_counts": {
+      "candidate_actions_not_one_per_watchlist": 1,
+      "duplicate_candidate_action": 2,
+      "duplicate_watchlist_ticker": 1,
+      "output_tokens_ge_2000": 1,
+      "response_fenced_json": 61,
+      "response_has_preamble_or_wrapper": 61,
+      "response_not_strict_json": 61,
+      "slow_call_30s": 1,
+      "trade_ready_action_not_buy_or_probe": 1
+    },
+    "quality_calls": 113,
+    "quality_input_tokens": 435092,
+    "quality_output_tokens": 75870,
+    "quality_parse_errors": 0,
+    "usage_timeline": [
+      {
+        "avg_input_tokens": 5203.2,
+        "avg_output_tokens": 475.4,
+        "bucket_start": "2026-06-01T22:30+09:00",
+        "calls": 26,
+        "input_issues": {
+          "prompt_input_tokens_ge_12000": 1,
+          "prompt_input_tokens_ge_8000": 3
+        },
+        "input_tokens": 135283,
+        "output_issues": {
+          "duplicate_candidate_action": 1,
+          "duplicate_watchlist_ticker": 1,
+          "response_fenced_json": 5,
+          "response_has_preamble_or_wrapper": 5,
+          "response_not_strict_json": 5
+        },
+        "output_tokens": 12361,
+        "parse_errors": 0,
+        "top_labels": {
+          "analyst_bear_r1": 3,
+          "analyst_bear_r2": 3,
+          "analyst_bull_r1": 3,
+          "analyst_bull_r2": 3,
+          "select_tickers": 4
+        },
+        "total_tokens": 147644
+      },
+      {
+        "avg_input_tokens": 3734.5,
+        "avg_output_tokens": 559.7,
+        "bucket_start": "2026-06-01T23:00+09:00",
+        "calls": 17,
+        "input_issues": {
+          "prompt_input_tokens_ge_12000": 2
+        },
+        "input_tokens": 63487,
+        "output_issues": {
+          "response_fenced_json": 9,
+          "response_has_preamble_or_wrapper": 9,
+          "response_not_strict_json": 9
+        },
+        "output_tokens": 9515,
+        "parse_errors": 0,
+        "top_labels": {
+          "analyst_bear_r1": 1,
+          "analyst_bear_r2": 1,
+          "hold_advisor_challenge": 2,
+          "hold_advisor_triage": 5,
+          "select_tickers": 2
+        },
+        "total_tokens": 73002
+      },
+      {
+        "avg_input_tokens": 5460.3,
+        "avg_output_tokens": 602.5,
+        "bucket_start": "2026-06-01T23:30+09:00",
+        "calls": 10,
+        "input_issues": {
+          "prompt_input_tokens_ge_12000": 2
+        },
+        "input_tokens": 54603,
+        "output_issues": {
+          "candidate_actions_not_one_per_watchlist": 1,
+          "duplicate_candidate_action": 1,
+          "response_fenced_json": 2,
+          "response_has_preamble_or_wrapper": 2,
+          "response_not_strict_json": 2
+        },
+        "output_tokens": 6025,
+        "parse_errors": 0,
+        "top_labels": {
+          "analyst_bear_r1": 1,
+          "analyst_bear_r2": 1,
+          "analyst_bull_r1": 1,
+          "hold_advisor_triage": 2,
+          "select_tickers": 2
+        },
+        "total_tokens": 60628
+      },
+      {
+        "avg_input_tokens": 2941.0,
+        "avg_output_tokens": 572.3,
+        "bucket_start": "2026-06-02T00:00+09:00",
+        "calls": 7,
+        "input_issues": {
+          "prompt_input_tokens_ge_12000": 1
+        },
+        "input_tokens": 20587,
+        "output_issues": {
+          "response_fenced_json": 5,
+          "response_has_preamble_or_wrapper": 5,
+          "response_not_strict_json": 5,
+          "trade_ready_action_not_buy_or_probe": 1
+        },
+        "output_tokens": 4006,
+        "parse_errors": 0,
+        "top_labels": {
+          "hold_advisor_bear": 1,
+          "hold_advisor_bull": 1,
+          "hold_advisor_neutral": 1,
+          "hold_advisor_triage": 2,
+          "select_tickers": 1
+        },
+        "total_tokens": 24593
+      },
+      {
+        "avg_input_tokens": 2506.7,
+        "avg_output_tokens": 574.4,
+        "bucket_start": "2026-06-02T00:30+09:00",
+        "calls": 10,
+        "input_issues": {
+          "prompt_input_tokens_ge_12000": 1
+        },
+        "input_tokens": 25067,
+        "output_issues": {
+          "response_fenced_json": 9,
+          "response_has_preamble_or_wrapper": 9,
+          "response_not_strict_json": 9
+        },
+        "output_tokens": 5744,
+        "parse_errors": 0,
+        "top_labels": {
+          "hold_advisor_bear": 2,
+          "hold_advisor_bull": 2,
+          "hold_advisor_neutral": 2,
+          "hold_advisor_triage": 3,
+          "select_tickers": 1
+        },
+        "total_tokens": 30811
+      },
+      {
+        "avg_input_tokens": 3344.5,
+        "avg_output_tokens": 799.7,
+        "bucket_start": "2026-06-02T01:00+09:00",
+        "calls": 6,
+        "input_issues": {
+          "prompt_input_tokens_ge_12000": 1
+        },
+        "input_tokens": 20067,
+        "output_issues": {
+          "response_fenced_json": 4,
+          "response_has_preamble_or_wrapper": 4,
+          "response_not_strict_json": 4
+        },
+        "output_tokens": 4798,
+        "parse_errors": 0,
+        "top_labels": {
+          "hold_advisor_challenge": 1,
+          "hold_advisor_triage": 3,
+          "param_tuner": 1,
+          "select_tickers": 1
+        },
+        "total_tokens": 24865
+      },
+      {
+        "avg_input_tokens": 6930.5,
+        "avg_output_tokens": 985.5,
+        "bucket_start": "2026-06-02T01:30+09:00",
+        "calls": 2,
+        "input_issues": {
+          "prompt_input_tokens_ge_12000": 1
+        },
+        "input_tokens": 13861,
+        "output_issues": {},
+        "output_tokens": 1971,
+        "parse_errors": 0,
+        "top_labels": {
+          "select_tickers": 1,
+          "tune_30min": 1
+        },
+        "total_tokens": 15832
+      },
+      {
+        "avg_input_tokens": 1557.7,
+        "avg_output_tokens": 782.7,
+        "bucket_start": "2026-06-02T02:00+09:00",
+        "calls": 3,
+        "input_issues": {},
+        "input_tokens": 4673,
+        "output_issues": {
+          "response_fenced_json": 3,
+          "response_has_preamble_or_wrapper": 3,
+          "response_not_strict_json": 3
+        },
+        "output_tokens": 2348,
+        "parse_errors": 0,
+        "top_labels": {
+          "hold_advisor_triage": 3
+        },
+        "total_tokens": 7021
+      },
+      {
+        "avg_input_tokens": 4283.0,
+        "avg_output_tokens": 933.8,
+        "bucket_start": "2026-06-02T02:30+09:00",
+        "calls": 4,
+        "input_issues": {
+          "prompt_input_tokens_ge_12000": 1
+        },
+        "input_tokens": 17132,
+        "output_issues": {
+          "response_fenced_json": 2,
+          "response_has_preamble_or_wrapper": 2,
+          "response_not_strict_json": 2
+        },
+        "output_tokens": 3735,
+        "parse_errors": 0,
+        "top_labels": {
+          "hold_advisor_triage": 2,
+          "select_tickers": 1,
+          "tune_30min": 1
+        },
+        "total_tokens": 20867
+      },
+      {
+        "avg_input_tokens": 1603.6,
+        "avg_output_tokens": 768.0,
+        "bucket_start": "2026-06-02T03:00+09:00",
+        "calls": 7,
+        "input_issues": {},
+        "input_tokens": 11225,
+        "output_issues": {
+          "response_fenced_json": 6,
+          "response_has_preamble_or_wrapper": 6,
+          "response_not_strict_json": 6
+        },
+        "output_tokens": 5376,
+        "parse_errors": 0,
+        "top_labels": {
+          "hold_advisor_triage": 6,
+          "tune_60min": 1
+        },
+        "total_tokens": 16601
+      },
+      {
+        "avg_input_tokens": 3176.3,
+        "avg_output_tokens": 886.3,
+        "bucket_start": "2026-06-02T03:30+09:00",
+        "calls": 6,
+        "input_issues": {
+          "prompt_input_tokens_ge_8000": 1
+        },
+        "input_tokens": 19058,
+        "output_issues": {
+          "response_fenced_json": 4,
+          "response_has_preamble_or_wrapper": 4,
+          "response_not_strict_json": 4
+        },
+        "output_tokens": 5318,
+        "parse_errors": 0,
+        "top_labels": {
+          "hold_advisor_triage": 4,
+          "select_tickers": 1,
+          "tune_90min": 1
+        },
+        "total_tokens": 24376
+      },
+      {
+        "avg_input_tokens": 3092.6,
+        "avg_output_tokens": 897.6,
+        "bucket_start": "2026-06-02T04:00+09:00",
+        "calls": 7,
+        "input_issues": {
+          "prompt_input_tokens_ge_12000": 1
+        },
+        "input_tokens": 21648,
+        "output_issues": {
+          "response_fenced_json": 5,
+          "response_has_preamble_or_wrapper": 5,
+          "response_not_strict_json": 5
+        },
+        "output_tokens": 6283,
+        "parse_errors": 0,
+        "top_labels": {
+          "hold_advisor_triage": 5,
+          "select_tickers": 1,
+          "tune_120min": 1
+        },
+        "total_tokens": 27931
+      },
+      {
+        "avg_input_tokens": 3164.3,
+        "avg_output_tokens": 856.7,
+        "bucket_start": "2026-06-02T04:30+09:00",
+        "calls": 6,
+        "input_issues": {
+          "prompt_input_tokens_ge_8000": 1
+        },
+        "input_tokens": 18986,
+        "output_issues": {
+          "response_fenced_json": 5,
+          "response_has_preamble_or_wrapper": 5,
+          "response_not_strict_json": 5
+        },
+        "output_tokens": 5140,
+        "parse_errors": 0,
+        "top_labels": {
+          "hold_advisor_triage": 4,
+          "select_tickers": 1,
+          "tune_150min": 1
+        },
+        "total_tokens": 24126
+      },
+      {
+        "avg_input_tokens": 4707.5,
+        "avg_output_tokens": 1625.0,
+        "bucket_start": "2026-06-02T05:00+09:00",
+        "calls": 2,
+        "input_issues": {},
+        "input_tokens": 9415,
+        "output_issues": {
+          "output_tokens_ge_2000": 1,
+          "response_fenced_json": 2,
+          "response_has_preamble_or_wrapper": 2,
+          "response_not_strict_json": 2,
+          "slow_call_30s": 1
+        },
+        "output_tokens": 3250,
+        "parse_errors": 0,
+        "top_labels": {
+          "hold_advisor_triage": 1,
+          "postmortem": 1
+        },
+        "total_tokens": 12665
+      }
+    ],
+    "usage_timeline_summary": {
+      "conclusion_ko": "Claude 사용량이 여러 시간 버킷에 분산됐습니다. peak bucket과 고입력 버킷을 중심으로 조정합니다.",
+      "first_bucket_share_pct": 28.9,
+      "first_bucket_start": "2026-06-01T22:30+09:00",
+      "first_bucket_total_tokens": 147644,
+      "high_input_bucket_count": 11,
+      "latest_bucket_start": "2026-06-02T05:00+09:00",
+      "latest_bucket_total_tokens": 12665,
+      "non_strict_json_bucket_count": 13,
+      "peak_bucket_share_pct": 28.9,
+      "peak_bucket_start": "2026-06-01T22:30+09:00",
+      "peak_bucket_total_tokens": 147644,
+      "status": "distributed",
+      "total_calls": 113,
+      "total_tokens": 510962
+    }
+  },
+  "claude_lightweighting": {
+    "actions_ko": [
+      "select_tickers 후보/evidence pack 행 수와 반복 calibration 블록을 줄이고 8k+ 입력 프롬프트를 별도 경고 기준으로 관리합니다."
+    ],
+    "analyst_r1_share_pct": 20.6,
+    "concerns": [
+      "selection_token_share_high",
+      "large_prompt_input_observed"
+    ],
+    "conclusion_ko": "후단 hold/r2 경량화는 대체로 작동하지만 selection/R1 입력 집중이 높아 전단 경량화는 미흡합니다.",
+    "front_load_share_pct": 63.0,
+    "groups": [
+      {
+        "avg_total_tokens": 13541.5,
+        "calls": 16,
+        "group": "selection",
+        "input_tokens": 189808,
+        "output_tokens": 26856,
+        "share_pct": 42.4,
+        "total_tokens": 216664
+      },
+      {
+        "avg_total_tokens": 7002.1,
+        "calls": 15,
+        "group": "analyst_r1",
+        "input_tokens": 101839,
+        "output_tokens": 3193,
+        "share_pct": 20.6,
+        "total_tokens": 105032
+      },
+      {
+        "avg_total_tokens": 2730.0,
+        "calls": 15,
+        "group": "analyst_r2",
+        "input_tokens": 37159,
+        "output_tokens": 3791,
+        "share_pct": 8.0,
+        "total_tokens": 40950
+      },
+      {
+        "avg_total_tokens": 2103.1,
+        "calls": 55,
+        "group": "hold_advisor",
+        "input_tokens": 79641,
+        "output_tokens": 36029,
+        "share_pct": 22.6,
+        "total_tokens": 115670
+      },
+      {
+        "avg_total_tokens": 2017.2,
+        "calls": 8,
+        "group": "tuning",
+        "input_tokens": 13416,
+        "output_tokens": 2722,
+        "share_pct": 3.2,
+        "total_tokens": 16138
+      },
+      {
+        "avg_total_tokens": 0.0,
+        "calls": 0,
+        "group": "other",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "share_pct": 3.2,
+        "total_tokens": 16508
+      }
+    ],
+    "high_input_issue_count": 16,
+    "hold_advisor_share_pct": 22.6,
+    "max_avg_input_tokens_by_label": 11863.0,
+    "positive_signals": [
+      "analyst_r2_reduced_vs_r1"
+    ],
+    "selection_share_pct": 42.4,
+    "status": "mixed",
+    "top_labels": [
+      {
+        "avg_duration_ms": 24175.7,
+        "avg_input_tokens": 11863.0,
+        "avg_output_tokens": 1678.5,
+        "calls": 16,
+        "duration_missing_calls": 9,
+        "duration_observed_calls": 7,
+        "input_issues": {
+          "prompt_input_tokens_ge_12000": 11,
+          "prompt_input_tokens_ge_8000": 5
+        },
+        "input_tokens": 189808,
+        "label": "select_tickers",
+        "output_issues": {
+          "candidate_actions_not_one_per_watchlist": 1,
+          "duplicate_candidate_action": 2,
+          "duplicate_watchlist_ticker": 1,
+          "response_fenced_json": 5,
+          "response_has_preamble_or_wrapper": 5,
+          "response_not_strict_json": 5,
+          "trade_ready_action_not_buy_or_probe": 1
+        },
+        "output_tokens": 26856,
+        "parse_errors": 0,
+        "total_tokens": 216664
+      },
+      {
+        "avg_duration_ms": 14269.3,
+        "avg_input_tokens": 1464.8,
+        "avg_output_tokens": 724.0,
+        "calls": 42,
+        "duration_missing_calls": 0,
+        "duration_observed_calls": 42,
+        "input_issues": {},
+        "input_tokens": 61522,
+        "label": "hold_advisor_triage",
+        "output_issues": {
+          "response_fenced_json": 42,
+          "response_has_preamble_or_wrapper": 42,
+          "response_not_strict_json": 42
+        },
+        "output_tokens": 30406,
+        "parse_errors": 0,
+        "total_tokens": 91928
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 6868.6,
+        "avg_output_tokens": 223.6,
+        "calls": 5,
+        "duration_missing_calls": 5,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 34343,
+        "label": "analyst_bear_r1",
+        "output_issues": {},
+        "output_tokens": 1118,
+        "parse_errors": 0,
+        "total_tokens": 35461
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 6753.6,
+        "avg_output_tokens": 230.8,
+        "calls": 5,
+        "duration_missing_calls": 5,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 33768,
+        "label": "analyst_bull_r1",
+        "output_issues": {},
+        "output_tokens": 1154,
+        "parse_errors": 0,
+        "total_tokens": 34922
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 6745.6,
+        "avg_output_tokens": 184.2,
+        "calls": 5,
+        "duration_missing_calls": 5,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 33728,
+        "label": "analyst_neutral_r1",
+        "output_issues": {},
+        "output_tokens": 921,
+        "parse_errors": 0,
+        "total_tokens": 34649
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 2556.6,
+        "avg_output_tokens": 247.0,
+        "calls": 5,
+        "duration_missing_calls": 5,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 12783,
+        "label": "analyst_bear_r2",
+        "output_issues": {},
+        "output_tokens": 1235,
+        "parse_errors": 0,
+        "total_tokens": 14018
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 2441.6,
+        "avg_output_tokens": 269.8,
+        "calls": 5,
+        "duration_missing_calls": 5,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 12208,
+        "label": "analyst_bull_r2",
+        "output_issues": {},
+        "output_tokens": 1349,
+        "parse_errors": 0,
+        "total_tokens": 13557
+      },
+      {
+        "avg_duration_ms": 0.0,
+        "avg_input_tokens": 2433.6,
+        "avg_output_tokens": 241.4,
+        "calls": 5,
+        "duration_missing_calls": 5,
+        "duration_observed_calls": 0,
+        "input_issues": {},
+        "input_tokens": 12168,
+        "label": "analyst_neutral_r2",
+        "output_issues": {},
+        "output_tokens": 1207,
+        "parse_errors": 0,
+        "total_tokens": 13375
+      }
+    ],
+    "total_tokens": 510962
+  },
+  "claude_usage": {
+    "api_usage_delta": {
+      "calls": -51,
+      "cost_usd": -1.476852,
+      "input_tokens": -397694,
+      "output_tokens": -18918
+    },
+    "hold_advisor_by_label": {
+      "hold_advisor_bear": 3,
+      "hold_advisor_bull": 3,
+      "hold_advisor_challenge": 4,
+      "hold_advisor_neutral": 3,
+      "hold_advisor_triage": 42
+    },
+    "hold_advisor_calls": 55,
+    "raw_by_label": {
+      "analyst_bear_r1": 5,
+      "analyst_bear_r2": 5,
+      "analyst_bull_r1": 5,
+      "analyst_bull_r2": 5,
+      "analyst_neutral_r1": 5,
+      "analyst_neutral_r2": 5,
+      "hold_advisor_bear": 3,
+      "hold_advisor_bull": 3,
+      "hold_advisor_challenge": 4,
+      "hold_advisor_neutral": 3,
+      "hold_advisor_triage": 42,
+      "param_tuner": 2,
+      "postmortem": 1,
+      "select_tickers": 16,
+      "tune_120min": 1,
+      "tune_150min": 1,
+      "tune_30min": 4,
+      "tune_60min": 2,
+      "tune_90min": 1
+    },
+    "raw_by_model": {
+      "claude-sonnet-4-6": 113
+    },
+    "raw_call_files": 113,
+    "raw_duration_ms": 929447,
+    "raw_input_tokens": 435092,
+    "raw_output_tokens": 75870,
+    "review_usage": {
+      "api_cost_trusted": false,
+      "api_cost_usd": -1.476852,
+      "calls": 113,
+      "input_tokens": 435092,
+      "output_tokens": 75870,
+      "source": "quality_report_raw_call_scan",
+      "total_tokens": 510962
+    }
+  },
+  "consistency_checks": {
+    "api_negative_delta_detected": true,
+    "api_negative_fields": [
+      "calls",
+      "input_tokens",
+      "output_tokens"
+    ],
+    "calls": {
+      "api": -51,
+      "quality": 113,
+      "raw": 113
+    },
+    "calls_match": false,
+    "input_tokens": {
+      "api": -397694,
+      "quality": 435092,
+      "raw": 435092
+    },
+    "input_tokens_match": false,
+    "output_tokens": {
+      "api": -18918,
+      "quality": 75870,
+      "raw": 75870
+    },
+    "output_tokens_match": false,
+    "raw_quality_calls_match": true,
+    "raw_quality_input_tokens_match": true,
+    "raw_quality_output_tokens_match": true,
+    "usage_source_for_final_review": "quality_report_raw_call_scan"
+  },
+  "evidence_samples": {
+    "guardian_block_causes": [
+      {
+        "code": "db.order_unknown_unresolved",
+        "message": "unresolved ORDER_UNKNOWN rows=3",
+        "risk_level": "P2"
+      },
+      {
+        "code": "db.pathb_stale_active_runs",
+        "message": "previous-session active Path B rows=6",
+        "risk_level": "P1"
+      },
+      {
+        "code": "db.pathb_lifecycle_window_consistency",
+        "message": "recent-window Path B lifecycle diagnostic warnings: recent_window_missing_events_count=1 recent_window_size_events=1000 recent_window_size_runs=500; PathB post-run lifecycle events missing payload_json.path_run_id=0",
+        "risk_level": "P2"
+      },
+      {
+        "code": "db.pathb_lifecycle_full_consistency",
+        "message": "full terminal lifecycle missing events=1",
+        "risk_level": "P2"
+      },
+      {
+        "code": "kis.balance_probe",
+        "message": "default preflight avoids direct balance APIs; broker-truth snapshot and live smoke cover read-only balance checks",
+        "risk_level": "P2"
+      },
+      {
+        "code": "runtime.bot_pid_lock",
+        "message": "pid lock is active; expected process appears alive",
+        "risk_level": "P2"
+      },
+      {
+        "code": "runtime.dashboard_pid_lock",
+        "message": "pid lock is active; expected process appears alive",
+        "risk_level": "P2"
+      },
+      {
+        "code": "state.brain_memory_change_guard",
+        "message": "state/brain.json has uncommitted changes",
+        "risk_level": "P2"
+      },
+      {
+        "code": "broker_truth.kr_stale_state",
+        "message": "KR snapshot stale",
+        "risk_level": "P1"
+      },
+      {
+        "code": "broker_truth.us_stale_state",
+        "message": "US snapshot stale",
+        "risk_level": "P1"
+      }
+    ],
+    "log_issue_samples": [
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "[pending sell reconcile] US EL BROKER_POSITION_GONE_ASSUME_SOLD order=0030326720",
+        "path": "logs\\system\\live_trading_20260601.jsonl"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "[pending sell reconcile] US BBY BROKER_OPEN_ORDER_FOUND_KEEP_PENDING order=0030328268",
+        "path": "logs\\system\\live_trading_20260601.jsonl"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "[pending sell broker sync reconcile] US {'market': 'US', 'checked': 2, 'closed': 1, 'partial': 0, 'kept_pending': 1, 'cleared_stale': 0, 'broker_truth_unavailable': False, 'errors': [], 'audit_trail': [{'market': 'US', 'ticker': 'EL', 'order_no': '0030326720', 'requested_qty': 1, 'local_position_qty': 1, 'stage': 'pending_sell_reconcile', 'resolution': 'BROKER_POSITION_GONE_ASSUME_SOLD', 'broker_fill_confirmed': True, 'filled_qty': 0, 'remaining_qty': 1, 'broker_position_qty': 0, 'open_order_rem",
+        "path": "logs\\system\\live_trading_20260601.jsonl"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "broker_truth",
+        "level": "WARNING",
+        "message": "[pending sell broker sync reconcile] US {'market': 'US', 'checked': 2, 'closed': 1, 'partial': 0, 'kept_pending': 1, 'cleared_stale': 0, 'broker_truth_unavailable': False, 'errors': [], 'audit_trail': [{'market': 'US', 'ticker': 'EL', 'order_no': '0030326720', 'requested_qty': 1, 'local_position_qty': 1, 'stage': 'pending_sell_reconcile', 'resolution': 'BROKER_POSITION_GONE_ASSUME_SOLD', 'broker_fill_confirmed': True, 'filled_qty': 0, 'remaining_qty': 1, 'broker_position_qty': 0, 'open_order_rem",
+        "path": "logs\\system\\live_trading_20260601.jsonl"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "broker_truth",
+        "level": "INFO",
+        "message": "[PathB FILLED reconcile] {'market': 'US', 'checked': 1, 'kept_open': 1, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+        "path": "logs\\system\\live_trading_20260601.jsonl"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "[PathB profit_review TRIGGERED] US HPE peak_pnl=+1.88% current=45.455 bridge=protective_stop_not_tighter_than_plan_stop",
+        "path": "logs\\system\\live_trading_20260601.jsonl"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "2026-06-01 23:31:59 [WARNING ] _reconcile_pending_sell_confirmations:23041 | [pending sell reconcile] US EL BROKER_POSITION_GONE_ASSUME_SOLD order=0030326720",
+        "path": "logs\\system\\live_trading_20260601.log"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "2026-06-01 23:31:59 [WARNING ] _reconcile_pending_sell_confirmations:23016 | [pending sell reconcile] US BBY BROKER_OPEN_ORDER_FOUND_KEEP_PENDING order=0030328268",
+        "path": "logs\\system\\live_trading_20260601.log"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "2026-06-01 23:32:00 [WARNING ] _sync_runtime_with_broker:19184 | [pending sell broker sync reconcile] US {'market': 'US', 'checked': 2, 'closed': 1, 'partial': 0, 'kept_pending': 1, 'cleared_stale': 0, 'broker_truth_unavailable': False, 'errors': [], 'audit_trail': [{'market': 'US', 'ticker': 'EL', 'order_no': '0030326720', 'requested_qty': 1, 'local_position_qty': 1, 'stage': 'pending_sell_reconcile', 'resolution': 'BROKER_POSITION_GONE_ASSUME_SOLD', 'broker_fill_confirmed': True, 'filled_qty':",
+        "path": "logs\\system\\live_trading_20260601.log"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "broker_truth",
+        "level": "WARNING",
+        "message": "2026-06-01 23:32:00 [WARNING ] _sync_runtime_with_broker:19184 | [pending sell broker sync reconcile] US {'market': 'US', 'checked': 2, 'closed': 1, 'partial': 0, 'kept_pending': 1, 'cleared_stale': 0, 'broker_truth_unavailable': False, 'errors': [], 'audit_trail': [{'market': 'US', 'ticker': 'EL', 'order_no': '0030326720', 'requested_qty': 1, 'local_position_qty': 1, 'stage': 'pending_sell_reconcile', 'resolution': 'BROKER_POSITION_GONE_ASSUME_SOLD', 'broker_fill_confirmed': True, 'filled_qty':",
+        "path": "logs\\system\\live_trading_20260601.log"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "broker_truth",
+        "level": "INFO",
+        "message": "2026-06-01 23:32:00 [INFO    ] reconcile_filled_positions:5601 | [PathB FILLED reconcile] {'market': 'US', 'checked': 1, 'kept_open': 1, 'kept_open_local': 0, 'closed': 0, 'order_unknown': 0, 'broker_truth_unavailable': 0, 'errors': []}",
+        "path": "logs\\system\\live_trading_20260601.log"
+      },
+      {
+        "at": "2026-06-01T23:33:02+09:00",
+        "kind": "log_warning",
+        "level": "WARNING",
+        "message": "2026-06-01 23:32:13 [WARNING ] _maybe_trigger_profit_protection_review:4436 | [PathB profit_review TRIGGERED] US HPE peak_pnl=+1.88% current=45.455 bridge=protective_stop_not_tighter_than_plan_stop",
+        "path": "logs\\system\\live_trading_20260601.log"
+      }
+    ],
+    "prompt_warning_samples": [
+      {
+        "active_lesson_chars": "199",
+        "candidate_lines": "35",
+        "evidence_pack_count": "5",
+        "evidence_requested_count": "28",
+        "input_tokens": "12207",
+        "label": "select_tickers",
+        "path": "logs\\raw_calls\\20260601_US_select_tickers_231537596887_805d7ac836.json",
+        "prompt_chars": "26564",
+        "timestamp": "2026-06-01T23:15:37+09:00",
+        "top_prompt_sections": "[{\"chars\": 14578, \"lines\": 37, \"section\": \"candidates\"}, {\"chars\": 3562, \"lines\": 2, \"section\": \"runtime_evidence\"}, {\"chars\": 2349, \"lines\": 42, \"section\": \"digest_news\"}, {\"chars\": 1354, \"lines\": 23, \"section\": \"output_contract\"}, {\"chars\": 977, \"lines\": 14, \"section\": \"rules\"}, {\"chars\": 845, \"lines\": 3, \"section\": \"tuning_contract\"}, {\"chars\": 780, \"lines\": 11, \"section\": \"decision_contract\"}, {\"chars\": 718, \"lines\": 6, \"section\": \"hard_soft_boundary\"}]"
+      },
+      {
+        "active_lesson_chars": "199",
+        "candidate_lines": "35",
+        "evidence_pack_count": "5",
+        "evidence_requested_count": "28",
+        "input_tokens": "12201",
+        "label": "select_tickers",
+        "path": "logs\\raw_calls\\20260602_US_select_tickers_001701587242_bb0b2458bc.json",
+        "prompt_chars": "26561",
+        "timestamp": "2026-06-02T00:17:01+09:00",
+        "top_prompt_sections": "[{\"chars\": 14558, \"lines\": 37, \"section\": \"candidates\"}, {\"chars\": 3566, \"lines\": 2, \"section\": \"runtime_evidence\"}, {\"chars\": 2362, \"lines\": 42, \"section\": \"digest_news\"}, {\"chars\": 1354, \"lines\": 23, \"section\": \"output_contract\"}, {\"chars\": 977, \"lines\": 14, \"section\": \"rules\"}, {\"chars\": 845, \"lines\": 3, \"section\": \"tuning_contract\"}, {\"chars\": 780, \"lines\": 11, \"section\": \"decision_contract\"}, {\"chars\": 718, \"lines\": 6, \"section\": \"hard_soft_boundary\"}]"
+      },
+      {
+        "active_lesson_chars": "199",
+        "candidate_lines": "35",
+        "evidence_pack_count": "5",
+        "evidence_requested_count": "28",
+        "input_tokens": "12177",
+        "label": "select_tickers",
+        "path": "logs\\raw_calls\\20260601_US_select_tickers_232240535354_9df50b8770.json",
+        "prompt_chars": "26560",
+        "timestamp": "2026-06-01T23:22:40+09:00",
+        "top_prompt_sections": "[{\"chars\": 14551, \"lines\": 37, \"section\": \"candidates\"}, {\"chars\": 3573, \"lines\": 2, \"section\": \"runtime_evidence\"}, {\"chars\": 2361, \"lines\": 42, \"section\": \"digest_news\"}, {\"chars\": 1354, \"lines\": 23, \"section\": \"output_contract\"}, {\"chars\": 977, \"lines\": 14, \"section\": \"rules\"}, {\"chars\": 845, \"lines\": 3, \"section\": \"tuning_contract\"}, {\"chars\": 780, \"lines\": 11, \"section\": \"decision_contract\"}, {\"chars\": 718, \"lines\": 6, \"section\": \"hard_soft_boundary\"}]"
+      },
+      {
+        "active_lesson_chars": "199",
+        "candidate_lines": "35",
+        "evidence_pack_count": "5",
+        "evidence_requested_count": "28",
+        "input_tokens": "12173",
+        "label": "select_tickers",
+        "path": "logs\\raw_calls\\20260601_US_select_tickers_234001616777_be624c5a9c.json",
+        "prompt_chars": "26531",
+        "timestamp": "2026-06-01T23:40:01+09:00",
+        "top_prompt_sections": "[{\"chars\": 14535, \"lines\": 37, \"section\": \"candidates\"}, {\"chars\": 3573, \"lines\": 2, \"section\": \"runtime_evidence\"}, {\"chars\": 2348, \"lines\": 42, \"section\": \"digest_news\"}, {\"chars\": 1354, \"lines\": 23, \"section\": \"output_contract\"}, {\"chars\": 977, \"lines\": 14, \"section\": \"rules\"}, {\"chars\": 845, \"lines\": 3, \"section\": \"tuning_contract\"}, {\"chars\": 780, \"lines\": 11, \"section\": \"decision_contract\"}, {\"chars\": 718, \"lines\": 6, \"section\": \"hard_soft_boundary\"}]"
+      },
+      {
+        "active_lesson_chars": "199",
+        "candidate_lines": "35",
+        "evidence_pack_count": "5",
+        "evidence_requested_count": "28",
+        "input_tokens": "12168",
+        "label": "select_tickers",
+        "path": "logs\\raw_calls\\20260601_US_select_tickers_234705841825_a73d8742d2.json",
+        "prompt_chars": "26526",
+        "timestamp": "2026-06-01T23:47:05+09:00",
+        "top_prompt_sections": "[{\"chars\": 14551, \"lines\": 37, \"section\": \"candidates\"}, {\"chars\": 3552, \"lines\": 2, \"section\": \"runtime_evidence\"}, {\"chars\": 2348, \"lines\": 42, \"section\": \"digest_news\"}, {\"chars\": 1354, \"lines\": 23, \"section\": \"output_contract\"}, {\"chars\": 977, \"lines\": 14, \"section\": \"rules\"}, {\"chars\": 845, \"lines\": 3, \"section\": \"tuning_contract\"}, {\"chars\": 780, \"lines\": 11, \"section\": \"decision_contract\"}, {\"chars\": 718, \"lines\": 6, \"section\": \"hard_soft_boundary\"}]"
+      },
+      {
+        "active_lesson_chars": "199",
+        "candidate_lines": "35",
+        "evidence_pack_count": "5",
+        "evidence_requested_count": "28",
+        "input_tokens": "12132",
+        "label": "select_tickers",
+        "path": "logs\\raw_calls\\20260602_US_select_tickers_023423921136_66e00acf02.json",
+        "prompt_chars": "26497",
+        "timestamp": "2026-06-02T02:34:23+09:00",
+        "top_prompt_sections": "[{\"chars\": 14466, \"lines\": 37, \"section\": \"candidates\"}, {\"chars\": 3582, \"lines\": 2, \"section\": \"runtime_evidence\"}, {\"chars\": 2374, \"lines\": 42, \"section\": \"digest_news\"}, {\"chars\": 1354, \"lines\": 23, \"section\": \"output_contract\"}, {\"chars\": 977, \"lines\": 14, \"section\": \"rules\"}, {\"chars\": 845, \"lines\": 3, \"section\": \"tuning_contract\"}, {\"chars\": 780, \"lines\": 11, \"section\": \"decision_contract\"}, {\"chars\": 718, \"lines\": 6, \"section\": \"hard_soft_boundary\"}]"
+      },
+      {
+        "active_lesson_chars": "199",
+        "candidate_lines": "35",
+        "evidence_pack_count": "5",
+        "evidence_requested_count": "28",
+        "input_tokens": "12124",
+        "label": "select_tickers",
+        "path": "logs\\raw_calls\\20260602_US_select_tickers_015406187108_9bc8825af8.json",
+        "prompt_chars": "26504",
+        "timestamp": "2026-06-02T01:54:06+09:00",
+        "top_prompt_sections": "[{\"chars\": 14489, \"lines\": 37, \"section\": \"candidates\"}, {\"chars\": 3578, \"lines\": 2, \"section\": \"runtime_evidence\"}, {\"chars\": 2362, \"lines\": 42, \"section\": \"digest_news\"}, {\"chars\": 1354, \"lines\": 23, \"section\": \"output_contract\"}, {\"chars\": 977, \"lines\": 14, \"section\": \"rules\"}, {\"chars\": 845, \"lines\": 3, \"section\": \"tuning_contract\"}, {\"chars\": 780, \"lines\": 11, \"section\": \"decision_contract\"}, {\"chars\": 718, \"lines\": 6, \"section\": \"hard_soft_boundary\"}]"
+      },
+      {
+        "active_lesson_chars": "199",
+        "candidate_lines": "35",
+        "evidence_pack_count": "5",
+        "evidence_requested_count": "28",
+        "input_tokens": "12120",
+        "label": "select_tickers",
+        "path": "logs\\raw_calls\\20260602_US_select_tickers_005902872170_95be3921f4.json",
+        "prompt_chars": "26467",
+        "timestamp": "2026-06-02T00:59:02+09:00",
+        "top_prompt_sections": "[{\"chars\": 14463, \"lines\": 37, \"section\": \"candidates\"}, {\"chars\": 3555, \"lines\": 2, \"section\": \"runtime_evidence\"}, {\"chars\": 2374, \"lines\": 42, \"section\": \"digest_news\"}, {\"chars\": 1354, \"lines\": 23, \"section\": \"output_contract\"}, {\"chars\": 977, \"lines\": 14, \"section\": \"rules\"}, {\"chars\": 845, \"lines\": 3, \"section\": \"tuning_contract\"}, {\"chars\": 780, \"lines\": 11, \"section\": \"decision_contract\"}, {\"chars\": 718, \"lines\": 6, \"section\": \"hard_soft_boundary\"}]"
+      },
+      {
+        "active_lesson_chars": "199",
+        "candidate_lines": "35",
+        "evidence_pack_count": "5",
+        "evidence_requested_count": "28",
+        "input_tokens": "12115",
+        "label": "select_tickers",
+        "path": "logs\\raw_calls\\20260602_US_select_tickers_012413411746_f4c43b45d4.json",
+        "prompt_chars": "26487",
+        "timestamp": "2026-06-02T01:24:13+09:00",
+        "top_prompt_sections": "[{\"chars\": 14495, \"lines\": 37, \"section\": \"candidates\"}, {\"chars\": 3555, \"lines\": 2, \"section\": \"runtime_evidence\"}, {\"chars\": 2362, \"lines\": 42, \"section\": \"digest_news\"}, {\"chars\": 1354, \"lines\": 23, \"section\": \"output_contract\"}, {\"chars\": 977, \"lines\": 14, \"section\": \"rules\"}, {\"chars\": 845, \"lines\": 3, \"section\": \"tuning_contract\"}, {\"chars\": 780, \"lines\": 11, \"section\": \"decision_contract\"}, {\"chars\": 718, \"lines\": 6, \"section\": \"hard_soft_boundary\"}]"
+      },
+      {
+        "active_lesson_chars": "199",
+        "candidate_lines": "35",
+        "evidence_pack_count": "5",
+        "evidence_requested_count": "28",
+        "input_tokens": "12061",
+        "label": "select_tickers",
+        "path": "logs\\raw_calls\\20260602_US_select_tickers_040755223717_64310bb0d1.json",
+        "prompt_chars": "26275",
+        "timestamp": "2026-06-02T04:07:55+09:00",
+        "top_prompt_sections": "[{\"chars\": 14362, \"lines\": 37, \"section\": \"candidates\"}, {\"chars\": 3463, \"lines\": 2, \"section\": \"runtime_evidence\"}, {\"chars\": 2375, \"lines\": 42, \"section\": \"digest_news\"}, {\"chars\": 1354, \"lines\": 23, \"section\": \"output_contract\"}, {\"chars\": 977, \"lines\": 14, \"section\": \"rules\"}, {\"chars\": 845, \"lines\": 3, \"section\": \"tuning_contract\"}, {\"chars\": 780, \"lines\": 11, \"section\": \"decision_contract\"}, {\"chars\": 718, \"lines\": 6, \"section\": \"hard_soft_boundary\"}]"
+      },
+      {
+        "active_lesson_chars": "199",
+        "candidate_lines": "35",
+        "evidence_pack_count": "5",
+        "evidence_requested_count": "28",
+        "input_tokens": "12031",
+        "label": "select_tickers",
+        "path": "logs\\raw_calls\\20260601_US_select_tickers_225651877435_9aac36f802.json",
+        "prompt_chars": "26377",
+        "timestamp": "2026-06-01T22:56:51+09:00",
+        "top_prompt_sections": "[{\"chars\": 14429, \"lines\": 37, \"section\": \"candidates\"}, {\"chars\": 3522, \"lines\": 2, \"section\": \"runtime_evidence\"}, {\"chars\": 2349, \"lines\": 42, \"section\": \"digest_news\"}, {\"chars\": 1354, \"lines\": 23, \"section\": \"output_contract\"}, {\"chars\": 977, \"lines\": 14, \"section\": \"rules\"}, {\"chars\": 845, \"lines\": 3, \"section\": \"tuning_contract\"}, {\"chars\": 780, \"lines\": 11, \"section\": \"decision_contract\"}, {\"chars\": 718, \"lines\": 6, \"section\": \"hard_soft_boundary\"}]"
+      },
+      {
+        "active_lesson_chars": "199",
+        "candidate_lines": "35",
+        "evidence_pack_count": "5",
+        "evidence_requested_count": "30",
+        "input_tokens": "11956",
+        "label": "select_tickers",
+        "path": "logs\\raw_calls\\20260601_US_select_tickers_223633986190_0e770481aa.json",
+        "prompt_chars": "26586",
+        "timestamp": "2026-06-01T22:36:33+09:00",
+        "top_prompt_sections": "[{\"chars\": 14577, \"lines\": 37, \"section\": \"candidates\"}, {\"chars\": 3569, \"lines\": 2, \"section\": \"runtime_evidence\"}, {\"chars\": 2363, \"lines\": 42, \"section\": \"digest_news\"}, {\"chars\": 1354, \"lines\": 23, \"section\": \"output_contract\"}, {\"chars\": 977, \"lines\": 14, \"section\": \"rules\"}, {\"chars\": 845, \"lines\": 3, \"section\": \"tuning_contract\"}, {\"chars\": 780, \"lines\": 11, \"section\": \"decision_contract\"}, {\"chars\": 718, \"lines\": 6, \"section\": \"hard_soft_boundary\"}]"
+      }
+    ],
+    "quality_issue_samples": [
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_challenge",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_challenge_224118358377_efbb17d08e.json",
+        "timestamp": "2026-06-01T22:41:18+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_challenge",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_challenge_230701217366_6d9b6116d3.json",
+        "timestamp": "2026-06-01T23:07:01+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_challenge",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_challenge_230730483021_ccf7488cf4.json",
+        "timestamp": "2026-06-01T23:07:30+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_223215504466_93c57c4bb8.json",
+        "timestamp": "2026-06-01T22:32:15+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_224107658782_feec3ac1e6.json",
+        "timestamp": "2026-06-01T22:41:07+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230610475882_249cccc373.json",
+        "timestamp": "2026-06-01T23:06:10+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230623132482_d72b1a5c0a.json",
+        "timestamp": "2026-06-01T23:06:23+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230648721973_43f664accd.json",
+        "timestamp": "2026-06-01T23:06:48+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230715984097_1eb2dca8ff.json",
+        "timestamp": "2026-06-01T23:07:15+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_230755549047_fd95a678b4.json",
+        "timestamp": "2026-06-01T23:07:55+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_233213909730_56b1087512.json",
+        "timestamp": "2026-06-01T23:32:13+09:00"
+      },
+      {
+        "input_issues": "[]",
+        "label": "hold_advisor_triage",
+        "output_issues": "[\"response_fenced_json\", \"response_has_preamble_or_wrapper\", \"response_not_strict_json\"]",
+        "path": "logs\\raw_calls\\20260601_US_hold_advisor_triage_234232327304_339a1119c2.json",
+        "timestamp": "2026-06-01T23:42:32+09:00"
+      }
+    ],
+    "quality_slow_call_samples": [
+      {
+        "duration_ms": "47750",
+        "label": "postmortem",
+        "path": "logs\\raw_calls\\20260601_US_postmortem_postmortem_US_2026-06-01_d35af0fb6f.json",
+        "timestamp": "2026-06-02T05:03:35+09:00"
+      },
+      {
+        "duration_ms": "15333",
+        "label": "hold_advisor_triage",
+        "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_011749226380_c48b0279c7.json",
+        "timestamp": "2026-06-02T01:17:49+09:00"
+      },
+      {
+        "duration_ms": "18833",
+        "label": "hold_advisor_triage",
+        "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_020408656326_d5b144d0d7.json",
+        "timestamp": "2026-06-02T02:04:08+09:00"
+      },
+      {
+        "duration_ms": "15608",
+        "label": "hold_advisor_triage",
+        "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_023616235674_5f75cd973e.json",
+        "timestamp": "2026-06-02T02:36:16+09:00"
+      },
+      {
+        "duration_ms": "15762",
+        "label": "hold_advisor_triage",
+        "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_024537115836_cd4ee41a89.json",
+        "timestamp": "2026-06-02T02:45:37+09:00"
+      },
+      {
+        "duration_ms": "15689",
+        "label": "hold_advisor_triage",
+        "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_030121895138_7463ccefb6.json",
+        "timestamp": "2026-06-02T03:01:21+09:00"
+      },
+      {
+        "duration_ms": "16584",
+        "label": "hold_advisor_triage",
+        "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_030401863332_caf82941dc.json",
+        "timestamp": "2026-06-02T03:04:01+09:00"
+      },
+      {
+        "duration_ms": "15587",
+        "label": "hold_advisor_triage",
+        "path": "logs\\raw_calls\\20260602_US_hold_advisor_triage_030439068683_8f4139c79e.json",
+        "timestamp": "2026-06-02T03:04:39+09:00"
+      }
+    ]
+  },
+  "generated_at": "2026-06-02T06:54:53+09:00",
+  "monitor_window": {
+    "end_at": "2026-06-02T07:00:00+09:00",
+    "market": "US",
+    "mode": "live",
+    "session_date": "2026-06-01",
+    "start_at": "2026-06-01T22:30:00+09:00"
+  },
+  "operations": {
+    "broker_fills": 13,
+    "broker_open_orders": 0,
+    "broker_positions": 3,
+    "broker_truth_error": "",
+    "broker_truth_missing": false,
+    "broker_truth_stale": true,
+    "decision_events": 16,
+    "guardian_gate": "BLOCK_START",
+    "guardian_ok": false,
+    "log_issue_counts": {
+      "broker_sync_protected": 14,
+      "broker_truth": 990,
+      "broker_truth_untrusted": 342,
+      "data_collection_minute_price_stale": 8,
+      "guardian_block_start": 383,
+      "log_error": 20,
+      "log_warning": 1750,
+      "order_unknown": 1245,
+      "pending_sell_local_state": 142,
+      "telegram": 32
+    },
+    "monitor_status": "running"
+  },
+  "out_dir": "docs\\reports\\overnight_us_monitor_20260601_2230\\interim_latest_usage",
+  "recommendations": [
+    {
+      "area": "output_contract",
+      "priority": "P1",
+      "recommendation": "Tighten JSON-only enforcement for affected labels or route non-strict responses through a bounded retry; parser recovery should remain fail-safe."
+    },
+    {
+      "area": "selection_schema",
+      "priority": "P2",
+      "recommendation": "Add a compact-schema self-check or post-parse warning for duplicate watchlist entries and candidate-action coverage gaps."
+    },
+    {
+      "area": "latency_cost",
+      "priority": "P2",
+      "recommendation": "Separate timeout-prone labels from normal review flow and keep cache/cooldown guards active for repeated HOLD reviews."
+    },
+    {
+      "area": "token_cost",
+      "priority": "P2",
+      "recommendation": "Reduce high-token prompts by trimming repeated calibration blocks and limiting evidence pack rows before model invocation; review labels with 8k+ input tokens even when the session average looks acceptable."
+    },
+    {
+      "area": "token_lightweighting",
+      "priority": "P2",
+      "recommendation": "select_tickers 후보/evidence pack 행 수와 반복 calibration 블록을 줄이고 8k+ 입력 프롬프트를 별도 경고 기준으로 관리합니다."
+    },
+    {
+      "area": "operations",
+      "priority": "P1",
+      "recommendation": "Resolve guardian BLOCK_START causes before treating the session as operationally clean; include any repeated block events observed during the window, not just the final snapshot."
+    },
+    {
+      "area": "broker_truth",
+      "priority": "P1",
+      "recommendation": "Refresh broker truth and keep new entries fail-closed while snapshot freshness is untrusted; review repeated stale/untrusted snapshots from the full window."
+    },
+    {
+      "area": "reconciliation",
+      "priority": "P1",
+      "recommendation": "Review manual-action-required local state before the next live start window."
+    },
+    {
+      "area": "runtime_errors",
+      "priority": "P1",
+      "recommendation": "Inspect error samples and confirm they did not affect broker truth, order routing, or Claude fallback behavior."
+    },
+    {
+      "area": "order_state",
+      "priority": "P2",
+      "recommendation": "Separate current-session unresolved ORDER_UNKNOWN from historical event noise in the morning review."
+    },
+    {
+      "area": "observability",
+      "priority": "P1",
+      "recommendation": "API usage delta is negative for calls, input_tokens, output_tokens; treat the quality report's raw-call scan as the Claude usage source of truth for this review."
+    }
+  ],
+  "sample_paths": {
+    "monitor_report": "docs\\reports\\overnight_us_monitor_20260601_2230\\interim_latest_usage\\final_report.md",
+    "quality_report": "docs\\reports\\overnight_us_monitor_20260601_2230\\interim_latest_usage\\claude_io_quality.md"
+  },
+  "sources": {
+    "monitor_json": "docs\\reports\\overnight_us_monitor_20260601_2230\\interim_latest_usage\\final_report.json",
+    "quality_json": "docs\\reports\\overnight_us_monitor_20260601_2230\\interim_latest_usage\\claude_io_quality.json"
+  }
+}

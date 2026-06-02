@@ -1,0 +1,18 @@
+﻿{
+    "pid":  22596,
+    "started_at":  "2026-06-01T21:39:39.7925357+09:00",
+    "scheduled_checks":  [
+                             "2026-06-01T22:45:00+09:00",
+                             "2026-06-02T00:00:00+09:00",
+                             "2026-06-02T02:00:00+09:00",
+                             "2026-06-02T04:00:00+09:00",
+                             "2026-06-02T06:30:00+09:00",
+                             "2026-06-02T07:10:00+09:00"
+                         ],
+    "out_dir":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230",
+    "stdout":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\health_watchdog_stdout.log",
+    "stderr":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\health_watchdog_stderr.log",
+    "result":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\health_watchdog.jsonl",
+    "behavior":  "periodic_read_only_monitor_process_and_artifact_freshness_snapshots",
+    "read_only":  true
+}

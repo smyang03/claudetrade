@@ -1,0 +1,2500 @@
+{
+  "avg_duration_ms": 10921.6,
+  "avg_input_tokens": 5460.4,
+  "avg_output_tokens": 556.7,
+  "by_label": [
+    {
+      "avg_duration_ms": 22650.3,
+      "avg_input_tokens": 12526.0,
+      "avg_output_tokens": 1529.1,
+      "calls": 21,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 21,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 19,
+        "prompt_input_tokens_ge_8000": 2
+      },
+      "input_tokens": 263045,
+      "label": "select_tickers",
+      "output_issues": {
+        "output_tokens_ge_2000": 1,
+        "response_fenced_json": 12,
+        "response_has_preamble_or_wrapper": 13,
+        "response_not_strict_json": 13,
+        "slow_call_30s": 3
+      },
+      "output_tokens": 32111,
+      "parse_errors": 0,
+      "total_tokens": 295156
+    },
+    {
+      "avg_duration_ms": 7900.8,
+      "avg_input_tokens": 5699.6,
+      "avg_output_tokens": 254.9,
+      "calls": 11,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 11,
+      "input_issues": {},
+      "input_tokens": 62696,
+      "label": "analyst_bear_r1",
+      "output_issues": {},
+      "output_tokens": 2804,
+      "parse_errors": 0,
+      "total_tokens": 65500
+    },
+    {
+      "avg_duration_ms": 7631.1,
+      "avg_input_tokens": 5534.1,
+      "avg_output_tokens": 260.3,
+      "calls": 11,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 11,
+      "input_issues": {},
+      "input_tokens": 60875,
+      "label": "analyst_bull_r1",
+      "output_issues": {},
+      "output_tokens": 2863,
+      "parse_errors": 0,
+      "total_tokens": 63738
+    },
+    {
+      "avg_duration_ms": 6843.5,
+      "avg_input_tokens": 5542.4,
+      "avg_output_tokens": 223.4,
+      "calls": 11,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 11,
+      "input_issues": {},
+      "input_tokens": 60966,
+      "label": "analyst_neutral_r1",
+      "output_issues": {},
+      "output_tokens": 2457,
+      "parse_errors": 0,
+      "total_tokens": 63423
+    },
+    {
+      "avg_duration_ms": 5876.9,
+      "avg_input_tokens": 2702.7,
+      "avg_output_tokens": 287.4,
+      "calls": 11,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 11,
+      "input_issues": {},
+      "input_tokens": 29730,
+      "label": "analyst_bear_r2",
+      "output_issues": {},
+      "output_tokens": 3161,
+      "parse_errors": 0,
+      "total_tokens": 32891
+    },
+    {
+      "avg_duration_ms": 5790.0,
+      "avg_input_tokens": 2551.1,
+      "avg_output_tokens": 287.3,
+      "calls": 11,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 11,
+      "input_issues": {},
+      "input_tokens": 28062,
+      "label": "analyst_bull_r2",
+      "output_issues": {},
+      "output_tokens": 3160,
+      "parse_errors": 0,
+      "total_tokens": 31222
+    },
+    {
+      "avg_duration_ms": 5941.4,
+      "avg_input_tokens": 2554.4,
+      "avg_output_tokens": 264.6,
+      "calls": 11,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 11,
+      "input_issues": {},
+      "input_tokens": 28098,
+      "label": "analyst_neutral_r2",
+      "output_issues": {},
+      "output_tokens": 2911,
+      "parse_errors": 0,
+      "total_tokens": 31009
+    },
+    {
+      "avg_duration_ms": 45625.0,
+      "avg_input_tokens": 7796.0,
+      "avg_output_tokens": 2500.0,
+      "calls": 1,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 1,
+      "input_issues": {},
+      "input_tokens": 7796,
+      "label": "postmortem",
+      "output_issues": {
+        "output_tokens_ge_2000": 1,
+        "response_fenced_json": 1,
+        "response_has_preamble_or_wrapper": 1,
+        "response_not_strict_json": 1,
+        "slow_call_30s": 1
+      },
+      "output_tokens": 2500,
+      "parse_errors": 0,
+      "total_tokens": 10296
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1597.7,
+      "avg_output_tokens": 639.0,
+      "calls": 3,
+      "duration_missing_calls": 3,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 4793,
+      "label": "param_tuner",
+      "output_issues": {},
+      "output_tokens": 1917,
+      "parse_errors": 0,
+      "total_tokens": 6710
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1635.0,
+      "avg_output_tokens": 312.3,
+      "calls": 3,
+      "duration_missing_calls": 3,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 4905,
+      "label": "tune_30min",
+      "output_issues": {},
+      "output_tokens": 937,
+      "parse_errors": 0,
+      "total_tokens": 5842
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1657.5,
+      "avg_output_tokens": 299.5,
+      "calls": 2,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 3315,
+      "label": "tune_60min",
+      "output_issues": {},
+      "output_tokens": 599,
+      "parse_errors": 0,
+      "total_tokens": 3914
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1660.5,
+      "avg_output_tokens": 296.0,
+      "calls": 2,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 3321,
+      "label": "tune_120min",
+      "output_issues": {},
+      "output_tokens": 592,
+      "parse_errors": 0,
+      "total_tokens": 3913
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1661.5,
+      "avg_output_tokens": 292.0,
+      "calls": 2,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 3323,
+      "label": "tune_90min",
+      "output_issues": {},
+      "output_tokens": 584,
+      "parse_errors": 0,
+      "total_tokens": 3907
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1740.0,
+      "avg_output_tokens": 355.0,
+      "calls": 1,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 1740,
+      "label": "tune_150min",
+      "output_issues": {},
+      "output_tokens": 355,
+      "parse_errors": 0,
+      "total_tokens": 2095
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1739.0,
+      "avg_output_tokens": 340.0,
+      "calls": 1,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 1739,
+      "label": "tune_210min",
+      "output_issues": {},
+      "output_tokens": 340,
+      "parse_errors": 0,
+      "total_tokens": 2079
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1742.0,
+      "avg_output_tokens": 316.0,
+      "calls": 1,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 1742,
+      "label": "tune_180min",
+      "output_issues": {},
+      "output_tokens": 316,
+      "parse_errors": 0,
+      "total_tokens": 2058
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1739.0,
+      "avg_output_tokens": 291.0,
+      "calls": 1,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 1739,
+      "label": "tune_240min",
+      "output_issues": {},
+      "output_tokens": 291,
+      "parse_errors": 0,
+      "total_tokens": 2030
+    }
+  ],
+  "by_model": {
+    "claude-sonnet-4-6": 104
+  },
+  "by_time_bucket": [
+    {
+      "avg_duration_ms": 16497.0,
+      "avg_input_tokens": 7146.1,
+      "avg_output_tokens": 838.1,
+      "bucket_start": "2026-06-02T08:30+09:00",
+      "calls": 9,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 9,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 3
+      },
+      "input_tokens": 64315,
+      "output_issues": {
+        "output_tokens_ge_2000": 1,
+        "response_fenced_json": 3,
+        "response_has_preamble_or_wrapper": 3,
+        "response_not_strict_json": 3,
+        "slow_call_30s": 3
+      },
+      "output_tokens": 7543,
+      "parse_errors": 0,
+      "top_labels": {
+        "analyst_bear_r1": 1,
+        "analyst_bear_r2": 1,
+        "analyst_bull_r1": 1,
+        "analyst_bull_r2": 1,
+        "select_tickers": 3
+      },
+      "total_tokens": 71858
+    },
+    {
+      "avg_duration_ms": 8246.6,
+      "avg_input_tokens": 5176.1,
+      "avg_output_tokens": 415.2,
+      "bucket_start": "2026-06-02T09:00+09:00",
+      "calls": 29,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 28,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 4
+      },
+      "input_tokens": 150106,
+      "output_issues": {
+        "response_fenced_json": 3,
+        "response_has_preamble_or_wrapper": 3,
+        "response_not_strict_json": 3
+      },
+      "output_tokens": 12042,
+      "parse_errors": 0,
+      "top_labels": {
+        "analyst_bear_r1": 4,
+        "analyst_bear_r2": 4,
+        "analyst_bull_r1": 4,
+        "analyst_bull_r2": 4,
+        "analyst_neutral_r1": 4
+      },
+      "total_tokens": 162148
+    },
+    {
+      "avg_duration_ms": 8049.6,
+      "avg_input_tokens": 4968.7,
+      "avg_output_tokens": 395.9,
+      "bucket_start": "2026-06-02T09:30+09:00",
+      "calls": 9,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 8,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 44718,
+      "output_issues": {
+        "response_fenced_json": 1,
+        "response_has_preamble_or_wrapper": 1,
+        "response_not_strict_json": 1
+      },
+      "output_tokens": 3563,
+      "parse_errors": 0,
+      "top_labels": {
+        "analyst_bear_r1": 1,
+        "analyst_bear_r2": 1,
+        "analyst_bull_r1": 2,
+        "analyst_bull_r2": 1,
+        "analyst_neutral_r1": 1
+      },
+      "total_tokens": 48281
+    },
+    {
+      "avg_duration_ms": 11696.6,
+      "avg_input_tokens": 5790.2,
+      "avg_output_tokens": 592.8,
+      "bucket_start": "2026-06-02T10:00+09:00",
+      "calls": 8,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 7,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 2
+      },
+      "input_tokens": 46322,
+      "output_issues": {
+        "response_fenced_json": 1,
+        "response_has_preamble_or_wrapper": 2,
+        "response_not_strict_json": 2
+      },
+      "output_tokens": 4742,
+      "parse_errors": 0,
+      "top_labels": {
+        "analyst_bear_r1": 1,
+        "analyst_bear_r2": 1,
+        "analyst_bull_r2": 1,
+        "analyst_neutral_r1": 1,
+        "select_tickers": 2
+      },
+      "total_tokens": 51064
+    },
+    {
+      "avg_duration_ms": 19172.0,
+      "avg_input_tokens": 5352.3,
+      "avg_output_tokens": 809.7,
+      "bucket_start": "2026-06-02T10:30+09:00",
+      "calls": 3,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 1,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 16057,
+      "output_issues": {
+        "response_fenced_json": 1,
+        "response_has_preamble_or_wrapper": 1,
+        "response_not_strict_json": 1
+      },
+      "output_tokens": 2429,
+      "parse_errors": 0,
+      "top_labels": {
+        "param_tuner": 1,
+        "select_tickers": 1,
+        "tune_120min": 1
+      },
+      "total_tokens": 18486
+    },
+    {
+      "avg_duration_ms": 21153.0,
+      "avg_input_tokens": 7234.0,
+      "avg_output_tokens": 891.0,
+      "bucket_start": "2026-06-02T11:00+09:00",
+      "calls": 2,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 1,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 14468,
+      "output_issues": {},
+      "output_tokens": 1782,
+      "parse_errors": 0,
+      "top_labels": {
+        "select_tickers": 1,
+        "tune_150min": 1
+      },
+      "total_tokens": 16250
+    },
+    {
+      "avg_duration_ms": 7512.0,
+      "avg_input_tokens": 3731.9,
+      "avg_output_tokens": 254.0,
+      "bucket_start": "2026-06-02T11:30+09:00",
+      "calls": 7,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 6,
+      "input_issues": {},
+      "input_tokens": 26123,
+      "output_issues": {},
+      "output_tokens": 1778,
+      "parse_errors": 0,
+      "top_labels": {
+        "analyst_bear_r1": 1,
+        "analyst_bear_r2": 1,
+        "analyst_bull_r1": 1,
+        "analyst_bull_r2": 1,
+        "analyst_neutral_r1": 1
+      },
+      "total_tokens": 27901
+    },
+    {
+      "avg_duration_ms": 17245.0,
+      "avg_input_tokens": 7293.0,
+      "avg_output_tokens": 809.5,
+      "bucket_start": "2026-06-02T12:00+09:00",
+      "calls": 2,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 1,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 14586,
+      "output_issues": {},
+      "output_tokens": 1619,
+      "parse_errors": 0,
+      "top_labels": {
+        "select_tickers": 1,
+        "tune_210min": 1
+      },
+      "total_tokens": 16205
+    },
+    {
+      "avg_duration_ms": 18214.0,
+      "avg_input_tokens": 7186.0,
+      "avg_output_tokens": 797.0,
+      "bucket_start": "2026-06-02T12:30+09:00",
+      "calls": 2,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 1,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 14372,
+      "output_issues": {},
+      "output_tokens": 1594,
+      "parse_errors": 0,
+      "top_labels": {
+        "select_tickers": 1,
+        "tune_240min": 1
+      },
+      "total_tokens": 15966
+    },
+    {
+      "avg_duration_ms": 7954.4,
+      "avg_input_tokens": 4671.9,
+      "avg_output_tokens": 445.1,
+      "bucket_start": "2026-06-02T13:00+09:00",
+      "calls": 8,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 7,
+      "input_issues": {
+        "prompt_input_tokens_ge_8000": 1
+      },
+      "input_tokens": 37375,
+      "output_issues": {},
+      "output_tokens": 3561,
+      "parse_errors": 0,
+      "top_labels": {
+        "analyst_bear_r1": 1,
+        "analyst_bear_r2": 1,
+        "analyst_bull_r1": 1,
+        "analyst_bull_r2": 1,
+        "analyst_neutral_r1": 1
+      },
+      "total_tokens": 40936
+    },
+    {
+      "avg_duration_ms": 8289.6,
+      "avg_input_tokens": 4726.1,
+      "avg_output_tokens": 413.6,
+      "bucket_start": "2026-06-02T13:30+09:00",
+      "calls": 8,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 7,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 37809,
+      "output_issues": {
+        "response_fenced_json": 1,
+        "response_has_preamble_or_wrapper": 1,
+        "response_not_strict_json": 1
+      },
+      "output_tokens": 3309,
+      "parse_errors": 0,
+      "top_labels": {
+        "analyst_bear_r1": 1,
+        "analyst_bear_r2": 1,
+        "analyst_bull_r1": 1,
+        "analyst_bull_r2": 1,
+        "analyst_neutral_r1": 1
+      },
+      "total_tokens": 41118
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1579.0,
+      "avg_output_tokens": 250.0,
+      "bucket_start": "2026-06-02T14:00+09:00",
+      "calls": 1,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 1579,
+      "output_issues": {},
+      "output_tokens": 250,
+      "parse_errors": 0,
+      "top_labels": {
+        "tune_60min": 1
+      },
+      "total_tokens": 1829
+    },
+    {
+      "avg_duration_ms": 20408.0,
+      "avg_input_tokens": 6483.5,
+      "avg_output_tokens": 915.0,
+      "bucket_start": "2026-06-02T14:30+09:00",
+      "calls": 2,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 1,
+      "input_issues": {
+        "prompt_input_tokens_ge_8000": 1
+      },
+      "input_tokens": 12967,
+      "output_issues": {},
+      "output_tokens": 1830,
+      "parse_errors": 0,
+      "top_labels": {
+        "select_tickers": 1,
+        "tune_90min": 1
+      },
+      "total_tokens": 14797
+    },
+    {
+      "avg_duration_ms": 12622.2,
+      "avg_input_tokens": 5958.9,
+      "avg_output_tokens": 696.7,
+      "bucket_start": "2026-06-02T15:00+09:00",
+      "calls": 11,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 9,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 3
+      },
+      "input_tokens": 65548,
+      "output_issues": {
+        "response_fenced_json": 1,
+        "response_has_preamble_or_wrapper": 1,
+        "response_not_strict_json": 1
+      },
+      "output_tokens": 7664,
+      "parse_errors": 0,
+      "top_labels": {
+        "analyst_bear_r1": 1,
+        "analyst_bear_r2": 1,
+        "analyst_bull_r1": 1,
+        "analyst_bull_r2": 1,
+        "select_tickers": 3
+      },
+      "total_tokens": 73212
+    },
+    {
+      "avg_duration_ms": 21253.0,
+      "avg_input_tokens": 6872.0,
+      "avg_output_tokens": 846.0,
+      "bucket_start": "2026-06-02T15:30+09:00",
+      "calls": 2,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 1,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 13744,
+      "output_issues": {
+        "response_fenced_json": 1,
+        "response_has_preamble_or_wrapper": 1,
+        "response_not_strict_json": 1
+      },
+      "output_tokens": 1692,
+      "parse_errors": 0,
+      "top_labels": {
+        "select_tickers": 1,
+        "tune_30min": 1
+      },
+      "total_tokens": 15436
+    },
+    {
+      "avg_duration_ms": 45625.0,
+      "avg_input_tokens": 7796.0,
+      "avg_output_tokens": 2500.0,
+      "bucket_start": "2026-06-02T16:00+09:00",
+      "calls": 1,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 1,
+      "input_issues": {},
+      "input_tokens": 7796,
+      "output_issues": {
+        "output_tokens_ge_2000": 1,
+        "response_fenced_json": 1,
+        "response_has_preamble_or_wrapper": 1,
+        "response_not_strict_json": 1,
+        "slow_call_30s": 1
+      },
+      "output_tokens": 2500,
+      "parse_errors": 0,
+      "top_labels": {
+        "postmortem": 1
+      },
+      "total_tokens": 10296
+    }
+  ],
+  "calls": 104,
+  "duration_missing_calls": 16,
+  "duration_observed_calls": 88,
+  "end_at": "2026-06-02T23:59:59+09:00",
+  "generated_at": "2026-06-02T20:51:11+09:00",
+  "input_issue_counts": {
+    "prompt_input_tokens_ge_12000": 19,
+    "prompt_input_tokens_ge_8000": 2
+  },
+  "input_tokens": 567885,
+  "issue_samples": [
+    {
+      "duration_ms": 45625,
+      "input_issues": [],
+      "input_tokens": 7796,
+      "label": "postmortem",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "output_tokens_ge_2000",
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json",
+        "slow_call_30s"
+      ],
+      "output_tokens": 2500,
+      "path": "logs\\raw_calls\\20260602_KR_postmortem_postmortem_KR_2026-06-02_069aa36cb4.json",
+      "timestamp": "2026-06-02T16:00:53+09:00"
+    },
+    {
+      "duration_ms": 35522,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12927,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json",
+        "slow_call_30s"
+      ],
+      "output_tokens": 1973,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_085342675751_826d316340.json",
+      "timestamp": "2026-06-02T08:53:42+09:00"
+    },
+    {
+      "duration_ms": 33632,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 13180,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json",
+        "slow_call_30s"
+      ],
+      "output_tokens": 1846,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_085540169950_f092b4445e.json",
+      "timestamp": "2026-06-02T08:55:40+09:00"
+    },
+    {
+      "duration_ms": 39412,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 13392,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "output_tokens_ge_2000",
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json",
+        "slow_call_30s"
+      ],
+      "output_tokens": 2168,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_085649200571_edc21a871d.json",
+      "timestamp": "2026-06-02T08:56:49+09:00"
+    },
+    {
+      "duration_ms": 18875,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12485,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1324,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_090653837697_36cdac2260.json",
+      "timestamp": "2026-06-02T09:06:53+09:00"
+    },
+    {
+      "duration_ms": 20418,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12470,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1472,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_091104415744_c55faca3a8.json",
+      "timestamp": "2026-06-02T09:11:04+09:00"
+    },
+    {
+      "duration_ms": 22445,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12568,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1520,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_091624216716_6adb9870b2.json",
+      "timestamp": "2026-06-02T09:16:24+09:00"
+    },
+    {
+      "duration_ms": 18520,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12593,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1346,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_092620593247_c0272b27fe.json",
+      "timestamp": "2026-06-02T09:26:20+09:00"
+    },
+    {
+      "duration_ms": 19455,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12847,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1389,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_094530259544_5c2555d1db.json",
+      "timestamp": "2026-06-02T09:45:30+09:00"
+    },
+    {
+      "duration_ms": 21936,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12787,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1478,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_100123965391_5397083287.json",
+      "timestamp": "2026-06-02T10:01:23+09:00"
+    },
+    {
+      "duration_ms": 29055,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12777,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1746,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_101725777210_ae2ff5681b.json",
+      "timestamp": "2026-06-02T10:17:25+09:00"
+    },
+    {
+      "duration_ms": 19172,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12684,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1461,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_104850829936_713dbb2296.json",
+      "timestamp": "2026-06-02T10:48:50+09:00"
+    },
+    {
+      "duration_ms": 21153,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12728,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1427,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_111822399760_f410a3d205.json",
+      "timestamp": "2026-06-02T11:18:22+09:00"
+    },
+    {
+      "duration_ms": 17245,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12847,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1279,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_121915661909_1cf13ee728.json",
+      "timestamp": "2026-06-02T12:19:15+09:00"
+    },
+    {
+      "duration_ms": 18214,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12633,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1303,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_125149901637_6af50ac869.json",
+      "timestamp": "2026-06-02T12:51:49+09:00"
+    },
+    {
+      "duration_ms": 17965,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 11959,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1423,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_131729870073_12ad248d87.json",
+      "timestamp": "2026-06-02T13:17:29+09:00"
+    },
+    {
+      "duration_ms": 20689,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12395,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1493,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_134328337826_5d266c6a8d.json",
+      "timestamp": "2026-06-02T13:43:28+09:00"
+    },
+    {
+      "duration_ms": 20408,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 11388,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1531,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_144423451927_724579db4f.json",
+      "timestamp": "2026-06-02T14:44:23+09:00"
+    },
+    {
+      "duration_ms": 24570,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12084,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1650,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_151558621195_7e76aa3463.json",
+      "timestamp": "2026-06-02T15:15:58+09:00"
+    },
+    {
+      "duration_ms": 17743,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12000,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1404,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_152447294901_a07ad5a109.json",
+      "timestamp": "2026-06-02T15:24:47+09:00"
+    },
+    {
+      "duration_ms": 17974,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12176,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1426,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_152658235378_8c899d366b.json",
+      "timestamp": "2026-06-02T15:26:58+09:00"
+    },
+    {
+      "duration_ms": 21253,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12125,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json"
+      ],
+      "output_tokens": 1452,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_155442826130_a504388668.json",
+      "timestamp": "2026-06-02T15:54:42+09:00"
+    }
+  ],
+  "market": "KR",
+  "output_issue_counts": {
+    "output_tokens_ge_2000": 2,
+    "response_fenced_json": 13,
+    "response_has_preamble_or_wrapper": 14,
+    "response_not_strict_json": 14,
+    "slow_call_30s": 4
+  },
+  "output_tokens": 57898,
+  "parse_errors": 0,
+  "prompt_warning_samples": [
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": false,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 30,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 13392,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 2168,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_085649200571_edc21a871d.json",
+      "prompt_chars": 30033,
+      "timestamp": "2026-06-02T08:56:49+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 15170,
+          "lines": 38,
+          "section": "header"
+        },
+        {
+          "chars": 4737,
+          "lines": 76,
+          "section": "hard_soft_boundary"
+        },
+        {
+          "chars": 3449,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2498,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 2127,
+          "lines": 29,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 699,
+          "lines": 10,
+          "section": "selection_feedback"
+        },
+        {
+          "chars": 300,
+          "lines": 14,
+          "section": "runtime_evidence"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": false,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 30,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 13180,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1846,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_085540169950_f092b4445e.json",
+      "prompt_chars": 29748,
+      "timestamp": "2026-06-02T08:55:40+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14885,
+          "lines": 38,
+          "section": "header"
+        },
+        {
+          "chars": 4737,
+          "lines": 76,
+          "section": "hard_soft_boundary"
+        },
+        {
+          "chars": 3449,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2498,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 2127,
+          "lines": 29,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 699,
+          "lines": 10,
+          "section": "selection_feedback"
+        },
+        {
+          "chars": 300,
+          "lines": 14,
+          "section": "runtime_evidence"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": false,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 30,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12927,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1973,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_085342675751_826d316340.json",
+      "prompt_chars": 29172,
+      "timestamp": "2026-06-02T08:53:42+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14834,
+          "lines": 38,
+          "section": "header"
+        },
+        {
+          "chars": 4695,
+          "lines": 76,
+          "section": "hard_soft_boundary"
+        },
+        {
+          "chars": 3377,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2127,
+          "lines": 29,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 2087,
+          "lines": 38,
+          "section": "digest_news"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 699,
+          "lines": 10,
+          "section": "selection_feedback"
+        },
+        {
+          "chars": 300,
+          "lines": 14,
+          "section": "runtime_evidence"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12847,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1389,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_094530259544_5c2555d1db.json",
+      "prompt_chars": 27572,
+      "timestamp": "2026-06-02T09:45:30+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 15504,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3496,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2498,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 19,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12847,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1279,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_121915661909_1cf13ee728.json",
+      "prompt_chars": 27760,
+      "timestamp": "2026-06-02T12:19:15+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 15440,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3553,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2498,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 1040,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12787,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1478,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_100123965391_5397083287.json",
+      "prompt_chars": 27448,
+      "timestamp": "2026-06-02T10:01:23+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 15358,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3518,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2498,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12777,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1746,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_101725777210_ae2ff5681b.json",
+      "prompt_chars": 27447,
+      "timestamp": "2026-06-02T10:17:25+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 15336,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3539,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2498,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 21,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12728,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1427,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_111822399760_f410a3d205.json",
+      "prompt_chars": 27420,
+      "timestamp": "2026-06-02T11:18:22+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 15349,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3499,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2498,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12684,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1461,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_104850829936_713dbb2296.json",
+      "prompt_chars": 27360,
+      "timestamp": "2026-06-02T10:48:50+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 15334,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3454,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2498,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 16,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12633,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1303,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_125149901637_6af50ac869.json",
+      "prompt_chars": 27342,
+      "timestamp": "2026-06-02T12:51:49+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 15287,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3483,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2498,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12593,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1346,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_092620593247_c0272b27fe.json",
+      "prompt_chars": 27161,
+      "timestamp": "2026-06-02T09:26:20+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 15161,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3426,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2498,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12568,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1520,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_091624216716_6adb9870b2.json",
+      "prompt_chars": 27129,
+      "timestamp": "2026-06-02T09:16:24+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 15061,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3494,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2498,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 30,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12485,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1324,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_090653837697_36cdac2260.json",
+      "prompt_chars": 27271,
+      "timestamp": "2026-06-02T09:06:53+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 15184,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3513,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2498,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 30,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12470,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1472,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_091104415744_c55faca3a8.json",
+      "prompt_chars": 26986,
+      "timestamp": "2026-06-02T09:11:04+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14927,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3485,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2498,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12395,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1493,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_134328337826_5d266c6a8d.json",
+      "prompt_chars": 27338,
+      "timestamp": "2026-06-02T13:43:28+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 15250,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3558,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2455,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12176,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1426,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_152658235378_8c899d366b.json",
+      "prompt_chars": 27194,
+      "timestamp": "2026-06-02T15:26:58+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 15198,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3468,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2455,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12125,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1452,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_155442826130_a504388668.json",
+      "prompt_chars": 26613,
+      "timestamp": "2026-06-02T15:54:42+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14592,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3493,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2455,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12084,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1650,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_151558621195_7e76aa3463.json",
+      "prompt_chars": 26814,
+      "timestamp": "2026-06-02T15:15:58+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14755,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3529,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2455,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12000,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1404,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_152447294901_a07ad5a109.json",
+      "prompt_chars": 26693,
+      "timestamp": "2026-06-02T15:24:47+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14697,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3466,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2455,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 11959,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1423,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_131729870073_12ad248d87.json",
+      "prompt_chars": 26713,
+      "timestamp": "2026-06-02T13:17:29+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14699,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3484,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2455,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 5,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 11388,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1531,
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_144423451927_724579db4f.json",
+      "prompt_chars": 23866,
+      "timestamp": "2026-06-02T14:44:23+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 15408,
+          "lines": 35,
+          "section": "candidates"
+        },
+        {
+          "chars": 2455,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1354,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 977,
+          "lines": 14,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        },
+        {
+          "chars": 699,
+          "lines": 10,
+          "section": "selection_feedback"
+        }
+      ]
+    }
+  ],
+  "raw_dir": "E:\\code\\claudetrade\\logs\\raw_calls",
+  "recommendations": [
+    {
+      "area": "output_contract",
+      "priority": "P1",
+      "recommendation": "Tighten JSON-only enforcement for affected labels or route non-strict responses through a bounded retry; parser recovery should remain fail-safe."
+    },
+    {
+      "area": "latency_cost",
+      "priority": "P2",
+      "recommendation": "Separate timeout-prone labels from normal review flow and keep cache/cooldown guards active for repeated HOLD reviews."
+    },
+    {
+      "area": "token_cost",
+      "priority": "P2",
+      "recommendation": "Reduce high-token prompts by trimming repeated calibration blocks and limiting evidence pack rows before model invocation; review labels with 8k+ input tokens even when the session average looks acceptable."
+    }
+  ],
+  "slow_call_samples": [
+    {
+      "duration_ms": 45625,
+      "label": "postmortem",
+      "path": "logs\\raw_calls\\20260602_KR_postmortem_postmortem_KR_2026-06-02_069aa36cb4.json",
+      "timestamp": "2026-06-02T16:00:53+09:00"
+    },
+    {
+      "duration_ms": 35522,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_085342675751_826d316340.json",
+      "timestamp": "2026-06-02T08:53:42+09:00"
+    },
+    {
+      "duration_ms": 33632,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_085540169950_f092b4445e.json",
+      "timestamp": "2026-06-02T08:55:40+09:00"
+    },
+    {
+      "duration_ms": 39412,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_085649200571_edc21a871d.json",
+      "timestamp": "2026-06-02T08:56:49+09:00"
+    },
+    {
+      "duration_ms": 18875,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_090653837697_36cdac2260.json",
+      "timestamp": "2026-06-02T09:06:53+09:00"
+    },
+    {
+      "duration_ms": 20418,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_091104415744_c55faca3a8.json",
+      "timestamp": "2026-06-02T09:11:04+09:00"
+    },
+    {
+      "duration_ms": 22445,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_091624216716_6adb9870b2.json",
+      "timestamp": "2026-06-02T09:16:24+09:00"
+    },
+    {
+      "duration_ms": 18520,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_092620593247_c0272b27fe.json",
+      "timestamp": "2026-06-02T09:26:20+09:00"
+    },
+    {
+      "duration_ms": 19455,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_094530259544_5c2555d1db.json",
+      "timestamp": "2026-06-02T09:45:30+09:00"
+    },
+    {
+      "duration_ms": 21936,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_100123965391_5397083287.json",
+      "timestamp": "2026-06-02T10:01:23+09:00"
+    },
+    {
+      "duration_ms": 29055,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_101725777210_ae2ff5681b.json",
+      "timestamp": "2026-06-02T10:17:25+09:00"
+    },
+    {
+      "duration_ms": 19172,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_104850829936_713dbb2296.json",
+      "timestamp": "2026-06-02T10:48:50+09:00"
+    },
+    {
+      "duration_ms": 21153,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_111822399760_f410a3d205.json",
+      "timestamp": "2026-06-02T11:18:22+09:00"
+    },
+    {
+      "duration_ms": 17245,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_121915661909_1cf13ee728.json",
+      "timestamp": "2026-06-02T12:19:15+09:00"
+    },
+    {
+      "duration_ms": 18214,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_125149901637_6af50ac869.json",
+      "timestamp": "2026-06-02T12:51:49+09:00"
+    },
+    {
+      "duration_ms": 17965,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_131729870073_12ad248d87.json",
+      "timestamp": "2026-06-02T13:17:29+09:00"
+    },
+    {
+      "duration_ms": 20689,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_134328337826_5d266c6a8d.json",
+      "timestamp": "2026-06-02T13:43:28+09:00"
+    },
+    {
+      "duration_ms": 20408,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_144423451927_724579db4f.json",
+      "timestamp": "2026-06-02T14:44:23+09:00"
+    },
+    {
+      "duration_ms": 24570,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_151558621195_7e76aa3463.json",
+      "timestamp": "2026-06-02T15:15:58+09:00"
+    },
+    {
+      "duration_ms": 17743,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_152447294901_a07ad5a109.json",
+      "timestamp": "2026-06-02T15:24:47+09:00"
+    },
+    {
+      "duration_ms": 17974,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_152658235378_8c899d366b.json",
+      "timestamp": "2026-06-02T15:26:58+09:00"
+    },
+    {
+      "duration_ms": 21253,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260602_KR_select_tickers_155442826130_a504388668.json",
+      "timestamp": "2026-06-02T15:54:42+09:00"
+    }
+  ],
+  "start_at": "2026-06-02T00:00:00+09:00",
+  "total_tokens": 625783
+}

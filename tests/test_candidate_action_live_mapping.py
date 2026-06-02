@@ -3239,6 +3239,75 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         payload = json.loads(row["payload_json"])
         self.assertEqual(payload["runtime_gate"]["data_quality"], "minute_complete")
 
+    def test_candidate_audit_live_write_marks_missing_quality_when_gate_flag_is_false(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
+        meta = {
+            "selection_snapshot_ts": "2026-06-02T15:54:00+09:00",
+            "selection_trace_id": "KR:trace:missing-quality",
+            "visibility_contract_version": "actual_prompt_v1",
+            "watchlist": ["005930"],
+            "trade_ready": [],
+            "candidate_actions": [{"ticker": "005930", "action": "WATCH", "reason": "data_missing"}],
+            "_candidate_action_routes": [
+                {
+                    "ticker": "005930",
+                    "requested_action": "WATCH",
+                    "final_action": "WATCH",
+                    "route": "PlanA.watch",
+                    "reason": "data_missing",
+                    "runtime_gate": {
+                        "data_quality": "minute_missing",
+                        "data_quality_missing": False,
+                        "evidence_data_state": "missing",
+                        "evidence_missing_fields": [
+                            "current_price",
+                            "ret_3m_pct",
+                            "volume_ratio_open",
+                        ],
+                    },
+                }
+            ],
+            "_final_prompt_pool": [
+                {
+                    "ticker": "005930",
+                    "market": "KR",
+                    "prompt_rank": 1,
+                    "price": 70000,
+                    "post_open_features": {"data_quality": "minute_missing"},
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            with patch.dict(os.environ, {"CANDIDATE_AUDIT_DB_PATH": str(db_path)}, clear=False):
+                TradingBot._write_candidate_audit_live(
+                    bot,
+                    "KR",
+                    selected=[],
+                    meta=meta,
+                    stages={},
+                )
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT data_quality, data_quality_missing, evidence_data_state,
+                           evidence_missing_fields_json
+                    FROM audit_candidate_rows
+                    WHERE ticker='005930'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+        self.assertEqual(row["data_quality"], "minute_missing")
+        self.assertEqual(row["data_quality_missing"], 1)
+        self.assertEqual(row["evidence_data_state"], "missing")
+        self.assertIn("volume_ratio_open", json.loads(row["evidence_missing_fields_json"]))
+
     def test_candidate_audit_records_shadow_and_live_overlay_payloads(self) -> None:
         bot = _make_bot()
         bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})

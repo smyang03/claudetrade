@@ -1,0 +1,615 @@
+{
+  "eval_result": {
+    "raw": "```json\n{\n  \"hit_rate\": \"11/14\",\n\n  \"main_failure_patterns\": [\n    \"인트라데이 실시간 하락 신호 과신 (2026-05-15): S&P500 -0.96%, NASDAQ -1.22%, VIX +4.58% 등 장중 하락 압력에 과도하게 반응하여 NEUTRAL/MILD_BEAR 판단했으나 실제 결과는 BULLISH(+1.106%). 장중 일시 하락을 종가 방향으로 오인하는 패턴\",\n    \"breadth 극단 강세 시 MODERATE_BULL 과소 판단 (2026-05-21): breadth 97% 상승(29/30), 성장 섹터 전면 확산에도 consensus가 MILD_BULL에 그쳐 FLAT 결과와 방향 불일치 발생 — 극단적 breadth가 오히려 단기 소진 신호일 수 있음을 반영하지 못함\",\n    \"FOMC 등 이벤트 주간 불확실성 미반영 (2026-05-07): breadth 63%, GC 우위, XLK 강세 등 기술적 신호는 양호했으나 FOMC 주간 특성상 실제 BEARISH(-0.371%) 발생 — 이벤트 리스크를 confidence 조정에 반영하지 않고 기술적 신호만으로 MILD_BULL 판단\"\n  ],\n\n  \"bull_prompt_weaknesses\": [\n    \"장중(인트라데이) 방향과 종가 방향의 구분 기준 부재: bull 프롬프트는 '인트라데이 반등'을 긍정 신호로 활용하지만, 장중 수치가 종가까지 유지될지 여부를 판단하는 기준(예: 반등 지속 시간, 거래량 수반 여부, 고점 대비 회복율)이 명시되어 있지 않아 장중 일시 반등을 과대 해석할 위험\",\n    \"breadth 극단값(90% 이상) 처리 로직 부재: breadth 97%(2026-05-21) 상황에서도 MODERATE_BULL 이상을 권고했으나, 극단적 breadth는 단기 과열·평균 회귀 신호일 수 있음. 프롬프트에 'breadth ≥90% 시 소진 가능성 병기' 또는 confidence 상한 제한 로직이 없어 과신 판단 유발\"\n  ],\n\n  \"bear_prompt_weaknesses\": [\n    \"VIX·매크로 지표의 역할이 과대 설정되어 있어 실제 미스에 기여: 2026-06-01 bear가 VIX +4.4%를 근거로 CAUTIOUS 판단했으나 실제 +3.803% BULLISH. bear 프롬프트 내 'VIX 단독 사용 금지' 규정이 명시되어 있지 않아 매크로 지표와 breadth가 충돌할 때 하방 편향이 발생\",\n    \"bear 분석가의 상방 판단 허용 범위가 불명확: 2026-05-27·05-26·05-12·05-11 등에서 bear가 MILD_BULL 또는 MODERATE_BULL을 출력하는 사례 다수 존재. bear 역할의 핵심이 '하방 리스크 식별'임에도 강세장에서 역할 정체성이 희석되어 차별화된 리스크 관점 제공 기능이 약화됨\"\n  ],\n\n  \"neutral_prompt_weaknesses\": [\n    \"neutral 분석가의 판단이 bull 또는 bear와 수렴하는 경향 과다: 14세션 중 neutral이 bull/bear 어느 한쪽과 동일한 판단을 내린 경우가 다수(05-27, 05-26, 05-21 등)로, 독립적 중립",
+    "_sample_summary": [
+      {
+        "date": "2026-06-01",
+        "consensus": "MILD_BULL",
+        "bull": "MODERATE_BULL",
+        "bear": "CAUTIOUS",
+        "neut": "NEUTRAL",
+        "avg_pnl_pct": 3.803,
+        "outcome_direction": "BULLISH",
+        "directional_hit": "HIT",
+        "bull_reason": "breadth 63% 상승(19/30), GC/DC 25/5로 강한 골든크로스 우위, 거래량 급증/폭증 30종목 중 30개(21+9)로 모멘텀 ",
+        "bear_reason": "Breadth 양호(63% 상승, GC 25/5)하고 VIX 16.0(+4.4%), HYG +0.10%, DXY 99.1로 매크로 스트레스 신호"
+      },
+      {
+        "date": "2026-05-27",
+        "consensus": "MILD_BULL",
+        "bull": "MODERATE_BULL",
+        "bear": "MILD_BULL",
+        "neut": "MILD_BULL",
+        "avg_pnl_pct": 0.629,
+        "outcome_direction": "BULLISH",
+        "directional_hit": "HIT",
+        "bull_reason": "breadth 87% 상승(26/4), 52주 고점 근접 11개·신고가권 3개, GC/DC 16/14로 전환 초기 수준이나 XLK +2.63%·",
+        "bear_reason": "breadth 87% 상승(26/4), VIX 16.9(-0.59%), HYG +0.34%, DXY 99.1로 매크로 스트레스 부재하며 XLK "
+      },
+      {
+        "date": "2026-05-26",
+        "consensus": "MILD_BULL",
+        "bull": "MODERATE_BULL",
+        "bear": "MILD_BULL",
+        "neut": "MILD_BULL",
+        "avg_pnl_pct": 0.083,
+        "outcome_direction": "FLAT",
+        "directional_hit": "HIT",
+        "bull_reason": "breadth 83% 상승(25/30), GC 22/8, 52주 고점 근접 12개·신고가권 7개로 시장 확산 매우 강하며, 인트라데이 S&P50",
+        "bear_reason": "인트라데이 S&P500 +0.87%, NASDAQ +1.37%로 프리오픈 대비 강화되었고, breadth 83% 상승(25/30), GC/DC "
+      },
+      {
+        "date": "2026-05-21",
+        "consensus": "MILD_BULL",
+        "bull": "MODERATE_BULL",
+        "bear": "MILD_BULL",
+        "neut": "MILD_BULL",
+        "avg_pnl_pct": -0.086,
+        "outcome_direction": "FLAT",
+        "directional_hit": "MISS",
+        "bull_reason": "시장 breadth 97% 상승(29/30), XLK +2.25%·XLY +2.53% 등 성장 섹터 확산, NVTS·ALAB·ARM 등 다수 M",
+        "bear_reason": "breadth 97% 상승(29/30), VIX 17.29(-0.86%), HYG +0.64%, XLK +2.25%/XLY +2.53% 등 위험"
+      },
+      {
+        "date": "2026-05-20",
+        "consensus": "MILD_BULL",
+        "bull": "MILD_BULL",
+        "bear": "MILD_BULL",
+        "neut": "NEUTRAL",
+        "avg_pnl_pct": 0.45,
+        "outcome_direction": "BULLISH",
+        "directional_hit": "HIT",
+        "bull_reason": "인트라데이 S&P500 +0.79% / NASDAQ +1.16%로 프리오픈 약세(S&P -0.67%)를 반전했고 VIX 17.85 하락 중이나,",
+        "bear_reason": "인트라데이 S&P500 +0.79%, NASDAQ +1.16%, VIX 17.85(-1.16%)로 장중 실질 개선 중이며, 프리오픈 다이제스트의"
+      },
+      {
+        "date": "2026-05-19",
+        "consensus": "MILD_BEAR",
+        "bull": "MILD_BEAR",
+        "bear": "MILD_BEAR",
+        "neut": "MILD_BEAR",
+        "avg_pnl_pct": -0.884,
+        "outcome_direction": "BEARISH",
+        "directional_hit": "HIT",
+        "bull_reason": "인트라데이 S&P500 -0.78%, NASDAQ -1.30%로 프리오픈 대비 하락 심화 중이며, breadth 50% 상승/GC-DC 균형(1",
+        "bear_reason": "인트라데이 S&P500 -0.78%·NASDAQ -1.30%로 프리오픈 대비 하락 심화, VIX 18.09(+1.52%) 상승 중이나 임계치(2"
+      },
+      {
+        "date": "2026-05-18",
+        "consensus": "MILD_BEAR",
+        "bull": "CAUTIOUS",
+        "bear": "CAUTIOUS_BEAR",
+        "neut": "MILD_BEAR",
+        "avg_pnl_pct": -0.902,
+        "outcome_direction": "BEARISH",
+        "directional_hit": "HIT",
+        "bull_reason": "인트라데이 S&P500 -0.60%, NASDAQ -1.18%로 프리오픈 대비 하락 전환된 가운데, breadth 21% 상승(6/22)·GC ",
+        "bear_reason": "인트라데이 S&P500 -0.60%·NASDAQ -1.18%로 실시간 하락 압력 확인, breadth 21% 상승(6/22)·DC 22개 우세로"
+      },
+      {
+        "date": "2026-05-15",
+        "consensus": "NEUTRAL",
+        "bull": "MILD_BEAR",
+        "bear": "CAUTIOUS",
+        "neut": "NEUTRAL",
+        "avg_pnl_pct": 1.106,
+        "outcome_direction": "BULLISH",
+        "directional_hit": "MISS",
+        "bull_reason": "인트라데이 실시간 기준 S&P500 -0.96%, NASDAQ -1.22%, VIX 18.05(+4.58%)로 장중 하락 압력이 뚜렷하며, br",
+        "bear_reason": "VIX 18.05 안정적이고 HYG -0.08% 미미하나, 실시간 시장이 S&P500 -0.96% / NASDAQ -1.22%로 역전되었고 br"
+      },
+      {
+        "date": "2026-05-14",
+        "consensus": "CAUTIOUS",
+        "bull": "MILD_BULL",
+        "bear": "CAUTIOUS",
+        "neut": "NEUTRAL",
+        "avg_pnl_pct": 3.664,
+        "outcome_direction": "BULLISH",
+        "directional_hit": "HIT",
+        "bull_reason": "breadth 47% 상승(14/16)으로 중립 경계에 걸쳐 있고 GC/DC 18/12로 골든크로스 우위이나 과반 미만 상승으로 MODERATE",
+        "bear_reason": "VIX 17.9 안정적이나 breadth 약화(상승 47%, GC 18/DC 12), RSI 과매수 8개 누적, TSLA/AAPL/GOOGL/C"
+      },
+      {
+        "date": "2026-05-13",
+        "consensus": "MILD_BULL",
+        "bull": "MILD_BULL",
+        "bear": "CAUTIOUS",
+        "neut": "MILD_BULL",
+        "avg_pnl_pct": 0.639,
+        "outcome_direction": "BULLISH",
+        "directional_hit": "HIT",
+        "bull_reason": "breadth 60% 상승(18/30), GC 19/11 우세, XLV +1.96%·XLF +0.78%·XLE +0.70% 섹터 확산이나 XLK",
+        "bear_reason": "Breadth 양호 (60% 상승, GC/DC 19/11) 하지만 대형주 과매수 누적 (TSLA RSI 78.1, AAPL RSI 75.5, G"
+      },
+      {
+        "date": "2026-05-12",
+        "consensus": "MODERATE_BULL",
+        "bull": "MODERATE_BULL",
+        "bear": "MODERATE_BULL",
+        "neut": "MILD_BULL",
+        "avg_pnl_pct": 2.614,
+        "outcome_direction": "BULLISH",
+        "directional_hit": "HIT",
+        "bull_reason": "Breadth 80% 상승(24/5), GC 22개 vs DC 8개, 거래량 급증/폭증 16개로 시장 breadth 강건하나, 현재 S&P500",
+        "bear_reason": "Breadth 강세(상승 80%, GC/DC 22/8), VIX 18.2 안정, 섹터 분산(XLK +1.34%, XLE +2.64%), 하지만 "
+      },
+      {
+        "date": "2026-05-11",
+        "consensus": "MODERATE_BULL",
+        "bull": "MODERATE_BULL",
+        "bear": "MODERATE_BULL",
+        "neut": "MILD_BULL",
+        "avg_pnl_pct": 0.072,
+        "outcome_direction": "FLAT",
+        "directional_hit": "HIT",
+        "bull_reason": "breadth 73% 상승(22/8), GC 21/9, 52주 고점권 8개로 시장 전반 강세 확인되며 XLK +3.44% 주도 하에 NVDA·D",
+        "bear_reason": "Breadth 강세(73% 상승, GC/DC 21/9) + VIX 18.2(안정) + HYG +0.35% + TNX/DXY 온건 수준이지만, 과"
+      },
+      {
+        "date": "2026-05-08",
+        "consensus": "MILD_BULL",
+        "bull": "MILD_BULL",
+        "bear": "MODERATE_BULL",
+        "neut": "MILD_BULL",
+        "avg_pnl_pct": 0.464,
+        "outcome_direction": "BULLISH",
+        "directional_hit": "HIT",
+        "bull_reason": "현재 S&P500 +0.53%·NASDAQ +0.85% 인트라데이 반등(프리오픈 소화), breadth 63% 상승·GC 20/DC 10으로 기",
+        "bear_reason": "Intraday S&P500 +0.53%, NASDAQ +0.85% with breadth 63% (19/11), GC/DC 20/10, VIX"
+      },
+      {
+        "date": "2026-05-07",
+        "consensus": "MILD_BULL",
+        "bull": "MILD_BULL",
+        "bear": "CAUTIOUS",
+        "neut": "MILD_BULL",
+        "avg_pnl_pct": -0.371,
+        "outcome_direction": "BEARISH",
+        "directional_hit": "MISS",
+        "bull_reason": "Breadth 63% 상승(19/11), GC 19개 vs DC 11개, XLK +2.66% 주도 + FOMC 주간 횡보 국면. 다만 현재 미국",
+        "bear_reason": "Breadth 양호(63% 상승, GC/DC 19/11)이고 VIX 17.27 안정적이나, 인트라데이 S&P500 -0.50% 약세 + 대형주 "
+      }
+    ]
+  },
+  "improved_prompt": {
+    "raw": "```json\n{\n  \"bull_persona_improved\": \"[Bull 분석가]\\n당신은 15년 경력의 성장주 모멘텀 트레이더입니다.\\n\\n[전문 영역 — 이 지표들을 우선 확인]\\n• RSI 과매도(30 이하) 반등 신호\\n• MACD 골든크로스 or 히스토그램 상향 전환\\n• 거래량 평균 대비 1.5배 이상 급증\\n• 볼린저밴드 하단 터치 후 반등\\n• 52주 신고가 근접 (5% 이내)\\n\\n[stance 결정 규칙 — 순서대로 적용]\\n1. breadth 요약(상승 비율, GC/DC, 섹터 확산) 또는 지수 흐름을 먼저 확인\\n2. breadth가 긍정적(상승 비율 60% 이상 or 섹터 2개 이상 상승) AND 개별 신호 2개 이상 → MODERATE_BULL\\n3. breadth 긍정 OR 개별 신호 2개 이상(breadth 데이터 없음 포함) → MILD_BULL\\n4. 개별 신호 1개 + 시장 분위기 중립 이상 → MILD_BULL\\n5. 개별 신호 1개만 존재 → CAUTIOUS\\n6. 기술적 신호 없음 → NEUTRAL 이하\\n7. breadth 데이터가 전혀 없고 개별 신호도 1개 이하 → confidence 0.5 이하 허용, NEUTRAL\\n\\n[confidence 부여 기준]\\n• 신호 3개 이상 + breadth 확인 → 0.75~0.90\\n• 신호 2개 + breadth 일부 확인 → 0.60~0.75\\n• 신호 1~2개, breadth 불명확 → 0.50~0.65\\n• 신호 부족 또는 데이터 결측 多 → 0.40~0.55 (이 경우만 0.5 이하 허용)\\n\\n[절대 하지 말 것]\\n• 환율·VIX만을 이유로 하락 판단 금지 (매크로는 참고만)\\n• HALT 판단은 시장 전체 서킷브레이커 상황에서만\\n• breadth 확인 없이 MODERATE_BULL 이상 부여 금지\\n• 근거 없이 confidence 0.5 이하 부여 금지 (데이터 결측 제외)\",\n\n  \"bear_us_persona_improved\": \"[Bear 분석가 (US)]\\n당신은 미국 주식 헤지펀드 리스크 매니저입니다.\\n\\n[전문 영역 — US 리스크 축을 우선 확인]\\n• VIX 수준/변화: 결측이면 calm으로 해석하지 말고 data_quality 불확실성으로 처리\\n• HYG 하락, TNX 급등, DXY 급등 같은 credit/rate/USD 스트레스\\n• SPY/QQQ/IWM 및 섹터 ETF(XLK/XLF/XLE 등) 약세 확산\\n• breadth 악화: 상승 비율 하락, GC/DC 악화, RSI 과매수 과포화 후 둔화\\n\\n[stance 결정 규칙 — 순서대로 적용]\\n1. 매크로 스트레스 지표(VIX/HYG/TNX/DXY) 상태를 먼저 확인\\n2. 위 4개 중 2개 이상 위험 신호 + breadth 악화(상승 비율 40% 이하 or DC 우세) → CAUTIOUS_BEAR\\n3. VIX 25 이상 또는 HYG 급락 + 지수 1d -1.5% 이상 하락 → DEFENSIVE 검토\\n4. VIX 30 이상 + 지수 서킷브레이커 발동 or 시장 전체 거래 중단 → HALT 검토\\n5. 매크로 스트레스 1개 + breadth 중립 → MILD_BEAR\\n6. 대형주 일부 과매수만 있고 breadth 양호(상승 비율 55% 이상) → CAUTIOUS 이상 유지\\n7. 매크로 데이터 결측 多 → confidence 0.45~0.55, NEUTRAL or CAUTIOUS\\n\\n[confidence 부여 기준]\\n• 스트레스 지표 3개 이상 + breadth 악화 확인 → 0.75~0.90\\n• 스트레스 지표 2개 + breadth 일부 악화 → 0.60~0.75\\n• 스트레스 1개 또는 breadth만 악화 → 0.50~0.65\\n• 데이터 결측으로 판단 불확실 → 0.40~0.55\\n\\n[절대 하지 말 것]\\n• KR 지표(VKOSPI, 외국인 선물)로 US Bear 판단 금지\\n• 개별 기술주 1~3개의 과매수만으로 HALT 판단 금지\\n• VIX 결측을 시장 안정 신호로 해석 금지\\n• breadth 확인 없이 DEFENSIVE 이상 부여 금지\",\n\n  \"neutral_persona_improved\": \"[Neutral 분석가]\\n당신은 퀀트 통계 분석가입니다.\\n\\n[전문 영역 — 이 관점에서 분석]\\n• 제공된 breadth 요약의 상승/하락 신호 개수 대비 비교\\n• 지표 간 상충 여부 (기술적 긍정 + 매크로 부정 → 불확실)\\n• 데이터 신뢰도 검증 (데이터 누락 비율 계산 후 불확실성 반영)\\n\\n[stance 결정 규칙 — 순서대로 적용]\\n1. 긍정 신호 수(Bull측)와 부정 신호 수(Bear측)를 명시적으로 카운트\\n2. 긍정:부정 = 1:1 또는 차이 1개 이하 → 반드시 NEUTRAL\\n3. 긍정이 부정보다 2배 이상(예: 4:2) → MILD_BULL\\n4. 부정이 긍정보다 2배 이상(예: 2:4) → MILD_BEAR\\n5. 데이터 결측률 30% 이상 → confidence -0.10 페널티 적용, NEUTRAL 방향으로 조정\\n6. AGGRESSIVE 또는 HALT는 원칙적으로 금지 (시스템 하드룰 발동 시 제외)\\n\\n[confidence 부여 기준]\\n• 신호 균형 명확 + 데이터 충분 → 0.65~0.80 (NEUTRAL 확신)\\n• 한쪽 우세 명확 + 데이터 충분 → 0.60~0.75\\n• 데이터 결측 30% 미만 + 신호 혼재 → 0.50~0.65\\n• 데이터 결측 30% 이상 또는 판단 불가 → 0.40~0.55\\n\\n[절대 하지 말 것]\\n• AGGRESSIVE, HALT 단독 판단 금지\\n• 신호 카운트 없이 감으로 stance 결정 금지\\n• 데이터 결측을 무시하고 높은 confidence 부여 금지\",\n\n  \"system_contracts_improved\": \"[시스템 계약]\\n\\nDecision contract:\\n- 본 모델은 자동매매 시스템의 의사결정 지원 모델입니다.\\n- 제공된 시장 데이터, 후보 종목, 포지션 데이터만을 사용하세요.\\n- JSON 스키마 요청 시 반드시 strict JSON만 반환하세요.\\n- 세 분석가(Bull/Bear/Neutral)의 stance를 독립적으로 산출한 뒤, 앙상블 로직에 따라 최종 stance를 결정하세요.\\n\\n하드/소프트 룰 경계:\\n- 하드 룰 (Claude 절대 override 불가):\\n  • 일일 손실 한도 초과 시 자동 포지션 축소\\n  • broker 데이터 신뢰 우선 (모델 추정으로 broker 데이터 무시 금지)\\n  • 최대 포지션 한도 초과 금지\\n- 소프트 룰 (Claude 조언 가능):\\n  • 시장 stance 방향 및 강도\\n  • 트레일링 스탑 목표 조정\\n  • 후보 종목별 리스크 캡 권고\\n\\n[앙상블 판단 계약]\\n• 세 분석가 stance의 가중 다수결로 최종 stance 결정\\n  - Bull 우세(2:1) → Bull측 stance 채택, confidence 평균\\n  - Bear 우세(2:1) → Bear측 stance 채택, confidence 평균\\n  - 분산(1:1:1) → Neutral stance 채택, confidence = 세 값의 평균 - 0.05\\n• 분석가 간 stance 격차가 3단계 이상(예: AGGRESSIVE vs DEFENSIVE)이면 NEUTRAL로 강제 조정\\n\\n[시장 breadth 우선 계약]\\n• 시장 mode는 먼저 breadth 요약과 지수/매크로/섹터 흐름으로 판단하세요.\\n• 개별 종목 1~3개만으로 시장 mode를 결정하지 마세요.\\n• breadth 데이터 완전 결측 시: 분석가별 confidence 상한을 0.65로 제한하세요.\",\n\n  \"data_guide_improved\": \"[데이터 해석 가이드]\\n\\n[수익률 해석]\\n•"
+  },
+  "comparisons": [
+    {
+      "date": "2026-06-01",
+      "actual_consensus": "MILD_BULL",
+      "actual_pnl": 3.803136360222176,
+      "sonnet": {},
+      "haiku": {},
+      "sonnet_old": {
+        "bull": {
+          "stance": "MILD_BULL",
+          "confidence": 0.65,
+          "key_reason": "시장 breadth 63% 상승·GC 25/5로 기술적 우위 확인되나 XLK +2.23% 주도 속 XLY·XLV·XLC 약세로 섹터 확산 미흡하",
+          "tokens": 252
+        },
+        "bear_us": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "S&P500 +0.22%, 나스닥 +0.20%로 소폭 상승, VIX 15.8(안정), HYG +0.10%, DXY 99.1로 매크로 스트레스 없",
+          "tokens": 191
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "breadth 63% 상승(19/11), GC/DC 25/5로 기술적 우위 명확하나, 섹터 분화(XLK +2.23% vs XLE -1.16%/X",
+          "tokens": 200
+        }
+      },
+      "sonnet_new": {
+        "bull": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "breadth 63% 상승(19/11), GC/DC 25/5로 기술적 구조 양호하나 XLK +2.23% 제외 대부분 섹터 하락(XLE -1.16",
+          "tokens": 263
+        },
+        "bear_us": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "S&P500 +0.22%, 나스닥 +0.20%, VIX 15.8(안정권), HYG +0.10%, DXY 99.1(달러 약세 기조) 등 매크로 스",
+          "tokens": 198
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "breadth 63% 상승(19/11), GC 25/5로 기술적 우위 명확하나 XLK +2.23% 제외 주요 섹터 하락(XLE -1.16%, X",
+          "tokens": 209
+        }
+      },
+      "haiku_old": {
+        "bull": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "시장 breadth 우호적(상승 63%, GC/DC 25/5, 거래량 급증 21개), XLK +2.23% 기술주 주도, VIX 15.8 안정적이",
+          "tokens": 208
+        },
+        "bear_us": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "Breadth 양호(상승 63%, GC/DC 25/5 양호) + 매크로 안정(VIX 15.8, DXY 99.1, HYG +0.10%) + 기술주",
+          "tokens": 208
+        },
+        "neutral": {
+          "stance": "NEUTRAL",
+          "confidence": 0.65,
+          "key_reason": "Breadth 상승신호(19/30, 63%)가 하락(11/30, 37%)을 상회하나 2:1 미만(1.73:1)이고, 기술적 긍정(XLK +2.2",
+          "tokens": 255
+        }
+      },
+      "haiku_new": {
+        "bull": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "S&P500 +0.22% / 나스닥 +0.20% 완만한 상승세에서 breadth 63% 상승(19/11), GC 25개/DC 5개로 골든크로스 ",
+          "tokens": 288
+        },
+        "bear_us": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "Breadth 양호(63% 상승, GC/DC 25/5 강세) + VIX 15.8(정상) + HYG +0.10%(신용 안정) + 섹터 분산(XLK",
+          "tokens": 270
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "Breadth 상승 신호 19/30(63%)로 2:1 기울기 충족하나, XLK +2.23% 주도 편중과 external_data_empty(매크",
+          "tokens": 180
+        }
+      }
+    },
+    {
+      "date": "2026-05-29",
+      "actual_consensus": "MILD_BULL",
+      "actual_pnl": null,
+      "sonnet": {},
+      "haiku": {},
+      "sonnet_old": {
+        "bull": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "breadth 87% 상승(26/30), GC 24/6 압도적 우위, XLK +1.31%·XLV +1.40% 주도 섹터 확산, S&P500 +0",
+          "tokens": 183
+        },
+        "bear_us": {
+          "stance": "MILD_BULL",
+          "confidence": 0.72,
+          "key_reason": "S&P500 +0.58%/나스닥 +0.91%, VIX 15.8 안정, HYG +0.12%, DXY 99.1 중립권, breadth 87% 상승(",
+          "tokens": 168
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "breadth 87% 상승(26/4), GC 24/6, S&P500 1d +0.58%/나스닥 1d +0.91%로 단기 상승 우위이나, NVDA ",
+          "tokens": 179
+        }
+      },
+      "sonnet_new": {
+        "bull": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "breadth 87% 상승(26/30), GC 24/6 압도적 우위, S&P500 +0.58%/나스닥 +0.91% 동반 상승, XLK +1.31",
+          "tokens": 184
+        },
+        "bear_us": {
+          "stance": "MILD_BULL",
+          "confidence": 0.72,
+          "key_reason": "S&P500 +0.58%, 나스닥 +0.91%, VIX 15.8(안정), HYG +0.12%(크레딧 이상 없음), DXY 99.1(중립), br",
+          "tokens": 192
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "breadth 87% 상승(26/4), GC 24/6, S&P500 1d +0.58%·나스닥 1d +0.91%로 단기 강세 우위이나, NVDA ",
+          "tokens": 183
+        }
+      },
+      "haiku_old": {
+        "bull": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "시장 breadth 87% 상승(26/30), GC 24/6 우위, XLK +1.31% & XLV +1.40% 방어+기술주 동시 강세, VIX ",
+          "tokens": 221
+        },
+        "bear_us": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "Breadth 강력(상승 87%, GC/DC 4:1, RSI 과매수 11개)하고 VIX 15.8(안정), HYG +0.12%(credit 정상)",
+          "tokens": 266
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.68,
+          "key_reason": "Breadth 압도적 강세(상승 87%, 26/30) + 기술 긍정(XLK +1.31%, XLV +1.40%, GC 24/6)이 지배적이나, N",
+          "tokens": 178
+        }
+      },
+      "haiku_new": {
+        "bull": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "S&P500 +0.58% / 나스닥 +0.91% 상승 with 87% 상승비율(26/30), GC 24개 우위, XLK +1.31% / XLV ",
+          "tokens": 164
+        },
+        "bear_us": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "Breadth 강세(87% 상승, GC 24/6 우위) + 매크로 안정(VIX 15.8, HYG +0.12%, DXY 99.1 안정) + 기술주",
+          "tokens": 181
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.68,
+          "key_reason": "Breadth 26/4 상승(87%)으로 명확한 2:1 이상 우위, S&P500 +0.58% / 나스닥 +0.91% 1d 상승, VIX 15.8",
+          "tokens": 224
+        }
+      }
+    },
+    {
+      "date": "2026-05-27",
+      "actual_consensus": "MILD_BULL",
+      "actual_pnl": 0.628588021738963,
+      "sonnet": {},
+      "haiku": {},
+      "sonnet_old": {
+        "bull": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "breadth 87% 상승(26/30), XLK +2.63%·XLI +1.47% 섹터 확산, 나스닥 +1.19%·S&P500 +0.61% 지수 ",
+          "tokens": 164
+        },
+        "bear_us": {
+          "stance": "MILD_BULL",
+          "confidence": 0.72,
+          "key_reason": "S&P500 +0.61%·나스닥 +1.19%, VIX 16.9(안정), HYG +0.34%, DXY 99.1(완화 수준), breadth 87%",
+          "tokens": 210
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "breadth 87% 상승(26/4)으로 상승 신호 우세하나, GC/DC 16/14 균등·RSI 과매수 8개·XLE -2.76%·XLV -0.9",
+          "tokens": 145
+        }
+      },
+      "sonnet_new": {
+        "bull": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "breadth 87% 상승(26/30), XLK +2.63%·XLI +1.47% 섹터 확산, S&P500 +0.61%·나스닥 +1.19%, VI",
+          "tokens": 189
+        },
+        "bear_us": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.78,
+          "key_reason": "S&P500 +0.61%·나스닥 +1.19%·VIX 16.9(저위험)·HYG +0.34%·DXY 99.1(안정) 등 매크로 스트레스 부재 속 b",
+          "tokens": 211
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "breadth 26/4(87% 상승)로 상승 우위 뚜렷하나 GC/DC 16/14 균형·RSI 과매수 8종·data_quality external",
+          "tokens": 173
+        }
+      },
+      "haiku_old": {
+        "bull": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "시장 breadth 87% 상승(26/4), GC 16개로 DC 14개 상회, XLK +2.63% 기술주 강세가 나스닥 +1.19% 견인하며 V",
+          "tokens": 229
+        },
+        "bear_us": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "Breadth 강세(87% 상승, GC/DC 16/14 양호) + 매크로 안정(VIX 16.9, HYG +0.34%, DXY 99.1 정상) +",
+          "tokens": 206
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.68,
+          "key_reason": "Breadth 우위(87% 상승, 26/4)와 기술적 모멘텀(XLK +2.63%, XLI +1.47%, S&P500 +0.61%, 나스닥 +1.",
+          "tokens": 228
+        }
+      },
+      "haiku_new": {
+        "bull": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "시장 breadth 87% 상승(26/4), GC 16개로 DC 14개 상회, XLK +2.63% 주도, 거래량 급증 8건 + RSI 과매도 1",
+          "tokens": 240
+        },
+        "bear_us": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "Breadth 강세(87% 상승, GC 16/DC 14) + 대형주 섹터 주도(XLK +2.63%, XLI +1.47%) + VIX 16.9(정",
+          "tokens": 200
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.72,
+          "key_reason": "Breadth 우위(26/30 상승, 87%)와 기술강세(XLK +2.63%, XLI +1.47%, RSI 과매수 8개)가 지배적이나, VIX ",
+          "tokens": 207
+        }
+      }
+    },
+    {
+      "date": "2026-05-26",
+      "actual_consensus": "MILD_BULL",
+      "actual_pnl": 0.08254048250829665,
+      "sonnet": {},
+      "haiku": {},
+      "sonnet_old": {
+        "bull": {
+          "stance": "MILD_BULL",
+          "confidence": 0.72,
+          "key_reason": "breadth 83% 상승(25/30), GC 22개, 52주 고점근접 12개+신고가권 7개로 시장 확산 신호 충분하나, 지수 S&P500 +0",
+          "tokens": 237
+        },
+        "bear_us": {
+          "stance": "MILD_BULL",
+          "confidence": 0.72,
+          "key_reason": "S&P500 +0.37%·나스닥 +0.19%, VIX 16.7(안정), HYG +0.01%, DXY 99.1(달러 약세권) 등 매크로 스트레스 ",
+          "tokens": 221
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "breadth 83% 상승(25/5), GC 22/8, 52주 신고가권 7종목 등 내부 지표 강세 우세하나, RSI 과매수 14종목·NVDA 5",
+          "tokens": 148
+        }
+      },
+      "sonnet_new": {
+        "bull": {
+          "stance": "MILD_BULL",
+          "confidence": 0.72,
+          "key_reason": "breadth 83% 상승(25/30), GC 22개, 52주 고점근접 19개(12+7), 섹터 XLV+1.17%/XLK+1.00% 다수 섹터 ",
+          "tokens": 202
+        },
+        "bear_us": {
+          "stance": "MILD_BULL",
+          "confidence": 0.72,
+          "key_reason": "S&P500 +0.37%, 나스닥 +0.19%로 소폭 상승, VIX 16.7(안정권), HYG +0.01%(크레딧 스트레스 없음), DXY 99",
+          "tokens": 205
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "breadth 83% 상승(25/5), GC 22/8, 52주 고점근접 12+신고가 7로 기술적 우위 명확하나, RSI 과매수 14개·NVDA ",
+          "tokens": 184
+        }
+      },
+      "haiku_old": {
+        "bull": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "시장 breadth 83% 상승(25/30), GC 22개 vs DC 8개, XLK +1.00% & XLV +1.17% 등 핵심 섹터 확산 우위",
+          "tokens": 185
+        },
+        "bear_us": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "SPY +0.37% / QQQ +0.19% 소폭 상승, breadth 83% 상승(25/30), GC 22/DC 8로 강세, VIX 16.7 안",
+          "tokens": 237
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.68,
+          "key_reason": "Breadth 신호 83% 상승(25/5), GC 22/8 우위, XLK +1.00%·XLV +1.17% 방어주 강세로 2:1 이상 기울었으나,",
+          "tokens": 210
+        }
+      },
+      "haiku_new": {
+        "bull": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "Breadth 83% 상승(25/30), GC 22개 vs DC 8개, 14개 RSI 과매수, 11개 거래량 급증으로 시장 전반 상승 모멘텀 확",
+          "tokens": 275
+        },
+        "bear_us": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "Breadth 강세(83% 상승, GC 22/8 양호) + 매크로 안정(VIX 16.7, HYG +0.01%, TNX 4.49% 정상범위) + ",
+          "tokens": 250
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.68,
+          "key_reason": "Breadth 신호 강력(상승 83% / 25:5 비율 5:1 초과)하고 섹터 분산 상승(XLK +1.00%, XLV +1.17%, XLI +0",
+          "tokens": 200
+        }
+      }
+    },
+    {
+      "date": "2026-05-21",
+      "actual_consensus": "MILD_BULL",
+      "actual_pnl": -0.08625147008709809,
+      "sonnet": {},
+      "haiku": {},
+      "sonnet_old": {
+        "bull": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "breadth 97% 상승(29/30), S&P500 +1.08%·나스닥 +1.54%, XLK +2.25%·XLY +2.53% 성장 섹터 주도로",
+          "tokens": 180
+        },
+        "bear_us": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.78,
+          "key_reason": "S&P500 +1.08%/나스닥 +1.54% 상승, VIX 17.6 안정, HYG +0.64% 크레딧 우호, breadth 97% 상승(29/3",
+          "tokens": 184
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "breadth 29/1(97% 상승)로 단기 상승 압력 강하나, GC/DC=12/18로 중기 추세는 하락 우위이며 TSLA 5일추세 -1.58%",
+          "tokens": 170
+        }
+      },
+      "sonnet_new": {
+        "bull": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "breadth 97% 상승(29/30), S&P500 +1.08%·나스닥 +1.54%·VIX 17.6 안정, XLK +2.25%·XLY +2.5",
+          "tokens": 196
+        },
+        "bear_us": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.78,
+          "key_reason": "S&P500 +1.08%/나스닥 +1.54% 상승, VIX 17.6(안정권), HYG +0.64%(크레딧 스트레스 없음), DXY 99.3(중립",
+          "tokens": 218
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.62,
+          "key_reason": "breadth 29/1(97% 상승)로 단기 상승 압력 강하나, GC/DC 12/18로 중기 추세는 하락 우위이며 TSLA 5일추세 -1.58%",
+          "tokens": 160
+        }
+      },
+      "haiku_old": {
+        "bull": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.78,
+          "key_reason": "시장 breadth 97% 상승(29/1), XLK +2.25% XLY +2.53% 등 멀티섹터 확산, S&P500 +1.08% 나스닥 +1.5",
+          "tokens": 267
+        },
+        "bear_us": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.72,
+          "key_reason": "SPY +1.08% / QQQ +1.54% 상승 with VIX 17.6(정상) & HYG +0.64%(credit 양호), 하지만 breadt",
+          "tokens": 185
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.72,
+          "key_reason": "Breadth 압도적 강세(상승 97%, 29/30) + 지수 긍정(S&P500 +1.08%, 나스닥 +1.54%) + 기술섹터 주도(XLK +",
+          "tokens": 268
+        }
+      },
+      "haiku_new": {
+        "bull": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.78,
+          "key_reason": "시장 breadth 97% 상승(29/1), XLK +2.25%·XLY +2.53% 등 섹터 확산, S&P500 +1.08%·나스닥 +1.54%",
+          "tokens": 209
+        },
+        "bear_us": {
+          "stance": "MODERATE_BULL",
+          "confidence": 0.78,
+          "key_reason": "SPY +1.08% / QQQ +1.54% 양호, 상승률 97% (29/30), VIX 17.6 안정, HYG +0.64% 신용양호, DXY 9",
+          "tokens": 298
+        },
+        "neutral": {
+          "stance": "MILD_BULL",
+          "confidence": 0.68,
+          "key_reason": "Breadth 압도적 긍정(상승 97%, 29/1)과 기술섹터 강세(XLK +2.25%, XLY +2.53%)가 주도하나, macro 제약(10",
+          "tokens": 172
+        }
+      }
+    }
+  ]
+}

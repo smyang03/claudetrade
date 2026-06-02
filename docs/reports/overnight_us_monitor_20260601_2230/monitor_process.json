@@ -1,0 +1,15 @@
+﻿{
+    "pid":  56356,
+    "started_at":  "2026-06-01T20:50:31.1529662+09:00",
+    "scheduled_start":  "2026-06-01T22:30:00+09:00",
+    "scheduled_end":  "2026-06-02T07:00:00+09:00",
+    "mode":  "live",
+    "market":  "US",
+    "session_date":  "2026-06-01",
+    "out_dir":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230",
+    "stdout":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\monitor_stdout.log",
+    "stderr":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\monitor_stderr.log",
+    "final_report":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\final_report.md",
+    "quality_report":  "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260601_2230\\claude_io_quality.md",
+    "read_only":  true
+}

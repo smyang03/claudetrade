@@ -17,7 +17,10 @@ from runtime_paths import get_runtime_path
 
 
 JSON_COLUMNS = {"evidence_missing_fields_json", "post_open_features_json", "kr_confirmation_snapshot_json"}
-MISSING_QUALITY = {"", "missing", "unknown", "none", "null"}
+MISSING_QUALITY = {
+    "", "missing", "unknown", "none", "null",
+    "minute_missing", "data_insufficient", "data_insufficient_shadow",
+}
 
 
 def _utc_now() -> str:
@@ -123,10 +126,12 @@ def _desired_values(payload: dict[str, Any]) -> dict[str, Any]:
     desired: dict[str, Any] = {}
     if quality_text:
         desired["data_quality"] = quality_text
+    _quality_implies_missing = bool(quality_text and quality_text.lower() in MISSING_QUALITY)
     if gate.get("data_quality_missing") not in (None, ""):
-        desired["data_quality_missing"] = 1 if _boolish(gate.get("data_quality_missing")) else 0
+        gate_flag = _boolish(gate.get("data_quality_missing"))
+        desired["data_quality_missing"] = 1 if (gate_flag or _quality_implies_missing) else 0
     elif quality_text:
-        desired["data_quality_missing"] = 1 if quality_text.lower() in MISSING_QUALITY else 0
+        desired["data_quality_missing"] = 1 if _quality_implies_missing else 0
     evidence_state = str(gate.get("evidence_data_state") or evidence_pack.get("data_state") or "").strip()
     if evidence_state:
         desired["evidence_data_state"] = evidence_state
@@ -143,7 +148,13 @@ def _desired_values(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _current_empty(column: str, value: Any) -> bool:
     if column == "data_quality_missing":
-        return value is None
+        # Existing 0 may be a stale misclassification; recheck it against desired evidence.
+        if value is None:
+            return True
+        try:
+            return int(value) == 0
+        except Exception:
+            return not _boolish(value)
     if value is None:
         return True
     if column in JSON_COLUMNS:
