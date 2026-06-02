@@ -828,7 +828,7 @@ def route_candidate_action(
 
     if requested == "PROBE_READY":
         if pathb_waiting and current_price > 0 and pathb_waiting_buy_zone_high > 0 and current_price > pathb_waiting_buy_zone_high:
-            good_data = (not data_quality_missing) and str(data_quality or "").lower() in {"good", "normal", "ok"}
+            good_data = (not data_quality_missing) and str(data_quality or "").lower() in {"good", "normal", "ok", "minute_complete"}
             if confidence >= float(planb_cancel_confidence_min) and not overextended and good_data:
                 return _decision(
                     "PROBE_READY",
@@ -863,7 +863,7 @@ def route_candidate_action(
                 runtime_gate_reason="entry_price_cap_exceeded",
             )
         if pathb_waiting:
-            good_data = (not data_quality_missing) and str(data_quality or "").lower() in {"good", "normal", "ok"}
+            good_data = (not data_quality_missing) and str(data_quality or "").lower() in {"good", "normal", "ok", "minute_complete"}
             has_buy_zone_context = current_price > 0 and buy_zone_high > 0
             pathb_price_allows_cancel = not has_buy_zone_context or current_price > buy_zone_high
             if market_text == "KR" and entry_price_cap_missing:

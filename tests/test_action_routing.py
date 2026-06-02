@@ -541,6 +541,33 @@ class ActionRoutingTests(unittest.TestCase):
         self.assertFalse(decision.cancel_pathb)
         self.assertTrue(decision.runtime_gate["data_quality_missing"])
 
+    def test_buy_ready_minute_complete_can_cancel_pathb(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "AAPL", "action": "BUY_READY", "confidence": 0.8},
+            market="US",
+            pathb_waiting=True,
+            overextended=False,
+            data_quality="minute_complete",
+        )
+
+        self.assertEqual(decision.route, "PlanA.buy")
+        self.assertTrue(decision.cancel_pathb)
+
+    def test_probe_ready_minute_complete_can_cancel_pathb_above_zone(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "AAPL", "action": "PROBE_READY", "confidence": 0.8},
+            market="US",
+            pathb_waiting=True,
+            execution_context={
+                "current_price": 105.0,
+                "pathb_waiting_buy_zone_high": 101.0,
+                "data_quality": "minute_complete",
+            },
+        )
+
+        self.assertEqual(decision.route, "PlanA.probe")
+        self.assertTrue(decision.cancel_pathb)
+
     def test_watch_negative_context_suspends_pathb_shadow(self) -> None:
         decision = route_candidate_action(
             {"ticker": "KBI", "action": "WATCH", "reason": "fade 지속, 방향 미확인"},
