@@ -1,6 +1,6 @@
 # Documentation Index
 
-Updated: 2026-05-27
+Updated: 2026-06-02
 
 ## Policy
 
@@ -18,9 +18,11 @@ Updated: 2026-05-27
 3. [../ACTIVE_WORK.md](../ACTIVE_WORK.md) for current implementation/review actions.
 4. [../P0_P1_CODE_LEVEL_DEV_REQUIREMENTS_20260527.md](../P0_P1_CODE_LEVEL_DEV_REQUIREMENTS_20260527.md) for detailed P0/P1 code-level development requirements.
 5. [../P0_P1_CODE_LEVEL_RECHECK_REPORT_20260527.md](../P0_P1_CODE_LEVEL_RECHECK_REPORT_20260527.md) for the latest code-level recheck and remaining dev order.
-6. [../ALWAYS_ANALYZE.md](../ALWAYS_ANALYZE.md) before market, live, prompt, learning, or dashboard policy changes.
-7. [ARCHITECTURE_MAP.md](ARCHITECTURE_MAP.md) when code ownership or runtime flow is unclear.
-8. [DOCUMENTATION_INVENTORY.md](DOCUMENTATION_INVENTORY.md) for the remaining docs tree.
+6. [../STRATEGY_FLOW_AUDIT_REQUIREMENTS_20260602.md](../STRATEGY_FLOW_AUDIT_REQUIREMENTS_20260602.md) for code-level strategy flow audit, missing handoff checks, and per-item performance metrics.
+7. [../STRATEGY_FLOW_AUDIT_REVIEW_20260602.md](../STRATEGY_FLOW_AUDIT_REVIEW_20260602.md) for the latest DB/log-backed strategy flow review and improvement priorities.
+8. [../ALWAYS_ANALYZE.md](../ALWAYS_ANALYZE.md) before market, live, prompt, learning, or dashboard policy changes.
+9. [ARCHITECTURE_MAP.md](ARCHITECTURE_MAP.md) when code ownership or runtime flow is unclear.
+10. [DOCUMENTATION_INVENTORY.md](DOCUMENTATION_INVENTORY.md) for the remaining docs tree.
 
 ## Classification
 

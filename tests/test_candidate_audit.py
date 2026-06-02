@@ -18,6 +18,10 @@ from tools.analyze_candidate_audit import (
     watch_trigger_funnel_summary,
 )
 from tools.backfill_candidate_audit import backfill_candidate_audit
+from tools.backfill_candidate_audit_runtime_evidence import (
+    apply_runtime_evidence_backfill,
+    build_runtime_evidence_backfill_plan,
+)
 from tools.candidate_audit_outcome_catchup import build_catchup_plan, main as catchup_main, run_catchup
 from tools.update_candidate_audit_outcomes import update_candidate_audit_outcomes
 import ticker_selection_db
@@ -71,6 +75,99 @@ class CandidateAuditBackfillTests(unittest.TestCase):
         self.assertEqual(result["consistency"]["trade_ready_family_mismatch_count"], 1)
         self.assertEqual(result["consistency"]["invalid_price_count"], 1)
         self.assertEqual(result["consistency"]["invalid_price_reason_counts"]["non_positive_price"], 1)
+
+    def test_analyze_candidate_audit_reports_actual_prompt_bucket_and_shadow_readiness(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            base = {
+                "runtime_mode": "live",
+                "market": "US",
+                "session_date": "2026-05-15",
+                "known_at": "2026-05-15T09:05:00+09:00",
+                "visibility_contract_version": "actual_prompt_v1",
+                "selection_trace_id": "US:trace:1",
+                "source_file": "trading_bot.prompt_pool",
+                "candidate_source": "yf",
+                "primary_bucket": "momentum_now",
+                "source_tags_json": ["yf"],
+                "raw_score_current": 91.0,
+                "trainer_prompt_score": 0.72,
+                "entry_timing_snapshot_json": {"entry_sequence_of_day": 1},
+                "post_open_features_json": {"or_formed": True, "volume_ratio_open": 1.8},
+                "filled_count": 1,
+                "first_fill_at": "2026-05-15T09:20:00+09:00",
+                "position_mfe_pct": 2.5,
+                "position_mae_pct": -0.4,
+            }
+            included = {**base, "call_id": "call1", "ticker": "AAPL", "actual_prompt_included": True}
+            not_included = {
+                **base,
+                "call_id": "call1",
+                "ticker": "MSFT",
+                "actual_prompt_included": False,
+                "primary_bucket": "",
+                "candidate_source": "",
+                "source_file": "",
+                "source_tags_json": [],
+                "raw_score_current": None,
+            }
+            store.upsert_candidate(included)
+            store.upsert_candidate(not_included)
+            store.upsert_outcomes(
+                [
+                    {
+                        "candidate_key": candidate_key(
+                            session_date="2026-05-15",
+                            market="US",
+                            call_id="call1",
+                            ticker="AAPL",
+                        ),
+                        "horizon_min": 60,
+                        "observed_at": "2026-05-15T10:20:00+09:00",
+                        "return_pct": 1.2,
+                        "max_runup_pct": 2.4,
+                        "max_drawdown_pct": -0.5,
+                        "status": "audit_sparse",
+                    },
+                    {
+                        "candidate_key": candidate_key(
+                            session_date="2026-05-15",
+                            market="US",
+                            call_id="call1",
+                            ticker="MSFT",
+                        ),
+                        "horizon_min": 60,
+                        "observed_at": "2026-05-15T10:20:00+09:00",
+                        "return_pct": -0.3,
+                        "max_runup_pct": 0.5,
+                        "max_drawdown_pct": -1.1,
+                        "status": "audit_sparse",
+                    },
+                ]
+            )
+
+            result = analyze_candidate_audit(
+                db_path=db_path,
+                session_date="2026-05-15",
+                market="US",
+            )
+
+        prompt = result["actual_prompt_profit_visibility"]
+        self.assertEqual(prompt["measured_rows"], 2)
+        self.assertEqual(prompt["groups"]["included"]["labeled_rows"], 1)
+        self.assertEqual(prompt["groups"]["not_included"]["labeled_rows"], 1)
+        self.assertEqual(prompt["delta_included_minus_not_included_mean_return_pct"], 1.5)
+        quality = result["bucket_source_score_quality"]
+        self.assertEqual(quality["blank_primary_bucket_count"], 1)
+        self.assertEqual(quality["blank_source_count"], 1)
+        self.assertEqual(quality["raw_score_missing_count"], 1)
+        self.assertEqual(quality["bucket_counts"]["momentum_now"], 1)
+        shadow = result["entry_exit_shadow_readiness"]
+        self.assertEqual(shadow["filled_rows"], 2)
+        self.assertEqual(shadow["entry_timing_snapshot_rows"], 2)
+        self.assertEqual(shadow["post_open_feature_rows"], 2)
+        self.assertIn("sample_gate_not_met", shadow["blockers"])
 
     def test_analyze_candidate_audit_splits_invalid_price_reasons(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -170,6 +267,58 @@ class CandidateAuditBackfillTests(unittest.TestCase):
         self.assertEqual(reasons_by_ticker["LEGACY"], "legacy_price_unmeasured")
         self.assertEqual(reasons_by_ticker["MISS"], "missing_quote")
         self.assertEqual(reasons_by_ticker["FAILRDY"], "legacy_price_unmeasured")
+
+    def test_analyze_candidate_audit_ignores_non_executable_selection_meta_price_null(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            base = {
+                "runtime_mode": "live",
+                "market": "KR",
+                "session_date": "2026-06-02",
+                "known_at": "2026-06-02T10:17:26+09:00",
+                "source_file": "trading_bot.selection_meta",
+                "in_prompt": False,
+                "input_to_claude_reported": False,
+                "final_prompt_included": False,
+                "actual_prompt_included": False,
+            }
+            store.upsert_candidate(
+                {
+                    **base,
+                    "call_id": "compact_only",
+                    "ticker": "021080",
+                    "price": None,
+                    "claude_trade_ready": False,
+                    "claude_action": "",
+                    "payload": {
+                        "actual_prompt_included": False,
+                        "prompt_overlay_added": False,
+                        "evidence_tickers": ["242040"],
+                    },
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "call_id": "actionable",
+                    "ticker": "005930",
+                    "price": None,
+                    "claude_trade_ready": True,
+                    "claude_action": "BUY_READY",
+                }
+            )
+
+            result = analyze_candidate_audit(
+                db_path=db_path,
+                session_date="2026-06-02",
+                market="KR",
+            )
+
+        invalid_rows = result["consistency"]["invalid_price"]
+        self.assertEqual(result["consistency"]["invalid_price_count"], 1)
+        self.assertEqual(invalid_rows[0]["ticker"], "005930")
+        self.assertEqual(result["consistency"]["invalid_price_reason_counts"]["legacy_price_unmeasured"], 1)
 
     def test_candidate_audit_additive_trainer_columns_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -307,6 +456,12 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                         "prompt_pool_audit": True,
                         "excluded_reason": "hard_cap_cutoff",
                         "screener_quality": {"screener_quality_state": "ok"},
+                        "runtime_gate": {
+                            "data_quality": "minute_complete",
+                            "data_quality_missing": False,
+                            "evidence_data_state": "confirmed",
+                            "volume_ratio_open": 2.4,
+                        },
                     },
                 }
             )
@@ -355,6 +510,188 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertTrue(payload["prompt_pool_audit"])
             self.assertEqual(payload["excluded_reason"], "hard_cap_cutoff")
             self.assertEqual(payload["screener_quality"]["screener_quality_state"], "ok")
+            self.assertEqual(payload["runtime_gate"]["data_quality"], "minute_complete")
+            self.assertFalse(payload["runtime_gate"]["data_quality_missing"])
+            self.assertEqual(payload["runtime_gate"]["evidence_data_state"], "confirmed")
+            self.assertEqual(payload["runtime_gate"]["volume_ratio_open"], 2.4)
+
+    def test_candidate_audit_extra_evidence_columns_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "call_evidence",
+                    "runtime_mode": "live",
+                    "market": "KR",
+                    "session_date": "2026-06-02",
+                    "known_at": "2026-06-02T09:10:00+09:00",
+                    "ticker": "005930",
+                    "source_file": "trading_bot.selection_meta",
+                    "data_quality": "minute_complete",
+                    "data_quality_missing": False,
+                    "evidence_data_state": "confirmed",
+                    "evidence_missing_fields_json": [],
+                    "post_open_features_json": {
+                        "data_quality": "minute_complete",
+                        "ret_5m_pct": 1.2,
+                        "volume_ratio_open": 2.4,
+                    },
+                    "kr_confirmation_snapshot_json": {
+                        "kr_confirmation_state": "confirmed",
+                        "kr_confirmation_reason": "or_formed",
+                    },
+                }
+            )
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT data_quality, data_quality_missing, evidence_data_state,
+                           evidence_missing_fields_json, post_open_features_json,
+                           kr_confirmation_snapshot_json
+                    FROM audit_candidate_rows
+                    WHERE ticker='005930'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+            self.assertEqual(row["data_quality"], "minute_complete")
+            self.assertEqual(row["data_quality_missing"], 0)
+            self.assertEqual(row["evidence_data_state"], "confirmed")
+            self.assertEqual(json.loads(row["evidence_missing_fields_json"]), [])
+            self.assertEqual(json.loads(row["post_open_features_json"])["ret_5m_pct"], 1.2)
+            self.assertEqual(
+                json.loads(row["kr_confirmation_snapshot_json"])["kr_confirmation_reason"],
+                "or_formed",
+            )
+
+    def test_runtime_evidence_backfill_dry_run_and_apply_fill_blank_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "call_payload_only",
+                    "runtime_mode": "live",
+                    "market": "KR",
+                    "session_date": "2026-06-02",
+                    "known_at": "2026-06-02T09:10:00+09:00",
+                    "ticker": "005930",
+                    "payload": {
+                        "runtime_gate": {
+                            "data_quality": "minute_complete",
+                            "data_quality_missing": False,
+                            "evidence_data_state": "confirmed",
+                            "evidence_missing_fields": [],
+                            "kr_confirmation_state": "confirmed",
+                            "kr_confirmation_reason": "or_formed",
+                            "evidence_pack": {
+                                "post_open_confirmation": {
+                                    "ret_5m_pct": 1.2,
+                                    "volume_ratio_open": 2.4,
+                                }
+                            },
+                        }
+                    },
+                }
+            )
+
+            dry_run = build_runtime_evidence_backfill_plan(
+                db_path=db_path,
+                runtime_mode="live",
+                market="KR",
+                session_date="2026-06-02",
+            )
+            self.assertTrue(dry_run["ok"])
+            self.assertEqual(dry_run["eligible_count"], 1)
+            self.assertEqual(dry_run["eligible"][0]["updates"]["data_quality"], "minute_complete")
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                before = conn.execute(
+                    "SELECT data_quality, data_quality_missing FROM audit_candidate_rows WHERE ticker='005930'"
+                ).fetchone()
+            finally:
+                conn.close()
+            self.assertIn(before["data_quality"], (None, ""))
+            self.assertIsNone(before["data_quality_missing"])
+
+            applied = apply_runtime_evidence_backfill(db_path, dry_run)
+            self.assertEqual(applied, 1)
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                after = conn.execute(
+                    """
+                    SELECT data_quality, data_quality_missing, evidence_data_state,
+                           post_open_features_json, kr_confirmation_snapshot_json
+                    FROM audit_candidate_rows
+                    WHERE ticker='005930'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+            self.assertEqual(after["data_quality"], "minute_complete")
+            self.assertEqual(after["data_quality_missing"], 0)
+            self.assertEqual(after["evidence_data_state"], "confirmed")
+            self.assertEqual(json.loads(after["post_open_features_json"])["volume_ratio_open"], 2.4)
+            self.assertEqual(
+                json.loads(after["kr_confirmation_snapshot_json"])["kr_confirmation_reason"],
+                "or_formed",
+            )
+
+    def test_runtime_evidence_backfill_does_not_overwrite_non_empty_columns_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "call_payload_conflict",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-06-01",
+                    "known_at": "2026-06-01T22:30:00+09:00",
+                    "ticker": "AAPL",
+                    "data_quality": "manual_quality",
+                    "payload": {
+                        "runtime_gate": {
+                            "data_quality": "minute_complete",
+                            "data_quality_missing": False,
+                            "evidence_data_state": "confirmed",
+                        }
+                    },
+                }
+            )
+
+            plan = build_runtime_evidence_backfill_plan(
+                db_path=db_path,
+                runtime_mode="live",
+                market="US",
+                session_date="2026-06-01",
+            )
+
+            self.assertEqual(plan["conflict_count"], 1)
+            self.assertNotIn("data_quality", plan["eligible"][0]["updates"])
+            applied = apply_runtime_evidence_backfill(db_path, plan)
+            self.assertEqual(applied, 1)
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    "SELECT data_quality, data_quality_missing, evidence_data_state FROM audit_candidate_rows WHERE ticker='AAPL'"
+                ).fetchone()
+            finally:
+                conn.close()
+            self.assertEqual(row["data_quality"], "manual_quality")
+            self.assertEqual(row["data_quality_missing"], 0)
+            self.assertEqual(row["evidence_data_state"], "confirmed")
 
     def test_candidate_audit_payload_json_fallback_when_payload_is_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

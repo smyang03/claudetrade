@@ -366,6 +366,51 @@ class LiveMaintenanceTests(unittest.TestCase):
             self.assertEqual(result["reason_code"], "BROKER_POSITION_ABSENT_SELL_FILL_UNCONFIRMED")
             self.assertEqual(result["positions_after_count"], 1)
 
+    def test_absent_filled_pathb_run_closes_as_audited_learning_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path_run_id = "path_el"
+            store = EventStore(root / "events.db")
+            _create_run(store, path_run_id=path_run_id, ticker="EL", status="FILLED")
+            positions_path = root / "live_open_positions.json"
+            positions_path.write_text("[]", encoding="utf-8")
+
+            dry = live_maintenance.reconcile_local_position_against_broker(
+                market="US",
+                ticker="EL",
+                path_run_id=path_run_id,
+                broker_truth=_broker_truth(),
+                store=store,
+                positions_path=positions_path,
+            )
+            self.assertEqual(dry["action"], "remove_local")
+            self.assertEqual(dry["next_status"], "CLOSED")
+            self.assertEqual(dry["reason_code"], live_maintenance.ABSENT_FILLED_CLOSE_REASON)
+
+            applied = live_maintenance.reconcile_local_position_against_broker(
+                market="US",
+                ticker="EL",
+                path_run_id=path_run_id,
+                broker_truth=_broker_truth(),
+                store=store,
+                positions_path=positions_path,
+                dry_run=False,
+                backup_dir=root / "backup",
+                operator="test",
+            )
+
+            run = store.find_path_run(path_run_id)
+            events = store.events_for_session(market="US", runtime_mode="live", session_date="2026-05-15")
+            self.assertTrue(applied["applied"])
+            self.assertEqual(run["status"], "CLOSED")
+            self.assertEqual(run["plan"]["close_reason"], live_maintenance.ABSENT_FILLED_CLOSE_REASON)
+            self.assertTrue(run["plan"]["learning_excluded"])
+            self.assertFalse(run["plan"]["exit_fill_confirmed"])
+            self.assertIsNone(run["plan"]["pnl_pct"])
+            self.assertEqual(events[-1]["event_type"], "CLOSED")
+            self.assertEqual(events[-1]["reason_code"], live_maintenance.ABSENT_FILLED_CLOSE_REASON)
+            self.assertTrue(events[-1]["payload"]["learning_excluded"])
+
     def test_sell_fill_evidence_closes_path_run_and_removes_local(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

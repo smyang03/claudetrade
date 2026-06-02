@@ -210,12 +210,90 @@ def _format_pct(value: Any) -> str:
         return "0.0%"
 
 
+def _readiness_status_label(value: Any) -> str:
+    mapping = {
+        "available": "가능",
+        "blocked": "차단",
+        "idle": "대기",
+        "closed": "장외",
+        "unknown": "확인",
+    }
+    raw = str(value or "")
+    return mapping.get(raw, raw or "확인")
+
+
+def _readiness_reason_label(value: Any) -> str:
+    mapping = {
+        "READY_WAITING_SIGNAL": "신호 대기",
+        "READY_WAITING_BUY_ZONE": "매수가 대기",
+        "WAITING_QUOTE_OR_BUY_ZONE": "가격대 감시",
+        "IDLE_NO_PATHA_TRADE_READY": "A 후보 없음",
+        "IDLE_NO_TRADE_READY": "매수 후보 없음",
+        "MARKET_CLOSED": "장외",
+        "BLOCKED_BROKER_TRUTH": "브로커 확인 필요",
+        "BROKER_TRUTH_STALE_OR_UNTRUSTED": "브로커 확인 필요",
+        "BLOCKED_AFFORDABILITY": "주문가능 부족",
+        "CASH_BELOW_MIN_ORDER": "주문가능 부족",
+        "POSITION_CAP_REACHED": "보유 한도",
+        "DAILY_ENTRY_CAP_REACHED": "일일 진입 한도",
+        "ANALYST_NEW_BUY_BLOCK": "분석가 신규매수 차단",
+        "ANALYST_MAX_GROSS_EXPOSURE_REACHED": "노출 한도",
+        "GROSS_EXPOSURE_REFERENCE_MISSING": "노출 기준 없음",
+        "GROSS_EXPOSURE_REMAINING_BELOW_MIN_ORDER": "노출 여력 부족",
+        "NO_ENTRY_WAITING_PLAN": "진입대기 없음",
+        "NO_TRADE_READY": "매수 후보 없음",
+        "NO_SELECTION_FILE": "선정 파일 없음",
+        "MISSING_PRICE_TARGETS": "가격계획 누락",
+        "PRICE_TARGETS_EMPTY": "가격계획 없음",
+    }
+    raw = str(value or "")
+    return mapping.get(raw, raw or "-")
+
+
+def _format_buy_readiness(summary: dict[str, Any]) -> str:
+    readiness = summary.get("buy_readiness") if isinstance(summary.get("buy_readiness"), dict) else {}
+    if not readiness:
+        pathb_live = summary.get("path_b_live") if isinstance(summary.get("path_b_live"), dict) else {}
+        readiness = pathb_live.get("buy_readiness") if isinstance(pathb_live.get("buy_readiness"), dict) else {}
+    if not readiness:
+        return ""
+    lines = ["<b>매수 가능 상태</b>"]
+    for market in ("KR", "US"):
+        rows = readiness.get(market) if isinstance(readiness.get(market), dict) else {}
+        if not rows:
+            continue
+        parts = []
+        for key, label in (("path_a", "A플랜"), ("path_b", "PathB")):
+            row = rows.get(key) if isinstance(rows.get(key), dict) else {}
+            if not row:
+                continue
+            status = _readiness_status_label(row.get("status"))
+            reason = _readiness_reason_label(row.get("primary_reason") or row.get("state"))
+            ready = int(row.get("ready_count", row.get("trade_ready_count", 0)) or 0)
+            waiting = int(row.get("entry_waiting_plans", 0) or 0)
+            tail = []
+            if ready:
+                tail.append(f"후보 {ready}")
+            if waiting:
+                tail.append(f"대기 {waiting}")
+            detail = f" ({', '.join(tail)})" if tail else ""
+            parts.append(f"{label} {status} - {reason}{detail}")
+        if parts:
+            lines.append(f"{market}: " + " | ".join(parts))
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
 def _format_buy_capacity(summary: dict[str, Any]) -> str:
     pathb_live = summary.get("path_b_live") if isinstance(summary.get("path_b_live"), dict) else {}
     capacity = pathb_live.get("execution_capacity") if isinstance(pathb_live.get("execution_capacity"), dict) else {}
+    readiness_text = _format_buy_readiness(summary)
     if not capacity:
-        return "<b>Buy Capacity</b>\nNo capacity snapshot is available."
-    lines = ["<b>Buy Capacity</b>"]
+        capacity_text = "<b>Buy Capacity</b>\nNo capacity snapshot is available."
+        return f"{readiness_text}\n\n{capacity_text}" if readiness_text else capacity_text
+    lines = []
+    if readiness_text:
+        lines.extend([readiness_text, ""])
+    lines.append("<b>Buy Capacity</b>")
     for market in ("KR", "US"):
         row = capacity.get(market) if isinstance(capacity.get(market), dict) else {}
         if not row:

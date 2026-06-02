@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import tempfile
+import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from tools import live_preflight
@@ -119,6 +123,31 @@ class LivePreflightCredentialModeTests(unittest.TestCase):
 
         self.assertEqual(check.status, "PASS")
         self.assertFalse(check.data["remediation_required"])
+
+    def test_token_rate_limit_marker_check_reports_active_cooldown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp) / "state"
+            state_dir.mkdir()
+            marker = state_dir / "live_kis_token_rate_limit_kr_test.json"
+            marker.write_text(
+                json.dumps(
+                    {
+                        "market": "KR",
+                        "cooldown_until": "2099-01-01T00:00:00",
+                        "cooldown_until_ts": time.time() + 120,
+                        "payload": {"msg_cd": "EGW00133", "msg1": "token issue rate exceeded"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(live_preflight, "get_runtime_path", return_value=state_dir):
+                check = live_preflight._token_rate_limit_marker_check("live")
+
+        self.assertEqual(check.name, "kis.token_rate_limit_cooldown")
+        self.assertEqual(check.status, "WARN")
+        self.assertEqual(check.data["active_count"], 1)
+        self.assertEqual(check.data["active_markers"][0]["msg_cd"], "EGW00133")
+        self.assertTrue(check.data["operator_action_required"])
 
 
 if __name__ == "__main__":

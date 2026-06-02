@@ -1,6 +1,6 @@
 # Documentation Inventory
 
-Updated: 2026-05-27
+Updated: 2026-06-02
 
 ## Remaining Structure
 
@@ -18,6 +18,8 @@ docs/
     NOW_CODE_REQUIREMENTS_20260522.md
     P0_P1_CODE_LEVEL_DEV_REQUIREMENTS_20260527.md
     P0_P1_CODE_LEVEL_RECHECK_REPORT_20260527.md
+    STRATEGY_FLOW_AUDIT_REQUIREMENTS_20260602.md
+    STRATEGY_FLOW_AUDIT_REVIEW_20260602.md
     core/
     source/
 ```
@@ -46,6 +48,8 @@ docs/
 | `NOW_CODE_REQUIREMENTS_20260522.md` | Immediate code requirements after plan cleanup. |
 | `P0_P1_CODE_LEVEL_DEV_REQUIREMENTS_20260527.md` | Detailed P0/P1 code-level development requirements with why/before/after/acceptance/tests. |
 | `P0_P1_CODE_LEVEL_RECHECK_REPORT_20260527.md` | Latest code-level recheck with complete/partial/missing status and remaining development order. |
+| `STRATEGY_FLOW_AUDIT_REQUIREMENTS_20260602.md` | Code-level strategy flow audit requirements with missing handoff checks and per-item performance metrics. |
+| `STRATEGY_FLOW_AUDIT_REVIEW_20260602.md` | Latest DB/log-backed strategy flow review with root-cause patterns, per-item evidence, and improvement priorities. |
 | `CODE_LEVEL_REQUIREMENTS_20260522.md` | Code-level judgment and remaining requirements. |
 | `ANALYST_OUTAGE_HANDLING_REQUIREMENTS_20260522.md` | Source requirement for analyst outage handling; not the active backlog. |
 

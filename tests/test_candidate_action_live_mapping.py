@@ -3153,6 +3153,92 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(row_payload["selection_trace_id"], "US:trace:test")
         self.assertTrue(row_payload["actual_prompt_included"])
 
+    def test_candidate_audit_live_write_promotes_runtime_evidence_columns(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
+        meta = {
+            "selection_snapshot_ts": "2026-05-07T09:00:00+09:00",
+            "selection_trace_id": "KR:trace:evidence",
+            "visibility_contract_version": "actual_prompt_v1",
+            "watchlist": ["005930"],
+            "trade_ready": ["005930"],
+            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "reason": "buy_ready"}],
+            "_candidate_action_routes": [
+                {
+                    "ticker": "005930",
+                    "requested_action": "BUY_READY",
+                    "final_action": "BUY_READY",
+                    "route": "PlanA.buy",
+                    "reason": "buy_ready",
+                    "runtime_gate": {
+                        "data_quality": "minute_complete",
+                        "data_quality_missing": False,
+                        "evidence_data_state": "confirmed",
+                        "evidence_missing_fields": [],
+                        "kr_confirmation_state": "confirmed",
+                        "kr_confirmation_reason": "or_formed",
+                        "kr_confirmation_checks": {"data_quality_ok": True},
+                        "volume_ratio_open": 2.4,
+                        "evidence_pack": {
+                            "data_quality": "minute_complete",
+                            "post_open_confirmation": {
+                                "ret_5m_pct": 1.2,
+                                "volume_ratio_open": 2.4,
+                            },
+                        },
+                    },
+                }
+            ],
+            "_final_prompt_pool": [
+                {
+                    "ticker": "005930",
+                    "market": "KR",
+                    "prompt_rank": 1,
+                    "price": 70000,
+                    "post_open_features": {
+                        "data_quality": "minute_complete",
+                        "ret_5m_pct": 1.2,
+                        "volume_ratio_open": 2.4,
+                    },
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            with patch.dict(os.environ, {"CANDIDATE_AUDIT_DB_PATH": str(db_path)}, clear=False):
+                TradingBot._write_candidate_audit_live(
+                    bot,
+                    "KR",
+                    selected=["005930"],
+                    meta=meta,
+                    stages={},
+                )
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT data_quality, data_quality_missing, evidence_data_state,
+                           post_open_features_json, kr_confirmation_snapshot_json,
+                           payload_json
+                    FROM audit_candidate_rows
+                    WHERE ticker='005930'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+        self.assertEqual(row["data_quality"], "minute_complete")
+        self.assertEqual(row["data_quality_missing"], 0)
+        self.assertEqual(row["evidence_data_state"], "confirmed")
+        self.assertEqual(json.loads(row["post_open_features_json"])["volume_ratio_open"], 2.4)
+        confirmation = json.loads(row["kr_confirmation_snapshot_json"])
+        self.assertEqual(confirmation["kr_confirmation_state"], "confirmed")
+        self.assertEqual(confirmation["kr_confirmation_reason"], "or_formed")
+        payload = json.loads(row["payload_json"])
+        self.assertEqual(payload["runtime_gate"]["data_quality"], "minute_complete")
+
     def test_candidate_audit_records_shadow_and_live_overlay_payloads(self) -> None:
         bot = _make_bot()
         bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})

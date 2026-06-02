@@ -145,8 +145,38 @@ def _price_provider_evidence_text(row: dict[str, Any], payload: dict[str, Any]) 
     return " ".join(evidence_parts)
 
 
+def _truthy_flag(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def _is_non_executable_selection_meta_row(row: dict[str, Any], payload: dict[str, Any]) -> bool:
+    source_file = str(row.get("source_file") or payload.get("source_file") or "").strip()
+    if source_file != "trading_bot.selection_meta":
+        return False
+    if _truthy_flag(row.get("in_prompt")) or _truthy_flag(row.get("input_to_claude_reported")):
+        return False
+    if _truthy_flag(row.get("final_prompt_included")) or _truthy_flag(row.get("actual_prompt_included")):
+        return False
+    if _truthy_flag(payload.get("actual_prompt_included")):
+        return False
+    if _truthy_flag(row.get("claude_trade_ready")):
+        return False
+    action = str(row.get("route_final_action") or row.get("claude_action") or "").strip()
+    if action:
+        return False
+    evidence_text = f"{_invalid_price_evidence_text(row, payload)} {_price_provider_evidence_text(row, payload)}"
+    invalid_terms = PRICE_STALE_TERMS + PRICE_UNIT_TERMS + PRICE_PROVIDER_TERMS + MISSING_QUOTE_TERMS + BROAD_INVALID_PRICE_TERMS
+    if _text_contains_any(evidence_text, invalid_terms):
+        return False
+    return True
+
+
 def _has_invalid_price_observation(row: dict[str, Any], payload: dict[str, Any]) -> bool:
     price = _to_float(row.get("price"))
+    if (price is None or price <= 0) and _is_non_executable_selection_meta_row(row, payload):
+        return False
     if price is None or price <= 0:
         return True
     text = _invalid_price_evidence_text(row, payload)
@@ -374,6 +404,16 @@ def _load_outcome_rows(
                    {col('no_signal_count', '0')}, {col('watch_only_count', '0')}, {col('buy_signal_count', '0')},
                    {col('entry_price')}, {col('first_signal_at')}, {col('first_fill_at')},
                    {col('execution_decision_id')}, {col('config_hash')},
+                   {col('source_file', "''")}, {col('candidate_source', "''")},
+                   {col('liquidity_bucket', "''")}, {col('primary_bucket', "''")},
+                   {col('secondary_buckets_json', "'[]'")},
+                   {col('selection_trace_id', "''")}, {col('visibility_contract_version', "''")},
+                   {col('actual_prompt_call_id', "''")}, {col('actual_prompt_included')},
+                   {col('actual_prompt_rank')}, {col('raw_rank')}, {col('prompt_rank_after_trim')},
+                   {col('raw_score_current')}, {col('raw_score_components_json', "'{}'")},
+                   {col('trainer_prompt_score')}, {col('trainer_score_rank')},
+                   {col('source_tags_json', "'[]'")}, {col('bucket_reasons_json', "'{}'")},
+                   {col('bucket_data_gaps_json', "'[]'")},
                    r.pnl_pct, r.close_reason, r.route_original_action,
                    r.route_final_action, r.route_route, r.route_reason,
                    {col('route_demoted_to')}, r.route_runtime_gate_reason,
@@ -383,6 +423,7 @@ def _load_outcome_rows(
                    {col('evidence_missing_fields_json', "'[]'")}, {col('evidence_action_ceiling')},
                    {col('evidence_ceiling_applied', '0')}, {col('entry_timing_snapshot_json', "'{}'")},
                    {col('post_open_features_json', "'{}'")}, {col('failed_ready_reasons_json', "'[]'")},
+                   {col('entry_delay_min')}, {col('position_mfe_pct')}, {col('position_mae_pct')},
                    {col('path_run_count', '0')}, {col('intraday_signal_count', '0')}, {col('intraday_traded_count', '0')},
                    o.horizon_min, o.status,
                    o.return_pct, o.max_runup_pct, o.max_drawdown_pct,
@@ -797,6 +838,215 @@ def _candidate_consistency_summary(
         "invalid_price": invalid_price[:30],
         "invalid_price_count": len(invalid_price),
         "invalid_price_reason_counts": dict(invalid_price_reason_counts.most_common()),
+    }
+
+
+def _actual_prompt_flag(row: dict[str, Any]) -> tuple[bool, bool]:
+    value = row.get("actual_prompt_included")
+    if value is None:
+        return False, False
+    return True, _truthy_flag(value)
+
+
+def actual_prompt_profit_visibility(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    groups: dict[str, list[dict[str, Any]]] = {
+        "included": [],
+        "not_included": [],
+        "unmeasured": [],
+    }
+    contract_rows = 0
+    trace_missing = 0
+    for row in rows:
+        if str(row.get("visibility_contract_version") or "").strip() == "actual_prompt_v1":
+            contract_rows += 1
+        if not str(row.get("selection_trace_id") or "").strip():
+            trace_missing += 1
+        measured, included = _actual_prompt_flag(row)
+        if not measured:
+            groups["unmeasured"].append(row)
+        elif included:
+            groups["included"].append(row)
+        else:
+            groups["not_included"].append(row)
+
+    included_summary = _metric_summary(groups["included"])
+    not_included_summary = _metric_summary(groups["not_included"])
+    included_labeled = int(included_summary.get("labeled_rows") or 0)
+    not_included_labeled = int(not_included_summary.get("labeled_rows") or 0)
+    measured_rows = len(groups["included"]) + len(groups["not_included"])
+    sample_ready = included_labeled >= 5 and not_included_labeled >= 5
+    status = (
+        "ready"
+        if sample_ready
+        else ("partial" if included_labeled or not_included_labeled else ("awaiting_outcomes" if measured_rows else "missing"))
+    )
+    return {
+        "contract": "actual_prompt_v1",
+        "status": status,
+        "rows": len(rows),
+        "contract_rows": contract_rows,
+        "measured_rows": measured_rows,
+        "unmeasured_rows": len(groups["unmeasured"]),
+        "trace_missing_count": trace_missing,
+        "groups": {
+            "included": included_summary,
+            "not_included": not_included_summary,
+            "unmeasured": _metric_summary(groups["unmeasured"]),
+        },
+        "delta_included_minus_not_included_mean_return_pct": _round(
+            (included_summary.get("mean_return_pct") or 0.0) - (not_included_summary.get("mean_return_pct") or 0.0)
+            if included_summary.get("mean_return_pct") is not None and not_included_summary.get("mean_return_pct") is not None
+            else None
+        ),
+        "delta_included_minus_not_included_mean_mfe_pct": _round(
+            (included_summary.get("mean_mfe_pct") or 0.0) - (not_included_summary.get("mean_mfe_pct") or 0.0)
+            if included_summary.get("mean_mfe_pct") is not None and not_included_summary.get("mean_mfe_pct") is not None
+            else None
+        ),
+        "interpretation": (
+            "actual_prompt_comparison_ready"
+            if sample_ready
+            else (
+                "actual_prompt_measured_waiting_for_outcomes"
+                if measured_rows and not (included_labeled or not_included_labeled)
+                else "collect_more_outcomes_before_strategy_judgment"
+            )
+        ),
+    }
+
+
+def bucket_source_score_quality(rows: list[dict[str, Any]], *, limit: int = 10) -> dict[str, Any]:
+    total = len(rows)
+    blank_bucket: list[dict[str, Any]] = []
+    blank_source: list[dict[str, Any]] = []
+    raw_score_missing: list[dict[str, Any]] = []
+    trainer_score_missing: list[dict[str, Any]] = []
+    source_tag_missing: list[dict[str, Any]] = []
+    bucket_gap_rows: list[dict[str, Any]] = []
+    bucket_counts: Counter[str] = Counter()
+    source_counts: Counter[str] = Counter()
+    for row in rows:
+        primary_bucket = str(row.get("primary_bucket") or "").strip()
+        source = str(row.get("candidate_source") or row.get("source_file") or "").strip()
+        source_tags = _json_list(row.get("source_tags_json"))
+        bucket_gaps = _json_list(row.get("bucket_data_gaps_json"))
+        bucket_counts[primary_bucket or "blank"] += 1
+        source_counts[source or "blank"] += 1
+        item = {
+            "candidate_key": row.get("candidate_key"),
+            "session_date": row.get("session_date"),
+            "market": row.get("market"),
+            "ticker": row.get("ticker"),
+            "classification": row.get("classification"),
+            "primary_bucket": primary_bucket,
+            "candidate_source": source,
+            "route_final_action": row.get("route_final_action") or "",
+        }
+        if not primary_bucket:
+            blank_bucket.append(item)
+        if not source:
+            blank_source.append(item)
+        if _to_float(row.get("raw_score_current")) is None:
+            raw_score_missing.append(item)
+        if _to_float(row.get("trainer_prompt_score")) is None:
+            trainer_score_missing.append(item)
+        if not source_tags:
+            source_tag_missing.append(item)
+        if bucket_gaps:
+            bucket_gap_rows.append({**item, "bucket_data_gaps": bucket_gaps})
+
+    return {
+        "rows": total,
+        "blank_primary_bucket_count": len(blank_bucket),
+        "blank_primary_bucket_rate": _round(len(blank_bucket) / total if total else None),
+        "blank_source_count": len(blank_source),
+        "blank_source_rate": _round(len(blank_source) / total if total else None),
+        "raw_score_missing_count": len(raw_score_missing),
+        "raw_score_missing_rate": _round(len(raw_score_missing) / total if total else None),
+        "trainer_score_missing_count": len(trainer_score_missing),
+        "trainer_score_missing_rate": _round(len(trainer_score_missing) / total if total else None),
+        "source_tag_missing_count": len(source_tag_missing),
+        "source_tag_missing_rate": _round(len(source_tag_missing) / total if total else None),
+        "bucket_data_gap_count": len(bucket_gap_rows),
+        "bucket_counts": dict(bucket_counts.most_common(20)),
+        "source_counts": dict(source_counts.most_common(20)),
+        "examples": {
+            "blank_primary_bucket": blank_bucket[:limit],
+            "blank_source": blank_source[:limit],
+            "raw_score_missing": raw_score_missing[:limit],
+            "bucket_data_gaps": bucket_gap_rows[:limit],
+        },
+        "status": "ok" if total and len(blank_bucket) / total < 0.10 else ("missing" if not total else "needs_review"),
+        "interpretation": "bucket_source_score_queryable" if total else "no_candidate_rows",
+    }
+
+
+def entry_exit_shadow_readiness(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    filled = [
+        row
+        for row in rows
+        if int(row.get("filled_count") or 0) > 0
+        or str(row.get("first_fill_at") or "").strip()
+        or _to_float(row.get("return_pct")) is not None
+        or _to_float(row.get("max_runup_pct")) is not None
+    ]
+    timing_rows = [
+        row
+        for row in rows
+        if _json_dict(row.get("entry_timing_snapshot_json")) or _to_float(row.get("entry_delay_min")) is not None
+    ]
+    post_open_rows = [row for row in rows if _json_dict(row.get("post_open_features_json"))]
+    mfe_rows = [
+        row
+        for row in rows
+        if _to_float(row.get("max_runup_pct")) is not None or _to_float(row.get("position_mfe_pct")) is not None
+    ]
+    mae_rows = [
+        row
+        for row in rows
+        if _to_float(row.get("max_drawdown_pct")) is not None or _to_float(row.get("position_mae_pct")) is not None
+    ]
+    session_dates = sorted({str(row.get("session_date") or "") for row in filled if row.get("session_date")})
+    span_days = 0
+    if len(session_dates) >= 2:
+        try:
+            span_days = (datetime.fromisoformat(session_dates[-1]) - datetime.fromisoformat(session_dates[0])).days + 1
+        except Exception:
+            span_days = 0
+    by_session = Counter(str(row.get("session_date") or "unknown") for row in filled)
+    top_day_count = max(by_session.values()) if by_session else 0
+    top_day_contribution = top_day_count / len(filled) if filled else None
+    sample_gate_passed = len(filled) >= 30 or span_days >= 28
+    concentration_ok = top_day_contribution is not None and top_day_contribution < 0.40
+    blockers: list[str] = []
+    if not sample_gate_passed:
+        blockers.append("sample_gate_not_met")
+    if top_day_contribution is None or not concentration_ok:
+        blockers.append("top_day_concentration_high_or_unknown")
+    if not timing_rows:
+        blockers.append("entry_timing_snapshot_missing")
+    if not post_open_rows:
+        blockers.append("post_open_features_missing")
+    if not mfe_rows or not mae_rows:
+        blockers.append("mfe_mae_observation_missing")
+    return {
+        "status": "promotion_ready" if not blockers else "observe_only",
+        "rows": len(rows),
+        "filled_rows": len(filled),
+        "unique_filled_sessions": len(session_dates),
+        "filled_session_span_days": span_days,
+        "top_day_contribution": _round(top_day_contribution),
+        "entry_timing_snapshot_rows": len(timing_rows),
+        "post_open_feature_rows": len(post_open_rows),
+        "mfe_observed_rows": len(mfe_rows),
+        "mae_observed_rows": len(mae_rows),
+        "sample_gate_passed": sample_gate_passed,
+        "blockers": blockers,
+        "interpretation": (
+            "safe_to_compare_entry_exit_shadow"
+            if not blockers
+            else "keep_shadow_until_sample_and_feature_gates_pass"
+        ),
     }
 
 
@@ -1491,6 +1741,9 @@ def analyze_candidate_audit(
         "consistency": consistency,
         "freshness": freshness,
         "outcome_coverage": coverage,
+        "actual_prompt_profit_visibility": actual_prompt_profit_visibility(rows),
+        "bucket_source_score_quality": bucket_source_score_quality(rows, limit=limit),
+        "entry_exit_shadow_readiness": entry_exit_shadow_readiness(rows),
         "buckets": buckets,
         "missed_winners": missed_winners(
             rows,

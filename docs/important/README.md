@@ -1,6 +1,6 @@
 # Important Document Index
 
-Updated: 2026-05-27
+Updated: 2026-06-02
 
 ## How To Read
 
@@ -10,8 +10,10 @@ Updated: 2026-05-27
 4. Use [P0_P1_CODE_LEVEL_DEV_REQUIREMENTS_20260527.md](P0_P1_CODE_LEVEL_DEV_REQUIREMENTS_20260527.md) for detailed P0/P1 code-level development requirements.
 5. Use [P0_P1_CODE_LEVEL_RECHECK_REPORT_20260527.md](P0_P1_CODE_LEVEL_RECHECK_REPORT_20260527.md) for the latest code-level implementation recheck and remaining dev order.
 6. Use [CODE_LEVEL_REQUIREMENTS_20260522.md](CODE_LEVEL_REQUIREMENTS_20260522.md) for code-level status, remaining improvements, and acceptance gates.
-7. Use `core/` for durable architecture and operating references.
-8. Use `source/` only when a decision needs the original detailed evidence.
+7. Use [STRATEGY_FLOW_AUDIT_REQUIREMENTS_20260602.md](STRATEGY_FLOW_AUDIT_REQUIREMENTS_20260602.md) for the code-level strategy-flow audit requirements.
+8. Use [STRATEGY_FLOW_AUDIT_REVIEW_20260602.md](STRATEGY_FLOW_AUDIT_REVIEW_20260602.md) for the latest DB/log-backed strategy-flow review and improvement priorities.
+9. Use `core/` for durable architecture and operating references.
+10. Use `source/` only when a decision needs the original detailed evidence.
 
 One-off plan/report files have been absorbed into ACTIVE_WORK/TODO_ROADMAP/DEVELOPED_WORK and removed. Do not recreate `docs/plans/` or `docs/reports/` as active backlogs.
 
@@ -38,6 +40,8 @@ One-off plan/report files have been absorbed into ACTIVE_WORK/TODO_ROADMAP/DEVEL
 | [P0_P1_CODE_LEVEL_DEV_REQUIREMENTS_20260527.md](P0_P1_CODE_LEVEL_DEV_REQUIREMENTS_20260527.md) | Detailed development requirements for P0/P1 items, including why, code targets, before/after, acceptance, and tests. |
 | [P0_P1_CODE_LEVEL_RECHECK_REPORT_20260527.md](P0_P1_CODE_LEVEL_RECHECK_REPORT_20260527.md) | Latest code-level recheck of P0/P1 requirements against current implementation, with complete/partial/missing status and remaining development order. |
 | [CODE_LEVEL_REQUIREMENTS_20260522.md](CODE_LEVEL_REQUIREMENTS_20260522.md) | Code-level judgment and before/after acceptance matrix across absorbed plans/reports. |
+| [STRATEGY_FLOW_AUDIT_REQUIREMENTS_20260602.md](STRATEGY_FLOW_AUDIT_REQUIREMENTS_20260602.md) | Code-level audit requirements for strategy flow integrity, missing handoffs, live gate intent, and per-item performance metrics. |
+| [STRATEGY_FLOW_AUDIT_REVIEW_20260602.md](STRATEGY_FLOW_AUDIT_REVIEW_20260602.md) | Latest read-only DB/log/code review against the strategy-flow audit requirements, with root-cause patterns and improvement priorities. |
 | [ANALYST_OUTAGE_HANDLING_REQUIREMENTS_20260522.md](ANALYST_OUTAGE_HANDLING_REQUIREMENTS_20260522.md) | Historical/source requirement for analyst outage handling; core code is implemented, UI polish remains in ACTIVE_WORK. |
 
 ## Current Source Evidence

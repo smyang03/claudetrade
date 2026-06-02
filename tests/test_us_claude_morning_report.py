@@ -314,6 +314,28 @@ class UsClaudeMorningReportTests(unittest.TestCase):
             self.assertIn("operations", areas)
             self.assertIn("broker_truth", areas)
 
+    def test_surfaces_guardian_alert_gate_when_top_level_gate_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            _write_json(
+                base / "final_report.json",
+                {
+                    "status": "running",
+                    "latest_snapshot": {
+                        "guardian": {"alert": {"gate": "BLOCK_START"}, "ok": None},
+                        "broker_truth": {"missing": False, "stale": False, "error": "", "positions_count": 1},
+                    },
+                    "log_issue_counts_since_start": {},
+                },
+            )
+            _write_json(base / "claude_io_quality.json", {"recommendations": []})
+
+            report = build_morning_report(out_dir=base)
+            areas = {row["area"] for row in report["recommendations"]}
+
+            self.assertEqual(report["operations"]["guardian_gate"], "BLOCK_START")
+            self.assertIn("operations", areas)
+
     def test_adds_observability_recommendation_for_usage_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

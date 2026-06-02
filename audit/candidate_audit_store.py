@@ -109,6 +109,7 @@ EXTRA_CANDIDATE_COLUMNS: dict[str, str] = {
     "earliest_bucket_detected_at": "TEXT",
     "data_quality_flags_json": "TEXT",
     "data_quality": "TEXT",
+    "data_quality_missing": "INTEGER",
     "history_status": "TEXT",
     "history_usable_rows": "INTEGER",
     "history_required_rows": "INTEGER",
@@ -180,6 +181,16 @@ _PROMPT_PAYLOAD_KEYS_TO_PRESERVE = {
     "excluded_reason",
     "screener_quality",
 }
+_RUNTIME_EVIDENCE_PAYLOAD_KEYS_TO_PRESERVE = {
+    "runtime_gate",
+    "confirmation_state",
+    "confirmation_reason",
+    "confirmation_shadow",
+    "post_open_features",
+    "post_open_features_json",
+    "kr_confirmation_snapshot",
+    "kr_confirmation_snapshot_json",
+}
 
 
 def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
@@ -205,6 +216,37 @@ def _decode_json_object(value: Any) -> dict[str, Any]:
             return {}
         return dict(parsed) if isinstance(parsed, dict) else {}
     return {}
+
+
+def _meaningful_payload_value(value: Any) -> bool:
+    return value not in (None, "", [], {})
+
+
+def _deep_merge_preserve_existing(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(existing or {})
+    for key, value in dict(incoming or {}).items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge_preserve_existing(current, value)
+        elif _meaningful_payload_value(value) or key not in merged:
+            merged[key] = value
+    return merged
+
+
+def _preserve_runtime_evidence_payload(merged: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+    result = dict(merged or {})
+    source_payload = dict(source or {})
+    for key in _RUNTIME_EVIDENCE_PAYLOAD_KEYS_TO_PRESERVE:
+        if key not in source_payload:
+            continue
+        source_value = source_payload.get(key)
+        if key == "runtime_gate" and isinstance(source_value, dict):
+            current_value = result.get(key) if isinstance(result.get(key), dict) else {}
+            result[key] = _deep_merge_preserve_existing(source_value, current_value)
+            continue
+        if key not in result or not _meaningful_payload_value(result.get(key)):
+            result[key] = source_value
+    return result
 
 
 def _row_payload(row: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
@@ -254,8 +296,8 @@ def _merge_payload(
         for key in _PROMPT_PAYLOAD_KEYS_TO_PRESERVE:
             if key in prompt_payload:
                 merged[key] = prompt_payload[key]
-        return merged
-    return incoming_payload
+        return _preserve_runtime_evidence_payload(merged, prompt_payload)
+    return _preserve_runtime_evidence_payload(incoming_payload, existing_payload)
 
 
 def _candidate_extra_value(column: str, row: dict[str, Any]) -> Any:
@@ -278,6 +320,7 @@ def _candidate_extra_value(column: str, row: dict[str, Any]) -> Any:
         "tuning_feedback_applied",
         "actual_prompt_included",
         "reported_input_to_claude",
+        "data_quality_missing",
         "final_prompt_included",
         "stale_cycle",
         "evidence_ceiling_applied",

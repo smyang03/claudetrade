@@ -475,7 +475,7 @@ def _ops_recommendations(monitor: dict[str, Any]) -> list[dict[str, str]]:
     issue_counts = monitor.get("log_issue_counts_since_start") if isinstance(monitor.get("log_issue_counts_since_start"), dict) else {}
     recs: list[dict[str, str]] = []
 
-    if str(guardian.get("gate") or "") == "BLOCK_START" or _safe_int(issue_counts.get("guardian_block_start")) > 0:
+    if _guardian_gate(guardian) == "BLOCK_START" or _safe_int(issue_counts.get("guardian_block_start")) > 0:
         recs.append(
             {
                 "priority": "P1",
@@ -521,6 +521,14 @@ def _ops_recommendations(monitor: dict[str, Any]) -> list[dict[str, str]]:
             }
         )
     return recs
+
+
+def _guardian_gate(guardian: dict[str, Any]) -> str:
+    gate = guardian.get("gate")
+    if gate:
+        return str(gate)
+    alert = guardian.get("alert") if isinstance(guardian.get("alert"), dict) else {}
+    return str(alert.get("gate") or "")
 
 
 def build_morning_report(*, out_dir: str | Path) -> dict[str, Any]:
@@ -589,7 +597,7 @@ def build_morning_report(*, out_dir: str | Path) -> dict[str, Any]:
         },
         "operations": {
             "monitor_status": monitor.get("status") or "missing",
-            "guardian_gate": guardian.get("gate") or "",
+            "guardian_gate": _guardian_gate(guardian),
             "guardian_ok": guardian.get("ok"),
             "broker_truth_missing": bool(broker.get("missing")),
             "broker_truth_stale": bool(broker.get("stale")),

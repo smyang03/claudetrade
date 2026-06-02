@@ -121,7 +121,7 @@ ca item keys only: t,a,s,c,fr,mat,ceil,rc,blk,inv,pt.
 Field meanings:
 t=ticker, a=action, s=strategy, c=numeric confidence 0.0-1.0.
 fr=freshness label, mat=setup maturity label, ceil=max action allowed by evidence.
-rc=short reason code, blk=array of blockers, inv=short invalidation condition.
+rc=required short reason code (WATCH/AVOID must include specific reason, not empty or MISSING_ACTION), blk=array of blockers, inv=short invalidation condition.
 Allowed actions: BUY_READY, PROBE_READY, PULLBACK_WAIT, WATCH, AVOID.
 pt is required for every ca item.
 BUY_READY/PROBE_READY/PULLBACK_WAIT use populated pt.

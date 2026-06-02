@@ -718,6 +718,20 @@ class V2Phase6Tests(unittest.TestCase):
 
     def test_buy_capacity_telegram_command_reports_capacity_snapshot(self):
         payload = {
+            "buy_readiness": {
+                "US": {
+                    "path_a": {
+                        "status": "available",
+                        "primary_reason": "READY_WAITING_SIGNAL",
+                        "ready_count": 1,
+                    },
+                    "path_b": {
+                        "status": "blocked",
+                        "primary_reason": "ANALYST_MAX_GROSS_EXPOSURE_REACHED",
+                        "ready_count": 0,
+                    },
+                }
+            },
             "path_b_live": {
                 "execution_capacity": {
                     "US": {
@@ -741,7 +755,52 @@ class V2Phase6Tests(unittest.TestCase):
 
         self.assertIn("Buy Capacity", response)
         self.assertIn("US", response)
+        self.assertIn("A플랜 가능", response)
+        self.assertIn("PathB 차단", response)
         self.assertIn("ANALYST_MAX_GROSS_EXPOSURE_REACHED", response)
+
+    def test_buy_readiness_reports_patha_and_pathb_states(self):
+        selection = {
+            "watch_rows": [
+                {
+                    "ticker": "BBY",
+                    "buy_path": "path_a",
+                    "category": "applied_trade_ready",
+                    "execution_route": "PlanA.buy",
+                }
+            ],
+            "no_plan_reasons": [],
+        }
+        readiness = {
+            "state": "READY_WAITING_BUY_ZONE",
+            "market_session_state": "active",
+            "known_blockers": [],
+            "trade_ready_count": 1,
+            "entry_waiting_plans": 1,
+        }
+        capacity = {
+            "US": {
+                "min_order_possible": True,
+                "capacity_block_reasons": [],
+                "today_entry_capacity_orders": 2,
+                "today_buy_capacity_krw": 600_000,
+                "remaining_daily_entries": 5,
+                "open_position_slots": 3,
+            }
+        }
+
+        summary = v2_ops_summary._path_buy_readiness_summary(
+            markets=["US"],
+            selections_by_market={"US": selection},
+            readiness_by_market={"US": readiness},
+            execution_capacity=capacity,
+        )
+
+        self.assertEqual(summary["US"]["path_a"]["status"], "available")
+        self.assertEqual(summary["US"]["path_a"]["state"], "READY_WAITING_SIGNAL")
+        self.assertEqual(summary["US"]["path_a"]["ready_count"], 1)
+        self.assertEqual(summary["US"]["path_b"]["status"], "available")
+        self.assertEqual(summary["US"]["path_b"]["entry_waiting_plans"], 1)
 
     def test_pathb_readiness_distinguishes_overnight_allowed_states(self):
         selection = {"counts": {"watchlist": 15, "applied_trade_ready": 0, "price_targets": 0}}

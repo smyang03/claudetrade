@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -58,6 +59,89 @@ class PriceUnitNormalizationTests(unittest.TestCase):
         self.assertAlmostEqual(row["entry"], 174.67)
         self.assertAlmostEqual(row["current"], 178.79)
         self.assertAlmostEqual(row["pnl_pct"], ((178.79 / 174.67) - 1.0) * 100.0, places=3)
+
+    def test_hold_advisor_log_marks_fallback_for_outcome_linkage(self) -> None:
+        votes = {
+            "bull": {"action": "HOLD", "confidence": 0.0, "reason": "parse fallback", "fallback": True},
+            "bear": {"action": "HOLD", "confidence": 0.0, "reason": "parse fallback", "fallback": True},
+            "neutral": {"action": "HOLD", "confidence": 0.0, "reason": "parse fallback", "fallback": True},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def _runtime_path(*parts, make_parents=False):
+                path = root.joinpath(*parts)
+                if make_parents:
+                    path.mkdir(parents=True, exist_ok=True)
+                return path
+
+            with patch.object(hold_advisor, "get_runtime_path", side_effect=_runtime_path):
+                hold_advisor._log_decision(
+                    "TEST",
+                    "US",
+                    {"entry": 100.0, "current_price": 101.0, "display_avg_price": 100.0, "display_current_price": 101.0},
+                    "HOLD",
+                    0.03,
+                    votes,
+                    "AUTO_SELL_REVIEW",
+                    "policy",
+                    triage={"action": "HOLD", "triage_parse_error": True, "fallback": True},
+                )
+
+            files = list((root / "logs" / "hold_advisor").glob("decisions_*.jsonl"))
+            row = json.loads(files[0].read_text(encoding="utf-8").strip())
+
+        self.assertTrue(row["fallback"])
+        self.assertFalse(row["cooldown"])
+        self.assertEqual(row["decision_source"], "hold_advisor")
+        self.assertEqual(row["pending_outcome_label"], "fallback_hold")
+        self.assertTrue(row["votes"]["bull"]["fallback"])
+
+    def test_hold_advisor_outcome_preserves_fallback_and_cooldown_labels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log_dir = root / "logs" / "hold_advisor"
+            log_dir.mkdir(parents=True)
+            today = datetime.now().strftime("%Y-%m-%d")
+            log_file = log_dir / f"decisions_{today}.jsonl"
+            log_file.write_text(
+                json.dumps(
+                    {
+                        "ticker": "TEST",
+                        "decision": "HOLD",
+                        "decision_stage": "AUTO_SELL_REVIEW",
+                        "decision_source": "auto_sell_review_cooldown",
+                        "fallback": False,
+                        "cooldown": True,
+                        "pnl_pct": 1.2,
+                        "votes": {},
+                        "outcome": None,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            def _runtime_path(*parts, make_parents=False):
+                path = root.joinpath(*parts)
+                if make_parents:
+                    path.mkdir(parents=True, exist_ok=True)
+                return path
+
+            bot = TradingBot.__new__(TradingBot)
+            bot.price_cache = {}
+            bot.usd_krw_rate = 1400.0
+            with patch("runtime_paths.get_runtime_path", side_effect=_runtime_path):
+                bot._update_hold_advisor_jsonl_outcome("TEST", "HOLD", True, 105.0, 2.5)
+
+            row = json.loads(log_file.read_text(encoding="utf-8").strip())
+
+        self.assertEqual(row["outcome"]["outcome_label"], "cooldown_hold")
+        self.assertTrue(row["outcome"]["advisor_cooldown"])
+        self.assertFalse(row["outcome"]["advisor_fallback"])
+        self.assertEqual(row["outcome"]["decision_source"], "auto_sell_review_cooldown")
 
     def test_pathb_position_pnl_pct_keeps_us_native_units(self) -> None:
         runtime = PathBRuntime.__new__(PathBRuntime)

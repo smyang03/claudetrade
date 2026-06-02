@@ -2680,7 +2680,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as e:
             log.warning(f"[lesson candidates] load failed: {e}")
         store["generated_at"] = datetime.now(KST).isoformat(timespec="seconds")
-        store.setdefault("markets", {})[market] = candidates
+        # source='data_analysis'/'postmortem' 수동 항목은 보존
+        existing = store.get("markets", {}).get(market, [])
+        pinned = [c for c in existing if isinstance(c, dict) and c.get("source") in ("data_analysis", "postmortem", "manual")]
+        store.setdefault("markets", {})[market] = candidates + pinned
         try:
             with open(_LESSON_CANDIDATES_PATH, "w", encoding="utf-8") as f:
                 json.dump(store, f, ensure_ascii=False, indent=2)
@@ -15200,6 +15203,100 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     info.get("failed_ready_reasons", []),
                 ),
             }
+
+        def _first_audit_dict(*values) -> dict:
+            for value in values:
+                parsed = _audit_dict(value)
+                if parsed:
+                    return parsed
+            return {}
+
+        def _audit_boolish(value) -> bool:
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+            return bool(value)
+
+        def _runtime_evidence_audit_fields(
+            runtime_gate: dict,
+            *,
+            prompt_row: dict | None = None,
+            action: dict | None = None,
+            route: dict | None = None,
+        ) -> dict:
+            gate = dict(runtime_gate or {})
+            prompt_map = dict(prompt_row or {})
+            action_map = dict(action or {})
+            route_map = dict(route or {})
+            evidence_pack = _audit_dict(gate.get("evidence_pack"))
+            post_open_features = _first_audit_dict(
+                prompt_map.get("post_open_features"),
+                action_map.get("post_open_features"),
+                route_map.get("post_open_features"),
+                gate.get("post_open_features"),
+                evidence_pack.get("post_open_confirmation"),
+            )
+
+            data_quality = (
+                gate.get("data_quality")
+                or post_open_features.get("data_quality")
+                or evidence_pack.get("data_quality")
+                or prompt_map.get("data_quality")
+                or action_map.get("data_quality")
+            )
+            fields: dict[str, Any] = {}
+            quality_text = str(data_quality or "").strip()
+            if quality_text:
+                fields["data_quality"] = quality_text
+
+            if gate.get("data_quality_missing") not in (None, ""):
+                fields["data_quality_missing"] = _audit_boolish(gate.get("data_quality_missing"))
+            elif quality_text:
+                fields["data_quality_missing"] = quality_text.lower() in {"missing", "unknown", "none", "null"}
+
+            if post_open_features:
+                fields["post_open_features_json"] = post_open_features
+
+            evidence_state = str(gate.get("evidence_data_state") or evidence_pack.get("data_state") or "").strip()
+            if evidence_state:
+                fields["evidence_data_state"] = evidence_state
+            evidence_missing_fields = _audit_list(
+                gate.get("evidence_missing_fields") or evidence_pack.get("missing_fields")
+            )
+            if evidence_missing_fields:
+                fields["evidence_missing_fields_json"] = evidence_missing_fields
+
+            confirmation_snapshot = _first_audit_dict(
+                route_map.get("kr_confirmation_snapshot"),
+                gate.get("kr_confirmation_snapshot"),
+                prompt_map.get("kr_confirmation_snapshot"),
+                action_map.get("kr_confirmation_snapshot"),
+            )
+            if not confirmation_snapshot:
+                confirmation_keys = (
+                    "kr_confirmation_state",
+                    "kr_confirmation_reason",
+                    "kr_confirmation_checks",
+                    "kr_confirmation_score",
+                    "kr_confirmation_score_items",
+                    "kr_confirmation_threshold",
+                    "kr_confirmation_fast_window_ok",
+                    "kr_confirmation_fast_window_elapsed_min",
+                    "kr_confirmation_fast_window_min",
+                    "kr_confirmation_fast_window_elapsed_missing",
+                )
+                confirmation_snapshot = {
+                    key: gate.get(key)
+                    for key in confirmation_keys
+                    if gate.get(key) not in (None, "", [], {})
+                }
+                if route_map.get("confirmation_state") not in (None, ""):
+                    confirmation_snapshot.setdefault("confirmation_state", route_map.get("confirmation_state"))
+                if route_map.get("confirmation_reason") not in (None, ""):
+                    confirmation_snapshot.setdefault("confirmation_reason", route_map.get("confirmation_reason"))
+            if confirmation_snapshot:
+                fields["kr_confirmation_snapshot_json"] = confirmation_snapshot
+            return fields
+
         actual_prompt_count = len(actual_prompt_tickers)
         try:
             store.upsert_call(
@@ -15366,6 +15463,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             consensus_mode=consensus_mode,
                         ),
                         **_stale_cycle_audit_fields(key, prompt_row),
+                        **_runtime_evidence_audit_fields(
+                            runtime_gate,
+                            prompt_row=prompt_row,
+                            action=action,
+                            route=route,
+                        ),
                         "payload": {
                             "confirmation_state": route.get("confirmation_state") or runtime_gate.get("kr_confirmation_state", ""),
                             "confirmation_reason": route.get("confirmation_reason") or runtime_gate.get("kr_confirmation_reason", ""),
@@ -15428,6 +15531,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             consensus_mode=consensus_mode,
                         ),
                         **_stale_cycle_audit_fields(key, row),
+                        **_runtime_evidence_audit_fields({}, prompt_row=row),
                         "payload": {
                             "selection_stage": "trainer_prompt_pool",
                             "prompt_pool_audit": True,
@@ -15494,6 +15598,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             consensus_mode=consensus_mode,
                         ),
                         **_stale_cycle_audit_fields(key, row),
+                        **_runtime_evidence_audit_fields({}, prompt_row=row),
                         "payload": {
                             "selection_stage": "trainer_prompt_pool_excluded",
                             "prompt_pool_audit": True,
@@ -23942,16 +24047,60 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             lines = log_file.read_text(encoding="utf-8").splitlines()
             updated = []
             patched = False
+            def _boolish(value) -> bool:
+                if isinstance(value, bool):
+                    return value
+                return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
             for line in reversed(lines):
                 if not patched:
                     try:
                         rec = json.loads(line)
                         if rec.get("ticker") == ticker and rec.get("outcome") is None:
+                            pnl_at_decision = float(rec.get("pnl_pct") or 0.0)
+                            pnl_at_close = round(float(extra_pnl_pct or 0.0), 4)
+                            rec_decision = str(rec.get("decision") or decision or "").strip().upper()
+                            votes = rec.get("votes") if isinstance(rec.get("votes"), dict) else {}
+                            triage = rec.get("triage") if isinstance(rec.get("triage"), dict) else {}
+                            advisor_fallback = bool(
+                                _boolish(rec.get("fallback"))
+                                or _boolish(triage.get("parse_error"))
+                                or any(_boolish((vote or {}).get("fallback")) for vote in votes.values() if isinstance(vote, dict))
+                            )
+                            decision_source = str(rec.get("decision_source") or "hold_advisor")
+                            advisor_cooldown = bool(
+                                _boolish(rec.get("cooldown"))
+                                or decision_source == "auto_sell_review_cooldown"
+                            )
+                            if advisor_cooldown:
+                                outcome_label = "cooldown_hold"
+                            elif advisor_fallback:
+                                outcome_label = f"fallback_{(rec_decision or decision or 'unknown').lower()}"
+                            elif rec_decision in {"HOLD", "TRAIL"}:
+                                outcome_label = "hold"
+                            elif rec_decision == "SELL":
+                                outcome_label = "sell"
+                            else:
+                                outcome_label = (rec_decision or "unknown").lower()
+                            # hold_delta: SELL만 의미있음 (HOLD extra_pnl_pct는 TP 초과분)
+                            if decision == "SELL":
+                                hold_delta: float | None = round(pnl_at_close - pnl_at_decision, 4)
+                                hold_outcome = "better" if hold_delta > 0.1 else ("worse" if hold_delta < -0.1 else "same")
+                            else:
+                                hold_delta = None
+                                hold_outcome = "better" if success else "worse"
                             rec["outcome"] = {
-                                "success":       success,
-                                "exit_price":    exit_price,
-                                "extra_pnl_pct": round(extra_pnl_pct, 4),
-                                "decision":      decision,
+                                "success":          success,
+                                "exit_price":       exit_price,
+                                "extra_pnl_pct":    round(extra_pnl_pct, 4),
+                                "decision":         decision,
+                                "pnl_at_close":     pnl_at_close,
+                                "hold_delta_pct":   hold_delta,
+                                "hold_outcome":     hold_outcome,
+                                "decision_stage":   str(rec.get("decision_stage") or ""),
+                                "decision_source":  decision_source,
+                                "outcome_label":    outcome_label,
+                                "advisor_fallback": advisor_fallback,
+                                "advisor_cooldown": advisor_cooldown,
                             }
                             line = json.dumps(rec, ensure_ascii=False)
                             patched = True

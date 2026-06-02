@@ -1457,7 +1457,7 @@ def _sanitize_analyst_result(result: dict, analyst_type: str) -> dict:
     key_contradictions = result.get("key_contradictions", [])
     if not isinstance(key_contradictions, list):
         key_contradictions = []
-    return {
+    sanitized: dict = {
         "stance": stance,
         "confidence": confidence,
         "key_reason": str(result.get("key_reason", ""))[:500],
@@ -1472,6 +1472,10 @@ def _sanitize_analyst_result(result: dict, analyst_type: str) -> dict:
         "key_confirmations": [str(x)[:120] for x in key_confirmations[:5]],
         "key_contradictions": [str(x)[:120] for x in key_contradictions[:5]],
     }
+    reversal_trigger = str(result.get("reversal_trigger", "") or "").strip()
+    if reversal_trigger:
+        sanitized["reversal_trigger"] = reversal_trigger[:200]
+    return sanitized
 
 
 def _fallback_result(error: Exception) -> dict:
@@ -1578,6 +1582,10 @@ PERSONAS = {
 
     "bear": """당신은 헤지펀드 출신 리스크 매니저입니다.
 
+[역할]
+• 시장 방향을 독립적으로 판단합니다 (항상 비관적일 필요 없음)
+• 어떤 stance를 내든 반드시 "이 조건이 깨지면 반전" 시나리오를 reversal_trigger로 명시해야 합니다
+
 [전문 영역 — 이 지표들을 우선 확인]
 • VKOSPI 20 이상 or 전일 대비 급등 (결측이면 중간 불확실성으로 처리)
 • USD/KRW 당일 변화 방향: 1d 상승(KRW 약세) = 위험, 1d 하락(KRW 강세) = 위험 완화
@@ -1603,23 +1611,31 @@ PERSONAS = {
 
 [전문 영역 — 이 관점에서 분석]
 • 제공된 breadth 요약의 상승/하락 신호 개수 대비 비교 (직접 재계산 금지)
-• 과거 유사 시장 패턴과의 통계적 일치도
 • 지표 간 상충 여부 (기술적 긍정 + 매크로 부정 → 불확실)
-• 데이터 신뢰도 검증 (데이터 누락시 불확실성 증가)
+• 데이터 신뢰도 검증 (데이터 누락 = confidence 페널티이지 NEUTRAL 근거가 아님)
 
-[판단 기준]
-• 상승/하락 신호 균등 → 반드시 NEUTRAL
-• 한쪽으로 2:1 이상 기울 때만 MILD_BULL or MILD_BEAR
-• 신호가 불명확하면 confidence 0.75 초과 금지. 지표가 한쪽으로 명확하거나 데이터 불확실성이 판단의 핵심 근거일 때만 0.85까지 허용
-• 극단 판단(AGGRESSIVE, HALT) 원칙적 금지
+[판단 기준 — 순서대로 적용]
+1. breadth 상승 비율 45~55% 구간일 때만 NEUTRAL 허용
+2. 긍정 신호가 부정보다 2배 이상(예: GC 우세, 섹터 상승 多, breadth 60%+) → MILD_BULL
+3. 부정 신호가 긍정보다 2배 이상 → MILD_BEAR
+4. 데이터 결측 30%+ → confidence를 0.10 하향 후 그래도 방향이 있으면 방향 제시
+5. 극단 판단(AGGRESSIVE, HALT) 원칙적 금지
+
+[NEUTRAL 조건 — 반드시 이 경우에만]
+• breadth 상승 비율이 실제로 45~55% 구간인 경우
+• key_reason에 반드시 "긍정 신호 X개 vs 부정 신호 Y개" 수치 포함
 
 [절대 하지 말 것]
-• 확신 없이 강한 stance 선택 금지
+• 데이터 결측을 NEUTRAL 근거로 사용 금지 (결측은 confidence 하향만)
 • 한쪽 분석가 의견에 무조건 동조 금지
-• 신호가 명확하지 않은데 confidence 0.7 이상 부여 금지""",
+• 방향이 있는데 불확실하다는 이유만으로 NEUTRAL 선택 금지""",
 }
 
 US_BEAR_PERSONA = """당신은 미국 주식 헤지펀드 리스크 매니저입니다.
+
+[역할]
+• 시장 방향을 독립적으로 판단합니다 (항상 비관적일 필요 없음)
+• 어떤 stance를 내든 반드시 "이 조건이 깨지면 반전" 시나리오를 reversal_trigger로 명시해야 합니다
 
 [전문 영역 — US 리스크 축을 우선 확인]
 • VIX 수준/변화: 결측이면 calm으로 해석하지 말고 data_quality 불확실성으로 처리
@@ -1645,7 +1661,8 @@ BREADTH_FIRST_CONTRACT = """[시장 breadth 우선 계약 — 반드시 준수]
 • 제공된 GC/DC, RSI 과매수/과매도, 상승/하락 개수는 코드가 계산한 값입니다. 직접 다시 세지 말고 그대로 사용하세요.
 • breadth와 개별 종목 예시가 충돌하면 breadth를 우선하세요.
 • VIX/DXY/VKOSPI가 N/A 또는 결측이면 안정 신호가 아니라 data_quality 불확실성입니다.
-• key_reason에는 개별 종목을 최대 3개까지만 예시로 언급하세요."""
+• key_reason에는 개별 종목을 최대 3개까지만 예시로 언급하세요.
+• breadth 60%+ 인데 장중 실시간 지수가 하락 중일 때: breadth를 방향 판단의 기준으로 삼고, 장중 하락은 confidence 조정에만 반영하세요. 장 초반·중반의 일시 하락을 종가 방향으로 단정하지 마세요."""
 
 
 def _persona_for(analyst_type: str, market: str = "") -> str:
@@ -1667,6 +1684,11 @@ def call_analyst(analyst_type: str, digest_prompt: str,
     lesson_section = f"\n[recent lesson candidates]\n{lesson_text}\n" if lesson_text else ""
 
     _r1_model = _r1_model_for(analyst_type)
+    _is_bear = str(analyst_type).lower() == "bear"
+    _bear_reversal_hint = (
+        ',\n  "reversal_trigger":"현재 stance가 뒤집히는 조건 한 문장 (구체적 지표 수치 포함)"'
+        if _is_bear else ""
+    )
 
     prompt = f"""{_persona_for(analyst_type, market)}
 
@@ -1683,6 +1705,8 @@ def call_analyst(analyst_type: str, digest_prompt: str,
 • 오늘 요일: 월요일이면 금요일 종가 기준임을 감안. 주말 사이 갭 가능성 포함.
 • 외국인/기관 N/A: 데이터 없음. 0(순매도도 순매수도 없음)과 다름. 판단 유보.
 • MACD 골든크로스(확대중): 추세 강화 신호. MACD 골든크로스(축소중): 추세 약화 주의.
+• 이벤트 ⚠️ 표시(FOMC, CPI, 실적 집중 주간): confidence를 0.05~0.08 하향 후 출력. key_reason에 이벤트 리스크 인지 여부 반드시 언급. 5d 추세를 1d보다 우선 참고.
+• FOMC 결과 발표 당일: 발표 전후로 1d 수치 방향이 뒤집힐 수 있음. 5d 추세 우선. 1d 단독 과신 금지.
 
 [시장 전체 메모리]
 {brain_summary}
@@ -1696,7 +1720,7 @@ def call_analyst(analyst_type: str, digest_prompt: str,
 위 데이터를 당신의 전문 영역 관점에서 분석하세요. 반드시 트렌드 수치(1d/5d)를 근거로 언급하세요.
 JSON으로만 응답 (다른 텍스트 없이):
 {{"stance":"{STANCES} 중 하나","confidence":0.0~1.0,
-  "key_reason":"핵심 근거 한 문장 (구체적 지표 수치 포함)"}}"""
+  "key_reason":"핵심 근거 한 문장 (구체적 지표 수치 포함)"{_bear_reversal_hint}}}"""
 
     try:
         r1_max_tokens = _env_int_bound("CLAUDE_ANALYST_R1_MAX_TOKENS", 700, 200, 2000)
@@ -1814,10 +1838,12 @@ def call_analyst_debate(analyst_type: str, my_r1: dict,
 {digest_prompt[:800]}
 
 토론 지침:
-• 다른 분석가의 논거를 당신의 전문 영역 관점에서 평가하세요.
+1. 자신의 R1 stance에 반하는 근거를 데이터에서 먼저 탐색하세요.
+2. 반대 근거가 충분히 강하면 stance를 수정하고 change_reason에 명시하세요.
+3. 반대 근거가 약하거나 없으면 stance를 유지하고 그 이유를 한 문장으로 설명하세요.
+   예: "반론 검토 결과: VIX 안정 + breadth 양호로 하락 근거 부족 — 유지"
+4. 다수 의견에 동조하기 위한 변경은 하지 마세요.
 • 과거 토론 이력이 있다면, 비슷한 상황에서 의견 변경이 도움이 됐는지 참고하세요.
-• 설득력 있는 논거라면 stance를 조정하세요. 그렇지 않으면 유지하세요.
-• 단순히 다수에 동조하기 위한 변경은 하지 마세요.
 
 JSON으로만 응답:
 {{"stance":"{STANCES} 중 하나","confidence":0.0~1.0,
@@ -1827,7 +1853,7 @@ JSON으로만 응답:
   "max_gross_exposure_pct":0~100,
   "suggested_strategy":"모멘텀|평균회귀|갭+눌림|변동성돌파|관망",
   "changed":true|false,
-  "change_reason":"변경했다면 설득된 논거, 유지했다면 null"}}"""
+  "change_reason":"변경했다면 설득된 논거, 유지했다면 반론 검토 결과 한 문장"}}"""
 
     try:
         r2_max_tokens = _env_int_bound("CLAUDE_ANALYST_R2_MAX_TOKENS", 900, 300, 2500)
@@ -2450,6 +2476,8 @@ execution_phase: {execution_phase or 'unspecified'}
 - trade_ready는 실제 매수 권한 후보입니다. 최대 {trade_max}개이며 0개도 허용됩니다.
 - trade_ready는 전략 슬롯을 나눠서 고르세요. slot guide: {slot_text}
 - 저유동성, 구조화 상품, 과열, 손절폭 과대 후보는 trade_ready에서 제외하세요.
+- KR market: momentum 전략은 현재 누적 손실 기록 중이므로 trade_ready 금지. watchlist 관찰만 허용.
+- KR market: 동일 종목이 직전 세션에서 손실(loss_cap/hard_stop)으로 청산된 경우 trade_ready 재선정 금지. watchlist 유지.
 - preopen_pin=HARD 후보는 장전 우수 후보라 평가 기회를 보장한 것이며 자동 매수 후보가 아닙니다.
 - preopen_pin=HARD confirm=required_before_trade_ready 후보는 anchor 대비 현재가 안정, OR/전략 신호, 개장 후 품질 확인 전에는 trade_ready로 올리지 마세요.
 - Use intraday context session_phase/active_strategies/runtime gates to judge execution feasibility, not just strength.

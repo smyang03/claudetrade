@@ -30,6 +30,60 @@ _POSTMORTEM_PLACEHOLDER_LESSONS = {
 }
 
 
+def _append_lesson_candidate(
+    market: str, date: str, key_lesson: str,
+    bull_result: str, excluded: bool
+) -> None:
+    if excluded or _is_placeholder_lesson(key_lesson):
+        return
+    try:
+        import time as _time
+        from datetime import datetime as _dt, timedelta as _td
+        from runtime_paths import get_runtime_path
+        path = Path(get_runtime_path("state", "lesson_candidates.json"))
+        store: dict = {"generated_at": "", "markets": {"KR": [], "US": []}}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    store = loaded
+                    store.setdefault("markets", {}).setdefault("KR", [])
+                    store.setdefault("markets", {}).setdefault("US", [])
+            except Exception:
+                pass
+        market_list: list = store.get("markets", {}).get(market, [])
+        new_id = f"{date}_{market}"
+        if any(isinstance(c, dict) and c.get("id") == new_id for c in market_list):
+            return
+        severity = "high" if bull_result == "MISS" else "info"
+        expires = (_dt.now() + _td(days=7)).strftime("%Y-%m-%dT%H:%M:%S+09:00")
+        now_str = _dt.now().strftime("%Y-%m-%dT%H:%M:%S+09:00")
+        market_list.append({
+            "id": new_id,
+            "market": market,
+            "scope": "selection",
+            "breached": bull_result == "MISS",
+            "claude_actionable": True,
+            "ops_flag": False,
+            "action_hint": key_lesson.strip(),
+            "summary": key_lesson.strip()[:100],
+            "metric_key": "postmortem_lesson",
+            "sample_count": 1,
+            "min_sample": 1,
+            "severity": severity,
+            "confidence": 0.7,
+            "generated_at": now_str,
+            "expires_at": expires,
+            "quality_version": "postmortem.v1",
+            "source": "postmortem",
+            "hit_result": bull_result,
+        })
+        store["markets"][market] = market_list
+        path.write_text(json.dumps(store, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        log.warning(f"[lesson_candidates] append 실패: {e}")
+
+
 def _is_placeholder_lesson(text: str) -> bool:
     text = (text or "").strip()
     if not text:
@@ -224,13 +278,11 @@ def _code_judge_hit_miss(stance: str, market_change_pct: float) -> str:
     분석가 스탠스 + 실제 시장 등락으로 HIT/MISS/PARTIAL 결과를 계산한다.
     Claude 자기평가 영향 제거용.
 
-    BULL/BEAR: 방향 예측 정확도
-    - BULL HIT:    시장 >= +0.5%
-    - BULL PARTIAL: 0% < 시장 < +0.5%
-    - BULL MISS:   시장 <= 0%
-    - BEAR HIT:    시장 <= -0.5%
-    - BEAR PARTIAL: -0.5% < 시장 < 0%
-    - BEAR MISS:   시장 >= 0%
+    BULL/BEAR: 방향 예측 정확도 (PARTIAL 없음 — 방향 일치 여부만)
+    - BULL HIT:  시장 > 0%
+    - BULL MISS: 시장 <= 0%
+    - BEAR HIT:  시장 < 0%
+    - BEAR MISS: 시장 >= 0%
 
     NEUTRAL: 횡보 예측 정확도
     - HIT: |시장| <= 0.5%, PARTIAL: <= 1.5%, MISS: > 1.5%
@@ -244,13 +296,9 @@ def _code_judge_hit_miss(stance: str, market_change_pct: float) -> str:
     abs_chg = abs(chg)
 
     if stance in _BULL_STANCES:
-        if chg >= _HIT_THRESHOLD:  return "HIT"
-        if chg > 0:                 return "PARTIAL"
-        return "MISS"
+        return "HIT" if chg > 0 else "MISS"
     elif stance in _BEAR_STANCES:
-        if chg <= -_HIT_THRESHOLD: return "HIT"
-        if chg < 0:                 return "PARTIAL"
-        return "MISS"
+        return "HIT" if chg < 0 else "MISS"
     elif stance in _AVOID_STANCES:
         if chg < -_HIT_THRESHOLD:  return "HIT"
         if chg < _AVOID_MISS:       return "PARTIAL"
@@ -690,6 +738,15 @@ def run(market: str, date: str, today_judgment: dict,
         "execution_issue_details": actual_result.get("execution_issue_details", []),
         "selection_feedback": BrainDB.get_recent_selection_feedback_text(market, days=20, max_chars=400),
     })
+
+    # lesson_candidates.json 자동 append
+    _append_lesson_candidate(
+        market=market,
+        date=date,
+        key_lesson=daily_key_lesson,
+        bull_result=pm["bull_result"],
+        excluded=execution_learning_excluded or pm.get("_system_error", False),
+    )
 
     # 전략별 성과 자동 업데이트
     if not execution_learning_excluded:

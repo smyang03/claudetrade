@@ -982,8 +982,10 @@ class AutoSellClaudeGateTests(unittest.TestCase):
                 return_value=advice,
             ) as advisor:
                 first = runtime._run_pathb_sell_review_gate(plan, pos, signal)
+                self.assertEqual(advisor.call_count, 1)
                 reviewed_at = runtime.store.find_path_run(plan.path_run_id)["plan"]["auto_sell_reviewed_at"]
                 second = runtime._run_pathb_sell_review_gate(plan, pos, signal)
+                self.assertEqual(advisor.call_count, 1)
 
             run = runtime.store.find_path_run(plan.path_run_id)
             self.assertFalse(first["allowed"])

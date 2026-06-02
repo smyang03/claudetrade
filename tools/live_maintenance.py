@@ -44,6 +44,7 @@ ACTIVE_PATH_RUN_STATUSES = {
     "SELL_PARTIAL_FILLED",
     "ORDER_UNKNOWN",
 }
+ABSENT_FILLED_CLOSE_REASON = "CLOSED_AUDITED_BROKER_ABSENT"
 
 
 def _now() -> str:
@@ -427,11 +428,14 @@ def _status_transition_for_absent_position(
     *,
     evidence: dict[str, Any],
     sell_order_id: str = "",
+    run_status: str = "",
 ) -> tuple[str, str, str]:
     if evidence.get("has_sell_fill"):
         return "remove_local", "CLOSED", "BROKER_SELL_FILL_RECONCILED"
     if str(sell_order_id or "").strip():
         return "manual_review", "", "BROKER_POSITION_ABSENT_SELL_FILL_UNCONFIRMED"
+    if str(run_status or "").upper() in {"FILLED", "PARTIAL_FILLED"}:
+        return "remove_local", "CLOSED", ABSENT_FILLED_CLOSE_REASON
     return "remove_local", "CANCELLED", "BROKER_POSITION_ABSENT_RECONCILED"
 
 
@@ -456,15 +460,31 @@ def _plan_update_for_next_status(next_status: str, *, evidence: dict[str, Any], 
     }
     if next_status == "CLOSED":
         sell_fill = (evidence.get("sell_fills") or [{}])[0]
-        payload.update(
-            {
-                "exit_fill_confirmed": True,
-                "exit_execution_id": _row_order_id(sell_fill),
-                "exit_fill_qty": _safe_int(sell_fill.get("filled_qty"), 0),
-                "actual_exit_price": _safe_float(sell_fill.get("avg_price") or sell_fill.get("fill_price") or sell_fill.get("price")),
-                "close_reason": reason_code,
-            }
-        )
+        has_sell_fill = bool(evidence.get("has_sell_fill"))
+        if has_sell_fill:
+            payload.update(
+                {
+                    "exit_fill_confirmed": True,
+                    "exit_execution_id": _row_order_id(sell_fill),
+                    "exit_fill_qty": _safe_int(sell_fill.get("filled_qty"), 0),
+                    "actual_exit_price": _safe_float(sell_fill.get("avg_price") or sell_fill.get("fill_price") or sell_fill.get("price")),
+                    "close_reason": reason_code,
+                }
+            )
+        else:
+            payload.update(
+                {
+                    "exit_fill_confirmed": False,
+                    "exit_execution_id": "",
+                    "exit_fill_qty": 0,
+                    "actual_exit_price": 0.0,
+                    "close_reason": reason_code,
+                    "pnl_pct": None,
+                    "learning_excluded": True,
+                    "broker_position_absent_after_fill_reconciled": True,
+                    "manual_reconciliation_required": False,
+                }
+            )
     else:
         payload.update({"cancel_reason": reason_code, "order_absent_reconciled": True})
     return payload
@@ -506,6 +526,7 @@ def _append_reconcile_event(
                 "reconciled_at": _now(),
                 "next_status": next_status,
                 "broker_evidence": evidence,
+                "learning_excluded": reason_code == ABSENT_FILLED_CLOSE_REASON,
             },
         )
     )
@@ -571,6 +592,7 @@ def reconcile_local_position_against_broker(
         action, next_status, reason_code = _status_transition_for_absent_position(
             evidence=evidence,
             sell_order_id=effective_sell_order_id,
+            run_status=str((run or {}).get("status") or ""),
         )
 
     changes: list[dict[str, Any]] = []

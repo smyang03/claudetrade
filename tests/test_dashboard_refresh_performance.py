@@ -598,6 +598,10 @@ class DashboardRefreshPerformanceTests(unittest.TestCase):
         self.assertEqual(digest["canonical_realized_pnl_available"], 2)
         self.assertEqual(digest["canonical_learning_allowed"], 1)
         self.assertEqual(digest["canonical_learning_excluded"], 1)
+        self.assertEqual(digest["canonical_latest_session_date"], "2026-05-12")
+        self.assertEqual(digest["canonical_session_lag_days"], 0)
+        self.assertEqual(digest["canonical_freshness_status"], "fresh")
+        self.assertIsInstance(digest["canonical_sync_age_sec"], int)
         self.assertEqual(digest["with_outcome"], 2)
 
     def test_live_summary_uses_cached_read_path_without_blocking_broker_calls(self) -> None:

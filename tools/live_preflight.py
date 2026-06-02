@@ -2521,12 +2521,14 @@ def _agent_call_event_store_contamination_checks(mode: str) -> list[CheckResult]
 
 def _token_checks(mode: str) -> list[CheckResult]:
     checks: list[CheckResult] = []
+    rate_limit_check = _token_rate_limit_marker_check(mode)
     token_path = ROOT / "state" / f"{mode}_kis_token.json"
     if not token_path.exists():
         return [
             CheckResult("kis.token_file", "FAIL", "token file missing", {"path": str(token_path)}),
             CheckResult("kis.kr_token_refresh", "FAIL", "token file missing", {"path": str(token_path)}),
             CheckResult("kis.us_token_refresh", "FAIL", "token file missing", {"path": str(token_path)}),
+            rate_limit_check,
         ]
     try:
         data = json.loads(token_path.read_text(encoding="utf-8"))
@@ -2535,6 +2537,7 @@ def _token_checks(mode: str) -> list[CheckResult]:
             CheckResult("kis.token_file", "FAIL", f"token file unreadable: {exc}", {"path": str(token_path)}),
             CheckResult("kis.kr_token_refresh", "FAIL", f"token file unreadable: {exc}", {"path": str(token_path)}),
             CheckResult("kis.us_token_refresh", "FAIL", f"token file unreadable: {exc}", {"path": str(token_path)}),
+            rate_limit_check,
         ]
     expires_raw = str(data.get("expires_at", "") or "")
     issued_raw = str(data.get("issued_at", "") or "")
@@ -2574,6 +2577,7 @@ def _token_checks(mode: str) -> list[CheckResult]:
         checks.append(CheckResult("kis.token_expiry", "FAIL", f"cannot parse token expiry: {exc}", {"expires_at": expires_raw}))
         checks.append(CheckResult("kis.kr_token_refresh", "FAIL", f"cannot parse token expiry: {exc}", {"expires_at": expires_raw}))
         checks.append(CheckResult("kis.us_token_refresh", "FAIL", f"cannot parse token expiry: {exc}", {"expires_at": expires_raw}))
+    checks.append(rate_limit_check)
     checks.append(
         CheckResult(
             "kis.balance_probe",
@@ -2589,6 +2593,60 @@ def _token_checks(mode: str) -> list[CheckResult]:
         )
     )
     return checks
+
+
+def _token_rate_limit_marker_check(mode: str) -> CheckResult:
+    state_dir = get_runtime_path("state", make_parents=False)
+    markers: list[dict[str, Any]] = []
+    active: list[dict[str, Any]] = []
+    now_ts = datetime.now().timestamp()
+    for path in sorted(state_dir.glob(f"{mode}_kis_token_rate_limit_*.json")):
+        try:
+            marker = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(marker, dict):
+                marker = {}
+        except Exception as exc:
+            markers.append({"path": str(path), "active": False, "error": str(exc)})
+            continue
+        try:
+            until_ts = float(marker.get("cooldown_until_ts", 0) or 0)
+        except Exception:
+            until_ts = 0.0
+        payload = marker.get("payload") if isinstance(marker.get("payload"), dict) else {}
+        item = {
+            "path": str(path),
+            "market": marker.get("market", ""),
+            "cooldown_until": marker.get("cooldown_until", ""),
+            "retry_after_sec": max(0, int(until_ts - now_ts)) if until_ts > 0 else 0,
+            "msg_cd": payload.get("msg_cd", ""),
+            "active": until_ts > now_ts,
+        }
+        markers.append(item)
+        if item["active"]:
+            active.append(item)
+    if not active:
+        return CheckResult(
+            "kis.token_rate_limit_cooldown",
+            "PASS",
+            "no active KIS token issue rate-limit cooldown marker",
+            {"marker_count": len(markers), "active_count": 0, "markers": markers[:10]},
+        )
+    return CheckResult(
+        "kis.token_rate_limit_cooldown",
+        "WARN",
+        f"active KIS token issue rate-limit cooldown markers={len(active)}",
+        {
+            "marker_count": len(markers),
+            "active_count": len(active),
+            "active_markers": active[:10],
+            **_warning_meta(
+                "kis_token_rate_limit_cooldown",
+                accepted=False,
+                action="wait for cooldown expiry or use valid cached token; do not force-refresh repeatedly",
+                blocked_if_live_start=False,
+            ),
+        },
+    )
 
 
 def _position_market_from_ticker(ticker: str) -> str:

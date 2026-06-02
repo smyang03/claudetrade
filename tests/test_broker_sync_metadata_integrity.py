@@ -156,6 +156,56 @@ def test_second_independent_zero_holding_snapshot_removes_missing_position() -> 
     assert ("US", "broker_position_removed") in [call.args for call in bot._flag_execution_issue.call_args_list]
 
 
+def test_plan_a_zero_holding_evidence_requires_fresh_truth_and_zero_open_remainder() -> None:
+    bot = _bot(
+        [],
+        broker_truth={
+            "missing": False,
+            "stale": False,
+            "error": "",
+            "ttl_sec": 15,
+            "last_success_at": "2026-05-28T01:05:00+09:00",
+            "last_attempt_at": "2026-05-28T01:05:00+09:00",
+            "positions": [],
+            "open_orders": [{"ticker": "AAPL", "side": "sell", "remaining_qty": 1}],
+            "today_fills": [],
+        },
+    )
+
+    evidence = TradingBot._sell_zero_holding_broker_evidence(bot, "US", "AAPL")
+
+    assert evidence["broker_truth_available"] is True
+    assert evidence["broker_position_qty"] == 0
+    assert evidence["broker_open_remaining_qty"] == 1
+    assert evidence["safe_to_reconcile_zero_holding"] is False
+    assert evidence["manual_reconciliation_required"] is True
+
+
+def test_plan_a_zero_holding_evidence_accepts_fresh_kr_zero_holding_fixture() -> None:
+    bot = _bot(
+        [],
+        broker_truth={
+            "missing": False,
+            "stale": False,
+            "error": "",
+            "ttl_sec": 15,
+            "last_success_at": "2026-05-28T01:05:00+09:00",
+            "last_attempt_at": "2026-05-28T01:05:00+09:00",
+            "positions": [],
+            "open_orders": [{"ticker": "005930", "side": "sell", "remaining_qty": 0}],
+            "today_fills": [],
+        },
+    )
+
+    evidence = TradingBot._sell_zero_holding_broker_evidence(bot, "KR", "005930")
+
+    assert evidence["broker_truth_available"] is True
+    assert evidence["broker_position_qty"] == 0
+    assert evidence["broker_open_remaining_qty"] == 0
+    assert evidence["safe_to_reconcile_zero_holding"] is True
+    assert evidence["manual_reconciliation_required"] is False
+
+
 def test_broker_injection_recovers_unique_pathb_metadata_from_event_store() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         store = EventStore(Path(tmp) / "events.db")

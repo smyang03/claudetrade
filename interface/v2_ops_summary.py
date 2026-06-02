@@ -139,6 +139,11 @@ def build_v2_ops_summary(
     brain_pending = BrainApprovalQueue().read_all()
     latest_review = _latest_daily_review(runtime_key)
     live_truth_verdict = _broker_truth_verdict(broker_truth)
+    entry_timing = build_entry_timing_summary(
+        market=market_key,
+        runtime_mode=runtime_key,
+        session_date=session_key,
+    )
     path_b_live = _path_b_live_summary(
         store,
         market_key,
@@ -179,12 +184,9 @@ def build_v2_ops_summary(
         "broker_truth": broker_truth,
         "live_truth_verdict": live_truth_verdict,
         "claude_picks": _claude_picks(events),
-        "entry_timing": build_entry_timing_summary(
-            market=market_key,
-            runtime_mode=runtime_key,
-            session_date=session_key,
-        ),
+        "entry_timing": entry_timing,
         "bucket_monitor": build_bucket_summary(market=market_key, session_date=session_key, runtime_mode=runtime_key),
+        "buy_readiness": path_b_live.get("buy_readiness", {}),
         "path_b_live": path_b_live,
         "lifecycle": {
             "event_counts": dict(counts),
@@ -513,6 +515,46 @@ def _path_b_live_summary(
         pathb_runs=pathb_runs,
         runtime_mode=runtime_mode,
     )
+    selection_by_market: dict[str, dict[str, Any]] = {}
+    readiness_by_market: dict[str, dict[str, Any]] = {}
+    for market_item in markets:
+        market_key_item = str(market_item or "").upper()
+        if not market_key_item:
+            continue
+        if market and market_key_item == str(market or "").upper():
+            market_selection = selection
+            market_readiness = readiness
+        else:
+            market_selection = _path_b_selection_snapshot(
+                market=market_key_item,
+                runtime_mode=runtime_mode,
+                session_date=session_date,
+                pathb_runs=pathb_runs,
+                config=config,
+                control=control,
+                name_map=name_map,
+                broker_truth=broker_truth or {},
+            )
+            market_readiness = _path_b_execution_readiness(
+                market=market_key_item,
+                session_date=session_date,
+                selection=market_selection,
+                config=config,
+                control=control,
+                broker_truth=broker_truth or {},
+                live_truth_verdict=live_truth_verdict or _broker_truth_verdict(broker_truth or {}),
+                execution_capacity=capacity,
+                pathb_runs=pathb_runs,
+                runtime_mode=runtime_mode,
+            )
+        selection_by_market[market_key_item] = market_selection
+        readiness_by_market[market_key_item] = market_readiness
+    buy_readiness = _path_buy_readiness_summary(
+        markets=markets,
+        selections_by_market=selection_by_market,
+        readiness_by_market=readiness_by_market,
+        execution_capacity=capacity,
+    )
     return {
         "config": config,
         "control": control,
@@ -520,6 +562,8 @@ def _path_b_live_summary(
         "execution_capacity": capacity,
         "run_counts": run_counts,
         "readiness": readiness,
+        "readiness_by_market": readiness_by_market,
+        "buy_readiness": buy_readiness,
         "runs": len(pathb_runs),
         "metrics": metrics,
         "ops_summary": ops_context["summary"],
@@ -2450,6 +2494,185 @@ def _path_b_execution_readiness(
         "operator_action_required": state.startswith("BLOCKED_"),
         "broker_truth": truth,
         "broker_truth_warning": "stale_or_untrusted" if broker_truth_unfresh else "",
+    }
+
+
+HARD_BUY_CAPACITY_BLOCKERS: set[str] = {
+    "ANALYST_NEW_BUY_BLOCK",
+    "ANALYST_MAX_GROSS_EXPOSURE_REACHED",
+    "GROSS_EXPOSURE_REFERENCE_MISSING",
+    "GROSS_EXPOSURE_REMAINING_BELOW_MIN_ORDER",
+    "CASH_BELOW_MIN_ORDER",
+    "POSITION_CAP_REACHED",
+    "DAILY_ENTRY_CAP_REACHED",
+}
+
+
+def _path_buy_readiness_summary(
+    *,
+    markets: list[str],
+    selections_by_market: dict[str, dict[str, Any]],
+    readiness_by_market: dict[str, dict[str, Any]],
+    execution_capacity: dict[str, Any],
+) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for market in markets:
+        market_key = str(market or "").upper()
+        if market_key not in {"KR", "US"}:
+            continue
+        selection = selections_by_market.get(market_key) if isinstance(selections_by_market.get(market_key), dict) else {}
+        readiness = readiness_by_market.get(market_key) if isinstance(readiness_by_market.get(market_key), dict) else {}
+        capacity = execution_capacity.get(market_key) if isinstance(execution_capacity.get(market_key), dict) else {}
+        out[market_key] = {
+            "path_a": _path_a_buy_readiness(market_key, selection, readiness, capacity),
+            "path_b": _path_b_buy_readiness(market_key, selection, readiness, capacity),
+        }
+    return out
+
+
+def _capacity_hard_blockers(capacity: dict[str, Any]) -> list[str]:
+    reasons = capacity.get("capacity_block_reasons") if isinstance(capacity.get("capacity_block_reasons"), list) else []
+    return [str(reason) for reason in reasons if str(reason) in HARD_BUY_CAPACITY_BLOCKERS]
+
+
+def _path_a_ready_rows(selection: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = selection.get("watch_rows") if isinstance(selection.get("watch_rows"), list) else []
+    ready_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        route = str(row.get("execution_route") or "")
+        buy_path = str(row.get("buy_path") or "")
+        category = str(row.get("category") or "")
+        if buy_path == "path_a" and (category == "applied_trade_ready" or route.startswith("PlanA.")):
+            ready_rows.append(row)
+    return ready_rows
+
+
+def _readiness_primary_reason(status: str, blockers: list[str], fallback: str = "") -> str:
+    if blockers:
+        return blockers[0]
+    if fallback:
+        return fallback
+    return status
+
+
+def _path_a_buy_readiness(
+    market: str,
+    selection: dict[str, Any],
+    readiness: dict[str, Any],
+    capacity: dict[str, Any],
+) -> dict[str, Any]:
+    ready_rows = _path_a_ready_rows(selection)
+    session_state = str(readiness.get("market_session_state") or "unknown")
+    truth_warning = str(readiness.get("broker_truth_warning") or "")
+    hard_blockers = _capacity_hard_blockers(capacity)
+    blockers: list[str] = []
+    status = "unknown"
+    state = "UNKNOWN"
+    if session_state != "active":
+        status = "closed"
+        state = "MARKET_CLOSED"
+        blockers.append("MARKET_CLOSED")
+    elif truth_warning:
+        status = "blocked"
+        state = "BLOCKED_BROKER_TRUTH"
+        blockers.append("BROKER_TRUTH_STALE_OR_UNTRUSTED")
+    elif hard_blockers:
+        status = "blocked"
+        state = hard_blockers[0]
+        blockers.extend(hard_blockers)
+    elif not bool(capacity.get("min_order_possible", True)):
+        status = "blocked"
+        state = "BLOCKED_AFFORDABILITY"
+        blockers.append("CASH_BELOW_MIN_ORDER")
+    elif not ready_rows:
+        status = "idle"
+        state = "IDLE_NO_PATHA_TRADE_READY"
+    else:
+        status = "available"
+        state = "READY_WAITING_SIGNAL"
+
+    return {
+        "market": market,
+        "path": "path_a",
+        "label": "PathA",
+        "status": status,
+        "state": state,
+        "can_buy": status == "available",
+        "primary_reason": _readiness_primary_reason(state, blockers),
+        "blockers": blockers,
+        "ready_count": len(ready_rows),
+        "trade_ready_count": len(ready_rows),
+        "market_session_state": session_state,
+        "orderable_cash_krw": capacity.get("orderable_cash_krw", 0),
+        "today_buy_capacity_krw": capacity.get("today_buy_capacity_krw", 0),
+        "today_entry_capacity_orders": capacity.get("today_entry_capacity_orders", 0),
+        "remaining_daily_entries": capacity.get("remaining_daily_entries", 0),
+        "open_position_slots": capacity.get("open_position_slots", 0),
+        "summary": (
+            f"PathA {status}: ready={len(ready_rows)} "
+            f"slots={capacity.get('open_position_slots', 0)} daily={capacity.get('remaining_daily_entries', 0)}"
+        ),
+    }
+
+
+def _path_b_buy_readiness(
+    market: str,
+    selection: dict[str, Any],
+    readiness: dict[str, Any],
+    capacity: dict[str, Any],
+) -> dict[str, Any]:
+    state = str(readiness.get("state") or "UNKNOWN")
+    session_state = str(readiness.get("market_session_state") or "unknown")
+    known_blockers = [str(item) for item in (readiness.get("known_blockers") or [])]
+    hard_blockers = _capacity_hard_blockers(capacity)
+    blockers = list(dict.fromkeys(known_blockers + hard_blockers))
+    entry_waiting = int(readiness.get("entry_waiting_plans") or 0)
+    trade_ready = int(readiness.get("trade_ready_count") or 0)
+    if state.startswith("BLOCKED_") or hard_blockers:
+        status = "blocked"
+    elif state in {"IDLE_MARKET_CLOSED", "IDLE_MARKET_CLOSED_OVERNIGHT_ALLOWED", "HOLDING_OVERNIGHT"}:
+        status = "closed"
+    elif state == "READY_WAITING_BUY_ZONE" or (state == "WAITING_QUOTE_OR_BUY_ZONE" and entry_waiting > 0):
+        status = "available"
+    elif state == "WAITING_QUOTE_OR_BUY_ZONE":
+        status = "idle"
+        if "NO_ENTRY_WAITING_PLAN" not in blockers:
+            blockers.append("NO_ENTRY_WAITING_PLAN")
+    elif state == "IDLE_NO_TRADE_READY":
+        status = "idle"
+    else:
+        status = "unknown"
+
+    no_plan = selection.get("no_plan_reasons") if isinstance(selection.get("no_plan_reasons"), list) else []
+    if status == "idle" and not blockers and no_plan:
+        blockers.append(str(no_plan[0]))
+
+    return {
+        "market": market,
+        "path": "path_b",
+        "label": "PathB",
+        "status": status,
+        "state": state,
+        "can_buy": status == "available",
+        "primary_reason": _readiness_primary_reason(state, blockers),
+        "blockers": blockers,
+        "ready_count": trade_ready,
+        "trade_ready_count": trade_ready,
+        "registered_live_plans": int(readiness.get("registered_live_plans") or 0),
+        "active_live_plans": int(readiness.get("active_live_plans") or 0),
+        "entry_waiting_plans": entry_waiting,
+        "market_session_state": session_state,
+        "orderable_cash_krw": capacity.get("orderable_cash_krw", 0),
+        "today_buy_capacity_krw": capacity.get("today_buy_capacity_krw", 0),
+        "today_entry_capacity_orders": capacity.get("today_entry_capacity_orders", 0),
+        "remaining_daily_entries": capacity.get("remaining_daily_entries", 0),
+        "open_position_slots": capacity.get("open_position_slots", 0),
+        "summary": (
+            f"PathB {status}: state={state} entry_waiting={entry_waiting} "
+            f"slots={capacity.get('open_position_slots', 0)} daily={capacity.get('remaining_daily_entries', 0)}"
+        ),
     }
 
 

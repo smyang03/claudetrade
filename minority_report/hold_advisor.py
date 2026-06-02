@@ -1713,6 +1713,43 @@ def _log_decision(ticker: str, market: str, pos: dict,
                     tp_price = tp_price / fx_rate
                 price_currency = "USD"
 
+        vote_rows = {}
+        vote_fallback = False
+        for key, value in votes.items():
+            vote_fallback = vote_fallback or bool(value.get("fallback", False))
+            vote_rows[key] = {
+                "action": value.get("action", ""),
+                "confidence": value.get("confidence", 0.0),
+                "duration_ms": int(value.get("duration_ms", 0) or 0),
+                "reason": value.get("reason", ""),
+                "revised_sell_target": value.get("revised_sell_target", 0.0),
+                "protective_stop": value.get("protective_stop", 0.0),
+                "hard_stop": value.get("hard_stop", 0.0),
+                "valid_for_min": value.get("valid_for_min", 0),
+                "reask_after_min": value.get("reask_after_min", 0),
+                "hold_mode": value.get("hold_mode", ""),
+                "invalid_if": value.get("invalid_if", ""),
+                "fallback": bool(value.get("fallback", False)),
+                "source": value.get("source", ""),
+                "exit_category": value.get("exit_category", ""),
+                "exit_driver": value.get("exit_driver", ""),
+            }
+        triage_fallback = bool((triage or {}).get("fallback", False) or (triage or {}).get("triage_parse_error", False))
+        advisor_cooldown = bool(pos.get("hold_advisor_cooldown", False) or pos.get("auto_sell_review_cooldown_active", False))
+        advisor_fallback = bool(pos.get("hold_advisor_fallback", False) or vote_fallback or triage_fallback)
+        decision_source = str(
+            pos.get("hold_advisor_decision_source")
+            or ("auto_sell_review_cooldown" if advisor_cooldown else "hold_advisor")
+        )
+        action_key = str(action or "").strip().lower() or "unknown"
+        pending_outcome_label = (
+            "cooldown_hold"
+            if advisor_cooldown
+            else f"fallback_{action_key}"
+            if advisor_fallback
+            else action_key
+        )
+
         entry = {
             "ts":         datetime.now().isoformat(timespec="seconds"),
             "ticker":     ticker,
@@ -1725,26 +1762,15 @@ def _log_decision(ticker: str, market: str, pos: dict,
             "held_days":  pos.get("held_days", 0),
             "decision":   action,
             "decision_stage": decision_stage,
+            "decision_source": decision_source,
+            "fallback": advisor_fallback,
+            "cooldown": advisor_cooldown,
+            "pending_outcome_label": pending_outcome_label,
             "default_policy": default_policy,
             "duration_ms": int(duration_ms or 0),
             "advisor_context_v2": pos.get("advisor_context_v2", {}) if isinstance(pos, dict) else {},
             "trail_pct":  trail_pct,
-            "votes": {
-                k: {
-                    "action": v["action"],
-                    "confidence": v["confidence"],
-                    "duration_ms": int(v.get("duration_ms", 0) or 0),
-                    "reason": v["reason"],
-                    "revised_sell_target": v.get("revised_sell_target", 0.0),
-                    "protective_stop": v.get("protective_stop", 0.0),
-                    "hard_stop": v.get("hard_stop", 0.0),
-                    "valid_for_min": v.get("valid_for_min", 0),
-                    "reask_after_min": v.get("reask_after_min", 0),
-                    "hold_mode": v.get("hold_mode", ""),
-                    "invalid_if": v.get("invalid_if", ""),
-                }
-                for k, v in votes.items()
-            },
+            "votes": vote_rows,
             "outcome":    None,   # 청산 후 채워짐
         }
         if triage is not None:

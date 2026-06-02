@@ -5117,6 +5117,10 @@ def _ml_db_digest(market: str) -> dict:
         "canonical_learning_allowed": 0,
         "canonical_learning_excluded": 0,
         "canonical_last_synced_at": "",
+        "canonical_sync_age_sec": None,
+        "canonical_latest_session_date": "",
+        "canonical_session_lag_days": None,
+        "canonical_freshness_status": "missing",
         "legacy_filled": 0,
         "legacy_with_outcome": 0,
         "total": 0,
@@ -5265,6 +5269,28 @@ def _ml_db_digest(market: str) -> dict:
                     canonical_params,
                 ).fetchone()
                 digest["canonical_last_synced_at"] = str(synced_row[0]) if synced_row and synced_row[0] else ""
+                digest["canonical_sync_age_sec"] = _dt_age_sec(digest["canonical_last_synced_at"])
+                latest_session_row = conn.execute(
+                    "SELECT MAX(session_date) FROM v2_canonical_performance WHERE market=? AND runtime_mode=?",
+                    canonical_params,
+                ).fetchone()
+                digest["canonical_latest_session_date"] = (
+                    str(latest_session_row[0]) if latest_session_row and latest_session_row[0] else ""
+                )
+                if digest["canonical_latest_session_date"]:
+                    try:
+                        latest_day = date.fromisoformat(str(digest["canonical_latest_session_date"])[:10])
+                        current_day = date.fromisoformat(session_date)
+                        digest["canonical_session_lag_days"] = max(0, (current_day - latest_day).days)
+                    except Exception:
+                        digest["canonical_session_lag_days"] = None
+                if digest["canonical_total"] > 0:
+                    if digest["canonical_session_lag_days"] is None:
+                        digest["canonical_freshness_status"] = "unknown"
+                    elif int(digest["canonical_session_lag_days"] or 0) > 0:
+                        digest["canonical_freshness_status"] = "stale"
+                    else:
+                        digest["canonical_freshness_status"] = "fresh"
                 if digest["canonical_total"] > 0:
                     digest["truth_source"] = "v2_canonical_performance"
                     digest["filled"] = digest["canonical_filled_today"]
@@ -9832,6 +9858,28 @@ main {{ padding: 20px 24px; max-width: 1600px; margin: 0 auto; }}
   font-size: 13px; font-weight: 700; margin-left: 6px; vertical-align: middle;
 }}
 .card-sub {{ font-size: 12px; color: var(--muted); margin-top: 6px; font-family: var(--mono); }}
+.buy-readiness-grid {{
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px; margin-top: 10px;
+}}
+.buy-readiness-item {{
+  min-width: 0; padding: 8px 9px; border-radius: 8px;
+  border: 1px solid rgba(148,163,184,0.22);
+  background: rgba(15,23,42,0.58);
+}}
+.buy-readiness-label {{
+  font-size: 10px; font-weight: 700; color: var(--muted);
+  letter-spacing: 0; margin-bottom: 4px; white-space: nowrap;
+}}
+.buy-readiness-status {{
+  font-family: var(--mono); font-size: 13px; font-weight: 800;
+  line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}}
+.buy-readiness-detail {{
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+  line-height: 1.25; margin-top: 4px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}}
 .account-focus-grid {{
   display: grid; grid-template-columns: repeat(auto-fit, minmax(122px, 1fr));
   gap: 8px; margin-top: 12px;
@@ -10237,6 +10285,15 @@ function fmtUsd(v) {
   return '$' + Number(v || 0).toFixed(2);
 }
 
+function fmtAgeShort(sec) {
+  const n = Number(sec);
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n < 60) return `${Math.round(n)}초`;
+  if (n < 3600) return `${Math.round(n / 60)}분`;
+  if (n < 86400) return `${Math.round(n / 3600)}시간`;
+  return `${Math.round(n / 86400)}일`;
+}
+
 function formatUsdKrwSplit(usd, krw, label = 'US') {
   const usdNum = Number(usd || 0);
   const krwNum = Number(krw || 0);
@@ -10351,22 +10408,132 @@ function formatBuyCapacityLine(row) {
   return `매수 여력: 보유 ${fmt.asset(row.position_exposure_krw || 0)} / 한도 ${capText}(${capPolicyText}) · 남은한도 ${fmt.asset(remaining)} · 주문가능 ${fmt.asset(row.orderable_cash_krw || 0)} · 오늘추가 ${fmt.asset(row.today_buy_capacity_krw || 0)} · 고정주문 ${fixedOrders}회(${fmt.asset(fixedCapacity)}) · <span style="color:${reasonColor}">${reasonText}</span>`;
 }
 
+function koBuyReadinessStatus(status) {
+  return ({
+    available: '가능',
+    blocked: '차단',
+    idle: '대기',
+    closed: '장외',
+    unknown: '확인',
+  }[String(status || '')] || '확인');
+}
+
+function buyReadinessColor(status) {
+  return ({
+    available: 'var(--green)',
+    blocked: '#f87171',
+    idle: '#f59e0b',
+    closed: 'var(--muted)',
+    unknown: 'var(--yellow)',
+  }[String(status || '')] || 'var(--yellow)');
+}
+
+function koBuyReadinessReason(reason) {
+  return ({
+    READY_WAITING_SIGNAL: '신호 대기',
+    READY_WAITING_BUY_ZONE: '매수가 대기',
+    WAITING_QUOTE_OR_BUY_ZONE: '가격대 감시',
+    IDLE_NO_PATHA_TRADE_READY: 'A 후보 없음',
+    IDLE_NO_TRADE_READY: '매수 후보 없음',
+    MARKET_CLOSED: '장외',
+    BLOCKED_BROKER_TRUTH: '브로커 확인 필요',
+    BROKER_TRUTH_STALE_OR_UNTRUSTED: '브로커 확인 필요',
+    BLOCKED_AFFORDABILITY: '주문가능 부족',
+    CASH_BELOW_MIN_ORDER: '주문가능 부족',
+    POSITION_CAP_REACHED: '보유 한도',
+    DAILY_ENTRY_CAP_REACHED: '일일 진입 한도',
+    ANALYST_NEW_BUY_BLOCK: '분석가 신규매수 차단',
+    ANALYST_MAX_GROSS_EXPOSURE_REACHED: '노출 한도',
+    GROSS_EXPOSURE_REFERENCE_MISSING: '노출 기준 없음',
+    GROSS_EXPOSURE_REMAINING_BELOW_MIN_ORDER: '노출 여력 부족',
+    NO_ENTRY_WAITING_PLAN: '진입대기 없음',
+    NO_TRADE_READY: '매수 후보 없음',
+    NO_SELECTION_FILE: '선정 파일 없음',
+    MISSING_PRICE_TARGETS: '가격계획 누락',
+    PRICE_TARGETS_EMPTY: '가격계획 없음',
+  }[String(reason || '')] || String(reason || '-'));
+}
+
+function fallbackPathAReadiness(today) {
+  const sess = (today || {}).session || {};
+  const maxDaily = Number((today || {}).max_daily_entries || 0);
+  const entries = Number((today || {}).entries_today || 0);
+  const positionRemaining = Number((today || {}).position_remaining || 0);
+  const minOrder = Number((today || {}).min_order_krw || 0);
+  const modeLimit = Number((today || {}).mode_order_limit_krw || 0);
+  const orderable = MARKET === 'US'
+    ? Number((today || {}).broker_orderable_cash_us_krw || 0)
+    : Number((today || {}).broker_orderable_cash_kr || 0);
+  const sc = (today || {}).stop_cluster || {};
+  if (sess.active === false) return {status:'closed', primary_reason:'MARKET_CLOSED', ready_count:0};
+  if (sc.blocked) return {status:'blocked', primary_reason:sc.reason || 'STOP_CLUSTER_MARKET_BLOCK', ready_count:0};
+  if (positionRemaining <= 0) return {status:'blocked', primary_reason:'POSITION_CAP_REACHED', ready_count:0};
+  if (maxDaily > 0 && entries >= maxDaily) return {status:'blocked', primary_reason:'DAILY_ENTRY_CAP_REACHED', ready_count:0};
+  if (minOrder > 0 && orderable > 0 && orderable < minOrder) return {status:'blocked', primary_reason:'CASH_BELOW_MIN_ORDER', ready_count:0};
+  if (minOrder > 0 && modeLimit > 0 && modeLimit < minOrder) return {status:'blocked', primary_reason:'BLOCKED_AFFORDABILITY', ready_count:0};
+  return {status:'unknown', primary_reason:'READY_WAITING_SIGNAL', ready_count:0};
+}
+
+function renderBuyReadinessCard(id, row, label) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const statusEl = el.querySelector('.buy-readiness-status');
+  const detailEl = el.querySelector('.buy-readiness-detail');
+  const labelEl = el.querySelector('.buy-readiness-label');
+  const status = String((row || {}).status || 'unknown');
+  const reason = String((row || {}).primary_reason || (row || {}).state || '');
+  const ready = Number((row || {}).ready_count ?? (row || {}).trade_ready_count ?? 0);
+  const orders = Number((row || {}).today_entry_capacity_orders || 0);
+  const cash = Number((row || {}).today_buy_capacity_krw || (row || {}).orderable_cash_krw || 0);
+  const waiting = Number((row || {}).entry_waiting_plans || 0);
+  if (labelEl) labelEl.textContent = label;
+  if (statusEl) {
+    statusEl.textContent = koBuyReadinessStatus(status);
+    statusEl.style.color = buyReadinessColor(status);
+  }
+  const bits = [];
+  if (ready > 0) bits.push(`후보 ${ready}`);
+  if (waiting > 0) bits.push(`대기 ${waiting}`);
+  if (orders > 0) bits.push(`추가 ${orders}회`);
+  if (cash > 0) bits.push(fmt.asset(cash));
+  const reasonText = koBuyReadinessReason(reason);
+  const detail = [reasonText, ...bits].filter(Boolean).join(' · ');
+  if (detailEl) detailEl.textContent = detail || '--';
+  el.title = `${label}: ${koBuyReadinessStatus(status)}${detail ? ' · ' + detail : ''}`;
+}
+
+function renderBuyReadiness(ops, today) {
+  const byMarket = ((ops || {}).buy_readiness || (((ops || {}).path_b_live || {}).buy_readiness) || {});
+  const marketRows = byMarket[MARKET] || {};
+  const pathA = marketRows.path_a || fallbackPathAReadiness(today || {});
+  const pathB = marketRows.path_b || {status:'unknown', primary_reason:'확인 중'};
+  renderBuyReadinessCard('buy-readiness-patha', pathA, 'A플랜 매수');
+  renderBuyReadinessCard('buy-readiness-pathb', pathB, 'PathB 매수');
+}
+
 let buyCapacitySeq = 0;
 async function loadBuyCapacityBar() {
   const el = document.getElementById('bar-buy-capacity');
-  if (!el) return;
+  if (!el && !document.getElementById('buy-readiness-grid')) return;
   const seq = ++buyCapacitySeq;
-  el.textContent = '매수 여력 확인 중...';
+  if (el) el.textContent = '매수 여력 확인 중...';
   try {
     const d = await apiGet('/api/v2/ops', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
     if (seq !== buyCapacitySeq) return;
+    window.__lastOpsSummary = d;
     const row = ((((d || {}).path_b_live || {}).execution_capacity || {})[MARKET]) || {};
-    el.innerHTML = formatBuyCapacityLine(row);
-    el.title = row.equity_source
-      ? `기준 ${row.equity_source}${row.equity_lag_suspected ? ' · 브로커/내부 기준 차이 의심' : ''}`
-      : '';
+    if (el) {
+      el.innerHTML = formatBuyCapacityLine(row);
+      el.title = row.equity_source
+        ? `기준 ${row.equity_source}${row.equity_lag_suspected ? ' · 브로커/내부 기준 차이 의심' : ''}`
+        : '';
+    }
+    renderBuyReadiness(d, window.__todaySummary || {});
   } catch (e) {
-    if (seq === buyCapacitySeq) el.textContent = '매수 여력 조회 실패';
+    if (seq === buyCapacitySeq) {
+      if (el) el.textContent = '매수 여력 조회 실패';
+      renderBuyReadiness(null, window.__todaySummary || {});
+    }
   }
 }
 
@@ -10909,6 +11076,18 @@ PAGE_TODAY_HTML = """
     <div class="card-label">오늘 총손익</div>
     <div class="card-value" id="today-pnl">--</div>
     <div class="card-sub"  id="today-krw">--</div>
+    <div class="buy-readiness-grid" id="buy-readiness-grid">
+      <div class="buy-readiness-item" id="buy-readiness-patha">
+        <div class="buy-readiness-label">A플랜 매수</div>
+        <div class="buy-readiness-status">--</div>
+        <div class="buy-readiness-detail">확인 중</div>
+      </div>
+      <div class="buy-readiness-item" id="buy-readiness-pathb">
+        <div class="buy-readiness-label">PathB 매수</div>
+        <div class="buy-readiness-status">--</div>
+        <div class="buy-readiness-detail">확인 중</div>
+      </div>
+    </div>
   </div>
   <div class="card blue">
     <div class="card-label">계좌 자산</div>
@@ -11880,6 +12059,8 @@ async function loadSummary() {
   const d = await apiGet('/api/summary', 'market=' + encodeURIComponent(MARKET)).then(r => r.json()).catch(() => ({}));
   if (!d.today) return;
   const t = d.today, p = d.period;
+  window.__todaySummary = t;
+  if (typeof renderBuyReadiness === 'function') renderBuyReadiness(window.__lastOpsSummary || null, t);
   const rawAssetSource = String(t.asset_source || '');
   const assetSourceLabel = (MODE === 'live' && rawAssetSource.includes('paper'))
     ? '브로커 기준'
@@ -11944,6 +12125,15 @@ async function loadSummary() {
   }
   const ml = t.ml_db || {};
   const mlTruth = ml.truth_source === 'v2_canonical_performance' ? 'V2 truth' : 'legacy';
+  const mlFreshBits = [];
+  if (ml.truth_source === 'v2_canonical_performance') {
+    const syncAge = fmtAgeShort(ml.canonical_sync_age_sec);
+    if (syncAge) mlFreshBits.push(`sync ${syncAge}전`);
+    if (ml.canonical_latest_session_date) {
+      const lag = Number(ml.canonical_session_lag_days || 0);
+      mlFreshBits.push(`V2 ${String(ml.canonical_latest_session_date).slice(5)}${lag > 0 ? ` +${lag}d stale` : ''}`);
+    }
+  }
   const mlTitle = document.getElementById('ml-db-title');
   const mlMeta = document.getElementById('ml-db-meta');
   const mlBreakdown = document.getElementById('ml-db-breakdown');
@@ -11954,7 +12144,7 @@ async function loadSummary() {
   }
   if (mlMeta) {
     mlMeta.textContent = ml.enabled
-      ? `${mlTruth} · BUY_SIGNAL ${ml.buy_signal || 0}건 · 체결 ${ml.filled || 0}건 · 결과기록 ${ml.with_outcome || 0}건 · 마지막 ${ml.last_ts || '--'}`
+      ? `${mlTruth} · BUY_SIGNAL ${ml.buy_signal || 0}건 · 체결 ${ml.filled || 0}건 · 결과기록 ${ml.with_outcome || 0}건${mlFreshBits.length ? ' · ' + mlFreshBits.join(' · ') : ''} · 마지막 ${ml.last_ts || '--'}`
       : '--';
   }
   if (mlBreakdown) {
@@ -12994,6 +13184,7 @@ async function loadSummary() {
   const t = d.today;
   const p = d.period || {};
   window.__todaySummary = t;
+  if (typeof renderBuyReadiness === 'function') renderBuyReadiness(window.__lastOpsSummary || null, t);
 
   const pnlEl = document.getElementById('today-pnl');
   const tradingPct = Number(t.trading_pnl_pct ?? t.pnl_pct ?? 0);
@@ -13080,6 +13271,15 @@ async function loadSummary() {
 
   const ml = t.ml_db || {};
   const mlTruth = ml.truth_source === 'v2_canonical_performance' ? 'V2 truth' : 'legacy';
+  const mlFreshBits = [];
+  if (ml.truth_source === 'v2_canonical_performance') {
+    const syncAge = fmtAgeShort(ml.canonical_sync_age_sec);
+    if (syncAge) mlFreshBits.push(`sync ${syncAge}전`);
+    if (ml.canonical_latest_session_date) {
+      const lag = Number(ml.canonical_session_lag_days || 0);
+      mlFreshBits.push(`V2 ${String(ml.canonical_latest_session_date).slice(5)}${lag > 0 ? ` +${lag}d stale` : ''}`);
+    }
+  }
   const mlTitle = document.getElementById('ml-db-title');
   const mlMeta = document.getElementById('ml-db-meta');
   const mlBreakdown = document.getElementById('ml-db-breakdown');
@@ -13090,7 +13290,7 @@ async function loadSummary() {
   }
   if (mlMeta) {
     mlMeta.textContent = ml.enabled
-      ? `${mlTruth} · BUY_SIGNAL ${ml.buy_signal || 0}건 · 체결 ${ml.filled || 0}건 · 결과기록 ${ml.with_outcome || 0}건 · 마지막 ${ml.last_ts || '--'}`
+      ? `${mlTruth} · BUY_SIGNAL ${ml.buy_signal || 0}건 · 체결 ${ml.filled || 0}건 · 결과기록 ${ml.with_outcome || 0}건${mlFreshBits.length ? ' · ' + mlFreshBits.join(' · ') : ''} · 마지막 ${ml.last_ts || '--'}`
       : '--';
   }
   if (mlBreakdown) {

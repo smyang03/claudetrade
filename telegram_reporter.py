@@ -905,6 +905,67 @@ def status_report(
     return text
 
 
+def _buy_readiness_status_label(value: str) -> str:
+    return {
+        "available": "가능",
+        "blocked": "차단",
+        "idle": "대기",
+        "closed": "장외",
+        "unknown": "확인",
+    }.get(str(value or ""), str(value or "확인"))
+
+
+def _buy_readiness_reason_label(value: str) -> str:
+    return {
+        "READY_WAITING_SIGNAL": "신호 대기",
+        "READY_WAITING_BUY_ZONE": "매수가 대기",
+        "WAITING_QUOTE_OR_BUY_ZONE": "가격대 감시",
+        "IDLE_NO_PATHA_TRADE_READY": "A 후보 없음",
+        "IDLE_NO_TRADE_READY": "매수 후보 없음",
+        "MARKET_CLOSED": "장외",
+        "BLOCKED_BROKER_TRUTH": "브로커 확인 필요",
+        "BROKER_TRUTH_STALE_OR_UNTRUSTED": "브로커 확인 필요",
+        "BLOCKED_AFFORDABILITY": "주문가능 부족",
+        "CASH_BELOW_MIN_ORDER": "주문가능 부족",
+        "POSITION_CAP_REACHED": "보유 한도",
+        "DAILY_ENTRY_CAP_REACHED": "일일 진입 한도",
+        "ANALYST_NEW_BUY_BLOCK": "분석가 신규매수 차단",
+        "ANALYST_MAX_GROSS_EXPOSURE_REACHED": "노출 한도",
+        "GROSS_EXPOSURE_REFERENCE_MISSING": "노출 기준 없음",
+        "GROSS_EXPOSURE_REMAINING_BELOW_MIN_ORDER": "노출 여력 부족",
+        "NO_ENTRY_WAITING_PLAN": "진입대기 없음",
+        "NO_TRADE_READY": "매수 후보 없음",
+        "NO_SELECTION_FILE": "선정 파일 없음",
+        "MISSING_PRICE_TARGETS": "가격계획 누락",
+        "PRICE_TARGETS_EMPTY": "가격계획 없음",
+    }.get(str(value or ""), str(value or "-"))
+
+
+def _buy_readiness_line(market: str, buy_readiness: Optional[dict]) -> str:
+    if not isinstance(buy_readiness, dict):
+        return ""
+    market_rows = buy_readiness.get(str(market or "").upper())
+    if not isinstance(market_rows, dict):
+        return ""
+    parts = []
+    for key, label in (("path_a", "A플랜"), ("path_b", "PathB")):
+        row = market_rows.get(key)
+        if not isinstance(row, dict):
+            continue
+        status = _buy_readiness_status_label(str(row.get("status") or "unknown"))
+        reason = _buy_readiness_reason_label(str(row.get("primary_reason") or row.get("state") or ""))
+        ready = int(row.get("ready_count", row.get("trade_ready_count", 0)) or 0)
+        waiting = int(row.get("entry_waiting_plans", 0) or 0)
+        tail = []
+        if ready:
+            tail.append(f"후보 {ready}")
+        if waiting:
+            tail.append(f"대기 {waiting}")
+        detail = f" ({', '.join(tail)})" if tail else ""
+        parts.append(f"{label} {status} - {reason}{detail}")
+    return "매수 가능 상태: " + " | ".join(parts) if parts else ""
+
+
 def dashboard_push(
     market: str,
     mode: str,
@@ -923,6 +984,7 @@ def dashboard_push(
     mode_order_limit_krw: float = 0.0,
     realized_excluding_eval_pnl_krw: Optional[float] = None,
     unrealized_today_delta_krw: Optional[float] = None,
+    buy_readiness: Optional[dict] = None,
 ) -> str:
     now = datetime.now(KST).strftime("%H:%M")
     icon = "🇰🇷" if market == "KR" else "🇺🇸"
@@ -944,13 +1006,15 @@ def dashboard_push(
     pnl_line = f"손익: {fmt_pct(pnl_pct)}  확정 {confirmed_pnl_krw:+,}원"
     if eval_delta:
         pnl_line += f" · 평가변동 {eval_delta:+,}원"
+    buy_readiness_text = _buy_readiness_line(market, buy_readiness)
     text = (
         f"{icon} <b>[대시보드 요약 {now}] {market}</b>\n"
         f"모드: <b>{_ko_mode(mode)}</b>{risk_text}"
         + (f" | 최대매수 {int(mode_order_limit_krw):,}원" if mode_order_limit_krw and mode_order_limit_krw > 0 else "")
         + "\n"
         f"{pnl_line}\n"
-        f"현금: {cash:,.0f}원 | 주문한도: {max_order_krw:,.0f}원 | "
+        + (buy_readiness_text + "\n" if buy_readiness_text else "")
+        + f"현금: {cash:,.0f}원 | 주문한도: {max_order_krw:,.0f}원 | "
         f"주식평가: {stock_value_krw:,.0f}원 | 총자산: {total_equity_krw:,.0f}원 | "
         f"수수료누적: {total_fee:,.0f}원\n\n"
         f"보유 포지션:\n{pos_lines}\n\n"
