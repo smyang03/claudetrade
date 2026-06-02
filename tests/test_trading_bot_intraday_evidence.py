@@ -144,7 +144,7 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertEqual(bot._or_high["005930"], 104.0)
         self.assertEqual(bot._or_low["005930"], 99.0)
 
-    def test_partial_feature_does_not_form_or_cache(self) -> None:
+    def test_partial_feature_with_or_data_does_form_or_cache(self) -> None:
         bot = _make_bot(lambda **kwargs: _candles())
 
         TradingBot._merge_last_post_open_features(
@@ -153,6 +153,24 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
             {
                 "005930": {
                     "data_quality": "minute_partial",
+                    "opening_range_high": 104.0,
+                    "opening_range_low": 99.0,
+                }
+            },
+        )
+
+        self.assertIn("005930", bot._or_formed)
+        self.assertTrue(bot._or_formed["005930"])
+
+    def test_missing_feature_does_not_form_or_cache(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles())
+
+        TradingBot._merge_last_post_open_features(
+            bot,
+            "KR",
+            {
+                "005930": {
+                    "data_quality": "minute_missing",
                     "opening_range_high": 104.0,
                     "opening_range_low": 99.0,
                 }

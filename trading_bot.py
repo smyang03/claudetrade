@@ -11960,7 +11960,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _maybe_update_or_cache_from_post_open_feature(self, market: str, ticker: str, features: dict) -> bool:
         if not isinstance(features, dict) or not features:
             return False
-        if str(features.get("data_quality") or "").strip().lower() != "minute_complete":
+        data_quality = str(features.get("data_quality") or "").strip().lower()
+        if data_quality == "minute_missing":
             return False
 
         def _positive(value: Any) -> Optional[float]:
@@ -30341,6 +30342,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         _morning_breadth = ((self.today_judgment.get("digest_raw") or {}).get("breadth_summary") or {})
         _current_breadth = self._build_current_breadth_summary(market, _tune_mode)
         _prev_tune_result = self._last_tune_result.get(market, {}) or {}
+        market_positions = self._positions_for_market(market)
         current_state = {
             "index_change":    _idx_now,
             "index_slope_30m": _slope_30m,   # None = 첫 튜닝 (이전 기준값 없음)
@@ -30360,7 +30362,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "sl":            p.get("sl", 0),
                     "tp":            p.get("tp", 0),
                 }
-                for p in self.risk.positions
+                for p in market_positions
             ],
             "alerts": [],
             "runtime_overrides": self._runtime_overrides(market),
@@ -30469,14 +30471,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             sl_adj = result.get("sl_adj", 0)
             if sl_adj != 0:
                 adj_clamped = max(-0.10, min(0.10, float(sl_adj)))  # ±10% 이내로 제한
-                for pos in self.risk.positions:
+                for pos in market_positions:
                     pos["sl"] = pos["sl"] * (1 + adj_clamped)
                 log.info(f"SL adjusted: {adj_clamped:+.3f}")
             # REVERSE: Claude가 장세 반전 판단 → 보유 포지션 청산
             # broker_sync 전략은 hold_advisor가 개별 판단하므로 REVERSE 대상에서 제외
-            if action == "REVERSE" and self.risk.positions:
-                reverse_targets = [p for p in self.risk.positions if p.get("strategy") != "broker_sync"]
-                skipped = [p["ticker"] for p in self.risk.positions if p.get("strategy") == "broker_sync"]
+            if action == "REVERSE" and market_positions:
+                reverse_targets = [p for p in market_positions if p.get("strategy") != "broker_sync"]
+                skipped = [p["ticker"] for p in market_positions if p.get("strategy") == "broker_sync"]
                 if skipped:
                     log.info(f"[REVERSE] broker_sync 포지션 제외 (hold_advisor 관할): {skipped}")
                 log.warning(f"[REVERSE] 튜너 판단: {result.get('reason','')} — {len(reverse_targets)}개 포지션 청산")
@@ -30502,14 +30504,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         warning = result.get("warning")
         # 모드가 바뀐 경우만 tuning_report 전송, 유지면 스킵
         if action != "MAINTAIN":
-            tuning_report(elapsed, result, old_mode, self.risk.positions)
+            tuning_report(elapsed, result, old_mode, self._positions_for_market(market))
             self._maybe_push_dashboard(force=True)
         else:
             if warning == "OVERLOADED":
                 log.warning(
                     f"[튜닝 {elapsed}분] Claude 과부하로 튜닝 생략 — 기존 모드 유지"
                 )
-                tuning_report(elapsed, result, self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"), self.risk.positions)
+                tuning_report(
+                    elapsed,
+                    result,
+                    self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"),
+                    self._positions_for_market(market),
+                )
             else:
                 log.info(f"[튜닝 {elapsed}분] MAINTAIN — 텔레그램 스킵")
         # 세션 이벤트 기록 (파인튜닝 데이터 — MAINTAIN 포함 전체 기록)
@@ -31835,6 +31842,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
         total_equity_krw = float(equity_ctx.get("total_krw", 0) or 0)
         market_cash_krw = float(equity_ctx.get("cash_krw", 0) or 0)
+        buy_readiness = {}
+        try:
+            from interface.v2_ops_summary import build_v2_ops_summary as _build_v2_ops_summary
+
+            ops_summary = _build_v2_ops_summary(
+                bot=self,
+                market=market,
+                runtime_mode=self._mode,
+                session_date=self._current_session_date_str(market),
+            )
+            buy_readiness = (
+                ops_summary.get("buy_readiness")
+                or ((ops_summary.get("path_b_live") or {}).get("buy_readiness") if isinstance(ops_summary, dict) else {})
+                or {}
+            )
+        except Exception as exc:
+            log.debug(f"[dashboard push] buy readiness snapshot skipped: {exc}")
         dashboard_push(market, mode, market_positions,
                        market_cash_krw, pnl_pct, pnl_krw, judgments, tickers,
                        max_order_krw=int(self.risk.max_order_krw),
@@ -31845,7 +31869,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                        risk_label=risk_label,
                        mode_order_limit_krw=self.risk.calc_order_budget(self.today_judgment.get("consensus", {}).get("size", 50)),
                        realized_excluding_eval_pnl_krw=realized_excluding_eval_pnl_krw,
-                       unrealized_today_delta_krw=unrealized_today_delta_krw)
+                       unrealized_today_delta_krw=unrealized_today_delta_krw,
+                       buy_readiness=buy_readiness)
         self._last_tg_state = state
     def _heartbeat(self):
         """1시간마다 로그 + 변화 없어도 강제 텔레그램 전송"""
