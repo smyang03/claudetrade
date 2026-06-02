@@ -2569,6 +2569,8 @@ Rules:
 - ca[].s must be a concrete setup strategy such as momentum, gap_pullback, mean_reversion, opening_range_pullback, volatility_breakout, or continuation.
 - ca[].rc, ca[].blk, and ca[].inv must be short machine codes.
 - Do not output human explanations.
+- KR market: momentum strategy is prohibited in tr (trade_ready). WATCH only.
+- KR market: tickers 078150/264850/024840 are prohibited in tr. WATCH only.
 """
 
     fallback_meta = normalize_selection_result(
