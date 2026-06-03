@@ -104,6 +104,7 @@ call :kill_pid_file "%STATE_DIR%\dashboard_server.pid" "dashboard" "dashboard\da
 call :kill_matching "trading_bot.py --live" "live trading_bot"
 call :kill_matching "dashboard\dashboard_server.py" "dashboard"
 call :kill_matching "tools\live_guardian.py" "live_guardian"
+call :kill_matching "tools\broker_truth_scheduler.py" "broker_truth_scheduler"
 call :kill_matching "tools\preopen_scheduler.py" "preopen_scheduler"
 call :kill_matching "tools\run_counterfactual_pipeline.py" "counterfactual_pipeline"
 
@@ -120,11 +121,24 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo [REFRESH] refreshing broker truth snapshots before live stack start...
+call conda activate %CONDA_ENV%
+if errorlevel 1 (
+  echo [ERROR] failed to activate conda env: %CONDA_ENV%
+  exit /b 1
+)
+python tools\broker_truth_scheduler.py --mode live --markets KR,US --once --force --ttl-sec 180 --json
+if errorlevel 1 (
+  echo [ERROR] broker truth startup refresh failed; live stack not started.
+  exit /b 1
+)
+
 echo [START] opening live stack tabs...
 wt ^
   new-tab --title "trading_bot" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] call conda activate %CONDA_ENV% ^&^& python trading_bot.py --live && call conda activate %CONDA_ENV% && python trading_bot.py --live" ^
   ; new-tab --title "dashboard" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] call conda activate %CONDA_ENV% ^&^& python dashboard\dashboard_server.py && call conda activate %CONDA_ENV% && python dashboard\dashboard_server.py" ^
   ; new-tab --title "live_guardian" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] call conda activate %CONDA_ENV% ^&^& python tools\live_guardian.py --mode live --watch --interval-sec 300 --telegram-alert && call conda activate %CONDA_ENV% && python tools\live_guardian.py --mode live --watch --interval-sec 300 --telegram-alert" ^
+  ; new-tab --title "broker_truth_scheduler" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] call conda activate %CONDA_ENV% ^&^& python tools\broker_truth_scheduler.py --mode live --markets KR,US --loop --interval-sec 30 --refresh-interval-min 10 --failure-retry-min 2 --preopen-min 20 --postclose-min 15 --ttl-sec 180 --no-refresh-on-start && call conda activate %CONDA_ENV% && python tools\broker_truth_scheduler.py --mode live --markets KR,US --loop --interval-sec 30 --refresh-interval-min 10 --failure-retry-min 2 --preopen-min 20 --postclose-min 15 --ttl-sec 180 --no-refresh-on-start" ^
   ; new-tab --title "preopen_scheduler" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] call conda activate %CONDA_ENV% ^&^& python tools\preopen_scheduler.py --mode live --markets KR,US --loop --interval-sec 60 && call conda activate %CONDA_ENV% && python tools\preopen_scheduler.py --mode live --markets KR,US --loop --interval-sec 60" ^
   ; new-tab --title "counterfactual_pipeline" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] call conda activate %CONDA_ENV% ^&^& python tools\run_counterfactual_pipeline.py --phase due --market KR,US --loop --interval-sec 300 --json && call conda activate %CONDA_ENV% && python tools\run_counterfactual_pipeline.py --phase due --market KR,US --loop --interval-sec 300 --json"
 

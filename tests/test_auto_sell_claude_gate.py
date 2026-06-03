@@ -1112,6 +1112,32 @@ class AutoSellClaudeGateTests(unittest.TestCase):
             self.assertTrue(run["plan"]["auto_sell_hold_fallback_to_sell"])
             self.assertEqual(run["plan"]["auto_sell_policy_reject_reason"], "protective_stop_too_close_or_above_current")
 
+    def test_pathb_profit_ladder_hold_rejects_when_gain_lock_floor_too_close(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan, pos = _pathb_runtime(tmp)
+            advice = {
+                "action": "HOLD",
+                "reason": "extend target with protected ladder profit",
+                "confidence": 0.78,
+                "revised_sell_target": 130.0,
+                "protective_stop": 112.0,
+            }
+
+            with patch.dict(os.environ, {"CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "true"}, clear=False), patch(
+                "minority_report.hold_advisor.ask", return_value=advice
+            ):
+                result = runtime._run_pathb_sell_review_gate(
+                    plan,
+                    pos,
+                    ExitSignal(True, "profit_ladder", "CLOSED_PROFIT_LADDER", 118.0, plan.path_run_id),
+                )
+
+            run = runtime.store.find_path_run(plan.path_run_id)
+            self.assertTrue(result["allowed"])
+            self.assertEqual(run["plan"]["auto_sell_review_action"], "SELL")
+            self.assertTrue(run["plan"]["auto_sell_hold_fallback_to_sell"])
+            self.assertEqual(run["plan"]["auto_sell_policy_reject_reason"], "protective_stop_too_close_or_above_current")
+
     def test_pathb_target_hold_keeps_when_existing_policy_stop_satisfies_gain_lock_floor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan, pos = _pathb_runtime(tmp)

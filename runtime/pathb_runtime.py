@@ -3286,6 +3286,10 @@ class PathBRuntime:
                 gain_floor = self._policy_float(floor_info.get("floor"))
                 if gain_floor > 0 and protective_stop < gain_floor:
                     protective_stop = gain_floor
+                if bool(floor_info.get("too_close")) or protective_stop >= current * (
+                    1.0 - self._policy_float(floor_info.get("min_distance"))
+                ):
+                    return {}, "protective_stop_too_close_or_above_current"
                 return {
                     **base,
                     "mode": "target_extension",

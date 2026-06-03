@@ -64,7 +64,7 @@ rank21-35 BR비율 1.4% — 중하위권도 포착 가치 있음
 
 ### 1차 프롬프트 품질 검증
 
-**테스트 도구**: `tools/test_tier1_quality.py`, `tools/test_tier1_expanded.py`  
+**테스트 도구**: `tools/tier1_quality_check.py`, `tools/tier1_expanded_quality_check.py`
 **모델**: claude-haiku-4-5-20251001  
 **데이터**: audit_candidate_rows (2026-05-18~06-01, US)
 
@@ -120,7 +120,7 @@ rank21-35 BR비율 1.4% — 중하위권도 포착 가치 있음
 
 ### Fast-Track 프롬프트 품질 검증
 
-**테스트 도구**: `tools/test_fasttrack_quality.py`  
+**테스트 도구**: `tools/fasttrack_quality_check.py`
 **모델**: claude-haiku-4-5-20251001  
 **데이터**: audit_candidate_rows (2026-05-20~06-01, US)
 

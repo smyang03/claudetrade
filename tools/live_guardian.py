@@ -211,12 +211,44 @@ def _order_unknown_remediation_commands(data: dict[str, Any]) -> list[str]:
 
 
 def _pathb_stale_active_remediation_commands(data: dict[str, Any]) -> list[str]:
-    rows = data.get("rows") if isinstance(data.get("rows"), list) else []
-    markets = sorted({str(row.get("market") or "").upper() for row in rows if isinstance(row, dict) and str(row.get("market") or "").upper() in {"KR", "US"}})
-    commands = [f"{sys.executable} tools/pathb_legacy_remediation.py --mode live --write-report"]
-    for market in markets:
-        commands.append(f"{sys.executable} tools/pathb_legacy_remediation.py --mode live --market {market} --write-report")
-    return commands
+    return [f"{sys.executable} tools/pathb_legacy_remediation.py --mode live --write-report"]
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(float(value))
+    except Exception:
+        return None
+
+
+def _pathb_confirmed_overnight_holding(row: dict[str, Any]) -> bool:
+    status = str(row.get("status") or "").upper()
+    if status != "FILLED":
+        return False
+    if bool(row.get("broker_truth_unavailable")) or bool(row.get("broker_truth_stale")):
+        return False
+    if str(row.get("broker_truth_error") or "").strip():
+        return False
+    if bool(row.get("broker_any_open_order_evidence", row.get("broker_open_order_evidence"))):
+        return False
+    if bool(row.get("broker_sell_fill_evidence")):
+        return False
+    if _int_or_none(row.get("broker_open_order_count")) not in (None, 0):
+        return False
+    local_qty = _int_or_none(row.get("local_position_qty"))
+    broker_qty = _int_or_none(row.get("broker_position_qty"))
+    broker_position_count = _int_or_none(row.get("broker_position_count"))
+    has_local_exposure = bool(row.get("local_exposure")) or (local_qty is not None and local_qty > 0)
+    has_broker_position = (broker_qty is not None and broker_qty > 0) or (
+        broker_position_count is not None and broker_position_count > 0
+    )
+    if not has_local_exposure or not has_broker_position:
+        return False
+    if local_qty is not None and broker_qty is not None and local_qty != broker_qty:
+        return False
+    return True
 
 
 def classify_preflight_check(
@@ -282,13 +314,40 @@ def classify_preflight_check(
             if isinstance(data.get("previous_session_with_local_exposure"), list)
             else []
         )
-        classification = "hard_fail" if previous_with_exposure else "soft_fail"
+        confirmed_overnight = [
+            row
+            for row in previous_with_exposure
+            if isinstance(row, dict) and _pathb_confirmed_overnight_holding(row)
+        ]
+        unresolved_with_exposure = [
+            row
+            for row in previous_with_exposure
+            if not (isinstance(row, dict) and _pathb_confirmed_overnight_holding(row))
+        ]
+        if unresolved_with_exposure:
+            classification = "hard_fail"
+        elif confirmed_overnight:
+            classification = "accepted_exception"
+        else:
+            classification = "soft_fail"
         enriched = dict(data)
-        enriched["remediation_commands"] = _pathb_stale_active_remediation_commands(enriched)
-        enriched.setdefault(
-            "operator_action",
-            "read-only: verify broker positions/open orders/fills before audited PathB remediation; never close rows from local DB alone",
-        )
+        enriched["previous_session_confirmed_overnight_holding"] = confirmed_overnight
+        enriched["previous_session_confirmed_overnight_holding_count"] = len(confirmed_overnight)
+        enriched["previous_session_with_local_exposure_unresolved"] = unresolved_with_exposure
+        enriched["previous_session_with_local_exposure_unresolved_count"] = len(unresolved_with_exposure)
+        if confirmed_overnight and not unresolved_with_exposure:
+            enriched["accepted_exception"] = True
+            enriched["remediation_required"] = False
+            enriched["remediation_commands"] = []
+            enriched["operator_action"] = (
+                "confirmed broker-held overnight PathB position; allow start and let runtime manage hold/sell gates"
+            )
+        else:
+            enriched["remediation_commands"] = _pathb_stale_active_remediation_commands(enriched)
+            enriched.setdefault(
+                "operator_action",
+                "read-only: verify broker positions/open orders/fills before audited PathB remediation; never close rows from local DB alone",
+            )
         enriched["auto_apply_allowed"] = False
         return GuardianFinding(name, status, classification, detail, enriched)
 

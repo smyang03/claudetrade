@@ -240,8 +240,104 @@ class LiveGuardianTests(unittest.TestCase):
         self.assertEqual(finding.classification, "hard_fail")
         self.assertIn("remediation_commands", finding.data)
         self.assertIn("pathb_legacy_remediation.py", finding.data["remediation_commands"][0])
+        self.assertNotIn("--market", finding.data["remediation_commands"][0])
         self.assertFalse(finding.data["auto_apply_allowed"])
         self.assertIn("broker", finding.data["operator_action"])
+
+    def test_confirmed_overnight_pathb_holding_is_accepted_exception(self) -> None:
+        row = {
+            "market": "US",
+            "ticker": "NOK",
+            "status": "FILLED",
+            "local_exposure": True,
+            "local_position_qty": 17,
+            "broker_truth_unavailable": False,
+            "broker_truth_stale": False,
+            "broker_truth_error": "",
+            "broker_position_qty": 17,
+            "broker_position_count": 1,
+            "broker_open_order_count": 0,
+            "broker_open_order_evidence": False,
+            "broker_any_open_order_evidence": False,
+            "broker_sell_fill_evidence": False,
+        }
+        finding = classify_preflight_check(
+            {
+                "name": "db.pathb_stale_active_runs",
+                "status": "WARN",
+                "detail": "previous-session active Path B rows=1",
+                "data": {
+                    "rows": [row],
+                    "previous_session_with_local_exposure": [row],
+                    "previous_session_no_local_exposure": [],
+                },
+            }
+        )
+
+        self.assertEqual(finding.classification, "accepted_exception")
+        self.assertTrue(finding.data["accepted_exception"])
+        self.assertFalse(finding.data["remediation_required"])
+        self.assertEqual(finding.data["remediation_commands"], [])
+        self.assertEqual(finding.data["previous_session_confirmed_overnight_holding_count"], 1)
+        self.assertEqual(finding.data["previous_session_with_local_exposure_unresolved_count"], 0)
+        self.assertFalse(finding.data["auto_apply_allowed"])
+
+    def test_confirmed_overnight_pathb_holding_qty_mismatch_remains_hard(self) -> None:
+        row = {
+            "market": "US",
+            "ticker": "NOK",
+            "status": "FILLED",
+            "local_exposure": True,
+            "local_position_qty": 17,
+            "broker_truth_unavailable": False,
+            "broker_truth_stale": False,
+            "broker_truth_error": "",
+            "broker_position_qty": 16,
+            "broker_position_count": 1,
+            "broker_open_order_count": 0,
+            "broker_any_open_order_evidence": False,
+            "broker_sell_fill_evidence": False,
+        }
+        finding = classify_preflight_check(
+            {
+                "name": "db.pathb_stale_active_runs",
+                "status": "WARN",
+                "detail": "previous-session active Path B rows=1",
+                "data": {"previous_session_with_local_exposure": [row]},
+            }
+        )
+
+        self.assertEqual(finding.classification, "hard_fail")
+        self.assertEqual(finding.data["previous_session_confirmed_overnight_holding_count"], 0)
+        self.assertEqual(finding.data["previous_session_with_local_exposure_unresolved_count"], 1)
+
+    def test_confirmed_overnight_pathb_holding_stale_broker_truth_remains_hard(self) -> None:
+        row = {
+            "market": "US",
+            "ticker": "NOK",
+            "status": "FILLED",
+            "local_exposure": True,
+            "local_position_qty": 17,
+            "broker_truth_unavailable": False,
+            "broker_truth_stale": True,
+            "broker_position_qty": 17,
+            "broker_position_count": 1,
+            "broker_open_order_count": 0,
+            "broker_any_open_order_evidence": False,
+            "broker_sell_fill_evidence": False,
+        }
+        finding = classify_preflight_check(
+            {
+                "name": "db.pathb_stale_active_runs",
+                "status": "WARN",
+                "detail": "previous-session active Path B rows=1",
+                "data": {"previous_session_with_local_exposure": [row]},
+            }
+        )
+
+        self.assertEqual(finding.classification, "hard_fail")
+        self.assertEqual(finding.data["previous_session_confirmed_overnight_holding_count"], 0)
+        self.assertEqual(finding.data["previous_session_with_local_exposure_unresolved_count"], 1)
 
     def test_telegram_fail_is_soft(self) -> None:
         finding = classify_preflight_check(
