@@ -117,12 +117,14 @@ class AutoSellClaudeGateTests(unittest.TestCase):
         precheck.assert_not_called()
         self.assertEqual(bot.risk.positions[0]["auto_sell_review_action"], "HOLD")
 
-    def test_plan_a_hard_stop_breach_overrides_hold_advisor(self) -> None:
+    def test_plan_a_hard_stop_breach_overrides_hold_advisor_when_review_all_false(self) -> None:
+        # review_all=False: hard_guard bypasses Claude → immediate SELL
         bot = _plan_a_bot()
         bot.risk.positions[0]["sl"] = 96.0
         cand = {**bot.risk.positions[0], "exit_price": 95.0, "reason": "stop_loss"}
 
-        with patch.dict("os.environ", {"CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "true"}), patch(
+        # force_sell threshold 높게 설정해서 force_sell 경로가 아닌 hard_guard 경로만 테스트
+        with patch.dict("os.environ", {"CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "false", "AUTO_SELL_REVIEW_FORCE_SELL_LOSS_PCT": "10"}), patch(
             "minority_report.hold_advisor.ask", return_value={"action": "HOLD", "reason": "not yet"}
         ) as advisor:
             review = bot._run_auto_sell_review_gate(cand, "US", "stop_loss", current_native=95.0)
@@ -131,6 +133,21 @@ class AutoSellClaudeGateTests(unittest.TestCase):
         advisor.assert_not_called()
         self.assertEqual(cand["auto_sell_review_action"], "SELL")
         self.assertIn("hard_stop_override_hold", cand["auto_sell_review_detail"])
+
+    def test_plan_a_hard_stop_breach_goes_to_claude_when_review_all_true(self) -> None:
+        # review_all=True: hard_guard breach가 있어도 Claude 게이트를 거침 — HOLD면 매도 차단
+        bot = _plan_a_bot()
+        bot.risk.positions[0]["sl"] = 96.0
+        cand = {**bot.risk.positions[0], "exit_price": 95.0, "reason": "stop_loss"}
+
+        with patch.dict("os.environ", {"CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "true", "AUTO_SELL_REVIEW_FORCE_SELL_LOSS_PCT": "10"}), patch(
+            "minority_report.hold_advisor.ask", return_value={"action": "HOLD", "reason": "not yet", "protective_stop": 94.0, "valid_for_min": 10}
+        ) as advisor:
+            review = bot._run_auto_sell_review_gate(cand, "US", "stop_loss", current_native=95.0)
+
+        advisor.assert_called_once()
+        self.assertFalse(review["allowed"])
+        self.assertIn("_hard_guard_breach_detail", cand)
 
     def test_mfe_profit_floor_bypasses_hold_cooldown_for_momentum(self) -> None:
         bot = _plan_a_bot()

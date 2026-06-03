@@ -22318,7 +22318,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 detail_prefix="system_force_sell_pre_cache",
             )
         hard_guard = self._auto_sell_hard_guard_breach(cand, market, reason_key, current_native=current_native)
-        if hard_guard:
+        if hard_guard and not review_all:
             force_detail = (
                 f"{hard_guard.get('source')} "
                 f"{float(hard_guard.get('current', 0) or 0):g} <= {float(hard_guard.get('stop', 0) or 0):g}"
@@ -22331,6 +22331,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 now_iso=now_iso,
                 force_detail=force_detail,
                 detail_prefix="hard_stop_override_hold",
+            )
+        if hard_guard and review_all:
+            cand["_hard_guard_breach_detail"] = (
+                f"{hard_guard.get('source')} "
+                f"{float(hard_guard.get('current', 0) or 0):g} <= {float(hard_guard.get('stop', 0) or 0):g}"
             )
         cached = self._hold_advisor_soft_cache_get(cand, market, reason_key, current_native)
         if cached:

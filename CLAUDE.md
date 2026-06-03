@@ -34,6 +34,7 @@ This repository is a Python-based KR/US automated trading system. `trading_bot.p
 - Do not remove or loosen the PathB `AUTO_SELL_REVIEW` HOLD cooldown guard. It prevents repeated Claude calls when `CLAUDE_REVIEW_ALL_AUTOMATED_SELLS=true` causes PathB `loss_cap`, `hard_stop`, or `profit_ladder` exits to pass through hold advisor review.
 - The protected flow is `runtime/pathb_runtime.py` `_pathb_auto_sell_review_cooldown_payload()` and `_run_pathb_sell_review_gate()`, with coverage in `tests/test_auto_sell_claude_gate.py::test_pathb_loss_cap_hold_respects_reask_cooldown`.
 - If this guard or related knobs (`CLAUDE_REVIEW_ALL_AUTOMATED_SELLS`, `AUTO_SELL_REVIEW_HOLD_COOLDOWN_MINUTES`, `PATHB_AUTO_SELL_REVIEW_HOLD_REASK_DROP_PCT`) must change, state the reason, expected Claude call/token impact, replacement duplicate-call protection, and tests run in the work note, commit message, or PR body.
+- `CLAUDE_REVIEW_ALL_AUTOMATED_SELLS=true`는 Path A 자동 매도(loss_cap·stop_loss·trail_stop 등)에도 Claude hold advisor 리뷰를 요구한다. 이 값을 false로 변경하면 Path A 포지션이 Claude 판단 없이 즉시 청산된다. 코드 리뷰·config 정리·자동 수정 등 어떤 경로로도 임의로 끄지 않는다.
 
 ### Revenue Structure — Do Not Break
 
@@ -494,6 +495,7 @@ until more data is available or a human explicitly approves the change.
 | `US_VOLATILITY_BREAKOUT_LIVE_ENABLED` | 미설정(=false) | US VB 전략 live 활성. VB 성과 미확인 상태이므로 현행 유지 |
 | `KR_PLANA_HOLD_POLICY_MODE` | `enforce` | KR Plan A hold advisor 정책 강제 적용 여부 |
 | `US_PLANA_HOLD_POLICY_MODE` | `enforce` | US Plan A hold advisor 정책 강제 적용 여부 |
+| `CLAUDE_REVIEW_ALL_AUTOMATED_SELLS` | `true` | **Path A 자동 매도 전 Claude hold advisor 리뷰 게이트 활성 여부. false로 바꾸면 loss_cap·stop_loss·trail_stop 등 Path A 자동 매도가 Claude 판단 없이 즉시 실행된다. 반드시 true 유지.** |
 
 이 설정들은 `.env.live`와 `config/v2_start_config.json` 두 곳에 존재한다. 한 곳만 바꾸면 반영이 안 될 수 있으므로 두 파일을 동시에 확인한다.
 
