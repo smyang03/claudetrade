@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -38,6 +38,7 @@ KST = ZoneInfo("Asia/Seoul") if ZoneInfo is not None else None
 
 from bot.session_date import resolve_session_date
 from runtime.market_resolver import infer_ticker_market
+from runtime.broker_truth_snapshot import age_seconds as _broker_truth_age_seconds
 from runtime_paths import get_runtime_path
 from tools.order_unknown_evidence import (
     attach_exposure_evidence as _shared_attach_order_unknown_exposure_evidence,
@@ -603,6 +604,61 @@ def _db_broker_truth_ttl_sec() -> int:
         return 300
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _utc_iso(value: datetime | None = None) -> str:
+    return (value or _utc_now()).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _broker_truth_stale_reason(
+    *,
+    missing: bool,
+    stale: bool,
+    error: str,
+    last_success_at: str,
+    age_sec: float | None,
+    ttl_sec: int,
+) -> str:
+    if missing:
+        return "missing"
+    if error:
+        return "error"
+    if not last_success_at:
+        return "last_success_missing"
+    if age_sec is None:
+        return "last_success_unparseable"
+    if stale or age_sec > ttl_sec:
+        return "age_gt_ttl"
+    return ""
+
+
+def _broker_truth_freshness_fields(item: dict[str, Any], *, evaluated_at: datetime) -> dict[str, Any]:
+    ttl_sec = _safe_int(item.get("ttl_sec"), 60)
+    last_success_at = str(item.get("last_success_at", "") or "")
+    age = _broker_truth_age_seconds(last_success_at, now=evaluated_at)
+    age_value = round(age, 3) if age is not None else None
+    ttl_margin = round(float(ttl_sec) - age, 3) if age is not None else None
+    missing = bool(item.get("missing", True))
+    stale = bool(item.get("stale", True))
+    error = str(item.get("error", "") or "")
+    return {
+        "evaluated_at": _utc_iso(evaluated_at),
+        "age_sec": age_value,
+        "ttl_sec": ttl_sec,
+        "ttl_margin_sec": ttl_margin,
+        "stale_reason": _broker_truth_stale_reason(
+            missing=missing,
+            stale=stale,
+            error=error,
+            last_success_at=last_success_at,
+            age_sec=age,
+            ttl_sec=ttl_sec,
+        ),
+    }
+
+
 def _load_broker_truth_snapshot_for_db(mode: str) -> dict[str, Any]:
     from runtime.broker_truth_snapshot import BrokerTruthSnapshot
 
@@ -676,9 +732,11 @@ def _broker_truth_snapshot_file_checks(mode: str, snapshot_path: Path) -> list[C
                 {"path": str(snapshot_path)},
             )
         )
+        evaluated_at = _utc_now()
         for market in ("KR", "US"):
             raw_item = raw_markets.get(market) if isinstance(raw_markets.get(market), dict) else {}
             item = markets.get(market) if isinstance(markets.get(market), dict) else {}
+            freshness = _broker_truth_freshness_fields(item, evaluated_at=evaluated_at)
             status = "PASS"
             detail = f"{market} snapshot available"
             if not item or bool(item.get("missing", True)):
@@ -698,7 +756,11 @@ def _broker_truth_snapshot_file_checks(mode: str, snapshot_path: Path) -> list[C
                     {
                         "last_success_at": item.get("last_success_at", ""),
                         "last_attempt_at": item.get("last_attempt_at", ""),
-                        "ttl_sec": item.get("ttl_sec", ""),
+                        "ttl_sec": freshness.get("ttl_sec"),
+                        "age_sec": freshness.get("age_sec"),
+                        "ttl_margin_sec": freshness.get("ttl_margin_sec"),
+                        "evaluated_at": freshness.get("evaluated_at"),
+                        "stale_reason": freshness.get("stale_reason"),
                         "error": item.get("error", ""),
                         "stale": bool(item.get("stale", False)),
                         "stored_stale": raw_item.get("stale", ""),
@@ -1315,6 +1377,99 @@ def _candidate_actions_live_config_check(effective: dict[str, str], mode: str) -
     )
 
 
+CONFIG_SOURCE_MEANING_KEYS: dict[str, dict[str, str]] = {
+    "MAX_DAILY_LOSS_PCT": {
+        "used_by": "legacy/global daily loss guard if referenced by runtime path",
+        "meaning": "legacy daily loss threshold; compare with DAILY_LOSS_LIMIT_PCT before live operations",
+    },
+    "DAILY_LOSS_LIMIT_PCT": {
+        "used_by": "Path A/Path B realized daily loss gate",
+        "meaning": "canonical daily loss halt/block threshold",
+    },
+    "MAX_POSITIONS": {
+        "used_by": "legacy/global position cap if referenced by runtime path",
+        "meaning": "legacy global position limit; market/path caps may be more specific",
+    },
+    "KR_MAX_POSITIONS": {
+        "used_by": "KR market position cap",
+        "meaning": "KR market-scoped maximum positions",
+    },
+    "US_MAX_POSITIONS": {
+        "used_by": "US market position cap",
+        "meaning": "US market-scoped maximum positions",
+    },
+    "PATHB_MAX_POSITIONS": {
+        "used_by": "PathB entry guard",
+        "meaning": "PathB-specific maximum active positions",
+    },
+}
+
+
+def _config_source_meaning_check(config: dict[str, Any]) -> CheckResult:
+    base_env = dict(config.get("base_env") or {})
+    overrides = dict(config.get("overrides") or {})
+    start_config = dict(config.get("start_config") or {})
+    effective = dict(config.get("effective") or {})
+    env_path = str(config.get("env_path") or "")
+    start_path = str(config.get("start_config_path") or "")
+    rows: dict[str, dict[str, Any]] = {}
+    for key, meta in CONFIG_SOURCE_MEANING_KEYS.items():
+        if key in overrides:
+            source = "v2_start_config.env_overrides"
+            source_path = start_path
+        elif key in base_env:
+            source = "env_file"
+            source_path = env_path
+        elif key in start_config:
+            source = "v2_start_config.top_level"
+            source_path = start_path
+        else:
+            source = "missing"
+            source_path = ""
+        rows[key] = {
+            "effective_value": effective.get(key, ""),
+            "source": source,
+            "source_path": source_path,
+            "used_by": meta["used_by"],
+            "meaning": meta["meaning"],
+        }
+    return CheckResult(
+        "config.source_meaning",
+        "PASS",
+        "critical config sources and gate meanings captured",
+        {"keys": rows, "config_change_allowed": False},
+    )
+
+
+def _kr_live_expansion_guard_check(effective: dict[str, str]) -> CheckResult:
+    strategy_flags = {
+        "KR_PLAN_A_MOMENTUM_SIGNAL_ENABLED": _truthy(effective.get("KR_PLAN_A_MOMENTUM_SIGNAL_ENABLED")),
+        "KR_PLAN_A_GAP_PULLBACK_SIGNAL_ENABLED": _truthy(effective.get("KR_PLAN_A_GAP_PULLBACK_SIGNAL_ENABLED")),
+        "KR_PLAN_A_ORP_SIGNAL_ENABLED": _truthy(effective.get("KR_PLAN_A_ORP_SIGNAL_ENABLED")),
+    }
+    enabled = [key for key, value in strategy_flags.items() if value]
+    status = "WARN" if enabled else "PASS"
+    detail = (
+        f"KR Plan A live expansion flags enabled: {', '.join(enabled)}"
+        if enabled
+        else "KR Plan A live expansion flags remain off; shadow/probe evidence required before expansion"
+    )
+    return CheckResult(
+        "kr.live_expansion_guard",
+        status,
+        detail,
+        {
+            "strategy_live_flags": strategy_flags,
+            "enabled_strategy_flags": enabled,
+            "pathb_kr_live_enabled": _truthy(effective.get("PATHB_KR_LIVE_ENABLED")),
+            "kr_claude_price_new_entry_block": _truthy(effective.get("KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK")),
+            "minimum_shadow_or_probe": {"fills": 30, "calendar_weeks": 4},
+            "live_expansion_allowed": False,
+            "config_change_allowed": False,
+        },
+    )
+
+
 def _repo_text(*parts: str) -> str:
     path = ROOT.joinpath(*parts)
     try:
@@ -1841,6 +1996,8 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
 
     important = {key: effective.get(key, "") for key in sorted(LIVE_CONFIG_KEYS) if key in effective}
     checks.append(CheckResult("config.effective_values", "PASS", "effective live values captured", {"values": important}))
+    checks.append(_config_source_meaning_check(config))
+    checks.append(_kr_live_expansion_guard_check(effective))
     checks.append(_kr_cap40_confirmation_enforce_check(effective))
     checks.append(_runtime_config_drift_check(config, mode))
     checks.append(_candidate_actions_live_config_check(effective, mode))

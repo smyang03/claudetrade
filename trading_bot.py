@@ -14811,6 +14811,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             for route in list((meta or {}).get("_candidate_action_routes") or [])
             if isinstance(route, dict) and str((route or {}).get("ticker") or "").strip()
         }
+        discovery_role_by_ticker = self._candidate_audit_ticker_map((meta or {}).get("_discovery_role_by_ticker"), market_key)
+        discovery_action_ceiling_by_ticker = self._candidate_audit_ticker_map(
+            (meta or {}).get("_discovery_action_ceiling_by_ticker"),
+            market_key,
+        )
+        discovery_signal_by_ticker = self._candidate_audit_ticker_map((meta or {}).get("_discovery_signal_by_ticker"), market_key)
         discovery_demoted_from = self._candidate_audit_ticker_map((meta or {}).get("_discovery_demoted_from_by_ticker"), market_key)
         discovery_ceiling_applied = self._candidate_audit_ticker_map((meta or {}).get("_discovery_action_ceiling_applied_by_ticker"), market_key)
         reason_map = self._candidate_audit_ticker_map((meta or {}).get("reasons"), market_key)
@@ -15140,6 +15146,33 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "discovery_overlay_rank": row.get("discovery_overlay_rank"),
             }
 
+        def _candidate_role_audit_fields(ticker_key: str, row: dict) -> dict:
+            role = str(row.get("candidate_pool_role") or discovery_role_by_ticker.get(ticker_key) or "").strip().upper()
+            if role == "EXPANSION":
+                role = "DISCOVERY"
+            fields: dict[str, Any] = {}
+            if role:
+                fields["candidate_pool_role"] = role
+            if role == "DISCOVERY":
+                signal = row.get("discovery_signal_family")
+                if signal in (None, ""):
+                    signal = discovery_signal_by_ticker.get(ticker_key)
+                    if isinstance(signal, list):
+                        signal = ",".join(str(item) for item in signal if str(item).strip())
+                ceiling = row.get("discovery_action_ceiling")
+                if ceiling in (None, ""):
+                    ceiling = discovery_action_ceiling_by_ticker.get(ticker_key)
+                for key, value in {
+                    "discovery_signal_family": signal,
+                    "discovery_reason": row.get("discovery_reason"),
+                    "discovery_action_ceiling": ceiling,
+                    "discovery_baseline_trainer_rank": row.get("discovery_baseline_trainer_rank"),
+                    "discovery_overlay_rank": row.get("discovery_overlay_rank"),
+                }.items():
+                    if value not in (None, ""):
+                        fields[key] = value
+            return fields
+
         def _raw_score_components(row: dict) -> dict:
             components = row.get("raw_score_components") or row.get("score_current_components")
             if isinstance(components, dict):
@@ -15434,6 +15467,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "route_cancel_pathb": bool(route.get("cancel_pathb")),
                         "route_suspend_pathb": bool(route.get("suspend_pathb")),
                         "route_warnings": list(route.get("warnings") or []),
+                        **_trainer_audit_fields(prompt_row, included=actual_prompt_included),
+                        **_candidate_role_audit_fields(key, prompt_row),
                         "evidence_version": str((meta or {}).get("evidence_version") or ""),
                         "schema_version": str(action.get("schema_version") or ""),
                         "freshness_verdict": str(action.get("freshness_verdict") or ""),
@@ -15463,7 +15498,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "tuning_feedback_applied": bool((meta or {}).get("tuning_feedback_applied", False)),
                         **_actual_prompt_audit_fields(key, prompt_row, included=actual_prompt_included),
                         **_v2_decision_audit_fields(key),
-                        **_trainer_audit_fields(prompt_row, included=actual_prompt_included),
                         **self._strength_capture_shadow_fields(
                             prompt_row,
                             market=market_key,
@@ -15532,6 +15566,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         **_actual_prompt_audit_fields(key, row, included=True),
                         **_v2_decision_audit_fields(key),
                         **_trainer_audit_fields(row, included=True),
+                        **_candidate_role_audit_fields(key, row),
                         **self._strength_capture_shadow_fields(
                             row,
                             market=market_key,
@@ -15599,6 +15634,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         **_actual_prompt_audit_fields(key, row, included=False),
                         **_v2_decision_audit_fields(key),
                         **_trainer_audit_fields(row, included=False, excluded_reason=excluded_reason),
+                        **_candidate_role_audit_fields(key, row),
                         **self._strength_capture_shadow_fields(
                             row,
                             market=market_key,
@@ -25431,6 +25467,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     f"watch={self.today_tickers.get(market, [])} "
                     f"trade_ready={self.trade_ready_tickers.get(market, [])}"
                 )
+                # startup_mid_session rescreen skip 시 PathB 플랜 재등록
+                # 재시작 전 intraday selection에서 등록됐어야 할 PathB 플랜이 유실되는 것을 방지
+                if trigger == "startup_mid_session" and getattr(self, "pathb", None) is not None:
+                    _saved_meta = dict(self.today_judgment.get("selection_meta") or {})
+                    if _saved_meta.get("_pathb_price_targets"):
+                        try:
+                            _pathb_rereg = self.pathb.register_from_selection_meta(market, _saved_meta)
+                            if _pathb_rereg:
+                                log.info(f"[PathB 재등록] {market} startup_mid_session {len(_pathb_rereg)}개 플랜 복구")
+                            else:
+                                log.info(f"[PathB 재등록] {market} startup_mid_session 신규 등록 없음 (이미 등록됐거나 가격존 없음)")
+                        except Exception as _rereg_e:
+                            log.warning(f"[PathB 재등록 실패] {market}: {_rereg_e}")
             else:
                 # 판단은 재사용하되 종목은 항상 새로 스크리닝한다.
                 # reused=True 때 전날 저장된 종목을 그대로 고정하는 문제를 막는다.

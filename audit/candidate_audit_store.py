@@ -307,6 +307,8 @@ def _candidate_extra_value(column: str, row: dict[str, Any]) -> Any:
         value = payload.get(column)
     if value is _MISSING or value is None:
         return None
+    if isinstance(value, str) and not value.strip():
+        return None
     if column.endswith("_json") or column in _JSON_TEXT_COLUMNS:
         if isinstance(value, str):
             return value

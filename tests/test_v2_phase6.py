@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 import unittest
@@ -186,6 +187,58 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(summary["lifecycle"]["event_counts"]["ORDER_UNKNOWN"], 1)
         self.assertEqual(summary["lifecycle"]["order_unknown_event_history_count"], 1)
         self.assertTrue(summary["path_b_live"]["order_unknown"][0]["manual_reconciliation_required"])
+
+    def test_broker_truth_summary_exposes_freshness_fields(self):
+        evaluated_at = datetime(2026, 6, 2, 17, 0, tzinfo=timezone.utc)
+        evaluated_iso = evaluated_at.isoformat(timespec="seconds").replace("+00:00", "Z")
+        last_success = (evaluated_at - timedelta(seconds=90)).isoformat(timespec="seconds").replace("+00:00", "Z")
+        snapshot = {
+            "runtime_mode": "live",
+            "generated_at": evaluated_iso,
+            "schema_version": 1,
+            "markets": {
+                "KR": {
+                    "missing": False,
+                    "stale": False,
+                    "last_success_at": evaluated_iso,
+                    "last_attempt_at": evaluated_iso,
+                    "ttl_sec": 60,
+                    "positions": [],
+                    "open_orders": [],
+                    "today_fills": [],
+                    "error": "",
+                },
+                "US": {
+                    "missing": False,
+                    "stale": True,
+                    "last_success_at": last_success,
+                    "last_attempt_at": last_success,
+                    "ttl_sec": 60,
+                    "positions": [{"ticker": "ASTS"}],
+                    "open_orders": [],
+                    "today_fills": [],
+                    "error": "",
+                },
+            },
+        }
+
+        with patch.object(v2_ops_summary, "_utc_now", return_value=evaluated_at), patch.object(
+            v2_ops_summary,
+            "load_broker_truth_snapshot",
+            return_value=snapshot,
+        ):
+            summary = v2_ops_summary._broker_truth_summary("live")
+            verdict = v2_ops_summary._broker_truth_verdict(summary)
+
+        us = summary["markets"]["US"]
+        self.assertEqual(us["age_sec"], 90.0)
+        self.assertEqual(us["ttl_margin_sec"], -30.0)
+        self.assertEqual(us["stale_reason"], "age_gt_ttl")
+        self.assertEqual(us["evaluated_at"], "2026-06-02T17:00:00Z")
+        self.assertEqual(verdict["US"]["age_sec"], 90.0)
+        self.assertEqual(verdict["US"]["ttl_margin_sec"], -30.0)
+        self.assertEqual(verdict["US"]["stale_reason"], "age_gt_ttl")
+        self.assertIn("age_gt_ttl", verdict["US"]["operator_message"])
 
     def test_ops_summary_counts_carried_pathb_close_in_today_comparison(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -903,6 +956,38 @@ class V2Phase6Tests(unittest.TestCase):
 
         self.assertEqual(readiness["state"], "BLOCKED_BROKER_TRUTH")
         self.assertTrue(readiness["operator_action_required"])
+        self.assertTrue(readiness["capacity_known"])
+        self.assertTrue(readiness["capacity_ok"])
+        self.assertTrue(readiness["capacity_ok_but_broker_truth_blocked"])
+        self.assertEqual(readiness["broker_truth_freshness"]["fresh"], False)
+
+    def test_pathb_readiness_does_not_report_capacity_ok_when_capacity_missing(self):
+        selection = {"counts": {"watchlist": 15, "applied_trade_ready": 2, "price_targets": 2}}
+        config = {"enabled": True, "intraday_only": False, "market_live_enabled": {"US": True}}
+        control = {"enabled": True}
+        truth = {"US": {"trusted": False, "fresh": False, "positions": 0, "open_orders": 0}}
+
+        with patch.object(
+            v2_ops_summary,
+            "_path_b_market_session_state",
+            return_value={"state": "active", "reason": "regular"},
+        ):
+            readiness = v2_ops_summary._path_b_execution_readiness(
+                market="US",
+                session_date="2026-05-21",
+                selection=selection,
+                config=config,
+                control=control,
+                broker_truth={},
+                live_truth_verdict=truth,
+                execution_capacity={},
+                pathb_runs=[],
+            )
+
+        self.assertEqual(readiness["state"], "BLOCKED_BROKER_TRUTH")
+        self.assertFalse(readiness["capacity_known"])
+        self.assertFalse(readiness["capacity_ok"])
+        self.assertFalse(readiness["capacity_ok_but_broker_truth_blocked"])
 
     def test_pathb_readiness_missing_intraday_uses_effective_config(self):
         selection = {"counts": {"watchlist": 15, "applied_trade_ready": 0, "price_targets": 0}}

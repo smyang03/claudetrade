@@ -139,6 +139,9 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         config = json.loads(config_path.read_text(encoding="utf-8"))
         env_overrides = config.get("env_overrides") or {}
 
+        self.assertEqual(env_overrides.get("CANDIDATE_PROMPT_POOL_HARD_CAP_US"), "35")
+        self.assertEqual(env_overrides.get("DISCOVERY_PROMPT_ENABLED"), "true")
+        self.assertEqual(env_overrides.get("DISCOVERY_MAX_SLOTS_US"), "5")
         self.assertEqual(env_overrides.get("DISCOVERY_ALLOW_BUY_READY"), "false")
         self.assertEqual(env_overrides.get("DISCOVERY_ALLOW_PROBE_READY"), "false")
         self.assertEqual(env_overrides.get("DISCOVERY_ALLOW_PULLBACK_WAIT"), "false")
@@ -3238,6 +3241,77 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(confirmation["kr_confirmation_reason"], "or_formed")
         payload = json.loads(row["payload_json"])
         self.assertEqual(payload["runtime_gate"]["data_quality"], "minute_complete")
+
+    def test_candidate_audit_live_write_preserves_action_and_discovery_metadata(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
+        meta = {
+            "selection_snapshot_ts": "2026-06-03T22:30:00+09:00",
+            "selection_trace_id": "US:trace:discovery-audit",
+            "visibility_contract_version": "actual_prompt_v1",
+            "watchlist": ["DISC"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {
+                    "ticker": "DISC",
+                    "action": "WATCH",
+                    "reason": "watch",
+                    "freshness_verdict": "FRESH",
+                }
+            ],
+            "_candidate_action_routes": [
+                {
+                    "ticker": "DISC",
+                    "requested_action": "WATCH",
+                    "final_action": "WATCH",
+                    "route": "PlanA.watch",
+                    "reason": "watch",
+                    "runtime_gate": {"reason": "watch"},
+                }
+            ],
+            "_discovery_role_by_ticker": {"DISC": "DISCOVERY"},
+            "_discovery_action_ceiling_by_ticker": {"DISC": "WATCH"},
+            "_discovery_signal_by_ticker": {"DISC": ["near_breakout", "momentum_now"]},
+            "_final_prompt_pool": [
+                {
+                    "ticker": "DISC",
+                    "market": "US",
+                    "prompt_rank": 1,
+                    "price": 25.0,
+                    "freshness_verdict": "",
+                    "candidate_pool_role": "",
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            with patch.dict(os.environ, {"CANDIDATE_AUDIT_DB_PATH": str(db_path)}, clear=False):
+                TradingBot._write_candidate_audit_live(
+                    bot,
+                    "US",
+                    selected=["DISC"],
+                    meta=meta,
+                    stages={},
+                )
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT freshness_verdict, candidate_pool_role, discovery_signal_family,
+                           discovery_action_ceiling
+                    FROM audit_candidate_rows
+                    WHERE ticker='DISC'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+        self.assertEqual(row["freshness_verdict"], "FRESH")
+        self.assertEqual(row["candidate_pool_role"], "DISCOVERY")
+        self.assertEqual(row["discovery_signal_family"], "near_breakout,momentum_now")
+        self.assertEqual(row["discovery_action_ceiling"], "WATCH")
 
     def test_candidate_audit_live_write_marks_missing_quality_when_gate_flag_is_false(self) -> None:
         bot = _make_bot()

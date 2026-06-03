@@ -1396,6 +1396,65 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(row["discovery_action_ceiling_applied"], 1)
             self.assertEqual(row["discovery_demoted_from"], "PULLBACK_WAIT")
 
+    def test_blank_extra_update_does_not_erase_discovery_role_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            base = {
+                "call_id": "call_discovery",
+                "runtime_mode": "live",
+                "market": "US",
+                "session_date": "2026-06-03",
+                "known_at": "2026-06-03T09:00:00",
+                "ticker": "DISC",
+            }
+            store.upsert_candidate(
+                {
+                    **base,
+                    "source_file": "trading_bot.prompt_pool",
+                    "candidate_pool_role": "DISCOVERY",
+                    "discovery_signal_family": "near_breakout,momentum_now",
+                    "discovery_reason": "core_cap_signal_candidate",
+                    "discovery_action_ceiling": "WATCH",
+                    "freshness_verdict": "FRESH",
+                    "trainer_tier": "WATCH",
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "known_at": "2026-06-03T09:01:00",
+                    "source_file": "trading_bot.selection_meta",
+                    "candidate_pool_role": "",
+                    "discovery_signal_family": "",
+                    "discovery_reason": "",
+                    "discovery_action_ceiling": "",
+                    "freshness_verdict": "",
+                    "trainer_tier": "",
+                }
+            )
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT candidate_pool_role, discovery_signal_family, discovery_reason,
+                           discovery_action_ceiling, freshness_verdict, trainer_tier
+                    FROM audit_candidate_rows
+                    WHERE ticker='DISC'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+            self.assertEqual(row["candidate_pool_role"], "DISCOVERY")
+            self.assertEqual(row["discovery_signal_family"], "near_breakout,momentum_now")
+            self.assertEqual(row["discovery_reason"], "core_cap_signal_candidate")
+            self.assertEqual(row["discovery_action_ceiling"], "WATCH")
+            self.assertEqual(row["freshness_verdict"], "FRESH")
+            self.assertEqual(row["trainer_tier"], "WATCH")
+
     def test_outcome_labeler_uses_existing_horizon_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "candidate_audit.db"

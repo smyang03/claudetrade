@@ -43,8 +43,8 @@ class CandidateDiscoveryOverlayTests(unittest.TestCase):
                 {
                     "ticker": "ADD2",
                     "reason": "prompt_cap",
-                    "primary_bucket": "volume_surge",
-                    "source_tags": ["US:volume_surge"],
+                    "primary_bucket": "momentum_now",
+                    "source_tags": ["US:momentum_now"],
                     "trainer_score_rank": 5,
                     "trainer_prompt_score": 80,
                 },
@@ -80,14 +80,14 @@ class CandidateDiscoveryOverlayTests(unittest.TestCase):
         self.assertEqual(out_meta["_discovery_added_tickers"], ["ADD1", "ADD2"])
         self.assertEqual(out_meta["_discovery_role_by_ticker"]["ADD1"], "DISCOVERY")
 
-    def test_kr_default_adds_at_most_four(self) -> None:
+    def test_kr_default_adds_at_most_five(self) -> None:
         meta = {
             "excluded_from_prompt": [
                 {
                     "ticker": f"00{i}",
                     "reason": "prompt_cap",
-                    "primary_bucket": "volume_surge",
-                    "source_tags": ["KR:volume_surge"],
+                    "primary_bucket": "near_breakout",
+                    "source_tags": ["KR:near_breakout"],
                     "trainer_score_rank": i,
                 }
                 for i in range(1, 8)
@@ -97,8 +97,78 @@ class CandidateDiscoveryOverlayTests(unittest.TestCase):
         with patch.dict("os.environ", {"DISCOVERY_PROMPT_ENABLED": "true"}, clear=False):
             rows, out_meta = apply_discovery_overlay([], meta, market="KR")
 
-        self.assertEqual(len(rows), 4)
-        self.assertEqual(out_meta["_discovery_added"], 4)
+        self.assertEqual(len(rows), 5)
+        self.assertEqual(out_meta["_discovery_added"], 5)
+
+    def test_kr_strict_rule_excludes_volume_surge_only_and_extreme_chase(self) -> None:
+        meta = {
+            "excluded_from_prompt": [
+                {
+                    "ticker": "VOL",
+                    "reason": "prompt_cap",
+                    "trainer_candidate_state": "PLAN_B",
+                    "primary_bucket": "volume_surge",
+                    "source_tags": ["KR:volume_surge"],
+                    "trainer_score_rank": 1,
+                    "change_pct": 3.0,
+                },
+                {
+                    "ticker": "CHASE",
+                    "reason": "prompt_cap",
+                    "trainer_candidate_state": "PLAN_A",
+                    "primary_bucket": "near_breakout",
+                    "source_tags": ["KR:near_breakout"],
+                    "trainer_score_rank": 2,
+                    "change_pct": 16.0,
+                },
+                {
+                    "ticker": "GOOD",
+                    "reason": "prompt_cap",
+                    "trainer_candidate_state": "PLAN_B",
+                    "primary_bucket": "near_breakout",
+                    "source_tags": ["KR:near_breakout"],
+                    "trainer_score_rank": 3,
+                    "change_pct": 4.0,
+                },
+            ]
+        }
+
+        with patch.dict("os.environ", {"DISCOVERY_PROMPT_ENABLED": "true"}, clear=False):
+            rows, out_meta = apply_discovery_overlay([], meta, market="KR")
+
+        self.assertEqual([row["ticker"] for row in rows], ["GOOD"])
+        self.assertEqual(out_meta["_discovery_reject_counts"]["kr_volume_surge_only"], 1)
+        self.assertEqual(out_meta["_discovery_reject_counts"]["kr_extreme_chase"], 1)
+
+    def test_kr_plan_b_momentum_requires_change_below_threshold(self) -> None:
+        meta = {
+            "excluded_from_prompt": [
+                {
+                    "ticker": "FAST",
+                    "reason": "prompt_cap",
+                    "trainer_candidate_state": "PLAN_B",
+                    "primary_bucket": "momentum_now",
+                    "source_tags": ["KR:momentum_now"],
+                    "trainer_score_rank": 1,
+                    "change_pct": 8.0,
+                },
+                {
+                    "ticker": "OK",
+                    "reason": "prompt_cap",
+                    "trainer_candidate_state": "PLAN_B",
+                    "primary_bucket": "momentum_now",
+                    "source_tags": ["KR:momentum_now"],
+                    "trainer_score_rank": 2,
+                    "change_pct": 6.0,
+                },
+            ]
+        }
+
+        with patch.dict("os.environ", {"DISCOVERY_PROMPT_ENABLED": "true"}, clear=False):
+            rows, out_meta = apply_discovery_overlay([], meta, market="KR")
+
+        self.assertEqual([row["ticker"] for row in rows], ["OK"])
+        self.assertEqual(out_meta["_discovery_reject_counts"]["kr_strict_rule"], 1)
 
     def test_signal_family_uses_primary_and_source_tags_not_secondary_only(self) -> None:
         row = {
@@ -140,6 +210,72 @@ class CandidateDiscoveryOverlayTests(unittest.TestCase):
             rows, _out_meta = apply_discovery_overlay([], meta, market="US")
 
         self.assertEqual([row["ticker"] for row in rows], ["NB"])
+
+    def test_us_defaults_to_five_slots_and_preserves_core_order_when_unconfigured(self) -> None:
+        core = [{"ticker": "CORE1", "prompt_rank": 1}, {"ticker": "CORE2", "prompt_rank": 2}]
+        meta = {
+            "excluded_from_prompt": [
+                {
+                    "ticker": f"ADD{i}",
+                    "reason": "prompt_cap",
+                    "primary_bucket": "near_breakout",
+                    "source_tags": ["US:near_breakout"],
+                    "trainer_score_rank": i,
+                    "trainer_prompt_score": 80 - i,
+                }
+                for i in range(1, 8)
+            ]
+        }
+
+        with patch.dict("os.environ", {"DISCOVERY_PROMPT_ENABLED": "true"}, clear=False):
+            rows, out_meta = apply_discovery_overlay(core, meta, market="US")
+
+        self.assertEqual([row["ticker"] for row in rows[:2]], ["CORE1", "CORE2"])
+        self.assertEqual([row["prompt_rank"] for row in rows], list(range(1, 8)))
+        self.assertEqual(len(rows), 7)
+        self.assertEqual(out_meta["_prompt_pool_core_count"], 2)
+        self.assertEqual(out_meta["_prompt_pool_discovery_count"], 5)
+        self.assertEqual(out_meta["_discovery_added_tickers"], ["ADD1", "ADD2", "ADD3", "ADD4", "ADD5"])
+
+    def test_us_strict_rule_excludes_low_liquidity_and_extreme_chase(self) -> None:
+        meta = {
+            "excluded_from_prompt": [
+                {
+                    "ticker": "LOW",
+                    "reason": "prompt_cap",
+                    "primary_bucket": "near_breakout",
+                    "source_tags": ["US:near_breakout"],
+                    "liquidity_bucket": "low",
+                    "trainer_score_rank": 1,
+                    "change_pct": 3.0,
+                },
+                {
+                    "ticker": "CHASE",
+                    "reason": "prompt_cap",
+                    "primary_bucket": "momentum_now",
+                    "source_tags": ["US:momentum_now"],
+                    "liquidity_bucket": "high",
+                    "trainer_score_rank": 2,
+                    "change_pct": 26.0,
+                },
+                {
+                    "ticker": "GOOD",
+                    "reason": "prompt_cap",
+                    "primary_bucket": "source_consensus",
+                    "source_tags": ["US:source_consensus"],
+                    "liquidity_bucket": "high",
+                    "trainer_score_rank": 3,
+                    "change_pct": 4.0,
+                },
+            ]
+        }
+
+        with patch.dict("os.environ", {"DISCOVERY_PROMPT_ENABLED": "true"}, clear=False):
+            rows, out_meta = apply_discovery_overlay([], meta, market="US")
+
+        self.assertEqual([row["ticker"] for row in rows], ["GOOD"])
+        self.assertEqual(out_meta["_discovery_reject_counts"]["low_liquidity"], 1)
+        self.assertEqual(out_meta["_discovery_reject_counts"]["us_extreme_chase"], 1)
 
 
 if __name__ == "__main__":

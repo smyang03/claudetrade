@@ -14,6 +14,22 @@ USEFUL_SIGNAL_FAMILIES = {
     "preopen_ignition",
     "source_consensus",
 }
+BAD_DATA_STATES = {
+    "bad",
+    "degraded",
+    "error",
+    "missing",
+    "missing_or_stale",
+    "none",
+    "null",
+    "partial_stale",
+    "provider_error",
+    "stale",
+    "unavailable",
+    "unknown_bad",
+}
+LOW_LIQUIDITY_BUCKETS = {"low", "thin", "very_low", "illiquid", "micro", "poor"}
+HIGH_LIQUIDITY_BUCKETS = {"high", "very_high", "leader", "liquidity_leader", "deep"}
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -86,6 +102,69 @@ def _list_values(value: Any) -> list[str]:
     return [str(value)]
 
 
+def _lower_token(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _state(row: dict[str, Any]) -> str:
+    return str(row.get("trainer_candidate_state") or "").strip().upper()
+
+
+def _score(row: dict[str, Any]) -> float:
+    for key in ("trainer_prompt_score", "candidate_quality_score", "score", "rank_score"):
+        value = row.get(key)
+        if value not in (None, ""):
+            return _as_float(value, 0.0)
+    return 0.0
+
+
+def _change_pct(row: dict[str, Any]) -> float:
+    for key in ("change_pct", "change_rate", "change", "pct_change"):
+        value = row.get(key)
+        if value not in (None, ""):
+            return _as_float(value, 0.0)
+    return 0.0
+
+
+def _liquidity_bucket(row: dict[str, Any]) -> str:
+    return _lower_token(row.get("liquidity_bucket") or row.get("liquidity_tier") or row.get("liquidity"))
+
+
+def _explicit_bad_data_or_evidence(row: dict[str, Any]) -> str:
+    for key in (
+        "data_quality",
+        "data_state",
+        "selection_evidence_data_state",
+        "evidence_data_state",
+        "freshness_verdict",
+        "evidence_class",
+    ):
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        token = _lower_token(value)
+        if token in BAD_DATA_STATES:
+            return key
+        if any(part in token for part in ("missing", "stale", "degraded", "error", "unavailable")):
+            return key
+    return ""
+
+
+def _explicit_bad_flow(row: dict[str, Any]) -> str:
+    if bool(row.get("flow_missing")):
+        return "flow_missing"
+    for key in ("flow_state", "flow_quality", "money_flow_state", "volume_flow_state"):
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        token = _lower_token(value)
+        if token in {"missing", "all_zero", "zero", "flat_zero", "unavailable"}:
+            return key
+        if "all_zero" in token or "missing" in token:
+            return key
+    return ""
+
+
 def _signal_token(value: Any, market: str) -> str:
     token = str(value or "").strip()
     if not token:
@@ -142,7 +221,8 @@ def _eligible(row: dict[str, Any], *, market: str) -> tuple[bool, list[str], str
     ticker = _ticker_key(row.get("ticker"), market)
     if not ticker:
         return False, [], "missing_ticker"
-    state = str(row.get("trainer_candidate_state") or "").strip().upper()
+    market_key = _market_key(market)
+    state = _state(row)
     if state == "QUARANTINE":
         return False, [], "trainer_quarantine"
     if _is_same_day_stopped(row):
@@ -159,6 +239,49 @@ def _eligible(row: dict[str, Any], *, market: str) -> tuple[bool, list[str], str
     if _env_bool("DISCOVERY_EXCLUDE_PULLBACK_ONLY", True) and primary in {"pullback_watch", "gap_pullback", "opening_range_pullback"}:
         if not set(signals) - {primary}:
             return False, signals, "pullback_only"
+    bad_data_reason = _explicit_bad_data_or_evidence(row)
+    if bad_data_reason:
+        return False, signals, f"bad_data:{bad_data_reason}"
+    if _liquidity_bucket(row) in LOW_LIQUIDITY_BUCKETS:
+        return False, signals, "low_liquidity"
+    if market_key == "KR":
+        bad_flow_reason = _explicit_bad_flow(row)
+        if bad_flow_reason:
+            return False, signals, f"bad_flow:{bad_flow_reason}"
+        change_pct = _change_pct(row)
+        if change_pct >= _as_float(os.getenv("DISCOVERY_KR_MAX_CHANGE_PCT"), 15.0):
+            return False, signals, "kr_extreme_chase"
+        signal_set = set(signals)
+        if state == "PLAN_A":
+            return True, signals, ""
+        if "near_breakout" in signal_set:
+            return True, signals, ""
+        if state == "PLAN_B":
+            if signal_set == {"volume_surge"}:
+                return False, signals, "kr_volume_surge_only"
+            if primary == "pullback_watch" and not (signal_set - {"pullback_watch"}):
+                return False, signals, "kr_pullback_only"
+            if ("liquidity_leader" in signal_set or "momentum_now" in signal_set) and change_pct < _as_float(
+                os.getenv("DISCOVERY_KR_PLAN_B_MAX_CHANGE_PCT"),
+                7.0,
+            ):
+                return True, signals, ""
+        return False, signals, "kr_strict_rule"
+    if market_key == "US":
+        change_pct = _change_pct(row)
+        max_change = _as_float(os.getenv("DISCOVERY_US_MAX_CHANGE_PCT"), 25.0)
+        if change_pct >= max_change:
+            return False, signals, "us_extreme_chase"
+        signal_set = set(signals)
+        if state == "PLAN_A":
+            return True, signals, ""
+        if state == "PLAN_B" and _score(row) >= _as_float(os.getenv("DISCOVERY_US_PLAN_B_MIN_SCORE"), 65.0):
+            return True, signals, ""
+        if signal_set & {"momentum_now", "near_breakout", "source_consensus", "liquidity_leader"}:
+            return True, signals, ""
+        if _liquidity_bucket(row) in HIGH_LIQUIDITY_BUCKETS:
+            return True, signals, ""
+        return False, signals, "us_strict_rule"
     return True, signals, ""
 
 
@@ -197,7 +320,7 @@ def apply_discovery_overlay(
     if not _env_bool("DISCOVERY_PROMPT_ENABLED", False):
         return core_pool, meta
 
-    max_slots = _env_int(f"DISCOVERY_MAX_SLOTS_{market_key}", 4 if market_key == "KR" else 3, low=0, high=20)
+    max_slots = _env_int(f"DISCOVERY_MAX_SLOTS_{market_key}", 5, low=0, high=20)
     meta.update(
         {
             "_discovery_enabled": True,

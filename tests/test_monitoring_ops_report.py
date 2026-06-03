@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from audit.candidate_audit_store import CandidateAuditStore
 from tools.monitoring_ops_report import _pead_manual_review_report, build_monitoring_ops_report
 
 
@@ -143,6 +144,7 @@ class MonitoringOpsReportTests(unittest.TestCase):
             self.assertEqual(payload["v2_learning_gate"]["learning_excluded"], 1)
             self.assertEqual(payload["v2_learning_gate"]["top_quality_reasons"]["ORDER_UNKNOWN_UNRESOLVED"], 2)
             self.assertEqual(payload["v2_learning_gate"]["top_quality_reasons"]["DIRTY_BROKER_TRUTH"], 1)
+            self.assertEqual(payload["v2_learning_gate"]["focus_exclusion_reasons"]["ORDER_UNKNOWN_UNRESOLVED"], 2)
             self.assertFalse(payload["v2_learning_gate"]["policy_change_allowed"])
             self.assertEqual(payload["pead_manual_review"]["promotion_gate_state"], "blocked_manual_review")
             self.assertEqual(len(payload["pead_manual_review"]["prompt_leak_candidates"]), 1)
@@ -179,6 +181,96 @@ class MonitoringOpsReportTests(unittest.TestCase):
                 )
 
             self.assertEqual(payload["gate_summary"]["actual_prompt_visibility"], consistency)
+
+    def test_report_surfaces_audit_reason_and_pathb_miss_read_only_views(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate_db = root / "candidate_audit.db"
+            store = CandidateAuditStore(candidate_db)
+            base = {
+                "call_id": "call_us",
+                "runtime_mode": "live",
+                "market": "US",
+                "session_date": "2026-06-03",
+                "known_at": "2026-06-03T22:30:00+09:00",
+            }
+            store.upsert_candidate(
+                {
+                    **base,
+                    "ticker": "DISC",
+                    "source_file": "trading_bot.selection_meta",
+                    "candidate_pool_role": "DISCOVERY",
+                    "discovery_signal_family": "near_breakout,momentum_now",
+                    "discovery_reason": "core_cap_signal_candidate",
+                    "discovery_action_ceiling": "WATCH",
+                    "route_runtime_gate_reason": "same_day_reentry_blocked",
+                    "payload": {"runtime_gate": {"reason": "same_day_reentry_blocked"}},
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "ticker": "MISS",
+                    "source_file": "trading_bot.selection_meta",
+                    "no_submit_reason_code": "NO_SIGNAL",
+                    "payload": {"runtime_gate": {"reason": "fallback_reason"}},
+                }
+            )
+            event_db = root / "v2_event_store.db"
+            conn = sqlite3.connect(event_db)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE pathb_miss_quality (
+                        market TEXT,
+                        runtime_mode TEXT,
+                        session_date TEXT,
+                        ticker TEXT,
+                        cancel_reason TEXT,
+                        zone_reentered_after_cancel INTEGER,
+                        mfe_30m_pct REAL,
+                        mae_30m_pct REAL,
+                        followup_status TEXT,
+                        quote_sample_count INTEGER
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO pathb_miss_quality
+                    VALUES ('US','live','2026-06-03','DISC','INVALID_PRICE',1,1.25,-0.2,'filled',3)
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            with patch("tools.monitoring_ops_report.analyze_candidate_audit", return_value={"available": True}):
+                payload = build_monitoring_ops_report(
+                    candidate_db=candidate_db,
+                    learning_db=root / "missing_decisions.db",
+                    event_db=event_db,
+                    mode="live",
+                    session_date="2026-06-03",
+                    market="US",
+                    pead_state=root / "missing_pead_state.json",
+                    pead_log_dir=root / "missing_pead_logs",
+                    hold_decision_dir=root / "missing_hold_logs",
+                )
+
+        metadata = payload["candidate_metadata_coverage"]
+        self.assertEqual(metadata["discovery_metadata_rows"], 1)
+        self.assertEqual(metadata["expansion_role_rows"], 0)
+        self.assertFalse(metadata["trade_behavior_change_allowed"])
+        reasons = payload["candidate_resolved_reason"]
+        self.assertEqual(reasons["reason_counts"]["same_day_reentry_blocked"], 1)
+        self.assertEqual(reasons["reason_counts"]["NO_SIGNAL"], 1)
+        miss = payload["pathb_missed_opportunity"]
+        self.assertEqual(miss["rows"], 1)
+        self.assertEqual(miss["by_cancel_reason"][0]["cancel_reason"], "INVALID_PRICE")
+        self.assertEqual(miss["source_overlay"]["candidate_audit"], "candidate_resolved_reason")
+        self.assertEqual(miss["candidate_resolved_reason_counts"]["NO_SIGNAL"], 1)
+        self.assertFalse(miss["trade_behavior_change_allowed"])
 
     def test_pead_gate_requires_complete_manual_checklist(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -57,7 +57,13 @@ class LivePreflightBrokerTruthSnapshotTests(unittest.TestCase):
         self.assertFalse(kr_check.data["stored_stale"])
         self.assertTrue(kr_check.data["stale"])
         self.assertTrue(kr_check.data["stale_recomputed"])
+        self.assertGreater(kr_check.data["age_sec"], 60)
+        self.assertLess(kr_check.data["ttl_margin_sec"], 0)
+        self.assertEqual(kr_check.data["stale_reason"], "age_gt_ttl")
+        self.assertTrue(kr_check.data["evaluated_at"])
         self.assertEqual(us_check.status, "PASS")
+        self.assertEqual(us_check.data["stale_reason"], "")
+        self.assertGreaterEqual(us_check.data["ttl_margin_sec"], 0)
 
 
 if __name__ == "__main__":

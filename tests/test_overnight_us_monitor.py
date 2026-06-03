@@ -6,10 +6,12 @@ from tempfile import TemporaryDirectory
 
 from tools.overnight_us_monitor import (
     _guardian_block_start_causes,
+    _guardian_report_for_market,
     _hold_advisor_cost_observation,
     _json_digest_summary,
     _news_payload_summary,
     _risk_axes,
+    _usage_delta_since_start,
 )
 
 
@@ -19,8 +21,18 @@ class OvernightUsMonitorReportTests(unittest.TestCase):
             {
                 "gate": "BLOCK_START",
                 "findings": [
-                    {"code": "db.pathb_stale_active_runs", "message": "stale PathB run"},
-                    {"code": "broker_truth.us_stale_state", "message": "US broker truth stale"},
+                    {"name": "config.runtime_snapshot_drift", "classification": "soft_fail", "detail": "soft only"},
+                    {"name": "smoke.all", "classification": "pass", "detail": "live smoke passed"},
+                    {
+                        "name": "db.pathb_stale_active_runs",
+                        "classification": "hard_fail",
+                        "detail": "stale PathB run",
+                    },
+                    {
+                        "name": "broker_truth.us_stale_state",
+                        "classification": "hard_fail",
+                        "detail": "US broker truth stale",
+                    },
                 ],
             },
             {},
@@ -31,6 +43,34 @@ class OvernightUsMonitorReportTests(unittest.TestCase):
         self.assertEqual(by_code["db.pathb_stale_active_runs"]["risk_level"], "P1")
         self.assertTrue(by_code["broker_truth.us_stale_state"]["blocking"])
         self.assertIn("live_preflight", by_code["broker_truth.us_stale_state"]["remediation_tool"])
+        self.assertNotIn("config.runtime_snapshot_drift", by_code)
+        self.assertNotIn("smoke.all", by_code)
+
+    def test_guardian_report_for_market_uses_market_gate_blockers(self) -> None:
+        kr_blocker = {
+            "name": "broker_truth.kr_stale_state",
+            "classification": "hard_fail",
+            "detail": "KR broker truth stale",
+        }
+        report = {
+            "ok": False,
+            "gate": "BLOCK_START",
+            "findings": [kr_blocker],
+            "market_gates": {
+                "KR": {"ok": False, "gate": "BLOCK_START", "blockers": [kr_blocker], "counts": {"current_blockers": 1}},
+                "US": {"ok": True, "gate": "ALLOW_START", "blockers": [], "counts": {"current_blockers": 0}},
+            },
+        }
+
+        us_view = _guardian_report_for_market(report, "US")
+        kr_view = _guardian_report_for_market(report, "KR")
+
+        self.assertEqual(us_view["gate"], "ALLOW_START")
+        self.assertEqual(us_view["top_level_gate"], "BLOCK_START")
+        self.assertEqual(_guardian_block_start_causes(us_view, {}, {}), [])
+        self.assertEqual(kr_view["gate"], "BLOCK_START")
+        causes = _guardian_block_start_causes(kr_view, {}, {})
+        self.assertEqual(causes[0]["code"], "broker_truth.kr_stale_state")
 
     def test_hold_advisor_cost_observation_separates_labels_and_bypass_contract(self) -> None:
         payload = _hold_advisor_cost_observation(
@@ -54,6 +94,10 @@ class OvernightUsMonitorReportTests(unittest.TestCase):
                 "protected_positions": [{"manual_reconciliation_required": True}, {}],
                 "pending_sells": [{}],
                 "order_unknown_event_count_us_total": 1,
+                "pathb_remediation": {
+                    "current_order_unknown_count": 0,
+                    "stale_active_count": 0,
+                },
                 "guardian": {"gate": "BLOCK_START"},
                 "broker_truth": {
                     "stale": True,
@@ -68,7 +112,27 @@ class OvernightUsMonitorReportTests(unittest.TestCase):
         self.assertEqual(axes["broker_positions"], 8)
         self.assertEqual(axes["broker_open_orders"], 1)
         self.assertEqual(axes["protected_positions"], 2)
-        self.assertEqual(axes["manual_action_required"], 3)
+        self.assertEqual(axes["manual_action_required"], 1)
+        self.assertEqual(axes["guardian_action_required"], 1)
+        self.assertEqual(axes["broker_truth_action_required"], 1)
+        self.assertEqual(axes["current_order_unknown"], 0)
+        self.assertEqual(axes["stale_active"], 0)
+        self.assertEqual(axes["historical_order_unknown_total"], 1)
+
+    def test_usage_delta_since_start_falls_back_to_raw_calls_when_api_delta_negative(self) -> None:
+        delta = _usage_delta_since_start(
+            {"calls": 2, "input_tokens": 200, "output_tokens": 20, "cost_usd": 0.03},
+            {"calls": 10, "input_tokens": 1000, "output_tokens": 100, "cost_usd": 0.25},
+            raw_call_count=3,
+            raw_call_tokens={"input_tokens": 300, "output_tokens": 30},
+        )
+
+        self.assertEqual(delta["source"], "raw_call_scan_fallback")
+        self.assertTrue(delta["api_negative_delta_detected"])
+        self.assertEqual(delta["calls"], 3)
+        self.assertEqual(delta["input_tokens"], 300)
+        self.assertEqual(delta["output_tokens"], 30)
+        self.assertEqual(delta["cost_usd"], 0.0)
 
     def test_news_payload_summary_counts_corp_news_and_coverage(self) -> None:
         with TemporaryDirectory() as tmp:

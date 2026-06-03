@@ -10,7 +10,9 @@ from zoneinfo import ZoneInfo
 from tools.live_preflight import (
     _heartbeat_checks,
     _candidate_actions_live_config_check,
+    _config_source_meaning_check,
     _config_checks,
+    _kr_live_expansion_guard_check,
     _kr_cap40_confirmation_enforce_check,
     _pathb_lifecycle_window_check_result,
     _market_session_calendar_check,
@@ -78,6 +80,57 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertTrue(config["start_config_loaded"])
         self.assertIn("env_overrides", config["start_config"])
         self.assertEqual(config["effective"].get("PATHB_MODE"), "min_size_live")
+
+    def test_config_source_meaning_describes_daily_loss_and_position_caps(self) -> None:
+        config = {
+            "env_path": ".env.live",
+            "start_config_path": "config/v2_start_config.json",
+            "base_env": {"MAX_DAILY_LOSS_PCT": "-8.0", "MAX_POSITIONS": "10"},
+            "overrides": {"DAILY_LOSS_LIMIT_PCT": "-2.0", "PATHB_MAX_POSITIONS": "15"},
+            "start_config": {"env_overrides": {"DAILY_LOSS_LIMIT_PCT": "-2.0"}},
+            "effective": {
+                "MAX_DAILY_LOSS_PCT": "-8.0",
+                "DAILY_LOSS_LIMIT_PCT": "-2.0",
+                "MAX_POSITIONS": "10",
+                "PATHB_MAX_POSITIONS": "15",
+            },
+        }
+
+        check = _config_source_meaning_check(config)
+
+        self.assertEqual(check.status, "PASS")
+        keys = check.data["keys"]
+        self.assertEqual(keys["MAX_DAILY_LOSS_PCT"]["source"], "env_file")
+        self.assertEqual(keys["DAILY_LOSS_LIMIT_PCT"]["source"], "v2_start_config.env_overrides")
+        self.assertIn("PathB", keys["PATHB_MAX_POSITIONS"]["used_by"])
+        self.assertFalse(check.data["config_change_allowed"])
+
+    def test_kr_live_expansion_guard_requires_shadow_probe_before_strategy_flags(self) -> None:
+        check = _kr_live_expansion_guard_check(
+            {
+                "KR_PLAN_A_MOMENTUM_SIGNAL_ENABLED": "false",
+                "KR_PLAN_A_GAP_PULLBACK_SIGNAL_ENABLED": "false",
+                "KR_PLAN_A_ORP_SIGNAL_ENABLED": "false",
+                "PATHB_KR_LIVE_ENABLED": "true",
+                "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK": "false",
+            }
+        )
+
+        self.assertEqual(check.status, "PASS")
+        self.assertFalse(check.data["live_expansion_allowed"])
+        self.assertEqual(check.data["minimum_shadow_or_probe"]["fills"], 30)
+
+    def test_kr_live_expansion_guard_warns_when_strategy_flag_enabled(self) -> None:
+        check = _kr_live_expansion_guard_check(
+            {
+                "KR_PLAN_A_MOMENTUM_SIGNAL_ENABLED": "true",
+                "KR_PLAN_A_GAP_PULLBACK_SIGNAL_ENABLED": "false",
+                "KR_PLAN_A_ORP_SIGNAL_ENABLED": "false",
+            }
+        )
+
+        self.assertEqual(check.status, "WARN")
+        self.assertIn("KR_PLAN_A_MOMENTUM_SIGNAL_ENABLED", check.data["enabled_strategy_flags"])
 
     def test_kr_cap40_requires_confirmation_enforce(self) -> None:
         check = _kr_cap40_confirmation_enforce_check(

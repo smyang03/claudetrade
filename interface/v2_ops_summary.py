@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import json
@@ -12,7 +12,7 @@ from bot.session_date import KST
 from config.v2 import DEFAULT_V2_CONFIG
 from learning.approval_queue import BrainApprovalQueue
 from lifecycle.event_store import EventStore
-from runtime.broker_truth_snapshot import load_broker_truth_snapshot
+from runtime.broker_truth_snapshot import age_seconds, load_broker_truth_snapshot
 from runtime.market_resolver import resolve_position_market
 from runtime_paths import get_runtime_path
 from bot.entry_timing import build_entry_timing_summary
@@ -217,43 +217,112 @@ def _session_date_from_bot(bot: Any | None) -> str:
     return datetime.now().date().isoformat()
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _utc_iso(value: datetime | None = None) -> str:
+    return (value or _utc_now()).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _broker_truth_stale_reason(
+    *,
+    missing: bool,
+    stale: bool,
+    error: str,
+    last_success_at: str,
+    age_sec: float | None,
+    ttl_sec: int,
+) -> str:
+    if missing:
+        return "missing"
+    if error:
+        return "error"
+    if not last_success_at:
+        return "last_success_missing"
+    if age_sec is None:
+        return "last_success_unparseable"
+    if stale or age_sec > ttl_sec:
+        return "age_gt_ttl"
+    return ""
+
+
+def _broker_truth_freshness_fields(data: dict[str, Any], *, evaluated_at: datetime) -> dict[str, Any]:
+    ttl_sec = int(_safe_int(data.get("ttl_sec")) or 60)
+    last_success_at = str(data.get("last_success_at", "") or "")
+    age = age_seconds(last_success_at, now=evaluated_at)
+    age_value = round(age, 3) if age is not None else None
+    ttl_margin = round(float(ttl_sec) - age, 3) if age is not None else None
+    missing = bool(data.get("missing", True))
+    stale = bool(data.get("stale", True))
+    error = str(data.get("error", "") or "")
+    return {
+        "evaluated_at": _utc_iso(evaluated_at),
+        "age_sec": age_value,
+        "ttl_sec": ttl_sec,
+        "ttl_margin_sec": ttl_margin,
+        "stale_reason": _broker_truth_stale_reason(
+            missing=missing,
+            stale=stale,
+            error=error,
+            last_success_at=last_success_at,
+            age_sec=age,
+            ttl_sec=ttl_sec,
+        ),
+    }
+
+
 def _broker_truth_summary(runtime_mode: str | None) -> dict[str, Any]:
     mode = str(runtime_mode or "live").lower()
+    evaluated_at = _utc_now()
     try:
         snapshot = load_broker_truth_snapshot(mode)
     except Exception as exc:
+        error_payload = {
+            "missing": True,
+            "stale": True,
+            "error": str(exc),
+            "positions": [],
+            "open_orders": [],
+            "today_fills": [],
+            "evaluated_at": _utc_iso(evaluated_at),
+            "age_sec": None,
+            "ttl_sec": 60,
+            "ttl_margin_sec": None,
+            "stale_reason": "error",
+        }
         return {
             "runtime_mode": mode,
             "missing": True,
             "broken": True,
             "error": str(exc),
-            "markets": {
-                "KR": {"missing": True, "stale": True, "error": str(exc), "positions": [], "open_orders": [], "today_fills": []},
-                "US": {"missing": True, "stale": True, "error": str(exc), "positions": [], "open_orders": [], "today_fills": []},
-            },
+            "evaluated_at": _utc_iso(evaluated_at),
+            "markets": {"KR": dict(error_payload), "US": dict(error_payload)},
         }
     markets = snapshot.get("markets") if isinstance(snapshot.get("markets"), dict) else {}
+    summarized_markets: dict[str, dict[str, Any]] = {}
+    for market in ("KR", "US"):
+        item = markets.get(market) if isinstance(markets.get(market), dict) else {}
+        summarized_markets[market] = {
+            "missing": bool(item.get("missing", True)),
+            "stale": bool(item.get("stale", True)),
+            "last_success_at": item.get("last_success_at", ""),
+            "last_attempt_at": item.get("last_attempt_at", ""),
+            "error": item.get("error", ""),
+            "account_summary": item.get("account_summary", {}),
+            "positions": item.get("positions", []),
+            "open_orders": item.get("open_orders", []),
+            "today_fills": item.get("today_fills", []),
+            **_broker_truth_freshness_fields(item, evaluated_at=evaluated_at),
+        }
     return {
         "runtime_mode": snapshot.get("runtime_mode", mode),
         "generated_at": snapshot.get("generated_at", ""),
+        "evaluated_at": _utc_iso(evaluated_at),
         "schema_version": snapshot.get("schema_version", 1),
         "broken": bool(snapshot.get("broken", False)),
         "error": str(snapshot.get("error", "") or ""),
-        "markets": {
-            market: {
-                "missing": bool((markets.get(market) or {}).get("missing", True)),
-                "stale": bool((markets.get(market) or {}).get("stale", True)),
-                "last_success_at": (markets.get(market) or {}).get("last_success_at", ""),
-                "last_attempt_at": (markets.get(market) or {}).get("last_attempt_at", ""),
-                "ttl_sec": (markets.get(market) or {}).get("ttl_sec", 60),
-                "error": (markets.get(market) or {}).get("error", ""),
-                "account_summary": (markets.get(market) or {}).get("account_summary", {}),
-                "positions": (markets.get(market) or {}).get("positions", []),
-                "open_orders": (markets.get(market) or {}).get("open_orders", []),
-                "today_fills": (markets.get(market) or {}).get("today_fills", []),
-            }
-            for market in ("KR", "US")
-        },
+        "markets": summarized_markets,
     }
 
 
@@ -270,16 +339,23 @@ def _broker_truth_verdict(broker_truth: dict[str, Any] | None) -> dict[str, Any]
         fills = data.get("today_fills") if isinstance(data.get("today_fills"), list) else []
         fresh = not missing and not stale and not error
         trusted = fresh
+        stale_reason = str(data.get("stale_reason", "") or "")
         if fresh:
             message = f"broker truth: positions={len(positions)}, open_orders={len(open_orders)}"
         else:
-            message = "broker truth needs refresh/reconcile before treating local state as current"
+            reason_suffix = f" ({stale_reason})" if stale_reason else ""
+            message = f"broker truth needs refresh/reconcile before treating local state as current{reason_suffix}"
         verdict[market] = {
             "trusted": trusted,
             "fresh": fresh,
             "missing": missing,
             "stale": stale,
             "error": error,
+            "stale_reason": stale_reason,
+            "evaluated_at": data.get("evaluated_at", ""),
+            "age_sec": data.get("age_sec"),
+            "ttl_sec": data.get("ttl_sec", 60),
+            "ttl_margin_sec": data.get("ttl_margin_sec"),
             "positions": len(positions),
             "open_orders": len(open_orders),
             "today_fills": len(fills),
@@ -2429,6 +2505,9 @@ def _path_b_execution_readiness(
     quote_state = "quote_not_checked_read_only"
 
     broker_truth_unfresh = not bool(truth.get("trusted")) or not bool(truth.get("fresh"))
+    capacity_known = bool(capacity)
+    capacity_reasons = capacity.get("capacity_block_reasons") if isinstance(capacity.get("capacity_block_reasons"), list) else []
+    capacity_ok = capacity_known and bool(capacity.get("min_order_possible", True)) and not capacity_reasons
 
     if not bool(config.get("enabled", False)) or not bool(control.get("enabled", True)) or bool(config.get("emergency_disable", False)) or bool(control.get("emergency_disabled", False)) or not bool(live_gate):
         state = "BLOCKED_CONFIG_OR_CONTROL"
@@ -2494,6 +2573,23 @@ def _path_b_execution_readiness(
         "operator_action_required": state.startswith("BLOCKED_"),
         "broker_truth": truth,
         "broker_truth_warning": "stale_or_untrusted" if broker_truth_unfresh else "",
+        "broker_truth_freshness": {
+            "fresh": bool(truth.get("fresh")),
+            "trusted": bool(truth.get("trusted")),
+            "missing": bool(truth.get("missing", True)),
+            "stale": bool(truth.get("stale", True)),
+            "error": str(truth.get("error", "") or ""),
+            "stale_reason": str(truth.get("stale_reason", "") or ""),
+            "last_success_at": str(truth.get("last_success_at", "") or ""),
+            "last_attempt_at": str(truth.get("last_attempt_at", "") or ""),
+            "evaluated_at": str(truth.get("evaluated_at", "") or ""),
+            "age_sec": truth.get("age_sec"),
+            "ttl_sec": truth.get("ttl_sec"),
+            "ttl_margin_sec": truth.get("ttl_margin_sec"),
+        },
+        "capacity_known": capacity_known,
+        "capacity_ok": capacity_ok,
+        "capacity_ok_but_broker_truth_blocked": state == "BLOCKED_BROKER_TRUTH" and capacity_ok,
     }
 
 

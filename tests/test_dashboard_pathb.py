@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
 import json
+import os
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -31,6 +32,15 @@ class DashboardPathBTests(unittest.TestCase):
         overrides = {"V2_MAX_DAILY_ENTRIES": "9", "KR_DAILY_ENTRY_CAP": "", "US_DAILY_ENTRY_CAP": ""}
         with patch.object(dashboard_server, "_start_config_env_overrides", return_value=overrides), patch.object(
             dashboard_server, "_runtime_env", return_value={}
+        ), patch.dict(
+            os.environ,
+            {
+                "KR_DAILY_ENTRY_CAP": "",
+                "US_DAILY_ENTRY_CAP": "",
+                "V2_MAX_DAILY_ENTRIES": "",
+                "MAX_DAILY_ENTRIES": "",
+            },
+            clear=False,
         ):
             self.assertEqual(dashboard_server._max_daily_entries_for_market("live", "KR"), 9)
             self.assertEqual(dashboard_server._max_daily_entries_for_market("live", "US"), 9)

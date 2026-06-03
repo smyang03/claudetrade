@@ -344,7 +344,10 @@ class AutoSellClaudeGateTests(unittest.TestCase):
         bot = _plan_a_bot()
         cand = {**bot.risk.positions[0], "exit_price": 95.0, "reason": "loss_cap"}
 
-        with patch.dict("os.environ", {"AUTO_SELL_REVIEW_FORCE_SELL_LOSS_PCT": "2.5"}), patch(
+        with patch.dict(
+            "os.environ",
+            {"AUTO_SELL_REVIEW_FORCE_SELL_LOSS_PCT": "2.5", "CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "false"},
+        ), patch(
             "minority_report.hold_advisor.ask",
             return_value={"action": "HOLD", "confidence": 0.8, "reason": "try one more review"},
         ), patch(
@@ -455,7 +458,7 @@ class AutoSellClaudeGateTests(unittest.TestCase):
             "auto_sell_review_cooldown_until": future,
         }
 
-        with patch(
+        with patch.dict(os.environ, {"CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "false"}, clear=False), patch(
             "minority_report.hold_advisor.ask",
             return_value={"action": "HOLD", "confidence": 0.7, "reason": "wait"},
         ) as advisor:
@@ -484,7 +487,7 @@ class AutoSellClaudeGateTests(unittest.TestCase):
             "auto_sell_review_cooldown_until": future,
         }
 
-        with patch(
+        with patch.dict(os.environ, {"CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "false"}, clear=False), patch(
             "minority_report.hold_advisor.ask",
             return_value={"action": "HOLD", "confidence": 0.7, "reason": "wait"},
         ) as advisor:
@@ -601,7 +604,11 @@ class AutoSellClaudeGateTests(unittest.TestCase):
             "reason": "pre_close",
         }
 
-        with patch.dict(os.environ, {"HOLD_ADVISOR_SOFT_CACHE_ENABLED": "true"}, clear=False), patch(
+        with patch.dict(
+            os.environ,
+            {"HOLD_ADVISOR_SOFT_CACHE_ENABLED": "true", "CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "false"},
+            clear=False,
+        ), patch(
             "minority_report.hold_advisor.ask"
         ) as advisor:
             review = bot._run_auto_sell_review_gate(cand, "KR", "pre_close", current_native=5770.0)
@@ -887,7 +894,9 @@ class AutoSellClaudeGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan, pos = _pathb_runtime(tmp)
 
-            with patch("minority_report.hold_advisor.ask") as advisor, patch(
+            with patch.dict(os.environ, {"CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "false"}, clear=False), patch(
+                "minority_report.hold_advisor.ask"
+            ) as advisor, patch(
                 "runtime.pathb_runtime.precheck_order",
                 return_value={"ok": True},
             ) as precheck, patch(

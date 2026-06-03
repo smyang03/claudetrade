@@ -3279,6 +3279,23 @@ class PathBRuntime:
             if protective_stop <= 0 or protective_stop >= current:
                 return {}, "protective_stop_missing_or_invalid"
             reask_if_price_above = self._policy_price_reask_above(advice, market, current)
+            revised_target = self._round_policy_price(advice.get("revised_sell_target"), market, direction="up")
+            # Claude가 revised_sell_target을 제시한 경우 → 목표가 상향 + 하방 floor 설정
+            if revised_target > current:
+                floor_info = self._pathb_gain_lock_floor_info(plan, pos, current, plan_json=plan_data)
+                gain_floor = self._policy_float(floor_info.get("floor"))
+                if gain_floor > 0 and protective_stop < gain_floor:
+                    protective_stop = gain_floor
+                return {
+                    **base,
+                    "mode": "target_extension",
+                    "source": "profit_ladder_hold",
+                    "protective_stop": protective_stop,
+                    "hard_stop": protective_stop,
+                    "revised_sell_target": revised_target,
+                    "trail_release_threshold": protective_stop,
+                    "reask_if_price_above": reask_if_price_above,
+                }, ""
             return {
                 **base,
                 "mode": "protective_hold",
@@ -3604,10 +3621,12 @@ class PathBRuntime:
             )
             valid_until = now + timedelta(minutes=valid_for_min)
             reask_if_price_above = self._policy_price_reask_above(advice, market_key, current)
+            revised_target = self._round_policy_price(advice.get("revised_sell_target"), market_key, direction="up")
+            use_target_extension = revised_target > current
             policy = {
                 "version": 1,
                 "status": "active",
-                "mode": "protective_hold",
+                "mode": "target_extension" if use_target_extension else "protective_hold",
                 "source": str(advice.get("source", "") or "general_review"),
                 "protective_stop": protective_stop,
                 "hard_stop": hard_stop,
@@ -3622,12 +3641,20 @@ class PathBRuntime:
                 "confidence": self._policy_float(advice.get("confidence")),
                 "hold_mode": str(advice.get("hold_mode", "") or ""),
             }
+            if use_target_extension:
+                policy["revised_sell_target"] = revised_target
             result = self._set_pathb_auto_sell_policy(path_run_id, policy)
             if result.get("updated"):
-                log.warning(
-                    f"[PathB protective_hold SET] {market_key} {plan.ticker} "
-                    f"ps={protective_stop:g} hs={hard_stop:g} valid_until={policy['valid_until']}"
-                )
+                if use_target_extension:
+                    log.warning(
+                        f"[PathB target_extension SET] {market_key} {plan.ticker} "
+                        f"ps={protective_stop:g} new_target={revised_target:g} valid_until={policy['valid_until']}"
+                    )
+                else:
+                    log.warning(
+                        f"[PathB protective_hold SET] {market_key} {plan.ticker} "
+                        f"ps={protective_stop:g} hs={hard_stop:g} valid_until={policy['valid_until']}"
+                    )
             else:
                 log.info(
                     f"[PathB protective_hold SKIP] {market_key} {plan.ticker} "
@@ -9035,6 +9062,12 @@ class PathBRuntime:
         pos["pathb_origin_reason"] = plan.origin_reason
         pos.setdefault("strategy", "claude_price")
         pos.setdefault("source_strategy", "claude_price")
+        # hold_advisor가 B-플랜 목표가/손절을 알 수 있도록 포지션에 저장
+        # 이 값이 없으면 profit_ladder 트리거 시 Claude가 remaining upside를 0으로 보고 SELL을 냄
+        if float(plan.sell_target or 0) > 0:
+            pos["pathb_reference_target"] = float(plan.sell_target)
+        if float(plan.stop_loss or 0) > 0:
+            pos["pathb_reference_stop"] = float(plan.stop_loss)
 
     def _native_hard_stop(self, pos: dict[str, Any], market: str) -> float | None:
         raw_stop = float(pos.get("sl", 0) or 0)

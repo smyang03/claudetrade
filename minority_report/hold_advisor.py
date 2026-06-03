@@ -490,6 +490,7 @@ Return strict JSON only:
   "protective_stop": null,
   "hard_stop": null,
   "recover_above": null,
+  "revised_sell_target": 0.0,
   "valid_for_min": 0,
   "reask_after_min": 0,
   "next_review_min": null,

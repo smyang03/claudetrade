@@ -114,6 +114,45 @@ def _enabled_markets(preflight: dict[str, Any]) -> list[str]:
     return [market for market in markets if market in {"KR", "US"}] or ["KR", "US"]
 
 
+def _broker_truth_market(name: str) -> str:
+    lowered = str(name or "").lower()
+    if lowered.startswith("broker_truth.kr_"):
+        return "KR"
+    if lowered.startswith("broker_truth.us_"):
+        return "US"
+    return ""
+
+
+def _finding_blocks_market(finding: GuardianFinding, market: str) -> bool:
+    if finding.classification != "hard_fail":
+        return False
+    broker_market = _broker_truth_market(finding.name)
+    return not broker_market or broker_market == market
+
+
+def _build_market_gates(
+    markets: list[str],
+    hard_fail: list[GuardianFinding],
+    action_fail: list[GuardianAction],
+) -> dict[str, dict[str, Any]]:
+    gates: dict[str, dict[str, Any]] = {}
+    action_blockers = [asdict(action) for action in action_fail]
+    for market in markets:
+        blockers = [asdict(finding) for finding in hard_fail if _finding_blocks_market(finding, market)]
+        ok = not blockers and not action_blockers
+        gates[market] = {
+            "ok": ok,
+            "gate": "ALLOW_START" if ok else "BLOCK_START",
+            "blockers": blockers,
+            "action_blockers": action_blockers,
+            "counts": {
+                "current_blockers": len(blockers),
+                "action_fail": len(action_blockers),
+            },
+        }
+    return gates
+
+
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -656,6 +695,7 @@ def run_guardian_once(
             allow_start = False
             action_fail.append(action)
 
+    market_gates = _build_market_gates(markets, hard_fail, action_fail)
     report = {
         "ok": allow_start,
         "mode": mode,
@@ -674,6 +714,7 @@ def run_guardian_once(
             "historical_remediation_items": len(historical_remediation_items),
         },
         "current_blockers": current_blockers,
+        "market_gates": market_gates,
         "historical_remediation_items": historical_remediation_items,
         "findings": [asdict(finding) for finding in findings],
         "actions": [asdict(action) for action in actions],
@@ -717,9 +758,24 @@ def _write_guardian_report(report: dict[str, Any]) -> tuple[Path, Path]:
         f"- historical_remediation_items: {report['counts'].get('historical_remediation_items', 0)}",
         f"- actions: {report['counts']['actions']}",
         "",
-        "## Current Blockers",
+        "## Market Gates",
         "",
     ]
+    market_gates = report.get("market_gates") if isinstance(report.get("market_gates"), dict) else {}
+    for market in report.get("enabled_markets") or []:
+        gate = market_gates.get(market) if isinstance(market_gates.get(market), dict) else {}
+        lines.append(
+            f"- {market}: gate={gate.get('gate', report.get('gate'))} "
+            f"ok={gate.get('ok', report.get('ok'))} blockers={(gate.get('counts') or {}).get('current_blockers', 0)} "
+            f"action_fail={(gate.get('counts') or {}).get('action_fail', 0)}"
+        )
+    if not report.get("enabled_markets"):
+        lines.append("- none")
+    lines.extend([
+        "",
+        "## Current Blockers",
+        "",
+    ])
     for finding in report.get("current_blockers") or []:
         lines.append(
             f"- `{finding.get('name')}` ({finding.get('status')}): {finding.get('detail')}"

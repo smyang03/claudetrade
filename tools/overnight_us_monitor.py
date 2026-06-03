@@ -35,7 +35,6 @@ KEYWORD_KINDS = {
     "broker sync protected": "broker_sync_protected",
     "pending sell broker sync protected": "pending_sell_broker_sync_protected",
     "BLOCK_START": "guardian_block_start",
-    "broker_truth": "broker_truth",
     "snapshot stale": "broker_truth_stale",
     "token expired": "token_expired",
     "KISTokenExpired": "token_expired",
@@ -423,6 +422,56 @@ def _usage_delta(current: dict[str, Any], baseline: dict[str, Any]) -> dict[str,
     }
 
 
+def _usage_delta_since_start(
+    current: dict[str, Any],
+    baseline: dict[str, Any],
+    *,
+    raw_call_count: int = 0,
+    raw_call_tokens: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    delta = _usage_delta(current, baseline)
+    negative_fields = [
+        key for key in ("calls", "input_tokens", "output_tokens", "cost_usd")
+        if _safe_float(delta.get(key)) < 0
+    ]
+    if not negative_fields:
+        return {
+            **delta,
+            "source": "api_usage_daily_delta",
+            "api_negative_delta_detected": False,
+            "api_negative_fields": [],
+        }
+    raw_tokens = raw_call_tokens if isinstance(raw_call_tokens, dict) else {}
+    return {
+        "calls": max(0, int(raw_call_count or 0)),
+        "input_tokens": max(0, _safe_int(raw_tokens.get("input_tokens"))),
+        "output_tokens": max(0, _safe_int(raw_tokens.get("output_tokens"))),
+        "cost_usd": max(0.0, round(_safe_float(delta.get("cost_usd")), 6)),
+        "source": "raw_call_scan_fallback",
+        "api_negative_delta_detected": True,
+        "api_negative_fields": negative_fields,
+    }
+
+
+def _guardian_item_is_blocking(item: Any, *, assume_blocking: bool = False) -> bool:
+    if not isinstance(item, dict):
+        return bool(assume_blocking and str(item or "").strip())
+    classification = str(item.get("classification") or "").strip().lower()
+    status = str(item.get("status") or "").strip().upper()
+    kind = str(item.get("kind") or "").strip().lower()
+    if classification in {"hard_fail", "action_fail"}:
+        return True
+    if status == "FAIL" and (classification == "action_fail" or kind == "action"):
+        return True
+    if not assume_blocking:
+        return False
+    if classification in {"pass", "soft_fail", "accepted_exception", "auto_fixable"}:
+        return False
+    if status == "PASS":
+        return False
+    return True
+
+
 def _guardian_block_start_causes(
     guardian_report: dict[str, Any],
     guardian_alert: dict[str, Any],
@@ -431,31 +480,35 @@ def _guardian_block_start_causes(
     if str(guardian_report.get("gate") or "") != "BLOCK_START":
         return []
     findings = guardian_report.get("findings") if isinstance(guardian_report.get("findings"), list) else []
-    raw_items: list[Any] = list(findings)
-    for key in ("fingerprint", "last_fingerprint", "blocking_reasons", "reasons"):
+    raw_items: list[tuple[Any, bool]] = [(item, False) for item in findings]
+    actions = guardian_report.get("actions") if isinstance(guardian_report.get("actions"), list) else []
+    raw_items.extend((item, True) for item in actions)
+    for key in ("blocking_reasons", "reasons"):
         value = guardian_alert.get(key)
         if isinstance(value, list):
-            raw_items.extend(value)
+            raw_items.extend((item, True) for item in value)
         elif isinstance(value, dict):
-            raw_items.extend(value.values())
+            raw_items.extend((item, True) for item in value.values())
         elif value:
-            raw_items.append(value)
+            raw_items.append((value, True))
     heartbeat_report = guardian_heartbeat.get("report") if isinstance(guardian_heartbeat.get("report"), dict) else {}
-    for key in ("findings", "blocking_reasons"):
+    for key, assume_blocking in (("findings", False), ("blocking_reasons", True), ("actions", True)):
         value = heartbeat_report.get(key)
         if isinstance(value, list):
-            raw_items.extend(value)
+            raw_items.extend((item, assume_blocking) for item in value)
 
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for item in raw_items:
+    for item, assume_blocking in raw_items:
+        if not _guardian_item_is_blocking(item, assume_blocking=assume_blocking):
+            continue
         if isinstance(item, dict):
             code = str(
                 item.get("code")
-                or item.get("kind")
-                or item.get("check")
                 or item.get("name")
+                or item.get("check")
                 or item.get("id")
+                or item.get("kind")
                 or item.get("message")
                 or ""
             ).strip()
@@ -492,6 +545,29 @@ def _guardian_block_start_causes(
             }
         )
     return out[:20]
+
+
+def _guardian_report_for_market(guardian_report: dict[str, Any], market: str) -> dict[str, Any]:
+    if not isinstance(guardian_report, dict):
+        return {}
+    market_key = str(market or "").upper()
+    market_gates = guardian_report.get("market_gates") if isinstance(guardian_report.get("market_gates"), dict) else {}
+    market_gate = market_gates.get(market_key) if isinstance(market_gates.get(market_key), dict) else {}
+    if not market_gate:
+        return dict(guardian_report)
+
+    view = dict(guardian_report)
+    view["top_level_ok"] = guardian_report.get("ok")
+    view["top_level_gate"] = guardian_report.get("gate")
+    view["ok"] = market_gate.get("ok")
+    view["gate"] = market_gate.get("gate")
+    view["counts"] = market_gate.get("counts") if isinstance(market_gate.get("counts"), dict) else {}
+    blockers = market_gate.get("blockers") if isinstance(market_gate.get("blockers"), list) else []
+    view["current_blockers"] = blockers
+    view["findings"] = blockers
+    view["market_gate"] = market_gate
+    view["market_gates"] = market_gates
+    return view
 
 
 def _guardian_action_for_code(code: str, message: str) -> tuple[str, str, str]:
@@ -543,18 +619,27 @@ def _risk_axes(latest: dict[str, Any]) -> dict[str, Any]:
     broker = latest.get("broker_truth") if isinstance(latest.get("broker_truth"), dict) else {}
     protected = latest.get("protected_positions") if isinstance(latest.get("protected_positions"), list) else []
     manual_required = sum(1 for row in protected if isinstance(row, dict) and row.get("manual_reconciliation_required"))
-    if bool((latest.get("guardian") or {}).get("gate") == "BLOCK_START"):
-        manual_required += 1
-    if bool(broker.get("missing")) or bool(broker.get("stale")) or str(broker.get("error") or ""):
-        manual_required += 1
+    guardian_action_required = 1 if bool((latest.get("guardian") or {}).get("gate") == "BLOCK_START") else 0
+    broker_action_required = 1 if (
+        bool(broker.get("missing")) or bool(broker.get("stale")) or bool(str(broker.get("error") or ""))
+    ) else 0
+    pathb_remediation = latest.get("pathb_remediation") if isinstance(latest.get("pathb_remediation"), dict) else {}
+    current_order_unknown = int(pathb_remediation.get("current_order_unknown_count") or 0)
+    stale_active = int(pathb_remediation.get("stale_active_count") or 0)
+    historical_order_unknown = int(latest.get("order_unknown_event_count_us_total") or 0)
     return {
         "broker_positions": int(broker.get("positions_count") or 0),
         "broker_open_orders": int(broker.get("open_orders_count") or 0),
         "local_open_positions": int(latest.get("open_positions_count") or 0),
         "protected_positions": len(protected),
         "pending_sells": len(latest.get("pending_sells") or []),
-        "order_unknown_events": int(latest.get("order_unknown_event_count_us_total") or 0),
+        "order_unknown_events": historical_order_unknown,
+        "historical_order_unknown_total": historical_order_unknown,
+        "current_order_unknown": current_order_unknown,
+        "stale_active": stale_active,
         "manual_action_required": int(manual_required),
+        "guardian_action_required": guardian_action_required,
+        "broker_truth_action_required": broker_action_required,
     }
 
 
@@ -872,6 +957,7 @@ class OvernightMonitor:
         guardian_report = {}
         if isinstance(guardian_heartbeat, dict) and guardian_heartbeat.get("report_path"):
             guardian_report = _read_json(Path(str(guardian_heartbeat.get("report_path"))), {})
+        guardian_view = _guardian_report_for_market(guardian_report, self.market)
         api_day = _now_kst().date().isoformat()
         api_usage = _api_usage_day(self.mode, api_day)
         order_unknown = _read_json(get_runtime_path("state", f"{self.mode}_v2_order_unknown.json"), {})
@@ -882,6 +968,7 @@ class OvernightMonitor:
                     continue
                 if str(row.get("market") or "").upper() == self.market:
                     recent_unknown.append(row)
+        raw_call_count = sum(self.raw_call_counts.values())
         snapshot = {
             "at": _now_kst().isoformat(timespec="seconds"),
             "open_positions_count": len(market_positions),
@@ -905,18 +992,27 @@ class OvernightMonitor:
             "guardian": {
                 "heartbeat": guardian_heartbeat if isinstance(guardian_heartbeat, dict) else {},
                 "alert": guardian_alert if isinstance(guardian_alert, dict) else {},
-                "ok": guardian_report.get("ok") if isinstance(guardian_report, dict) else None,
-                "gate": guardian_report.get("gate") if isinstance(guardian_report, dict) else "",
-                "counts": guardian_report.get("counts") if isinstance(guardian_report, dict) else {},
-                "findings": (guardian_report.get("findings") or [])[:20] if isinstance(guardian_report, dict) else [],
+                "ok": guardian_view.get("ok") if isinstance(guardian_view, dict) else None,
+                "gate": guardian_view.get("gate") if isinstance(guardian_view, dict) else "",
+                "top_level_ok": guardian_report.get("ok") if isinstance(guardian_report, dict) else None,
+                "top_level_gate": guardian_report.get("gate") if isinstance(guardian_report, dict) else "",
+                "counts": guardian_view.get("counts") if isinstance(guardian_view, dict) else {},
+                "market_gate": guardian_view.get("market_gate") if isinstance(guardian_view, dict) else {},
+                "market_gates": guardian_report.get("market_gates") if isinstance(guardian_report, dict) else {},
+                "findings": (guardian_view.get("findings") or [])[:20] if isinstance(guardian_view, dict) else [],
                 "block_start_causes": _guardian_block_start_causes(
-                    guardian_report if isinstance(guardian_report, dict) else {},
+                    guardian_view if isinstance(guardian_view, dict) else {},
                     guardian_alert if isinstance(guardian_alert, dict) else {},
                     guardian_heartbeat if isinstance(guardian_heartbeat, dict) else {},
                 ),
             },
             "api_usage_today": api_usage,
-            "api_usage_delta_since_start": _usage_delta(api_usage, self.baseline_usage),
+            "api_usage_delta_since_start": _usage_delta_since_start(
+                api_usage,
+                self.baseline_usage,
+                raw_call_count=raw_call_count,
+                raw_call_tokens=self.raw_call_tokens,
+            ),
             "data_collection": _data_collection_snapshot(self.mode, self.market, self.session_date),
             "order_unknown_event_count_us_total": len(recent_unknown),
             "pathb_remediation": _pathb_remediation_snapshot(self.mode),
@@ -1025,7 +1121,7 @@ class OvernightMonitor:
             "",
             "## Current Operations",
             "",
-            f"- guardian_gate: {guardian.get('gate')} ok={guardian.get('ok')} status={(guardian.get('heartbeat') or {}).get('status')}",
+            f"- guardian_gate: {guardian.get('gate')} ok={guardian.get('ok')} top_level_gate={guardian.get('top_level_gate')} status={(guardian.get('heartbeat') or {}).get('status')}",
             f"- broker_truth: missing={broker.get('missing')} stale={broker.get('stale')} error={broker.get('error')} last_success={broker.get('last_success_at')}",
             f"- broker_positions/open_orders/fills: {broker.get('positions_count')} / {broker.get('open_orders_count')} / {broker.get('today_fills_count')}",
             f"- open_positions_count: {latest.get('open_positions_count')}",
@@ -1048,8 +1144,9 @@ class OvernightMonitor:
             "",
             f"- broker_exposure: positions={risk_axes.get('broker_positions')} open_local_positions={risk_axes.get('local_open_positions')}",
             f"- open_orders: broker={risk_axes.get('broker_open_orders')} pending_sell_local={risk_axes.get('pending_sells')}",
-            f"- local_unresolved_state: protected={risk_axes.get('protected_positions')} order_unknown_events={risk_axes.get('order_unknown_events')}",
+            f"- local_unresolved_state: protected={risk_axes.get('protected_positions')} current_order_unknown={risk_axes.get('current_order_unknown')} stale_active={risk_axes.get('stale_active')} historical_order_unknown_total={risk_axes.get('historical_order_unknown_total')}",
             f"- manual_action_required: {risk_axes.get('manual_action_required')}",
+            f"- guardian_action_required: {risk_axes.get('guardian_action_required')} broker_truth_action_required={risk_axes.get('broker_truth_action_required')}",
             "",
             "## PathB Remediation Separation",
             "",

@@ -223,11 +223,310 @@ def _v2_learning_gate_report(db_path: Path, *, market: str, runtime_mode: str) -
             "learning_allowed": learning_allowed,
             "learning_excluded": learning_excluded,
             "top_quality_reasons": dict(reason_counts.most_common(20)),
+            "focus_exclusion_reasons": {
+                key: int(reason_counts.get(key, 0))
+                for key in (
+                    "FORWARD_NOT_MEASURED",
+                    "ORDER_UNKNOWN_UNRESOLVED",
+                    "FORWARD_PENDING_DATA",
+                    "DIRTY_BROKER_TRUTH",
+                )
+            },
             "last_synced_at": synced_at,
             "policy_change_allowed": False,
         }
     finally:
         conn.close()
+
+
+def _blank_expr(column: str) -> str:
+    return f"SUM(CASE WHEN {column} IS NULL OR TRIM(CAST({column} AS TEXT))='' THEN 1 ELSE 0 END)"
+
+
+def _candidate_metadata_coverage_report(
+    *,
+    db_path: Path,
+    session_date: str,
+    market: str,
+    runtime_mode: str,
+) -> dict[str, Any]:
+    if not db_path.exists():
+        return {"available": False, "reason": "db_missing", "db_path": str(db_path)}
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(conn, "audit_candidate_rows"):
+            return {"available": False, "reason": "table_missing", "db_path": str(db_path)}
+        columns = _columns(conn, "audit_candidate_rows")
+        where = ["runtime_mode=?"]
+        params: list[Any] = [runtime_mode]
+        if session_date:
+            where.append("session_date=?")
+            params.append(session_date)
+        if market:
+            where.append("market=?")
+            params.append(market.upper())
+        watched_columns = [
+            "candidate_pool_role",
+            "discovery_signal_family",
+            "discovery_reason",
+            "discovery_action_ceiling",
+            "freshness_verdict",
+            "trainer_tier",
+            "lifecycle_state",
+            "evidence_data_state",
+        ]
+        pieces = ["COUNT(*) AS rows"]
+        for column in watched_columns:
+            if column in columns:
+                pieces.append(f"{_blank_expr(column)} AS blank_{column}")
+        row = conn.execute(
+            f"SELECT {', '.join(pieces)} FROM audit_candidate_rows WHERE {' AND '.join(where)}",
+            params,
+        ).fetchone()
+        total = int(row["rows"] or 0) if row else 0
+        blank_counts: dict[str, int] = {}
+        blank_rates: dict[str, float | None] = {}
+        for column in watched_columns:
+            key = f"blank_{column}"
+            if row is not None and key in row.keys():
+                count = int(row[key] or 0)
+                blank_counts[column] = count
+                blank_rates[column] = round(count / total, 4) if total else None
+        discovery_where = list(where)
+        discovery_params = list(params)
+        discovery_predicates = []
+        for column in ("candidate_pool_role", "discovery_signal_family", "discovery_reason", "discovery_action_ceiling"):
+            if column in columns:
+                discovery_predicates.append(f"({column} IS NOT NULL AND TRIM(CAST({column} AS TEXT))<>'')")
+        discovery_rows = 0
+        expansion_role_rows = 0
+        if discovery_predicates:
+            row = conn.execute(
+                f"""
+                SELECT
+                  COUNT(*) AS rows,
+                  SUM(CASE WHEN UPPER(TRIM(COALESCE(candidate_pool_role,'')))='EXPANSION' THEN 1 ELSE 0 END) AS expansion_rows
+                FROM audit_candidate_rows
+                WHERE {' AND '.join(discovery_where)}
+                  AND ({' OR '.join(discovery_predicates)})
+                """,
+                discovery_params,
+            ).fetchone()
+            discovery_rows = int(row["rows"] or 0) if row else 0
+            expansion_role_rows = int(row["expansion_rows"] or 0) if row else 0
+        return {
+            "available": True,
+            "db_path": str(db_path),
+            "rows": total,
+            "blank_counts": blank_counts,
+            "blank_rates": blank_rates,
+            "discovery_metadata_rows": discovery_rows,
+            "expansion_role_rows": expansion_role_rows,
+            "role_contract": "candidate_pool_role must remain DISCOVERY for discovery/expansion audit rows",
+            "trade_behavior_change_allowed": False,
+        }
+    finally:
+        conn.close()
+
+
+def _decode_json_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+            return dict(parsed) if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _resolved_candidate_reason(row: sqlite3.Row) -> tuple[str, str]:
+    payload = _decode_json_dict(row["payload_json"] if "payload_json" in row.keys() else "")
+    runtime_gate = _decode_json_dict(payload.get("runtime_gate"))
+    ordered = [
+        ("no_submit_reason_code", row["no_submit_reason_code"] if "no_submit_reason_code" in row.keys() else ""),
+        ("route_runtime_gate_reason", row["route_runtime_gate_reason"] if "route_runtime_gate_reason" in row.keys() else ""),
+        ("route_reason", row["route_reason"] if "route_reason" in row.keys() else ""),
+        ("payload.runtime_gate.reason", runtime_gate.get("reason")),
+        ("classification", row["classification"] if "classification" in row.keys() else ""),
+    ]
+    for source, value in ordered:
+        text = str(value or "").strip()
+        if text:
+            return text, source
+    return "unknown", "fallback"
+
+
+def _candidate_resolved_reason_report(
+    *,
+    db_path: Path,
+    session_date: str,
+    market: str,
+    runtime_mode: str,
+    limit: int = 20,
+) -> dict[str, Any]:
+    if not db_path.exists():
+        return {"available": False, "reason": "db_missing", "db_path": str(db_path)}
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(conn, "audit_candidate_rows"):
+            return {"available": False, "reason": "table_missing", "db_path": str(db_path)}
+        columns = _columns(conn, "audit_candidate_rows")
+        selected = [
+            "ticker",
+            "classification",
+            "route_reason",
+            "route_runtime_gate_reason",
+            "payload_json",
+        ]
+        if "no_submit_reason_code" in columns:
+            selected.append("no_submit_reason_code")
+        where = ["runtime_mode=?"]
+        params: list[Any] = [runtime_mode]
+        if session_date:
+            where.append("session_date=?")
+            params.append(session_date)
+        if market:
+            where.append("market=?")
+            params.append(market.upper())
+        rows = list(
+            conn.execute(
+                f"SELECT {', '.join(selected)} FROM audit_candidate_rows WHERE {' AND '.join(where)}",
+                params,
+            )
+        )
+        reason_counts: Counter[str] = Counter()
+        source_counts: Counter[str] = Counter()
+        examples: list[dict[str, Any]] = []
+        for row in rows:
+            reason, source = _resolved_candidate_reason(row)
+            reason_counts[reason] += 1
+            source_counts[source] += 1
+            if len(examples) < max(int(limit or 1), 1):
+                examples.append(
+                    {
+                        "ticker": row["ticker"],
+                        "resolved_reason": reason,
+                        "source": source,
+                        "classification": row["classification"] if "classification" in row.keys() else "",
+                    }
+                )
+        return {
+            "available": True,
+            "db_path": str(db_path),
+            "rows": len(rows),
+            "reason_counts": dict(reason_counts.most_common(limit)),
+            "source_counts": dict(source_counts.most_common()),
+            "examples": examples,
+            "trade_behavior_change_allowed": False,
+        }
+    finally:
+        conn.close()
+
+
+def _pathb_missed_opportunity_report(
+    *,
+    db_path: Path,
+    session_date: str,
+    market: str,
+    runtime_mode: str,
+    limit: int = 10,
+) -> dict[str, Any]:
+    if not db_path.exists():
+        return {"available": False, "reason": "db_missing", "db_path": str(db_path)}
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(conn, "pathb_miss_quality"):
+            return {"available": False, "reason": "table_missing", "db_path": str(db_path)}
+        where = ["runtime_mode=?"]
+        params: list[Any] = [runtime_mode]
+        if session_date:
+            where.append("session_date=?")
+            params.append(session_date)
+        if market:
+            where.append("market=?")
+            params.append(market.upper())
+        where_sql = " AND ".join(where)
+        reason_rows = [
+            dict(row)
+            for row in conn.execute(
+                f"""
+                SELECT
+                  COALESCE(NULLIF(cancel_reason,''), 'unknown') AS cancel_reason,
+                  COUNT(*) AS rows,
+                  SUM(CASE WHEN COALESCE(zone_reentered_after_cancel,0)=1 THEN 1 ELSE 0 END) AS zone_reentered,
+                  SUM(CASE WHEN COALESCE(mfe_30m_pct,0)>0 THEN 1 ELSE 0 END) AS positive_mfe_rows,
+                  AVG(mfe_30m_pct) AS avg_mfe_30m_pct,
+                  AVG(mae_30m_pct) AS avg_mae_30m_pct
+                FROM pathb_miss_quality
+                WHERE {where_sql}
+                GROUP BY COALESCE(NULLIF(cancel_reason,''), 'unknown')
+                ORDER BY rows DESC
+                """,
+                params,
+            )
+        ]
+        examples = [
+            dict(row)
+            for row in conn.execute(
+                f"""
+                SELECT market, session_date, ticker, cancel_reason,
+                       zone_reentered_after_cancel, mfe_30m_pct, mae_30m_pct,
+                       followup_status, quote_sample_count
+                FROM pathb_miss_quality
+                WHERE {where_sql}
+                ORDER BY COALESCE(mfe_30m_pct, -999999.0) DESC
+                LIMIT ?
+                """,
+                [*params, max(int(limit or 1), 1)],
+            )
+        ]
+        return {
+            "available": True,
+            "db_path": str(db_path),
+            "rows": sum(int(row.get("rows") or 0) for row in reason_rows),
+            "by_cancel_reason": reason_rows,
+            "top_positive_mfe_examples": examples,
+            "trade_behavior_change_allowed": False,
+            "reason_split_change_allowed": False,
+        }
+    finally:
+        conn.close()
+
+
+def _kr_live_expansion_guard_report(mode: str) -> dict[str, Any]:
+    try:
+        from tools.live_preflight import load_effective_config
+
+        config = load_effective_config(mode)
+        effective = dict(config.get("effective") or {})
+    except Exception as exc:
+        return {"available": False, "reason": "config_unavailable", "error": str(exc)}
+
+    def truthy(value: Any) -> bool:
+        return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    strategy_flags = {
+        "KR_PLAN_A_MOMENTUM_SIGNAL_ENABLED": truthy(effective.get("KR_PLAN_A_MOMENTUM_SIGNAL_ENABLED")),
+        "KR_PLAN_A_GAP_PULLBACK_SIGNAL_ENABLED": truthy(effective.get("KR_PLAN_A_GAP_PULLBACK_SIGNAL_ENABLED")),
+        "KR_PLAN_A_ORP_SIGNAL_ENABLED": truthy(effective.get("KR_PLAN_A_ORP_SIGNAL_ENABLED")),
+    }
+    enabled_strategy_flags = [key for key, value in strategy_flags.items() if value]
+    return {
+        "available": True,
+        "status": "warn" if enabled_strategy_flags else "pass",
+        "strategy_live_flags": strategy_flags,
+        "enabled_strategy_flags": enabled_strategy_flags,
+        "pathb_kr_live_enabled": truthy(effective.get("PATHB_KR_LIVE_ENABLED")),
+        "kr_claude_price_new_entry_block": truthy(effective.get("KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK")),
+        "minimum_shadow_or_probe": {"fills": 30, "calendar_weeks": 4},
+        "live_expansion_allowed": False,
+        "config_change_allowed": False,
+    }
 
 
 def _pead_manual_review_report(
@@ -402,6 +701,7 @@ def build_monitoring_ops_report(
     *,
     candidate_db: str | Path | None = None,
     learning_db: str | Path | None = None,
+    event_db: str | Path | None = None,
     mode: str = "live",
     session_date: str = "",
     market: str = "",
@@ -419,6 +719,7 @@ def build_monitoring_ops_report(
     market_key = str(market or "").upper()
     candidate_path = Path(candidate_db) if candidate_db else get_runtime_path("data", "audit", "candidate_audit.db")
     learning_path = Path(learning_db) if learning_db else get_runtime_path("data", "ml", "decisions.db")
+    event_path = Path(event_db) if event_db else get_runtime_path("data", "v2_event_store.db")
     candidate_analysis: dict[str, Any]
     if candidate_path.exists():
         try:
@@ -454,8 +755,27 @@ def build_monitoring_ops_report(
             market=market_key,
             runtime_mode=runtime_mode,
         ),
+        "candidate_metadata_coverage": _candidate_metadata_coverage_report(
+            db_path=candidate_path,
+            session_date=session_date,
+            market=market_key,
+            runtime_mode=runtime_mode,
+        ),
+        "candidate_resolved_reason": _candidate_resolved_reason_report(
+            db_path=candidate_path,
+            session_date=session_date,
+            market=market_key,
+            runtime_mode=runtime_mode,
+        ),
+        "pathb_missed_opportunity": _pathb_missed_opportunity_report(
+            db_path=event_path,
+            session_date=session_date,
+            market=market_key,
+            runtime_mode=runtime_mode,
+        ),
         "kis_token_status": _kis_token_status(runtime_mode),
         "v2_learning_gate": _v2_learning_gate_report(learning_path, market=market_key, runtime_mode=runtime_mode),
+        "kr_live_expansion_guard": _kr_live_expansion_guard_report(runtime_mode),
         "hold_advisor_latency": hold_latency,
         "hold_advisor_cache_shadow": _hold_advisor_cache_shadow(
             decision_dir=hold_decisions,
@@ -469,6 +789,18 @@ def build_monitoring_ops_report(
             log_dir=Path(pead_log_dir) if pead_log_dir else get_runtime_path("logs", "pead"),
         ),
     }
+    if isinstance(payload.get("pathb_missed_opportunity"), dict):
+        payload["pathb_missed_opportunity"]["source_overlay"] = {
+            "event_store": "pathb_miss_quality",
+            "candidate_audit": "candidate_resolved_reason",
+            "funnel": "candidate_analysis.routing_delta",
+        }
+        payload["pathb_missed_opportunity"]["candidate_resolved_reason_counts"] = dict(
+            (payload.get("candidate_resolved_reason") or {}).get("reason_counts") or {}
+        )
+        payload["pathb_missed_opportunity"]["routing_delta_reason_counts"] = dict(
+            (((payload.get("candidate_analysis") or {}).get("routing_delta") or {}).get("route_reason_counts") or {})
+        )
     payload["gate_summary"] = {
         "actual_prompt_visibility": (
             candidate_analysis.get("consistency") or candidate_analysis.get("candidate_consistency") or {}
@@ -478,6 +810,8 @@ def build_monitoring_ops_report(
         "bucket_source_score_performance_allowed": False,
         "watch_trigger_policy_change_allowed": False,
         "learning_policy_change_allowed": False,
+        "kr_live_expansion_allowed": False,
+        "pathb_missed_opportunity_policy_change_allowed": False,
         "pead_policy_change_allowed": False,
     }
     if write_report:
@@ -489,6 +823,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build read-only monitoring operations report.")
     parser.add_argument("--candidate-db", default="")
     parser.add_argument("--learning-db", default="")
+    parser.add_argument("--event-db", default="")
     parser.add_argument("--mode", default="live", choices=["live", "paper"])
     parser.add_argument("--date", default="")
     parser.add_argument("--market", default="")
@@ -505,6 +840,7 @@ def main(argv: list[str] | None = None) -> int:
     payload = build_monitoring_ops_report(
         candidate_db=args.candidate_db or None,
         learning_db=args.learning_db or None,
+        event_db=args.event_db or None,
         mode=args.mode,
         session_date=args.date,
         market=args.market,

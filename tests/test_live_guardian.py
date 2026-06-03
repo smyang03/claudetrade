@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from tools.live_guardian import (
+    GuardianAction,
     _apply_auto_fixes,
     _alert_state_path,
     _guardian_heartbeat_path,
@@ -490,6 +491,77 @@ class LiveGuardianTests(unittest.TestCase):
         self.assertEqual(report["counts"]["accepted_exception"], 1)
         self.assertEqual(report["counts"]["soft_fail"], 0)
         self.assertTrue(report["ok"])
+
+    def test_market_gates_scope_broker_truth_stale_by_market(self) -> None:
+        preflight = {
+            "ok": False,
+            "fail_count": 0,
+            "warn_count": 1,
+            "checks": [
+                {
+                    "name": "broker_truth.kr_stale_state",
+                    "status": "WARN",
+                    "detail": "KR snapshot stale",
+                    "data": {"ttl_sec": 30},
+                }
+            ],
+            "effective_config": {"ENABLED_MARKETS": "KR,US"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "tools.live_guardian.run_preflight",
+            return_value=preflight,
+        ), patch(
+            "tools.live_guardian._write_guardian_heartbeat",
+        ), patch(
+            "tools.live_guardian._write_guardian_report",
+            return_value=(Path(tmp) / "guardian.json", Path(tmp) / "guardian.md"),
+        ):
+            report = run_guardian_once(mode="live", skip_smoke=True)
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["gate"], "BLOCK_START")
+        self.assertEqual(report["market_gates"]["KR"]["gate"], "BLOCK_START")
+        self.assertEqual(report["market_gates"]["US"]["gate"], "ALLOW_START")
+        self.assertEqual(report["market_gates"]["KR"]["blockers"][0]["name"], "broker_truth.kr_stale_state")
+        self.assertEqual(report["market_gates"]["US"]["blockers"], [])
+
+    def test_market_gates_include_start_action_fail(self) -> None:
+        preflight = {
+            "ok": True,
+            "fail_count": 0,
+            "warn_count": 0,
+            "checks": [
+                {
+                    "name": "runtime.process_inventory",
+                    "status": "PASS",
+                    "detail": "process inventory ok",
+                    "data": {"source": "psutil", "rows": []},
+                }
+            ],
+            "effective_config": {"ENABLED_MARKETS": "KR,US"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "tools.live_guardian.run_preflight",
+            return_value=preflight,
+        ), patch(
+            "tools.live_guardian._write_guardian_heartbeat",
+        ), patch(
+            "tools.live_guardian._start_bot",
+            return_value=GuardianAction("start_bot", "FAIL", "failed to start", {}),
+        ), patch(
+            "tools.live_guardian._write_guardian_report",
+            return_value=(Path(tmp) / "guardian.json", Path(tmp) / "guardian.md"),
+        ):
+            report = run_guardian_once(mode="live", start_bot=True, skip_smoke=True)
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["gate"], "BLOCK_START")
+        self.assertEqual(report["market_gates"]["KR"]["gate"], "BLOCK_START")
+        self.assertEqual(report["market_gates"]["US"]["gate"], "BLOCK_START")
+        self.assertEqual(report["market_gates"]["KR"]["counts"]["action_fail"], 1)
+        self.assertEqual(report["market_gates"]["US"]["counts"]["action_fail"], 1)
 
     def test_auto_fix_attempts_missing_token_refresh_without_requiring_soft_classification(self) -> None:
         finding = classify_preflight_check(
