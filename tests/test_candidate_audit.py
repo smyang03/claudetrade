@@ -569,6 +569,34 @@ class CandidateAuditBackfillTests(unittest.TestCase):
                 "or_formed",
             )
 
+    def test_candidate_audit_blank_integer_bool_extra_value_records_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "call_blank_bool",
+                    "runtime_mode": "live",
+                    "market": "KR",
+                    "session_date": "2026-06-02",
+                    "known_at": "2026-06-02T09:10:00+09:00",
+                    "ticker": "005930",
+                    "source_file": "trading_bot.selection_meta",
+                    "data_quality_missing": "",
+                }
+            )
+
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    "SELECT data_quality_missing FROM audit_candidate_rows WHERE ticker='005930'"
+                ).fetchone()
+            finally:
+                conn.close()
+
+            self.assertEqual(row["data_quality_missing"], 0)
+
     def test_runtime_evidence_backfill_dry_run_and_apply_fill_blank_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "candidate_audit.db"

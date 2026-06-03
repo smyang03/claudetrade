@@ -311,6 +311,35 @@ class LiveGuardianTests(unittest.TestCase):
         self.assertEqual(finding.data["previous_session_confirmed_overnight_holding_count"], 0)
         self.assertEqual(finding.data["previous_session_with_local_exposure_unresolved_count"], 1)
 
+    def test_confirmed_overnight_pathb_holding_missing_broker_qty_remains_hard(self) -> None:
+        row = {
+            "market": "US",
+            "ticker": "NOK",
+            "status": "FILLED",
+            "local_exposure": True,
+            "local_position_qty": 17,
+            "broker_truth_unavailable": False,
+            "broker_truth_stale": False,
+            "broker_truth_error": "",
+            "broker_position_qty": None,
+            "broker_position_count": 1,
+            "broker_open_order_count": 0,
+            "broker_any_open_order_evidence": False,
+            "broker_sell_fill_evidence": False,
+        }
+        finding = classify_preflight_check(
+            {
+                "name": "db.pathb_stale_active_runs",
+                "status": "WARN",
+                "detail": "previous-session active Path B rows=1",
+                "data": {"previous_session_with_local_exposure": [row]},
+            }
+        )
+
+        self.assertEqual(finding.classification, "hard_fail")
+        self.assertEqual(finding.data["previous_session_confirmed_overnight_holding_count"], 0)
+        self.assertEqual(finding.data["previous_session_with_local_exposure_unresolved_count"], 1)
+
     def test_confirmed_overnight_pathb_holding_stale_broker_truth_remains_hard(self) -> None:
         row = {
             "market": "US",

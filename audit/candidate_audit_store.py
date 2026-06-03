@@ -169,6 +169,22 @@ EXTRA_CALL_COLUMNS: dict[str, str] = {
 
 _MISSING = object()
 _JSON_TEXT_COLUMNS = {"soft_gate_overrides", "hard_blocks", "soft_gates", "strength_capture_rules"}
+_INT_BOOL_COLUMNS = {
+    "was_trade_ready_before",
+    "legacy_auto_ready_promoted",
+    "override_validated",
+    "claude_override_allowed",
+    "bypass_advisor",
+    "tuning_feedback_applied",
+    "actual_prompt_included",
+    "reported_input_to_claude",
+    "data_quality_missing",
+    "final_prompt_included",
+    "stale_cycle",
+    "evidence_ceiling_applied",
+    "strength_capture_shadow",
+    "discovery_action_ceiling_applied",
+}
 _PROMPT_STAGE_SOURCE_FILES = {
     "trading_bot.prompt_pool_excluded",
     "trading_bot.prompt_pool",
@@ -307,31 +323,16 @@ def _candidate_extra_value(column: str, row: dict[str, Any]) -> Any:
         value = payload.get(column)
     if value is _MISSING or value is None:
         return None
+    if column in _INT_BOOL_COLUMNS:
+        if isinstance(value, str) and not value.strip():
+            return 0
+        return _int_bool(value)
     if isinstance(value, str) and not value.strip():
         return None
     if column.endswith("_json") or column in _JSON_TEXT_COLUMNS:
         if isinstance(value, str):
             return value
         return _json(value)
-    if column in {
-        "was_trade_ready_before",
-        "legacy_auto_ready_promoted",
-        "override_validated",
-        "claude_override_allowed",
-        "bypass_advisor",
-        "tuning_feedback_applied",
-        "actual_prompt_included",
-        "reported_input_to_claude",
-        "data_quality_missing",
-        "final_prompt_included",
-        "stale_cycle",
-        "evidence_ceiling_applied",
-        "strength_capture_shadow",
-        "discovery_action_ceiling_applied",
-    }:
-        if value is None:
-            return None
-        return _int_bool(value)
     return value
 
 

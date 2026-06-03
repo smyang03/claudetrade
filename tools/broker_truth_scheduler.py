@@ -22,7 +22,12 @@ if str(ROOT) not in sys.path:
 from bot.session_date import KST, resolve_session_date_str
 from preopen.scheduler import is_trading_day, market_key, regular_close_dt, regular_open_dt
 from runtime_paths import get_runtime_path
-from tools.live_maintenance import broker_truth_report
+
+
+def broker_truth_report(**kwargs: Any) -> dict[str, Any]:
+    from tools.live_maintenance import broker_truth_report as _broker_truth_report
+
+    return _broker_truth_report(**kwargs)
 
 
 def _now_iso() -> str:
@@ -109,9 +114,14 @@ def _lock_path(mode: str) -> Path:
     return get_runtime_path("state", name)
 
 
-def _event_path(mode: str) -> Path:
+def _event_path(mode: str, now_dt: datetime | None = None) -> Path:
     runtime_mode = _runtime_mode(mode)
-    day = datetime.now(KST).strftime("%Y%m%d")
+    current = now_dt or datetime.now(KST)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=KST)
+    else:
+        current = current.astimezone(KST)
+    day = current.strftime("%Y%m%d")
     return get_runtime_path("logs", "broker_truth_scheduler", f"{day}_{runtime_mode}.jsonl")
 
 
@@ -130,8 +140,8 @@ def _save_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def _append_event(mode: str, event: dict[str, Any]) -> None:
-    path = _event_path(mode)
+def _append_event(mode: str, event: dict[str, Any], *, now_dt: datetime | None = None) -> None:
+    path = _event_path(mode, now_dt=now_dt)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = dict(event or {})
     payload.setdefault("ts", _now_iso())
@@ -248,6 +258,7 @@ def market_refresh_window(
         current = current.replace(tzinfo=KST)
     else:
         current = current.astimezone(KST)
+    calendar_errors: list[dict[str, str]] = []
     for session_date in _candidate_session_dates(mkt, current):
         try:
             if not is_trading_day(mkt, session_date):
@@ -255,12 +266,8 @@ def market_refresh_window(
             opened = regular_open_dt(mkt, session_date)
             closed = regular_close_dt(mkt, session_date)
         except Exception as exc:
-            return {
-                "market": mkt,
-                "active": False,
-                "reason": f"calendar_error:{exc}",
-                "session_date": session_date,
-            }
+            calendar_errors.append({"session_date": session_date, "error": str(exc)})
+            continue
         start = opened - timedelta(minutes=max(0, int(preopen_min)))
         end = closed + timedelta(minutes=max(0, int(postclose_min)))
         if start <= current <= end:
@@ -274,6 +281,15 @@ def market_refresh_window(
                 "regular_close": closed.isoformat(timespec="seconds"),
                 "window_end": end.isoformat(timespec="seconds"),
             }
+    if calendar_errors:
+        first_error = calendar_errors[0]
+        return {
+            "market": mkt,
+            "active": False,
+            "reason": f"calendar_error:{first_error.get('error', '')}",
+            "session_date": first_error.get("session_date", ""),
+            "calendar_errors": calendar_errors,
+        }
     return {
         "market": mkt,
         "active": False,
@@ -345,7 +361,7 @@ def run_scheduler_once(
     force: bool = False,
     dry_run: bool = False,
     now_dt: datetime | None = None,
-    refresh_interval_min: int = 10,
+    refresh_interval_min: int = 2,
     failure_retry_min: int = 2,
     preopen_min: int = 20,
     postclose_min: int = 15,
@@ -461,7 +477,7 @@ def run_scheduler_once(
             summary["ok"] = False
             last_error = str(exc)
         summary["results"].append(market_result)
-        _append_event(runtime_mode, {"event": "refresh", **market_result})
+        _append_event(runtime_mode, {"event": "refresh", **market_result}, now_dt=current)
 
     _save_json(state_path, state)
     _write_heartbeat(
@@ -485,7 +501,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--interval-sec", type=int, default=30)
-    parser.add_argument("--refresh-interval-min", type=int, default=10)
+    parser.add_argument("--refresh-interval-min", type=int, default=2)
     parser.add_argument("--failure-retry-min", type=int, default=2)
     parser.add_argument("--preopen-min", type=int, default=20)
     parser.add_argument("--postclose-min", type=int, default=15)

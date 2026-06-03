@@ -51,6 +51,37 @@ class BrokerTruthSchedulerTests(unittest.TestCase):
         self.assertTrue(window["active"])
         self.assertEqual(window["session_date"], "2026-06-03")
 
+    def test_calendar_error_continues_to_later_candidate_session(self) -> None:
+        now = datetime(2026, 6, 3, 22, 20, tzinfo=KST)
+
+        def fake_is_trading_day(market: str, session_date: str) -> bool:
+            if session_date == "2026-06-02":
+                raise RuntimeError("temporary calendar failure")
+            return True
+
+        def fake_open(market: str, session_date: str) -> datetime:
+            return datetime(2026, 6, 3, 22, 30, tzinfo=KST)
+
+        def fake_close(market: str, session_date: str) -> datetime:
+            return datetime(2026, 6, 4, 5, 0, tzinfo=KST)
+
+        with patch("tools.broker_truth_scheduler.is_trading_day", side_effect=fake_is_trading_day), patch(
+            "tools.broker_truth_scheduler.regular_open_dt",
+            side_effect=fake_open,
+        ), patch(
+            "tools.broker_truth_scheduler.regular_close_dt",
+            side_effect=fake_close,
+        ):
+            window = broker_truth_scheduler.market_refresh_window(
+                "US",
+                now_dt=now,
+                preopen_min=20,
+                postclose_min=15,
+            )
+
+        self.assertTrue(window["active"])
+        self.assertEqual(window["session_date"], "2026-06-03")
+
     def test_force_refresh_runs_all_markets(self) -> None:
         now = datetime(2026, 6, 3, 20, 0, tzinfo=KST)
         with tempfile.TemporaryDirectory() as tmp:
@@ -140,6 +171,41 @@ class BrokerTruthSchedulerTests(unittest.TestCase):
         self.assertEqual(summary["due"], 0)
         self.assertEqual(summary["skipped"], 1)
         report_mock.assert_not_called()
+
+    def test_event_log_path_uses_scheduler_tick_date(self) -> None:
+        now = datetime(2026, 6, 3, 23, 59, tzinfo=KST)
+        active_window = {"market": "US", "active": True, "reason": "inside_refresh_window"}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("tools.broker_truth_scheduler.get_runtime_path", side_effect=_runtime_path(root)), patch(
+                "tools.broker_truth_scheduler.market_refresh_window",
+                return_value=active_window,
+            ), patch(
+                "tools.broker_truth_scheduler.broker_truth_report",
+                return_value={
+                    "ok": True,
+                    "market": "US",
+                    "positions": [],
+                    "open_orders": [],
+                    "today_fills": [],
+                    "stale": False,
+                    "missing": False,
+                    "error": "",
+                },
+            ):
+                summary = broker_truth_scheduler.run_scheduler_once(
+                    mode="live",
+                    markets=["US"],
+                    force=True,
+                    now_dt=now,
+                )
+
+            event_path = root / "logs" / "broker_truth_scheduler" / "20260603_live.jsonl"
+            next_day_path = root / "logs" / "broker_truth_scheduler" / "20260604_live.jsonl"
+
+            self.assertTrue(summary["ok"])
+            self.assertTrue(event_path.exists())
+            self.assertFalse(next_day_path.exists())
 
 
 if __name__ == "__main__":

@@ -239,11 +239,8 @@ def _pathb_confirmed_overnight_holding(row: dict[str, Any]) -> bool:
         return False
     local_qty = _int_or_none(row.get("local_position_qty"))
     broker_qty = _int_or_none(row.get("broker_position_qty"))
-    broker_position_count = _int_or_none(row.get("broker_position_count"))
     has_local_exposure = bool(row.get("local_exposure")) or (local_qty is not None and local_qty > 0)
-    has_broker_position = (broker_qty is not None and broker_qty > 0) or (
-        broker_position_count is not None and broker_position_count > 0
-    )
+    has_broker_position = broker_qty is not None and broker_qty > 0
     if not has_local_exposure or not has_broker_position:
         return False
     if local_qty is not None and broker_qty is not None and local_qty != broker_qty:

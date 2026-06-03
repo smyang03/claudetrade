@@ -22,7 +22,7 @@ def test_live_stack_starts_broker_truth_scheduler() -> None:
     assert r'tools\broker_truth_scheduler.py" "broker_truth_scheduler' in text
     assert r"python tools\broker_truth_scheduler.py --mode live --markets KR,US --once --force --ttl-sec 180 --json" in text
     assert r"python tools\broker_truth_scheduler.py --mode live --markets KR,US --loop" in text
-    assert "--refresh-interval-min 10" in text
+    assert "--refresh-interval-min 2" in text
     assert "--failure-retry-min 2" in text
     assert "--ttl-sec 180" in text
     assert "--no-refresh-on-start" in text
