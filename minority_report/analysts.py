@@ -2098,6 +2098,17 @@ def _digest_news_excerpt(digest_prompt: str, max_chars: int = 600) -> str:
     return "\nDigest news excerpt:\n" + excerpt[: max(1, int(max_chars))].strip() + "\n"
 
 
+def _selection_market_session_date(market: str) -> str:
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+
+    market_key = str(market or "").strip().upper()
+    now_kr = _dt.now(_ZI("Asia/Seoul"))
+    if market_key == "US":
+        return now_kr.astimezone(_ZI("America/New_York")).date().isoformat()
+    return now_kr.date().isoformat()
+
+
 def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candidates: list,
                    intraday_context: str = "",
                    lesson_context: str = "",
@@ -2106,7 +2117,8 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                    execution_phase: str = "",
                    evidence_by_ticker: Optional[dict] = None,
                    prompt_pool_override: Optional[list[dict]] = None,
-                   prompt_pool_meta_override: Optional[dict] = None) -> list:
+                   prompt_pool_meta_override: Optional[dict] = None,
+                   session_date: str = "") -> list:
     """Claude가 WATCH와 TRADE_READY를 분리 선택한다."""
     global _LAST_SELECTION_META
     if not candidates:
@@ -2535,6 +2547,9 @@ execution_phase: {execution_phase or 'unspecified'}
   }}{candidate_actions_example}
 }}"""
 
+    smart_skip_watch_cap = watch_max
+    smart_skip_trade_cap = trade_max
+    smart_skip_prompt_contract = "selection_rank_v3+execution_plan_v1"
     if compact_selection_enabled:
         compact_watch_max = min(
             watch_max,
@@ -2544,6 +2559,9 @@ execution_phase: {execution_phase or 'unspecified'}
             trade_max,
             _env_int_bound("CLAUDE_SELECTION_COMPACT_TRADE_READY_MAX", min(5, trade_max), 0, max(0, trade_max)),
         )
+        smart_skip_watch_cap = compact_watch_max
+        smart_skip_trade_cap = compact_trade_max
+        smart_skip_prompt_contract = "selection_compact.v1"
         prompt = f"""{phase_instruction}
 execution_phase: {execution_phase or 'unspecified'}
 market: {market}
@@ -2666,7 +2684,20 @@ Rules:
     fallback_meta = _attach_prompt_pool_meta(fallback_meta)
     fallback = fallback_meta["watchlist"]
 
-    smart_skip_prompt_hash = selection_smart_skip.sha256_text(prompt)
+    smart_skip_session_date = str(session_date or _selection_market_session_date(market))
+    smart_skip_prompt_hash = selection_smart_skip.semantic_signature(
+        market=market,
+        session_date=smart_skip_session_date,
+        consensus_mode=consensus_mode,
+        execution_phase=execution_phase,
+        candidates=prompt_candidates,
+        prompt_contract=smart_skip_prompt_contract,
+        watch_cap=smart_skip_watch_cap,
+        trade_cap=smart_skip_trade_cap,
+        session_phase=execution_phase,
+        config_hash=str(prompt_pool_meta.get("config_hash") or prompt_pool_meta.get("_config_hash") or ""),
+        lesson_hash=str(active_lesson_meta.get("hash") or active_lesson_meta.get("selected_hash") or ""),
+    )
     try:
         smart_skip = selection_smart_skip.maybe_reuse(
             market=market,
@@ -2675,6 +2706,7 @@ Rules:
             prompt_hash=smart_skip_prompt_hash,
             prompt_candidate_count=len(prompt_candidates),
             preopen_watch=preopen_watch,
+            session_date=smart_skip_session_date,
         )
     except Exception as smart_skip_exc:
         log.debug(f"[ticker-selection] smart skip fail-open {market}: {smart_skip_exc}")
@@ -2989,6 +3021,7 @@ Rules:
                 prompt_candidate_count=len(prompt_candidates),
                 selection_meta=selection_meta,
                 reasons=reasons,
+                session_date=smart_skip_session_date,
             )
         except Exception as smart_skip_record_exc:
             log.debug(f"[ticker-selection] smart skip record failed {market}: {smart_skip_record_exc}")

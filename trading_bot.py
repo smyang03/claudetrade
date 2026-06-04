@@ -687,6 +687,20 @@ def _sub_screener_trigger_enabled(market: str) -> bool:
     if os.getenv(scoped_name) is not None:
         return _env_bool(scoped_name, False)
     return _env_bool("SUB_SCREENER_TRIGGER_ENABLED", True)
+def _env_float_value(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return float(default)
+    try:
+        return float(str(raw).strip())
+    except Exception:
+        return float(default)
+def _market_env_float(market: str, suffix: str, default: float) -> float:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    scoped_name = f"{market_key}_{suffix}"
+    if os.getenv(scoped_name) not in (None, ""):
+        return _env_float_value(scoped_name, default)
+    return _env_float_value(suffix, default)
 def _market_dynamic_universe_top_n_env(market: str) -> int:
     market_key = str(market or "").upper()
     default = _DYNAMIC_UNIVERSE_TOP_N_DEFAULTS.get(market_key, 20)
@@ -14905,6 +14919,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "BEAR_R1_MODEL",
             "NEUTRAL_R1_MODEL",
             "CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED",
+            "CLAUDE_SELECTION_COMPACT_WATCH_MAX",
+            "CLAUDE_SELECTION_COMPACT_TRADE_READY_MAX",
+            "CLAUDE_SELECTION_COMPRESSED_MAX_TOKENS",
+            "SELECTION_SMART_SKIP_ENABLED",
+            "SELECTION_SMART_SKIP_MODE",
+            "SELECTION_SMART_SKIP_TTL_MIN",
             "ENABLE_CLAUDE_CANDIDATE_ACTIONS",
             "CANDIDATE_ACTIONS_V2_ENABLED",
             "ENABLE_ACTION_ROUTING",
@@ -14923,6 +14943,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "US_EARLY_ENTRY_SOFT_GATE_ENABLED",
             "KR_EARLY_ENTRY_SOFT_GATE_ENABLED",
             "CLAUDE_REVIEW_ALL_AUTOMATED_SELLS",
+            "SUB_SCREENER_PLAN_A_MIN_SCORE",
+            "KR_SUB_SCREENER_PLAN_A_MIN_SCORE",
+            "US_SUB_SCREENER_PLAN_A_MIN_SCORE",
+            "SUB_SCREENER_PLAN_B_MIN_SCORE",
+            "KR_SUB_SCREENER_PLAN_B_MIN_SCORE",
+            "US_SUB_SCREENER_PLAN_B_MIN_SCORE",
         )
         runtime_cfg = getattr(self, "runtime_config", None)
         values: dict[str, str] = {}
@@ -16341,7 +16367,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                execution_phase=self._current_judgment_phase(target_market),
                                                evidence_by_ticker=evidence_by_ticker,
                                                prompt_pool_override=prompt_rows,
-                                               prompt_pool_meta_override=prompt_meta)
+                                               prompt_pool_meta_override=prompt_meta,
+                                               session_date=self._current_session_date_str(target_market))
             if not selected:
                 raise RuntimeError("최종 선택 종목이 없습니다.")
             sel_meta = self._apply_selection_meta(target_market, selected, mode=mode, source=source_type_key)
@@ -25333,6 +25360,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     evidence_by_ticker=evidence_by_ticker,
                     prompt_pool_override=prompt_rows,
                     prompt_pool_meta_override=prompt_meta,
+                    session_date=self._current_session_date_str(market),
                 )
                 sel_meta = self._apply_selection_meta(market, selected, mode="PREOPEN_WATCH", source=_JUDGMENT_PHASE_PREOPEN)
                 sel_meta = self._force_preopen_watch_only(market, sel_meta)
@@ -25686,7 +25714,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                     execution_phase=self._current_judgment_phase(market),
                                                     evidence_by_ticker=evidence_by_ticker,
                                                     prompt_pool_override=prompt_rows,
-                                                    prompt_pool_meta_override=prompt_meta)
+                                                    prompt_pool_meta_override=prompt_meta,
+                                                    session_date=self._current_session_date_str(market))
             sel_meta = self._apply_selection_meta(market, selected, mode=consensus.get("mode", ""), source="session_open")
             self._record_preopen_rank_diff(
                 market,
@@ -25870,7 +25899,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                                    execution_phase=self._current_judgment_phase(market),
                                                                    evidence_by_ticker=evidence_by_ticker,
                                                                    prompt_pool_override=prompt_rows,
-                                                                   prompt_pool_meta_override=prompt_meta)
+                                                                   prompt_pool_meta_override=prompt_meta,
+                                                                   session_date=self._current_session_date_str(market))
                     fresh_meta = self._apply_selection_meta(
                         market,
                         fresh_selected,
@@ -26616,8 +26646,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 current_exclude,
                 screener_rows,
                 plan_a_threshold=int(os.getenv("SUB_SCREENER_PLAN_A_THRESHOLD", "1")),
+                plan_a_min_score=_market_env_float(market_key, "SUB_SCREENER_PLAN_A_MIN_SCORE", 0.0),
                 plan_b_threshold=int(os.getenv("SUB_SCREENER_PLAN_B_THRESHOLD", "2")),
-                plan_b_min_score=float(os.getenv("SUB_SCREENER_PLAN_B_MIN_SCORE", "65")),
+                plan_b_min_score=_market_env_float(market_key, "SUB_SCREENER_PLAN_B_MIN_SCORE", 65.0),
             )
         except Exception as exc:
             log.warning(f"[sub_screener] {market_key} scan failed: {exc}")
@@ -31128,7 +31159,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                                     execution_phase=self._current_judgment_phase(market),
                                                                     evidence_by_ticker=evidence_by_ticker,
                                                                     prompt_pool_override=prompt_rows,
-                                                                    prompt_pool_meta_override=prompt_meta)
+                                                                    prompt_pool_meta_override=prompt_meta,
+                                                                    session_date=self._current_session_date_str(market))
                         tune_meta = self._apply_selection_meta(
                             market,
                             tune_tickers,
@@ -31490,7 +31522,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                     execution_phase=self._current_judgment_phase(market),
                                                     evidence_by_ticker=evidence_by_ticker,
                                                     prompt_pool_override=prompt_rows,
-                                                    prompt_pool_meta_override=prompt_meta)
+                                                    prompt_pool_meta_override=prompt_meta,
+                                                    session_date=self._current_session_date_str(market))
         new_meta = dict(get_last_selection_meta() or {})
         new_meta.setdefault("watchlist", list(new_selected or []))
         new_meta["_entry_route_source"] = "partial_reselect"
@@ -31908,7 +31941,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                                      execution_phase=self._current_judgment_phase(market),
                                                      evidence_by_ticker=evidence_by_ticker,
                                                      prompt_pool_override=prompt_rows,
-                                                     prompt_pool_meta_override=prompt_meta)
+                                                     prompt_pool_meta_override=prompt_meta,
+                                                     session_date=self._current_session_date_str(market))
                         reinvoke_meta = self._apply_selection_meta(
                             market,
                             new_tickers,

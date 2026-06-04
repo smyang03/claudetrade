@@ -66,6 +66,130 @@ def sha256_text(value: str) -> str:
     return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
 
 
+def _clean_token(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _candidate_ticker(value: Any, market: str) -> str:
+    if not isinstance(value, dict):
+        return ""
+    ticker = str(value.get("ticker") or value.get("code") or value.get("t") or "").strip()
+    if not ticker:
+        return ""
+    return ticker.upper() if _market_key(market) == "US" else ticker
+
+
+def _first_value(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, "", [], {}):
+            return value
+    return ""
+
+
+def _score_bucket(value: Any) -> str:
+    try:
+        score = float(str(value).replace(",", ""))
+    except Exception:
+        return ""
+    if score != score:
+        return ""
+    score = max(0.0, min(100.0, score))
+    return str(int(score // 5) * 5)
+
+
+def _semantic_candidate(row: dict[str, Any], market: str) -> dict[str, str]:
+    live = row.get("live_evidence") if isinstance(row.get("live_evidence"), dict) else {}
+    risk = live.get("risk_control_view") if isinstance(live.get("risk_control_view"), dict) else {}
+    ticker = _candidate_ticker(row, market)
+    evidence_class = _first_value(
+        row.get("evidence_class"),
+        row.get("selection_evidence_class"),
+        live.get("evidence_class"),
+    )
+    action_ceiling = _first_value(
+        row.get("selection_evidence_action_ceiling"),
+        row.get("evidence_action_ceiling"),
+        row.get("action_ceiling"),
+        row.get("discovery_action_ceiling"),
+        live.get("action_ceiling"),
+        risk.get("action_ceiling"),
+    )
+    trainer_state = _first_value(
+        row.get("trainer_candidate_state"),
+        row.get("candidate_pool_role"),
+        row.get("candidate_state"),
+    )
+    source_role = _first_value(
+        row.get("candidate_pool_role"),
+        row.get("source_type"),
+        row.get("candidate_source"),
+        row.get("source_file"),
+        row.get("discovery_signal_family"),
+    )
+    score = _first_value(
+        row.get("trainer_prompt_score"),
+        row.get("candidate_quality_score"),
+        row.get("raw_score_current"),
+        row.get("score"),
+    )
+    return {
+        "ticker": ticker,
+        "evidence_class": _clean_token(evidence_class),
+        "action_ceiling": _clean_token(action_ceiling),
+        "trainer_state": _clean_token(trainer_state),
+        "source_role": _clean_token(source_role),
+        "score_bucket": _score_bucket(score),
+    }
+
+
+def semantic_signature(
+    *,
+    market: str,
+    session_date: str,
+    consensus_mode: str,
+    execution_phase: str,
+    candidates: list[dict[str, Any]],
+    prompt_contract: str,
+    watch_cap: int,
+    trade_cap: int,
+    session_phase: str = "",
+    config_hash: str = "",
+    lesson_hash: str = "",
+) -> str:
+    """Stable smart-skip key that ignores prompt wording and ticker order."""
+    market_key = _market_key(market)
+    semantic_candidates = [
+        item
+        for item in (_semantic_candidate(dict(row or {}), market_key) for row in candidates or [])
+        if item.get("ticker")
+    ]
+    semantic_candidates.sort(
+        key=lambda item: (
+            item.get("ticker", ""),
+            item.get("evidence_class", ""),
+            item.get("action_ceiling", ""),
+            item.get("trainer_state", ""),
+            item.get("source_role", ""),
+            item.get("score_bucket", ""),
+        )
+    )
+    payload = {
+        "schema": "selection_smart_skip.semantic.v1",
+        "market": market_key,
+        "session_date": str(session_date or "").strip(),
+        "consensus_mode": str(consensus_mode or "").strip().upper(),
+        "execution_phase": str(execution_phase or "").strip().lower(),
+        "prompt_contract": str(prompt_contract or "").strip(),
+        "watch_cap": int(watch_cap or 0),
+        "trade_cap": int(trade_cap or 0),
+        "session_phase": str(session_phase or "").strip().lower(),
+        "config_hash": str(config_hash or "").strip(),
+        "lesson_hash": str(lesson_hash or "").strip(),
+        "candidates": semantic_candidates,
+    }
+    return sha256_text(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
 def scope_key(*, market: str, consensus_mode: str, execution_phase: str) -> str:
     payload = {
         "market": _market_key(market),
@@ -212,14 +336,92 @@ def _parse_iso(value: str) -> datetime | None:
         return None
 
 
+_ENTRY_ACTIONS = {"BUY_READY", "PROBE_READY", "ADD_READY"}
+_PRICE_PLAN_ACTIONS = {"PULLBACK_WAIT"}
+_ACTION_KEYS = ("final_action", "action", "requested_action", "a")
+_PRICE_PLAN_KEYS = (
+    "price_targets",
+    "_pathb_price_targets",
+    "_pathb_shadow_price_targets",
+    "pt",
+    "target",
+    "targets",
+)
+_PRICE_TARGET_FIELDS = {
+    "buy_zone_low",
+    "buy_zone_high",
+    "sell_target",
+    "stop_loss",
+    "hold_days",
+    "confidence",
+    "reference_price",
+    "current_price",
+    "max_entry_price",
+    "cancel_if_open_above",
+    "lo",
+    "hi",
+    "tgt",
+    "stp",
+    "days",
+    "conf",
+    "cf",
+    "ref",
+}
+
+
+def _has_price_plan(value: Any) -> bool:
+    if isinstance(value, dict):
+        for key in _PRICE_TARGET_FIELDS:
+            if key in value and value.get(key) not in (None, "", {}, []):
+                return True
+        for key in _PRICE_PLAN_KEYS:
+            if key in value and _has_price_plan(value.get(key)):
+                return True
+        if any(str(value.get(key) or "").strip() for key in _ACTION_KEYS):
+            return False
+        return any(_has_price_plan(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_price_plan(item) for item in value)
+    return value not in (None, "")
+
+
+def _candidate_action_name(item: dict[str, Any]) -> str:
+    for key in _ACTION_KEYS:
+        action = str(item.get(key) or "").strip().upper()
+        if action:
+            return action
+    return ""
+
+
+def _iter_candidate_action_items(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if not isinstance(value, dict):
+        return []
+    if any(str(value.get(key) or "").strip() for key in _ACTION_KEYS):
+        return [value]
+    return [item for item in value.values() if isinstance(item, dict)]
+
+
+def _candidate_actions_actionable(value: Any) -> bool:
+    for item in _iter_candidate_action_items(value):
+        action = _candidate_action_name(item)
+        if action in _ENTRY_ACTIONS:
+            return True
+        if action in _PRICE_PLAN_ACTIONS and _has_price_plan(item):
+            return True
+    return False
+
+
 def _has_trade_ready_or_price_plan(meta: dict[str, Any]) -> bool:
     if list(meta.get("trade_ready") or []):
         return True
-    for key in ("price_targets", "_pathb_price_targets", "candidate_actions", "_candidate_action_routes"):
+    for key in ("price_targets", "_pathb_price_targets"):
         value = meta.get(key)
-        if isinstance(value, dict) and value:
+        if _has_price_plan(value):
             return True
-        if isinstance(value, list) and value:
+    for key in ("candidate_actions", "_candidate_action_routes"):
+        if _candidate_actions_actionable(meta.get(key)):
             return True
     return False
 

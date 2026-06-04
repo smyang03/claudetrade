@@ -136,6 +136,33 @@ class SubScreenerIntegrationTests(unittest.TestCase):
 
         self.assertEqual(recorded, ["scan"])
 
+    def test_passes_market_scoped_plan_a_score_floor(self) -> None:
+        bot = _base_bot()
+        rows = [{"ticker": "SPOT"}]
+        bot._screen_market_candidates = lambda market, mode, *, force_refresh=False: rows
+        captured: dict = {}
+
+        def scan(*args, **kwargs):
+            captured.update(kwargs)
+            return _trigger_result()
+
+        with patch.dict(
+            os.environ,
+            {
+                "SUB_SCREENER_PLAN_A_MIN_SCORE": "70",
+                "US_SUB_SCREENER_PLAN_A_MIN_SCORE": "72",
+            },
+            clear=False,
+        ), \
+            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
+            patch("runtime.sub_screener.scan_new_candidates", side_effect=scan), \
+            patch("runtime.sub_screener.record_scan"), \
+            patch("runtime.sub_screener.record_attempt"), \
+            patch("runtime.sub_screener.record_triage_success"):
+            TradingBot.maybe_run_sub_screener(bot, "US")
+
+        self.assertEqual(captured["plan_a_min_score"], 72.0)
+
     def test_interval_respected(self) -> None:
         bot = _base_bot()
         bot._last_sub_screener_at["US"] = time.time()

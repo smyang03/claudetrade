@@ -45,6 +45,38 @@ class SubScreenerTests(unittest.TestCase):
         self.assertEqual(result.trigger_reason, "new_plan_a:1")
         self.assertEqual([row["ticker"] for row in result.new_plan_a], ["GOOD"])
 
+    def test_plan_a_score_floor_blocks_low_score_trigger(self) -> None:
+        with patch(
+            "runtime.sub_screener.build_trainer_prompt_pool",
+            return_value={"scored_pool": [_row("LOW", "PLAN_A", 64.9)]},
+        ):
+            result = sub_screener.scan_new_candidates(
+                "US",
+                set(),
+                [{"ticker": "LOW"}],
+                plan_a_min_score=70.0,
+            )
+
+        self.assertFalse(result.should_trigger)
+        self.assertEqual(result.trigger_reason, "no_trigger")
+        self.assertEqual(result.new_plan_a, [])
+
+    def test_plan_a_score_floor_allows_high_score_trigger(self) -> None:
+        with patch(
+            "runtime.sub_screener.build_trainer_prompt_pool",
+            return_value={"scored_pool": [_row("HIGH", "PLAN_A", 70.0)]},
+        ):
+            result = sub_screener.scan_new_candidates(
+                "US",
+                set(),
+                [{"ticker": "HIGH"}],
+                plan_a_min_score=70.0,
+            )
+
+        self.assertTrue(result.should_trigger)
+        self.assertEqual(result.trigger_reason, "new_plan_a:1")
+        self.assertEqual([row["ticker"] for row in result.new_plan_a], ["HIGH"])
+
     def test_no_trigger_plan_b_below_threshold(self) -> None:
         with patch(
             "runtime.sub_screener.build_trainer_prompt_pool",

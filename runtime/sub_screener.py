@@ -339,6 +339,7 @@ def scan_new_candidates(
     screener_rows: list[dict[str, Any]],
     *,
     plan_a_threshold: int = 1,
+    plan_a_min_score: float = 0.0,
     plan_b_threshold: int = 2,
     plan_b_min_score: float = 65.0,
 ) -> SubScanResult:
@@ -359,6 +360,7 @@ def scan_new_candidates(
     new_plan_a = [
         row for row in new_scored
         if str(row.get("trainer_candidate_state") or "").upper() == "PLAN_A"
+        and _score(row) >= float(plan_a_min_score)
     ]
     new_plan_b_high = [
         row for row in new_scored
