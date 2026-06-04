@@ -1020,6 +1020,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._or_high: dict[str, float] = {}
         self._or_low: dict[str, float] = {}
         self._or_formed: dict[str, bool] = {}
+        self._restore_runtime_handoff_snapshot()
         self._restore_post_open_features_from_jsonl()
         self._intraday_recheck_stale_alert_keys: set[str] = set()
         # KIS 지수 스냅샷 캐시 — API 일시 실패 시 TTL 내 이전 성공 값 재사용
@@ -14179,6 +14180,183 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._post_open_anchor = {}
         if not hasattr(self, "_post_open_feature_last_emit"):
             self._post_open_feature_last_emit = {}
+
+    def _runtime_handoff_path(self) -> Path:
+        return get_runtime_path("state", f"{getattr(self, '_mode', 'live')}_runtime_handoff_snapshot.json")
+
+    def _json_safe_runtime_value(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            out = {}
+            for key, item in value.items():
+                try:
+                    safe_key = str(key)
+                except Exception:
+                    continue
+                out[safe_key] = self._json_safe_runtime_value(item)
+            return out
+        if isinstance(value, (list, tuple, deque)):
+            return [self._json_safe_runtime_value(item) for item in value]
+        if isinstance(value, set):
+            return sorted(str(item) for item in value)
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        return str(value)
+
+    def _runtime_handoff_payload(self, trigger: str = "manual") -> dict:
+        self._ensure_post_open_tracking()
+        try:
+            session_dates = {market: self._current_session_date_str(market) for market in ("KR", "US")}
+        except Exception:
+            session_dates = {}
+        fields = {
+            "today_tickers": getattr(self, "today_tickers", {}),
+            "trade_ready_tickers": getattr(self, "trade_ready_tickers", {}),
+            "selection_meta": getattr(self, "selection_meta", {}),
+            "selection_stages": getattr(self, "selection_stages", {}),
+            "price_cache": getattr(self, "price_cache", {}),
+            "price_cache_raw": getattr(self, "price_cache_raw", {}),
+            "_intraday_high": getattr(self, "_intraday_high", {}),
+            "_intraday_low": getattr(self, "_intraday_low", {}),
+            "_or_high": getattr(self, "_or_high", {}),
+            "_or_low": getattr(self, "_or_low", {}),
+            "_or_formed": getattr(self, "_or_formed", {}),
+            "_post_open_price_history": getattr(self, "_post_open_price_history", {}),
+            "_post_open_anchor": getattr(self, "_post_open_anchor", {}),
+            "_post_open_feature_last_emit": getattr(self, "_post_open_feature_last_emit", {}),
+            "_last_post_open_features_by_ticker": getattr(self, "_last_post_open_features_by_ticker", {}),
+            "_last_screen_candidates": getattr(self, "_last_screen_candidates", {}),
+            "_last_data_insufficient_candidates": getattr(self, "_last_data_insufficient_candidates", {}),
+            "_data_insufficient_watch_tickers": getattr(self, "_data_insufficient_watch_tickers", {}),
+            "_last_universe_filter_bypass": getattr(self, "_last_universe_filter_bypass", {}),
+            "_pathb_negative_watch_counts": getattr(self, "_pathb_negative_watch_counts", {}),
+            "_entry_blocked": getattr(self, "_entry_blocked", {}),
+            "_ticker_no_signal_minutes": getattr(self, "_ticker_no_signal_minutes", {}),
+            "_ticker_no_signal_cycles": getattr(self, "_ticker_no_signal_cycles", {}),
+            "_ticker_runtime_blocked_reasons": getattr(self, "_ticker_runtime_blocked_reasons", {}),
+            "_ticker_runtime_rejection_reasons": getattr(self, "_ticker_runtime_rejection_reasons", {}),
+            "_last_rescreen_at": getattr(self, "_last_rescreen_at", {}),
+            "_last_sub_screener_at": getattr(self, "_last_sub_screener_at", {}),
+        }
+        return {
+            "schema_version": 1,
+            "mode": getattr(self, "_mode", "live"),
+            "pid": os.getpid(),
+            "trigger": str(trigger or "manual"),
+            "written_at": datetime.now(KST).isoformat(timespec="seconds"),
+            "session_dates": session_dates,
+            "fields": self._json_safe_runtime_value(fields),
+        }
+
+    def _write_runtime_handoff_snapshot(self, trigger: str = "manual") -> None:
+        runtime_cfg = getattr(self, "runtime_config", None)
+        if runtime_cfg is not None and not runtime_cfg.get_bool("ENABLE_RUNTIME_HANDOFF_SNAPSHOT", True):
+            return
+        try:
+            payload = self._runtime_handoff_payload(trigger=trigger)
+            _atomic_json_dump_with_retry(self._runtime_handoff_path(), payload, indent=2, default=str)
+            message = (
+                f"[runtime handoff save] trigger={payload.get('trigger')} "
+                f"path={self._runtime_handoff_path()}"
+            )
+            if str(trigger or "") == "autosave":
+                log.debug(message)
+            else:
+                log.info(message)
+        except Exception as exc:
+            log.warning(f"[runtime handoff save failed] {exc}")
+
+    def _restore_runtime_handoff_snapshot(self) -> None:
+        runtime_cfg = getattr(self, "runtime_config", None)
+        if runtime_cfg is not None and not runtime_cfg.get_bool("ENABLE_RUNTIME_HANDOFF_SNAPSHOT", True):
+            return
+        path = self._runtime_handoff_path()
+        if not path.exists():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            log.debug(f"[runtime handoff restore] read failed: {exc}")
+            return
+        if str(payload.get("mode") or "") != str(getattr(self, "_mode", "")):
+            return
+        written_raw = str(payload.get("written_at") or "").strip()
+        try:
+            written_at = datetime.fromisoformat(written_raw.replace("Z", "+00:00"))
+            if written_at.tzinfo is None:
+                written_at = written_at.replace(tzinfo=KST)
+            age_sec = (datetime.now(KST) - written_at.astimezone(KST)).total_seconds()
+        except Exception:
+            age_sec = 999999.0
+        max_age_sec = 1800.0
+        if runtime_cfg is not None:
+            max_age_sec = runtime_cfg.get_float("RUNTIME_HANDOFF_MAX_AGE_SEC", 1800.0)
+        if age_sec > max(60.0, float(max_age_sec or 1800.0)):
+            log.info(f"[runtime handoff restore] skipped stale age_sec={age_sec:.1f}")
+            return
+        fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+        dict_fields = (
+            "today_tickers",
+            "trade_ready_tickers",
+            "selection_meta",
+            "selection_stages",
+            "price_cache",
+            "price_cache_raw",
+            "_intraday_high",
+            "_intraday_low",
+            "_or_high",
+            "_or_low",
+            "_or_formed",
+            "_post_open_price_history",
+            "_post_open_anchor",
+            "_post_open_feature_last_emit",
+            "_last_post_open_features_by_ticker",
+            "_last_screen_candidates",
+            "_last_data_insufficient_candidates",
+            "_data_insufficient_watch_tickers",
+            "_last_universe_filter_bypass",
+            "_pathb_negative_watch_counts",
+            "_entry_blocked",
+            "_ticker_no_signal_minutes",
+            "_ticker_no_signal_cycles",
+            "_ticker_runtime_blocked_reasons",
+            "_ticker_runtime_rejection_reasons",
+            "_last_rescreen_at",
+            "_last_sub_screener_at",
+        )
+        restored: list[str] = []
+        for name in dict_fields:
+            value = fields.get(name)
+            if isinstance(value, dict):
+                setattr(self, name, value)
+                restored.append(name)
+        self._ensure_post_open_tracking()
+        if not isinstance(getattr(self, "_last_post_open_features_by_ticker", None), dict):
+            self._last_post_open_features_by_ticker = {"KR": {}, "US": {}}
+        for market_key in ("KR", "US"):
+            self._last_post_open_features_by_ticker.setdefault(market_key, {})
+        log.info(
+            f"[runtime handoff restore] restored={len(restored)} age_sec={age_sec:.1f} "
+            f"source_pid={payload.get('pid')} trigger={payload.get('trigger')}"
+        )
+        try:
+            self._write_funnel_event(
+                "runtime_handoff_restore",
+                "KR",
+                {
+                    "restored_fields": restored,
+                    "restored_field_count": len(restored),
+                    "age_sec": round(float(age_sec), 3),
+                    "source_pid": payload.get("pid"),
+                    "trigger": payload.get("trigger"),
+                    "session_dates": payload.get("session_dates") or {},
+                },
+            )
+        except Exception:
+            pass
 
     def _reset_session_live_caches(self, market: str, selected: list[str]) -> None:
         for attr in (
@@ -32906,6 +33084,7 @@ def main(is_paper: bool = True):
         sys.exit(1)
     atexit.register(_clear_bot_pid_file, is_paper)
     bot = TradingBot(is_paper=is_paper)
+    atexit.register(bot._write_runtime_handoff_snapshot, "atexit")
     enabled_markets = set(getattr(bot, "enabled_markets", {"KR", "US"}))
     log.info("=== Trading Bot Start ===")
     # Record session_start at boot.
@@ -33035,6 +33214,7 @@ def main(is_paper: bool = True):
         schedule.every(_RESCREEN_SCHEDULE_TICK_MIN).minutes.do(bot.run_rescreen, _mkt)
         schedule.every(30).minutes.do(bot.run_tuning, _mkt)
         schedule.every(60).minutes.do(bot._intraday_position_review, _mkt)
+    schedule.every(1).minutes.do(bot._write_runtime_handoff_snapshot, "autosave")
 
     # 1시간마다 상태 보고 (세션 중일 때만 실제 전송)
     schedule.every(60).minutes.do(bot._heartbeat)
@@ -33057,6 +33237,7 @@ def main(is_paper: bool = True):
             schedule.run_pending()
             time.sleep(1)
     finally:
+        bot._write_runtime_handoff_snapshot("shutdown")
         bot._stop_all_ws()
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

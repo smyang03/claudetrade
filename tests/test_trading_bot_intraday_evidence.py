@@ -280,6 +280,81 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertIn("KR:005930", bot._post_open_anchor)
         self.assertGreaterEqual(len(bot._post_open_price_history["KR:005930"]), 2)
 
+    def test_runtime_handoff_snapshot_restores_volatile_selection_memory(self) -> None:
+        source = _make_bot(lambda **kwargs: _candles())
+        source.is_paper = False
+        source.today_tickers = {"KR": ["005930"]}
+        source.trade_ready_tickers = {"KR": ["005930"], "US": []}
+        source.selection_meta = {"KR": {"selection_snapshot_ts": "2026-05-13T09:16:00"}, "US": {}}
+        source.selection_stages = {"KR": {"applied": {"selected": ["005930"]}}, "US": {}}
+        source.price_cache = {"005930": 106.0}
+        source.price_cache_raw = {"005930": 106.0}
+        source._intraday_high = {"005930": 107.0}
+        source._intraday_low = {"005930": 99.0}
+        source._or_high = {"005930": 104.0}
+        source._or_low = {"005930": 99.0}
+        source._or_formed = {"005930": True}
+        source._post_open_anchor = {
+            "KR:005930": {
+                "anchor_at": "2026-05-13T09:00:00",
+                "anchor_price": 100.0,
+                "anchor_source": "preopen_anchor",
+            }
+        }
+        source._post_open_price_history = {
+            "KR:005930": [
+                {"ts": "2026-05-13T09:00:00", "price": 100.0, "source": "test"},
+                {"ts": "2026-05-13T09:16:00", "price": 106.0, "source": "test"},
+            ]
+        }
+        source._last_post_open_features_by_ticker = {
+            "KR": {
+                "005930": {
+                    "ticker": "005930",
+                    "known_at": "2026-05-13T09:16:00",
+                    "anchor_at": "2026-05-13T09:00:00",
+                    "current_price": 106.0,
+                    "ret_5m_pct": 5.0,
+                    "opening_range_break": True,
+                    "vwap_distance_pct": 1.0,
+                    "volume_ratio_open": 2.0,
+                    "data_quality": "minute_complete",
+                }
+            },
+            "US": {},
+        }
+
+        target = _make_bot(lambda **kwargs: _candles())
+        target.is_paper = False
+        target.today_tickers = {}
+        target.trade_ready_tickers = {"KR": [], "US": []}
+        target.selection_meta = {"KR": {}, "US": {}}
+        target.selection_stages = {"KR": {}, "US": {}}
+        target.price_cache = {}
+        target.price_cache_raw = {}
+        target._intraday_high = {}
+        target._intraday_low = {}
+        target._or_high = {}
+        target._or_low = {}
+        target._or_formed = {}
+        target._post_open_anchor = {}
+        target._post_open_price_history = {}
+        target._last_post_open_features_by_ticker = {"KR": {}, "US": {}}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("runtime_paths._RUNTIME_ROOT", Path(tmpdir)):
+                TradingBot._write_runtime_handoff_snapshot(source, "test_shutdown")
+                TradingBot._restore_runtime_handoff_snapshot(target)
+
+        self.assertEqual(target.today_tickers["KR"], ["005930"])
+        self.assertEqual(target.trade_ready_tickers["KR"], ["005930"])
+        self.assertEqual(target.price_cache["005930"], 106.0)
+        self.assertTrue(target._or_formed["005930"])
+        self.assertEqual(target._or_high["005930"], 104.0)
+        self.assertIn("KR:005930", target._post_open_anchor)
+        self.assertEqual(target._last_post_open_features_by_ticker["KR"]["005930"]["ret_5m_pct"], 5.0)
+        self.assertEqual(target._last_funnel_event[0], "runtime_handoff_restore")
+
     def test_prefetch_uses_phase_target_limit_and_candidate_priority(self) -> None:
         bot = _make_bot(lambda **kwargs: _candles())
         bot.runtime_config.values["INTRADAY_EVIDENCE_MAX_TICKERS"] = 2
