@@ -2552,6 +2552,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "confidence": _confidence(breached, sample),
                 "generated_at": now_iso,
                 "expires_at": expires_at,
+                "basis_source": "ops_review_snapshot",
+                "basis_max_session": ops_review_snapshot.get("as_of"),
+                "basis_synced_at": now_iso,
+                "truth_status": "fresh",
             }
             candidate.update(lesson_quality_fields(metric_key, scope, value, sample))
             candidates.append(candidate)
@@ -2605,6 +2609,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "confidence": round(min(0.9, 0.3 + affordability_sample * 0.15), 2),
                 "generated_at": now_iso,
                 "expires_at": expires_at,
+                "basis_source": "session_decision_event_log",
+                "basis_max_session": ops_review_snapshot.get("as_of"),
+                "basis_synced_at": now_iso,
+                "truth_status": "fresh",
                 "examples": [
                     {
                         "ticker": event.get("ticker"),
@@ -2639,6 +2647,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return ""
         severity_rank = {"high": 0, "medium": 1, "info": 2, "low": 3}
         today_iso = self._current_session_date_str(market)
+        manual_review_sources = {"data_analysis", "manual", "postmortem"}
+        def _truth_status(item: dict) -> str:
+            status = str(item.get("truth_status") or "").strip().lower()
+            if status:
+                return status
+            source = str(item.get("source") or "").strip().lower()
+            if source in manual_review_sources:
+                return "manual_review_required"
+            return "fresh"
         rows = []
         for item in market_rows:
             if not isinstance(item, dict):
@@ -2648,6 +2665,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if bool(item.get("ops_flag", False)):
                 continue
             if item.get("claude_actionable") is False:
+                continue
+            if _truth_status(item) != "fresh":
                 continue
             if str(item.get("scope") or "").lower() in {"execution", "consensus", "strategy"}:
                 continue
@@ -3492,6 +3511,262 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self._persist_live_judgment(market_key)
             except Exception as exc:
                 log.debug(f"[selection_meta] persist skipped {market_key}: {exc}")
+
+    def _apply_kr_trade_ready_carry(
+        self,
+        market: str,
+        meta: dict,
+        *,
+        source: str = "",
+        selected: Optional[list[str]] = None,
+    ) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        source_key = str(source or "").strip()
+        if market_key != "KR" or source_key != "sub_screener_rescreen":
+            return meta
+        if not self._runtime_bool("KR_TRADE_READY_CARRY_ENABLED", True):
+            return meta
+
+        previous_meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+        previous_ready = list(dict.fromkeys(previous_meta.get("trade_ready") or []))
+        if not previous_ready:
+            return meta
+
+        try:
+            ttl_min = max(0.0, float(self._runtime_float("KR_TRADE_READY_CARRY_TTL_MIN", 5.0)))
+        except Exception:
+            ttl_min = 5.0
+        if ttl_min <= 0:
+            return meta
+
+        def _key(raw: Any) -> str:
+            return self._selection_ticker_key(market_key, str(raw or ""))
+
+        def _dict_value(payload: dict, field: str, ticker_key: str) -> Any:
+            values = payload.get(field) if isinstance(payload, dict) else {}
+            if not isinstance(values, dict):
+                return None
+            if ticker_key in values:
+                return values.get(ticker_key)
+            for raw_key, raw_value in values.items():
+                if _key(raw_key) == ticker_key:
+                    return raw_value
+            return None
+
+        def _parse_ts(raw: Any) -> Optional[datetime]:
+            text = str(raw or "").strip()
+            if not text:
+                return None
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except Exception:
+                return None
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=KST)
+            return parsed.astimezone(KST)
+
+        previous_ts = ""
+        for ts_key in ("selection_snapshot_ts", "_selection_snapshot_ts", "selected_at", "created_at", "updated_at"):
+            previous_ts = str(previous_meta.get(ts_key) or "").strip()
+            if previous_ts:
+                break
+        previous_dt = _parse_ts(previous_ts)
+        if previous_dt is None:
+            return meta
+        age_min = max(0.0, (datetime.now(KST) - previous_dt).total_seconds() / 60.0)
+        if age_min > ttl_min:
+            return meta
+
+        current_meta = dict(meta or {})
+        watchlist = list(dict.fromkeys(current_meta.get("watchlist") or selected or []))
+        if watchlist and not current_meta.get("watchlist"):
+            current_meta["watchlist"] = watchlist
+        watch_keys = {_key(ticker) for ticker in watchlist}
+        ready = list(dict.fromkeys(current_meta.get("trade_ready") or []))
+        ready_keys = {_key(ticker) for ticker in ready}
+        if not watch_keys:
+            return meta
+
+        hard_reason_tokens = (
+            "already_holding",
+            "pending_order",
+            "same_day",
+            "entry_blackout",
+            "broker",
+            "halt",
+            "missing_price_target",
+            "data_insufficient",
+            "missing_data",
+            "stale",
+            "late_entry",
+            "kr_stale",
+            "hard_block",
+            "blocked",
+            "cooldown",
+            "quarantine",
+            "risk_block",
+            "order_block",
+            "invalid",
+            "outlier",
+        )
+
+        def _hard_drop_reason(ticker_key: str) -> str:
+            veto = _dict_value(current_meta, "veto", ticker_key)
+            if str(veto or "").strip():
+                return f"new_veto:{str(veto).strip()[:80]}"
+            risk_tags = _dict_value(current_meta, "risk_tags", ticker_key)
+            if isinstance(risk_tags, str):
+                risk_tag_text = risk_tags
+            else:
+                try:
+                    risk_tag_text = " ".join(str(tag) for tag in list(risk_tags or []))
+                except Exception:
+                    risk_tag_text = ""
+            if self._watch_only_text_has_any(risk_tag_text, _WATCH_ONLY_HARD_KEYWORDS):
+                return "new_hard_risk_tag"
+            for route in list(current_meta.get("_candidate_action_routes") or []):
+                if not isinstance(route, dict) or _key(route.get("ticker")) != ticker_key:
+                    continue
+                final_action = str(route.get("final_action") or "").strip().upper()
+                reason = str(
+                    route.get("reason")
+                    or route.get("runtime_gate_reason")
+                    or route.get("blocker")
+                    or ""
+                ).strip()
+                if final_action in {"BLOCK", "HARD_BLOCK", "REJECT"}:
+                    return f"new_route_{final_action.lower()}:{reason[:80]}"
+                reason_lower = reason.lower()
+                for token in hard_reason_tokens:
+                    if token in reason_lower:
+                        return f"new_route_reason:{reason[:80]}"
+            for action in list(current_meta.get("candidate_actions") or []):
+                if not isinstance(action, dict) or _key(action.get("ticker")) != ticker_key:
+                    continue
+                action_text = str(action.get("action") or "").strip().upper()
+                reason = str(action.get("reason") or "").strip()
+                if action_text in {"BLOCK", "HARD_BLOCK", "REJECT", "EXCLUDE"}:
+                    return f"new_action_{action_text.lower()}:{reason[:80]}"
+            return ""
+
+        carried: list[str] = []
+        blocked: dict[str, str] = {}
+        for ticker in previous_ready:
+            ticker_key = _key(ticker)
+            if not ticker_key or ticker_key in ready_keys:
+                continue
+            if ticker_key not in watch_keys:
+                blocked[ticker_key] = "not_in_current_watchlist"
+                continue
+            hard_reason = _hard_drop_reason(ticker_key)
+            if hard_reason:
+                blocked[ticker_key] = hard_reason
+                continue
+            carried.append(ticker_key)
+
+        if not carried and not blocked:
+            return meta
+
+        previous_allowed_missing = {
+            _key(ticker)
+            for ticker in list(previous_meta.get("_trade_ready_without_price_targets_allowed") or [])
+            if _key(ticker)
+        }
+        for ticker_key in carried:
+            if ticker_key not in ready_keys:
+                ready.append(ticker_key)
+                ready_keys.add(ticker_key)
+
+            for map_key in (
+                "price_targets",
+                "recommended_strategy",
+                "allocation_intent",
+                "max_order_cap_pct",
+                "max_position_pct",
+                "risk_budget_pct",
+                "size_reason",
+                "reasons",
+            ):
+                carried_value = _dict_value(previous_meta, map_key, ticker_key)
+                if carried_value in (None, "", [], {}):
+                    continue
+                current_map = dict(current_meta.get(map_key) or {})
+                if _dict_value(current_meta, map_key, ticker_key) in (None, "", [], {}):
+                    current_map[ticker_key] = carried_value
+                    current_meta[map_key] = current_map
+
+            if ticker_key in previous_allowed_missing:
+                allowed_missing = list(current_meta.get("_trade_ready_without_price_targets_allowed") or [])
+                allowed_missing.append(ticker_key)
+                current_meta["_trade_ready_without_price_targets_allowed"] = list(dict.fromkeys(allowed_missing))
+
+        current_meta["trade_ready"] = ready
+        plan_a_ready = list(current_meta.get("_candidate_action_plan_a_ready") or [])
+        current_meta["_candidate_action_plan_a_ready"] = list(dict.fromkeys(plan_a_ready + carried))
+
+        routes = []
+        route_keys: set[str] = set()
+        for route in list(current_meta.get("_candidate_action_routes") or []):
+            if not isinstance(route, dict):
+                routes.append(route)
+                continue
+            ticker_key = _key(route.get("ticker"))
+            route_keys.add(ticker_key)
+            if ticker_key in carried:
+                updated_route = dict(route)
+                previous_final = str(updated_route.get("final_action") or "").strip()
+                updated_route["previous_final_action"] = previous_final
+                updated_route["final_action"] = "BUY_READY"
+                updated_route["route"] = updated_route.get("route") or "PlanA.buy"
+                updated_route["reason"] = "carried_recent_trade_ready"
+                updated_route["trade_ready_carry"] = True
+                updated_route["carried_from_source"] = str(previous_meta.get("_selection_source_type") or "")
+                routes.append(updated_route)
+            else:
+                routes.append(route)
+        for ticker_key in carried:
+            if ticker_key in route_keys:
+                continue
+            routes.append(
+                {
+                    "ticker": ticker_key,
+                    "original_action": "WATCH",
+                    "final_action": "BUY_READY",
+                    "route": "PlanA.buy",
+                    "reason": "carried_recent_trade_ready",
+                    "trade_ready_carry": True,
+                    "carried_from_source": str(previous_meta.get("_selection_source_type") or ""),
+                }
+            )
+        if routes:
+            current_meta["_candidate_action_routes"] = routes
+
+        carry_payload = {
+            "enabled": True,
+            "source": source_key,
+            "carried": carried,
+            "blocked": blocked,
+            "ttl_minutes": ttl_min,
+            "age_minutes": round(age_min, 3),
+            "previous_snapshot_ts": previous_ts,
+            "applied_at": datetime.now(KST).isoformat(timespec="seconds"),
+            "reason": "preserve_recent_kr_trade_ready_until_entry_scan",
+        }
+        current_meta["_trade_ready_carry"] = carry_payload
+        if carried:
+            log.info(
+                f"[trade_ready carry] {market_key} source={source_key} "
+                f"carried={carried} age={age_min:.1f}m"
+            )
+            analysis_log.info(
+                f"[trade_ready carry] {market_key} carried={carried}",
+                extra={"extra": {
+                    "event": "trade_ready_carry",
+                    "market": market_key,
+                    **carry_payload,
+                }},
+            )
+        return current_meta
 
     def _selection_meta_mark_runtime_filtered(
         self,
@@ -9292,6 +9567,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         meta = self._apply_candidate_action_live_routes(market, meta)
         meta = self._apply_candidate_pool_role_ceiling(market, meta, stage="post_route")
         meta = self._apply_selection_evidence_ceiling(market, meta, stage="post_route")
+        meta = self._apply_kr_trade_ready_carry(market, meta, source=route_source, selected=selected)
         meta = self._normalize_selection_meta_runtime(market, meta, selected, mode=mode)
         allow_missing_price_targets = meta.get("_trade_ready_without_price_targets_allowed") or []
         meta = self._enforce_trade_ready_price_targets(
@@ -14356,6 +14632,27 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if age_sec > max(60.0, float(max_age_sec or 1800.0)):
             log.info(f"[runtime handoff restore] skipped stale age_sec={age_sec:.1f}")
             return
+        saved_session_dates = payload.get("session_dates") if isinstance(payload.get("session_dates"), dict) else {}
+        current_session_dates: dict[str, str] = {}
+        eligible_markets: set[str] = set()
+        skipped_markets: dict[str, dict[str, str]] = {}
+        for market_key in ("KR", "US"):
+            saved_date = str(saved_session_dates.get(market_key) or "").strip()
+            try:
+                current_date = str(self._current_session_date_str(market_key) or "").strip()
+            except Exception:
+                current_date = ""
+            current_session_dates[market_key] = current_date
+            if saved_date and current_date and saved_date == current_date:
+                eligible_markets.add(market_key)
+            else:
+                skipped_markets[market_key] = {"saved": saved_date, "current": current_date}
+        if not eligible_markets:
+            log.info(
+                "[runtime handoff restore] skipped session_date_mismatch "
+                f"saved={saved_session_dates} current={current_session_dates}"
+            )
+            return
         fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
         dict_fields = (
             "today_tickers",
@@ -14386,11 +14683,97 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "_last_rescreen_at",
             "_last_sub_screener_at",
         )
+        market_scoped_fields = {
+            "today_tickers",
+            "trade_ready_tickers",
+            "selection_meta",
+            "selection_stages",
+            "_last_post_open_features_by_ticker",
+            "_last_screen_candidates",
+            "_last_data_insufficient_candidates",
+            "_data_insufficient_watch_tickers",
+            "_ticker_runtime_blocked_reasons",
+            "_ticker_runtime_rejection_reasons",
+            "_last_rescreen_at",
+            "_last_sub_screener_at",
+        }
+        prefixed_market_fields = {
+            "_post_open_price_history",
+            "_post_open_anchor",
+            "_post_open_feature_last_emit",
+            "_pathb_negative_watch_counts",
+        }
+        ticker_scoped_fields = {
+            "price_cache",
+            "price_cache_raw",
+            "_intraday_high",
+            "_intraday_low",
+            "_or_high",
+            "_or_low",
+            "_or_formed",
+            "_entry_blocked",
+            "_ticker_no_signal_minutes",
+            "_ticker_no_signal_cycles",
+        }
+        full_session_match = all(market_key in eligible_markets for market_key in ("KR", "US"))
+        skipped_fields: list[str] = []
+        if skipped_markets:
+            log.info(
+                "[runtime handoff restore] skipped market session state "
+                f"markets={sorted(skipped_markets)} saved={saved_session_dates} current={current_session_dates}"
+            )
         restored: list[str] = []
         for name in dict_fields:
             value = fields.get(name)
             if isinstance(value, dict):
-                setattr(self, name, value)
+                if name in market_scoped_fields:
+                    current_value = getattr(self, name, None)
+                    merged = dict(current_value) if isinstance(current_value, dict) else {}
+                    applied = False
+                    for market_key in sorted(eligible_markets):
+                        if market_key in value:
+                            merged[market_key] = value.get(market_key)
+                            applied = True
+                    if not applied:
+                        continue
+                    setattr(self, name, merged)
+                elif name in prefixed_market_fields:
+                    if full_session_match:
+                        setattr(self, name, value)
+                    else:
+                        prefixes = tuple(f"{market_key}:" for market_key in eligible_markets)
+                        filtered = {
+                            key: item
+                            for key, item in value.items()
+                            if str(key or "").upper().startswith(prefixes)
+                        }
+                        if not filtered:
+                            skipped_fields.append(name)
+                            continue
+                        current_value = getattr(self, name, None)
+                        merged = dict(current_value) if isinstance(current_value, dict) else {}
+                        merged.update(filtered)
+                        setattr(self, name, merged)
+                elif name in ticker_scoped_fields:
+                    if not full_session_match:
+                        skipped_fields.append(name)
+                        continue
+                    setattr(self, name, value)
+                elif name == "_last_universe_filter_bypass":
+                    market_key = str(value.get("market") or "").upper()
+                    session_date = str(value.get("session_date") or "").strip()
+                    if not (
+                        full_session_match
+                        or (
+                            market_key in eligible_markets
+                            and (not session_date or session_date == current_session_dates.get(market_key, ""))
+                        )
+                    ):
+                        skipped_fields.append(name)
+                        continue
+                    setattr(self, name, value)
+                else:
+                    setattr(self, name, value)
                 restored.append(name)
         self._ensure_post_open_tracking()
         if not isinstance(getattr(self, "_last_post_open_features_by_ticker", None), dict):
@@ -14413,6 +14796,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "source_pid": payload.get("pid"),
                     "trigger": payload.get("trigger"),
                     "session_dates": payload.get("session_dates") or {},
+                    "current_session_dates": current_session_dates,
+                    "skipped_markets": skipped_markets,
+                    "skipped_fields": skipped_fields,
                 },
             )
         except Exception:
@@ -14817,6 +15203,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "one_share_affordability": dict((meta or {}).get("_one_share_affordability") or {}),
             "pathb_wait_tickers": list((meta or {}).get("_pathb_wait_tickers") or []),
             "partial_reselect": dict((meta or {}).get("_partial_reselect_replacement") or {}),
+            "trade_ready_carry": dict((meta or {}).get("_trade_ready_carry") or {}),
             "universe_filter_bypass": dict((meta or {}).get("universe_filter_bypass") or getattr(self, "_last_universe_filter_bypass", {}) or {}),
             "live_evidence": live_evidence_summary,
             "selection_trace_id": (meta or {}).get("selection_trace_id", ""),
@@ -15758,6 +16145,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "smart_skip_reused": bool((meta or {}).get("_smart_skip_reused")),
                         "smart_skip_reason": str((meta or {}).get("_smart_skip_reason") or ""),
                         "sub_screener_triage": dict((meta or {}).get("_sub_screener_triage") or {}),
+                        "trade_ready_carry": dict((meta or {}).get("_trade_ready_carry") or {}),
                         "selection_stages": stages,
                         "audit_source": "live_write",
                         "visibility_contract_version": visibility_contract_version,
@@ -15930,6 +16318,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "overlay_mode": overlay_mode,
                             "prompt_overlay_added": bool(prompt_row.get("prompt_overlay_added")),
                             "overlay_plan_b_used": overlay_plan_b_used,
+                            "trade_ready_carry": dict((meta or {}).get("_trade_ready_carry") or {}),
+                            "trade_ready_carried": key in set((meta or {}).get("_trade_ready_carry", {}).get("carried", [])),
                             "screener_quality": _screener_quality_payload(prompt_row, action, meta or {}),
                         },
                     }
@@ -21545,6 +21935,119 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # 포지션 파일 다시 저장 (hold_advice 갱신 반영)
         self._save_positions()
         self._write_live_status(market, force=True)
+
+    def _intraday_review_gate(
+        self,
+        pos: dict,
+        market: str,
+        *,
+        force: bool,
+        pnl_pct: float,
+        current_native: float,
+    ) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if force:
+            return {"allowed": True, "reason": "force"}
+        if bool(pos.get("pending_next_open_sell")):
+            return {"allowed": True, "reason": "pending_next_open_sell"}
+        if bool(pos.get("pending_intraday_recheck")):
+            due_state = self._intraday_recheck_due_state(pos)
+            if bool(due_state.get("due")):
+                session_date = self._current_session_date_str(market_key)
+                count = self._intraday_review_count_for_session(pos, session_date)
+                max_per_session = int(max(0.0, self._runtime_float("INTRADAY_REVIEW_DAILY_MAX_PER_POSITION", 3.0)))
+                reason = (
+                    "bypassed_daily_max_pending_due"
+                    if max_per_session > 0 and count >= max_per_session
+                    else "pending_recheck_due"
+                )
+                return {"allowed": True, "reason": reason, "count": count, "due_state": due_state}
+            return {
+                "allowed": False,
+                "reason": f"pending_recheck_{due_state.get('reason', 'not_due')}",
+                "due_state": due_state,
+            }
+
+        session_date = self._current_session_date_str(market_key)
+        count = self._intraday_review_count_for_session(pos, session_date)
+        if count <= 0:
+            return {"allowed": True, "reason": "first_review", "count": count}
+
+        max_per_session = int(max(0.0, self._runtime_float("INTRADAY_REVIEW_DAILY_MAX_PER_POSITION", 3.0)))
+        last_pnl_raw = pos.get("intraday_review_last_pnl_pct")
+        try:
+            last_pnl = float(last_pnl_raw)
+        except Exception:
+            last_pnl = None
+        pnl_delta_trigger = max(0.0, self._runtime_float("INTRADAY_REVIEW_REASK_PNL_DELTA_PCT", 1.0))
+        if last_pnl is not None and pnl_delta_trigger > 0 and abs(float(pnl_pct) - last_pnl) >= pnl_delta_trigger:
+            reason = (
+                "bypassed_daily_max_material_pnl_change"
+                if max_per_session > 0 and count >= max_per_session
+                else "material_pnl_change"
+            )
+            return {
+                "allowed": True,
+                "reason": reason,
+                "count": count,
+                "pnl_delta_pct": round(abs(float(pnl_pct) - last_pnl), 3),
+            }
+
+        stop_price = self._position_stop_price(pos, market_key, current_native)
+        if current_native > 0 and stop_price > 0:
+            stop_distance_pct = (current_native / stop_price - 1.0) * 100.0
+            near_stop_pct = max(0.0, self._runtime_float("INTRADAY_REVIEW_NEAR_STOP_DISTANCE_PCT", 1.0))
+            if near_stop_pct > 0 and stop_distance_pct <= near_stop_pct:
+                reason = (
+                    "bypassed_daily_max_near_stop"
+                    if max_per_session > 0 and count >= max_per_session
+                    else "near_hard_stop"
+                )
+                return {
+                    "allowed": True,
+                    "reason": reason,
+                    "count": count,
+                    "hard_stop_distance_pct": round(stop_distance_pct, 3),
+                }
+
+        if max_per_session > 0 and count >= max_per_session:
+            return {"allowed": False, "reason": "skipped_daily_max_regular", "count": count, "max": max_per_session}
+
+        cooldown_min = max(0.0, self._runtime_float("INTRADAY_REVIEW_COOLDOWN_MINUTES", 120.0))
+        last_at = self._parse_kst_datetime(pos.get("intraday_review_last_at"))
+        if cooldown_min > 0 and last_at is not None:
+            elapsed_min = (datetime.now(KST) - last_at).total_seconds() / 60.0
+            if elapsed_min < cooldown_min:
+                return {
+                    "allowed": False,
+                    "reason": "skipped_cooldown_regular",
+                    "count": count,
+                    "remaining_min": round(cooldown_min - elapsed_min, 1),
+                }
+        return {"allowed": True, "reason": "cooldown_elapsed", "count": count}
+
+    def _intraday_review_count_for_session(self, pos: dict, session_date: str) -> int:
+        if str(pos.get("intraday_review_session") or "") != str(session_date or ""):
+            return 0
+        try:
+            return max(0, int(float(pos.get("intraday_review_count", 0) or 0)))
+        except Exception:
+            log.warning(
+                f"[intraday review count invalid] {pos.get('ticker', '')} "
+                f"count={pos.get('intraday_review_count')!r}"
+            )
+            return 0
+
+    def _mark_intraday_review_attempt(self, pos: dict, market: str, *, pnl_pct: float) -> None:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        session_date = self._current_session_date_str(market_key)
+        count = self._intraday_review_count_for_session(pos, session_date)
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        pos["intraday_review_session"] = session_date
+        pos["intraday_review_count"] = count + 1
+        pos["intraday_review_last_at"] = now_iso
+        pos["intraday_review_last_pnl_pct"] = round(float(pnl_pct), 4)
+
     def _intraday_position_review(self, market: str, force: bool = False,
                                    ticker_filter: str = ""):
         """장 중 1시간 주기 보유 포지션 Claude 점검.
@@ -21602,6 +22105,29 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 net_str = f"{int(round(net)):+,} KRW"
             action, reason = "HOLD", ""
             advice = None
+            gate = self._intraday_review_gate(
+                pos,
+                market,
+                force=force,
+                pnl_pct=float(pnl),
+                current_native=float(cur or 0),
+            )
+            if not bool(gate.get("allowed")):
+                detail = str(gate.get("reason") or "review_limited")
+                if gate.get("remaining_min") is not None:
+                    detail += f" {gate.get('remaining_min')}m"
+                if gate.get("count") is not None:
+                    detail += f" count={gate.get('count')}"
+                lines.append(
+                    f"{pnl_icon} <b>{disp}</b>  {pnl:+.2f}%  {net_str}\n"
+                    f"  Claude: <b>검토 생략</b> ({detail})"
+                )
+                log.info(
+                    f"[intraday review skipped] {market} {ticker} reason={gate.get('reason')} "
+                    f"count={gate.get('count')} remaining={gate.get('remaining_min')}"
+                )
+                continue
+            self._mark_intraday_review_attempt(pos, market, pnl_pct=float(pnl))
             try:
                 from minority_report.hold_advisor import ask as advisor_ask
                 advice = advisor_ask(

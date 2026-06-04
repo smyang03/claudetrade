@@ -409,6 +409,76 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertEqual(target._ticker_runtime_rejection_reasons["KR"]["005930"]["WEAK_SIGNAL"], 1)
         self.assertEqual(target._last_funnel_event[0], "runtime_handoff_restore")
 
+    def test_runtime_handoff_snapshot_skips_previous_session_market_state(self) -> None:
+        source = _make_bot(lambda **kwargs: _candles())
+        source.is_paper = False
+        source.today_tickers = {"KR": ["005930"], "US": ["AAPL"]}
+        source.trade_ready_tickers = {"KR": ["005930"], "US": ["AAPL"]}
+        source.selection_meta = {"KR": {"trade_ready": ["005930"]}, "US": {"trade_ready": ["AAPL"]}}
+        source.selection_stages = {
+            "KR": {"applied": {"selected": ["005930"]}},
+            "US": {"applied": {"selected": ["AAPL"]}},
+        }
+        source.price_cache = {"005930": 106.0, "AAPL": 200.0}
+        source.price_cache_raw = {"005930": 106.0, "AAPL": 200.0}
+        source._or_high = {"005930": 104.0, "AAPL": 201.0}
+        source._post_open_anchor = {
+            "KR:005930": {"anchor_price": 100.0},
+            "US:AAPL": {"anchor_price": 198.0},
+        }
+        source._last_post_open_features_by_ticker = {
+            "KR": {"005930": {"ret_5m_pct": 5.0}},
+            "US": {"AAPL": {"ret_5m_pct": 2.0}},
+        }
+        source._last_rescreen_at = {"KR": 111.0, "US": 222.0}
+        source._last_sub_screener_at = {"KR": 333.0, "US": 444.0}
+        source._ticker_runtime_blocked_reasons = {
+            "KR": {"005930": {"NO_SIGNAL": 2}},
+            "US": {"AAPL": {"NO_SIGNAL": 1}},
+        }
+        source._ticker_runtime_rejection_reasons = {
+            "KR": {"005930": {"WEAK_SIGNAL": 1}},
+            "US": {"AAPL": {"WEAK_SIGNAL": 1}},
+        }
+
+        target = _make_bot(lambda **kwargs: _candles())
+        target.is_paper = False
+        target._current_session_date_str = lambda market: (
+            "2026-05-14" if str(market).upper() == "KR" else "2026-05-13"
+        )
+        target.today_tickers = {"KR": [], "US": []}
+        target.trade_ready_tickers = {"KR": [], "US": []}
+        target.selection_meta = {"KR": {}, "US": {}}
+        target.selection_stages = {"KR": {}, "US": {}}
+        target.price_cache = {}
+        target.price_cache_raw = {}
+        target._or_high = {}
+        target._post_open_anchor = {}
+        target._last_post_open_features_by_ticker = {"KR": {}, "US": {}}
+        target._last_rescreen_at = {"KR": 0.0, "US": 0.0}
+        target._last_sub_screener_at = {"KR": 0.0, "US": 0.0}
+        target._ticker_runtime_blocked_reasons = {"KR": {}, "US": {}}
+        target._ticker_runtime_rejection_reasons = {"KR": {}, "US": {}}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("runtime_paths._RUNTIME_ROOT", Path(tmpdir)):
+                TradingBot._write_runtime_handoff_snapshot(source, "test_shutdown")
+                TradingBot._restore_runtime_handoff_snapshot(target)
+
+        self.assertEqual(target.today_tickers["KR"], [])
+        self.assertEqual(target.trade_ready_tickers["KR"], [])
+        self.assertEqual(target.selection_meta["KR"], {})
+        self.assertNotIn("005930", target.price_cache)
+        self.assertNotIn("KR:005930", target._post_open_anchor)
+        self.assertNotIn("005930", target._last_post_open_features_by_ticker["KR"])
+        self.assertEqual(target._last_rescreen_at["KR"], 0.0)
+        self.assertEqual(target.today_tickers["US"], ["AAPL"])
+        self.assertEqual(target.trade_ready_tickers["US"], ["AAPL"])
+        self.assertEqual(target._post_open_anchor["US:AAPL"]["anchor_price"], 198.0)
+        self.assertEqual(target._last_post_open_features_by_ticker["US"]["AAPL"]["ret_5m_pct"], 2.0)
+        self.assertEqual(target._last_rescreen_at["US"], 222.0)
+        self.assertEqual(target._last_funnel_event[2]["skipped_markets"]["KR"]["saved"], "2026-05-13")
+
     def test_prefetch_uses_phase_target_limit_and_candidate_priority(self) -> None:
         bot = _make_bot(lambda **kwargs: _candles())
         bot.runtime_config.values["INTRADAY_EVIDENCE_MAX_TICKERS"] = 2
