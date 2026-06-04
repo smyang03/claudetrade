@@ -25047,7 +25047,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         trade_alert("sell", ex["ticker"], ex["qty"], alert_exit_price, ex["strategy"], 0, 0, reason=reason, market=market, name=ex_name, usd_krw=self.usd_krw_rate, buy_path=_exit_buy_path)
         try:
             _perf_strategy = str(ex.get("strategy", "unknown") or "unknown")
-            if _perf_strategy not in ("broker_sync", "broker_balance", ""):
+            if _perf_strategy not in ("broker_sync", "broker_balance", "") and self._runtime_bool("BRAIN_PERF_AUTO_WRITE_ENABLED", False):
                 BrainDB.update_strategy_performance(
                     market, _perf_strategy,
                     ex.get("pnl_pct", 0), ex.get("pnl", 0) > 0
@@ -25093,10 +25093,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 # TP 도달 → 즉시 청산 자체는 수익 실현
                 success = ex.get("pnl", 0) > 0
                 extra_pnl_pct = ex.get("pnl_pct", 0.0)
-            # brain.json 누적
-            BrainDB.update_hold_advisor_performance(
-                market, ex["ticker"], decision, success, extra_pnl_pct
-            )
+            # brain.json 누적 — BRAIN_PERF_AUTO_WRITE_ENABLED=1 시에만 기록
+            if self._runtime_bool("BRAIN_PERF_AUTO_WRITE_ENABLED", False):
+                BrainDB.update_hold_advisor_performance(
+                    market, ex["ticker"], decision, success, extra_pnl_pct
+                )
             # JSONL outcome 업데이트
             self._update_hold_advisor_jsonl_outcome(
                 ex["ticker"], decision, success, exit_price, extra_pnl_pct

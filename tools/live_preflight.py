@@ -2993,7 +2993,7 @@ def _brain_memory_change_check(
                 "brain_memory_dirty",
                 accepted=False,
                 action="review and explicitly commit or revert state/brain.json before treating policy memory as approved",
-                blocked_if_live_start=False,
+                blocked_if_live_start=True,
             )
         )
         return CheckResult(
