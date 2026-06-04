@@ -112,6 +112,7 @@ _sim_test.py
 state/candidate_cohort_reliability_*.json
 state/candidate_trainer_*.json
 state/price_collection_priority_*.json
+state/selection_smart_skip_*.json
 state/sub_screener_*.json
 state/kr_candidate_flow_*.json
 state/kr_index_history_*.json

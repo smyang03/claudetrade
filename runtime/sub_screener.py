@@ -64,9 +64,11 @@ def _empty_counter(market: str, date: str) -> dict[str, Any]:
         "attempt_count": 0,
         "success_count": 0,
         "last_scan_at": "",
+        "last_detected_at": "",
         "last_attempt_at": "",
         "last_success_at": "",
         "last_detection": {},
+        "last_detected_fingerprint": "",
         "last_attempt_fingerprint": "",
         "dedupe_suppressed_count": 0,
         "last_dedupe_suppressed": {},
@@ -187,18 +189,25 @@ def is_duplicate_trigger(
     if not fingerprint:
         return False
     state = load_session_counter(market, date)
-    # last_attempt_fingerprint(실제 Claude 호출 시) 또는 last_detected_fingerprint(rate-limit 시) 중 하나와 일치하면 dedupe
-    last_fp = str(state.get("last_attempt_fingerprint") or "") or str(state.get("last_detected_fingerprint") or "")
-    if last_fp != fingerprint:
-        return False
-    last_attempt = str(state.get("last_attempt_at") or "").strip()
-    if not last_attempt:
-        return False
-    try:
-        elapsed = (datetime.now() - datetime.fromisoformat(last_attempt)).total_seconds()
-    except Exception:
-        return False
-    return elapsed < float(ttl_sec or 0.0)
+    seen_at_values: list[str] = []
+    if str(state.get("last_attempt_fingerprint") or "") == fingerprint:
+        seen_at_values.append(str(state.get("last_attempt_at") or "").strip())
+    if str(state.get("last_detected_fingerprint") or "") == fingerprint:
+        seen_at_values.append(str(state.get("last_detected_at") or "").strip())
+    if seen_at_values:
+        elapsed_values: list[float] = []
+        for raw_at in seen_at_values:
+            if not raw_at:
+                continue
+            try:
+                seen_at = datetime.fromisoformat(raw_at)
+                now = datetime.now(seen_at.tzinfo) if seen_at.tzinfo is not None else datetime.now()
+                elapsed_values.append((now - seen_at).total_seconds())
+            except Exception:
+                continue
+        if elapsed_values:
+            return min(elapsed_values) < float(ttl_sec or 0.0)
+    return False
 
 
 def record_scan(market: str, date: str, result: SubScanResult) -> None:
@@ -209,11 +218,14 @@ def record_scan(market: str, date: str, result: SubScanResult) -> None:
     consuming the session reinvoke limit.
     """
     state = load_session_counter(market, date)
+    now = _now_iso()
     state["scan_count"] = int(state.get("scan_count") or 0) + 1
-    state["last_scan_at"] = _now_iso()
+    state["last_scan_at"] = now
     if bool(getattr(result, "should_trigger", False)):
         state["detection_count"] = int(state.get("detection_count") or 0) + 1
+        state["last_detected_at"] = now
         state["last_detection"] = {
+            "at": now,
             "reason": str(getattr(result, "trigger_reason", "") or ""),
             "new_tickers": _new_tickers(result),
         }

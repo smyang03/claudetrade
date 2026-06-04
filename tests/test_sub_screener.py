@@ -145,7 +145,19 @@ class SubScreenerTests(unittest.TestCase):
         self.assertEqual(state["scan_count"], 2)
         self.assertEqual(state["detection_count"], 1)
         self.assertEqual(state["attempt_count"], 0)
+        self.assertTrue(state["last_detected_at"])
         self.assertEqual(state["last_detection"]["new_tickers"], ["B"])
+
+    def test_detected_only_duplicate_uses_detection_time(self) -> None:
+        trigger = sub_screener.SubScanResult(True, [_row("A", "PLAN_A", 90.0)], [], [], "new_plan_a:1")
+        same_set = sub_screener.SubScanResult(True, [_row("A", "PLAN_A", 91.0)], [], [], "new_plan_a:1")
+
+        sub_screener.record_scan("US", "2026-05-22", trigger)
+        state = sub_screener.load_session_counter("US", "2026-05-22")
+
+        self.assertEqual(state["attempt_count"], 0)
+        self.assertEqual(state["last_detected_fingerprint"], "A")
+        self.assertTrue(sub_screener.is_duplicate_trigger("US", "2026-05-22", same_set, ttl_sec=3600))
 
     def test_state_file_scan_attempt_success_separate(self) -> None:
         trigger = sub_screener.SubScanResult(True, [_row("A", "PLAN_A", 90.0)], [], [], "new_plan_a:1")
