@@ -33,6 +33,7 @@ class PostOpenFeatureSnapshot:
     anchor_at: str
     anchor_price: float
     current_price: float
+    market_session_date: str = ""
     ret_3m_pct: float | None = None
     ret_5m_pct: float | None = None
     ret_10m_pct: float | None = None
@@ -53,6 +54,8 @@ class PostOpenFeatureSnapshot:
             "market": self.market,
             "known_at": self.known_at,
             "anchor_at": self.anchor_at,
+            "market_session_date": self.market_session_date,
+            "session_date": self.market_session_date,
             "anchor_price": self.anchor_price,
             "current_price": self.current_price,
             "ret_3m_pct": self.ret_3m_pct,
@@ -201,6 +204,7 @@ def build_post_open_snapshot(
     ask: float | None = None,
     vwap_distance_pct: float | None = None,
     data_quality: str = "partial",
+    market_session_date: str = "",
 ) -> PostOpenFeatureSnapshot:
     filtered_returns = filter_future_returns(returns or {}, known_at=known_at, anchor_at=anchor_at)
     from_high = pct_change(current_price, open_high) if open_high else None
@@ -219,8 +223,9 @@ def build_post_open_snapshot(
         ret_30m_pct=filtered_returns["ret_30m_pct"],
         pullback_from_high_pct=from_high,
     )
+    session_date = str(market_session_date or str(anchor_at)[:10]).strip()[:10]
     snapshot_id = candidate_trace_id(
-        session_date=str(anchor_at)[:10],
+        session_date=session_date,
         market=market,
         ticker=ticker,
         first_seen_at=anchor_at,
@@ -232,6 +237,7 @@ def build_post_open_snapshot(
         market=str(market).upper(),
         known_at=str(known_at),
         anchor_at=str(anchor_at),
+        market_session_date=session_date,
         anchor_price=float(anchor_price),
         current_price=float(current_price),
         ret_3m_pct=filtered_returns["ret_3m_pct"],
@@ -339,6 +345,49 @@ def _feature_restore_sort_key(payload: dict[str, Any]) -> tuple[int, int, dateti
     return (_feature_quality_rank(payload), _feature_presence_score(payload), _feature_known_at(payload))
 
 
+def _feature_fail_closed(payload: dict[str, Any]) -> bool:
+    if bool((payload or {}).get("fail_closed")):
+        return True
+    status = str((payload or {}).get("evidence_status") or "").strip().lower()
+    return status == "fail_closed"
+
+
+def _feature_should_replace_restore(
+    old: dict[str, Any],
+    new: dict[str, Any],
+    *,
+    fail_closed_replace_stale_sec: float = 300.0,
+) -> bool:
+    if not isinstance(new, dict) or not new:
+        return False
+    if not isinstance(old, dict) or not old:
+        return True
+
+    old_fail_closed = _feature_fail_closed(old)
+    new_fail_closed = _feature_fail_closed(new)
+    old_rank = _feature_quality_rank(old)
+    new_rank = _feature_quality_rank(new)
+    old_dt = _feature_known_at(old)
+    new_dt = _feature_known_at(new)
+
+    if new_fail_closed:
+        if old_fail_closed:
+            return new_dt >= old_dt
+        if old_rank <= 0:
+            return True
+        if old_dt == datetime.min or new_dt == datetime.min:
+            return False
+        stale_sec = max(0.0, float(fail_closed_replace_stale_sec or 0.0))
+        return (new_dt - old_dt).total_seconds() >= stale_sec
+
+    if old_fail_closed:
+        if new_rank <= 0 or old_dt == datetime.min or new_dt == datetime.min:
+            return False
+        return new_dt > old_dt
+
+    return _feature_restore_sort_key(new) >= _feature_restore_sort_key(old)
+
+
 def load_recent_feature_snapshots(
     *,
     market: str,
@@ -356,7 +405,6 @@ def load_recent_feature_snapshots(
         reverse=True,
     )[: max(1, int(max_files or 1))]
     latest: dict[str, dict[str, Any]] = {}
-    latest_score: dict[str, tuple[int, int, datetime]] = {}
     for path in files:
         try:
             with path.open("r", encoding="utf-8") as f:
@@ -378,8 +426,6 @@ def load_recent_feature_snapshots(
             if not ticker:
                 continue
             key = ticker.upper() if market_key == "US" else ticker
-            score = _feature_restore_sort_key(payload)
-            if key not in latest or score >= latest_score.get(key, (0, 0, datetime.min)):
+            if key not in latest or _feature_should_replace_restore(latest.get(key) or {}, payload):
                 latest[key] = dict(payload)
-                latest_score[key] = score
     return latest

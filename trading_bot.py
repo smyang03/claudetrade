@@ -1087,10 +1087,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         _hist_thread.start()
         # Partial reselect state.
         self._partial_reselect_last: dict = {"KR": None, "US": None}
-        self._ticker_no_signal_cycles: dict = {}
+        self._ensure_runtime_selection_memory()
         self._ticker_exclude_log: dict = {"KR": [], "US": []}
-        self._ticker_runtime_blocked_reasons: dict = {"KR": {}, "US": {}}
-        self._ticker_runtime_rejection_reasons: dict = {"KR": {}, "US": {}}
         # ── continuation entry 1회 제한 플래그 (ticker → bool, 세션마다 리셋) ───
         self._continuation_used: dict = {}   # key: ticker, val: True/False
         # ── 주문 예외(HTTP 500 등) 연속 카운터 — 3회 연속 시 당일 차단 ──────────
@@ -11957,6 +11955,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
         except Exception:
             return None
+    def _post_open_feature_fail_closed(self, features: dict) -> bool:
+        if bool((features or {}).get("fail_closed")):
+            return True
+        status = str((features or {}).get("evidence_status") or "").strip().lower()
+        return status == "fail_closed"
     def _post_open_feature_should_replace(self, old: dict, new: dict) -> bool:
         if not isinstance(new, dict) or not new:
             return False
@@ -11964,19 +11967,25 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return True
         new_rank = self._post_open_feature_quality_rank(new)
         old_rank = self._post_open_feature_quality_rank(old)
-        if bool(new.get("fail_closed")):
+        new_dt = self._post_open_feature_known_at(new)
+        old_dt = self._post_open_feature_known_at(old)
+        new_fail_closed = self._post_open_feature_fail_closed(new)
+        old_fail_closed = self._post_open_feature_fail_closed(old)
+        if new_fail_closed:
+            if old_fail_closed:
+                if new_dt and old_dt:
+                    return new_dt >= old_dt
+                return bool(new_dt and not old_dt)
             if old_rank <= 0:
                 return True
-            new_dt = self._post_open_feature_known_at(new)
-            old_dt = self._post_open_feature_known_at(old)
             stale_sec = self._runtime_float("INTRADAY_EVIDENCE_FAIL_CLOSED_REPLACE_STALE_SEC", 300.0)
             return bool(new_dt and old_dt and (new_dt - old_dt).total_seconds() >= stale_sec)
+        if old_fail_closed:
+            return bool(new_rank > 0 and new_dt and old_dt and new_dt > old_dt)
         if new_rank <= 0 and old_rank > 0:
             return False
         if old_rank > new_rank and old_rank > 0:
             return False
-        new_dt = self._post_open_feature_known_at(new)
-        old_dt = self._post_open_feature_known_at(old)
         if new_dt and old_dt and new_dt > old_dt:
             return True
         if new_rank > old_rank:
@@ -12037,8 +12046,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if not features:
                 continue
             merged = self._merge_last_post_open_features(market_key, features)
-            self._restore_post_open_tracking_from_features(market_key, features)
-            restored_counts[market_key] = len(features)
+            tracking_features: dict[str, dict] = {}
+            for raw_key in features:
+                key = self._selection_ticker_key(market_key, raw_key)
+                restored_feature = (merged or {}).get(key)
+                if isinstance(restored_feature, dict) and restored_feature:
+                    tracking_features[key] = restored_feature
+            self._restore_post_open_tracking_from_features(market_key, tracking_features)
+            restored_counts[market_key] = len(tracking_features)
             try:
                 log.info(
                     f"[post_open restore] {market_key} restored={len(features)} "
@@ -12140,6 +12155,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         ):
             row.pop(key, None)
 
+    def _us_post_open_known_at_matches_session(self, known_at: str, session_date: str) -> bool:
+        known_text = str(known_at or "").strip()
+        expected = str(session_date or "").strip()
+        if not known_text or not expected:
+            return False
+        try:
+            observed = datetime.fromisoformat(known_text.replace("Z", "+00:00"))
+            if observed.tzinfo is None:
+                observed = observed.replace(tzinfo=KST)
+            return observed.astimezone(ZoneInfo("America/New_York")).date().isoformat() == expected
+        except Exception:
+            return False
+
     def _post_open_feature_matches_session(self, features: dict, session_date: str) -> bool:
         if not isinstance(features, dict) or not str(session_date or "").strip():
             return False
@@ -12156,10 +12184,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if snapshot_id.startswith(compact):
             return True
         market_key = str(features.get("market") or "").strip().upper()
-        if market_key != "US":
-            known_at = str(features.get("known_at") or "").strip()
-            if known_at[:10] == expected:
+        known_at = str(features.get("known_at") or "").strip()
+        if market_key == "US":
+            if self._us_post_open_known_at_matches_session(known_at, expected):
                 return True
+        elif known_at[:10] == expected:
+            return True
         return False
 
     def _stale_cached_evidence_missing_feature(self, market: str, ticker: str, session_date: str) -> dict:
@@ -12747,6 +12777,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 try:
                     payload = dict(features)
                     payload.setdefault("market", market_key)
+                    payload["market_session_date"] = session_date
+                    payload.setdefault("session_date", session_date)
                     payload.setdefault("evidence_surface", "selection_intraday_prefetch")
                     payload.setdefault("feature_surface", "intraday_minute_feature")
                     payload.setdefault("runtime_gate_evidence_preferred", True)
@@ -12816,7 +12848,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             existing_feature = existing_feature_store.get(key)
             if not isinstance(existing_feature, dict):
                 continue
-            if str(existing_feature.get("known_at") or "")[:10] == session_date_for_features:
+            if self._post_open_feature_matches_session(existing_feature, session_date_for_features):
                 post_open_features_by_ticker.setdefault(key, dict(existing_feature))
             else:
                 existing_feature_store.pop(key, None)
@@ -12976,6 +13008,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 open_high=high,
                                 opening_range_high=self._positive_float_or_none((getattr(self, "_or_high", {}) or {}).get(ticker)),
                                 data_quality=str(anchor.get("anchor_source") or "partial"),
+                                market_session_date=session_date_for_features,
                             ).to_dict()
                             existing_po = post_open_features_by_ticker.get(selection_key) or {}
                             if self._post_open_feature_should_replace(existing_po, po_snapshot):
@@ -14198,6 +14231,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _runtime_handoff_path(self) -> Path:
         return get_runtime_path("state", f"{getattr(self, '_mode', 'live')}_runtime_handoff_snapshot.json")
 
+    def _ensure_runtime_selection_memory(self) -> None:
+        if not isinstance(getattr(self, "_ticker_no_signal_cycles", None), dict):
+            self._ticker_no_signal_cycles = {}
+        for attr in ("_ticker_runtime_blocked_reasons", "_ticker_runtime_rejection_reasons"):
+            value = getattr(self, attr, None)
+            if not isinstance(value, dict):
+                value = {}
+            for market_key in ("KR", "US"):
+                if not isinstance(value.get(market_key), dict):
+                    value[market_key] = {}
+            setattr(self, attr, value)
+
     def _json_safe_runtime_value(self, value: Any) -> Any:
         if isinstance(value, dict):
             out = {}
@@ -14352,6 +14397,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._last_post_open_features_by_ticker = {"KR": {}, "US": {}}
         for market_key in ("KR", "US"):
             self._last_post_open_features_by_ticker.setdefault(market_key, {})
+        self._ensure_runtime_selection_memory()
         log.info(
             f"[runtime handoff restore] restored={len(restored)} age_sec={age_sec:.1f} "
             f"source_pid={payload.get('pid')} trigger={payload.get('trigger')}"
@@ -14531,6 +14577,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             bid=self._positive_float_or_none(price_info.get("bid") or price_info.get("bid_price")),
             ask=self._positive_float_or_none(price_info.get("ask") or price_info.get("ask_price")),
             data_quality=str(anchor.get("anchor_source") or "partial"),
+            market_session_date=self._current_session_date_str(market_key),
         )
         payload = snapshot.to_dict()
         payload.update({

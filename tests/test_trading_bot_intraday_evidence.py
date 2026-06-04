@@ -280,6 +280,50 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertIn("KR:005930", bot._post_open_anchor)
         self.assertGreaterEqual(len(bot._post_open_price_history["KR:005930"]), 2)
 
+    def test_jsonl_restore_does_not_overwrite_handoff_fail_closed_with_older_complete(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles())
+        bot._last_post_open_features_by_ticker = {
+            "KR": {
+                "005930": {
+                    "ticker": "005930",
+                    "market": "KR",
+                    "known_at": "2026-05-13T15:05:00",
+                    "data_quality": "minute_missing",
+                    "fail_closed": True,
+                    "evidence_status": "fail_closed",
+                    "evidence_action_ceiling": "WATCH",
+                }
+            },
+            "US": {},
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("runtime_paths._RUNTIME_ROOT", Path(tmpdir)):
+                append_feature_snapshot_payload(
+                    {
+                        "market": "KR",
+                        "ticker": "005930",
+                        "known_at": "2026-05-13T15:00:00",
+                        "anchor_at": "2026-05-13T09:00:00",
+                        "anchor_price": 100.0,
+                        "current_price": 106.0,
+                        "data_quality": "minute_complete",
+                        "ret_5m_pct": 5.0,
+                        "opening_range_high": 104.0,
+                        "opening_range_low": 99.0,
+                        "opening_range_break": True,
+                    }
+                )
+
+                TradingBot._restore_post_open_features_from_jsonl(bot)
+
+        features = bot._last_post_open_features_by_ticker["KR"]["005930"]
+        self.assertEqual(features["known_at"], "2026-05-13T15:05:00")
+        self.assertEqual(features["data_quality"], "minute_missing")
+        self.assertTrue(features["fail_closed"])
+        self.assertEqual(features["evidence_action_ceiling"], "WATCH")
+        self.assertNotIn("KR:005930", bot._post_open_anchor)
+
     def test_runtime_handoff_snapshot_restores_volatile_selection_memory(self) -> None:
         source = _make_bot(lambda **kwargs: _candles())
         source.is_paper = False
@@ -289,6 +333,9 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         source.selection_stages = {"KR": {"applied": {"selected": ["005930"]}}, "US": {}}
         source.price_cache = {"005930": 106.0}
         source.price_cache_raw = {"005930": 106.0}
+        source._ticker_no_signal_cycles = {"005930": 3}
+        source._ticker_runtime_blocked_reasons = {"KR": {"005930": {"NO_SIGNAL": 2}}, "US": {}}
+        source._ticker_runtime_rejection_reasons = {"KR": {"005930": {"WEAK_SIGNAL": 1}}, "US": {}}
         source._intraday_high = {"005930": 107.0}
         source._intraday_low = {"005930": 99.0}
         source._or_high = {"005930": 104.0}
@@ -332,6 +379,9 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         target.selection_stages = {"KR": {}, "US": {}}
         target.price_cache = {}
         target.price_cache_raw = {}
+        target._ticker_no_signal_cycles = {}
+        target._ticker_runtime_blocked_reasons = {"KR": {}, "US": {}}
+        target._ticker_runtime_rejection_reasons = {"KR": {}, "US": {}}
         target._intraday_high = {}
         target._intraday_low = {}
         target._or_high = {}
@@ -353,6 +403,10 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertEqual(target._or_high["005930"], 104.0)
         self.assertIn("KR:005930", target._post_open_anchor)
         self.assertEqual(target._last_post_open_features_by_ticker["KR"]["005930"]["ret_5m_pct"], 5.0)
+        TradingBot._ensure_runtime_selection_memory(target)
+        self.assertEqual(target._ticker_no_signal_cycles["005930"], 3)
+        self.assertEqual(target._ticker_runtime_blocked_reasons["KR"]["005930"]["NO_SIGNAL"], 2)
+        self.assertEqual(target._ticker_runtime_rejection_reasons["KR"]["005930"]["WEAK_SIGNAL"], 1)
         self.assertEqual(target._last_funnel_event[0], "runtime_handoff_restore")
 
     def test_prefetch_uses_phase_target_limit_and_candidate_priority(self) -> None:
@@ -593,6 +647,38 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
 
         self.assertEqual(rows[0]["post_open_features"]["data_quality"], "minute_complete")
         self.assertEqual(rows[0]["post_open_ret_5m_pct"], 5.0)
+
+    def test_us_cached_feature_after_kst_midnight_matches_ny_session(self) -> None:
+        def provider(**_kwargs):
+            raise AssertionError("prefetch should be skipped")
+
+        bot = _make_bot(provider, market="US")
+        bot.runtime_config.values["ENABLE_POST_OPEN_FEATURES_SHADOW"] = False
+        bot._current_session_date_str = lambda _market: "2026-06-03"
+        bot._last_post_open_features_by_ticker = {
+            "KR": {},
+            "US": {
+                "AAPL": {
+                    "ticker": "AAPL",
+                    "market": "US",
+                    "known_at": "2026-06-04T01:10:00+09:00",
+                    "data_quality": "minute_complete",
+                    "ret_5m_pct": 4.2,
+                }
+            },
+        }
+
+        rows = TradingBot._annotate_selection_execution_features(
+            bot,
+            "US",
+            [{"ticker": "aapl", "price": 100.0}],
+            "NEUTRAL",
+            prefetch_intraday_evidence=False,
+        )
+
+        self.assertEqual(rows[0]["post_open_features"]["data_quality"], "minute_complete")
+        self.assertEqual(rows[0]["post_open_ret_5m_pct"], 4.2)
+        self.assertIn("AAPL", bot._last_post_open_features_by_ticker["US"])
 
     def test_final_prompt_alignment_prefetches_trainer_prompt_ticker(self) -> None:
         events: list[tuple[str, str, dict]] = []

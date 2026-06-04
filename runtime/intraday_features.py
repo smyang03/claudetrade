@@ -255,6 +255,7 @@ def compute_intraday_features(
         volume_ratio_open=volume_ratio,
         vwap_distance_pct=vwap_distance,
         data_quality="minute_partial",
+        market_session_date=open_dt.date().isoformat(),
     ).to_dict()
     snapshot.update(
         {
