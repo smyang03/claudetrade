@@ -796,7 +796,7 @@ def route_candidate_action(
         gate_reasons: list[str] = []
         if evidence_state == "missing":
             gate_reasons.append("evidence_missing")
-        if evidence_ceiling in {"WATCH", "WAIT_CONFIRMATION"}:
+        if evidence_ceiling in {"WATCH", "WAIT_CONFIRMATION", "PROBE_READY"}:
             gate_reasons.append(f"evidence_ceiling_{evidence_ceiling.lower()}")
         if gate_reasons:
             gate_mode = str(os.getenv("PULLBACK_WAIT_EVIDENCE_GATE_MODE", "shadow") or "shadow").strip().lower()

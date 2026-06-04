@@ -26185,7 +26185,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         current_watch = list(dict.fromkeys((getattr(self, "today_tickers", {}) or {}).get(market_key, []) or []))
         meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
         watchlist = list(dict.fromkeys(list(meta.get("watchlist") or []) + current_watch))
-        trade_ready = list(dict.fromkeys(meta.get("trade_ready") or []))
+        # self.trade_ready_tickers를 우선 참조해 triage 실행으로 기존 TR이 제거되는 것을 방지
+        live_trade_ready = list(dict.fromkeys(
+            list((getattr(self, "trade_ready_tickers", {}) or {}).get(market_key, []) or [])
+            + list(meta.get("trade_ready") or [])
+        ))
+        trade_ready = live_trade_ready
         reasons = dict(meta.get("reasons") or {})
         triage_rows: list[dict] = []
         added: list[str] = []

@@ -1236,10 +1236,12 @@ def build_intraday_advisor_context(market: str = "KR") -> dict:
 
             _k5d = ktrend.get("change_5d")
             _k5d_str = f" / 5d {_k5d:+.1f}%" if _k5d is not None else ""
+            _kospi_chg = _safe_float_or_none(kospi.get('change_pct'))
+            _kosdaq_chg = _safe_float_or_none(kosdaq.get('change_pct'))
             kospi_str  = (f"코스피 {kospi.get('close', 0):,.0f} "
-                          f"({kospi.get('change_pct', 0):+.2f}%{_k5d_str})")
+                          f"({_kospi_chg:+.2f}%{_k5d_str})" if _kospi_chg is not None else f"코스피 {kospi.get('close', 0):,.0f} (N/A%{_k5d_str})")
             kosdaq_str = (f"코스닥 {kosdaq.get('close', 0):,.0f} "
-                          f"({kosdaq.get('change_pct', 0):+.2f}%)")
+                          f"({_kosdaq_chg:+.2f}%)" if _kosdaq_chg is not None else f"코스닥 {kosdaq.get('close', 0):,.0f} (N/A%)")
             usd_str = ""
             if usd:
                 usd_str = f"USD/KRW {usd:,.0f}"
@@ -1262,10 +1264,10 @@ def build_intraday_advisor_context(market: str = "KR") -> dict:
             sp500  = ctx.get("sp500", {})
             nasdaq = ctx.get("nasdaq", {})
             vix    = ctx.get("vix")
-            sp_str = (f"S&P500 {sp500.get('close', 0):,.0f} "
-                      f"({sp500.get('change_pct', 0):+.2f}%)")
-            nq_str = (f"NASDAQ {nasdaq.get('close', 0):,.0f} "
-                      f"({nasdaq.get('change_pct', 0):+.2f}%)")
+            _sp_chg = _safe_float_or_none(sp500.get('change_pct'))
+            _nq_chg = _safe_float_or_none(nasdaq.get('change_pct'))
+            sp_str = (f"S&P500 {sp500.get('close', 0):,.0f} ({_sp_chg:+.2f}%)" if _sp_chg is not None else f"S&P500 {sp500.get('close', 0):,.0f} (N/A%)")
+            nq_str = (f"NASDAQ {nasdaq.get('close', 0):,.0f} ({_nq_chg:+.2f}%)" if _nq_chg is not None else f"NASDAQ {nasdaq.get('close', 0):,.0f} (N/A%)")
             vix_str = _metric_prompt_value(vix, "VIX")
             return {"ok": True, "text": f"{sp_str} | {nq_str} | {vix_str}"}
 
@@ -1406,13 +1408,13 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         # MACD 신호
         macd_sig = "골든크로스" if row.get("macd",0) > row.get("signal",0) else "데드크로스"
 
-        # BB 위치
-        bb_pct = row.get("bb_pct", 50)
-        bb_pos = "상단" if bb_pct > 80 else "하단" if bb_pct < 20 else "중간"
+        # BB 위치 — None/NaN 안전 처리
+        bb_pct = _safe_float_or_none(row.get("bb_pct"))
+        bb_pos = ("상단" if bb_pct > 80 else "하단" if bb_pct < 20 else "중간") if bb_pct is not None else "N/A"
 
-        # 거래량 이상
-        vol_r = row.get("vol_ratio", 1.0)
-        vol_signal = "폭증" if vol_r > 3 else "증가" if vol_r > 1.5 else "보통" if vol_r > 0.7 else "감소"
+        # 거래량 이상 — None/NaN 안전 처리
+        vol_r = _safe_float_or_none(row.get("vol_ratio"))
+        vol_signal = ("폭증" if vol_r > 3 else "증가" if vol_r > 1.5 else "보통" if vol_r > 0.7 else "감소") if vol_r is not None else "N/A"
 
         def _safe_int(v, default=0):
             try:
@@ -1593,8 +1595,8 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
             dt_row = past.iloc[[-1]]
 
         row = dt_row.iloc[0]
-        vol_r    = row.get("vol_ratio", 1.0)
-        bb_pct   = row.get("bb_pct", 50)
+        vol_r    = _safe_float_or_none(row.get("vol_ratio"))
+        bb_pct   = _safe_float_or_none(row.get("bb_pct"))
         macd_sig = "골든크로스" if row.get("macd", 0) > row.get("signal", 0) else "데드크로스"
 
         # 변동성 돌파 목표가 (K=0.45)
@@ -1754,7 +1756,8 @@ def digest_to_prompt(digest: dict) -> str:
         if kospi:
             # 코스피 1d + 5d 추세
             kospi_5d = ctx.get("kospi_trend", {}).get("change_5d")
-            kospi_str = f"코스피 1d {kospi.get('change_pct',0):+.2f}%"
+            _kp_chg = _safe_float_or_none(kospi.get('change_pct'))
+            kospi_str = f"코스피 1d {_kp_chg:+.2f}%" if _kp_chg is not None else "코스피 1d N/A%"
             if kospi_5d is not None:
                 kospi_str += f" / 5d {kospi_5d:+.2f}%"
 
@@ -1801,15 +1804,17 @@ def digest_to_prompt(digest: dict) -> str:
         nq = ctx.get("nasdaq", {})
         vix_str = _metric_prompt_value(ctx.get("vix"), "VIX")
         dxy_str = _metric_prompt_value(ctx.get("dxy"), "DXY")
-        lines.append(f"  S&P500 {sp.get('change_pct',0):+.2f}% | "
-                     f"나스닥 {nq.get('change_pct',0):+.2f}% | "
-                     f"{vix_str} | "
-                     f"{dxy_str}")
+        _sp_chg2 = _safe_float_or_none(sp.get('change_pct'))
+        _nq_chg2 = _safe_float_or_none(nq.get('change_pct'))
+        _sp_part = f"S&P500 {_sp_chg2:+.2f}%" if _sp_chg2 is not None else "S&P500 N/A%"
+        _nq_part = f"나스닥 {_nq_chg2:+.2f}%" if _nq_chg2 is not None else "나스닥 N/A%"
+        lines.append(f"  {_sp_part} | {_nq_part} | {vix_str} | {dxy_str}")
         # 채권 / 신용
         tnx = ctx.get("tnx", 0)
         hyg = ctx.get("hyg", {})
         if tnx:
-            hyg_str = f" | HYG {hyg.get('change_pct', 0):+.2f}%" if hyg else ""
+            _hyg_chg = _safe_float_or_none(hyg.get('change_pct')) if hyg else None
+            hyg_str = f" | HYG {_hyg_chg:+.2f}%" if (_hyg_chg is not None) else ""
             lines.append(f"  10년 국채금리 {tnx:.2f}%{hyg_str}")
         # 섹터 ETF
         sectors = ctx.get("sectors", {})

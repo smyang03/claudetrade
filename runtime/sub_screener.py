@@ -187,7 +187,9 @@ def is_duplicate_trigger(
     if not fingerprint:
         return False
     state = load_session_counter(market, date)
-    if str(state.get("last_attempt_fingerprint") or "") != fingerprint:
+    # last_attempt_fingerprint(실제 Claude 호출 시) 또는 last_detected_fingerprint(rate-limit 시) 중 하나와 일치하면 dedupe
+    last_fp = str(state.get("last_attempt_fingerprint") or "") or str(state.get("last_detected_fingerprint") or "")
+    if last_fp != fingerprint:
         return False
     last_attempt = str(state.get("last_attempt_at") or "").strip()
     if not last_attempt:
@@ -215,6 +217,11 @@ def record_scan(market: str, date: str, result: SubScanResult) -> None:
             "reason": str(getattr(result, "trigger_reason", "") or ""),
             "new_tickers": _new_tickers(result),
         }
+        # 감지된 fingerprint를 기록해 rate-limited 스캔 이후에도 dedupe가 작동하게 함
+        # record_attempt()가 호출되지 않아도 같은 set이 반복 감지되면 억제 가능
+        detected_fp = trigger_fingerprint(market, result)
+        if detected_fp:
+            state["last_detected_fingerprint"] = detected_fp
     save_session_counter(market, date, state)
 
 
@@ -311,8 +318,8 @@ def triage_candidates(result: SubScanResult, *, max_add: int = 5) -> list[dict[s
     limit = max(0, int(max_add or 0))
     if limit <= 0:
         return []
-    ranked: list[dict[str, Any]] = []
     seen: set[str] = set()
+    pool: list[dict[str, Any]] = []
     for row in list(result.new_plan_a or []) + list(result.new_plan_b_high or []) + list(result.all_new_scored or []):
         if not isinstance(row, dict):
             continue
@@ -320,10 +327,10 @@ def triage_candidates(result: SubScanResult, *, max_add: int = 5) -> list[dict[s
         if not ticker or ticker in seen:
             continue
         seen.add(ticker)
-        ranked.append(dict(row))
-        if len(ranked) >= limit:
-            break
-    return ranked
+        pool.append(dict(row))
+    # score 내림차순 정렬 후 상위 limit개 반환 — PLAN_A/B 순서보다 실제 점수 기준
+    pool.sort(key=lambda r: float(r.get("trainer_prompt_score") or r.get("candidate_quality_score") or 0), reverse=True)
+    return pool[:limit]
 
 
 def scan_new_candidates(

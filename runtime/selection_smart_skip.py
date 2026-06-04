@@ -124,11 +124,11 @@ def load_state(market: str, session_date: str | None = None) -> dict[str, Any]:
 
 def save_state(market: str, state: dict[str, Any], session_date: str | None = None) -> None:
     path = state_path(market, session_date or str(state.get("date") or ""))
-    normalized = empty_state(market, session_date or str(state.get("date") or ""))
-    normalized.update(dict(state or {}))
-    normalized["market"] = _market_key(market)
+    # 이미 load_state()를 통해 정규화된 state를 그대로 저장 — empty_state() 재호출 생략
+    payload = dict(state or {})
+    payload["market"] = _market_key(market)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(normalized, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
     tmp.replace(path)
 
 
@@ -248,7 +248,12 @@ def maybe_reuse(
 
     if not _enabled() or mode == "off":
         return {"reuse": False, "reason": "disabled"}
+    # observe 모드에서 early-exit 케이스(force_call/preopen_watch/missing_hash)는
+    # disk write 없이 반환 — cache lookup은 이후에 계속 진행해 would_reuse 계측에 사용
+    is_observe = mode == "observe"
     if str(os.getenv("SELECTION_SMART_SKIP_FORCE_CALL", "false") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        if is_observe:
+            return {"reuse": False, "reason": "force_call"}
         return _record_fail_open(
             market=market_key,
             session_date=date_key,
@@ -257,6 +262,8 @@ def maybe_reuse(
             prompt_hash=prompt_hash,
         )
     if preopen_watch:
+        if is_observe:
+            return {"reuse": False, "reason": "preopen_watch"}
         return _record_fail_open(
             market=market_key,
             session_date=date_key,
@@ -265,6 +272,8 @@ def maybe_reuse(
             prompt_hash=prompt_hash,
         )
     if not prompt_hash:
+        if is_observe:
+            return {"reuse": False, "reason": "missing_prompt_hash"}
         return _record_fail_open(
             market=market_key,
             session_date=date_key,
