@@ -127,6 +127,274 @@ class V2LearningPerformanceSyncTests(unittest.TestCase):
             self.assertEqual(row["quality_grade"], "CLEAN")
             self.assertEqual(row["learning_allowed"], 1)
 
+    def test_sync_uses_audited_broker_native_exit_price_and_qty_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            cases = [
+                ("APLD", {"exit_price_native": 45.2, "broker_sell_filled_qty": 7}, 47.3, 7, 45.2),
+                (
+                    "NOK",
+                    {
+                        "broker_sell_fill_price_native": 15.79,
+                        "broker_sell_filled_qty": 18,
+                        "broker_sell_remaining_qty": 0,
+                    },
+                    16.11,
+                    18,
+                    15.79,
+                ),
+            ]
+            decision_ids: dict[str, str] = {}
+            for ticker, close_payload, entry_price, qty, _exit_price in cases:
+                decision_id = registry.register_trade_ready(
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-26",
+                    ticker=ticker,
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    strategy_hint="claude_price",
+                )
+                decision_ids[ticker] = decision_id
+                for event in (
+                    LifecycleEvent(
+                        event_type="ORDER_SENT",
+                        market="US",
+                        runtime_mode="live",
+                        session_date="2026-05-26",
+                        ticker=ticker,
+                        decision_id=decision_id,
+                        execution_id=f"buy_{ticker}",
+                        prompt_version="v2",
+                        brain_snapshot_id="brain_us",
+                        payload={"price": entry_price, "qty": qty},
+                    ),
+                    LifecycleEvent(
+                        event_type="FILLED",
+                        market="US",
+                        runtime_mode="live",
+                        session_date="2026-05-26",
+                        ticker=ticker,
+                        decision_id=decision_id,
+                        execution_id=f"buy_{ticker}",
+                        prompt_version="v2",
+                        brain_snapshot_id="brain_us",
+                        payload={"price": entry_price, "qty": qty},
+                    ),
+                    LifecycleEvent(
+                        event_type="CLOSED",
+                        market="US",
+                        runtime_mode="live",
+                        session_date="2026-05-26",
+                        ticker=ticker,
+                        decision_id=decision_id,
+                        execution_id=f"sell_{ticker}",
+                        prompt_version="v2",
+                        brain_snapshot_id="brain_us",
+                        reason_code="CLOSED_AUDITED_BROKER_SELL",
+                        payload={
+                            **close_payload,
+                            "close_reason": "CLOSED_AUDITED_BROKER_SELL",
+                            "pnl_pct": -1.0,
+                        },
+                    ),
+                ):
+                    store.append(event)
+
+            summary = sync_v2_learning_performance(event_db=event_db, ml_db=ml_db, market="US", dry_run=False)
+
+            self.assertEqual(summary["strategy_attribution_counts"]["audited_broker_backfill"], 2)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = {
+                    row["ticker"]: row
+                    for row in conn.execute(
+                        """
+                        SELECT ticker, exit_price, qty, pnl_krw, portfolio_realized,
+                               strategy_attribution, learning_allowed
+                        FROM v2_learning_performance
+                        WHERE v2_decision_id IN (?, ?)
+                        """,
+                        (decision_ids["APLD"], decision_ids["NOK"]),
+                    ).fetchall()
+                }
+
+            self.assertEqual(rows["APLD"]["exit_price"], 45.2)
+            self.assertEqual(rows["APLD"]["qty"], 7)
+            self.assertEqual(rows["NOK"]["exit_price"], 15.79)
+            self.assertEqual(rows["NOK"]["qty"], 18)
+            for row in rows.values():
+                self.assertIsNone(row["pnl_krw"])
+                self.assertEqual(row["portfolio_realized"], 1)
+                self.assertEqual(row["strategy_attribution"], "audited_broker_backfill")
+                self.assertEqual(row["learning_allowed"], 0)
+
+    def test_sync_marks_price_without_qty_as_degraded_and_blocks_learning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-26",
+                ticker="MISSQ",
+                prompt_version="v2",
+                brain_snapshot_id="brain_us",
+                strategy_hint="momentum",
+            )
+            for event in (
+                LifecycleEvent(
+                    event_type="ORDER_SENT",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-26",
+                    ticker="MISSQ",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={"price": 100.0, "qty": 1},
+                ),
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-26",
+                    ticker="MISSQ",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={"price": 100.0, "qty": 1},
+                ),
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-26",
+                    ticker="MISSQ",
+                    decision_id=decision_id,
+                    execution_id="sell1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={"exit_price_native": 101.0, "pnl_pct": 1.0},
+                ),
+                LifecycleEvent(
+                    event_type="FORWARD_MEASURED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-26",
+                    ticker="MISSQ",
+                    decision_id=decision_id,
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={"complete": True},
+                ),
+            ):
+                store.append(event)
+
+            summary = sync_v2_learning_performance(event_db=event_db, ml_db=ml_db, market="US", dry_run=False)
+
+            self.assertEqual(summary["degraded"], 1)
+            self.assertEqual(summary["degraded_reason_counts"], {"MISSING_CLOSE_QTY": 1})
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT exit_price, qty, learning_allowed, quality_reasons_json FROM v2_learning_performance WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+
+            self.assertEqual(row["exit_price"], 101.0)
+            self.assertEqual(row["qty"], 1)
+            self.assertEqual(row["learning_allowed"], 0)
+            self.assertIn("MISSING_CLOSE_QTY", json.loads(row["quality_reasons_json"]))
+
+    def test_sync_reports_unchanged_on_semantic_rerun_without_duplicate_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="KR",
+                runtime_mode="live",
+                session_date="2026-05-08",
+                ticker="005930",
+                prompt_version="v2",
+                brain_snapshot_id="brain_kr",
+                strategy_hint="momentum",
+            )
+            for event in (
+                LifecycleEvent(
+                    event_type="ORDER_SENT",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"price": 70000, "qty": 2},
+                ),
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"price": 70000, "qty": 2},
+                ),
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=decision_id,
+                    execution_id="sell1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"exit_price": 71400, "qty": 2, "pnl_pct": 2.0},
+                ),
+                LifecycleEvent(
+                    event_type="FORWARD_MEASURED",
+                    market="KR",
+                    runtime_mode="live",
+                    session_date="2026-05-08",
+                    ticker="005930",
+                    decision_id=decision_id,
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_kr",
+                    payload={"complete": True},
+                ),
+            ):
+                store.append(event)
+
+            first = sync_v2_learning_performance(event_db=event_db, ml_db=ml_db, market="KR", dry_run=False)
+            second = sync_v2_learning_performance(event_db=event_db, ml_db=ml_db, market="KR", dry_run=True)
+
+            self.assertEqual(first["insert"], 1)
+            self.assertEqual(second["insert"], 0)
+            self.assertEqual(second["update"], 0)
+            self.assertEqual(second["unchanged"], 1)
+            self.assertIn("skipped", second)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                count = conn.execute("SELECT COUNT(*) FROM v2_learning_performance WHERE v2_decision_id=?", (decision_id,)).fetchone()[0]
+            self.assertEqual(count, 1)
+
     def test_sync_separates_discovery_origin_performance_bucket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1585,7 +1853,7 @@ class V2LearningPerformanceSyncTests(unittest.TestCase):
                     execution_id="sell1",
                     prompt_version="v2",
                     brain_snapshot_id="brain_us",
-                    payload={"price": 202.0, "pnl_pct": 1.0},
+                    payload={"price": 202.0, "qty": 1, "pnl_pct": 1.0},
                 ),
                 LifecycleEvent(
                     event_type="QUALITY_MARKED",

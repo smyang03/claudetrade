@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS v2_learning_performance (
     path_type            TEXT,
     path_run_id          TEXT,
     strategy             TEXT,
+    strategy_attribution TEXT NOT NULL DEFAULT 'strategy',
     origin_action        TEXT,
     candidate_pool_role  TEXT,
     experiment_bucket    TEXT NOT NULL DEFAULT 'standard',
@@ -50,6 +51,7 @@ CREATE TABLE IF NOT EXISTS v2_learning_performance (
     timing_style         TEXT,
     filled               INTEGER NOT NULL DEFAULT 0,
     closed               INTEGER NOT NULL DEFAULT 0,
+    portfolio_realized   INTEGER NOT NULL DEFAULT 0,
     fill_event_id        INTEGER,
     close_event_id       INTEGER,
     filled_at            TEXT,
@@ -89,6 +91,7 @@ CREATE TABLE IF NOT EXISTS v2_canonical_performance (
     path_type            TEXT,
     path_run_id          TEXT,
     strategy             TEXT,
+    strategy_attribution TEXT NOT NULL DEFAULT 'strategy',
     origin_action        TEXT,
     candidate_pool_role  TEXT,
     experiment_bucket    TEXT NOT NULL DEFAULT 'standard',
@@ -99,6 +102,7 @@ CREATE TABLE IF NOT EXISTS v2_canonical_performance (
     discovery_overlay_rank INTEGER,
     filled               INTEGER NOT NULL DEFAULT 0,
     closed               INTEGER NOT NULL DEFAULT 0,
+    portfolio_realized   INTEGER NOT NULL DEFAULT 0,
     first_fill_event_id  INTEGER,
     first_close_event_id INTEGER,
     last_close_event_id  INTEGER,
@@ -158,22 +162,22 @@ CREATE INDEX IF NOT EXISTS idx_v2_decision_fill_links_status
 UPSERT_SQL = """
 INSERT INTO v2_learning_performance (
     v2_decision_id, market, runtime_mode, session_date, ticker, status,
-    route, path_type, path_run_id, strategy, origin_action,
+    route, path_type, path_run_id, strategy, strategy_attribution, origin_action,
     candidate_pool_role, experiment_bucket, discovery_live_experiment,
     discovery_action_ceiling, discovery_signal_family, discovery_reason,
     discovery_overlay_rank, timing_style,
-    filled, closed, fill_event_id, close_event_id, filled_at, closed_at,
+    filled, closed, portfolio_realized, fill_event_id, close_event_id, filled_at, closed_at,
     entry_price, exit_price, qty, pnl_krw, pnl_pct, mfe_pct, mae_pct,
     close_reason, forward_complete, quality_grade, quality_reasons_json,
     learning_allowed, source_event_count, synced_at
 )
 VALUES (
     :v2_decision_id, :market, :runtime_mode, :session_date, :ticker, :status,
-    :route, :path_type, :path_run_id, :strategy, :origin_action,
+    :route, :path_type, :path_run_id, :strategy, :strategy_attribution, :origin_action,
     :candidate_pool_role, :experiment_bucket, :discovery_live_experiment,
     :discovery_action_ceiling, :discovery_signal_family, :discovery_reason,
     :discovery_overlay_rank, :timing_style,
-    :filled, :closed, :fill_event_id, :close_event_id, :filled_at, :closed_at,
+    :filled, :closed, :portfolio_realized, :fill_event_id, :close_event_id, :filled_at, :closed_at,
     :entry_price, :exit_price, :qty, :pnl_krw, :pnl_pct, :mfe_pct, :mae_pct,
     :close_reason, :forward_complete, :quality_grade, :quality_reasons_json,
     :learning_allowed, :source_event_count, :synced_at
@@ -188,6 +192,7 @@ ON CONFLICT(v2_decision_id) DO UPDATE SET
     path_type=excluded.path_type,
     path_run_id=excluded.path_run_id,
     strategy=excluded.strategy,
+    strategy_attribution=excluded.strategy_attribution,
     origin_action=excluded.origin_action,
     candidate_pool_role=excluded.candidate_pool_role,
     experiment_bucket=excluded.experiment_bucket,
@@ -199,6 +204,7 @@ ON CONFLICT(v2_decision_id) DO UPDATE SET
     timing_style=excluded.timing_style,
     filled=excluded.filled,
     closed=excluded.closed,
+    portfolio_realized=excluded.portfolio_realized,
     fill_event_id=excluded.fill_event_id,
     close_event_id=excluded.close_event_id,
     filled_at=excluded.filled_at,
@@ -222,11 +228,11 @@ ON CONFLICT(v2_decision_id) DO UPDATE SET
 CANONICAL_UPSERT_SQL = """
 INSERT INTO v2_canonical_performance (
     v2_decision_id, canonical_key, market, runtime_mode, session_date, ticker,
-    status, route, path_type, path_run_id, strategy, origin_action,
+    status, route, path_type, path_run_id, strategy, strategy_attribution, origin_action,
     candidate_pool_role, experiment_bucket, discovery_live_experiment,
     discovery_action_ceiling, discovery_signal_family, discovery_reason,
     discovery_overlay_rank,
-    filled, closed, first_fill_event_id, first_close_event_id, last_close_event_id,
+    filled, closed, portfolio_realized, first_fill_event_id, first_close_event_id, last_close_event_id,
     earliest_fill_at, first_closed_at, last_closed_at,
     entry_price, first_exit_price, last_exit_price, qty, pnl_krw, pnl_pct,
     mfe_pct, mae_pct, quality_grade, learning_allowed, raw_fill_event_count,
@@ -234,11 +240,11 @@ INSERT INTO v2_canonical_performance (
 )
 VALUES (
     :v2_decision_id, :canonical_key, :market, :runtime_mode, :session_date, :ticker,
-    :status, :route, :path_type, :path_run_id, :strategy, :origin_action,
+    :status, :route, :path_type, :path_run_id, :strategy, :strategy_attribution, :origin_action,
     :candidate_pool_role, :experiment_bucket, :discovery_live_experiment,
     :discovery_action_ceiling, :discovery_signal_family, :discovery_reason,
     :discovery_overlay_rank,
-    :filled, :closed, :first_fill_event_id, :first_close_event_id, :last_close_event_id,
+    :filled, :closed, :portfolio_realized, :first_fill_event_id, :first_close_event_id, :last_close_event_id,
     :earliest_fill_at, :first_closed_at, :last_closed_at,
     :entry_price, :first_exit_price, :last_exit_price, :qty, :pnl_krw, :pnl_pct,
     :mfe_pct, :mae_pct, :quality_grade, :learning_allowed, :raw_fill_event_count,
@@ -255,6 +261,7 @@ ON CONFLICT(v2_decision_id) DO UPDATE SET
     path_type=excluded.path_type,
     path_run_id=excluded.path_run_id,
     strategy=excluded.strategy,
+    strategy_attribution=excluded.strategy_attribution,
     origin_action=excluded.origin_action,
     candidate_pool_role=excluded.candidate_pool_role,
     experiment_bucket=excluded.experiment_bucket,
@@ -265,6 +272,7 @@ ON CONFLICT(v2_decision_id) DO UPDATE SET
     discovery_overlay_rank=excluded.discovery_overlay_rank,
     filled=excluded.filled,
     closed=excluded.closed,
+    portfolio_realized=excluded.portfolio_realized,
     first_fill_event_id=excluded.first_fill_event_id,
     first_close_event_id=excluded.first_close_event_id,
     last_close_event_id=excluded.last_close_event_id,
@@ -333,7 +341,83 @@ METRIC_CONTRACT = {
     "truth_source": "lifecycle_events_and_v2_path_runs",
 }
 
+ENTRY_PRICE_KEYS = (
+    "entry_price",
+    "actual_fill_price",
+    "fill_price_native",
+    "fill_price",
+    "price",
+    "avg_price",
+)
+
+EXIT_PRICE_KEYS = (
+    "exit_price",
+    "actual_fill_price",
+    "fill_price",
+    "price",
+    "close_price",
+    "exit_price_native",
+    "sell_fill_price_native",
+    "broker_sell_fill_price_native",
+)
+
+CLOSE_QTY_KEYS = (
+    "qty",
+    "filled_qty",
+    "exit_qty",
+    "sell_filled_qty",
+    "sell_fill_qty",
+    "broker_sell_filled_qty",
+    "broker_sell_fill_qty",
+)
+
+ENTRY_QTY_KEYS = ("qty", "filled_qty", "entry_qty", "order_qty")
+
+LEARNING_COMPARISON_FIELDS = (
+    "market",
+    "runtime_mode",
+    "session_date",
+    "ticker",
+    "status",
+    "route",
+    "path_type",
+    "path_run_id",
+    "strategy",
+    "strategy_attribution",
+    "origin_action",
+    "candidate_pool_role",
+    "experiment_bucket",
+    "discovery_live_experiment",
+    "discovery_action_ceiling",
+    "discovery_signal_family",
+    "discovery_reason",
+    "discovery_overlay_rank",
+    "timing_style",
+    "filled",
+    "closed",
+    "portfolio_realized",
+    "fill_event_id",
+    "close_event_id",
+    "filled_at",
+    "closed_at",
+    "entry_price",
+    "exit_price",
+    "qty",
+    "pnl_krw",
+    "pnl_pct",
+    "mfe_pct",
+    "mae_pct",
+    "close_reason",
+    "forward_complete",
+    "quality_grade",
+    "quality_reasons_json",
+    "learning_allowed",
+    "source_event_count",
+)
+
 PERFORMANCE_EXPERIMENT_COLUMNS = {
+    "strategy_attribution": "TEXT NOT NULL DEFAULT 'strategy'",
+    "portfolio_realized": "INTEGER NOT NULL DEFAULT 0",
     "candidate_pool_role": "TEXT",
     "experiment_bucket": "TEXT NOT NULL DEFAULT 'standard'",
     "discovery_live_experiment": "INTEGER NOT NULL DEFAULT 0",
@@ -413,6 +497,49 @@ def _text(payload: dict[str, Any], *keys: str) -> str:
         value = str(payload.get(key) or "").strip()
         if value:
             return value
+    return ""
+
+
+def _close_price(payload: dict[str, Any]) -> float | None:
+    return _num(payload, *EXIT_PRICE_KEYS)
+
+
+def _close_qty(close_payload: dict[str, Any], fill_payload: dict[str, Any]) -> float | None:
+    return _num(close_payload, *CLOSE_QTY_KEYS) or _num(fill_payload, *ENTRY_QTY_KEYS)
+
+
+def _close_payload_qty(close_payload: dict[str, Any]) -> float | None:
+    return _num(close_payload, *CLOSE_QTY_KEYS)
+
+
+def _strategy_attribution(close_event: dict[str, Any], close_payload: dict[str, Any]) -> str:
+    close_reason = _text(close_payload, "close_reason", "exit_reason") or str(close_event.get("reason_code") or "")
+    data_quality = str(close_event.get("data_quality") or close_payload.get("data_quality") or "").strip().upper()
+    closed_by = str(close_payload.get("closed_by") or "").strip()
+    if (
+        close_reason == "CLOSED_AUDITED_BROKER_SELL"
+        or data_quality == "AUDITED_BROKER_BACKFILL"
+        or closed_by == "manual_broker_reconcile_backfill"
+    ):
+        return "audited_broker_backfill"
+    if close_reason == "CLOSED_AUDITED_BROKER_ABSENT":
+        return "audited_broker_absent"
+    return "strategy"
+
+
+def _portfolio_realized(close: dict[str, Any], close_reason: str, exit_price: float | None, pnl_krw: float | None, pnl_pct: float | None) -> int:
+    if not close or close_reason == "CLOSED_AUDITED_BROKER_ABSENT":
+        return 0
+    return 1 if any(value is not None for value in (exit_price, pnl_krw, pnl_pct)) else 0
+
+
+def _sync_degraded_reason(close: dict[str, Any], close_reason: str, close_payload: dict[str, Any], exit_price: float | None) -> str:
+    if not close:
+        return ""
+    if close_reason == "CLOSED_AUDITED_BROKER_SELL" and exit_price is None:
+        return "MISSING_AUDITED_EXIT_PRICE"
+    if exit_price is not None and _close_payload_qty(close_payload) is None:
+        return "MISSING_CLOSE_QTY"
     return ""
 
 
@@ -705,6 +832,22 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
     close_reason = _text(close_payload, "close_reason", "exit_reason") or str(close.get("reason_code") or "")
     status = "CLOSED" if close else ("FILLED" if fill else str(decision.get("status") or latest_event.get("event_type") or ""))
     experiment_context = _discovery_performance_context(decision, path_run)
+    entry_price = _num(fill_payload, *ENTRY_PRICE_KEYS)
+    exit_price = _close_price(close_payload)
+    qty = _close_qty(close_payload, fill_payload)
+    pnl_krw = _num(close_payload, "pnl_krw", "pnl")
+    pnl_pct = _num(close_payload, "pnl_pct", "position_pnl_pct")
+    sync_degraded_reason = _sync_degraded_reason(close, close_reason, close_payload, exit_price)
+    strategy_attribution = _strategy_attribution(close, close_payload)
+    quality_reasons = list(quality.reasons)
+    if sync_degraded_reason:
+        quality_reasons.append(sync_degraded_reason)
+    learning_allowed = live_clean_learning_allowed(
+        runtime_mode=runtime_mode,
+        quality=quality.grade,
+        forward_complete=forward_complete,
+    )
+    learning_allowed = bool(learning_allowed and not sync_degraded_reason and strategy_attribution == "strategy")
     return {
         "v2_decision_id": str(decision.get("decision_id") or ""),
         "market": str(decision.get("market") or ""),
@@ -716,40 +859,31 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
         "path_type": path_type,
         "path_run_id": str(path_run.get("path_run_id") or event_path_run_id or close_payload.get("path_run_id") or fill_payload.get("path_run_id") or ""),
         "strategy": strategy,
+        "strategy_attribution": strategy_attribution,
         "origin_action": str(path_plan.get("origin_action") or decision_payload.get("origin_action") or ""),
         **experiment_context,
         "timing_style": str(decision.get("timing_style") or decision_payload.get("timing_style") or ""),
         "filled": 1 if fill else 0,
         "closed": 1 if close else 0,
+        "portfolio_realized": _portfolio_realized(close, close_reason, exit_price, pnl_krw, pnl_pct),
         "fill_event_id": fill.get("event_id") if fill else None,
         "close_event_id": close.get("event_id") if close else None,
         "filled_at": fill.get("occurred_at") if fill else None,
         "closed_at": close.get("occurred_at") if close else None,
-        "entry_price": _num(
-            fill_payload,
-            "entry_price",
-            "actual_fill_price",
-            "fill_price_native",
-            "fill_price",
-            "price",
-            "avg_price",
-        ),
-        "exit_price": _num(close_payload, "exit_price", "actual_fill_price", "fill_price", "price", "close_price"),
-        "qty": _num(close_payload, "qty", "filled_qty") or _num(fill_payload, "qty", "filled_qty"),
-        "pnl_krw": _num(close_payload, "pnl_krw", "pnl"),
-        "pnl_pct": _num(close_payload, "pnl_pct", "position_pnl_pct"),
+        "entry_price": entry_price,
+        "exit_price": exit_price,
+        "qty": qty,
+        "pnl_krw": pnl_krw,
+        "pnl_pct": pnl_pct,
         "mfe_pct": _num(close_payload, "mfe_pct", "position_mfe_pct"),
         "mae_pct": _num(close_payload, "mae_pct", "position_mae_pct"),
         "close_reason": close_reason,
         "forward_complete": 1 if forward_complete else 0,
         "quality_grade": quality.grade.value,
-        "quality_reasons_json": json.dumps(list(quality.reasons), ensure_ascii=False),
-        "learning_allowed": 1 if live_clean_learning_allowed(
-            runtime_mode=runtime_mode,
-            quality=quality.grade,
-            forward_complete=forward_complete,
-        ) else 0,
+        "quality_reasons_json": json.dumps(quality_reasons, ensure_ascii=False),
+        "learning_allowed": 1 if learning_allowed else 0,
         "source_event_count": len(events),
+        "sync_degraded_reason": sync_degraded_reason,
         "synced_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
 
@@ -788,6 +922,7 @@ def build_canonical_row(
         "path_type": learning_row.get("path_type"),
         "path_run_id": learning_row.get("path_run_id"),
         "strategy": learning_row.get("strategy"),
+        "strategy_attribution": learning_row.get("strategy_attribution"),
         "origin_action": learning_row.get("origin_action"),
         "candidate_pool_role": learning_row.get("candidate_pool_role"),
         "experiment_bucket": learning_row.get("experiment_bucket"),
@@ -798,6 +933,7 @@ def build_canonical_row(
         "discovery_overlay_rank": learning_row.get("discovery_overlay_rank"),
         "filled": 1 if fill_events else 0,
         "closed": 1 if close_events else 0,
+        "portfolio_realized": learning_row.get("portfolio_realized"),
         "first_fill_event_id": first_fill.get("event_id") if first_fill else None,
         "first_close_event_id": first_close.get("event_id") if first_close else None,
         "last_close_event_id": last_close.get("event_id") if last_close else None,
@@ -805,7 +941,7 @@ def build_canonical_row(
         "first_closed_at": first_close.get("occurred_at") if first_close else None,
         "last_closed_at": last_close.get("occurred_at") if last_close else None,
         "entry_price": learning_row.get("entry_price"),
-        "first_exit_price": _num(first_close_payload, "exit_price", "actual_fill_price", "fill_price", "price", "close_price"),
+        "first_exit_price": _close_price(first_close_payload),
         "last_exit_price": learning_row.get("exit_price"),
         "qty": learning_row.get("qty"),
         "pnl_krw": learning_row.get("pnl_krw"),
@@ -901,6 +1037,55 @@ def _changed_legacy_updates(row: sqlite3.Row, updates: dict[str, Any]) -> dict[s
         for key, value in updates.items()
         if key in row_keys and not _db_values_equal(row[key], value)
     }
+
+
+def _learning_change_counts(ml_path: Path, rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"insert": 0, "update": 0, "unchanged": 0, "skipped": 0}
+    if not rows:
+        return counts
+    if not ml_path.exists():
+        counts["insert"] = len(rows)
+        return counts
+    try:
+        with _connect(ml_path) as conn:
+            if not _table_exists(conn, "v2_learning_performance"):
+                counts["insert"] = len(rows)
+                return counts
+            existing_rows = {
+                str(row["v2_decision_id"]): row
+                for row in conn.execute("SELECT * FROM v2_learning_performance").fetchall()
+            }
+    except Exception:
+        counts["skipped"] = len(rows)
+        return counts
+
+    for row in rows:
+        decision_id = str(row.get("v2_decision_id") or "")
+        existing = existing_rows.get(decision_id)
+        if existing is None:
+            counts["insert"] += 1
+            continue
+        existing_keys = set(existing.keys())
+        changed = False
+        for field in LEARNING_COMPARISON_FIELDS:
+            if field not in existing_keys or not _db_values_equal(existing[field], row.get(field)):
+                changed = True
+                break
+        if changed:
+            counts["update"] += 1
+        else:
+            counts["unchanged"] += 1
+    return counts
+
+
+def _row_value_counts(rows: list[dict[str, Any]], field: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = str(row.get(field) or "").strip()
+        if not value:
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def _live_legacy_decision_where(columns: set[str]) -> str:
@@ -1208,6 +1393,7 @@ def sync_v2_learning_performance(
             rows.append(learning_row)
             canonical_rows.append(build_canonical_row(decision, events, path_run, learning_row))
             event_sets[decision_id] = events
+    learning_change_counts = _learning_change_counts(ml_path, rows)
     written = 0
     link_rows: list[dict[str, Any]] = []
     if dry_run:
@@ -1239,6 +1425,8 @@ def sync_v2_learning_performance(
     filled = sum(1 for row in rows if row["filled"])
     closed = sum(1 for row in rows if row["closed"])
     learning_allowed = sum(1 for row in rows if row["learning_allowed"])
+    degraded_reason_counts = _row_value_counts(rows, "sync_degraded_reason")
+    strategy_attribution_counts = _row_value_counts(rows, "strategy_attribution")
     experiment_buckets = sorted({str(row.get("experiment_bucket") or "standard") for row in rows})
     return {
         "event_db": str(event_path),
@@ -1246,6 +1434,12 @@ def sync_v2_learning_performance(
         "dry_run": bool(dry_run),
         "repair_decisions": bool(repair_decisions),
         "selected": len(rows),
+        "insert": learning_change_counts["insert"],
+        "update": learning_change_counts["update"],
+        "unchanged": learning_change_counts["unchanged"],
+        "skipped": learning_change_counts["skipped"],
+        "degraded": sum(degraded_reason_counts.values()),
+        "degraded_reason_counts": degraded_reason_counts,
         "written": written,
         "canonical_written": 0 if dry_run else len(canonical_rows),
         "decision_links_written": 0 if dry_run else len(link_rows),
@@ -1256,6 +1450,7 @@ def sync_v2_learning_performance(
         "closed": closed,
         "forward_complete": sum(1 for row in rows if row["forward_complete"]),
         "learning_allowed": learning_allowed,
+        "strategy_attribution_counts": strategy_attribution_counts,
         "experiment_bucket_counts": {
             bucket: sum(1 for row in rows if str(row.get("experiment_bucket") or "standard") == bucket)
             for bucket in experiment_buckets

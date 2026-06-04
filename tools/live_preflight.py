@@ -3869,15 +3869,155 @@ def _candidate_audit_outcome_checks(mode: str) -> list[CheckResult]:
         total, latest = conn.execute(
             "SELECT COUNT(*), MAX(label_generated_at) FROM audit_candidate_outcomes"
         ).fetchone()
+        rows = conn.execute(
+            """
+            SELECT horizon_min, COALESCE(NULLIF(status, ''), 'unknown') AS status,
+                   COALESCE(NULLIF(source, ''), 'unknown') AS source,
+                   COUNT(*) AS rows,
+                   MAX(label_generated_at) AS latest_label_generated_at
+            FROM audit_candidate_outcomes
+            GROUP BY horizon_min, status, source
+            ORDER BY horizon_min, status, source
+            """
+        ).fetchall()
     except Exception as exc:
         return [CheckResult("candidate_audit.outcome_update", "WARN", f"candidate outcome check failed: {exc}")]
     finally:
         if conn is not None:
             conn.close()
 
-    status = "PASS" if int(total or 0) > 0 and latest else "WARN"
-    detail = f"outcome_rows={int(total or 0)} latest_label_generated_at={latest or ''}"
-    return [CheckResult("candidate_audit.outcome_update", status, detail, {"path": str(path), "rows": int(total or 0), "latest": latest or ""})]
+    horizon_status: list[dict[str, Any]] = []
+    daily_pending_rows = 0
+    insufficient_rows = 0
+    for row in rows:
+        item = {
+            "horizon_min": int(row[0] or 0),
+            "status": str(row[1] or "unknown"),
+            "source": str(row[2] or "unknown"),
+            "rows": int(row[3] or 0),
+            "latest_label_generated_at": row[4] or "",
+        }
+        horizon_status.append(item)
+        if item["status"] == "daily_pending":
+            daily_pending_rows += item["rows"]
+        if item["status"] == "insufficient_samples":
+            insufficient_rows += item["rows"]
+
+    has_rows = int(total or 0) > 0 and bool(latest)
+    status = "PASS" if has_rows and daily_pending_rows == 0 else "WARN"
+    status_parts = [
+        f"{item['horizon_min']}m:{item['status']}={item['rows']}"
+        for item in horizon_status[:8]
+    ]
+    detail = (
+        f"outcome_rows={int(total or 0)} latest_label_generated_at={latest or ''} "
+        f"daily_pending_rows={daily_pending_rows} insufficient_rows={insufficient_rows}"
+    )
+    if status_parts:
+        detail = f"{detail}; status_counts={', '.join(status_parts)}"
+    data = {
+        "path": str(path),
+        "rows": int(total or 0),
+        "latest": latest or "",
+        "horizon_status": horizon_status,
+        "daily_pending_rows": daily_pending_rows,
+        "insufficient_sample_rows": insufficient_rows,
+    }
+    if status == "WARN":
+        data.update(
+            _warning_meta(
+                "candidate_audit_outcome_freshness",
+                accepted=True,
+                action="refresh candidate audit outcomes before using daily forward audit as learning evidence",
+            )
+        )
+    return [CheckResult("candidate_audit.outcome_update", status, detail, data)]
+
+
+def _ticker_selection_attribution_checks(mode: str) -> list[CheckResult]:
+    path = get_runtime_path("data", "ticker_selection_log.db", make_parents=False)
+    if not path.exists():
+        return [CheckResult("ticker_selection.execution_attribution", "WARN", f"ticker selection DB missing: {path}")]
+    conn = None
+    try:
+        conn = sqlite3.connect(str(path), timeout=5)
+        tables = {
+            str(row[0])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if "ticker_selection_log" not in tables:
+            return [CheckResult("ticker_selection.execution_attribution", "WARN", "ticker_selection_log table missing")]
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(ticker_selection_log)")}
+        if "execution_decision_id" not in columns:
+            return [CheckResult("ticker_selection.execution_attribution", "WARN", "execution_decision_id column missing")]
+        rows = conn.execute(
+            """
+            SELECT market,
+                   COUNT(*) AS traded_rows,
+                   SUM(CASE WHEN COALESCE(trade_ready, 0)=0 THEN 1 ELSE 0 END) AS watch_only_traded_rows,
+                   SUM(CASE WHEN execution_decision_id IS NULL OR TRIM(execution_decision_id)='' THEN 1 ELSE 0 END) AS missing_execution_decision_id_rows,
+                   SUM(CASE WHEN execution_decision_id IS NOT NULL AND TRIM(execution_decision_id)!='' THEN 1 ELSE 0 END) AS linked_execution_decision_id_rows,
+                   MIN(date) AS min_date,
+                   MAX(date) AS max_date
+            FROM ticker_selection_log
+            WHERE bot_mode=? AND traded=1
+            GROUP BY market
+            ORDER BY market
+            """,
+            (mode,),
+        ).fetchall()
+    except Exception as exc:
+        return [CheckResult("ticker_selection.execution_attribution", "WARN", f"selection attribution check failed: {exc}")]
+    finally:
+        if conn is not None:
+            conn.close()
+
+    markets = []
+    traded_total = 0
+    missing_total = 0
+    watch_only_traded_total = 0
+    for row in rows:
+        traded_rows = int(row[1] or 0)
+        watch_only_rows = int(row[2] or 0)
+        missing_rows = int(row[3] or 0)
+        linked_rows = int(row[4] or 0)
+        traded_total += traded_rows
+        missing_total += missing_rows
+        watch_only_traded_total += watch_only_rows
+        markets.append(
+            {
+                "market": str(row[0] or ""),
+                "traded_rows": traded_rows,
+                "watch_only_traded_rows": watch_only_rows,
+                "missing_execution_decision_id_rows": missing_rows,
+                "linked_execution_decision_id_rows": linked_rows,
+                "min_date": row[5] or "",
+                "max_date": row[6] or "",
+            }
+        )
+
+    status = "PASS" if missing_total == 0 and watch_only_traded_total == 0 else "WARN"
+    detail = (
+        f"traded_rows={traded_total} missing_execution_decision_id={missing_total} "
+        f"watch_only_traded_rows={watch_only_traded_total}"
+    )
+    data = {
+        "path": str(path),
+        "mode": mode,
+        "markets": markets,
+        "traded_rows": traded_total,
+        "missing_execution_decision_id_rows": missing_total,
+        "watch_only_traded_rows": watch_only_traded_total,
+    }
+    if status == "WARN":
+        data.update(
+            _warning_meta(
+                "ticker_selection_execution_attribution_gap",
+                accepted=True,
+                action="repair selection-to-v2 decision linkage before using traded selection rows for learning attribution",
+            )
+        )
+    return [CheckResult("ticker_selection.execution_attribution", status, detail, data)]
 
 
 def _ml_db_health_checks(mode: str) -> list[CheckResult]:
@@ -3994,6 +4134,7 @@ def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, i
     checks.extend(_ml_db_health_checks(mode))
     checks.extend(_external_data_readiness_checks(config))
     checks.extend(_candidate_audit_outcome_checks(mode))
+    checks.extend(_ticker_selection_attribution_checks(mode))
     checks.extend(_ops_summary_checks(mode))
     fail_count = sum(1 for check in checks if check.status == "FAIL")
     warn_count = sum(1 for check in checks if check.status == "WARN")

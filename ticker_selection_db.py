@@ -851,7 +851,7 @@ def get_recent_selection_feedback(
     as_of: Optional[str] = None,
     strong_runup_pct: float = 5.0,
 ) -> dict[str, object]:
-    """최근 종목 선정 품질을 Claude 프롬프트용 요약 지표로 집계한다."""
+    """최근 종목 선정 품질을 ticker-date 단위로 집계한다."""
     if as_of:
         end_date = as_of
     else:
@@ -862,26 +862,43 @@ def get_recent_selection_feedback(
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             """
+            WITH dedup AS (
+                SELECT
+                    ticker,
+                    date,
+                    COUNT(*) AS raw_rows,
+                    MAX(CASE WHEN trade_ready=1 THEN 1 ELSE 0 END) AS any_trade_ready,
+                    MAX(CASE WHEN traded=1 THEN 1 ELSE 0 END) AS any_traded,
+                    AVG(CASE WHEN trade_ready=1 THEN forward_3d END) AS trade_ready_forward_3d,
+                    AVG(CASE WHEN trade_ready=1 THEN max_runup_3d END) AS trade_ready_runup_3d,
+                    AVG(CASE WHEN trade_ready=1 THEN max_drawdown_3d END) AS trade_ready_drawdown_3d,
+                    AVG(CASE WHEN trade_ready=0 THEN forward_3d END) AS watch_only_forward_3d,
+                    AVG(CASE WHEN trade_ready=0 THEN max_runup_3d END) AS watch_only_runup_3d,
+                    AVG(CASE WHEN trade_ready=0 THEN max_drawdown_3d END) AS watch_only_drawdown_3d
+                FROM ticker_selection_log
+                WHERE market=? AND date>=? AND date<=?
+                GROUP BY ticker, date
+            )
             SELECT
                 COUNT(*) AS total_rows,
-                SUM(CASE WHEN trade_ready=1 THEN 1 ELSE 0 END) AS trade_ready_rows,
-                SUM(CASE WHEN trade_ready=0 THEN 1 ELSE 0 END) AS watch_only_rows,
-                SUM(CASE WHEN traded=1 THEN 1 ELSE 0 END) AS traded_rows,
-                SUM(CASE WHEN trade_ready=1 AND forward_3d IS NOT NULL THEN 1 ELSE 0 END) AS trade_ready_forward_n,
-                AVG(CASE WHEN trade_ready=1 THEN forward_3d END) AS trade_ready_avg_forward_3d,
-                AVG(CASE WHEN trade_ready=1 THEN max_runup_3d END) AS trade_ready_avg_runup_3d,
-                AVG(CASE WHEN trade_ready=1 THEN max_drawdown_3d END) AS trade_ready_avg_drawdown_3d,
-                SUM(CASE WHEN trade_ready=1 AND forward_3d > 0 THEN 1 ELSE 0 END) AS trade_ready_hit_count,
-                SUM(CASE WHEN trade_ready=1 AND forward_3d <= 0 THEN 1 ELSE 0 END) AS weak_trade_ready_count,
-                SUM(CASE WHEN trade_ready=0 AND forward_3d IS NOT NULL THEN 1 ELSE 0 END) AS watch_only_forward_n,
-                AVG(CASE WHEN trade_ready=0 THEN forward_3d END) AS watch_only_avg_forward_3d,
-                AVG(CASE WHEN trade_ready=0 THEN max_runup_3d END) AS watch_only_avg_runup_3d,
-                AVG(CASE WHEN trade_ready=0 THEN max_drawdown_3d END) AS watch_only_avg_drawdown_3d,
-                SUM(CASE WHEN trade_ready=0 AND max_runup_3d >= ? THEN 1 ELSE 0 END) AS missed_watch_only_count
-            FROM ticker_selection_log
-            WHERE market=? AND date>=? AND date<=?
+                SUM(raw_rows) AS raw_row_count,
+                SUM(CASE WHEN any_trade_ready=1 THEN 1 ELSE 0 END) AS trade_ready_rows,
+                SUM(CASE WHEN any_trade_ready=0 THEN 1 ELSE 0 END) AS watch_only_rows,
+                SUM(CASE WHEN any_traded=1 THEN 1 ELSE 0 END) AS traded_rows,
+                SUM(CASE WHEN any_trade_ready=1 AND trade_ready_forward_3d IS NOT NULL THEN 1 ELSE 0 END) AS trade_ready_forward_n,
+                AVG(CASE WHEN any_trade_ready=1 THEN trade_ready_forward_3d END) AS trade_ready_avg_forward_3d,
+                AVG(CASE WHEN any_trade_ready=1 THEN trade_ready_runup_3d END) AS trade_ready_avg_runup_3d,
+                AVG(CASE WHEN any_trade_ready=1 THEN trade_ready_drawdown_3d END) AS trade_ready_avg_drawdown_3d,
+                SUM(CASE WHEN any_trade_ready=1 AND trade_ready_forward_3d > 0 THEN 1 ELSE 0 END) AS trade_ready_hit_count,
+                SUM(CASE WHEN any_trade_ready=1 AND trade_ready_forward_3d <= 0 THEN 1 ELSE 0 END) AS weak_trade_ready_count,
+                SUM(CASE WHEN any_trade_ready=0 AND watch_only_forward_3d IS NOT NULL THEN 1 ELSE 0 END) AS watch_only_forward_n,
+                AVG(CASE WHEN any_trade_ready=0 THEN watch_only_forward_3d END) AS watch_only_avg_forward_3d,
+                AVG(CASE WHEN any_trade_ready=0 THEN watch_only_runup_3d END) AS watch_only_avg_runup_3d,
+                AVG(CASE WHEN any_trade_ready=0 THEN watch_only_drawdown_3d END) AS watch_only_avg_drawdown_3d,
+                SUM(CASE WHEN any_trade_ready=0 AND watch_only_runup_3d >= ? THEN 1 ELSE 0 END) AS missed_watch_only_count
+            FROM dedup
             """,
-            (strong_runup_pct, market, start_date, end_date),
+            (market, start_date, end_date, strong_runup_pct),
         ).fetchone()
 
     total_rows = int(row["total_rows"] or 0)
@@ -896,7 +913,9 @@ def get_recent_selection_feedback(
         "days": days,
         "start_date": start_date,
         "end_date": end_date,
+        "metric_basis": "distinct_ticker_date",
         "total_rows": total_rows,
+        "raw_row_count": int(row["raw_row_count"] or 0),
         "trade_ready_rows": int(row["trade_ready_rows"] or 0),
         "watch_only_rows": int(row["watch_only_rows"] or 0),
         "traded_rows": int(row["traded_rows"] or 0),
@@ -954,18 +973,32 @@ def get_recent_selection_feedback_breakdown(
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             f"""
+            WITH dedup AS (
+                SELECT
+                    {group_key} AS group_value,
+                    ticker,
+                    date,
+                    COUNT(*) AS raw_rows,
+                    MAX(CASE WHEN trade_ready=1 THEN 1 ELSE 0 END) AS any_trade_ready,
+                    AVG(CASE WHEN trade_ready=1 THEN forward_3d END) AS trade_ready_forward_3d,
+                    AVG(CASE WHEN trade_ready=0 THEN forward_3d END) AS watch_only_forward_3d,
+                    AVG(CASE WHEN trade_ready=0 THEN max_runup_3d END) AS watch_only_runup_3d
+                FROM ticker_selection_log
+                WHERE market=? AND date>=? AND date<=?
+                  AND COALESCE(TRIM({group_key}), '') != ''
+                GROUP BY {group_key}, ticker, date
+            )
             SELECT
-                {group_key} AS group_value,
+                group_value,
                 COUNT(*) AS total_rows,
-                SUM(CASE WHEN trade_ready=1 AND forward_3d IS NOT NULL THEN 1 ELSE 0 END) AS trade_ready_forward_n,
-                SUM(CASE WHEN trade_ready=1 AND forward_3d <= 0 THEN 1 ELSE 0 END) AS weak_trade_ready_count,
-                SUM(CASE WHEN trade_ready=0 AND forward_3d IS NOT NULL THEN 1 ELSE 0 END) AS watch_only_forward_n,
-                SUM(CASE WHEN trade_ready=0 AND max_runup_3d >= ? THEN 1 ELSE 0 END) AS missed_watch_only_count,
-                AVG(CASE WHEN trade_ready=0 THEN max_runup_3d END) AS watch_only_avg_runup_3d
-            FROM ticker_selection_log
-            WHERE market=? AND date>=? AND date<=?
-              AND COALESCE(TRIM({group_key}), '') != ''
-            GROUP BY {group_key}
+                SUM(raw_rows) AS raw_row_count,
+                SUM(CASE WHEN any_trade_ready=1 AND trade_ready_forward_3d IS NOT NULL THEN 1 ELSE 0 END) AS trade_ready_forward_n,
+                SUM(CASE WHEN any_trade_ready=1 AND trade_ready_forward_3d <= 0 THEN 1 ELSE 0 END) AS weak_trade_ready_count,
+                SUM(CASE WHEN any_trade_ready=0 AND watch_only_forward_3d IS NOT NULL THEN 1 ELSE 0 END) AS watch_only_forward_n,
+                SUM(CASE WHEN any_trade_ready=0 AND watch_only_runup_3d >= ? THEN 1 ELSE 0 END) AS missed_watch_only_count,
+                AVG(CASE WHEN any_trade_ready=0 THEN watch_only_runup_3d END) AS watch_only_avg_runup_3d
+            FROM dedup
+            GROUP BY group_value
             HAVING COUNT(*) >= ?
             ORDER BY
                 missed_watch_only_count DESC,
@@ -974,7 +1007,7 @@ def get_recent_selection_feedback_breakdown(
                 group_value ASC
             LIMIT ?
             """,
-            (strong_runup_pct, market, start_date, end_date, min_rows, limit),
+            (market, start_date, end_date, strong_runup_pct, min_rows, limit),
         ).fetchall()
 
     result = []
@@ -996,6 +1029,7 @@ def get_recent_selection_feedback_breakdown(
                 "group_key": group_key,
                 "group_value": row["group_value"],
                 "total_rows": int(row["total_rows"] or 0),
+                "raw_row_count": int(row["raw_row_count"] or 0),
                 "trade_ready_forward_n": trade_ready_forward_n,
                 "weak_trade_ready_count": int(row["weak_trade_ready_count"] or 0),
                 "weak_trade_ready_rate_3d": weak_trade_ready_rate,
@@ -1074,9 +1108,15 @@ def format_recent_selection_feedback(
     if not summary["total_rows"]:
         return ""
 
+    raw_row_suffix = ""
+    raw_row_count = int(summary.get("raw_row_count") or 0)
+    if raw_row_count and raw_row_count != int(summary["total_rows"] or 0):
+        raw_row_suffix = f" raw_rows={raw_row_count}"
+
     lines = [
         (
             f"- 최근 {summary['days']}일 selected={summary['total_rows']} "
+            f"basis={summary.get('metric_basis', 'distinct_ticker_date')}{raw_row_suffix} "
             f"trade_ready={summary['trade_ready_rows']} watch_only={summary['watch_only_rows']} "
             f"traded={summary['traded_rows']}"
         ),
