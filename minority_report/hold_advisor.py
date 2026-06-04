@@ -411,7 +411,15 @@ def _triage_case_payload(
         pnl_pct = (native_current / native_entry - 1.0) * 100.0
     advisor_ctx = pos.get("advisor_context_v2") if isinstance(pos.get("advisor_context_v2"), dict) else {}
     pathb_exit_signal = pos.get("pathb_exit_signal") if isinstance(pos.get("pathb_exit_signal"), dict) else {}
-    return {
+    hard_guard = {
+        "breached": bool(pos.get("hard_guard_breached") or pos.get("_hard_guard_breach_detail")),
+        "reason": pos.get("hard_guard_reason", ""),
+        "source": pos.get("hard_guard_source", ""),
+        "current": _as_float(pos.get("hard_guard_current"), 0.0),
+        "stop": _as_float(pos.get("hard_guard_stop"), 0.0),
+        "detail": pos.get("_hard_guard_breach_detail", ""),
+    }
+    payload = {
         "ticker": pos.get("ticker", "-"),
         "market": market,
         "strategy": pos.get("strategy", ""),
@@ -436,6 +444,9 @@ def _triage_case_payload(
         "advisor_context_v2": _scrub_triage_prompt_value(advisor_ctx),
         "market_context": (rt_context or digest_prompt or "")[:1800],
     }
+    if hard_guard["breached"]:
+        payload["hard_guard"] = _scrub_triage_prompt_value(hard_guard)
+    return payload
 
 
 def _build_triage_prompt(

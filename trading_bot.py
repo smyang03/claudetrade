@@ -22442,6 +22442,43 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return False, ""
         return False, ""
 
+    def _auto_sell_review_hard_guard_cooldown_active(
+        self,
+        cand: dict,
+        market: str,
+        reason: str,
+        hard_guard: dict,
+        *,
+        current_native: float = 0.0,
+    ) -> tuple[bool, str]:
+        cooldown_active, cooldown_detail = self._auto_sell_review_cooldown_active(
+            cand,
+            market,
+            reason,
+            current_native=current_native,
+        )
+        if not cooldown_active:
+            return False, cooldown_detail
+
+        prev_source = str(cand.get("auto_sell_review_hard_guard_source") or "").strip()
+        prev_current = self._float_or_zero(cand.get("auto_sell_review_hard_guard_current"))
+        prev_stop = self._float_or_zero(cand.get("auto_sell_review_hard_guard_stop"))
+        cur_source = str((hard_guard or {}).get("source") or "").strip()
+        cur_current = self._float_or_zero((hard_guard or {}).get("current"))
+        cur_stop = self._float_or_zero((hard_guard or {}).get("stop"))
+        if not prev_source:
+            return False, "hard_guard_first_review_bypasses_cooldown"
+        if cur_source and prev_source != cur_source:
+            return False, f"hard_guard_source_changed:{prev_source}->{cur_source}"
+        if prev_stop > 0 and cur_stop > 0 and abs(cur_stop / prev_stop - 1.0) * 100.0 >= 0.01:
+            return False, f"hard_guard_stop_changed:{prev_stop:g}->{cur_stop:g}"
+        price_move_max = max(0.0, self._runtime_float("HOLD_ADVISOR_SOFT_CACHE_PRICE_MOVE_MAX_PCT", 0.2))
+        if prev_current > 0 and cur_current > 0:
+            adverse_drop_pct = max(0.0, (1.0 - cur_current / prev_current) * 100.0)
+            if adverse_drop_pct >= price_move_max:
+                return False, f"hard_guard_price_worsened:{adverse_drop_pct:.2f}%"
+        return True, f"{cooldown_detail};hard_guard_context_unchanged"
+
     def _auto_sell_review_force_sell_result(
         self,
         cand: dict,
@@ -22737,12 +22774,38 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 force_detail=force_detail,
                 detail_prefix="hard_stop_override_hold",
             )
+        cache_bypassed_by_hard_guard = False
         if hard_guard and review_all:
-            cand["_hard_guard_breach_detail"] = (
+            hard_guard_detail = (
                 f"{hard_guard.get('source')} "
                 f"{float(hard_guard.get('current', 0) or 0):g} <= {float(hard_guard.get('stop', 0) or 0):g}"
             )
-        cached = self._hold_advisor_soft_cache_get(cand, market, reason_key, current_native)
+            cand["_hard_guard_breach_detail"] = hard_guard_detail
+            cand["hard_guard_breached"] = True
+            cand["hard_guard_reason"] = str(hard_guard.get("reason") or reason_key)
+            cand["hard_guard_source"] = str(hard_guard.get("source") or "")
+            cand["hard_guard_current"] = float(hard_guard.get("current", 0) or 0)
+            cand["hard_guard_stop"] = float(hard_guard.get("stop", 0) or 0)
+            cache_bypassed_by_hard_guard = True
+        cached = None
+        if cache_bypassed_by_hard_guard:
+            try:
+                self._write_funnel_event(
+                    "hold_advisor_cache_hard_guard_bypass",
+                    market,
+                    {
+                        "ticker": ticker,
+                        "reason": reason_key,
+                        "detail": cand.get("_hard_guard_breach_detail", ""),
+                        "hard_guard_source": cand.get("hard_guard_source", ""),
+                        "hard_guard_current": cand.get("hard_guard_current", 0.0),
+                        "hard_guard_stop": cand.get("hard_guard_stop", 0.0),
+                    },
+                )
+            except Exception:
+                pass
+        else:
+            cached = self._hold_advisor_soft_cache_get(cand, market, reason_key, current_native)
         if cached:
             force_sell, force_detail = self._auto_sell_review_force_sell_required(
                 cand,
@@ -22794,12 +22857,43 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         else:
             review_pos["current_price"] = float(cand.get("exit_price", 0) or cand.get("current_price", 0) or 0)
 
-        cooldown_active, cooldown_detail = self._auto_sell_review_cooldown_active(
-            cand,
-            market,
-            reason_key,
-            current_native=current_native,
-        )
+        if cache_bypassed_by_hard_guard:
+            cooldown_active, cooldown_detail = self._auto_sell_review_hard_guard_cooldown_active(
+                cand,
+                market,
+                reason_key,
+                hard_guard,
+                current_native=current_native,
+            )
+            if str(cand.get("auto_sell_review_cooldown_until") or "").strip():
+                event_type = (
+                    "auto_sell_review_cooldown_hard_guard_active"
+                    if cooldown_active
+                    else "auto_sell_review_cooldown_hard_guard_bypass"
+                )
+                try:
+                    self._write_funnel_event(
+                        event_type,
+                        market,
+                        {
+                            "ticker": ticker,
+                            "reason": reason_key,
+                            "detail": cand.get("_hard_guard_breach_detail", ""),
+                            "cooldown_detail": cooldown_detail,
+                            "hard_guard_source": cand.get("hard_guard_source", ""),
+                            "hard_guard_current": cand.get("hard_guard_current", 0.0),
+                            "hard_guard_stop": cand.get("hard_guard_stop", 0.0),
+                        },
+                    )
+                except Exception:
+                    pass
+        else:
+            cooldown_active, cooldown_detail = self._auto_sell_review_cooldown_active(
+                cand,
+                market,
+                reason_key,
+                current_native=current_native,
+            )
         if cooldown_active:
             payload = {
                 "auto_sell_reviewed_at": now_iso,
@@ -22874,6 +22968,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "auto_sell_review_confidence": confidence,
             "auto_sell_review_fallback": fallback,
         }
+        if cache_bypassed_by_hard_guard:
+            payload["auto_sell_review_hard_guard_source"] = cand.get("hard_guard_source", "")
+            payload["auto_sell_review_hard_guard_current"] = cand.get("hard_guard_current", 0.0)
+            payload["auto_sell_review_hard_guard_stop"] = cand.get("hard_guard_stop", 0.0)
+            payload["auto_sell_review_hard_guard_detail"] = cand.get("_hard_guard_breach_detail", "")
         if action != "SELL":
             policy_payload = self._apply_plan_a_hold_policy(cand, market, advice if isinstance(advice, dict) else {}, current_native)
             payload.update(policy_payload)

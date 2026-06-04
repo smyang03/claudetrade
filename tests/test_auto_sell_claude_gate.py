@@ -760,6 +760,107 @@ class AutoSellClaudeGateTests(unittest.TestCase):
         self.assertNotIn("hold_advisor_cache_hit", review)
         self.assertEqual(cand["auto_sell_review_detail"], "fresh near-close review")
 
+    def test_hard_guard_review_all_bypasses_soft_cache_for_fresh_review(self) -> None:
+        bot = _plan_a_bot()
+        bot._current_session_date_str = lambda market: "2026-05-12"  # type: ignore[method-assign]
+        bot._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+        bot.risk.positions[0].update(
+            {
+                "current_price": 105.0,
+                "display_current_price": 105.0,
+                "profit_floor_price": 105.5,
+            }
+        )
+        future = (datetime.now().astimezone() + timedelta(minutes=20)).isoformat(timespec="seconds")
+        cand = {
+            **bot.risk.positions[0],
+            "exit_price": 105.0,
+            "entry_time": "2026-05-12T09:30:00+09:00",
+            "reason": "profit_floor",
+            "auto_sell_review_cooldown_until": future,
+        }
+        payload = {
+            "auto_sell_review_reason": "profit_floor",
+            "auto_sell_review_action": "HOLD",
+            "auto_sell_review_detail": "cached hold",
+            "auto_sell_review_confidence": 0.8,
+            "auto_sell_review_fallback": False,
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "HOLD_ADVISOR_SOFT_CACHE_ENABLED": "true",
+                "CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "true",
+                "AUTO_SELL_REVIEW_FORCE_SELL_LOSS_PCT": "10",
+            },
+            clear=False,
+        ):
+            bot._hold_advisor_soft_cache_put(
+                cand,
+                "US",
+                "profit_floor",
+                105.0,
+                payload,
+                {"action": "HOLD", "next_review_min": 10},
+            )
+            with patch(
+                "minority_report.hold_advisor.ask",
+                return_value={"action": "SELL", "confidence": 0.9, "reason": "fresh hard guard sell"},
+            ) as advisor:
+                review = bot._run_auto_sell_review_gate(cand, "US", "profit_floor", current_native=105.0)
+
+        self.assertTrue(review["allowed"])
+        advisor.assert_called_once()
+        self.assertNotIn("hold_advisor_cache_hit", review)
+        self.assertIn("_hard_guard_breach_detail", cand)
+        advisor_pos = advisor.call_args.args[0]
+        self.assertTrue(advisor_pos["hard_guard_breached"])
+        self.assertEqual(advisor_pos["hard_guard_source"], "profit_floor_price")
+        self.assertEqual(advisor_pos["hard_guard_current"], 105.0)
+        self.assertEqual(advisor_pos["hard_guard_stop"], 105.5)
+        self.assertEqual(cand["auto_sell_review_action"], "SELL")
+        self.assertEqual(cand["auto_sell_review_detail"], "fresh hard guard sell")
+
+    def test_hard_guard_review_all_keeps_cooldown_when_context_unchanged(self) -> None:
+        bot = _plan_a_bot()
+        bot._current_session_date_str = lambda market: "2026-05-12"  # type: ignore[method-assign]
+        bot._minutes_to_close = lambda market: 999.0  # type: ignore[method-assign]
+        future = (datetime.now().astimezone() + timedelta(minutes=20)).isoformat(timespec="seconds")
+        cand = {
+            **bot.risk.positions[0],
+            "current_price": 105.0,
+            "display_current_price": 105.0,
+            "exit_price": 105.0,
+            "profit_floor_price": 105.5,
+            "entry_time": "2026-05-12T09:30:00+09:00",
+            "reason": "profit_floor",
+            "auto_sell_review_cooldown_until": future,
+            "auto_sell_review_hard_guard_source": "profit_floor_price",
+            "auto_sell_review_hard_guard_current": 105.0,
+            "auto_sell_review_hard_guard_stop": 105.5,
+            "auto_sell_review_action": "HOLD",
+            "auto_sell_review_confidence": 0.8,
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "true",
+                "AUTO_SELL_REVIEW_FORCE_SELL_LOSS_PCT": "10",
+            },
+            clear=False,
+        ), patch(
+            "minority_report.hold_advisor.ask",
+            return_value={"action": "SELL", "confidence": 0.9, "reason": "should not be called"},
+        ) as advisor:
+            review = bot._run_auto_sell_review_gate(cand, "US", "profit_floor", current_native=105.0)
+
+        self.assertFalse(review["allowed"])
+        advisor.assert_not_called()
+        self.assertEqual(cand["auto_sell_review_action"], "HOLD")
+        self.assertIn("hard_guard_context_unchanged", cand["auto_sell_review_detail"])
+
     def test_recovery_micro_hard_loss_forces_sell_for_soft_exit_reasons(self) -> None:
         bot = _plan_a_bot()
         hard_loss_cand = {

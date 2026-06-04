@@ -581,6 +581,33 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
         self.assertNotIn('"votes"', prompt)
         self.assertIn("category is the exit reason class", prompt)
 
+    def test_triage_prompt_includes_structured_hard_guard_breach(self) -> None:
+        prompt = hold_advisor._build_triage_prompt(
+            {
+                "ticker": "TEST",
+                "entry": 100.0,
+                "current_price": 105.0,
+                "hard_guard_breached": True,
+                "hard_guard_reason": "profit_floor",
+                "hard_guard_source": "profit_floor_price",
+                "hard_guard_current": 105.0,
+                "hard_guard_stop": 105.5,
+                "_hard_guard_breach_detail": "profit_floor_price 105 <= 105.5",
+            },
+            "US",
+            "digest",
+            "",
+            "AUTO_SELL_REVIEW",
+            "policy",
+            120.0,
+            False,
+        )
+
+        self.assertIn('"hard_guard"', prompt)
+        self.assertIn('"breached": true', prompt)
+        self.assertIn('"source": "profit_floor_price"', prompt)
+        self.assertIn('"stop": 105.5', prompt)
+
     def test_triage_shim_votes_do_not_create_three_analyst_strategy_majority(self) -> None:
         judgments = {
             role: {
