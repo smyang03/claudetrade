@@ -13,6 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Do not use shell redirection, `Out-File`, or `Set-Content` to rewrite source files unless UTF-8 is explicitly controlled.
 - Before committing Korean text, run `python tools/check_mojibake.py --staged`.
 - If mojibake appears in existing lines, fix it from git history instead of guessing the intended Korean text.
+- `state/brain.json` is tracked by git but must not be included in code/screener commits. A pre-commit hook (`tools/check_brain_commit.py`) blocks it. To commit a deliberate brain update: `ALLOW_BRAIN_COMMIT=1 git commit ...`.
 
 ## Repository Development Rules
 
@@ -462,17 +463,18 @@ until more data is available or a human explicitly approves the change.
 
 ### 현재
 
-- live 기준 브로커 truth 정렬
-- 대시보드 live 데이터 소스 정리
-- selection / execution / 수익률 계산 QA 강화
-- PEAD 입력 품질 개선
+- US PathB 수익 구조 보존 (target/pre-close/profit_ladder/Claude sell 4개 경로)
+- KR 구조적 손실 분리 관찰: KR live 확대 금지, shadow/축소 우선
+- v2 성과 원장 정합성 (decisions.db ↔ v2_event_store sync freshness)
+- ticker_selection attribution 누락 리포트 (execution_decision_id 누락률 추적)
+- candidate audit outcome freshness 표시 (daily_pending 상태 명시)
 
 ### 다음 단계
 
-- KR momentum 축소 관찰
-- PEAD surprise shadow 5거래일 검증
-- `lesson_candidates` 기반 저위험 프롬프트 요약 정교화
-- live dashboard 원장/자산곡선 broker 기준 검증 강화
+- KR-only shadow veto gate: 장 초반/후반 진입, loss_cap 직후 재진입, stop cluster 시 size-down
+- US loss_cap cluster shadow: buy-zone-hit 후 손절 집중 구간 size-down 계측
+- watch_only missed runup + bucket decomposition 연결 리포트
+- PEAD surprise shadow 5거래일 검증 및 prompt 적용 검토
 
 ### 장기
 
@@ -500,6 +502,12 @@ until more data is available or a human explicitly approves the change.
 | `KR_PLANA_HOLD_POLICY_MODE` | `enforce` | KR Plan A hold advisor 정책 강제 적용 여부 |
 | `US_PLANA_HOLD_POLICY_MODE` | `enforce` | US Plan A hold advisor 정책 강제 적용 여부 |
 | `CLAUDE_REVIEW_ALL_AUTOMATED_SELLS` | `true` | **Path A 자동 매도 전 Claude hold advisor 리뷰 게이트 활성 여부. false로 바꾸면 loss_cap·stop_loss·trail_stop 등 Path A 자동 매도가 Claude 판단 없이 즉시 실행된다. 반드시 true 유지.** |
+| `SELECTION_SMART_SKIP_MODE` | `live` | selection 재사용 모드. live = TTL 내 동일 semantic signature면 Claude 호출 생략. observe로 낮추면 호출 횟수 증가 |
+| `SUB_SCREENER_TRIGGER_ENABLED` | `true` | sub_screener 감지 후 triage/reinvoke 활성 여부 |
+| `PULLBACK_WAIT_EVIDENCE_GATE_MODE` | `live` | evidence 부족 시 PULLBACK_WAIT → WATCH 강등 적용. shadow로 낮추면 약한 evidence 후보가 PathB wait pool로 진입 가능 |
+| `CLAUDE_SELECTION_COMPRESSED_MAX_TOKENS` | `2200` | compact selection 응답 최대 토큰. 초과 시 trade_ready=[] fallback. 25/7 cap 실험 시 2600으로 올릴 것 |
+| `INTRADAY_REVIEW_COOLDOWN_MINUTES` | `120` | 포지션별 intraday review 최소 간격(분). 손익 급변·stop 근처는 우회 |
+| `INTRADAY_REVIEW_DAILY_MAX_PER_POSITION` | `3` | 포지션별 일중 review 최대 횟수. pending_due·손익 급변·stop 근처는 초과 허용 |
 
 이 설정들은 `.env.live`와 `config/v2_start_config.json` 두 곳에 존재한다. 한 곳만 바꾸면 반영이 안 될 수 있으므로 두 파일을 동시에 확인한다.
 
@@ -736,6 +744,15 @@ ORDER_UNKNOWN 매도 복구 흐름 (`_reconcile_exit_order_unknown_run`):
 - `brain.json` 중복/상충 기록 정규화
 - 브레인/대시보드 한글 깨짐 복원
 - US 미체결 주문 `remaining_qty` 누락으로 `open_orders` 필터 실패 수정 (2026-05-27)
+- Smart Skip semantic signature 전환: 전체 prompt hash → ticker+action_ceiling 기반, 가격 노이즈 무시 (2026-06-04)
+- Runtime handoff snapshot: 재시작 시 today_tickers·trade_ready·price_cache·post_open evidence 복원 (2026-06-04)
+- Post-open feature JSONL 복원: 세션별 최신 스냅샷 persist → 재시작 후 evidence 연속성 유지 (2026-06-04)
+- INTRADAY_REVIEW gate: per-position cooldown 120분 + daily max 3회, 트리거 기반 우회 (2026-06-04)
+- AUTO_SELL_REVIEW hard guard cache bypass: hard_guard 발동 시 stale cache 우회 → fresh Hold Advisor 호출 (2026-06-04)
+- sub_screener Plan A min score floor: `SUB_SCREENER_PLAN_A_MIN_SCORE=70`, 저품질 trigger 방지 (2026-06-04)
+- `brain.json` pre-commit hook: `tools/check_brain_commit.py`, 코드 커밋에 brain 혼입 차단 (2026-06-04)
+- operator_summary 추가: current trading risk / previous-session cleanup 분리 표시 (2026-06-04)
+- v2 성과 sync 정합성: v2_event_store → decisions.db 최신 CLOSED 이벤트 반영 경로 보강 (2026-06-05)
 
 ## 재시작 / 장애 복구 절차
 
