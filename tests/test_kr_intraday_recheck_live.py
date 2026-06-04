@@ -425,6 +425,218 @@ class KrIntradayRecheckLiveTests(unittest.TestCase):
         self.assertEqual(state["due_at"], "")
         warning.assert_called_once()
 
+    def test_intraday_review_skips_recent_position_inside_cooldown(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "entry": 1000.0,
+            "display_avg_price": 1000.0,
+            "current_price": 994.0,
+            "display_current_price": 994.0,
+            "sl": 900.0,
+            "qty": 1,
+            "source_type": "signal_entry",
+            "intraday_review_session": "2026-05-20",
+            "intraday_review_count": 1,
+            "intraday_review_last_at": (datetime.now(KST) - timedelta(minutes=30)).isoformat(timespec="seconds"),
+            "intraday_review_last_pnl_pct": -0.5,
+            "_fill_ts": time.time() - 7200,
+        }
+        bot = _bot(pos)
+
+        gate = TradingBot._intraday_review_gate(bot, pos, "KR", force=False, pnl_pct=-0.6, current_native=994.0)
+        self.assertFalse(gate["allowed"])
+        self.assertEqual(gate["reason"], "skipped_cooldown_regular")
+
+        with patch("minority_report.hold_advisor.ask") as advisor_ask, patch("trading_bot.block_alert"):
+            TradingBot._intraday_position_review(bot, "KR")
+
+        advisor_ask.assert_not_called()
+        bot._execute_sell.assert_not_called()
+        self.assertEqual(pos["intraday_review_count"], 1)
+
+    def test_intraday_review_daily_max_blocks_regular_reask(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "entry": 1000.0,
+            "display_avg_price": 1000.0,
+            "current_price": 994.0,
+            "display_current_price": 994.0,
+            "sl": 900.0,
+            "qty": 1,
+            "source_type": "signal_entry",
+            "intraday_review_session": "2026-05-20",
+            "intraday_review_count": 3,
+            "intraday_review_last_at": (datetime.now(KST) - timedelta(hours=3)).isoformat(timespec="seconds"),
+            "intraday_review_last_pnl_pct": -0.5,
+            "_fill_ts": time.time() - 7200,
+        }
+        bot = _bot(pos)
+
+        gate = TradingBot._intraday_review_gate(bot, pos, "KR", force=False, pnl_pct=-0.6, current_native=994.0)
+        self.assertFalse(gate["allowed"])
+        self.assertEqual(gate["reason"], "skipped_daily_max_regular")
+
+        with patch("minority_report.hold_advisor.ask") as advisor_ask, patch("trading_bot.block_alert"):
+            TradingBot._intraday_position_review(bot, "KR")
+
+        advisor_ask.assert_not_called()
+        bot._execute_sell.assert_not_called()
+        self.assertEqual(pos["intraday_review_count"], 3)
+
+    def test_intraday_review_material_pnl_change_bypasses_cooldown_before_daily_max(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "entry": 1000.0,
+            "display_avg_price": 1000.0,
+            "current_price": 985.0,
+            "display_current_price": 985.0,
+            "sl": 900.0,
+            "qty": 1,
+            "source_type": "signal_entry",
+            "intraday_review_session": "2026-05-20",
+            "intraday_review_count": 1,
+            "intraday_review_last_at": (datetime.now(KST) - timedelta(minutes=30)).isoformat(timespec="seconds"),
+            "intraday_review_last_pnl_pct": -0.1,
+            "_fill_ts": time.time() - 7200,
+        }
+        bot = _bot(pos)
+
+        with patch("minority_report.hold_advisor.ask", return_value={"action": "HOLD", "confidence": 0.8}) as advisor_ask, patch(
+            "trading_bot.block_alert"
+        ):
+            TradingBot._intraday_position_review(bot, "KR")
+
+        advisor_ask.assert_called_once()
+        bot._execute_sell.assert_not_called()
+        self.assertEqual(pos["intraday_review_count"], 2)
+
+    def test_intraday_review_material_pnl_change_bypasses_daily_max(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "entry": 1000.0,
+            "display_avg_price": 1000.0,
+            "current_price": 985.0,
+            "display_current_price": 985.0,
+            "sl": 900.0,
+            "qty": 1,
+            "source_type": "signal_entry",
+            "intraday_review_session": "2026-05-20",
+            "intraday_review_count": 3,
+            "intraday_review_last_at": (datetime.now(KST) - timedelta(minutes=30)).isoformat(timespec="seconds"),
+            "intraday_review_last_pnl_pct": -0.1,
+            "_fill_ts": time.time() - 7200,
+        }
+        bot = _bot(pos)
+
+        gate = TradingBot._intraday_review_gate(bot, pos, "KR", force=False, pnl_pct=-1.5, current_native=985.0)
+        self.assertTrue(gate["allowed"])
+        self.assertEqual(gate["reason"], "bypassed_daily_max_material_pnl_change")
+
+        with patch("minority_report.hold_advisor.ask", return_value={"action": "HOLD", "confidence": 0.8}) as advisor_ask, patch(
+            "trading_bot.block_alert"
+        ):
+            TradingBot._intraday_position_review(bot, "KR")
+
+        advisor_ask.assert_called_once()
+        bot._execute_sell.assert_not_called()
+        self.assertEqual(pos["intraday_review_count"], 4)
+
+    def test_intraday_review_near_hard_stop_bypasses_daily_max(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "entry": 1000.0,
+            "display_avg_price": 1000.0,
+            "current_price": 961.0,
+            "display_current_price": 961.0,
+            "sl": 960.0,
+            "qty": 1,
+            "source_type": "signal_entry",
+            "intraday_review_session": "2026-05-20",
+            "intraday_review_count": 3,
+            "intraday_review_last_at": (datetime.now(KST) - timedelta(minutes=30)).isoformat(timespec="seconds"),
+            "intraday_review_last_pnl_pct": -3.9,
+            "_fill_ts": time.time() - 7200,
+        }
+        bot = _bot(pos)
+
+        gate = TradingBot._intraday_review_gate(bot, pos, "KR", force=False, pnl_pct=-3.9, current_native=961.0)
+        self.assertTrue(gate["allowed"])
+        self.assertEqual(gate["reason"], "bypassed_daily_max_near_stop")
+
+        with patch("minority_report.hold_advisor.ask", return_value={"action": "HOLD", "confidence": 0.8}) as advisor_ask, patch(
+            "trading_bot.block_alert"
+        ):
+            TradingBot._intraday_position_review(bot, "KR")
+
+        advisor_ask.assert_called_once()
+        bot._execute_sell.assert_not_called()
+        self.assertEqual(pos["intraday_review_count"], 4)
+
+    def test_intraday_review_invalid_count_is_reset_without_blocking_review(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "entry": 1000.0,
+            "display_avg_price": 1000.0,
+            "current_price": 994.0,
+            "display_current_price": 994.0,
+            "sl": 900.0,
+            "qty": 1,
+            "source_type": "signal_entry",
+            "intraday_review_session": "2026-05-20",
+            "intraday_review_count": "not-a-number",
+            "intraday_review_last_at": (datetime.now(KST) - timedelta(minutes=30)).isoformat(timespec="seconds"),
+            "intraday_review_last_pnl_pct": -0.5,
+            "_fill_ts": time.time() - 7200,
+        }
+        bot = _bot(pos)
+
+        with patch("minority_report.hold_advisor.ask", return_value={"action": "HOLD", "confidence": 0.8}) as advisor_ask, patch(
+            "trading_bot.block_alert"
+        ):
+            TradingBot._intraday_position_review(bot, "KR")
+
+        advisor_ask.assert_called_once()
+        bot._execute_sell.assert_not_called()
+        self.assertEqual(pos["intraday_review_count"], 1)
+
+    def test_intraday_review_pending_recheck_due_bypasses_daily_max(self) -> None:
+        pos = {
+            "ticker": "005930",
+            "entry": 1000.0,
+            "display_avg_price": 1000.0,
+            "current_price": 990.0,
+            "display_current_price": 990.0,
+            "sl": 960.0,
+            "qty": 1,
+            "source_type": "signal_entry",
+            "pending_intraday_recheck": True,
+            "pending_intraday_recheck_used": True,
+            "pending_intraday_recheck_pnl_at_review": -1.2,
+            "pending_intraday_recheck_due_at": (datetime.now(KST) - timedelta(minutes=1)).isoformat(
+                timespec="seconds"
+            ),
+            "intraday_review_session": "2026-05-20",
+            "intraday_review_count": 3,
+            "intraday_review_last_at": (datetime.now(KST) - timedelta(hours=3)).isoformat(timespec="seconds"),
+            "intraday_review_last_pnl_pct": -1.2,
+            "_fill_ts": time.time() - 7200,
+        }
+        bot = _bot(pos)
+
+        gate = TradingBot._intraday_review_gate(bot, pos, "KR", force=False, pnl_pct=-1.0, current_native=990.0)
+        self.assertTrue(gate["allowed"])
+        self.assertEqual(gate["reason"], "bypassed_daily_max_pending_due")
+
+        with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.8}) as advisor_ask, patch(
+            "trading_bot.block_alert"
+        ):
+            TradingBot._intraday_position_review(bot, "KR")
+
+        advisor_ask.assert_called_once()
+        bot._execute_sell.assert_called_once()
+        self.assertFalse(pos["pending_intraday_recheck"])
+        self.assertEqual(pos["pending_intraday_recheck_status"], "sell_after_recheck")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -201,6 +201,72 @@ class ActiveLessonBuilderTests(unittest.TestCase):
         self.assertNotIn("summary should not appear", result["section"])
         self.assertEqual(result["metadata"]["ignored_reasons"]["missing_action_hint"], 1)
 
+    def test_lesson_candidates_block_stale_or_unreviewed_truth_status(self) -> None:
+        payload = {
+            "markets": {
+                "US": [
+                    {
+                        "id": "stale_hint",
+                        "market": "US",
+                        "scope": "selection",
+                        "action_hint": "stale performance hint should not be injected.",
+                        "truth_status": "stale",
+                        "claude_actionable": True,
+                        "ops_flag": False,
+                        "min_sample": 1,
+                        "breached": True,
+                        "severity": "high",
+                        "confidence": 0.8,
+                        "sample_count": 5,
+                        "generated_at": "2026-05-01T23:00:00",
+                        "expires_at": "2099-01-01T00:00:00",
+                    },
+                    {
+                        "id": "manual_review_required",
+                        "market": "US",
+                        "source": "data_analysis",
+                        "scope": "selection",
+                        "action_hint": "manual analysis without fresh truth should not be injected.",
+                        "claude_actionable": True,
+                        "ops_flag": False,
+                        "min_sample": 1,
+                        "breached": True,
+                        "severity": "high",
+                        "confidence": 0.8,
+                        "sample_count": 5,
+                        "generated_at": "2026-05-01T23:00:00",
+                        "expires_at": "2099-01-01T00:00:00",
+                    },
+                    {
+                        "id": "fresh_hint",
+                        "market": "US",
+                        "scope": "selection",
+                        "action_hint": "fresh performance hint may be injected.",
+                        "truth_status": "fresh",
+                        "claude_actionable": True,
+                        "ops_flag": False,
+                        "min_sample": 1,
+                        "breached": True,
+                        "severity": "high",
+                        "confidence": 0.8,
+                        "sample_count": 5,
+                        "generated_at": "2026-05-01T23:00:00",
+                        "expires_at": "2099-01-01T00:00:00",
+                    },
+                ]
+            }
+        }
+        with patch.object(active_lessons, "_load_lesson_candidates", return_value=payload), \
+             patch.object(active_lessons, "_load_brain", return_value={"markets": {"US": {}}}), \
+             patch.dict(os.environ, {"ACTIVE_LESSONS_ENABLED": "true", "ACTIVE_LESSONS_SHADOW": "false"}, clear=False):
+            result = active_lessons.build_active_lesson_context("US")
+
+        self.assertIn("fresh performance hint", result["section"])
+        self.assertNotIn("stale performance hint", result["section"])
+        self.assertNotIn("manual analysis without fresh truth", result["section"])
+        self.assertEqual(result["metadata"]["ignored_reasons"]["truth_status_stale"], 1)
+        self.assertEqual(result["metadata"]["ignored_reasons"]["truth_status_manual_review_required"], 1)
+
     def test_recent_day_cap_and_execution_excluded_flags(self) -> None:
         brain = {
             "markets": {

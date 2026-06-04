@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 import builtins
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import tempfile
 import unittest
@@ -701,6 +701,136 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(meta["allocation_intent"]["INTC"], "probe")
         self.assertEqual(meta["max_order_cap_pct"]["INTC"], 30)
         self.assertIn("INTC", meta["_trade_ready_without_price_targets_allowed"])
+
+    def test_kr_sub_screener_rescreen_carries_recent_trade_ready_once(self) -> None:
+        bot = _make_bot()
+        bot.today_judgment = {"market": "KR", "consensus": {"mode": "BALANCED"}}
+        selected_at = datetime.now(KST).isoformat(timespec="seconds")
+        bot.selection_meta["KR"] = {
+            "watchlist": ["005930", "000660"],
+            "trade_ready": ["005930"],
+            "selection_snapshot_ts": selected_at,
+            "_selection_source_type": "analyst_reinvoke",
+            "recommended_strategy": {"005930": "momentum"},
+            "price_targets": {"005930": {"reference_price": 70000.0}},
+            "reasons": {"005930": "fresh BUY_READY from previous analyst pass"},
+        }
+        bot.trade_ready_tickers["KR"] = ["005930"]
+        raw_meta = {
+            "watchlist": ["005930", "000660"],
+            "trade_ready": [],
+            "candidate_actions": [{"ticker": "005930", "action": "WATCH", "reason": "wait one more print"}],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(
+                bot,
+                "KR",
+                ["005930", "000660"],
+                mode="BALANCED",
+                source="sub_screener_rescreen",
+            )
+
+        self.assertEqual(meta["trade_ready"], ["005930"])
+        self.assertEqual(bot.trade_ready_tickers["KR"], ["005930"])
+        self.assertEqual(meta["price_targets"]["005930"]["reference_price"], 70000.0)
+        self.assertEqual(meta["_trade_ready_carry"]["carried"], ["005930"])
+        self.assertEqual(meta["_trade_ready_carry"]["source"], "sub_screener_rescreen")
+        route = [r for r in meta["_candidate_action_routes"] if r.get("ticker") == "005930"][0]
+        self.assertTrue(route["trade_ready_carry"])
+        self.assertEqual(route["final_action"], "BUY_READY")
+        self.assertEqual(route["reason"], "carried_recent_trade_ready")
+
+    def test_kr_sub_screener_rescreen_does_not_carry_hard_veto(self) -> None:
+        bot = _make_bot()
+        bot.today_judgment = {"market": "KR", "consensus": {"mode": "BALANCED"}}
+        selected_at = datetime.now(KST).isoformat(timespec="seconds")
+        bot.selection_meta["KR"] = {
+            "watchlist": ["005930"],
+            "trade_ready": ["005930"],
+            "selection_snapshot_ts": selected_at,
+            "recommended_strategy": {"005930": "momentum"},
+            "price_targets": {"005930": {"reference_price": 70000.0}},
+        }
+        bot.trade_ready_tickers["KR"] = ["005930"]
+        raw_meta = {
+            "watchlist": ["005930"],
+            "trade_ready": [],
+            "veto": {"005930": "missing_data"},
+            "candidate_actions": [{"ticker": "005930", "action": "WATCH", "reason": "missing_data"}],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(
+                bot,
+                "KR",
+                ["005930"],
+                mode="BALANCED",
+                source="sub_screener_rescreen",
+            )
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(bot.trade_ready_tickers["KR"], [])
+        self.assertEqual(meta["_trade_ready_carry"]["carried"], [])
+        self.assertEqual(meta["_trade_ready_carry"]["blocked"]["005930"], "new_veto:missing_data")
+
+    def test_kr_trade_ready_carry_expires_by_ttl(self) -> None:
+        bot = _make_bot()
+        bot.today_judgment = {"market": "KR", "consensus": {"mode": "BALANCED"}}
+        selected_at = (datetime.now(KST) - timedelta(minutes=10)).isoformat(timespec="seconds")
+        bot.selection_meta["KR"] = {
+            "watchlist": ["005930"],
+            "trade_ready": ["005930"],
+            "selection_snapshot_ts": selected_at,
+            "price_targets": {"005930": {"reference_price": 70000.0}},
+        }
+        bot.trade_ready_tickers["KR"] = ["005930"]
+        raw_meta = {
+            "watchlist": ["005930"],
+            "trade_ready": [],
+            "candidate_actions": [{"ticker": "005930", "action": "WATCH", "reason": "wait"}],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(
+                bot,
+                "KR",
+                ["005930"],
+                mode="BALANCED",
+                source="sub_screener_rescreen",
+            )
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertNotIn("_trade_ready_carry", meta)
+
+    def test_kr_trade_ready_carry_only_applies_to_sub_screener_rescreen(self) -> None:
+        bot = _make_bot()
+        bot.today_judgment = {"market": "KR", "consensus": {"mode": "BALANCED"}}
+        selected_at = datetime.now(KST).isoformat(timespec="seconds")
+        bot.selection_meta["KR"] = {
+            "watchlist": ["005930"],
+            "trade_ready": ["005930"],
+            "selection_snapshot_ts": selected_at,
+            "price_targets": {"005930": {"reference_price": 70000.0}},
+        }
+        bot.trade_ready_tickers["KR"] = ["005930"]
+        raw_meta = {
+            "watchlist": ["005930"],
+            "trade_ready": [],
+            "candidate_actions": [{"ticker": "005930", "action": "WATCH", "reason": "manual downgrade"}],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(
+                bot,
+                "KR",
+                ["005930"],
+                mode="BALANCED",
+                source="manual_rescreen",
+            )
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertNotIn("_trade_ready_carry", meta)
 
     def test_inline_replacement_updates_selection_meta_and_persists(self) -> None:
         bot = _make_bot()

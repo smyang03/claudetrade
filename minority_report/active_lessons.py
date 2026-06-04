@@ -18,6 +18,7 @@ _SOURCE_PRIORITY = {
     "learned_lessons": 100,
 }
 _SEVERITY_SCORE = {"high": 90, "medium": 60, "info": 25, "low": 10}
+_MANUAL_REVIEW_SOURCES = {"data_analysis", "manual", "postmortem"}
 _SYSTEM_TERMS = (
     "kis",
     "token",
@@ -104,6 +105,16 @@ def _is_system_text(text: str) -> bool:
 def _date_prefix(value: Any) -> str:
     text = str(value or "").strip()
     return text[:10] if len(text) >= 10 else ""
+
+
+def _lesson_truth_status(item: dict[str, Any]) -> str:
+    status = str(item.get("truth_status") or "").strip().lower()
+    if status:
+        return status
+    source = str(item.get("source") or "").strip().lower()
+    if source in _MANUAL_REVIEW_SOURCES:
+        return "manual_review_required"
+    return "fresh"
 
 
 def _days_old(value: Any, today: date) -> int:
@@ -202,6 +213,10 @@ def _collect_lesson_candidate_items(market: str, today: date, ignored: list[dict
             continue
         if row.get("claude_actionable") is False:
             ignored.append({"source": "lesson_candidates", "reason": "not_claude_actionable"})
+            continue
+        truth_status = _lesson_truth_status(row)
+        if truth_status != "fresh":
+            ignored.append({"source": "lesson_candidates", "reason": f"truth_status_{truth_status}"})
             continue
         if str(row.get("scope") or "").lower() in {"execution", "consensus", "strategy"}:
             ignored.append({"source": "lesson_candidates", "reason": "non_selection_scope"})
