@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from audit.candidate_audit_store import CandidateAuditStore
+from audit.candidate_audit_store import CandidateAuditStore, candidate_key
 from tools.monitoring_ops_report import _pead_manual_review_report, build_monitoring_ops_report
 
 
@@ -182,6 +182,43 @@ class MonitoringOpsReportTests(unittest.TestCase):
 
             self.assertEqual(payload["gate_summary"]["actual_prompt_visibility"], consistency)
 
+    def test_report_surfaces_hard_guard_review_bypass_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            funnel = root / "logs" / "funnel"
+            funnel.mkdir(parents=True)
+            (funnel / "hold_advisor_cache_hard_guard_bypass_20260603_US.jsonl").write_text(
+                json.dumps(
+                    {
+                        "event_type": "hold_advisor_cache_hard_guard_bypass",
+                        "written_at": "2026-06-04T01:10:00+09:00",
+                        "session_date": "2026-06-03",
+                        "market": "US",
+                        "ticker": "AAPL",
+                        "reason": "profit_floor",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with patch("runtime_paths._RUNTIME_ROOT", root):
+                payload = build_monitoring_ops_report(
+                    candidate_db=root / "missing_candidate_audit.db",
+                    learning_db=root / "missing_decisions.db",
+                    mode="live",
+                    session_date="2026-06-03",
+                    market="US",
+                    pead_state=root / "missing_pead_state.json",
+                    pead_log_dir=root / "missing_pead_logs",
+                    hold_decision_dir=root / "missing_hold_logs",
+                )
+
+        summary = payload["hard_guard_review_bypass"]
+        self.assertEqual(summary["total_count"], 1)
+        self.assertEqual(summary["event_counts"]["hold_advisor_cache_hard_guard_bypass"], 1)
+        self.assertEqual(summary["by_reason"]["profit_floor"], 1)
+
     def test_report_surfaces_audit_reason_and_pathb_miss_read_only_views(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -278,6 +315,53 @@ class MonitoringOpsReportTests(unittest.TestCase):
                     },
                 }
             )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "ticker": "READY",
+                    "source_file": "trading_bot.selection_meta",
+                    "claude_action": "BUY_READY",
+                    "claude_trade_ready": True,
+                    "route_original_action": "BUY_READY",
+                    "route_final_action": "BUY_READY",
+                    "filled_count": 1,
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "ticker": "BLOCK",
+                    "source_file": "trading_bot.selection_meta",
+                    "claude_action": "BUY_READY",
+                    "claude_trade_ready": True,
+                    "route_original_action": "BUY_READY",
+                    "route_final_action": "WATCH",
+                    "route_runtime_gate_reason": "affordability_fail",
+                    "filled_count": 0,
+                }
+            )
+            ready_key = candidate_key(session_date="2026-06-03", market="US", call_id="call_us", ticker="READY")
+            store.upsert_outcome(
+                {
+                    "candidate_key": ready_key,
+                    "horizon_min": 60,
+                    "target_at": "2026-06-03T23:30:00+09:00",
+                    "observed_at": "2026-06-03T23:30:00+09:00",
+                    "observed_price": 101.0,
+                    "return_pct": 1.0,
+                    "max_runup_pct": 2.5,
+                    "max_drawdown_pct": -0.4,
+                    "status": "intraday_forward",
+                    "source": "test",
+                    "label_generated_at": "2026-06-04T00:00:00+09:00",
+                }
+            )
+            conn = sqlite3.connect(candidate_db)
+            try:
+                conn.execute("UPDATE audit_candidate_rows SET filled_count=1 WHERE candidate_key=?", (ready_key,))
+                conn.commit()
+            finally:
+                conn.close()
             event_db = root / "v2_event_store.db"
             conn = sqlite3.connect(event_db)
             try:
@@ -302,6 +386,67 @@ class MonitoringOpsReportTests(unittest.TestCase):
                     INSERT INTO pathb_miss_quality
                     VALUES ('US','live','2026-06-03','DISC','INVALID_PRICE',1,1.25,-0.2,'filled',3)
                     """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE lifecycle_events (
+                        event_type TEXT,
+                        market TEXT,
+                        runtime_mode TEXT,
+                        session_date TEXT,
+                        ticker TEXT,
+                        occurred_at TEXT,
+                        reason_code TEXT,
+                        payload_json TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO lifecycle_events
+                    VALUES ('CLOSED','US','live','2026-06-03','TGTX','2026-06-04T04:00:00+09:00','CLOSED_PROFIT_LADDER',?)
+                    """,
+                    (
+                        json.dumps(
+                            {
+                                "entry_route": "path_b",
+                                "path_type": "claude_price",
+                                "strategy_used": "claude_price",
+                                "path_run_id": "path_20260603_US_TGTX_claude_price_1",
+                                "close_reason": "CLOSED_PROFIT_LADDER",
+                                "pnl_pct": 1.2,
+                                "position_mfe_pct": 2.0,
+                                "position_mae_pct": -0.3,
+                            }
+                        ),
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO lifecycle_events
+                    VALUES ('CLOSED','US','live','2026-06-03','AMZN','2026-06-04T04:10:00+09:00','CLOSED_HARD_STOP',?)
+                    """,
+                    (
+                        json.dumps(
+                            {
+                                "entry_route": "path_b",
+                                "path_type": "claude_price",
+                                "strategy_used": "claude_price",
+                                "path_run_id": "path_20260603_US_AMZN_claude_price_1",
+                                "close_reason": "CLOSED_HARD_STOP",
+                                "pnl_pct": -1.5,
+                                "position_mfe_pct": 0.5,
+                                "position_mae_pct": -1.8,
+                            }
+                        ),
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO lifecycle_events
+                    VALUES ('CLOSED','US','live','2026-06-03','IGNORED','2026-06-04T04:20:00+09:00','CLOSED_MANUAL',?)
+                    """,
+                    (json.dumps({"entry_route": "manual", "pnl_pct": 5.0}),),
                 )
                 conn.commit()
             finally:
@@ -343,12 +488,26 @@ class MonitoringOpsReportTests(unittest.TestCase):
         reasons = payload["candidate_resolved_reason"]
         self.assertEqual(reasons["reason_counts"]["same_day_reentry_blocked"], 1)
         self.assertEqual(reasons["reason_counts"]["NO_SIGNAL"], 1)
+        buy_ready = payload["buy_ready_shadow_quality"]
+        self.assertEqual(buy_ready["ready_candidate_count"], 2)
+        self.assertEqual(buy_ready["filled_count"], 1)
+        self.assertEqual(buy_ready["blocked_reason_counts"]["affordability_fail"], 1)
+        self.assertEqual(buy_ready["mean_return_pct"], 1.0)
+        self.assertFalse(buy_ready["live_gate_change_allowed"])
         miss = payload["pathb_missed_opportunity"]
         self.assertEqual(miss["rows"], 1)
         self.assertEqual(miss["by_cancel_reason"][0]["cancel_reason"], "INVALID_PRICE")
         self.assertEqual(miss["source_overlay"]["candidate_audit"], "candidate_resolved_reason")
         self.assertEqual(miss["candidate_resolved_reason_counts"]["NO_SIGNAL"], 1)
         self.assertFalse(miss["trade_behavior_change_allowed"])
+        protection = payload["pathb_profit_protection"]
+        self.assertEqual(protection["closed_count"], 2)
+        self.assertEqual(protection["realized_count"], 2)
+        self.assertEqual(protection["mfe_measured_count"], 2)
+        self.assertEqual(protection["mean_realized_pnl_pct"], -0.15)
+        self.assertEqual(protection["mean_mfe_pct"], 1.25)
+        self.assertEqual(protection["mean_giveback_pct"], 1.4)
+        self.assertFalse(protection["profit_ladder_change_allowed"])
 
     def test_pead_gate_requires_complete_manual_checklist(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

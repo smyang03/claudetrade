@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 from runtime_paths import get_runtime_path
 from tools.analyze_candidate_audit import analyze_candidate_audit
 from tools.analyze_hold_advisor_latency import analyze_hold_advisor_latency
+from tools.hard_guard_review_bypass import summarize_hard_guard_review_bypass
 
 KST = timezone(timedelta(hours=9))
 
@@ -591,6 +592,163 @@ def _resolved_candidate_reason(row: sqlite3.Row) -> tuple[str, str]:
     return "unknown", "fallback"
 
 
+def _optional_select(columns: set[str], name: str, default_sql: str = "''") -> str:
+    return name if name in columns else f"{default_sql} AS {name}"
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _mean(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 4) if values else None
+
+
+def _buy_ready_shadow_quality_report(
+    *,
+    db_path: Path,
+    session_date: str,
+    market: str,
+    runtime_mode: str,
+    horizon_min: int,
+    limit: int = 10,
+) -> dict[str, Any]:
+    if not db_path.exists():
+        return {"available": False, "reason": "db_missing", "db_path": str(db_path)}
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(conn, "audit_candidate_rows"):
+            return {"available": False, "reason": "candidate_table_missing", "db_path": str(db_path)}
+        if not _table_exists(conn, "audit_candidate_outcomes"):
+            return {"available": False, "reason": "outcome_table_missing", "db_path": str(db_path)}
+        columns = _columns(conn, "audit_candidate_rows")
+        where = ["r.runtime_mode=?"]
+        params: list[Any] = [runtime_mode]
+        if session_date:
+            where.append("r.session_date=?")
+            params.append(session_date)
+        if market:
+            where.append("r.market=?")
+            params.append(market.upper())
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                f"""
+                SELECT
+                  r.candidate_key,
+                  r.ticker,
+                  {_optional_select(columns, 'classification')},
+                  {_optional_select(columns, 'route_original_action')},
+                  {_optional_select(columns, 'route_final_action')},
+                  {_optional_select(columns, 'claude_action')},
+                  {_optional_select(columns, 'claude_trade_ready', '0')},
+                  {_optional_select(columns, 'filled_count', '0')},
+                  {_optional_select(columns, 'route_runtime_gate_reason')},
+                  {_optional_select(columns, 'route_reason')},
+                  {_optional_select(columns, 'no_submit_reason_code')},
+                  o.status AS outcome_status,
+                  o.return_pct,
+                  o.max_runup_pct,
+                  o.max_drawdown_pct
+                FROM audit_candidate_rows r
+                LEFT JOIN audit_candidate_outcomes o
+                  ON o.candidate_key = r.candidate_key
+                 AND o.horizon_min = ?
+                WHERE {' AND '.join(where)}
+                """,
+                [int(horizon_min), *params],
+            )
+        ]
+        ready_actions = {"BUY_READY", "PROBE_READY", "ADD_READY"}
+        ready_rows: list[dict[str, Any]] = []
+        reason_counts: Counter[str] = Counter()
+        action_counts: Counter[str] = Counter()
+        outcome_status_counts: Counter[str] = Counter()
+        returns: list[float] = []
+        mfes: list[float] = []
+        maes: list[float] = []
+        examples: list[dict[str, Any]] = []
+        filled_rows = 0
+        measured_rows = 0
+        for row in rows:
+            actions = [
+                str(row.get("route_original_action") or "").strip().upper(),
+                str(row.get("claude_action") or "").strip().upper(),
+                str(row.get("route_final_action") or "").strip().upper(),
+            ]
+            action = next((item for item in actions if item), "")
+            is_ready = any(item in ready_actions for item in actions) or int(row.get("claude_trade_ready") or 0) == 1
+            if not is_ready:
+                continue
+            ready_rows.append(row)
+            action_counts[action or "unknown"] += 1
+            filled = int(row.get("filled_count") or 0) > 0
+            if filled:
+                filled_rows += 1
+            reason = (
+                str(row.get("route_runtime_gate_reason") or "").strip()
+                or str(row.get("no_submit_reason_code") or "").strip()
+                or str(row.get("route_reason") or "").strip()
+                or ("filled" if filled else "unknown")
+            )
+            if not filled:
+                reason_counts[reason] += 1
+            status = str(row.get("outcome_status") or "unmeasured")
+            outcome_status_counts[status] += 1
+            ret = _float_or_none(row.get("return_pct"))
+            mfe = _float_or_none(row.get("max_runup_pct"))
+            mae = _float_or_none(row.get("max_drawdown_pct"))
+            if ret is not None or mfe is not None or mae is not None:
+                measured_rows += 1
+            if ret is not None:
+                returns.append(ret)
+            if mfe is not None:
+                mfes.append(mfe)
+            if mae is not None:
+                maes.append(mae)
+            if len(examples) < max(int(limit or 1), 1):
+                examples.append(
+                    {
+                        "ticker": row.get("ticker"),
+                        "action": action,
+                        "filled": filled,
+                        "reason": reason,
+                        "outcome_status": status,
+                        "return_pct": ret,
+                        "max_runup_pct": mfe,
+                        "max_drawdown_pct": mae,
+                    }
+                )
+        total_ready = len(ready_rows)
+        return {
+            "available": True,
+            "db_path": str(db_path),
+            "horizon_min": int(horizon_min),
+            "ready_candidate_count": total_ready,
+            "filled_count": filled_rows,
+            "execution_feasible_rate": round(filled_rows / total_ready, 4) if total_ready else None,
+            "measured_outcome_count": measured_rows,
+            "outcome_coverage_rate": round(measured_rows / total_ready, 4) if total_ready else None,
+            "action_counts": dict(action_counts.most_common()),
+            "blocked_reason_counts": dict(reason_counts.most_common(20)),
+            "outcome_status_counts": dict(outcome_status_counts.most_common()),
+            "mean_return_pct": _mean(returns),
+            "mean_max_runup_pct": _mean(mfes),
+            "mean_max_drawdown_pct": _mean(maes),
+            "examples": examples,
+            "trade_behavior_change_allowed": False,
+            "live_gate_change_allowed": False,
+        }
+    finally:
+        conn.close()
+
+
 def _candidate_resolved_reason_report(
     *,
     db_path: Path,
@@ -725,6 +883,169 @@ def _pathb_missed_opportunity_report(
             "top_positive_mfe_examples": examples,
             "trade_behavior_change_allowed": False,
             "reason_split_change_allowed": False,
+        }
+    finally:
+        conn.close()
+
+
+def _pathb_profit_protection_report(
+    *,
+    db_path: Path,
+    session_date: str,
+    market: str,
+    runtime_mode: str,
+    limit: int = 10,
+) -> dict[str, Any]:
+    if not db_path.exists():
+        return {"available": False, "reason": "db_missing", "db_path": str(db_path)}
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(conn, "lifecycle_events"):
+            return {"available": False, "reason": "table_missing", "db_path": str(db_path)}
+        columns = _columns(conn, "lifecycle_events")
+        required = {"event_type", "runtime_mode", "market", "session_date", "ticker", "reason_code", "payload_json"}
+        if not required.issubset(columns):
+            return {
+                "available": False,
+                "reason": "columns_missing",
+                "db_path": str(db_path),
+                "missing_columns": sorted(required - columns),
+            }
+        where = ["event_type='CLOSED'", "runtime_mode=?"]
+        params: list[Any] = [runtime_mode]
+        if session_date:
+            where.append("session_date=?")
+            params.append(session_date)
+        if market:
+            where.append("market=?")
+            params.append(market.upper())
+        selected = ["market", "session_date", "ticker", "reason_code", "payload_json"]
+        if "occurred_at" in columns:
+            selected.append("occurred_at")
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                f"""
+                SELECT {', '.join(selected)}
+                FROM lifecycle_events
+                WHERE {' AND '.join(where)}
+                ORDER BY COALESCE(occurred_at, '') DESC
+                """,
+                params,
+            )
+        ]
+        close_reason_rows: dict[str, dict[str, Any]] = {}
+        examples: list[dict[str, Any]] = []
+        pnl_values: list[float] = []
+        mfe_values: list[float] = []
+        giveback_values: list[float] = []
+        measured_mfe_rows = 0
+        closed_count = 0
+        for row in rows:
+            payload = _decode_json_dict(row.get("payload_json"))
+            path_run_id = str(payload.get("path_run_id") or "")
+            strategy_used = str(payload.get("strategy_used") or "").lower()
+            path_type = str(payload.get("path_type") or "").lower()
+            entry_route = str(payload.get("entry_route") or "").lower()
+            route_source = str(payload.get("route_source") or "").lower()
+            is_pathb = (
+                entry_route == "path_b"
+                or path_type in {"claude_price", "path_b"}
+                or strategy_used in {"claude_price", "recovery_micro"}
+                or path_run_id.startswith("path_")
+                or route_source == "buy_zone_hit"
+            )
+            if not is_pathb:
+                continue
+            closed_count += 1
+            close_reason = str(payload.get("close_reason") or row.get("reason_code") or "unknown")
+            pnl = _float_or_none(payload.get("pnl_pct"))
+            mfe = None
+            for key in ("position_mfe_pct", "peak_pnl_pct", "mfe_pct", "max_mfe_pct"):
+                mfe = _float_or_none(payload.get(key))
+                if mfe is not None:
+                    break
+            mae = None
+            for key in ("position_mae_pct", "mae_pct", "max_drawdown_pct"):
+                mae = _float_or_none(payload.get(key))
+                if mae is not None:
+                    break
+            giveback = round(mfe - pnl, 4) if mfe is not None and pnl is not None else None
+            bucket = close_reason_rows.setdefault(
+                close_reason,
+                {
+                    "close_reason": close_reason,
+                    "rows": 0,
+                    "realized_count": 0,
+                    "mfe_measured_count": 0,
+                    "_pnl": [],
+                    "_mfe": [],
+                    "_giveback": [],
+                    "positive_pnl_rows": 0,
+                },
+            )
+            bucket["rows"] += 1
+            if pnl is not None:
+                bucket["realized_count"] += 1
+                bucket["_pnl"].append(pnl)
+                pnl_values.append(pnl)
+                if pnl > 0:
+                    bucket["positive_pnl_rows"] += 1
+            if mfe is not None:
+                measured_mfe_rows += 1
+                bucket["mfe_measured_count"] += 1
+                bucket["_mfe"].append(mfe)
+                mfe_values.append(mfe)
+            if giveback is not None:
+                bucket["_giveback"].append(giveback)
+                giveback_values.append(giveback)
+            examples.append(
+                {
+                    "ticker": row.get("ticker"),
+                    "close_reason": close_reason,
+                    "pnl_pct": pnl,
+                    "mfe_pct": mfe,
+                    "mae_pct": mae,
+                    "giveback_pct": giveback,
+                    "path_run_id": path_run_id,
+                }
+            )
+        by_close_reason: list[dict[str, Any]] = []
+        for bucket in close_reason_rows.values():
+            by_close_reason.append(
+                {
+                    "close_reason": bucket["close_reason"],
+                    "rows": bucket["rows"],
+                    "realized_count": bucket["realized_count"],
+                    "mfe_measured_count": bucket["mfe_measured_count"],
+                    "avg_pnl_pct": _mean(bucket["_pnl"]),
+                    "avg_mfe_pct": _mean(bucket["_mfe"]),
+                    "avg_giveback_pct": _mean(bucket["_giveback"]),
+                    "positive_pnl_rows": bucket["positive_pnl_rows"],
+                }
+            )
+        by_close_reason.sort(key=lambda item: (-int(item["rows"] or 0), str(item["close_reason"])))
+        top_giveback = sorted(
+            examples,
+            key=lambda item: item["giveback_pct"] if item["giveback_pct"] is not None else -999999.0,
+            reverse=True,
+        )[: max(int(limit or 1), 1)]
+        return {
+            "available": True,
+            "db_path": str(db_path),
+            "source": "lifecycle_events.CLOSED",
+            "closed_count": closed_count,
+            "realized_count": len(pnl_values),
+            "mfe_measured_count": measured_mfe_rows,
+            "mean_realized_pnl_pct": _mean(pnl_values),
+            "mean_mfe_pct": _mean(mfe_values),
+            "mean_giveback_pct": _mean(giveback_values),
+            "by_close_reason": by_close_reason,
+            "top_giveback_examples": top_giveback,
+            "trade_behavior_change_allowed": False,
+            "profit_ladder_change_allowed": False,
+            "hold_advisor_policy_change_allowed": False,
         }
     finally:
         conn.close()
@@ -925,6 +1246,62 @@ def _write_report(payload: dict[str, Any], report_dir: str | Path | None) -> dic
     ]
     for name, row in (payload.get("gate_summary") or {}).items():
         lines.append(f"- {name}: {row}")
+    buy_ready = payload.get("buy_ready_shadow_quality") if isinstance(payload.get("buy_ready_shadow_quality"), dict) else {}
+    if buy_ready:
+        lines.extend(
+            [
+                "",
+                "## BUY_READY Shadow Quality",
+                "",
+                f"- available: {buy_ready.get('available')} horizon_min={buy_ready.get('horizon_min')}",
+                f"- ready_candidate_count: {buy_ready.get('ready_candidate_count')} filled_count={buy_ready.get('filled_count')} execution_feasible_rate={buy_ready.get('execution_feasible_rate')}",
+                f"- outcome_coverage: measured={buy_ready.get('measured_outcome_count')} rate={buy_ready.get('outcome_coverage_rate')}",
+                f"- mean_return_pct: {buy_ready.get('mean_return_pct')} mean_mfe={buy_ready.get('mean_max_runup_pct')} mean_mae={buy_ready.get('mean_max_drawdown_pct')}",
+                f"- blocked_reason_counts: {buy_ready.get('blocked_reason_counts')}",
+                f"- live_gate_change_allowed: {buy_ready.get('live_gate_change_allowed')}",
+            ]
+        )
+    selection = payload.get("selection_call_breakdown") if isinstance(payload.get("selection_call_breakdown"), dict) else {}
+    if selection:
+        smart = selection.get("smart_skip_state") if isinstance(selection.get("smart_skip_state"), dict) else {}
+        lines.extend(
+            [
+                "",
+                "## Claude Selection Cost",
+                "",
+                f"- selection_application_count: {selection.get('selection_application_count')} full_select_tickers_estimate={selection.get('full_select_tickers_estimate')}",
+                f"- smart_skip_reuse_count: {selection.get('smart_skip_reuse_count')} sub_screener_triage_count={selection.get('sub_screener_triage_count')}",
+                f"- smart_skip_state: mode={smart.get('mode')} reuse={smart.get('reuse_count')} fail_open={smart.get('fail_open_count')} reasons={smart.get('fail_open_reasons')}",
+            ]
+        )
+    hard_guard = payload.get("hard_guard_review_bypass") if isinstance(payload.get("hard_guard_review_bypass"), dict) else {}
+    if hard_guard:
+        lines.extend(
+            [
+                "",
+                "## Hard Guard Review Bypass",
+                "",
+                f"- total_count: {hard_guard.get('total_count')} event_counts={hard_guard.get('event_counts')}",
+                f"- by_reason: {hard_guard.get('by_reason')}",
+                f"- policy_change_allowed: {hard_guard.get('policy_change_allowed')}",
+            ]
+        )
+    protection = (
+        payload.get("pathb_profit_protection") if isinstance(payload.get("pathb_profit_protection"), dict) else {}
+    )
+    if protection:
+        lines.extend(
+            [
+                "",
+                "## PathB Profit Protection",
+                "",
+                f"- available: {protection.get('available')} source={protection.get('source')}",
+                f"- closed_count: {protection.get('closed_count')} realized_count={protection.get('realized_count')} mfe_measured_count={protection.get('mfe_measured_count')}",
+                f"- mean_realized_pnl_pct: {protection.get('mean_realized_pnl_pct')} mean_mfe_pct={protection.get('mean_mfe_pct')} mean_giveback_pct={protection.get('mean_giveback_pct')}",
+                f"- by_close_reason: {protection.get('by_close_reason')}",
+                f"- profit_ladder_change_allowed: {protection.get('profit_ladder_change_allowed')}",
+            ]
+        )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"json": str(json_path), "md": str(md_path)}
 
@@ -1005,7 +1382,20 @@ def build_monitoring_ops_report(
             market=market_key,
             runtime_mode=runtime_mode,
         ),
+        "buy_ready_shadow_quality": _buy_ready_shadow_quality_report(
+            db_path=candidate_path,
+            session_date=session_date,
+            market=market_key,
+            runtime_mode=runtime_mode,
+            horizon_min=int(horizon_min),
+        ),
         "pathb_missed_opportunity": _pathb_missed_opportunity_report(
+            db_path=event_path,
+            session_date=session_date,
+            market=market_key,
+            runtime_mode=runtime_mode,
+        ),
+        "pathb_profit_protection": _pathb_profit_protection_report(
             db_path=event_path,
             session_date=session_date,
             market=market_key,
@@ -1021,6 +1411,10 @@ def build_monitoring_ops_report(
             end_date=hold_end_date or session_date,
             market=market_key or "ALL",
             ttl_minutes=hold_cache_ttl_minutes,
+        ),
+        "hard_guard_review_bypass": summarize_hard_guard_review_bypass(
+            session_date=session_date,
+            market=market_key or "ALL",
         ),
         "pead_manual_review": _pead_manual_review_report(
             state_path=Path(pead_state) if pead_state else get_runtime_path("state", "pead_shadow_state.json"),
@@ -1050,6 +1444,7 @@ def build_monitoring_ops_report(
         "learning_policy_change_allowed": False,
         "kr_live_expansion_allowed": False,
         "pathb_missed_opportunity_policy_change_allowed": False,
+        "pathb_profit_protection_policy_change_allowed": False,
         "pead_policy_change_allowed": False,
     }
     if write_report:

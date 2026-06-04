@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from runtime_paths import get_runtime_path
+from tools.hard_guard_review_bypass import summarize_hard_guard_review_bypass
 
 KST = timezone(timedelta(hours=9))
 LOG_DIRS = (
@@ -611,6 +612,8 @@ def _hold_advisor_cost_observation(raw_call_summary: dict[str, Any]) -> dict[str
             "stale_or_error_truth",
             "order_failure",
             "pathb_auto_sell_hold_cooldown_guard",
+            "plan_a_hard_guard_soft_cache_bypass",
+            "plan_a_hard_guard_cooldown_bypass",
         ],
     }
 
@@ -625,21 +628,100 @@ def _risk_axes(latest: dict[str, Any]) -> dict[str, Any]:
     ) else 0
     pathb_remediation = latest.get("pathb_remediation") if isinstance(latest.get("pathb_remediation"), dict) else {}
     current_order_unknown = int(pathb_remediation.get("current_order_unknown_count") or 0)
+    previous_order_unknown = int(pathb_remediation.get("previous_order_unknown_count") or 0)
     stale_active = int(pathb_remediation.get("stale_active_count") or 0)
+    apply_eligible_items = int(pathb_remediation.get("apply_eligible_items") or 0)
     historical_order_unknown = int(latest.get("order_unknown_event_count_us_total") or 0)
+    pending_sells = len(latest.get("pending_sells") or [])
+    broker_open_orders = int(broker.get("open_orders_count") or 0)
+    current_trading_risk = {
+        "broker_open_orders": broker_open_orders,
+        "pending_sells": pending_sells,
+        "current_order_unknown": current_order_unknown,
+        "manual_action_required": int(manual_required),
+        "guardian_action_required": guardian_action_required,
+        "broker_truth_action_required": broker_action_required,
+    }
+    previous_session_cleanup = {
+        "previous_order_unknown": previous_order_unknown,
+        "stale_active": stale_active,
+        "apply_eligible_items": apply_eligible_items,
+        "historical_order_unknown_total": historical_order_unknown,
+    }
     return {
         "broker_positions": int(broker.get("positions_count") or 0),
-        "broker_open_orders": int(broker.get("open_orders_count") or 0),
+        "broker_open_orders": broker_open_orders,
         "local_open_positions": int(latest.get("open_positions_count") or 0),
         "protected_positions": len(protected),
-        "pending_sells": len(latest.get("pending_sells") or []),
+        "pending_sells": pending_sells,
         "order_unknown_events": historical_order_unknown,
         "historical_order_unknown_total": historical_order_unknown,
         "current_order_unknown": current_order_unknown,
+        "previous_order_unknown": previous_order_unknown,
         "stale_active": stale_active,
         "manual_action_required": int(manual_required),
         "guardian_action_required": guardian_action_required,
         "broker_truth_action_required": broker_action_required,
+        "current_trading_risk": current_trading_risk,
+        "previous_session_cleanup": previous_session_cleanup,
+    }
+
+
+def _operator_summary(latest: dict[str, Any], risk_axes: dict[str, Any] | None = None) -> dict[str, Any]:
+    axes = risk_axes if isinstance(risk_axes, dict) else _risk_axes(latest)
+    pathb_remediation = latest.get("pathb_remediation") if isinstance(latest.get("pathb_remediation"), dict) else {}
+    current_risk = axes.get("current_trading_risk") if isinstance(axes.get("current_trading_risk"), dict) else {}
+    previous_cleanup = (
+        axes.get("previous_session_cleanup") if isinstance(axes.get("previous_session_cleanup"), dict) else {}
+    )
+    action_required: list[str] = []
+    attention: list[str] = []
+    normal: list[str] = []
+
+    if int(current_risk.get("broker_truth_action_required") or 0):
+        action_required.append("broker_truth_untrusted")
+    if int(current_risk.get("guardian_action_required") or 0):
+        action_required.append("guardian_block_start")
+    if int(current_risk.get("broker_open_orders") or 0):
+        action_required.append("broker_open_orders_present")
+    if int(current_risk.get("pending_sells") or 0):
+        action_required.append("local_pending_sells_present")
+    if int(current_risk.get("current_order_unknown") or 0):
+        action_required.append("current_session_order_unknown")
+    if int(current_risk.get("manual_action_required") or 0):
+        action_required.append("manual_reconciliation_required")
+
+    previous_order_unknown = int(previous_cleanup.get("previous_order_unknown") or 0)
+    stale_active = int(previous_cleanup.get("stale_active") or 0)
+    apply_eligible = int(previous_cleanup.get("apply_eligible_items") or 0)
+    if previous_order_unknown:
+        attention.append("previous_session_order_unknown_cleanup")
+    if stale_active:
+        attention.append("previous_session_stale_active_cleanup")
+    if apply_eligible:
+        attention.append("pathb_cleanup_apply_eligible")
+    if bool(pathb_remediation.get("error")):
+        attention.append("pathb_remediation_report_error")
+
+    if not action_required:
+        normal.extend(
+            [
+                "current_order_path_clean",
+                "broker_truth_not_action_required",
+                "no_local_pending_sells",
+            ]
+        )
+    if not attention:
+        normal.append("no_previous_session_cleanup_backlog")
+
+    status = "action_required" if action_required else "attention" if attention else "normal"
+    return {
+        "status": status,
+        "action_required": action_required,
+        "attention": attention,
+        "normal": normal,
+        "current_trading_risk": current_risk,
+        "previous_session_cleanup": previous_cleanup,
     }
 
 
@@ -1016,6 +1098,12 @@ class OvernightMonitor:
             "data_collection": _data_collection_snapshot(self.mode, self.market, self.session_date),
             "order_unknown_event_count_us_total": len(recent_unknown),
             "pathb_remediation": _pathb_remediation_snapshot(self.mode),
+            "hard_guard_review_bypass": summarize_hard_guard_review_bypass(
+                session_date=self.session_date,
+                market=self.market,
+                start_at=self.start_at,
+                end_at=_now_kst(),
+            ),
             "pid_state": [
                 _pid_state("trading_bot", get_runtime_path("state", f"{self.mode}_trading_bot.pid")),
                 _pid_state("dashboard", get_runtime_path("state", "dashboard_server.pid")),
@@ -1072,6 +1160,7 @@ class OvernightMonitor:
             "samples": self.raw_call_samples[-80:],
         }
         state_counts = dict(self.state_counts.most_common())
+        risk_axes = _risk_axes(latest)
         return {
             "status": "completed" if final else self.status,
             "generated_at": _now_kst().isoformat(timespec="seconds"),
@@ -1090,7 +1179,8 @@ class OvernightMonitor:
             "log_issue_samples": self.log_samples[-120:],
             "state_observation_counts_since_start": state_counts,
             "state_observation_samples": self.state_samples[-120:],
-            "risk_axes": _risk_axes(latest),
+            "risk_axes": risk_axes,
+            "operator_summary": _operator_summary(latest, risk_axes),
             "snapshots_recorded": len(self.snapshots),
         }
 
@@ -1107,7 +1197,11 @@ class OvernightMonitor:
         usage = latest.get("api_usage_delta_since_start") or {}
         claude = report.get("claude_usage_since_start") or {}
         hold_cost = report.get("hold_advisor_cost_observation") or {}
+        hard_guard_bypass = latest.get("hard_guard_review_bypass") or {}
         risk_axes = report.get("risk_axes") or {}
+        operator = report.get("operator_summary") or _operator_summary(latest, risk_axes)
+        current_risk = operator.get("current_trading_risk") or {}
+        previous_cleanup = operator.get("previous_session_cleanup") or {}
         minute_latest = ((data_price.get("minute") or {}).get("latest") or [{}])[0]
         daily_latest = ((data_price.get("daily") or {}).get("latest") or [{}])[0]
         lines = [
@@ -1118,6 +1212,15 @@ class OvernightMonitor:
             f"- monitor_window: {report.get('start_at')} ~ {report.get('end_at')}",
             f"- mode/market/session: {report.get('mode')} / {report.get('market')} / {report.get('session_date')}",
             f"- read_only: {report.get('read_only')}",
+            "",
+            "## Operator Summary",
+            "",
+            f"- status: {operator.get('status')}",
+            f"- action_required: {operator.get('action_required')}",
+            f"- attention: {operator.get('attention')}",
+            f"- normal: {operator.get('normal')}",
+            f"- current_trading_risk: {current_risk}",
+            f"- previous_session_cleanup: {previous_cleanup}",
             "",
             "## Current Operations",
             "",
@@ -1144,7 +1247,8 @@ class OvernightMonitor:
             "",
             f"- broker_exposure: positions={risk_axes.get('broker_positions')} open_local_positions={risk_axes.get('local_open_positions')}",
             f"- open_orders: broker={risk_axes.get('broker_open_orders')} pending_sell_local={risk_axes.get('pending_sells')}",
-            f"- local_unresolved_state: protected={risk_axes.get('protected_positions')} current_order_unknown={risk_axes.get('current_order_unknown')} stale_active={risk_axes.get('stale_active')} historical_order_unknown_total={risk_axes.get('historical_order_unknown_total')}",
+            f"- current_unresolved_state: protected={risk_axes.get('protected_positions')} current_order_unknown={risk_axes.get('current_order_unknown')}",
+            f"- previous_cleanup_state: previous_order_unknown={risk_axes.get('previous_order_unknown')} stale_active={risk_axes.get('stale_active')} historical_order_unknown_total={risk_axes.get('historical_order_unknown_total')}",
             f"- manual_action_required: {risk_axes.get('manual_action_required')}",
             f"- guardian_action_required: {risk_axes.get('guardian_action_required')} broker_truth_action_required={risk_axes.get('broker_truth_action_required')}",
             "",
@@ -1188,6 +1292,7 @@ class OvernightMonitor:
                 f"- by_label: {claude.get('by_label')}",
                 f"- by_model: {claude.get('by_model')}",
                 f"- hold_advisor_calls: total={hold_cost.get('observed_calls')} by_label={hold_cost.get('by_label')} saved_calls_estimate={hold_cost.get('saved_calls_estimate')}",
+                f"- hard_guard_review_bypass: total={hard_guard_bypass.get('total_count')} events={hard_guard_bypass.get('event_counts')} latest={hard_guard_bypass.get('latest_event')}",
                 "",
                 "## State Observations",
                 "",

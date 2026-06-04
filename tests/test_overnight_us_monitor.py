@@ -10,9 +10,11 @@ from tools.overnight_us_monitor import (
     _hold_advisor_cost_observation,
     _json_digest_summary,
     _news_payload_summary,
+    _operator_summary,
     _risk_axes,
     _usage_delta_since_start,
 )
+from tools.hard_guard_review_bypass import summarize_hard_guard_review_bypass
 
 
 class OvernightUsMonitorReportTests(unittest.TestCase):
@@ -86,6 +88,35 @@ class OvernightUsMonitorReportTests(unittest.TestCase):
         self.assertEqual(payload["observed_calls"], 5)
         self.assertEqual(payload["by_label"]["hold_advisor_bull"], 3)
         self.assertIn("pathb_auto_sell_hold_cooldown_guard", payload["safety_critical_cache_bypass"])
+        self.assertIn("plan_a_hard_guard_soft_cache_bypass", payload["safety_critical_cache_bypass"])
+
+    def test_hard_guard_review_bypass_summary_counts_funnel_events(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            funnel = root / "logs" / "funnel"
+            funnel.mkdir(parents=True)
+            path = funnel / "hold_advisor_cache_hard_guard_bypass_20260603_US.jsonl"
+            path.write_text(
+                '{"event_type":"hold_advisor_cache_hard_guard_bypass","written_at":"2026-06-04T01:10:00+09:00","session_date":"2026-06-03","market":"US","ticker":"AAPL","reason":"profit_floor","hard_guard_source":"profit_floor_price","hard_guard_current":105.0,"hard_guard_stop":105.5}\n',
+                encoding="utf-8",
+            )
+            cooldown_path = funnel / "auto_sell_review_cooldown_hard_guard_bypass_20260603_US.jsonl"
+            cooldown_path.write_text(
+                '{"event_type":"auto_sell_review_cooldown_hard_guard_bypass","written_at":"2026-06-04T01:11:00+09:00","session_date":"2026-06-03","market":"US","ticker":"AAPL","reason":"profit_floor"}\n',
+                encoding="utf-8",
+            )
+
+            payload = summarize_hard_guard_review_bypass(
+                session_date="2026-06-03",
+                market="US",
+                log_dir=funnel,
+            )
+
+        self.assertEqual(payload["total_count"], 2)
+        self.assertEqual(payload["event_counts"]["hold_advisor_cache_hard_guard_bypass"], 1)
+        self.assertEqual(payload["event_counts"]["auto_sell_review_cooldown_hard_guard_bypass"], 1)
+        self.assertEqual(payload["by_reason"]["profit_floor"], 2)
+        self.assertEqual(payload["by_ticker"]["AAPL"], 2)
 
     def test_risk_axes_summarizes_manual_action_required(self) -> None:
         axes = _risk_axes(
@@ -116,8 +147,44 @@ class OvernightUsMonitorReportTests(unittest.TestCase):
         self.assertEqual(axes["guardian_action_required"], 1)
         self.assertEqual(axes["broker_truth_action_required"], 1)
         self.assertEqual(axes["current_order_unknown"], 0)
+        self.assertEqual(axes["previous_order_unknown"], 0)
         self.assertEqual(axes["stale_active"], 0)
         self.assertEqual(axes["historical_order_unknown_total"], 1)
+        self.assertEqual(axes["current_trading_risk"]["broker_open_orders"], 1)
+        self.assertEqual(axes["previous_session_cleanup"]["historical_order_unknown_total"], 1)
+
+    def test_operator_summary_separates_current_risk_from_previous_cleanup(self) -> None:
+        latest = {
+            "open_positions_count": 4,
+            "protected_positions": [],
+            "pending_sells": [],
+            "order_unknown_event_count_us_total": 7,
+            "pathb_remediation": {
+                "current_order_unknown_count": 0,
+                "previous_order_unknown_count": 2,
+                "stale_active_count": 3,
+                "apply_eligible_items": 1,
+            },
+            "guardian": {"gate": "ALLOW_START"},
+            "broker_truth": {
+                "stale": False,
+                "missing": False,
+                "error": "",
+                "positions_count": 4,
+                "open_orders_count": 0,
+            },
+        }
+
+        axes = _risk_axes(latest)
+        summary = _operator_summary(latest, axes)
+
+        self.assertEqual(summary["status"], "attention")
+        self.assertEqual(summary["action_required"], [])
+        self.assertIn("previous_session_order_unknown_cleanup", summary["attention"])
+        self.assertIn("previous_session_stale_active_cleanup", summary["attention"])
+        self.assertIn("pathb_cleanup_apply_eligible", summary["attention"])
+        self.assertEqual(summary["current_trading_risk"]["current_order_unknown"], 0)
+        self.assertEqual(summary["previous_session_cleanup"]["stale_active"], 3)
 
     def test_usage_delta_since_start_falls_back_to_raw_calls_when_api_delta_negative(self) -> None:
         delta = _usage_delta_since_start(
