@@ -500,6 +500,14 @@ def _text(payload: dict[str, Any], *keys: str) -> str:
     return ""
 
 
+def _code(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _actor(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
 def _close_price(payload: dict[str, Any]) -> float | None:
     return _num(payload, *EXIT_PRICE_KEYS)
 
@@ -513,9 +521,9 @@ def _close_payload_qty(close_payload: dict[str, Any]) -> float | None:
 
 
 def _strategy_attribution(close_event: dict[str, Any], close_payload: dict[str, Any]) -> str:
-    close_reason = _text(close_payload, "close_reason", "exit_reason") or str(close_event.get("reason_code") or "")
-    data_quality = str(close_event.get("data_quality") or close_payload.get("data_quality") or "").strip().upper()
-    closed_by = str(close_payload.get("closed_by") or "").strip()
+    close_reason = _code(_text(close_payload, "close_reason", "exit_reason") or close_event.get("reason_code"))
+    data_quality = _code(close_event.get("data_quality") or close_payload.get("data_quality"))
+    closed_by = _actor(close_payload.get("closed_by"))
     if (
         close_reason == "CLOSED_AUDITED_BROKER_SELL"
         or data_quality == "AUDITED_BROKER_BACKFILL"
@@ -528,7 +536,7 @@ def _strategy_attribution(close_event: dict[str, Any], close_payload: dict[str, 
 
 
 def _portfolio_realized(close: dict[str, Any], close_reason: str, exit_price: float | None, pnl_krw: float | None, pnl_pct: float | None) -> int:
-    if not close or close_reason == "CLOSED_AUDITED_BROKER_ABSENT":
+    if not close or _code(close_reason) == "CLOSED_AUDITED_BROKER_ABSENT":
         return 0
     return 1 if any(value is not None for value in (exit_price, pnl_krw, pnl_pct)) else 0
 
@@ -536,7 +544,7 @@ def _portfolio_realized(close: dict[str, Any], close_reason: str, exit_price: fl
 def _sync_degraded_reason(close: dict[str, Any], close_reason: str, close_payload: dict[str, Any], exit_price: float | None) -> str:
     if not close:
         return ""
-    if close_reason == "CLOSED_AUDITED_BROKER_SELL" and exit_price is None:
+    if _code(close_reason) == "CLOSED_AUDITED_BROKER_SELL" and exit_price is None:
         return "MISSING_AUDITED_EXIT_PRICE"
     if exit_price is not None and _close_payload_qty(close_payload) is None:
         return "MISSING_CLOSE_QTY"
@@ -624,19 +632,43 @@ def _load_decisions(
         event_params.append(end_date)
     event_sql = """
         SELECT
-            decision_id,
-            MAX(market) AS market,
-            MAX(runtime_mode) AS runtime_mode,
-            MIN(session_date) AS session_date,
-            MAX(ticker) AS ticker,
-            MAX(prompt_version) AS prompt_version,
-            MAX(brain_snapshot_id) AS brain_snapshot_id,
-            MAX(event_type) AS status
-        FROM lifecycle_events
+            grouped.decision_id,
+            grouped.market,
+            grouped.runtime_mode,
+            grouped.session_date,
+            grouped.ticker,
+            grouped.prompt_version,
+            grouped.brain_snapshot_id,
+            COALESCE(latest_status.event_type, latest_any.event_type, '') AS status
+        FROM (
+            SELECT
+                decision_id,
+                MAX(market) AS market,
+                MAX(runtime_mode) AS runtime_mode,
+                MIN(session_date) AS session_date,
+                MAX(ticker) AS ticker,
+                MAX(prompt_version) AS prompt_version,
+                MAX(brain_snapshot_id) AS brain_snapshot_id,
+                MAX(event_id) AS latest_event_id,
+                MAX(
+                    CASE
+                        WHEN event_type NOT IN ('QUALITY_MARKED', 'EXECUTION_ADVISOR_DECISION')
+                        THEN event_id
+                    END
+                ) AS latest_status_event_id
+            FROM lifecycle_events
     """
     if event_where:
         event_sql += " WHERE " + " AND ".join(event_where)
-    event_sql += " GROUP BY decision_id ORDER BY session_date, market, ticker, decision_id"
+    event_sql += """
+            GROUP BY decision_id
+        ) grouped
+        LEFT JOIN lifecycle_events latest_status
+            ON latest_status.event_id = grouped.latest_status_event_id
+        LEFT JOIN lifecycle_events latest_any
+            ON latest_any.event_id = grouped.latest_event_id
+        ORDER BY grouped.session_date, grouped.market, grouped.ticker, grouped.decision_id
+    """
     for event_row in conn.execute(event_sql, event_params).fetchall():
         decision_id = str(event_row["decision_id"] or "")
         if decision_id and decision_id not in by_decision:
