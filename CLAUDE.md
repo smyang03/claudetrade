@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 코드 작업 원칙
+
+코드 수정·작성·파일 편집은 운영자가 명시적으로 "수정해", "구현해", "작성해", "코드 작성" 등의 지시를 한 경우에만 진행한다. "검토해줘", "분석해줘", "확인해줘", "어떻게 생각해" 등은 분석과 의견 제시만 하고 코드를 건드리지 않는다.
+
 ## Encoding Safety Rules
 
 - Keep all source, docs, JSON, and scripts as UTF-8.

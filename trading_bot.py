@@ -9241,6 +9241,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         route_source = str(source or "").strip()
         if route_source and not str(meta.get("_entry_route_source") or "").strip():
             meta["_entry_route_source"] = route_source
+        if route_source:
+            meta["_selection_source_type"] = route_source
         mode = str(mode or (self.today_judgment or {}).get("consensus", {}).get("mode", "") or "")
         meta["consensus_mode"] = mode
         consensus_payload = (self.today_judgment or {}).get("consensus", {}) or {}
@@ -14819,6 +14821,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         discovery_signal_by_ticker = self._candidate_audit_ticker_map((meta or {}).get("_discovery_signal_by_ticker"), market_key)
         discovery_demoted_from = self._candidate_audit_ticker_map((meta or {}).get("_discovery_demoted_from_by_ticker"), market_key)
         discovery_ceiling_applied = self._candidate_audit_ticker_map((meta or {}).get("_discovery_action_ceiling_applied_by_ticker"), market_key)
+        discovery_added_keys = {
+            self._selection_ticker_key(market_key, ticker)
+            for ticker in list((meta or {}).get("_discovery_added_tickers") or [])
+            if self._selection_ticker_key(market_key, ticker)
+        }
         reason_map = self._candidate_audit_ticker_map((meta or {}).get("reasons"), market_key)
         veto_map = self._candidate_audit_ticker_map((meta or {}).get("veto"), market_key)
         risk_tag_map = self._candidate_audit_ticker_map((meta or {}).get("risk_tags"), market_key)
@@ -15146,25 +15153,69 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "discovery_overlay_rank": row.get("discovery_overlay_rank"),
             }
 
+        def _first_nonblank(*values):
+            for value in values:
+                if value not in (None, ""):
+                    return value
+            return None
+
         def _candidate_role_audit_fields(ticker_key: str, row: dict) -> dict:
-            role = str(row.get("candidate_pool_role") or discovery_role_by_ticker.get(ticker_key) or "").strip().upper()
+            action = action_by_ticker.get(ticker_key, {})
+            route = route_by_ticker.get(ticker_key, {})
+            runtime_gate = route.get("runtime_gate") if isinstance(route.get("runtime_gate"), dict) else {}
+            role = str(
+                _first_nonblank(
+                    row.get("candidate_pool_role"),
+                    discovery_role_by_ticker.get(ticker_key),
+                    action.get("candidate_pool_role"),
+                    route.get("candidate_pool_role"),
+                    runtime_gate.get("candidate_pool_role"),
+                )
+                or ""
+            ).strip().upper()
             if role == "EXPANSION":
+                role = "DISCOVERY"
+            if not role and (
+                ticker_key in discovery_added_keys
+                or discovery_role_by_ticker.get(ticker_key)
+                or discovery_action_ceiling_by_ticker.get(ticker_key)
+                or discovery_signal_by_ticker.get(ticker_key)
+                or action.get("discovery_demoted_from")
+                or action.get("discovery_action_ceiling_applied")
+                or runtime_gate.get("discovery_action_ceiling_applied")
+            ):
                 role = "DISCOVERY"
             fields: dict[str, Any] = {}
             if role:
                 fields["candidate_pool_role"] = role
             if role == "DISCOVERY":
-                signal = row.get("discovery_signal_family")
-                if signal in (None, ""):
-                    signal = discovery_signal_by_ticker.get(ticker_key)
-                    if isinstance(signal, list):
-                        signal = ",".join(str(item) for item in signal if str(item).strip())
-                ceiling = row.get("discovery_action_ceiling")
-                if ceiling in (None, ""):
-                    ceiling = discovery_action_ceiling_by_ticker.get(ticker_key)
+                signal = _first_nonblank(
+                    row.get("discovery_signal_family"),
+                    discovery_signal_by_ticker.get(ticker_key),
+                    action.get("discovery_signal_family"),
+                    route.get("discovery_signal_family"),
+                    runtime_gate.get("discovery_signal_family"),
+                )
+                if isinstance(signal, list):
+                    signal = ",".join(str(item) for item in signal if str(item).strip())
+                ceiling = _first_nonblank(
+                    row.get("discovery_action_ceiling"),
+                    discovery_action_ceiling_by_ticker.get(ticker_key),
+                    action.get("discovery_action_ceiling"),
+                    route.get("discovery_action_ceiling"),
+                    runtime_gate.get("discovery_action_ceiling"),
+                    "WATCH" if ticker_key in discovery_added_keys else None,
+                )
+                reason = _first_nonblank(
+                    row.get("discovery_reason"),
+                    action.get("discovery_reason"),
+                    route.get("discovery_reason"),
+                    runtime_gate.get("discovery_reason"),
+                    "core_cap_signal_candidate" if ticker_key in discovery_added_keys else None,
+                )
                 for key, value in {
                     "discovery_signal_family": signal,
-                    "discovery_reason": row.get("discovery_reason"),
+                    "discovery_reason": reason,
                     "discovery_action_ceiling": ceiling,
                     "discovery_baseline_trainer_rank": row.get("discovery_baseline_trainer_rank"),
                     "discovery_overlay_rank": row.get("discovery_overlay_rank"),
@@ -15357,6 +15408,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "candidate_action_count": len(actions),
                     "payload": {
                         "candidate_actions_source": (meta or {}).get("_candidate_actions_source", ""),
+                        "selection_source_type": (meta or {}).get("_selection_source_type", ""),
+                        "smart_skip_reused": bool((meta or {}).get("_smart_skip_reused")),
+                        "smart_skip_reason": str((meta or {}).get("_smart_skip_reason") or ""),
+                        "sub_screener_triage": dict((meta or {}).get("_sub_screener_triage") or {}),
                         "selection_stages": stages,
                         "audit_source": "live_write",
                         "visibility_contract_version": visibility_contract_version,
@@ -15377,8 +15432,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "overlay_plan_a_max": (meta or {}).get("_overlay_plan_a_max"),
                         "overlay_plan_b_used": overlay_plan_b_used,
                         "discovery_enabled": bool((meta or {}).get("_discovery_enabled")),
+                        "discovery_eligible_count": int((meta or {}).get("_discovery_eligible_count") or 0),
+                        "discovery_eligible_tickers": list((meta or {}).get("_discovery_eligible_tickers") or []),
                         "discovery_added": int((meta or {}).get("_discovery_added") or 0),
                         "discovery_added_tickers": list((meta or {}).get("_discovery_added_tickers") or []),
+                        "discovery_reject_counts": dict((meta or {}).get("_discovery_reject_counts") or {}),
                         "prompt_pool_core_count": int((meta or {}).get("_prompt_pool_core_count") or 0),
                         "prompt_pool_discovery_count": int((meta or {}).get("_prompt_pool_discovery_count") or 0),
                         "discovery_demoted_tickers": list((meta or {}).get("_discovery_demoted_tickers") or []),
@@ -26115,6 +26173,111 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception:
                 pass
         return exclude
+
+    def _apply_sub_screener_triage(self, market: str, result: sub_screener.SubScanResult) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        max_add = max(0, int(os.getenv("SUB_SCREENER_TRIAGE_MAX_ADD", "5") or 5))
+        rows = sub_screener.triage_candidates(result, max_add=max_add)
+        if not rows:
+            return {"added_tickers": [], "skipped_tickers": [], "reason": "no_triage_rows"}
+
+        exclude = self._build_sub_screener_exclude_set(market_key)
+        current_watch = list(dict.fromkeys((getattr(self, "today_tickers", {}) or {}).get(market_key, []) or []))
+        meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+        watchlist = list(dict.fromkeys(list(meta.get("watchlist") or []) + current_watch))
+        trade_ready = list(dict.fromkeys(meta.get("trade_ready") or []))
+        reasons = dict(meta.get("reasons") or {})
+        triage_rows: list[dict] = []
+        added: list[str] = []
+        skipped: list[str] = []
+
+        for row in rows:
+            ticker = str((row or {}).get("ticker") or "").strip()
+            key = self._selection_ticker_key(market_key, ticker)
+            if not ticker or not key:
+                continue
+            if key in exclude or ticker in watchlist:
+                skipped.append(ticker)
+                continue
+            watchlist.append(ticker)
+            added.append(ticker)
+            triage_rows.append(dict(row or {}))
+            score = (row or {}).get("trainer_prompt_score")
+            state = str((row or {}).get("trainer_candidate_state") or "").strip()
+            reasons[ticker] = f"sub_screener_triage:{state or 'candidate'} score={score}"
+
+        if not added:
+            return {"added_tickers": [], "skipped_tickers": skipped, "reason": "all_triage_rows_excluded"}
+
+        meta["watchlist"] = watchlist
+        meta["trade_ready"] = [ticker for ticker in trade_ready if ticker in watchlist]
+        meta["reasons"] = reasons
+        meta["_selection_source_type"] = "sub_screener_triage"
+        meta["_sub_screener_triage"] = {
+            "enabled": True,
+            "trigger_reason": str(getattr(result, "trigger_reason", "") or ""),
+            "added_tickers": added,
+            "skipped_tickers": skipped,
+            "row_count": len(triage_rows),
+            "max_add": max_add,
+            "full_select_tickers_called": False,
+        }
+        meta["_sub_screener_triage_rows"] = triage_rows
+        if not str(meta.get("selection_snapshot_ts") or "").strip():
+            meta["selection_snapshot_ts"] = datetime.now(KST).isoformat(timespec="seconds")
+
+        if not hasattr(self, "today_tickers") or not isinstance(self.today_tickers, dict):
+            self.today_tickers = {"KR": [], "US": []}
+        if not hasattr(self, "selection_meta") or not isinstance(self.selection_meta, dict):
+            self.selection_meta = {"KR": {}, "US": {}}
+        if not hasattr(self, "trade_ready_tickers") or not isinstance(self.trade_ready_tickers, dict):
+            self.trade_ready_tickers = {"KR": [], "US": []}
+        if not hasattr(self, "selection_stages") or not isinstance(self.selection_stages, dict):
+            self.selection_stages = {}
+
+        self.today_tickers[market_key] = watchlist
+        self.selection_meta[market_key] = meta
+        self.trade_ready_tickers[market_key] = list(meta.get("trade_ready") or [])
+        stages = dict(self.selection_stages.get(market_key) or {})
+        stages["sub_screener_triage"] = {
+            "watchlist": watchlist,
+            "trade_ready": list(meta.get("trade_ready") or []),
+            "added_tickers": added,
+            "skipped_tickers": skipped,
+            "trigger_reason": str(getattr(result, "trigger_reason", "") or ""),
+        }
+        self.selection_stages[market_key] = stages
+
+        if isinstance(getattr(self, "today_judgment", None), dict):
+            self.today_judgment["tickers"] = watchlist
+            self.today_judgment["selection_meta"] = meta
+            self.today_judgment["trade_ready_tickers"] = list(meta.get("trade_ready") or [])
+            self.today_judgment["selection_stages"] = stages
+            universe = list(self.today_judgment.get("universe_tickers") or [])
+            for ticker in added:
+                if ticker not in universe:
+                    universe.append(ticker)
+            self.today_judgment["universe_tickers"] = universe
+
+        try:
+            self._entry_timing_mark_candidates(market_key, added, "sub_screener_triage")
+        except Exception:
+            pass
+        try:
+            self._record_candidate_funnel_snapshot(
+                market_key,
+                selected=watchlist,
+                meta=meta,
+                stages=stages,
+            )
+        except Exception as exc:
+            log.debug(f"[sub_screener] {market_key} triage audit failed: {exc}")
+        try:
+            self._persist_live_judgment(market_key)
+        except Exception:
+            pass
+        return {"added_tickers": added, "skipped_tickers": skipped, "reason": "triage_applied"}
+
     def maybe_run_sub_screener(self, market: str) -> None:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         if not _env_bool("SUB_SCREENER_ENABLED", False):
@@ -26196,11 +26359,44 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
         if not _sub_screener_trigger_enabled(market_key):
             return
+        dedupe_ttl_sec = max(0, int(os.getenv("SUB_SCREENER_DEDUPE_TTL_MIN", "60"))) * 60
+        if dedupe_ttl_sec > 0:
+            try:
+                if sub_screener.is_duplicate_trigger(market_key, today, result, ttl_sec=dedupe_ttl_sec):
+                    sub_screener.record_dedupe_suppressed(market_key, today, result, ttl_sec=dedupe_ttl_sec)
+                    log.info(
+                        f"[sub_screener] {market_key} dedupe_suppressed "
+                        f"reason={result.trigger_reason}"
+                    )
+                    return
+            except Exception as exc:
+                log.warning(f"[sub_screener] {market_key} dedupe check failed: {exc}")
         try:
             sub_screener.record_attempt(market_key, today, result)
         except Exception as exc:
             log.warning(f"[sub_screener] {market_key} record_attempt failed: {exc}")
             return
+
+        if _env_bool("SUB_SCREENER_TRIAGE_ENABLED", True):
+            try:
+                triage = self._apply_sub_screener_triage(market_key, result)
+                sub_screener.record_triage_success(
+                    market_key,
+                    today,
+                    result,
+                    added_tickers=list(triage.get("added_tickers") or []),
+                    skipped_tickers=list(triage.get("skipped_tickers") or []),
+                )
+                log.info(
+                    f"[sub_screener] {market_key} triage_applied "
+                    f"added={triage.get('added_tickers', [])} "
+                    f"skipped={triage.get('skipped_tickers', [])}"
+                )
+                return
+            except Exception as exc:
+                log.warning(f"[sub_screener] {market_key} triage failed: {exc}")
+                if not _env_bool("SUB_SCREENER_TRIAGE_FAIL_OPEN_FULL_RESCREEN", False):
+                    return
 
         old_mode = mode
         rejudged = False

@@ -3106,6 +3106,17 @@ def _merge_position_context(base: dict, overlay: Optional[dict]) -> dict:
         "auto_sell_policy_reject_reason", "auto_sell_policy_last_reject_reason",
         "auto_sell_policy_last_created_at", "auto_sell_policy_last_created_price",
         "auto_sell_policy_recreate_block_until",
+        "auto_sell_reviewed_at", "auto_sell_review_action", "auto_sell_review_detail",
+        "auto_sell_review_close_reason", "auto_sell_review_reason",
+        "auto_sell_review_confidence", "auto_sell_review_price_native",
+        "pending_sell_order_no", "pending_sell_qty", "pending_sell_price",
+        "pending_sell_created_at", "pending_sell_reason", "pending_sell_status",
+        "pathb_pending_sell_order_no", "pathb_pending_sell_qty",
+        "pathb_pending_sell_price", "pathb_pending_sell_created_at",
+        "pending_next_open_sell", "pending_next_open_reason",
+        "pending_next_open_sell_recheck_status", "pending_next_open_sell_recheck_at",
+        "pending_next_open_sell_recheck_cause", "pending_next_open_sell_attempt_price",
+        "pending_next_open_sell_attempt_status", "pending_next_open_sell_attempted_at",
         "source_strategy", "path_type", "pathb_path_run_id", "pathb_plan",
         "v2_decision_id", "v2_execution_id", "position_id", "order_no",
         "currency", "display_currency", "raw_avg_price", "raw_current_price",
@@ -3126,6 +3137,157 @@ def _merge_position_context(base: dict, overlay: Optional[dict]) -> dict:
     if merged.get("display_current_price") in (None, "", 0) and merged.get("current_price"):
         merged["display_current_price"] = merged.get("current_price")
     return merged
+
+
+def _dashboard_float_or_zero(value) -> float:
+    try:
+        if value is None or value == "":
+            return 0.0
+        if isinstance(value, str):
+            value = value.replace(",", "").replace("$", "").replace("원", "").strip()
+            if not value:
+                return 0.0
+        num = float(value)
+        if math.isnan(num) or math.isinf(num):
+            return 0.0
+        return num
+    except Exception:
+        return 0.0
+
+
+def _position_sell_signal(pos: dict, market: str, pending_sell: Optional[dict] = None) -> dict:
+    """Build dashboard-only sell signal metadata from already persisted position/control state."""
+    if not isinstance(pos, dict):
+        return {}
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    ticker = str(pos.get("ticker", "") or "").strip().upper()
+    if not ticker:
+        return {}
+
+    def _price(*keys) -> float:
+        for key in keys:
+            value = _dashboard_float_or_zero(pos.get(key))
+            if value > 0:
+                return value
+        return 0.0
+
+    def _payload(
+        *,
+        source: str,
+        label: str,
+        price: float = 0.0,
+        price_source: str = "",
+        at: str = "",
+        reason: str = "",
+        qty: int = 0,
+        urgency: str = "",
+        order_no: str = "",
+    ) -> dict:
+        at_text = str(at or "")
+        return {
+            "active": True,
+            "source": source,
+            "label": label,
+            "price": round(float(price or 0.0), 6) if price > 0 else 0.0,
+            "price_source": price_source,
+            "currency": "USD" if market_key == "US" else "KRW",
+            "at": at_text,
+            "at_label": _format_mmdd_hhmm(at_text) if at_text else "",
+            "reason": str(reason or ""),
+            "qty": int(qty or 0),
+            "urgency": str(urgency or ""),
+            "order_no": str(order_no or ""),
+        }
+
+    pathb_order_no = str(pos.get("pathb_pending_sell_order_no", "") or "").strip()
+    generic_order_no = str(pos.get("pending_sell_order_no", "") or "").strip()
+    pending_order_no = pathb_order_no or generic_order_no
+    pending_status = str(pos.get("pending_sell_status", "") or "").strip().lower()
+    inactive_statuses = {"resolved", "closed", "filled", "cancelled", "canceled", "cleared"}
+    if pending_order_no and pending_status not in inactive_statuses:
+        price = _price("pathb_pending_sell_price", "pending_sell_price")
+        qty = int(_dashboard_float_or_zero(pos.get("pathb_pending_sell_qty") or pos.get("pending_sell_qty")))
+        return _payload(
+            source="pending_sell_order",
+            label="매도 주문 들어감",
+            price=price,
+            price_source="pending_sell_price" if price > 0 else "",
+            at=str(pos.get("pathb_pending_sell_created_at") or pos.get("pending_sell_created_at") or ""),
+            reason=str(pos.get("pending_sell_reason") or pos.get("auto_sell_review_reason") or ""),
+            qty=qty,
+            order_no=pending_order_no,
+        )
+
+    control = pending_sell if isinstance(pending_sell, dict) else {}
+    control_ticker = str(control.get("ticker", "") or "").strip().upper()
+    control_market = str(control.get("market", market_key) or market_key).strip().upper()
+    if control_ticker == ticker and control_market == market_key:
+        price = _dashboard_float_or_zero(control.get("sell_price"))
+        return _payload(
+            source="dashboard_pending_sell",
+            label="대시보드 매도 예약",
+            price=price,
+            price_source="dashboard_pending_sell" if price > 0 else "",
+            at=str(control.get("requested_at") or ""),
+            reason="dashboard_immediate_sell",
+        )
+
+    if bool(pos.get("pending_next_open_sell")):
+        price = _price(
+            "pending_next_open_sell_attempt_price",
+            "auto_sell_review_price_native",
+            "display_current_price",
+            "current_price",
+        )
+        advice = pos.get("hold_advice") if isinstance(pos.get("hold_advice"), dict) else {}
+        return _payload(
+            source="pending_next_open_sell",
+            label="다음 개장 매도 신호",
+            price=price,
+            price_source="pending_next_open_sell_attempt_price" if pos.get("pending_next_open_sell_attempt_price") else "current_price",
+            at=str(
+                pos.get("pending_next_open_sell_attempted_at")
+                or pos.get("pending_next_open_sell_recheck_at")
+                or pos.get("auto_sell_reviewed_at")
+                or ""
+            ),
+            reason=str(
+                pos.get("pending_next_open_reason")
+                or pos.get("pending_next_open_sell_recheck_cause")
+                or advice.get("reason")
+                or ""
+            ),
+            urgency=str(advice.get("sell_urgency") or "next_open"),
+        )
+
+    advice = pos.get("hold_advice") if isinstance(pos.get("hold_advice"), dict) else {}
+    advice_action = str(advice.get("action", "") or "").strip().upper()
+    review_action = str(pos.get("auto_sell_review_action", "") or "").strip().upper()
+    if advice_action == "SELL" or review_action == "SELL":
+        price = (
+            _dashboard_float_or_zero(advice.get("revised_sell_target"))
+            or _price("auto_sell_review_price_native", "display_current_price", "current_price")
+        )
+        return _payload(
+            source="hold_advisor_sell" if advice_action == "SELL" else "auto_sell_review_sell",
+            label="Claude 매도 신호",
+            price=price,
+            price_source="revised_sell_target" if _dashboard_float_or_zero(advice.get("revised_sell_target")) > 0 else "signal_price",
+            at=str(pos.get("auto_sell_reviewed_at") or pos.get("last_hold_update") or ""),
+            reason=str(advice.get("reason") or pos.get("auto_sell_review_detail") or pos.get("auto_sell_review_reason") or ""),
+            urgency=str(advice.get("sell_urgency") or ""),
+        )
+    return {}
+
+
+def _attach_position_sell_signals(positions: list, market: str, mode: str) -> None:
+    pending_sell = (_load_claude_control(mode=mode) or {}).get("pending_sell")
+    for pos in positions or []:
+        signal = _position_sell_signal(pos, market, pending_sell=pending_sell)
+        if signal:
+            pos["sell_signal"] = signal
+        else:
+            pos.pop("sell_signal", None)
 
 
 def _merge_positions_for_display(
@@ -5865,6 +6027,7 @@ def api_summary():
     )
     positions = _merge_positions_for_display(market, broker_positions, position_context, broker_ok=broker_ok)
     _apply_dashboard_position_quote_overlays(market, positions, mode)
+    _attach_position_sell_signals(positions, market, mode)
     pending_orders = _filter_items_for_market(live.get("pending_orders", []) if live else [], market)
     name_map = _ticker_name_map(market, mode=mode)
     for pos in positions:
@@ -9324,6 +9487,7 @@ def api_tickers_today():
     live_positions = _filter_items_for_market(live.get("positions", []) if live else [], market)
     live_pending = _filter_items_for_market(live.get("pending_orders", []) if live else [], market)
     name_map = _ticker_name_map(market, mode=mode)
+    control_pending_sell = (_load_claude_control(mode=mode) or {}).get("pending_sell")
 
     held_entries: dict[str, int] = {}
     held_qty_map: dict[str, int] = {}
@@ -9619,6 +9783,15 @@ def api_tickers_today():
         ticker = item.get("ticker", "")
         broker = broker_map.get(ticker, {})
         live_pos = live_pos_map.get(ticker, {})
+        if broker and live_pos:
+            signal_source = _merge_position_context(broker, live_pos)
+        elif live_pos:
+            signal_source = dict(live_pos)
+        elif broker:
+            signal_source = dict(broker)
+        else:
+            signal_source = {"ticker": ticker}
+        item["sell_signal"] = _position_sell_signal(signal_source, market, pending_sell=control_pending_sell)
         item["held_entries"] = held_entries.get(ticker, 0)
         item["held_qty"] = held_qty_map.get(ticker, 0)
         item["pending_count"] = pending_map.get(ticker, 0)
@@ -10292,6 +10465,32 @@ function fmtAgeShort(sec) {
   if (n < 3600) return `${Math.round(n / 60)}분`;
   if (n < 86400) return `${Math.round(n / 3600)}시간`;
   return `${Math.round(n / 86400)}일`;
+}
+
+function formatSellSignalPrice(signal, market = MARKET, usdKrw = 0) {
+  const price = Number((signal || {}).price || 0);
+  if (!(price > 0)) return '가격 미정';
+  const currency = String((signal || {}).currency || (market === 'KR' ? 'KRW' : 'USD')).toUpperCase();
+  if (market === 'KR' || currency === 'KRW') return fmt.price(price);
+  const krw = Number(usdKrw || 0) > 0 ? ` (약 ${fmt.price(price * Number(usdKrw || 0))})` : '';
+  return '$' + price.toFixed(2) + krw;
+}
+
+function renderSellSignalLine(signal, market = MARKET, usdKrw = 0, compact = false) {
+  if (!signal || !signal.active) return '';
+  const label = escapeHtml(signal.label || '매도 신호');
+  const price = formatSellSignalPrice(signal, market, usdKrw);
+  const at = signal.at_label ? ` · ${escapeHtml(signal.at_label)}` : '';
+  const urgency = signal.urgency ? ` · ${escapeHtml(signal.urgency)}` : '';
+  const orderNo = signal.order_no ? ` · 주문 ${escapeHtml(signal.order_no)}` : '';
+  const reason = signal.reason ? `<div style="font-size:10px;color:#fecaca;margin-top:3px;line-height:1.35;overflow-wrap:anywhere">${escapeHtml(signal.reason)}</div>` : '';
+  const baseStyle = compact
+    ? 'font-size:10px;color:#fecaca;margin-top:4px;line-height:1.35'
+    : 'font-size:10px;color:#fecaca;margin-top:6px;padding-top:6px;border-top:1px solid rgba(239,68,68,0.25);line-height:1.35';
+  return `<div style="${baseStyle}">
+    <span style="color:#ef4444;font-weight:700">${label} 들어감 @ ${price}</span><span style="color:#fca5a5">${at}${urgency}${orderNo}</span>
+    ${compact ? '' : reason}
+  </div>`;
 }
 
 function formatUsdKrwSplit(usd, krw, label = 'US') {
@@ -11701,6 +11900,7 @@ async function loadMonitorTickers() {
         : '';
       const pickStatus = t.selection_status_ko ? ` · ${t.selection_status_ko}` : '';
       const statusText = Number(t.sig_count || 0) > 0 ? `신호 ${t.sig_count}` : `${evLabel}${pickStatus}`;
+      const sellSignalQuick = renderSellSignalLine(t.sell_signal, MARKET, 0, true);
       return `
         <div class="card" style="padding:10px 12px;min-width:132px;flex:0 0 auto;border-color:${ev.color}33">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
@@ -11709,6 +11909,7 @@ async function loadMonitorTickers() {
           </div>
           <div style="font-family:var(--mono);font-size:12px;color:var(--text);margin-bottom:3px">${priceText}</div>
           <div style="font-size:10px;color:${ev.color}">${statusText}</div>
+          ${sellSignalQuick}
           ${selectionText ? `<div style="font-size:10px;color:#94a3b8;margin-top:2px">${selectionText}</div>` : ''}
         </div>`;
     }).join('');
@@ -11842,6 +12043,7 @@ async function loadMonitorTickers() {
     const pathHtml = pathBits.length
       ? `<div style="font-size:10px;color:#93c5fd;margin-top:4px">${pathBits.join(' · ')}</div>`
       : '';
+    const sellSignalHtml = renderSellSignalLine(t.sell_signal, MARKET, 0, true);
     const selectReasonHtml = t.select_reason
       ? `<div style="font-size:10px;color:#64748b;margin-top:5px;line-height:1.4;border-top:1px solid var(--border);padding-top:5px">${t.select_reason}</div>`
       : '';
@@ -11869,6 +12071,7 @@ async function loadMonitorTickers() {
       ${statusHtml}
       ${priceMetaHtml}
       ${pathHtml}
+      ${sellSignalHtml}
       ${skipHtmlFinal}
       ${noneReasonHtml}
       ${selectReasonHtml}
@@ -11941,6 +12144,7 @@ async function loadSignalFeed() {
         if (heldEntries > 0) statusBits.push(`보유 ${heldEntries}건`);
         if (heldQty > 0) statusBits.push(`수량 ${heldQty}`);
         if (pendingCount > 0) statusBits.push(`미체결 ${pendingCount}건`);
+        const sellSignalPinned = renderSellSignalLine(t.sell_signal, MARKET, Number(summary.usd_krw || 0), true);
         return `<div style="background:var(--surface2);border:1px solid rgba(59,130,246,0.35);border-radius:8px;padding:12px 14px;min-width:170px;max-width:260px;flex:1">
           <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
             <div style="font-family:var(--mono);font-weight:700;font-size:14px;color:#e2e8f0">${t.display_ticker || t.ticker}</div>
@@ -11948,6 +12152,7 @@ async function loadSignalFeed() {
           </div>
           <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${priceStr}</div>
           <div style="font-size:10px;color:#94a3b8;margin-top:6px">${statusBits.join(' · ') || '상태 없음'}</div>
+          ${sellSignalPinned}
           ${(t.avg_price || t.current_price) ? `<div style="font-size:10px;color:#64748b;margin-top:6px">매수가 ${t.avg_price ? (MARKET === 'KR' ? Math.round(Number(t.avg_price)).toLocaleString() + '원' : '$' + Number(t.avg_price).toFixed(2)) : '--'} · 현재가 ${t.current_price ? (MARKET === 'KR' ? Math.round(Number(t.current_price)).toLocaleString() + '원' : '$' + Number(t.current_price).toFixed(2)) : '--'}</div>` : ''}
         </div>`;
       }).join('');
@@ -11991,13 +12196,16 @@ async function loadSignalFeed() {
     if (heldEntries > 0) parts.push(`보유 ${heldEntries}건 · 수량 ${heldQty}`);
     if (pendingCount > 0) parts.push(`미체결 ${pendingCount}건`);
     if (!parts.length) parts.push('상태 없음');
+    const sellSignalText = t.sell_signal && t.sell_signal.active
+      ? ` · ${escapeHtml(t.sell_signal.label || '매도 신호')} @ ${formatSellSignalPrice(t.sell_signal, MARKET, Number(summary.usd_krw || 0))}`
+      : '';
     return `<div style="display:flex;align-items:center;gap:10px;padding:6px 16px;background:rgba(59,130,246,0.08);border-bottom:1px solid rgba(31,41,55,0.4)">
       <span style="color:var(--text-dim);min-width:56px">${t.last_ts || '--:--'}</span>
       <span>🔵</span>
       <span style="min-width:36px;color:#94a3b8">${MARKET}</span>
       <span style="min-width:80px;color:#93c5fd;font-weight:700">${t.display_ticker || t.ticker || ''}</span>
       <span style="min-width:72px;color:var(--text-dim)">${priceStr}</span>
-      <span style="color:var(--text-dim)">${parts.join(' · ')}</span>
+      <span style="color:var(--text-dim)">${parts.join(' · ')}<span style="color:#fecaca">${sellSignalText}</span></span>
     </div>`;
   }).join('');
   const rows = d.map(ev => {
@@ -12285,6 +12493,7 @@ async function loadSummary() {
            ${advReasonText ? `<span style="color:#94a3b8;display:block;margin-top:3px;max-height:120px;overflow-y:auto;line-height:1.45;padding-right:4px;white-space:normal">→ ${advReasonText}</span>` : ''}
          </div>`
       : '';
+    const sellSignalHtml = renderSellSignalLine(pos.sell_signal, MARKET, usdKrw);
     const cardId = 'pos-card-kr-' + pos.ticker;
     return `
     <div class="card" id="${cardId}" style="min-width:260px;flex:0 0 280px;padding:14px 16px">
@@ -12308,6 +12517,7 @@ async function loadSummary() {
         <span>평가 ${curValue}</span>
       </div>
       ${stopLine ? `<div style="font-size:10px;color:var(--text-dim);margin-top:2px">${stopLine}</div>` : ''}
+      ${sellSignalHtml}
       ${advHtml}
       <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         <button onclick="reviewPosition('KR','${pos.ticker}','${cardId}')"
@@ -13454,6 +13664,7 @@ async function loadSummary() {
                <span style="color:#ca8a04;font-weight:600">수익 검토 타임아웃 HOLD${prTimeoutBadge}</span>
              </div>`
           : '';
+      const sellSignalHtml2 = renderSellSignalLine(pos.sell_signal, MARKET, usdKrw);
       const safeTickerId2 = String(pos.ticker || '').replace(/[^A-Za-z0-9_-]/g, '_');
       const cardId2 = 'pos-card-' + safeTickerId2;
       const chartId2 = 'pos-chart-' + safeTickerId2;
@@ -13483,6 +13694,7 @@ async function loadSummary() {
           <div style="height:58px;margin:5px 0 7px 0"><canvas id="${chartId2}"></canvas></div>
           ${stopLine ? `<div style="font-size:10px;color:var(--text-dim);margin-top:2px">${stopLine}</div>` : ''}
           ${pathbLine ? `<div style="font-size:10px;color:#93c5fd;margin-top:2px">${pathbLine}</div>` : ''}
+          ${sellSignalHtml2}
           ${advHtml}
           <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <button onclick="reviewPosition(MARKET,'${pos.ticker}','${cardId2}')"

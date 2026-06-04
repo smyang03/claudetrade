@@ -3313,6 +3313,67 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(row["discovery_signal_family"], "near_breakout,momentum_now")
         self.assertEqual(row["discovery_action_ceiling"], "WATCH")
 
+    def test_candidate_audit_live_write_recovers_discovery_role_from_added_tickers(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})
+        meta = {
+            "selection_snapshot_ts": "2026-06-03T22:30:00+09:00",
+            "selection_trace_id": "US:trace:discovery-audit-added",
+            "visibility_contract_version": "actual_prompt_v1",
+            "watchlist": ["DISC"],
+            "trade_ready": [],
+            "candidate_actions": [{"ticker": "DISC", "action": "WATCH", "reason": "watch"}],
+            "_candidate_action_routes": [
+                {
+                    "ticker": "DISC",
+                    "requested_action": "WATCH",
+                    "final_action": "WATCH",
+                    "route": "PlanA.watch",
+                    "reason": "watch",
+                    "runtime_gate": {"reason": "watch"},
+                }
+            ],
+            "_discovery_added_tickers": ["DISC"],
+            "_final_prompt_pool": [
+                {
+                    "ticker": "DISC",
+                    "market": "US",
+                    "prompt_rank": 1,
+                    "price": 25.0,
+                    "candidate_pool_role": "",
+                    "discovery_action_ceiling": "",
+                    "discovery_reason": "",
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            with patch.dict(os.environ, {"CANDIDATE_AUDIT_DB_PATH": str(db_path)}, clear=False):
+                TradingBot._write_candidate_audit_live(
+                    bot,
+                    "US",
+                    selected=["DISC"],
+                    meta=meta,
+                    stages={},
+                )
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT candidate_pool_role, discovery_reason, discovery_action_ceiling
+                    FROM audit_candidate_rows
+                    WHERE ticker='DISC'
+                    """
+                ).fetchone()
+            finally:
+                conn.close()
+
+        self.assertEqual(row["candidate_pool_role"], "DISCOVERY")
+        self.assertEqual(row["discovery_reason"], "core_cap_signal_candidate")
+        self.assertEqual(row["discovery_action_ceiling"], "WATCH")
+
     def test_candidate_audit_live_write_marks_missing_quality_when_gate_flag_is_false(self) -> None:
         bot = _make_bot()
         bot.runtime_config.values.update({"ENABLE_CANDIDATE_AUDIT_LIVE": True})

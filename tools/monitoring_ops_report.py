@@ -315,6 +315,110 @@ def _candidate_metadata_coverage_report(
             ).fetchone()
             discovery_rows = int(row["rows"] or 0) if row else 0
             expansion_role_rows = int(row["expansion_rows"] or 0) if row else 0
+        discovery_prompt_metrics = {
+            "available": False,
+            "reason": "audit_claude_calls_missing",
+            "calls": 0,
+            "enabled_calls": 0,
+            "eligible_total": 0,
+            "added_total": 0,
+            "prompt_pool_discovery_total": 0,
+            "reject_counts": {},
+        }
+        if _table_exists(conn, "audit_claude_calls"):
+            call_where = ["runtime_mode=?"]
+            call_params: list[Any] = [runtime_mode]
+            if session_date:
+                call_where.append("session_date=?")
+                call_params.append(session_date)
+            if market:
+                call_where.append("market=?")
+                call_params.append(market.upper())
+            rows = conn.execute(
+                f"""
+                SELECT label, payload_json
+                FROM audit_claude_calls
+                WHERE {' AND '.join(call_where)}
+                """,
+                call_params,
+            ).fetchall()
+            reject_counter: Counter[str] = Counter()
+            calls = 0
+            enabled_calls = 0
+            eligible_total = 0
+            added_total = 0
+            prompt_pool_discovery_total = 0
+            for call_row in rows:
+                payload = _decode_json_dict(call_row["payload_json"])
+                if "discovery_enabled" not in payload:
+                    continue
+                calls += 1
+                if bool(payload.get("discovery_enabled")):
+                    enabled_calls += 1
+                try:
+                    eligible_total += int(payload.get("discovery_eligible_count") or 0)
+                except Exception:
+                    pass
+                try:
+                    added_total += int(payload.get("discovery_added") or 0)
+                except Exception:
+                    pass
+                try:
+                    prompt_pool_discovery_total += int(payload.get("prompt_pool_discovery_count") or 0)
+                except Exception:
+                    pass
+                reject_counts = payload.get("discovery_reject_counts")
+                if isinstance(reject_counts, dict):
+                    for reason, count in reject_counts.items():
+                        try:
+                            reject_counter[str(reason)] += int(count or 0)
+                        except Exception:
+                            pass
+            discovery_prompt_metrics = {
+                "available": True,
+                "calls": calls,
+                "enabled_calls": enabled_calls,
+                "eligible_total": eligible_total,
+                "added_total": added_total,
+                "prompt_pool_discovery_total": prompt_pool_discovery_total,
+                "reject_counts": dict(reject_counter.most_common()),
+                "eligible_added_zero": bool(enabled_calls > 0 and eligible_total == 0),
+                "audit_write_blank_suspected": bool(added_total > 0 and discovery_rows == 0),
+            }
+        pullback_gate_count = 0
+        pullback_live_count = 0
+        pullback_shadow_count = 0
+        pullback_gate_tickers: list[str] = []
+        pullback_gate_reasons: Counter[str] = Counter()
+        pullback_legacy_shadow_count = 0
+        for candidate_row in conn.execute(
+            f"""
+            SELECT ticker, payload_json
+            FROM audit_candidate_rows
+            WHERE {' AND '.join(where)}
+            """,
+            params,
+        ).fetchall():
+            payload = _decode_json_dict(candidate_row["payload_json"])
+            runtime_gate = payload.get("runtime_gate")
+            if not isinstance(runtime_gate, dict):
+                continue
+            gate = runtime_gate.get("pullback_wait_evidence_gate")
+            if not isinstance(gate, dict):
+                legacy_shadow = runtime_gate.get("pullback_wait_evidence_shadow")
+                if isinstance(legacy_shadow, dict) and bool(legacy_shadow.get("would_demote_to_watch")):
+                    pullback_legacy_shadow_count += 1
+                continue
+            pullback_gate_count += 1
+            if bool(gate.get("demoted_to_watch")):
+                pullback_live_count += 1
+            else:
+                pullback_shadow_count += 1
+            ticker = str(candidate_row["ticker"] or "").strip().upper()
+            if ticker and ticker not in pullback_gate_tickers:
+                pullback_gate_tickers.append(ticker)
+            for reason in list(gate.get("reasons") or []):
+                pullback_gate_reasons[str(reason)] += 1
         return {
             "available": True,
             "db_path": str(db_path),
@@ -322,9 +426,137 @@ def _candidate_metadata_coverage_report(
             "blank_counts": blank_counts,
             "blank_rates": blank_rates,
             "discovery_metadata_rows": discovery_rows,
+            "discovery_prompt_metrics": discovery_prompt_metrics,
+            "pullback_wait_evidence_gate": {
+                "count": pullback_gate_count,
+                "live_demotion_count": pullback_live_count,
+                "shadow_count": pullback_shadow_count,
+                "tickers": pullback_gate_tickers[:50],
+                "reason_counts": dict(pullback_gate_reasons.most_common()),
+                "legacy_shadow_count": pullback_legacy_shadow_count,
+                "trade_behavior_change_allowed": bool(pullback_live_count > 0),
+            },
             "expansion_role_rows": expansion_role_rows,
             "role_contract": "candidate_pool_role must remain DISCOVERY for discovery/expansion audit rows",
             "trade_behavior_change_allowed": False,
+        }
+    finally:
+        conn.close()
+
+
+def _selection_source_bucket(source: str) -> str:
+    text = str(source or "").strip().lower()
+    if not text:
+        return "unknown"
+    if "sub_screener" in text:
+        return "sub_screener"
+    if "manual" in text or "telegram" in text:
+        return "manual"
+    if "reinvoke" in text:
+        return "analyst_reinvoke"
+    if "session_open" in text or "preopen" in text or text == "initial":
+        return "scheduled"
+    if "session_reuse" in text or "resume" in text or "startup" in text:
+        return "resume"
+    return "other"
+
+
+def _selection_call_breakdown_report(
+    *,
+    db_path: Path,
+    session_date: str,
+    market: str,
+    runtime_mode: str,
+) -> dict[str, Any]:
+    state_payload: dict[str, Any] = {}
+    try:
+        from runtime import selection_smart_skip
+
+        if market and session_date:
+            state_payload = selection_smart_skip.load_state(market, session_date)
+    except Exception:
+        state_payload = {}
+    if not db_path.exists():
+        return {
+            "available": False,
+            "reason": "db_missing",
+            "db_path": str(db_path),
+            "smart_skip_state": state_payload,
+        }
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(conn, "audit_claude_calls"):
+            return {
+                "available": False,
+                "reason": "audit_claude_calls_missing",
+                "db_path": str(db_path),
+                "smart_skip_state": state_payload,
+            }
+        where = ["runtime_mode=?"]
+        params: list[Any] = [runtime_mode]
+        if session_date:
+            where.append("session_date=?")
+            params.append(session_date)
+        if market:
+            where.append("market=?")
+            params.append(market.upper())
+        rows = conn.execute(
+            f"""
+            SELECT label, input_tokens, output_tokens, payload_json
+            FROM audit_claude_calls
+            WHERE {' AND '.join(where)}
+            """,
+            params,
+        ).fetchall()
+        application_count = 0
+        smart_reuse_count = 0
+        sub_triage_count = 0
+        by_source: Counter[str] = Counter()
+        by_bucket: Counter[str] = Counter()
+        by_label: Counter[str] = Counter()
+        token_input = 0
+        token_output = 0
+        for row in rows:
+            label = str(row["label"] or "unknown")
+            by_label[label] += 1
+            token_input += int(row["input_tokens"] or 0)
+            token_output += int(row["output_tokens"] or 0)
+            payload = _decode_json_dict(row["payload_json"])
+            if label != "selection_meta_live":
+                continue
+            application_count += 1
+            source = str(payload.get("selection_source_type") or "unknown")
+            by_source[source] += 1
+            by_bucket[_selection_source_bucket(source)] += 1
+            if bool(payload.get("smart_skip_reused")):
+                smart_reuse_count += 1
+            triage = payload.get("sub_screener_triage")
+            if isinstance(triage, dict) and bool(triage.get("enabled")):
+                sub_triage_count += 1
+        full_call_estimate = max(0, application_count - smart_reuse_count - sub_triage_count)
+        return {
+            "available": True,
+            "db_path": str(db_path),
+            "selection_application_count": application_count,
+            "full_select_tickers_estimate": full_call_estimate,
+            "smart_skip_reuse_count": smart_reuse_count,
+            "sub_screener_triage_count": sub_triage_count,
+            "by_source": dict(by_source.most_common()),
+            "by_bucket": dict(by_bucket.most_common()),
+            "by_label": dict(by_label.most_common()),
+            "audit_token_sums": {"input": token_input, "output": token_output},
+            "smart_skip_state": {
+                "full_call_count": int(state_payload.get("full_call_count") or 0) if state_payload else 0,
+                "reuse_count": int(state_payload.get("reuse_count") or 0) if state_payload else 0,
+                "observe_hit_count": int(state_payload.get("observe_hit_count") or 0) if state_payload else 0,
+                "mode": str(state_payload.get("mode") or "") if state_payload else "",
+                "fail_open_count": int(state_payload.get("fail_open_count") or 0) if state_payload else 0,
+                "fail_open_reasons": dict(state_payload.get("fail_open_reasons") or {}) if state_payload else {},
+                "last_fail_open": dict(state_payload.get("last_fail_open") or {}) if state_payload else {},
+                "last_observe_hit": dict(state_payload.get("last_observe_hit") or {}) if state_payload else {},
+            },
+            "policy_change_allowed": False,
         }
     finally:
         conn.close()
@@ -756,6 +988,12 @@ def build_monitoring_ops_report(
             runtime_mode=runtime_mode,
         ),
         "candidate_metadata_coverage": _candidate_metadata_coverage_report(
+            db_path=candidate_path,
+            session_date=session_date,
+            market=market_key,
+            runtime_mode=runtime_mode,
+        ),
+        "selection_call_breakdown": _selection_call_breakdown_report(
             db_path=candidate_path,
             session_date=session_date,
             market=market_key,

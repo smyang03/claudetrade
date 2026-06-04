@@ -139,6 +139,62 @@ class SubScreenerTests(unittest.TestCase):
         self.assertEqual(state["date"], "2026-05-22")
         self.assertEqual(state["attempt_count"], 1)
 
+    def test_duplicate_trigger_suppression_tracks_exact_ticker_set(self) -> None:
+        trigger = sub_screener.SubScanResult(
+            True,
+            [_row("B", "PLAN_A", 90.0), _row("A", "PLAN_A", 88.0)],
+            [],
+            [],
+            "new_plan_a:2",
+        )
+        same_set = sub_screener.SubScanResult(
+            True,
+            [_row("A", "PLAN_A", 91.0), _row("B", "PLAN_A", 89.0)],
+            [],
+            [],
+            "new_plan_a:2",
+        )
+        new_set = sub_screener.SubScanResult(True, [_row("C", "PLAN_A", 90.0)], [], [], "new_plan_a:1")
+
+        sub_screener.record_attempt("US", "2026-05-22", trigger)
+
+        self.assertTrue(sub_screener.is_duplicate_trigger("US", "2026-05-22", same_set, ttl_sec=3600))
+        self.assertFalse(sub_screener.is_duplicate_trigger("US", "2026-05-22", new_set, ttl_sec=3600))
+
+        sub_screener.record_dedupe_suppressed("US", "2026-05-22", same_set, ttl_sec=3600)
+        state = sub_screener.load_session_counter("US", "2026-05-22")
+
+        self.assertEqual(state["attempt_count"], 1)
+        self.assertEqual(state["dedupe_suppressed_count"], 1)
+        self.assertEqual(state["last_dedupe_suppressed"]["fingerprint"], "A|B")
+
+    def test_triage_candidates_and_success_state(self) -> None:
+        trigger = sub_screener.SubScanResult(
+            True,
+            [_row("A", "PLAN_A", 90.0)],
+            [_row("B", "PLAN_B", 70.0)],
+            [_row("C", "PLAN_B", 66.0)],
+            "new_plan_a:1",
+        )
+
+        rows = sub_screener.triage_candidates(trigger, max_add=2)
+        self.assertEqual([row["ticker"] for row in rows], ["A", "B"])
+
+        sub_screener.record_attempt("US", "2026-05-22", trigger)
+        sub_screener.record_triage_success(
+            "US",
+            "2026-05-22",
+            trigger,
+            added_tickers=["A"],
+            skipped_tickers=["B"],
+        )
+        state = sub_screener.load_session_counter("US", "2026-05-22")
+
+        self.assertEqual(state["triage_success_count"], 1)
+        self.assertEqual(state["success_count"], 1)
+        self.assertTrue(state["attempts"][-1]["triage"])
+        self.assertEqual(state["last_triage"]["added_tickers"], ["A"])
+
 
 if __name__ == "__main__":
     unittest.main()

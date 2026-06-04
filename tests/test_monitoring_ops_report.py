@@ -194,6 +194,52 @@ class MonitoringOpsReportTests(unittest.TestCase):
                 "session_date": "2026-06-03",
                 "known_at": "2026-06-03T22:30:00+09:00",
             }
+            store.upsert_call(
+                {
+                    "call_id": "call_us",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-06-03",
+                    "called_at": "2026-06-03T22:30:00+09:00",
+                    "label": "select_tickers",
+                    "payload": {
+                        "discovery_enabled": True,
+                        "discovery_eligible_count": 2,
+                        "discovery_added": 1,
+                        "prompt_pool_discovery_count": 1,
+                        "discovery_reject_counts": {"not_cap_excluded": 3},
+                    },
+                }
+            )
+            store.upsert_call(
+                {
+                    "call_id": "selection_app",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-06-03",
+                    "called_at": "2026-06-03T22:31:00+09:00",
+                    "label": "selection_meta_live",
+                    "payload": {
+                        "selection_source_type": "sub_screener_triage",
+                        "smart_skip_reused": False,
+                        "sub_screener_triage": {"enabled": True},
+                    },
+                }
+            )
+            store.upsert_call(
+                {
+                    "call_id": "selection_skip",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-06-03",
+                    "called_at": "2026-06-03T22:32:00+09:00",
+                    "label": "selection_meta_live",
+                    "payload": {
+                        "selection_source_type": "session_reuse_rescreen",
+                        "smart_skip_reused": True,
+                    },
+                }
+            )
             store.upsert_candidate(
                 {
                     **base,
@@ -214,6 +260,22 @@ class MonitoringOpsReportTests(unittest.TestCase):
                     "source_file": "trading_bot.selection_meta",
                     "no_submit_reason_code": "NO_SIGNAL",
                     "payload": {"runtime_gate": {"reason": "fallback_reason"}},
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "ticker": "PWAIT",
+                    "source_file": "trading_bot.selection_meta",
+                    "payload": {
+                        "runtime_gate": {
+                            "pullback_wait_evidence_gate": {
+                                "demoted_to_watch": True,
+                                "shadow_only": False,
+                                "reasons": ["evidence_missing", "evidence_ceiling_watch"],
+                            }
+                        }
+                    },
                 }
             )
             event_db = root / "v2_event_store.db"
@@ -260,6 +322,22 @@ class MonitoringOpsReportTests(unittest.TestCase):
 
         metadata = payload["candidate_metadata_coverage"]
         self.assertEqual(metadata["discovery_metadata_rows"], 1)
+        self.assertEqual(metadata["discovery_prompt_metrics"]["enabled_calls"], 1)
+        self.assertEqual(metadata["discovery_prompt_metrics"]["eligible_total"], 2)
+        self.assertEqual(metadata["discovery_prompt_metrics"]["added_total"], 1)
+        self.assertFalse(metadata["discovery_prompt_metrics"]["audit_write_blank_suspected"])
+        self.assertEqual(metadata["pullback_wait_evidence_gate"]["count"], 1)
+        self.assertEqual(metadata["pullback_wait_evidence_gate"]["live_demotion_count"], 1)
+        self.assertEqual(metadata["pullback_wait_evidence_gate"]["shadow_count"], 0)
+        self.assertEqual(metadata["pullback_wait_evidence_gate"]["tickers"], ["PWAIT"])
+        self.assertEqual(metadata["pullback_wait_evidence_gate"]["reason_counts"]["evidence_missing"], 1)
+        breakdown = payload["selection_call_breakdown"]
+        self.assertEqual(breakdown["selection_application_count"], 2)
+        self.assertEqual(breakdown["smart_skip_reuse_count"], 1)
+        self.assertEqual(breakdown["sub_screener_triage_count"], 1)
+        self.assertEqual(breakdown["full_select_tickers_estimate"], 0)
+        self.assertEqual(breakdown["by_bucket"]["sub_screener"], 1)
+        self.assertIn("observe_hit_count", breakdown["smart_skip_state"])
         self.assertEqual(metadata["expansion_role_rows"], 0)
         self.assertFalse(metadata["trade_behavior_change_allowed"])
         reasons = payload["candidate_resolved_reason"]

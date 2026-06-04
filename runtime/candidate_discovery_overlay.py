@@ -310,6 +310,8 @@ def apply_discovery_overlay(
         "_discovery_max_slots": 0,
         "_discovery_added": 0,
         "_discovery_added_tickers": [],
+        "_discovery_eligible_count": 0,
+        "_discovery_eligible_tickers": [],
         "_discovery_role_by_ticker": {},
         "_discovery_action_ceiling_by_ticker": {},
         "_discovery_signal_by_ticker": {},
@@ -352,6 +354,7 @@ def apply_discovery_overlay(
         seen.add(key)
 
     rows.sort(key=lambda item: _sort_key(item[0]))
+    eligible_tickers = [_ticker_key(row.get("ticker"), market_key) for row, _signals in rows]
     discovery_rows: list[dict[str, Any]] = []
     role_by_ticker: dict[str, str] = {}
     ceiling_by_ticker: dict[str, str] = {}
@@ -384,6 +387,8 @@ def apply_discovery_overlay(
         {
             "_discovery_added": len(discovery_rows),
             "_discovery_added_tickers": list(role_by_ticker.keys()),
+            "_discovery_eligible_count": len(rows),
+            "_discovery_eligible_tickers": [ticker for ticker in eligible_tickers if ticker],
             "_discovery_role_by_ticker": role_by_ticker,
             "_discovery_action_ceiling_by_ticker": ceiling_by_ticker,
             "_discovery_signal_by_ticker": signal_by_ticker,
@@ -398,6 +403,8 @@ def apply_discovery_overlay(
     metrics["discovery_overlay"] = {
         "version": DISCOVERY_OVERLAY_VERSION,
         "max_slots": max_slots,
+        "eligible_count": len(rows),
+        "eligible_tickers": [ticker for ticker in eligible_tickers if ticker],
         "added": len(discovery_rows),
         "added_tickers": list(role_by_ticker.keys()),
         "reject_counts": reject_counts,

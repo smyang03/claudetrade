@@ -113,7 +113,7 @@ def reference_prices_from_candidates(candidates: list[dict[str, Any]], market: s
 
 def compact_output_contract(*, watch_max: int, trade_max: int) -> str:
     return f"""MACHINE-COMPACT OUTPUT CONTRACT.
-Return strict JSON only. No markdown.
+Output a single line of minified JSON. No markdown. No code fences. No backticks. No newlines. No spaces after colons or commas. Start your response with {{ and end with }}.
 Use keys only: wl,tr,ca.
 wl=max {int(watch_max)} tickers. tr=max {int(trade_max)} tickers.
 ca exactly one item per wl ticker, same order.

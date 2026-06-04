@@ -77,8 +77,11 @@ class CandidateDiscoveryOverlayTests(unittest.TestCase):
         self.assertEqual(rows[2]["discovery_action_ceiling"], "WATCH")
         self.assertEqual(out_meta["_prompt_pool_core_count"], 2)
         self.assertEqual(out_meta["_prompt_pool_discovery_count"], 2)
+        self.assertEqual(out_meta["_discovery_eligible_count"], 2)
+        self.assertEqual(out_meta["_discovery_eligible_tickers"], ["ADD1", "ADD2"])
         self.assertEqual(out_meta["_discovery_added_tickers"], ["ADD1", "ADD2"])
         self.assertEqual(out_meta["_discovery_role_by_ticker"]["ADD1"], "DISCOVERY")
+        self.assertEqual(out_meta["metrics"]["discovery_overlay"]["eligible_count"], 2)
 
     def test_kr_default_adds_at_most_five(self) -> None:
         meta = {

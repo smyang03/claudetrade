@@ -91,6 +91,34 @@ class DigestBreadthContractTests(unittest.TestCase):
         self.assertIn("[Rush Street(ticker=RSI)]", prompt)
         self.assertIn("시장 mode 판단은 breadth 요약", prompt)
 
+    def test_digest_prompt_handles_missing_rsi_without_traceback(self) -> None:
+        technicals = {
+            "MISS": {
+                "name": "Missing RSI",
+                "close": 12.3,
+                "change_pct": 1.2,
+                "rsi": None,
+                "macd": "flat",
+                "bb_pct": None,
+                "vol_ratio": None,
+                "pos_52w": None,
+            }
+        }
+        digest = {
+            "date": "2026-06-04",
+            "market": "US",
+            "context": {"sp500": {"change_pct": 0.1}, "nasdaq": {"change_pct": 0.2}},
+            "technicals": technicals,
+            "breadth_summary": build_breadth_summary("US", technicals, {}),
+        }
+
+        prompt = digest_to_prompt(digest)
+
+        self.assertIn("RSI N/A", prompt)
+        self.assertIn("BB N/A", prompt)
+        self.assertIn("거래량 N/A배", prompt)
+        self.assertIn("52주위치 N/A%", prompt)
+
 
 class AnalystPromptContractTests(unittest.TestCase):
     def test_us_bear_persona_uses_us_risk_axes(self) -> None:

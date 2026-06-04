@@ -790,6 +790,35 @@ def route_candidate_action(
             gate_context["demotion_layer"] = "evidence_ceiling"
             default_warnings.append("evidence_ceiling_applied")
 
+    if bool(context.get("evidence_pack_ceiling_enabled")) and requested == "PULLBACK_WAIT":
+        evidence_ceiling = str(context.get("evidence_action_ceiling") or "").strip().upper()
+        evidence_state = str(context.get("evidence_data_state") or "").strip().lower()
+        gate_reasons: list[str] = []
+        if evidence_state == "missing":
+            gate_reasons.append("evidence_missing")
+        if evidence_ceiling in {"WATCH", "WAIT_CONFIRMATION"}:
+            gate_reasons.append(f"evidence_ceiling_{evidence_ceiling.lower()}")
+        if gate_reasons:
+            gate_mode = str(os.getenv("PULLBACK_WAIT_EVIDENCE_GATE_MODE", "shadow") or "shadow").strip().lower()
+            live_gate = gate_mode in {"live", "enforce", "block"}
+            gate_context["pullback_wait_evidence_gate"] = {
+                "demoted_to_watch": live_gate,
+                "shadow_only": not live_gate,
+                "mode": "live" if live_gate else "shadow",
+                "reasons": gate_reasons,
+                "evidence_action_ceiling": evidence_ceiling,
+                "evidence_data_state": evidence_state,
+            }
+            if live_gate:
+                return _decision(
+                    "WATCH",
+                    reason="pullback_wait_evidence_gate",
+                    warnings=["pullback_wait_evidence_gate"],
+                    demoted_to="WATCH",
+                    runtime_gate_reason="pullback_wait_evidence_gate",
+                )
+            default_warnings.append("pullback_wait_evidence_shadow")
+
     if (
         requested in {"PROBE_READY", "BUY_READY"}
         and bool(context.get("soft_gate_override_validation_enabled"))

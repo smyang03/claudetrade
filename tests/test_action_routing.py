@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from runtime.action_routing import route_candidate_action
 
@@ -62,6 +63,73 @@ class ActionRoutingTests(unittest.TestCase):
         self.assertEqual(decision.reason, "pullback_wait_blocked_negative_context")
         self.assertEqual(decision.runtime_gate_reason, "negative_pullback_context")
         self.assertEqual(decision.demoted_to, "WATCH")
+
+    def test_pullback_wait_evidence_ceiling_defaults_to_shadow_without_route_change(self) -> None:
+        decision = route_candidate_action(
+            {
+                "ticker": "GXO",
+                "action": "PULLBACK_WAIT",
+                "confidence": 0.72,
+                "price_targets": {
+                    "buy_zone_low": 40.0,
+                    "buy_zone_high": 41.0,
+                    "sell_target": 44.0,
+                    "stop_loss": 39.0,
+                    "hold_days": 1,
+                    "confidence": 0.72,
+                },
+            },
+            market="US",
+            execution_context={
+                "evidence_pack_ceiling_enabled": True,
+                "evidence_data_state": "missing",
+                "evidence_action_ceiling": "WATCH",
+            },
+        )
+
+        self.assertEqual(decision.final_action, "PULLBACK_WAIT")
+        self.assertEqual(decision.route, "PathB.wait")
+        self.assertIn("pullback_wait_evidence_shadow", decision.warnings)
+        gate = decision.runtime_gate["pullback_wait_evidence_gate"]
+        self.assertTrue(gate["shadow_only"])
+        self.assertFalse(gate["demoted_to_watch"])
+        self.assertEqual(gate["mode"], "shadow")
+        self.assertIn("evidence_missing", gate["reasons"])
+        self.assertIn("evidence_ceiling_watch", gate["reasons"])
+
+    def test_pullback_wait_evidence_ceiling_live_mode_demotes_to_watch(self) -> None:
+        with patch.dict("os.environ", {"PULLBACK_WAIT_EVIDENCE_GATE_MODE": "live"}, clear=False):
+            decision = route_candidate_action(
+                {
+                    "ticker": "GXO",
+                    "action": "PULLBACK_WAIT",
+                    "confidence": 0.72,
+                    "price_targets": {
+                        "buy_zone_low": 40.0,
+                        "buy_zone_high": 41.0,
+                        "sell_target": 44.0,
+                        "stop_loss": 39.0,
+                        "hold_days": 1,
+                        "confidence": 0.72,
+                    },
+                },
+                market="US",
+                execution_context={
+                    "evidence_pack_ceiling_enabled": True,
+                    "evidence_data_state": "missing",
+                    "evidence_action_ceiling": "WATCH",
+                },
+            )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertIsNone(decision.route)
+        self.assertEqual(decision.reason, "pullback_wait_evidence_gate")
+        self.assertEqual(decision.runtime_gate_reason, "pullback_wait_evidence_gate")
+        self.assertIn("pullback_wait_evidence_gate", decision.warnings)
+        gate = decision.runtime_gate["pullback_wait_evidence_gate"]
+        self.assertFalse(gate["shadow_only"])
+        self.assertTrue(gate["demoted_to_watch"])
+        self.assertEqual(gate["mode"], "live")
 
     def test_kr_pullback_negative_context_records_healthy_shadow_without_route_change(self) -> None:
         decision = route_candidate_action(

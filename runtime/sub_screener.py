@@ -67,6 +67,11 @@ def _empty_counter(market: str, date: str) -> dict[str, Any]:
         "last_attempt_at": "",
         "last_success_at": "",
         "last_detection": {},
+        "last_attempt_fingerprint": "",
+        "dedupe_suppressed_count": 0,
+        "last_dedupe_suppressed": {},
+        "triage_success_count": 0,
+        "last_triage": {},
         "attempts": [],
     }
 
@@ -77,7 +82,14 @@ def _normalize_counter(payload: Any, market: str, date: str) -> dict[str, Any]:
         state.update(payload)
     state["market"] = _market_key(market)
     state["date"] = str(date or "")
-    for key in ("scan_count", "detection_count", "attempt_count", "success_count"):
+    for key in (
+        "scan_count",
+        "detection_count",
+        "attempt_count",
+        "success_count",
+        "dedupe_suppressed_count",
+        "triage_success_count",
+    ):
         try:
             state[key] = max(0, int(state.get(key) or 0))
         except Exception:
@@ -152,6 +164,41 @@ def _new_tickers(result: SubScanResult) -> list[str]:
     return tickers
 
 
+def trigger_fingerprint(market: str, result: SubScanResult) -> str:
+    market_key = _market_key(market)
+    tickers = sorted(
+        {
+            _ticker_key(ticker, market_key)
+            for ticker in _new_tickers(result)
+            if _ticker_key(ticker, market_key)
+        }
+    )
+    return "|".join(tickers)
+
+
+def is_duplicate_trigger(
+    market: str,
+    date: str,
+    result: SubScanResult,
+    *,
+    ttl_sec: float,
+) -> bool:
+    fingerprint = trigger_fingerprint(market, result)
+    if not fingerprint:
+        return False
+    state = load_session_counter(market, date)
+    if str(state.get("last_attempt_fingerprint") or "") != fingerprint:
+        return False
+    last_attempt = str(state.get("last_attempt_at") or "").strip()
+    if not last_attempt:
+        return False
+    try:
+        elapsed = (datetime.now() - datetime.fromisoformat(last_attempt)).total_seconds()
+    except Exception:
+        return False
+    return elapsed < float(ttl_sec or 0.0)
+
+
 def record_scan(market: str, date: str, result: SubScanResult) -> None:
     """Record every scan and only count detection when should_trigger is true.
 
@@ -174,17 +221,42 @@ def record_scan(market: str, date: str, result: SubScanResult) -> None:
 def record_attempt(market: str, date: str, result: SubScanResult) -> None:
     state = load_session_counter(market, date)
     now = _now_iso()
+    fingerprint = trigger_fingerprint(market, result)
     attempt = {
         "at": now,
         "reason": str(getattr(result, "trigger_reason", "") or ""),
         "new_tickers": _new_tickers(result),
+        "fingerprint": fingerprint,
         "success": False,
     }
     state["attempt_count"] = int(state.get("attempt_count") or 0) + 1
     state["last_attempt_at"] = now
+    state["last_attempt_fingerprint"] = fingerprint
     attempts = list(state.get("attempts") or [])
     attempts.append(attempt)
     state["attempts"] = attempts[-50:]
+    save_session_counter(market, date, state)
+
+
+def record_dedupe_suppressed(
+    market: str,
+    date: str,
+    result: SubScanResult,
+    *,
+    ttl_sec: float,
+) -> None:
+    state = load_session_counter(market, date)
+    now = _now_iso()
+    fingerprint = trigger_fingerprint(market, result)
+    state["dedupe_suppressed_count"] = int(state.get("dedupe_suppressed_count") or 0) + 1
+    state["last_dedupe_suppressed"] = {
+        "at": now,
+        "reason": str(getattr(result, "trigger_reason", "") or ""),
+        "new_tickers": _new_tickers(result),
+        "fingerprint": fingerprint,
+        "ttl_sec": float(ttl_sec or 0.0),
+        "last_attempt_at": str(state.get("last_attempt_at") or ""),
+    }
     save_session_counter(market, date, state)
 
 
@@ -197,6 +269,61 @@ def record_success(market: str, date: str) -> None:
         attempts[-1] = {**dict(attempts[-1] or {}), "success": True}
         state["attempts"] = attempts
     save_session_counter(market, date, state)
+
+
+def record_triage_success(
+    market: str,
+    date: str,
+    result: SubScanResult,
+    *,
+    added_tickers: list[str],
+    skipped_tickers: list[str] | None = None,
+) -> None:
+    state = load_session_counter(market, date)
+    now = _now_iso()
+    added = [str(ticker or "").strip() for ticker in list(added_tickers or []) if str(ticker or "").strip()]
+    skipped = [str(ticker or "").strip() for ticker in list(skipped_tickers or []) if str(ticker or "").strip()]
+    state["triage_success_count"] = int(state.get("triage_success_count") or 0) + 1
+    state["success_count"] = int(state.get("success_count") or 0) + 1
+    state["last_success_at"] = now
+    state["last_triage"] = {
+        "at": now,
+        "reason": str(getattr(result, "trigger_reason", "") or ""),
+        "new_tickers": _new_tickers(result),
+        "added_tickers": added,
+        "skipped_tickers": skipped,
+        "fingerprint": trigger_fingerprint(market, result),
+    }
+    attempts = list(state.get("attempts") or [])
+    if attempts:
+        attempts[-1] = {
+            **dict(attempts[-1] or {}),
+            "success": True,
+            "triage": True,
+            "triage_added_tickers": added,
+            "triage_skipped_tickers": skipped,
+        }
+        state["attempts"] = attempts
+    save_session_counter(market, date, state)
+
+
+def triage_candidates(result: SubScanResult, *, max_add: int = 5) -> list[dict[str, Any]]:
+    limit = max(0, int(max_add or 0))
+    if limit <= 0:
+        return []
+    ranked: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in list(result.new_plan_a or []) + list(result.new_plan_b_high or []) + list(result.all_new_scored or []):
+        if not isinstance(row, dict):
+            continue
+        ticker = str(row.get("ticker") or "").strip()
+        if not ticker or ticker in seen:
+            continue
+        seen.add(ticker)
+        ranked.append(dict(row))
+        if len(ranked) >= limit:
+            break
+    return ranked
 
 
 def scan_new_candidates(

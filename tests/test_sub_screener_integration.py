@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import time
 import unittest
 from types import SimpleNamespace
@@ -50,6 +51,7 @@ class SubScreenerIntegrationTests(unittest.TestCase):
                 "SUB_SCREENER_MAX_PER_SESSION": "5",
                 "SUB_SCREENER_MIN_INTERVAL_MIN": "15",
                 "SUB_SCREENER_BLACKOUT_BEFORE_CLOSE_MIN": "30",
+                "SUB_SCREENER_TRIAGE_ENABLED": "true",
             },
             clear=False,
         )
@@ -91,6 +93,7 @@ class SubScreenerIntegrationTests(unittest.TestCase):
         recorded: list[str] = []
         bot._reinvoke_analysts = lambda *args, **kwargs: recorded.append("reinvoke")
         bot.manual_rescreen = lambda *args, **kwargs: recorded.append("rescreen")
+        bot._apply_sub_screener_triage = lambda *args, **kwargs: recorded.append("triage") or {"added_tickers": ["005930"], "skipped_tickers": []}
 
         with patch.dict(
             os.environ,
@@ -104,10 +107,10 @@ class SubScreenerIntegrationTests(unittest.TestCase):
             patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
             patch("runtime.sub_screener.record_scan", side_effect=lambda *args, **kwargs: recorded.append("scan")), \
             patch("runtime.sub_screener.record_attempt", side_effect=lambda *args, **kwargs: recorded.append("attempt")), \
-            patch("runtime.sub_screener.record_success", side_effect=lambda *args, **kwargs: recorded.append("success")):
+            patch("runtime.sub_screener.record_triage_success", side_effect=lambda *args, **kwargs: recorded.append("success")):
             TradingBot.maybe_run_sub_screener(bot, "KR")
 
-        self.assertEqual(recorded, ["scan", "attempt", "reinvoke", "rescreen", "success"])
+        self.assertEqual(recorded, ["scan", "attempt", "triage", "success"])
 
     def test_market_scoped_trigger_can_keep_us_shadow_when_global_live(self) -> None:
         bot = _base_bot()
@@ -152,7 +155,7 @@ class SubScreenerIntegrationTests(unittest.TestCase):
 
         self.assertIn("US", bot._last_sub_screener_at)
 
-    def test_candidate_override_passed_to_rescreen(self) -> None:
+    def test_legacy_candidate_override_passed_to_rescreen_when_triage_disabled(self) -> None:
         bot = _base_bot()
         rows = [{"ticker": "SPOT"}]
         captured: dict = {}
@@ -162,7 +165,8 @@ class SubScreenerIntegrationTests(unittest.TestCase):
             "candidate_override", candidate_override
         ) or ["SPOT"]
 
-        with patch("runtime.sub_screener.is_rate_limited", return_value=False), \
+        with patch.dict(os.environ, {"SUB_SCREENER_TRIAGE_ENABLED": "false"}, clear=False), \
+            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
             patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
             patch("runtime.sub_screener.record_scan"), \
             patch("runtime.sub_screener.record_attempt"), \
@@ -171,14 +175,15 @@ class SubScreenerIntegrationTests(unittest.TestCase):
 
         self.assertIs(captured["candidate_override"], rows)
 
-    def test_reinvoke_same_mode_runs_override_rescreen(self) -> None:
+    def test_legacy_reinvoke_same_mode_runs_override_rescreen_when_triage_disabled(self) -> None:
         bot = _base_bot()
         bot._screen_market_candidates = lambda market, mode, *, force_refresh=False: [{"ticker": "SPOT"}]
         calls: list[str] = []
         bot._reinvoke_analysts = lambda market, trigger: calls.append("reinvoke")
         bot.manual_rescreen = lambda market, *, source_type, trigger, candidate_override=None: calls.append("rescreen") or ["SPOT"]
 
-        with patch("runtime.sub_screener.is_rate_limited", return_value=False), \
+        with patch.dict(os.environ, {"SUB_SCREENER_TRIAGE_ENABLED": "false"}, clear=False), \
+            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
             patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
             patch("runtime.sub_screener.record_scan"), \
             patch("runtime.sub_screener.record_attempt"), \
@@ -187,7 +192,7 @@ class SubScreenerIntegrationTests(unittest.TestCase):
 
         self.assertEqual(calls, ["reinvoke", "rescreen"])
 
-    def test_reinvoke_mode_change_still_rescreens_with_override(self) -> None:
+    def test_legacy_reinvoke_mode_change_still_rescreens_with_override_when_triage_disabled(self) -> None:
         bot = _base_bot()
         bot._screen_market_candidates = lambda market, mode, *, force_refresh=False: [{"ticker": "SPOT"}]
         calls: list[str] = []
@@ -199,7 +204,8 @@ class SubScreenerIntegrationTests(unittest.TestCase):
         bot._reinvoke_analysts = reinvoke
         bot.manual_rescreen = lambda market, *, source_type, trigger, candidate_override=None: calls.append("rescreen") or ["SPOT"]
 
-        with patch("runtime.sub_screener.is_rate_limited", return_value=False), \
+        with patch.dict(os.environ, {"SUB_SCREENER_TRIAGE_ENABLED": "false"}, clear=False), \
+            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
             patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
             patch("runtime.sub_screener.record_scan"), \
             patch("runtime.sub_screener.record_attempt"), \
@@ -208,7 +214,7 @@ class SubScreenerIntegrationTests(unittest.TestCase):
 
         self.assertEqual(calls, ["reinvoke", "rescreen"])
 
-    def test_reinvoke_fail_fallback_to_rescreen(self) -> None:
+    def test_legacy_reinvoke_fail_fallback_to_rescreen_when_triage_disabled(self) -> None:
         bot = _base_bot()
         bot._screen_market_candidates = lambda market, mode, *, force_refresh=False: [{"ticker": "SPOT"}]
         calls: list[str] = []
@@ -220,7 +226,8 @@ class SubScreenerIntegrationTests(unittest.TestCase):
         bot._reinvoke_analysts = fail_reinvoke
         bot.manual_rescreen = lambda market, *, source_type, trigger, candidate_override=None: calls.append("rescreen") or ["SPOT"]
 
-        with patch("runtime.sub_screener.is_rate_limited", return_value=False), \
+        with patch.dict(os.environ, {"SUB_SCREENER_TRIAGE_ENABLED": "false"}, clear=False), \
+            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
             patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
             patch("runtime.sub_screener.record_scan"), \
             patch("runtime.sub_screener.record_attempt"), \
@@ -228,6 +235,43 @@ class SubScreenerIntegrationTests(unittest.TestCase):
             TradingBot.maybe_run_sub_screener(bot, "US")
 
         self.assertEqual(calls, ["reinvoke", "rescreen"])
+
+    def test_duplicate_trigger_suppresses_reinvoke_and_rescreen(self) -> None:
+        bot = _base_bot()
+        bot._screen_market_candidates = lambda market, mode, *, force_refresh=False: [{"ticker": "SPOT"}]
+        bot._reinvoke_analysts = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("reinvoke should not run"))
+        bot.manual_rescreen = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("rescreen should not run"))
+
+        with tempfile.TemporaryDirectory() as tmp, \
+            patch.dict(os.environ, {"SUB_SCREENER_STATE_DIR": tmp, "SUB_SCREENER_DEDUPE_TTL_MIN": "60"}, clear=False):
+            sub_screener.record_attempt("US", "2026-05-22", _trigger_result())
+            with patch("runtime.sub_screener.is_rate_limited", return_value=False), \
+                patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
+                patch("runtime.sub_screener.record_attempt", side_effect=AssertionError("attempt should not run")):
+                TradingBot.maybe_run_sub_screener(bot, "US")
+
+            state = sub_screener.load_session_counter("US", "2026-05-22")
+
+        self.assertEqual(state["attempt_count"], 1)
+        self.assertEqual(state["dedupe_suppressed_count"], 1)
+        self.assertEqual(state["last_dedupe_suppressed"]["new_tickers"], ["SPOT"])
+
+    def test_triage_suppresses_reinvoke_and_full_rescreen(self) -> None:
+        bot = _base_bot()
+        bot._screen_market_candidates = lambda market, mode, *, force_refresh=False: [{"ticker": "SPOT"}]
+        calls: list[str] = []
+        bot._reinvoke_analysts = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("reinvoke should not run"))
+        bot.manual_rescreen = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("rescreen should not run"))
+        bot._apply_sub_screener_triage = lambda *args, **kwargs: calls.append("triage") or {"added_tickers": ["SPOT"], "skipped_tickers": []}
+
+        with patch("runtime.sub_screener.is_rate_limited", return_value=False), \
+            patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
+            patch("runtime.sub_screener.record_scan"), \
+            patch("runtime.sub_screener.record_attempt"), \
+            patch("runtime.sub_screener.record_triage_success", side_effect=lambda *args, **kwargs: calls.append("success")):
+            TradingBot.maybe_run_sub_screener(bot, "US")
+
+        self.assertEqual(calls, ["triage", "success"])
 
     def test_loop_prevention_max_per_session(self) -> None:
         bot = _base_bot()
@@ -306,7 +350,8 @@ class SubScreenerIntegrationTests(unittest.TestCase):
         bot._reinvoke_analysts = lambda market, trigger: None
         bot.manual_rescreen = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("rescreen failed"))
 
-        with patch("runtime.sub_screener.is_rate_limited", return_value=False), \
+        with patch.dict(os.environ, {"SUB_SCREENER_TRIAGE_ENABLED": "false"}, clear=False), \
+            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
             patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
             patch("runtime.sub_screener.record_scan"), \
             patch("runtime.sub_screener.record_attempt"), \

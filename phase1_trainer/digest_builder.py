@@ -625,6 +625,13 @@ def _metric_prompt_value(value, label: str, digits: int = 1) -> str:
     return f"{label} {parsed:.{digits}f}"
 
 
+def _prompt_numeric(value, fmt: str, default: str = "N/A") -> str:
+    parsed = _safe_float_or_none(value)
+    if parsed is None:
+        return default
+    return format(parsed, fmt)
+
+
 def _iter_breadth_rows(items) -> list[dict]:
     rows: list[dict] = []
     if isinstance(items, dict):
@@ -1633,16 +1640,22 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         corp_news  = news.get("corp_news", {}).get(ticker, {})
         avg_sent   = corp_news.get("avg_sentiment", 0)
         news_items = corp_news.get("items", [])
+        change_pct_val = _safe_float_or_none(row.get("change_pct"))
+        rsi_val = _safe_float_or_none(row.get("rsi"))
+        bb_pct_val = _safe_float_or_none(bb_pct)
+        vol_ratio_val = _safe_float_or_none(vol_r)
+        pos_52w_val = _safe_float_or_none(row.get("pos52"))
+        avg_sent_val = _safe_float_or_none(avg_sent)
 
         layer_b[ticker] = {
             "name":           name,
             "close":          round(close_val, 2),
-            "change_pct":     round(float(row.get("change_pct", 0)), 2),
-            "rsi":            round(float(row.get("rsi", 50)), 1),
+            "change_pct":     round(change_pct_val if change_pct_val is not None else 0.0, 2),
+            "rsi":            round(rsi_val, 1) if rsi_val is not None else None,
             "macd":           macd_sig,
-            "bb_pct":         round(float(bb_pct), 1),
-            "vol_ratio":      round(float(vol_r), 2),
-            "pos_52w":        round(float(row.get("pos52", 50)), 1),
+            "bb_pct":         round(bb_pct_val, 1) if bb_pct_val is not None else None,
+            "vol_ratio":      round(vol_ratio_val, 2) if vol_ratio_val is not None else None,
+            "pos_52w":        round(pos_52w_val, 1) if pos_52w_val is not None else None,
             "vb_target":      round(vb_target, 2),
             "atr_pct":        atr_pct,       # 변동성 지표
             "trend_5d":       trend_5d,      # 5일 추세 기울기 (%/day)
@@ -1656,7 +1669,7 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
             "eps_estimate":   earnings_meta.get("eps_estimate"),
             "pead_bias":      earnings_meta.get("pead_bias", "neutral"),
             "prompt_applied": prompt_applied,
-            "news_sentiment": round(float(avg_sent), 3),
+            "news_sentiment": round(avg_sent_val, 3) if avg_sent_val is not None else None,
             "sec_filing":     bool([i for i in news_items if i.get("source") == "SEC EDGAR"]),
         }
         shadow_rows.append(
@@ -1831,18 +1844,27 @@ def digest_to_prompt(digest: dict) -> str:
     # 종목 지표
     lines.append("\n▶ 종목 기술 지표")
     for ticker, t in tech.items():
-        rsi_mark = "🔴과매도" if t["rsi"] < 30 else "🟢과매수" if t["rsi"] > 70 else ""
-        vol_mark = "⚡폭증" if t["vol_ratio"] > 3 else "↑증가" if t["vol_ratio"] > 1.5 else ""
-        bb_display = t['bb_pos'] if 'bb_pos' in t else f"{t['bb_pct']:.0f}%"
+        rsi = _safe_float_or_none(t.get("rsi"))
+        vol_ratio = _safe_float_or_none(t.get("vol_ratio"))
+        bb_pct = _safe_float_or_none(t.get("bb_pct"))
+        pos_52w = _safe_float_or_none(t.get("pos_52w"))
+        rsi_mark = "🔴과매도" if rsi is not None and rsi < 30 else "🟢과매수" if rsi is not None and rsi > 70 else ""
+        vol_mark = "⚡폭증" if vol_ratio is not None and vol_ratio > 3 else "↑증가" if vol_ratio is not None and vol_ratio > 1.5 else ""
+        bb_display = t.get("bb_pos") if t.get("bb_pos") not in (None, "") else (_prompt_numeric(bb_pct, ".0f", "N/A") + ("%" if bb_pct is not None else ""))
+        close_display = _prompt_numeric(t.get("close"), ",.2f")
+        change_display = _prompt_numeric(t.get("change_pct"), "+.2f", "+0.00")
+        rsi_display = _prompt_numeric(rsi, ".1f")
+        vol_display = _prompt_numeric(vol_ratio, ".1f")
+        pos_display = _prompt_numeric(pos_52w, ".0f")
         label = _prompt_ticker_label(ticker, t)
         lines.append(
-            f"  [{label}] {t['close']:,} "
-            f"{t['change_pct']:+.2f}% | "
-            f"RSI {t['rsi']}{rsi_mark} | "
-            f"MACD {t['macd']} | "
+            f"  [{label}] {close_display} "
+            f"{change_display}% | "
+            f"RSI {rsi_display}{rsi_mark} | "
+            f"MACD {t.get('macd', 'N/A')} | "
             f"BB {bb_display} | "
-            f"거래량 {t['vol_ratio']:.1f}배{vol_mark} | "
-            f"52주위치 {t['pos_52w']:.0f}%"
+            f"거래량 {vol_display}배{vol_mark} | "
+            f"52주위치 {pos_display}%"
         )
         # 수급 (KR만) — None=결측, 0=실제0으로 구분
         ff   = t.get("foreign_flow")
@@ -1860,10 +1882,11 @@ def digest_to_prompt(digest: dict) -> str:
             lines[-1] = lines[-1]  # 종목 라인 유지
             # MACD 라인에 방향 추가 (기존 라인 수정)
             for i in range(len(lines) - 1, -1, -1):
-                if f"MACD {t['macd']}" in lines[i]:
+                macd_text = str(t.get("macd", "N/A"))
+                if f"MACD {macd_text}" in lines[i]:
                     lines[i] = lines[i].replace(
-                        f"MACD {t['macd']}",
-                        f"MACD {t['macd']}({exp_str})"
+                        f"MACD {macd_text}",
+                        f"MACD {macd_text}({exp_str})"
                     )
                     break
         if t.get("disclosure"):
@@ -1878,9 +1901,12 @@ def digest_to_prompt(digest: dict) -> str:
         surprise_sign = str(t.get("surprise_sign", "") or "")
         surprise_strength = str(t.get("surprise_strength", "") or "")
         extras = []
-        if atr:           extras.append(f"ATR {atr:.1f}%")
-        if tr5 is not None and tr5 != 0: extras.append(f"5일추세 {tr5:+.2f}%/일")
-        if pm:            extras.append(f"프리마켓 {pm:+.2f}%")
+        atr_val = _safe_float_or_none(atr)
+        tr5_val = _safe_float_or_none(tr5)
+        pm_val = _safe_float_or_none(pm)
+        if atr_val is not None and atr_val > 0: extras.append(f"ATR {atr_val:.1f}%")
+        if tr5_val is not None and tr5_val != 0: extras.append(f"5일추세 {tr5_val:+.2f}%/일")
+        if pm_val is not None and pm_val != 0: extras.append(f"프리마켓 {pm_val:+.2f}%")
         if ed:            extras.append(f"실적 {ed}")
         if ew and ew != "none": extras.append(f"실적창 {ew}")
         if prompt_applied and surprise_sign and surprise_sign != "unknown":

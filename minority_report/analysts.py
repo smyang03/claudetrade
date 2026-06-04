@@ -31,6 +31,7 @@ from runtime.selection_compact_schema import (
     compact_schema_enabled,
     reference_prices_from_candidates,
 )
+from runtime import selection_smart_skip
 
 log          = get_minority_logger()
 analysis_log = get_analysis_logger()
@@ -2665,6 +2666,50 @@ Rules:
     fallback_meta = _attach_prompt_pool_meta(fallback_meta)
     fallback = fallback_meta["watchlist"]
 
+    smart_skip_prompt_hash = selection_smart_skip.sha256_text(prompt)
+    try:
+        smart_skip = selection_smart_skip.maybe_reuse(
+            market=market,
+            consensus_mode=consensus_mode,
+            execution_phase=execution_phase,
+            prompt_hash=smart_skip_prompt_hash,
+            prompt_candidate_count=len(prompt_candidates),
+            preopen_watch=preopen_watch,
+        )
+    except Exception as smart_skip_exc:
+        log.debug(f"[ticker-selection] smart skip fail-open {market}: {smart_skip_exc}")
+        smart_skip = {"reuse": False, "reason": "smart_skip_error"}
+    if bool(smart_skip.get("reuse")):
+        selection_meta = dict(smart_skip.get("selection_meta") or {})
+        selection_meta = _attach_prompt_pool_meta(selection_meta)
+        selection_meta["_smart_skip_reused"] = True
+        selection_meta["_smart_skip_reason"] = str(smart_skip.get("reason") or "prompt_cache_hit")
+        selection_meta["_smart_skip_cached_at"] = str(smart_skip.get("cached_at") or "")
+        tickers = list(dict.fromkeys(selection_meta.get("watchlist") or fallback or []))
+        selection_meta["watchlist"] = tickers
+        selection_meta["trade_ready"] = list(selection_meta.get("trade_ready") or [])
+        reasons = dict(smart_skip.get("reasons") or selection_meta.get("reasons") or {})
+        _LAST_SELECTION_META = selection_meta
+        log.info(
+            f"[ticker-selection] {market} smart_skip reuse "
+            f"watch={tickers} trade_ready={selection_meta.get('trade_ready', [])}"
+        )
+        analysis_log.info(
+            f"[selection smart_skip] {market} watch={tickers} trade_ready={selection_meta.get('trade_ready', [])}",
+            extra={
+                "extra": {
+                    "event": "ticker_selection_smart_skip",
+                    "market": market,
+                    "consensus_mode": consensus_mode,
+                    "selected": tickers,
+                    "trade_ready": selection_meta.get("trade_ready", []),
+                    "candidate_count": len(prompt_candidates),
+                    "reason": str(smart_skip.get("reason") or ""),
+                }
+            },
+        )
+        return tickers, reasons
+
     US_INVERSE_ETFS = {"TZA", "SPDN", "NVD", "SQQQ", "SDOW", "SPXU", "SH", "PSQ", "MYY"}
     US_STABLE_ANCHORS = ["T", "VZ", "XLU", "KO", "JNJ", "PG", "O", "VYM", "SCHD"]
 
@@ -2924,6 +2969,18 @@ Rules:
                     log.info(f"[ticker-selection] DEFENSIVE/HALT anchors added: {tickers}")
 
         _LAST_SELECTION_META = selection_meta
+        try:
+            selection_smart_skip.record_full_call(
+                market=market,
+                consensus_mode=consensus_mode,
+                execution_phase=execution_phase,
+                prompt_hash=smart_skip_prompt_hash,
+                prompt_candidate_count=len(prompt_candidates),
+                selection_meta=selection_meta,
+                reasons=reasons,
+            )
+        except Exception as smart_skip_record_exc:
+            log.debug(f"[ticker-selection] smart skip record failed {market}: {smart_skip_record_exc}")
         log.info(
             f"[ticker-selection] {market} watch={tickers} "
             f"trade_ready={selection_meta.get('trade_ready', [])}"
