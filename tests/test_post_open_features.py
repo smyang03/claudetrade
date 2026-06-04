@@ -8,9 +8,11 @@ from unittest.mock import patch
 
 from runtime.post_open_features import (
     append_feature_snapshot,
+    append_feature_snapshot_payload,
     build_post_open_snapshot,
     feature_known_at_allowed,
     infer_momentum_state,
+    load_recent_feature_snapshots,
     returns_from_price_history,
 )
 
@@ -90,6 +92,87 @@ class PostOpenFeatureTests(unittest.TestCase):
                 self.assertEqual(payload["ticker"], "001440")
                 self.assertEqual(payload["feature_surface"], "post_open_feature_builder")
                 self.assertTrue(payload["runtime_gate_evidence_preferred"])
+
+    def test_load_recent_feature_snapshots_filters_session_and_keeps_latest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("runtime_paths._RUNTIME_ROOT", Path(tmpdir)):
+                append_feature_snapshot_payload(
+                    {
+                        "market": "US",
+                        "ticker": "AAPL",
+                        "known_at": "2026-05-14T00:10:00",
+                        "anchor_at": "2026-05-13T22:30:00",
+                        "anchor_price": 100.0,
+                        "current_price": 101.0,
+                        "data_quality": "minute_partial",
+                    }
+                )
+                append_feature_snapshot_payload(
+                    {
+                        "market": "US",
+                        "ticker": "aapl",
+                        "known_at": "2026-05-14T00:12:00",
+                        "anchor_at": "2026-05-13T22:30:00",
+                        "anchor_price": 100.0,
+                        "current_price": 103.0,
+                        "data_quality": "minute_complete",
+                    }
+                )
+                append_feature_snapshot_payload(
+                    {
+                        "market": "US",
+                        "ticker": "MSFT",
+                        "known_at": "2026-05-14T00:13:00",
+                        "anchor_at": "2026-05-12T22:30:00",
+                        "anchor_price": 200.0,
+                        "current_price": 201.0,
+                        "data_quality": "minute_complete",
+                    }
+                )
+
+                loaded = load_recent_feature_snapshots(market="US", session_date="2026-05-13")
+
+                self.assertEqual(set(loaded), {"AAPL"})
+                self.assertEqual(loaded["AAPL"]["current_price"], 103.0)
+                self.assertEqual(loaded["AAPL"]["data_quality"], "minute_complete")
+                self.assertEqual(load_recent_feature_snapshots(market="US", session_date="2026-05-14"), {})
+
+    def test_load_recent_feature_snapshots_prefers_higher_quality_over_later_low_quality(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("runtime_paths._RUNTIME_ROOT", Path(tmpdir)):
+                append_feature_snapshot_payload(
+                    {
+                        "market": "KR",
+                        "ticker": "005930",
+                        "known_at": "2026-05-13T15:00:00",
+                        "anchor_at": "2026-05-13T09:00:00",
+                        "anchor_price": 100.0,
+                        "current_price": 110.0,
+                        "data_quality": "minute_complete",
+                        "ret_3m_pct": 1.0,
+                        "ret_5m_pct": 2.0,
+                        "opening_range_break": True,
+                        "vwap_distance_pct": 0.5,
+                        "volume_ratio_open": 2.0,
+                    }
+                )
+                append_feature_snapshot_payload(
+                    {
+                        "market": "KR",
+                        "ticker": "005930",
+                        "known_at": "2026-05-13T15:01:00",
+                        "anchor_at": "2026-05-13T09:00:00",
+                        "anchor_price": 100.0,
+                        "current_price": 111.0,
+                        "data_quality": "first_observed",
+                    }
+                )
+
+                loaded = load_recent_feature_snapshots(market="KR", session_date="2026-05-13")
+
+                self.assertEqual(loaded["005930"]["known_at"], "2026-05-13T15:00:00")
+                self.assertEqual(loaded["005930"]["data_quality"], "minute_complete")
+                self.assertEqual(loaded["005930"]["ret_5m_pct"], 2.0)
 
     def test_returns_from_history_are_future_blind_and_lag_limited(self) -> None:
         returns = returns_from_price_history(

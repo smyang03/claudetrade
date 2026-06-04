@@ -80,8 +80,13 @@ class SelectionSmartSkipTests(unittest.TestCase):
         state = selection_smart_skip.load_state("US", "2026-06-04")
 
         self.assertTrue(decision["reuse"])
+        self.assertTrue(decision["full_claude_call_skipped"])
+        self.assertEqual(decision["mode"], "live")
         self.assertEqual(decision["selection_meta"]["watchlist"], ["AAPL"])
+        self.assertTrue(decision["selection_meta"]["_smart_skip_full_claude_call_skipped"])
+        self.assertEqual(decision["selection_meta"]["_smart_skip_mode"], "live")
         self.assertEqual(state["reuse_count"], 1)
+        self.assertTrue(state["last_reuse"]["full_claude_call_skipped"])
 
     def test_fail_open_when_prompt_changes(self) -> None:
         selection_smart_skip.record_full_call(

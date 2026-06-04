@@ -87,6 +87,8 @@ def empty_state(market: str, session_date: str | None = None) -> dict[str, Any]:
         "fail_open_count": 0,
         "last_full_call_at": "",
         "last_reuse_at": "",
+        "last_reuse": {},
+        "last_full_call": {},
         "last_observe_hit": {},
         "last_fail_open": {},
         "fail_open_reasons": {},
@@ -117,6 +119,10 @@ def load_state(market: str, session_date: str | None = None) -> dict[str, Any]:
         state["last_entry_by_scope"] = {}
     if not isinstance(state.get("history"), list):
         state["history"] = []
+    if not isinstance(state.get("last_reuse"), dict):
+        state["last_reuse"] = {}
+    if not isinstance(state.get("last_full_call"), dict):
+        state["last_full_call"] = {}
     if not isinstance(state.get("fail_open_reasons"), dict):
         state["fail_open_reasons"] = {}
     return state
@@ -372,17 +378,37 @@ def maybe_reuse(
     state["mode"] = mode
     state["reuse_count"] = int(state.get("reuse_count") or 0) + 1
     state["last_reuse_at"] = now
+    state["last_reuse"] = {
+        "at": now,
+        "scope": scope,
+        "prompt_hash": prompt_hash,
+        "prompt_candidate_count": int(prompt_candidate_count or 0),
+        "cached_at": str(entry.get("created_at") or ""),
+        "full_claude_call_skipped": True,
+        "mode": "live",
+    }
     history = list(state.get("history") or [])
-    history.append({"at": now, "event": "reuse", "scope": scope, "prompt_hash": prompt_hash})
+    history.append({
+        "at": now,
+        "event": "reuse",
+        "scope": scope,
+        "prompt_hash": prompt_hash,
+        "mode": "live",
+        "full_claude_call_skipped": True,
+    })
     state["history"] = history[-100:]
     save_state(market_key, state, date_key)
     selection_meta["_smart_skip_reused"] = True
+    selection_meta["_smart_skip_mode"] = "live"
+    selection_meta["_smart_skip_full_claude_call_skipped"] = True
     selection_meta["_smart_skip_scope"] = scope
     selection_meta["_smart_skip_prompt_hash"] = prompt_hash
     selection_meta["_smart_skip_cached_at"] = str(entry.get("created_at") or "")
     return {
         "reuse": True,
         "reason": "prompt_cache_hit",
+        "mode": "live",
+        "full_claude_call_skipped": True,
         "selection_meta": selection_meta,
         "reasons": dict(entry.get("reasons") or {}),
         "scope": scope,
@@ -425,7 +451,22 @@ def record_full_call(
     state["mode"] = _mode()
     state["full_call_count"] = int(state.get("full_call_count") or 0) + 1
     state["last_full_call_at"] = now
+    state["last_full_call"] = {
+        "at": now,
+        "scope": scope,
+        "prompt_hash": str(prompt_hash or ""),
+        "prompt_candidate_count": int(prompt_candidate_count or 0),
+        "mode": _mode(),
+        "full_claude_call_skipped": False,
+    }
     history = list(state.get("history") or [])
-    history.append({"at": now, "event": "full_call", "scope": scope, "prompt_hash": str(prompt_hash or "")})
+    history.append({
+        "at": now,
+        "event": "full_call",
+        "scope": scope,
+        "prompt_hash": str(prompt_hash or ""),
+        "mode": _mode(),
+        "full_claude_call_skipped": False,
+    })
     state["history"] = history[-100:]
     save_state(market_key, state, date_key)

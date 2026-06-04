@@ -194,8 +194,10 @@ from runtime.post_open_features import (
     DEFAULT_OVEREXTENDED_5M_PCT,
     OVEREXTENDED_5M_PCT_BY_MARKET,
     append_feature_snapshot,
+    append_feature_snapshot_payload,
     build_post_open_snapshot,
     infer_momentum_state,
+    load_recent_feature_snapshots,
     returns_from_price_history,
 )
 from runtime.pathb_reasons import normalize_pathb_decision_exit_reason
@@ -1018,6 +1020,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._or_high: dict[str, float] = {}
         self._or_low: dict[str, float] = {}
         self._or_formed: dict[str, bool] = {}
+        self._restore_post_open_features_from_jsonl()
         self._intraday_recheck_stale_alert_keys: set[str] = set()
         # KIS 지수 스냅샷 캐시 — API 일시 실패 시 TTL 내 이전 성공 값 재사용
         self._kis_index_cache: dict[str, dict] = {}
@@ -11955,6 +11958,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return bool(new_dt and old_dt and (new_dt - old_dt).total_seconds() >= stale_sec)
         if new_rank <= 0 and old_rank > 0:
             return False
+        if old_rank > new_rank and old_rank > 0:
+            return False
         new_dt = self._post_open_feature_known_at(new)
         old_dt = self._post_open_feature_known_at(old)
         if new_dt and old_dt and new_dt > old_dt:
@@ -11962,6 +11967,79 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if new_rank > old_rank:
             return True
         return False
+
+    def _restore_post_open_tracking_from_features(self, market: str, features_by_ticker: dict[str, dict]) -> None:
+        self._ensure_post_open_tracking()
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        for raw_ticker, features in (features_by_ticker or {}).items():
+            if not isinstance(features, dict):
+                continue
+            ticker = self._selection_ticker_key(market_key, features.get("ticker") or raw_ticker)
+            if not ticker:
+                continue
+            anchor_at = str(features.get("anchor_at") or "").strip()
+            known_at = str(features.get("known_at") or "").strip()
+            anchor_price = self._positive_float_or_none(features.get("anchor_price"))
+            current_price = self._positive_float_or_none(features.get("current_price") or features.get("price"))
+            if not anchor_at or anchor_price is None:
+                continue
+            key = self._post_open_key(market_key, ticker)
+            self._post_open_anchor.setdefault(
+                key,
+                {
+                    "anchor_at": anchor_at,
+                    "anchor_price": float(anchor_price),
+                    "anchor_source": str(features.get("anchor_source") or features.get("data_quality") or "restored_snapshot"),
+                },
+            )
+            history = list(self._post_open_price_history.get(key) or [])
+            history.append({"ts": anchor_at, "price": float(anchor_price), "source": "restored_snapshot_anchor"})
+            if known_at and current_price is not None:
+                history.append({"ts": known_at, "price": float(current_price), "source": "restored_snapshot"})
+            dedup: dict[str, dict] = {}
+            for item in history:
+                ts = str((item or {}).get("ts") or "").strip()
+                price = self._positive_float_or_none((item or {}).get("price"))
+                if ts and price is not None:
+                    dedup[ts] = {"ts": ts, "price": float(price), "source": str((item or {}).get("source") or "")}
+            self._post_open_price_history[key] = [dedup[ts] for ts in sorted(dedup)][-240:]
+
+    def _restore_post_open_features_from_jsonl(self) -> None:
+        runtime_cfg = getattr(self, "runtime_config", None)
+        if runtime_cfg is not None and not runtime_cfg.get_bool("ENABLE_POST_OPEN_FEATURE_JSONL", True):
+            return
+        restored_counts: dict[str, int] = {}
+        for market_key in ("KR", "US"):
+            try:
+                session_date = self._current_session_date_str(market_key)
+            except Exception:
+                continue
+            try:
+                features = load_recent_feature_snapshots(market=market_key, session_date=session_date)
+            except Exception as exc:
+                log.debug(f"[post_open restore] {market_key} failed: {exc}")
+                continue
+            if not features:
+                continue
+            merged = self._merge_last_post_open_features(market_key, features)
+            self._restore_post_open_tracking_from_features(market_key, features)
+            restored_counts[market_key] = len(features)
+            try:
+                log.info(
+                    f"[post_open restore] {market_key} restored={len(features)} "
+                    f"store={len(merged)} session={session_date}"
+                )
+            except Exception:
+                pass
+        if restored_counts:
+            try:
+                self._write_funnel_event(
+                    "post_open_feature_restore",
+                    "KR" if restored_counts.get("KR") else "US",
+                    {"restored_counts": restored_counts},
+                )
+            except Exception:
+                pass
     def _maybe_update_or_cache_from_post_open_feature(self, market: str, ticker: str, features: dict) -> bool:
         if not isinstance(features, dict) or not features:
             return False
@@ -12056,13 +12134,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             value = str(features.get(key) or "").strip()
             if value == expected:
                 return True
-        for key in ("anchor_at", "known_at"):
-            value = str(features.get(key) or "").strip()
-            if value[:10] == expected:
-                return True
+        anchor_at = str(features.get("anchor_at") or "").strip()
+        if anchor_at:
+            return anchor_at[:10] == expected
         snapshot_id = str(features.get("snapshot_id") or "").strip()
         if snapshot_id.startswith(compact):
             return True
+        market_key = str(features.get("market") or "").strip().upper()
+        if market_key != "US":
+            known_at = str(features.get("known_at") or "").strip()
+            if known_at[:10] == expected:
+                return True
         return False
 
     def _stale_cached_evidence_missing_feature(self, market: str, ticker: str, session_date: str) -> dict:
@@ -12643,6 +12725,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 fail_closed_reason=fail_closed_reason,
             )
         self._merge_last_post_open_features(market_key, features_by_ticker)
+        if self._runtime_bool("ENABLE_POST_OPEN_FEATURE_JSONL", True):
+            for features in (features_by_ticker or {}).values():
+                if not isinstance(features, dict):
+                    continue
+                try:
+                    payload = dict(features)
+                    payload.setdefault("market", market_key)
+                    payload.setdefault("evidence_surface", "selection_intraday_prefetch")
+                    payload.setdefault("feature_surface", "intraday_minute_feature")
+                    payload.setdefault("runtime_gate_evidence_preferred", True)
+                    append_feature_snapshot_payload(payload)
+                except Exception as exc:
+                    log.debug(f"[intraday evidence jsonl failed] {market_key}: {exc}")
         return features_by_ticker
     def _annotate_selection_execution_features(
         self,

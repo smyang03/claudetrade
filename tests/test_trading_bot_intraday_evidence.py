@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import threading
+import tempfile
 import unittest
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import patch
 
 from runtime.intraday_minute_cache import IntradayMinuteCache
+from runtime.post_open_features import append_feature_snapshot_payload
 from trading_bot import KST, TradingBot
 
 
@@ -199,6 +202,83 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
 
         self.assertEqual(bot._or_high["005930"], 110.0)
         self.assertEqual(bot._or_low["005930"], 100.0)
+
+    def test_later_lower_quality_feature_does_not_overwrite_complete_evidence(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles())
+
+        TradingBot._merge_last_post_open_features(
+            bot,
+            "KR",
+            {
+                "005930": {
+                    "ticker": "005930",
+                    "known_at": "2026-05-13T09:16:00",
+                    "data_quality": "minute_complete",
+                    "ret_5m_pct": 5.0,
+                    "opening_range_break": True,
+                    "vwap_distance_pct": 1.2,
+                    "volume_ratio_open": 2.0,
+                }
+            },
+        )
+        TradingBot._merge_last_post_open_features(
+            bot,
+            "KR",
+            {
+                "005930": {
+                    "ticker": "005930",
+                    "known_at": "2026-05-13T09:17:00",
+                    "data_quality": "first_observed",
+                    "ret_5m_pct": None,
+                    "opening_range_break": None,
+                    "vwap_distance_pct": None,
+                    "volume_ratio_open": None,
+                }
+            },
+        )
+
+        features = bot._last_post_open_features_by_ticker["KR"]["005930"]
+        self.assertEqual(features["data_quality"], "minute_complete")
+        self.assertTrue(features["opening_range_break"])
+        self.assertEqual(features["volume_ratio_open"], 2.0)
+
+    def test_startup_restore_loads_post_open_feature_jsonl_and_or_cache(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles())
+        bot._last_post_open_features_by_ticker = {"KR": {}, "US": {}}
+        bot._post_open_price_history = {}
+        bot._post_open_anchor = {}
+        bot._or_high = {}
+        bot._or_low = {}
+        bot._or_formed = {}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("runtime_paths._RUNTIME_ROOT", Path(tmpdir)):
+                append_feature_snapshot_payload(
+                    {
+                        "market": "KR",
+                        "ticker": "005930",
+                        "known_at": "2026-05-13T09:16:00",
+                        "anchor_at": "2026-05-13T09:00:00",
+                        "anchor_price": 100.0,
+                        "current_price": 106.0,
+                        "data_quality": "minute_complete",
+                        "ret_5m_pct": 5.0,
+                        "opening_range_high": 104.0,
+                        "opening_range_low": 99.0,
+                        "opening_range_break": True,
+                        "vwap_distance_pct": 1.0,
+                        "volume_ratio_open": 2.0,
+                    }
+                )
+
+                TradingBot._restore_post_open_features_from_jsonl(bot)
+
+        features = bot._last_post_open_features_by_ticker["KR"]["005930"]
+        self.assertEqual(features["data_quality"], "minute_complete")
+        self.assertTrue(bot._or_formed["005930"])
+        self.assertEqual(bot._or_high["005930"], 104.0)
+        self.assertIn("KR:005930", bot._post_open_anchor)
+        self.assertGreaterEqual(len(bot._post_open_price_history["KR:005930"]), 2)
 
     def test_prefetch_uses_phase_target_limit_and_candidate_priority(self) -> None:
         bot = _make_bot(lambda **kwargs: _candles())

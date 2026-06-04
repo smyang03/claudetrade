@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -249,8 +250,136 @@ def build_post_open_snapshot(
 
 
 def append_feature_snapshot(snapshot: PostOpenFeatureSnapshot) -> None:
-    day = str(snapshot.known_at)[:10].replace("-", "")
-    path = get_runtime_path("logs", "funnel", f"post_open_features_{day}_{snapshot.market}.jsonl")
+    append_feature_snapshot_payload(snapshot.to_dict())
+
+
+def append_feature_snapshot_payload(payload: dict[str, Any]) -> None:
+    if not isinstance(payload, dict) or not payload:
+        return
+    market = str(payload.get("market") or "").strip().upper()
+    ticker = str(payload.get("ticker") or "").strip()
+    if market not in {"KR", "US"} or not ticker:
+        return
+    known_at = str(payload.get("known_at") or datetime.now().isoformat(timespec="seconds"))
+    day = known_at[:10].replace("-", "")
+    path = get_runtime_path("logs", "funnel", f"post_open_features_{day}_{market}.jsonl")
     path.parent.mkdir(parents=True, exist_ok=True)
+    record = dict(payload)
+    record.setdefault("feature_surface", "post_open_feature_builder")
+    record.setdefault("evidence_surface", "post_open_feature_snapshot")
+    record.setdefault("runtime_gate_evidence_preferred", True)
     with path.open("a", encoding="utf-8", newline="\n") as f:
-        f.write(json.dumps(snapshot.to_dict(), ensure_ascii=False, separators=(",", ":")) + "\n")
+        f.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def _feature_matches_session(payload: dict[str, Any], session_date: str, market: str = "") -> bool:
+    expected = str(session_date or "").strip()[:10]
+    if not expected:
+        return False
+    compact = expected.replace("-", "")
+    for key in ("session_date", "market_session_date"):
+        value = str((payload or {}).get(key) or "").strip()[:10]
+        if value == expected:
+            return True
+    anchor_at = str((payload or {}).get("anchor_at") or "").strip()
+    if anchor_at:
+        return anchor_at[:10] == expected
+    snapshot_id = str((payload or {}).get("snapshot_id") or "").strip()
+    if snapshot_id:
+        return bool(snapshot_id.startswith(compact))
+    market_key = str(market or (payload or {}).get("market") or "").strip().upper()
+    if market_key != "US":
+        known_at = str((payload or {}).get("known_at") or "").strip()
+        if known_at[:10] == expected:
+            return True
+    return False
+
+
+def _feature_known_at(payload: dict[str, Any]) -> datetime:
+    text = str((payload or {}).get("known_at") or "").strip()
+    if text:
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception:
+            pass
+    return datetime.min
+
+
+def _feature_quality_rank(payload: dict[str, Any]) -> int:
+    quality = str((payload or {}).get("data_quality") or "").strip().lower()
+    if quality in {"minute_complete", "confirmed", "good"}:
+        return 4
+    if quality in {"minute_partial", "partial"}:
+        return 2
+    if quality in {"first_observed", "preopen_anchor"}:
+        return 1
+    return 0
+
+
+def _feature_presence_score(payload: dict[str, Any]) -> int:
+    score = 0
+    for key in (
+        "current_price",
+        "ret_3m_pct",
+        "ret_5m_pct",
+        "opening_range_break",
+        "opening_range_high",
+        "opening_range_low",
+        "vwap",
+        "vwap_distance_pct",
+        "volume_ratio_open",
+    ):
+        value = (payload or {}).get(key)
+        if value not in (None, ""):
+            score += 1
+    return score
+
+
+def _feature_restore_sort_key(payload: dict[str, Any]) -> tuple[int, int, datetime]:
+    return (_feature_quality_rank(payload), _feature_presence_score(payload), _feature_known_at(payload))
+
+
+def load_recent_feature_snapshots(
+    *,
+    market: str,
+    session_date: str,
+    max_files: int = 4,
+    max_lines_per_file: int = 5000,
+) -> dict[str, dict[str, Any]]:
+    market_key = str(market or "").strip().upper()
+    if market_key not in {"KR", "US"}:
+        return {}
+    base = get_runtime_path("logs", "funnel", "placeholder", make_parents=False).parent
+    files = sorted(
+        base.glob(f"post_open_features_*_{market_key}.jsonl"),
+        key=lambda path: path.stat().st_mtime if path.exists() else 0.0,
+        reverse=True,
+    )[: max(1, int(max_files or 1))]
+    latest: dict[str, dict[str, Any]] = {}
+    latest_score: dict[str, tuple[int, int, datetime]] = {}
+    for path in files:
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                lines = deque(f, maxlen=max(1, int(max_lines_per_file or 1)))
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                payload = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("market") or "").strip().upper() != market_key:
+                continue
+            if not _feature_matches_session(payload, session_date, market_key):
+                continue
+            ticker = str(payload.get("ticker") or "").strip()
+            if not ticker:
+                continue
+            key = ticker.upper() if market_key == "US" else ticker
+            score = _feature_restore_sort_key(payload)
+            if key not in latest or score >= latest_score.get(key, (0, 0, datetime.min)):
+                latest[key] = dict(payload)
+                latest_score[key] = score
+    return latest

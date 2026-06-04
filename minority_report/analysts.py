@@ -2683,6 +2683,8 @@ Rules:
         selection_meta = dict(smart_skip.get("selection_meta") or {})
         selection_meta = _attach_prompt_pool_meta(selection_meta)
         selection_meta["_smart_skip_reused"] = True
+        selection_meta["_smart_skip_mode"] = str(smart_skip.get("mode") or "live")
+        selection_meta["_smart_skip_full_claude_call_skipped"] = bool(smart_skip.get("full_claude_call_skipped", True))
         selection_meta["_smart_skip_reason"] = str(smart_skip.get("reason") or "prompt_cache_hit")
         selection_meta["_smart_skip_cached_at"] = str(smart_skip.get("cached_at") or "")
         tickers = list(dict.fromkeys(selection_meta.get("watchlist") or fallback or []))
@@ -2692,6 +2694,8 @@ Rules:
         _LAST_SELECTION_META = selection_meta
         log.info(
             f"[ticker-selection] {market} smart_skip reuse "
+            f"full_call_skipped=true reason={selection_meta.get('_smart_skip_reason', '')} "
+            f"scope={selection_meta.get('_smart_skip_scope', '')} "
             f"watch={tickers} trade_ready={selection_meta.get('trade_ready', [])}"
         )
         analysis_log.info(
@@ -2699,12 +2703,19 @@ Rules:
             extra={
                 "extra": {
                     "event": "ticker_selection_smart_skip",
+                    "log_contract": "selection_smart_skip_live_reuse_v1",
+                    "source": "smart_skip_live_reuse",
                     "market": market,
                     "consensus_mode": consensus_mode,
                     "selected": tickers,
                     "trade_ready": selection_meta.get("trade_ready", []),
                     "candidate_count": len(prompt_candidates),
                     "reason": str(smart_skip.get("reason") or ""),
+                    "mode": str(smart_skip.get("mode") or "live"),
+                    "full_claude_call_skipped": bool(smart_skip.get("full_claude_call_skipped", True)),
+                    "cache_scope": str(selection_meta.get("_smart_skip_scope") or smart_skip.get("scope") or ""),
+                    "cached_at": str(selection_meta.get("_smart_skip_cached_at") or smart_skip.get("cached_at") or ""),
+                    "prompt_hash": str(selection_meta.get("_smart_skip_prompt_hash") or smart_skip_prompt_hash),
                 }
             },
         )
