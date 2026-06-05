@@ -2203,7 +2203,7 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
     from lifecycle.event_store import EventStore
     from lifecycle.models import LifecycleEvent
 
-    store = EventStore()
+    store = EventStore(read_only=True, initialize=False)
     kr_session = _session_date_guess("KR")
     us_session = _session_date_guess("US")
     current_sessions = {"KR": kr_session, "US": us_session}

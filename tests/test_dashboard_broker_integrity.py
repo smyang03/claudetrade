@@ -42,6 +42,36 @@ def test_position_merge_preserves_broker_integrity_status() -> None:
     assert pos["broker_missing_seen_count"] == 1
 
 
+def test_judgment_basis_exposes_execution_authority_labels() -> None:
+    preopen = dashboard_server._judgment_basis(
+        {
+            "digest_raw": {"context": {}},
+            "judgment_context_basis": {
+                "phase": "preopen_watch",
+                "execution_authority": "NONE",
+                "intraday_context_included": False,
+            },
+        },
+        "KR",
+    )
+    executable = dashboard_server._judgment_basis(
+        {
+            "digest_raw": {"context": {}},
+            "judgment_context_basis": {
+                "phase": "opening_confirm",
+                "execution_authority": "BUY_SELL_RECHECK",
+                "intraday_context_included": True,
+            },
+        },
+        "US",
+    )
+
+    assert preopen["judgment_label"] == "장전 후보판단"
+    assert preopen["orders_allowed"] is False
+    assert executable["judgment_label"] == "실행 장판단"
+    assert executable["orders_allowed"] is True
+
+
 def test_position_merge_preserves_sell_signal_metadata_for_display() -> None:
     broker_rows = [
         {

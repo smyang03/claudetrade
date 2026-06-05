@@ -7175,12 +7175,29 @@ def _judgment_basis(rec: dict, market: str) -> dict:
     primary_ctx = ctx.get(primary_key) if isinstance(ctx.get(primary_key), dict) else {}
     secondary_ctx = ctx.get(secondary_key) if isinstance(ctx.get(secondary_key), dict) else {}
     context_basis = rec.get("judgment_context_basis") if isinstance(rec.get("judgment_context_basis"), dict) else {}
+    phase = str(context_basis.get("phase") or "")
+    execution_authority = str(context_basis.get("execution_authority") or "")
+    authority_allows_orders = execution_authority in {"BUY_SELL_RECHECK", "BUY_SELL_LIVE"}
+    if phase == "preopen_watch":
+        judgment_label = "장전 후보판단"
+        authority_label = "주문 권한 없음"
+    elif authority_allows_orders:
+        judgment_label = "실행 장판단"
+        authority_label = "주문 판단 가능"
+    else:
+        judgment_label = "실행 장판단 미확정"
+        authority_label = "신규 매수 차단"
     built_at_raw = digest.get("built_at") or ""
     flags = digest.get("data_quality_flags") or ctx.get("data_quality_flags") or []
     if not isinstance(flags, list):
         flags = [str(flags)]
 
     basis = {
+        "phase": phase,
+        "execution_authority": execution_authority,
+        "judgment_label": judgment_label,
+        "authority_label": authority_label,
+        "orders_allowed": bool(authority_allows_orders),
         "digest_built_at": built_at_raw,
         "primary_label": primary_label,
         "secondary_label": secondary_label,
@@ -7684,6 +7701,8 @@ def api_brain():
         "regime":       market.get("current_beliefs", {}).get("market_regime", market.get("current_regime", "unknown")),
         "analyst":      market.get("analyst_performance", {}),
         "beliefs":      market.get("current_beliefs", {}),
+        "learned_lessons": market.get("current_beliefs", {}).get("learned_lessons", []),
+        "correction_guide": brain.get("correction_guide", {}).get(mkt, {}),
         "version":      brain.get("meta", {}).get("version", 0),
         "updated":      brain.get("meta", {}).get("last_updated", ""),
         "strategy":     strategy,
@@ -14635,6 +14654,53 @@ function renderBrokerTruthCard(mkt, bt) {
       ${compact ? `<div class="pathb-broker-error" title="${pathbEscapeHtml(error)}">오류 ${pathbEscapeHtml(compact)}${hint ? `<div class="pathb-broker-hint">${pathbEscapeHtml(hint)}</div>` : ''}</div>` : ''}
     </div>`;
 }
+function koPathBPreopenPolicy(v) {
+  const m = {
+    DEFER_OPEN_RECHECK: '개장 재확인 대기',
+    WAIT_FRESH_OPEN_QUOTE: '개장 호가 대기',
+    SELL_NOW_AFTER_OPEN_CONFIRM: '개장 확인 후 매도',
+    SELL_NOW: '즉시 매도',
+    CLEAR_DEFERRED_STOP: '대기 해제',
+    SKIP_STALE_OR_CLOSED: '중복 리뷰 차단'
+  };
+  return m[String(v || '').toUpperCase()] || String(v || '');
+}
+function koPathBPreopenSeverity(v) {
+  const m = {
+    shallow_loss_stop: '얕은 손절',
+    severe_loss_stop: '큰 손절',
+    profit_protective_stop: '수익 보호',
+    boundary_loss_stop: '경계 구간'
+  };
+  return m[String(v || '')] || String(v || '');
+}
+function pathbPreopenPolicyCell(r) {
+  if (r.skip_stale_or_closed_review) {
+    const reason = r.skip_stale_or_closed_review_reason || '';
+    const at = r.skip_stale_or_closed_review_at || '';
+    return `<div style="font-size:11px;color:#fbbf24">중복 리뷰 차단</div>`
+      + `<div style="font-size:10px;color:#94a3b8">${[reason, at].filter(Boolean).map(pathbEscapeHtml).join(' · ')}</div>`;
+  }
+  const decision = r.preopen_exit_policy_decision || r.open_confirm_recheck_result || '';
+  const status = r.preopen_exit_policy_status || r.preopen_exit_defer_status || '';
+  if (!decision && !status) return '-';
+  const severity = koPathBPreopenSeverity(r.preopen_exit_policy_severity || '');
+  const bits = [koPathBPreopenPolicy(decision)].filter(Boolean);
+  if (severity) bits.push(severity);
+  if (r.preopen_exit_defer_active) bits.push('대기중');
+  const meta = [];
+  if (r.preopen_exit_policy_pnl_pct !== '' && r.preopen_exit_policy_pnl_pct !== null && r.preopen_exit_policy_pnl_pct !== undefined) {
+    meta.push(`PnL ${fmtSignedPct(r.preopen_exit_policy_pnl_pct)}`);
+  }
+  if (r.preopen_exit_policy_stop_distance_pct !== '' && r.preopen_exit_policy_stop_distance_pct !== null && r.preopen_exit_policy_stop_distance_pct !== undefined) {
+    meta.push(`stop ${fmtSignedPct(r.preopen_exit_policy_stop_distance_pct)}`);
+  }
+  if (status) meta.push(status);
+  if (r.open_confirm_recheck_at) meta.push(r.open_confirm_recheck_at);
+  else if (r.preopen_exit_policy_recheck_earliest_at) meta.push(`재확인 ${r.preopen_exit_policy_recheck_earliest_at}`);
+  return `<div style="font-size:11px;color:#93c5fd">${bits.map(pathbEscapeHtml).join(' · ')}</div>`
+    + (meta.length ? `<div style="font-size:10px;color:#94a3b8">${meta.map(pathbEscapeHtml).join(' · ')}</div>` : '');
+}
 async function loadPathB() {
   const market = (typeof MARKET !== 'undefined' ? MARKET : '') || localStorage.getItem('market') || 'KR';
   const mode = localStorage.getItem('runtime_mode') || 'live';
@@ -14764,6 +14830,7 @@ async function loadPathB() {
       <td>${r.display_ticker || r.ticker || ''}</td>
       <td>${koBuyPath(r.buy_path || 'path_b')}</td>
       <td>${koPathBStatus(r.status || '')}</td>
+      <td>${pathbPreopenPolicyCell(r)}</td>
       <td>${r.buy_zone_low || ''} ~ ${r.buy_zone_high || ''}</td>
       <td>${r.sell_target || ''}</td>
       <td>${r.stop_loss || ''}</td>
@@ -14775,13 +14842,14 @@ async function loadPathB() {
     </tr>
   `).join('');
   document.getElementById('pathb-active').innerHTML = rows
-    ? `<table><thead><tr><th>시장</th><th>종목</th><th>매수 경로</th><th>상태</th><th>매수 존</th><th>목표</th><th>손절</th><th>신뢰도</th><th>수량</th><th>수익률</th><th>진입 근거</th><th>청산 근거</th></tr></thead><tbody>${rows}</tbody></table>`
+    ? `<table><thead><tr><th>시장</th><th>종목</th><th>매수 경로</th><th>상태</th><th>개장 재검증</th><th>매수 존</th><th>목표</th><th>손절</th><th>신뢰도</th><th>수량</th><th>수익률</th><th>진입 근거</th><th>청산 근거</th></tr></thead><tbody>${rows}</tbody></table>`
     : '<div class="muted">활성 B플랜이 없습니다.</div>';
   const recentRows = (b.recent || []).map(r => `
     <tr>
       <td>${r.display_ticker || r.ticker || ''}</td>
       <td>${koBuyPath(r.buy_path || 'path_b')}</td>
       <td>${koPathBStatus(r.status || '')}</td>
+      <td>${pathbPreopenPolicyCell(r)}</td>
       <td>${r.buy_zone_low || ''} ~ ${r.buy_zone_high || ''}</td>
       <td>${r.actual_entry_price || r.entry_order_price || ''}</td>
       <td>${r.actual_exit_price || ''}</td>
@@ -14793,7 +14861,7 @@ async function loadPathB() {
     </tr>
   `).join('');
   document.getElementById('pathb-recent').innerHTML = recentRows
-    ? `<table><thead><tr><th>종목</th><th>매수 경로</th><th>상태</th><th>매수 존</th><th>진입</th><th>청산</th><th>수익률</th><th>결과</th><th>Claude 근거</th><th>진입 태그</th><th>무효 조건</th></tr></thead><tbody>${recentRows}</tbody></table>`
+    ? `<table><thead><tr><th>종목</th><th>매수 경로</th><th>상태</th><th>개장 재검증</th><th>매수 존</th><th>진입</th><th>청산</th><th>수익률</th><th>결과</th><th>Claude 근거</th><th>진입 태그</th><th>무효 조건</th></tr></thead><tbody>${recentRows}</tbody></table>`
     : '<div class="muted">오늘 클로드 가격 플랜 기록이 없습니다.</div>';
   const unknownRows = (b.order_unknown || []).map(r => `
     <tr><td>${r.market || ''}</td><td>${r.display_ticker || r.ticker || ''}</td><td>${koPathBStatus(r.status || '')}</td><td>${koOrderUnknownResolution(r.order_unknown_resolution || '')}</td><td>${r.manual_reconciliation_required ? '필요' : '-'}</td><td>${r.broker_position_evidence ? '있음' : '없음'}</td><td>${r.broker_today_fill_evidence ? '있음' : '없음'}</td><td>${r.path_a_origin_possible ? '가능' : '-'}</td><td>${r.broker_truth_last_success_at || ''}</td><td>${r.path_run_id || ''}</td></tr>

@@ -118,7 +118,7 @@ def build_v2_ops_summary(
     runtime_mode: str | None = None,
     session_date: str | None = None,
 ) -> dict[str, Any]:
-    store = store or EventStore()
+    store = store or _default_read_event_store()
     market_key = str(market or "").upper() or None
     runtime_key = str(runtime_mode or "").lower() or None
     session_key = session_date or _session_date_from_bot(bot)
@@ -207,6 +207,16 @@ def build_v2_ops_summary(
         "daily_review": latest_review,
         "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
+
+
+def _default_read_event_store() -> EventStore:
+    store = EventStore(read_only=True, initialize=False)
+    try:
+        with store.connect():
+            pass
+        return store
+    except Exception:
+        return EventStore()
 
 
 def _session_date_from_bot(bot: Any | None) -> str:
@@ -2980,6 +2990,21 @@ def _compact_path_runs(
                 "pnl_pct": plan.get("pnl_pct", ""),
                 "cancel_reason": plan.get("cancel_reason", ""),
                 "close_reason": plan.get("close_reason", ""),
+                "preopen_exit_policy_mode": plan.get("preopen_exit_policy_mode", ""),
+                "preopen_exit_policy_decision": plan.get("preopen_exit_policy_decision", ""),
+                "preopen_exit_policy_status": plan.get("preopen_exit_policy_status", ""),
+                "preopen_exit_policy_severity": plan.get("preopen_exit_policy_severity", ""),
+                "preopen_exit_policy_pnl_pct": plan.get("preopen_exit_policy_pnl_pct", ""),
+                "preopen_exit_policy_stop_distance_pct": plan.get("preopen_exit_policy_stop_distance_pct", ""),
+                "preopen_exit_policy_recorded_at": plan.get("preopen_exit_policy_recorded_at", ""),
+                "preopen_exit_policy_recheck_earliest_at": plan.get("preopen_exit_policy_recheck_earliest_at", ""),
+                "preopen_exit_defer_active": bool(plan.get("preopen_exit_defer_active", False)),
+                "preopen_exit_defer_status": plan.get("preopen_exit_defer_status", ""),
+                "open_confirm_recheck_result": plan.get("open_confirm_recheck_result", ""),
+                "open_confirm_recheck_at": plan.get("open_confirm_recheck_at", ""),
+                "skip_stale_or_closed_review": bool(plan.get("skip_stale_or_closed_review", False)),
+                "skip_stale_or_closed_review_reason": plan.get("skip_stale_or_closed_review_reason", ""),
+                "skip_stale_or_closed_review_at": plan.get("skip_stale_or_closed_review_at", ""),
                 "ops_reason": ops.get("ops_reason", ""),
                 "ops_reason_source": ops.get("reason_source", ""),
                 "reason_codes": ops.get("reason_codes", []),

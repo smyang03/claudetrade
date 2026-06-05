@@ -62,6 +62,15 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertIn('id="lifetime-pnl-basis"', body)
         self.assertNotIn('id="streak-val"', body)
 
+    def test_pathb_page_exposes_preopen_recheck_column(self) -> None:
+        res = app.test_client().get("/pathb")
+
+        self.assertEqual(res.status_code, 200)
+        body = res.get_data(as_text=True)
+        self.assertIn("function pathbPreopenPolicyCell", body)
+        self.assertIn("개장 재검증", body)
+        self.assertIn("preopen_exit_policy_decision", body)
+
     def test_today_page_shows_pnl_source_badge_helpers(self) -> None:
         res = app.test_client().get("/")
 
