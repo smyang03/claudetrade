@@ -108,6 +108,15 @@ LIVE_CONFIG_KEYS = {
     "KR_PATHB_PREOPEN_EXIT_POLICY_MODE",
     "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US",
     "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR",
+    "PATHB_SELECTION_RECONCILE_ENABLED",
+    "PATHB_SELECTION_RECONCILE_MODE",
+    "US_PATHB_SELECTION_RECONCILE_MODE",
+    "KR_PATHB_SELECTION_RECONCILE_MODE",
+    "PATHB_SELECTION_RECONCILE_CANCEL_INVALID",
+    "PATHB_SELECTION_RECONCILE_CANCEL_SUSPENDED",
+    "PATHB_SELECTION_RECONCILE_UPDATE_VALID_TARGETS",
+    "PATHB_SELECTION_RECONCILE_HIT_SUSPEND_CANCEL",
+    "PATHB_RECONCILE_FORCE_FRESH_AFTER_CANCEL",
     "KR_REENTRY_COOLDOWN_MINUTES",
     "US_REENTRY_COOLDOWN_MINUTES",
     "USD_KRW_RATE",
@@ -205,6 +214,12 @@ RUNTIME_CONFIG_DRIFT_KEYS = {
     "PATHB_PREOPEN_EXIT_POLICY_MODE",
     "US_PATHB_PREOPEN_EXIT_POLICY_MODE",
     "KR_PATHB_PREOPEN_EXIT_POLICY_MODE",
+    "PATHB_SELECTION_RECONCILE_ENABLED",
+    "PATHB_SELECTION_RECONCILE_MODE",
+    "US_PATHB_SELECTION_RECONCILE_MODE",
+    "KR_PATHB_SELECTION_RECONCILE_MODE",
+    "PATHB_SELECTION_RECONCILE_HIT_SUSPEND_CANCEL",
+    "PATHB_RECONCILE_FORCE_FRESH_AFTER_CANCEL",
     "ACTIVE_LESSONS_ENABLED",
     "ACTIVE_LESSONS_SHADOW",
     "ACTIVE_LESSONS_MAX_ITEMS",
@@ -260,6 +275,9 @@ CRITICAL_RUNTIME_CONFIG_DRIFT_KEYS = {
     "PATHB_FIXED_ORDER_KRW",
     "US_PATHB_PREOPEN_EXIT_POLICY_MODE",
     "KR_PATHB_PREOPEN_EXIT_POLICY_MODE",
+    "PATHB_SELECTION_RECONCILE_ENABLED",
+    "US_PATHB_SELECTION_RECONCILE_MODE",
+    "KR_PATHB_SELECTION_RECONCILE_MODE",
 }
 
 REQUIRED_TABLE_COLUMNS = {
@@ -1432,6 +1450,18 @@ CONFIG_SOURCE_MEANING_KEYS: dict[str, dict[str, str]] = {
         "used_by": "preflight expectation for KR PathB preopen exit policy",
         "meaning": "operator-approved expected KR mode used by preflight only",
     },
+    "PATHB_SELECTION_RECONCILE_ENABLED": {
+        "used_by": "PathB selection-plan reconciliation",
+        "meaning": "enables Fresh selection based WAITING/HIT plan reconciliation",
+    },
+    "US_PATHB_SELECTION_RECONCILE_MODE": {
+        "used_by": "US PathB selection-plan reconciliation",
+        "meaning": "market-scoped US mode; enforce can cancel stale WAITING plans",
+    },
+    "KR_PATHB_SELECTION_RECONCILE_MODE": {
+        "used_by": "KR PathB selection-plan reconciliation",
+        "meaning": "market-scoped KR mode; shadow logs without cancelling live plans",
+    },
 }
 
 
@@ -1543,6 +1573,77 @@ def _pathb_preopen_exit_policy_check(config: dict[str, Any]) -> CheckResult:
             "env_live_note": "do not duplicate market-scoped values in .env.live unless changing the source-of-truth policy",
             "operator_action": "keep KR off unless KR preopen defer is explicitly approved",
             "config_change_allowed": False,
+        },
+    )
+
+
+def _pathb_selection_reconcile_check(config: dict[str, Any]) -> CheckResult:
+    effective = dict(config.get("effective") or {})
+
+    def normalized_mode(raw: Any) -> str:
+        mode = str(raw or "").strip().lower()
+        return mode if mode in {"off", "shadow", "enforce"} else "invalid"
+
+    enabled = _truthy(effective.get("PATHB_SELECTION_RECONCILE_ENABLED"))
+    global_mode = normalized_mode(effective.get("PATHB_SELECTION_RECONCILE_MODE", "shadow"))
+    market_modes: dict[str, str] = {}
+    source_by_market: dict[str, dict[str, str]] = {}
+    for market in ("US", "KR"):
+        market_key = f"{market}_PATHB_SELECTION_RECONCILE_MODE"
+        if str(effective.get(market_key, "")).strip():
+            market_modes[market] = normalized_mode(effective.get(market_key))
+            source_by_market[market] = {"key": market_key, **_config_key_source(config, market_key)}
+        else:
+            market_modes[market] = global_mode
+            source_by_market[market] = {
+                "key": "PATHB_SELECTION_RECONCILE_MODE",
+                **_config_key_source(config, "PATHB_SELECTION_RECONCILE_MODE"),
+                "fallback": "global",
+            }
+
+    risky_flags = {
+        "PATHB_SELECTION_RECONCILE_UPDATE_VALID_TARGETS": _truthy(effective.get("PATHB_SELECTION_RECONCILE_UPDATE_VALID_TARGETS")),
+        "PATHB_SELECTION_RECONCILE_HIT_SUSPEND_CANCEL": _truthy(effective.get("PATHB_SELECTION_RECONCILE_HIT_SUSPEND_CANCEL")),
+        "PATHB_RECONCILE_FORCE_FRESH_AFTER_CANCEL": _truthy(effective.get("PATHB_RECONCILE_FORCE_FRESH_AFTER_CANCEL")),
+    }
+    invalid_modes = {
+        market: mode
+        for market, mode in market_modes.items()
+        if mode == "invalid"
+    }
+    warnings: list[str] = []
+    if not enabled:
+        warnings.append("PATHB_SELECTION_RECONCILE_ENABLED is false")
+    for key, value in risky_flags.items():
+        if value:
+            warnings.append(f"{key} is true")
+    for market, mode in invalid_modes.items():
+        warnings.append(f"{market} mode is invalid: {mode}")
+
+    status = "WARN" if warnings else "PASS"
+    return CheckResult(
+        "config.pathb_selection_reconcile",
+        status,
+        "PathB selection reconcile config checked",
+        {
+            "enabled": enabled,
+            "effective_modes": market_modes,
+            "configured_values": {
+                "PATHB_SELECTION_RECONCILE_ENABLED": str(effective.get("PATHB_SELECTION_RECONCILE_ENABLED", "")),
+                "PATHB_SELECTION_RECONCILE_MODE": str(effective.get("PATHB_SELECTION_RECONCILE_MODE", "")),
+                "US_PATHB_SELECTION_RECONCILE_MODE": str(effective.get("US_PATHB_SELECTION_RECONCILE_MODE", "")),
+                "KR_PATHB_SELECTION_RECONCILE_MODE": str(effective.get("KR_PATHB_SELECTION_RECONCILE_MODE", "")),
+                "PATHB_SELECTION_RECONCILE_CANCEL_INVALID": str(effective.get("PATHB_SELECTION_RECONCILE_CANCEL_INVALID", "")),
+                "PATHB_SELECTION_RECONCILE_CANCEL_SUSPENDED": str(effective.get("PATHB_SELECTION_RECONCILE_CANCEL_SUSPENDED", "")),
+                "PATHB_SELECTION_RECONCILE_UPDATE_VALID_TARGETS": str(effective.get("PATHB_SELECTION_RECONCILE_UPDATE_VALID_TARGETS", "")),
+                "PATHB_SELECTION_RECONCILE_HIT_SUSPEND_CANCEL": str(effective.get("PATHB_SELECTION_RECONCILE_HIT_SUSPEND_CANCEL", "")),
+                "PATHB_RECONCILE_FORCE_FRESH_AFTER_CANCEL": str(effective.get("PATHB_RECONCILE_FORCE_FRESH_AFTER_CANCEL", "")),
+            },
+            "source_by_market": source_by_market,
+            "risky_flags": risky_flags,
+            "warnings": warnings,
+            "operator_action": "review risky flags before enabling target updates, HIT cancel, or force-fresh behavior",
+            "config_change_allowed": True,
         },
     )
 
@@ -2104,6 +2205,7 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
     checks.append(CheckResult("config.effective_values", "PASS", "effective live values captured", {"values": important}))
     checks.append(_config_source_meaning_check(config))
     checks.append(_pathb_preopen_exit_policy_check(config))
+    checks.append(_pathb_selection_reconcile_check(config))
     checks.append(_kr_live_expansion_guard_check(effective))
     checks.append(_kr_cap40_confirmation_enforce_check(effective))
     checks.append(_runtime_config_drift_check(config, mode))

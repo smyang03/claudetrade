@@ -13,6 +13,8 @@ from lifecycle.models import LifecycleEvent, normalize_event_type, utc_now_iso
 NON_STATUS_EVENT_TYPES = {
     "QUALITY_MARKED",
     "EXECUTION_ADVISOR_DECISION",
+    "PATHB_SELECTION_RECONCILE",
+    "PATHB_SELECTION_RECONCILE_ERROR",
 }
 
 

@@ -9663,11 +9663,52 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     self.selection_meta[market] = meta
             except Exception as _pathb_e:
                 log.error(f"[PathB] plan registration failed {market}: {_pathb_e}", exc_info=True)
+            if self._should_reconcile_pathb_selection(market, meta, source=route_source, preopen_source=preopen_source):
+                try:
+                    reconcile_events = self.pathb.reconcile_waiting_from_selection(
+                        market,
+                        meta,
+                        source=route_source,
+                    )
+                    if reconcile_events:
+                        meta["pathb_selection_reconcile"] = reconcile_events
+                        self.selection_meta[market] = meta
+                except Exception as _reconcile_e:
+                    log.warning(f"[PathB reconcile skip] {market} {route_source}: {_reconcile_e}", exc_info=True)
         if self.today_judgment.get("market") == market:
             self.today_judgment["selection_meta"] = meta
             self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
             self.today_judgment["selection_stages"] = stages
         return meta
+
+    def _should_reconcile_pathb_selection(
+        self,
+        market: str,
+        meta: dict,
+        *,
+        source: str = "",
+        preopen_source: bool = False,
+    ) -> bool:
+        if preopen_source:
+            return False
+        source_key = str(source or "").strip()
+        if source_key not in {"session_open", "manual_rescreen", "rescreen", "analyst_reinvoke", "tuning_rescreen"}:
+            return False
+        if bool((meta or {}).get("_smart_skip_reused")):
+            return False
+        if bool((meta or {}).get("_candidate_actions_missing_contract")):
+            return False
+        if str((meta or {}).get("_forced_watch_only_phase") or "").strip():
+            return False
+        if str((meta or {}).get("_fallback_mode") or "").strip():
+            return False
+        if not (
+            (meta or {}).get("watchlist")
+            or (meta or {}).get("candidate_actions")
+            or (meta or {}).get("_candidate_action_routes")
+        ):
+            return False
+        return True
 
     def _preopen_watch_only_meta_payload(self, meta: Optional[dict] = None) -> dict:
         clean = dict(meta or {})

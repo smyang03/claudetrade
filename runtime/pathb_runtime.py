@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -27,6 +28,7 @@ from execution.path_arbiter import SameDayReentryGuard
 from execution.safety_gate import PathBSafetyGate, SafetyContext
 from kis_api import cancel_order, get_balance, get_price, place_order, precheck_order
 from lifecycle.event_store import EventStore
+from lifecycle.models import LifecycleEvent, LifecycleEventType
 from logger import get_trading_logger
 from runtime.broker_side import broker_row_side_matches
 from runtime.broker_truth_snapshot import BrokerTruthSnapshot
@@ -1654,6 +1656,387 @@ class PathBRuntime:
                 f"{missing_price_targets}"
             )
         return registered
+
+    def _selection_reconcile_mode(self, market: str) -> str:
+        if not self._runtime_bool("PATHB_SELECTION_RECONCILE_ENABLED", False):
+            return "off"
+        market_key = str(market or "").upper()
+        raw = self._runtime_value(f"{market_key}_PATHB_SELECTION_RECONCILE_MODE", "")
+        if raw is None or str(raw).strip() == "":
+            raw = self._runtime_value("PATHB_SELECTION_RECONCILE_MODE", "shadow")
+        mode = str(raw or "shadow").strip().lower()
+        return mode if mode in {"off", "shadow", "enforce"} else "shadow"
+
+    def _selection_reconcile_meta_hash(self, meta: dict[str, Any]) -> str:
+        try:
+            body = json.dumps(meta or {}, ensure_ascii=False, sort_keys=True, default=str)
+        except Exception:
+            body = str(sorted((meta or {}).keys()))
+        return "sha256:" + hashlib.sha256(body.encode("utf-8", errors="replace")).hexdigest()
+
+    def _selection_reconcile_keys_from(self, market: str, value: Any) -> set[str]:
+        keys: set[str] = set()
+        if value in (None, ""):
+            return keys
+        if isinstance(value, dict):
+            if any(key in value for key in ("ticker", "symbol", "code", "종목코드")):
+                items = [value]
+            else:
+                items = list(value.keys()) + list(value.values())
+        else:
+            items = value if isinstance(value, (list, tuple, set)) else [value]
+        for item in items:
+            raw = ""
+            if isinstance(item, dict):
+                raw = str(
+                    item.get("ticker")
+                    or item.get("symbol")
+                    or item.get("code")
+                    or item.get("종목코드")
+                    or ""
+                )
+            else:
+                raw = str(item or "")
+            raw = raw.strip()
+            if raw:
+                keys.add(self._ticker_key(market, raw))
+        return keys
+
+    def _selection_reconcile_indexes(self, market: str, meta: dict[str, Any]) -> dict[str, Any]:
+        candidate_actions = list((meta or {}).get("candidate_actions") or [])
+        routes = list((meta or {}).get("_candidate_action_routes") or [])
+        action_by_ticker: dict[str, dict[str, Any]] = {}
+        route_by_ticker: dict[str, dict[str, Any]] = {}
+        for action in candidate_actions:
+            if not isinstance(action, dict):
+                continue
+            key = next(iter(self._selection_reconcile_keys_from(market, action)), "")
+            if key:
+                action_by_ticker[key] = dict(action)
+        for route in routes:
+            if not isinstance(route, dict):
+                continue
+            key = next(iter(self._selection_reconcile_keys_from(market, route)), "")
+            if key:
+                route_by_ticker[key] = dict(route)
+
+        reviewed_keys: set[str] = set()
+        for field in (
+            "candidate_actions",
+            "_candidate_action_routes",
+            "_raw_trade_ready",
+            "_raw_watchlist",
+            "trade_ready",
+            "watchlist",
+            "_pathb_wait_tickers",
+            "_final_prompt_pool",
+            "final_prompt_pool",
+            "_prompt_pool",
+            "prompt_pool",
+            "_prompt_pool_tickers",
+            "prompt_pool_tickers",
+            "_screener_pool",
+            "screener_pool",
+            "_current_candidates",
+            "current_candidates",
+        ):
+            reviewed_keys.update(self._selection_reconcile_keys_from(market, (meta or {}).get(field)))
+
+        retained_keys: set[str] = set()
+        for field in (
+            "candidate_actions",
+            "_candidate_action_routes",
+            "_raw_trade_ready",
+            "_raw_watchlist",
+            "trade_ready",
+            "watchlist",
+            "_pathb_wait_tickers",
+        ):
+            retained_keys.update(self._selection_reconcile_keys_from(market, (meta or {}).get(field)))
+
+        return {
+            "actions": action_by_ticker,
+            "routes": route_by_ticker,
+            "reviewed_keys": reviewed_keys,
+            "retained_keys": retained_keys,
+            "raw_trade_ready": self._selection_reconcile_keys_from(market, (meta or {}).get("_raw_trade_ready")),
+            "raw_watchlist": self._selection_reconcile_keys_from(market, (meta or {}).get("_raw_watchlist")),
+            "watchlist": self._selection_reconcile_keys_from(market, (meta or {}).get("watchlist")),
+        }
+
+    def _selection_reconcile_verdict(
+        self,
+        market: str,
+        ticker_key: str,
+        indexes: dict[str, Any],
+    ) -> tuple[str, str, dict[str, Any]]:
+        action = dict((indexes.get("actions") or {}).get(ticker_key) or {})
+        route = dict((indexes.get("routes") or {}).get(ticker_key) or {})
+        reviewed = ticker_key in (indexes.get("reviewed_keys") or set())
+        if not reviewed:
+            return "UNKNOWN_KEEP", "not_reviewed", {
+                "reviewed": False,
+                "route_missing": False,
+                "route_incomplete": False,
+            }
+
+        has_action = bool(action)
+        has_route = bool(route)
+        route_has_core = any(
+            route.get(field) not in (None, "")
+            for field in ("final_action", "reason", "suspend_pathb", "pathb_suspend_shadow")
+        )
+        if has_action and (not has_route or not route_has_core):
+            return "ROUTE_UNKNOWN_KEEP", "route_missing" if not has_route else "route_incomplete", {
+                "reviewed": True,
+                "route_missing": not has_route,
+                "route_incomplete": bool(has_route and not route_has_core),
+            }
+
+        action_name = str(action.get("action") or "").strip().upper()
+        final_action = str(route.get("final_action") or "").strip().upper()
+        route_reason = str(route.get("reason") or "").strip()
+        runtime_reason = str(route.get("runtime_gate_reason") or "").strip()
+        deferred = bool(route.get("pathb_suspend_deferred"))
+
+        if (
+            not deferred
+            and (
+                bool(route.get("suspend_pathb"))
+                or route_reason == "pullback_wait_blocked_negative_context"
+                or bool(route.get("pathb_live_suspend"))
+                or bool(route.get("live_suspend_pathb"))
+            )
+        ):
+            return "SUSPENDED_CANCEL", route_reason or runtime_reason or "fresh_selection_suspended_negative_context", {
+                "reviewed": True,
+                "route_missing": False,
+                "route_incomplete": False,
+            }
+
+        invalid_reasons = {
+            "claude_avoid",
+            "candidate_quarantine",
+            "off_list_candidate_action",
+            "off_list_hard_block",
+            "hard_block",
+        }
+        if (
+            action_name in {"AVOID", "EXPIRED", "HARD_BLOCK"}
+            or final_action in {"AVOID", "EXPIRED", "HARD_BLOCK"}
+            or route_reason in invalid_reasons
+            or bool(route.get("hard_block"))
+            or bool(route.get("off_list_hard_block"))
+        ):
+            return "INVALID_CANCEL", route_reason or action_name or final_action or "fresh_selection_invalidated", {
+                "reviewed": True,
+                "route_missing": False,
+                "route_incomplete": False,
+            }
+
+        retained = ticker_key in (indexes.get("retained_keys") or set())
+        if reviewed and not retained:
+            return "INVALID_CANCEL", "reviewed_and_removed", {
+                "reviewed": True,
+                "route_missing": False,
+                "route_incomplete": False,
+            }
+
+        if (
+            ticker_key in (indexes.get("raw_trade_ready") or set())
+            or action_name in {"BUY_READY", "ADD_READY", "PULLBACK_WAIT"}
+            or final_action in {"BUY_READY", "ADD_READY", "PULLBACK_WAIT"}
+            or route_reason == "pathb_waiting_kept_inside_buy_zone"
+            or bool(route.get("pathb_live_executable_wait"))
+        ):
+            return "VALID_KEEP", route_reason or action_name or final_action or "fresh_selection_valid", {
+                "reviewed": True,
+                "route_missing": False,
+                "route_incomplete": False,
+            }
+
+        if ticker_key in (indexes.get("watchlist") or set()) or ticker_key in (indexes.get("raw_watchlist") or set()):
+            return "KEEP", route_reason or action_name or final_action or "watchlist_keep", {
+                "reviewed": True,
+                "route_missing": False,
+                "route_incomplete": False,
+            }
+
+        return "KEEP", route_reason or action_name or final_action or "default_keep", {
+            "reviewed": True,
+            "route_missing": False,
+            "route_incomplete": False,
+        }
+
+    def _emit_selection_reconcile_event(
+        self,
+        run: dict[str, Any],
+        *,
+        source: str,
+        mode: str,
+        verdict: str,
+        action: str,
+        reason: str,
+        meta: dict[str, Any],
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        payload = {
+            **self._execution_safety_payload(),
+            "event": "PATHB_SELECTION_RECONCILE",
+            "source": str(source or ""),
+            "mode": str(mode or ""),
+            "old_status": str(run.get("status") or ""),
+            "verdict": str(verdict or ""),
+            "action": str(action or ""),
+            "reason": str(reason or ""),
+            "selection_snapshot_ts": str((meta or {}).get("selection_snapshot_ts") or ""),
+            "selection_call_id": str((meta or {}).get("selection_call_id") or (meta or {}).get("_selection_call_id") or ""),
+            "selection_meta_hash": self._selection_reconcile_meta_hash(meta),
+            "smart_skip_reused": bool((meta or {}).get("_smart_skip_reused")),
+            "hit_cancel_enabled": self._runtime_bool("PATHB_SELECTION_RECONCILE_HIT_SUSPEND_CANCEL", False),
+            "update_valid_targets": self._runtime_bool("PATHB_SELECTION_RECONCILE_UPDATE_VALID_TARGETS", False),
+            **dict(details or {}),
+        }
+        try:
+            self.store.append(
+                LifecycleEvent(
+                    event_type=LifecycleEventType.PATHB_SELECTION_RECONCILE,
+                    market=str(run.get("market") or ""),
+                    runtime_mode=self.mode,
+                    session_date=str(run.get("session_date") or ""),
+                    ticker=str(run.get("ticker") or ""),
+                    decision_id=str(run.get("decision_id") or ""),
+                    prompt_version=str((run.get("plan") or {}).get("prompt_version") or "pathb_price_v1"),
+                    brain_snapshot_id=self._brain_snapshot_id(str(run.get("market") or "")),
+                    reason_code=str(reason or ""),
+                    payload=payload,
+                )
+            )
+        except Exception as exc:
+            log.debug(f"[PathB reconcile audit failed] {run.get('market')} {run.get('ticker')}: {exc}")
+
+    def _cancel_waiting_for_selection_reconcile(self, run: dict[str, Any], *, reason: str) -> bool:
+        if str(run.get("status") or "") != "WAITING":
+            return False
+        path_run_id = str(run.get("path_run_id") or "")
+        if not path_run_id:
+            return False
+        self.store.update_path_run(
+            path_run_id,
+            status="CANCELLED",
+            plan={
+                "cancel_reason": reason,
+                "selection_reconcile_cancelled": True,
+                **self._execution_safety_payload(),
+            },
+            merge_plan=True,
+        )
+        self.adapter._append_event(
+            LifecycleEventType.CLAUDE_PRICE_CANCELLED,
+            path_run_id,
+            runtime_mode=self.mode,
+            brain_snapshot_id=self._brain_snapshot_id(str(run.get("market") or "")),
+            path_status="CANCELLED",
+            reason_code=reason,
+            extra={
+                "reason": reason,
+                "selection_reconcile_cancelled": True,
+                **self._execution_safety_payload(),
+            },
+        )
+        return True
+
+    def reconcile_waiting_from_selection(
+        self,
+        market: str,
+        meta: dict[str, Any],
+        *,
+        source: str = "",
+    ) -> list[dict[str, Any]]:
+        market_key = str(market or "").upper()
+        mode = self._selection_reconcile_mode(market_key)
+        if mode == "off":
+            return []
+        if bool((meta or {}).get("_smart_skip_reused")):
+            return []
+        if str((meta or {}).get("_forced_watch_only_phase") or "").strip():
+            return []
+        if str(source or "").strip().lower() in {"preopen_watch", "preopen"}:
+            return []
+
+        session_date = self._session_date(market_key)
+        indexes = self._selection_reconcile_indexes(market_key, meta or {})
+        cancel_invalid = self._runtime_bool("PATHB_SELECTION_RECONCILE_CANCEL_INVALID", True)
+        cancel_suspended = self._runtime_bool("PATHB_SELECTION_RECONCILE_CANCEL_SUSPENDED", True)
+        hit_cancel_enabled = self._runtime_bool("PATHB_SELECTION_RECONCILE_HIT_SUSPEND_CANCEL", False)
+        outcomes: list[dict[str, Any]] = []
+
+        runs = self.store.path_runs_for_session(
+            market=market_key,
+            runtime_mode=self.mode,
+            session_date=session_date,
+            path_type="claude_price",
+        )
+        for run in runs:
+            status = str(run.get("status") or "")
+            if status not in {"WAITING", "HIT"}:
+                continue
+            ticker_key = self._ticker_key(market_key, str(run.get("ticker") or ""))
+            verdict, reason, details = self._selection_reconcile_verdict(market_key, ticker_key, indexes)
+            action = "keep"
+            event_verdict = verdict
+            if verdict in {"SUSPENDED_CANCEL", "INVALID_CANCEL"}:
+                cancel_enabled = cancel_suspended if verdict == "SUSPENDED_CANCEL" else cancel_invalid
+                if status == "HIT" and not hit_cancel_enabled:
+                    event_verdict = verdict.replace("_CANCEL", "_LOG")
+                    action = "log"
+                elif mode == "enforce" and cancel_enabled:
+                    cancelled = self._cancel_waiting_for_selection_reconcile(
+                        run,
+                        reason=(
+                            "fresh_selection_suspended_negative_context"
+                            if verdict == "SUSPENDED_CANCEL"
+                            else "fresh_selection_invalidated"
+                        ),
+                    )
+                    action = "cancel" if cancelled else "log"
+                elif mode == "shadow":
+                    action = "shadow"
+                else:
+                    action = "log"
+            elif verdict in {"UNKNOWN_KEEP", "ROUTE_UNKNOWN_KEEP", "VALID_KEEP", "KEEP"}:
+                action = "keep"
+
+            outcome = {
+                "market": market_key,
+                "runtime_mode": self.mode,
+                "session_date": session_date,
+                "ticker": ticker_key,
+                "path_run_id": str(run.get("path_run_id") or ""),
+                "old_status": status,
+                "mode": mode,
+                "verdict": event_verdict,
+                "action": action,
+                "reason": reason,
+                **details,
+            }
+            outcomes.append(outcome)
+            self._emit_selection_reconcile_event(
+                run,
+                source=source,
+                mode=mode,
+                verdict=event_verdict,
+                action=action,
+                reason=reason,
+                meta=meta or {},
+                details=details,
+            )
+        if outcomes:
+            log.info(
+                f"[PathB selection reconcile] {market_key} mode={mode} "
+                f"plans={len(outcomes)} cancel={sum(1 for item in outcomes if item.get('action') == 'cancel')}"
+            )
+        return outcomes
 
     def _scan_shadow_waiting_entries(self, market: str) -> int:
         market_key = str(market or "").upper()

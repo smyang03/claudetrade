@@ -52,11 +52,19 @@ class _DummyPathB:
         self.registered_meta: dict | None = None
         self.active_run = active_run
         self.cancelled: list[tuple[str, str, str]] = []
+        self.reconcile_calls: list[tuple[str, dict, str]] = []
+        self.reconcile_error: Exception | None = None
         self.broker_truth = None
 
     def register_from_selection_meta(self, market: str, meta: dict) -> list[str]:
         self.registered_meta = dict(meta)
         return ["path_wait"] if meta.get("_pathb_wait_tickers") else []
+
+    def reconcile_waiting_from_selection(self, market: str, meta: dict, *, source: str = "") -> list[dict]:
+        self.reconcile_calls.append((market, dict(meta), source))
+        if self.reconcile_error is not None:
+            raise self.reconcile_error
+        return [{"ticker": "NVDA", "action": "keep", "verdict": "VALID_KEEP"}]
 
     def _active_path_for_ticker(self, market: str, ticker: str) -> dict | None:
         return self.active_run
@@ -487,6 +495,65 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(meta["trade_ready"], [])
         self.assertTrue(meta["_legacy_auto_ready_blocked"])
         self.assertEqual(meta["_fallback_mode"], "empty_selection_meta_watch_only")
+
+    def test_pathb_selection_reconcile_runs_after_fresh_selection(self) -> None:
+        bot = _make_bot()
+        raw_meta = {
+            "watchlist": ["NVDA"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {
+                    "ticker": "NVDA",
+                    "action": "PULLBACK_WAIT",
+                    "confidence": 0.8,
+                    "price_targets": {
+                        "buy_zone_low": 100.0,
+                        "buy_zone_high": 101.0,
+                        "sell_target": 108.0,
+                        "stop_loss": 96.0,
+                        "hold_days": 1,
+                        "confidence": 0.8,
+                    },
+                }
+            ],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "US", ["NVDA"], mode="BALANCED", source="rescreen")
+
+        self.assertEqual(len(bot.pathb.reconcile_calls), 1)
+        self.assertEqual(bot.pathb.reconcile_calls[0][2], "rescreen")
+        self.assertEqual(meta["pathb_selection_reconcile"][0]["verdict"], "VALID_KEEP")
+
+    def test_pathb_selection_reconcile_failure_is_fail_open(self) -> None:
+        bot = _make_bot()
+        bot.pathb.reconcile_error = RuntimeError("db locked")
+        raw_meta = {
+            "watchlist": ["NVDA"],
+            "trade_ready": [],
+            "candidate_actions": [
+                {
+                    "ticker": "NVDA",
+                    "action": "PULLBACK_WAIT",
+                    "confidence": 0.8,
+                    "price_targets": {
+                        "buy_zone_low": 100.0,
+                        "buy_zone_high": 101.0,
+                        "sell_target": 108.0,
+                        "stop_loss": 96.0,
+                        "hold_days": 1,
+                        "confidence": 0.8,
+                    },
+                }
+            ],
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "US", ["NVDA"], mode="BALANCED", source="rescreen")
+
+        self.assertEqual(len(bot.pathb.reconcile_calls), 1)
+        self.assertEqual(meta["watchlist"], ["NVDA"])
+        self.assertNotIn("pathb_selection_reconcile", meta)
 
     def test_us_quality_runtime_error_keeps_score_schema(self) -> None:
         bot = _make_bot()
