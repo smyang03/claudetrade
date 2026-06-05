@@ -102,6 +102,19 @@ _BROKER_SNAPSHOT_LOCK = threading.Lock()
 _BROKER_POSITIONS_LOCK = threading.Lock()
 _BROKER_REFRESH_LOCK = threading.Lock()
 _KIS_RUNTIME_LOCK = threading.Lock()
+_ACTIVE_LESSON_ENV_LOCK = threading.Lock()
+_ACTIVE_LESSON_ENV_KEYS = {
+    "ACTIVE_LESSONS_ENABLED",
+    "ACTIVE_LESSONS_SHADOW",
+    "ACTIVE_LESSONS_MAX_ITEMS",
+    "ACTIVE_LESSONS_MAX_CHARS",
+    "ACTIVE_LESSONS_ANALYST_MAX_CHARS",
+    "ACTIVE_LESSONS_DEBATE_ENABLED",
+    "ACTIVE_LESSONS_DEBATE_MAX_CHARS",
+    "ACTIVE_LESSONS_RETRY_MAX_CHARS",
+    "ACTIVE_LESSONS_ALLOW_RECENT_DAYS",
+    "ACTIVE_LESSONS_ALLOW_LEGACY_BRAIN",
+}
 _DASHBOARD_QUOTE_CACHE: dict[tuple[str, str, str], dict] = {}
 _DASHBOARD_QUOTE_LOCK = threading.Lock()
 
@@ -398,6 +411,91 @@ def _start_config_env_overrides(mode: str) -> dict:
     if not isinstance(overrides, dict):
         return {}
     return {str(k): str(v).lower() if isinstance(v, bool) else str(v) for k, v in overrides.items() if v is not None}
+
+
+def _active_lesson_env(mode: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for source in (_runtime_env(mode), _start_config_env_overrides(mode)):
+        for key, value in source.items():
+            if str(key).startswith("ACTIVE_LESSONS") and value is not None:
+                values[str(key)] = str(value)
+    return values
+
+
+@contextmanager
+def _temporary_active_lesson_env(values: dict[str, str]):
+    keys = set(_ACTIVE_LESSON_ENV_KEYS)
+    keys.update(str(key) for key in values)
+    keys.update(key for key in os.environ if str(key).startswith("ACTIVE_LESSONS"))
+    previous: dict[str, Optional[str]] = {key: os.environ.get(key) for key in keys}
+    try:
+        for key in keys:
+            os.environ.pop(key, None)
+        for key, value in values.items():
+            os.environ[key] = str(value)
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _dashboard_active_lessons_payload(market: str, mode: str) -> dict[str, Any]:
+    market_key = "US" if str(market or "").upper() == "US" else "KR"
+    runtime_mode = _normalize_mode(mode)
+    env_values = _active_lesson_env(runtime_mode)
+    try:
+        from minority_report.active_lessons import build_active_lesson_context
+    except Exception as exc:
+        return {
+            "ok": False,
+            "market": market_key,
+            "runtime_mode": runtime_mode,
+            "items": [],
+            "metadata": {"error": str(exc), "injected": False, "count": 0},
+            "env": env_values,
+        }
+    try:
+        with _ACTIVE_LESSON_ENV_LOCK:
+            with _temporary_active_lesson_env(env_values):
+                context = build_active_lesson_context(market_key)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "market": market_key,
+            "runtime_mode": runtime_mode,
+            "items": [],
+            "metadata": {"error": str(exc), "injected": False, "count": 0},
+            "env": env_values,
+        }
+    metadata = dict(context.get("metadata") or {})
+    items = []
+    for item in list(context.get("items") or []):
+        if not isinstance(item, dict):
+            continue
+        items.append(
+            {
+                "id": str(item.get("id") or ""),
+                "source": str(item.get("source") or ""),
+                "scope": str(item.get("scope") or ""),
+                "text": str(item.get("text") or ""),
+                "severity": str(item.get("severity") or ""),
+                "confidence": item.get("confidence"),
+                "sample_count": item.get("sample_count"),
+                "generated_at": str(item.get("generated_at") or ""),
+                "score": item.get("score"),
+            }
+        )
+    return {
+        "ok": True,
+        "market": market_key,
+        "runtime_mode": runtime_mode,
+        "items": items,
+        "metadata": metadata,
+        "env": env_values,
+    }
 
 
 def _start_config_path(mode: str = "live") -> Path:
@@ -7440,6 +7538,7 @@ def api_market_context_chart():
 @app.route("/api/patterns")
 def api_patterns():
     market  = request.args.get("market", best_market_with_data())
+    mode = _request_mode()
     records = load_records(60, market)
     brain = load_brain()
     brain_modes = (brain.get("markets", {}).get(market, {}) or {}).get("mode_performance", {}) or {}
@@ -7489,8 +7588,16 @@ def api_patterns():
     return jsonify({
         "lessons": [{"text": k, "count": v} for k, v in top_lessons],
         "modes":   normalized_modes,
+        "active_lessons": _dashboard_active_lessons_payload(market, mode),
         "unit": "percent",
     })
+
+
+@app.route("/api/active-lessons")
+def api_active_lessons():
+    market = request.args.get("market", best_market_with_data())
+    mode = _request_mode()
+    return jsonify(_dashboard_active_lessons_payload(market, mode))
 
 
 @app.route("/api/credits")
@@ -14083,6 +14190,9 @@ PAGE_ANALYTICS_HTML = """
   <div class="card yellow">
     <div class="section-title">반복 교훈 패턴</div>
     <div id="lessons-list"></div>
+    <div style="height:1px;background:var(--border);margin:14px 0"></div>
+    <div class="section-title" style="font-size:13px;margin-bottom:8px">Claude 주입 교훈</div>
+    <div id="active-lessons-list"></div>
   </div>
 </div>
 
@@ -14200,10 +14310,43 @@ async function loadPatterns() {
   const lessons = d.lessons || [];
   document.getElementById('lessons-list').innerHTML = lessons.map(l => `
     <div class="lesson-item">
-      <span class="lesson-count">${l.count}회</span>
-      <span class="lesson-text">${l.text}</span>
+      <span class="lesson-count">${escapeHtml(l.count)}회</span>
+      <span class="lesson-text">${escapeHtml(l.text)}</span>
     </div>
   `).join('') || '<div style="color:var(--muted);font-size:13px">아직 없음</div>';
+
+  const active = d.active_lessons || {};
+  const activeMeta = active.metadata || {};
+  const activeItems = active.items || [];
+  const activeStatus = active.ok === false
+    ? '확인 실패'
+    : activeMeta.injected ? 'Claude 주입됨'
+    : activeMeta.enabled ? (activeMeta.shadow ? 'Shadow 관찰' : '주입 없음')
+    : '비활성';
+  const activeColor = activeMeta.injected ? 'var(--green)' : activeMeta.enabled ? 'var(--yellow)' : 'var(--muted)';
+  const ignoredReasons = activeMeta.ignored_reasons || {};
+  const ignoredText = Object.entries(ignoredReasons).slice(0, 3)
+    .map(([k, v]) => `${escapeHtml(k)}:${escapeHtml(v)}`).join(' · ');
+  const activeBox = document.getElementById('active-lessons-list');
+  if (activeBox) {
+    const metaLine = `
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
+        <span style="color:${activeColor};font-weight:600">${activeStatus}</span>
+        · ${escapeHtml(active.market || MARKET)} ${escapeHtml(active.runtime_mode || MODE)}
+        · ${escapeHtml(activeMeta.count || activeItems.length || 0)}건
+        ${ignoredText ? ` · 제외 ${ignoredText}` : ''}
+      </div>`;
+    const itemHtml = activeItems.map(l => {
+      const sample = Number(l.sample_count || 0);
+      const severity = l.severity ? ` · ${escapeHtml(l.severity)}` : '';
+      const source = l.source ? escapeHtml(l.source) : 'active';
+      return `<div class="lesson-item">
+        <span class="lesson-count">${sample > 0 ? 'n=' + escapeHtml(sample) : source}</span>
+        <span class="lesson-text">${escapeHtml(l.text)}<span style="color:var(--muted)">${severity}</span></span>
+      </div>`;
+    }).join('');
+    activeBox.innerHTML = metaLine + (itemHtml || '<div style="color:var(--muted);font-size:13px">표시할 주입 교훈 없음</div>');
+  }
 }
 
 async function loadBrain() {
