@@ -3068,6 +3068,7 @@ class PathBRuntime:
         now: datetime,
         status: str = "",
         throttle_ok: bool = True,
+        activate_defer: bool = True,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         session_ctx = self._pathb_preopen_exit_session_context(plan.market, now=now)
@@ -3093,7 +3094,7 @@ class PathBRuntime:
         }
         if severity == "boundary_loss_stop":
             payload["severity_boundary_case"] = True
-        if decision == "DEFER_OPEN_RECHECK":
+        if decision == "DEFER_OPEN_RECHECK" and activate_defer:
             payload.update(
                 {
                     "preopen_exit_defer_active": True,
@@ -3168,7 +3169,7 @@ class PathBRuntime:
         pnl_pct = self._pathb_review_position_pnl_pct(pos, market, current_native=current_native)
         stop_distance_pct, stop_price = self._pathb_signal_stop_distance_pct(plan, pos, signal, current_native)
         severity = self._pathb_preopen_exit_severity(pnl_pct, stop_distance_pct)
-        active_defer = self._pathb_deferred_exit_active(run_plan, signal)
+        active_defer = mode != "shadow" and self._pathb_deferred_exit_active(run_plan, signal)
 
         if active_defer and session_phase in {"opening_wait", "opening_confirm", "regular"}:
             if not self._pathb_open_confirm_recheck_ready(market, now=now):
@@ -3245,6 +3246,8 @@ class PathBRuntime:
             stop_price=stop_price,
             mode=mode,
             now=now,
+            status="shadow_observed" if mode == "shadow" else "",
+            activate_defer=mode != "shadow",
             throttle_ok=not self._pathb_defer_record_throttled(run_plan, now),
         )
         if mode == "shadow":

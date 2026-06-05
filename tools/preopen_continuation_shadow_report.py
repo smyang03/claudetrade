@@ -15,6 +15,7 @@ from preopen.continuation_shadow import build_report_payload, render_report_mark
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build US preopen continuation shadow report")
     parser.add_argument("--market", default="US")
+    parser.add_argument("--mode", choices=["live", "paper"], default="live")
     parser.add_argument("--from", dest="date_from")
     parser.add_argument("--to", dest="date_to")
     parser.add_argument("--db-path")
@@ -26,6 +27,7 @@ def main() -> int:
     payload = build_report_payload(
         args.db_path,
         market=args.market,
+        mode=args.mode,
         date_from=args.date_from,
         date_to=args.date_to,
     )

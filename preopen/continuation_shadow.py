@@ -112,7 +112,7 @@ def _connect(db_path: str | Path | None = None) -> sqlite3.Connection:
 
 def _connect_readonly(path: str | Path) -> sqlite3.Connection:
     db = Path(path)
-    uri = f"{db.resolve().as_uri()}?mode=ro&immutable=1"
+    uri = f"{db.resolve().as_uri()}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     conn.execute("PRAGMA query_only=ON")
     conn.row_factory = sqlite3.Row
@@ -143,6 +143,150 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
         return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     except sqlite3.Error:
         return set()
+
+
+def _quote_ident(name: str) -> str:
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def _unique_index_column_sets(conn: sqlite3.Connection, table: str) -> list[tuple[str, ...]]:
+    result: list[tuple[str, ...]] = []
+    try:
+        indexes = conn.execute(f"PRAGMA index_list({_quote_ident(table)})").fetchall()
+    except sqlite3.Error:
+        return result
+    for index in indexes:
+        try:
+            is_unique = bool(index["unique"])
+            index_name = str(index["name"])
+        except Exception:
+            is_unique = bool(index[2])
+            index_name = str(index[1])
+        if not is_unique:
+            continue
+        try:
+            cols = tuple(
+                str(row["name"] if isinstance(row, sqlite3.Row) else row[2])
+                for row in conn.execute(f"PRAGMA index_info({_quote_ident(index_name)})").fetchall()
+            )
+        except sqlite3.Error:
+            cols = ()
+        if cols:
+            result.append(cols)
+    return result
+
+
+def _runtime_mode_table_sql(table: str, sql: str, columns: set[str]) -> str:
+    start = sql.find("(")
+    if start < 0:
+        raise ContinuationShadowError(f"preopen_shadow_schema_migration_invalid_sql:{table}")
+    new_sql = f"CREATE TABLE {table} " + sql[start:]
+    if table in {"preopen_feature_snapshots", "preopen_outcomes"} and "runtime_mode" not in columns:
+        new_sql = new_sql.replace(
+            "market TEXT NOT NULL,",
+            "market TEXT NOT NULL,\n                runtime_mode TEXT NOT NULL DEFAULT 'live',",
+            1,
+        )
+    replacements = {
+        "preopen_candidates": (
+            "UNIQUE(session_date, market, ticker)",
+            "UNIQUE(session_date, market, runtime_mode, ticker)",
+        ),
+        "preopen_feature_snapshots": (
+            "UNIQUE(session_date, market, ticker, offset_min)",
+            "UNIQUE(session_date, market, runtime_mode, ticker, offset_min)",
+        ),
+        "preopen_claude_checks": (
+            "UNIQUE(session_date, market, eval_offset_min, fingerprint, attempt_no)",
+            "UNIQUE(session_date, market, runtime_mode, eval_offset_min, fingerprint, attempt_no)",
+        ),
+        "preopen_outcomes": (
+            "UNIQUE(session_date, market, ticker)",
+            "UNIQUE(session_date, market, runtime_mode, ticker)",
+        ),
+    }
+    old, new = replacements[table]
+    new_sql = new_sql.replace(old, new)
+    return new_sql
+
+
+def _rebuild_runtime_mode_identity_table(conn: sqlite3.Connection, table: str) -> None:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_schema WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    if not row or not row["sql"]:
+        return
+    columns = _table_columns(conn, table)
+    create_sql = _runtime_mode_table_sql(table, str(row["sql"]), columns)
+    legacy = f"{table}_legacy_{uuid.uuid4().hex[:8]}"
+    conn.execute(f"ALTER TABLE {_quote_ident(table)} RENAME TO {_quote_ident(legacy)}")
+    conn.execute(create_sql)
+    old_columns = _table_columns(conn, legacy)
+    new_columns = _table_columns(conn, table)
+    copy_columns: list[str] = []
+    select_exprs: list[str] = []
+    for column in new_columns:
+        if column == "runtime_mode":
+            copy_columns.append(column)
+            if column in old_columns:
+                select_exprs.append("COALESCE(runtime_mode, 'live')")
+            else:
+                select_exprs.append("'live'")
+            continue
+        if column in old_columns:
+            copy_columns.append(column)
+            select_exprs.append(_quote_ident(column))
+    conn.execute(
+        f"""
+        INSERT OR IGNORE INTO {_quote_ident(table)} ({', '.join(_quote_ident(col) for col in copy_columns)})
+        SELECT {', '.join(select_exprs)} FROM {_quote_ident(legacy)}
+        """
+    )
+    conn.execute(f"DROP TABLE {_quote_ident(legacy)}")
+
+
+def _migrate_runtime_mode_identity_keys(conn: sqlite3.Connection) -> None:
+    desired = {
+        "preopen_candidates": ("session_date", "market", "runtime_mode", "ticker"),
+        "preopen_feature_snapshots": ("session_date", "market", "runtime_mode", "ticker", "offset_min"),
+        "preopen_claude_checks": ("session_date", "market", "runtime_mode", "eval_offset_min", "fingerprint", "attempt_no"),
+        "preopen_outcomes": ("session_date", "market", "runtime_mode", "ticker"),
+    }
+    stale = {
+        "preopen_candidates": ("session_date", "market", "ticker"),
+        "preopen_feature_snapshots": ("session_date", "market", "ticker", "offset_min"),
+        "preopen_claude_checks": ("session_date", "market", "eval_offset_min", "fingerprint", "attempt_no"),
+        "preopen_outcomes": ("session_date", "market", "ticker"),
+    }
+    for table, desired_columns in desired.items():
+        if not _table_columns(conn, table):
+            continue
+        unique_sets = _unique_index_column_sets(conn, table)
+        columns = _table_columns(conn, table)
+        if desired_columns not in unique_sets or stale[table] in unique_sets or "runtime_mode" not in columns:
+            _rebuild_runtime_mode_identity_table(conn, table)
+
+
+def _ensure_secondary_indexes(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS ix_preopen_candidates_session_eligible_score
+        ON preopen_candidates(session_date, market, runtime_mode, eligible, deterministic_score DESC);
+
+        CREATE INDEX IF NOT EXISTS ix_preopen_candidates_source_hash
+        ON preopen_candidates(source_row_hash);
+
+        CREATE INDEX IF NOT EXISTS ix_preopen_feature_snapshots_candidate_offset
+        ON preopen_feature_snapshots(candidate_id, offset_min);
+
+        CREATE INDEX IF NOT EXISTS ix_preopen_claude_decisions_case
+        ON preopen_claude_decisions(check_id, case_id);
+
+        CREATE INDEX IF NOT EXISTS ix_preopen_outcomes_decision_join
+        ON preopen_outcomes(session_date, market, runtime_mode, ticker, actual_selected, actual_trade_ready, actual_ordered);
+        """
+    )
 
 
 def _json(value: Any) -> str:
@@ -362,7 +506,7 @@ def init_schema(db_path: str | Path | None = None) -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_date TEXT NOT NULL,
                 market TEXT NOT NULL,
-                runtime_mode TEXT,
+                runtime_mode TEXT NOT NULL,
                 schema_version TEXT,
                 run_id TEXT,
                 ticker TEXT NOT NULL,
@@ -422,13 +566,14 @@ def init_schema(db_path: str | Path | None = None) -> None:
                 eligible_rule_version TEXT,
                 eligible_components_json TEXT,
                 evaluation_case_id TEXT,
-                UNIQUE(session_date, market, ticker)
+                UNIQUE(session_date, market, runtime_mode, ticker)
             );
 
             CREATE TABLE IF NOT EXISTS preopen_feature_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_date TEXT NOT NULL,
                 market TEXT NOT NULL,
+                runtime_mode TEXT NOT NULL DEFAULT 'live',
                 ticker TEXT NOT NULL,
                 offset_min INTEGER NOT NULL,
                 regular_open_price REAL,
@@ -460,7 +605,7 @@ def init_schema(db_path: str | Path | None = None) -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT,
                 UNIQUE(candidate_id, offset_min),
-                UNIQUE(session_date, market, ticker, offset_min)
+                UNIQUE(session_date, market, runtime_mode, ticker, offset_min)
             );
 
             CREATE TABLE IF NOT EXISTS preopen_claude_checks (
@@ -481,7 +626,7 @@ def init_schema(db_path: str | Path | None = None) -> None:
                 parse_error TEXT,
                 created_at TEXT NOT NULL,
                 run_id TEXT,
-                runtime_mode TEXT,
+                runtime_mode TEXT NOT NULL,
                 status TEXT,
                 attempt_no INTEGER DEFAULT 1,
                 retry_of_check_id INTEGER,
@@ -500,7 +645,7 @@ def init_schema(db_path: str | Path | None = None) -> None:
                 daily_call_count_after INTEGER DEFAULT 0,
                 api_error_type TEXT,
                 api_error_message TEXT,
-                UNIQUE(session_date, market, eval_offset_min, fingerprint, attempt_no)
+                UNIQUE(session_date, market, runtime_mode, eval_offset_min, fingerprint, attempt_no)
             );
 
             CREATE TABLE IF NOT EXISTS preopen_claude_decisions (
@@ -536,6 +681,7 @@ def init_schema(db_path: str | Path | None = None) -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_date TEXT NOT NULL,
                 market TEXT NOT NULL,
+                runtime_mode TEXT NOT NULL DEFAULT 'live',
                 ticker TEXT NOT NULL,
                 ret_5m REAL,
                 ret_30m REAL,
@@ -578,11 +724,11 @@ def init_schema(db_path: str | Path | None = None) -> None:
                 route_route TEXT,
                 entry_price REAL,
                 pnl_pct REAL,
-                UNIQUE(session_date, market, ticker)
+                UNIQUE(session_date, market, runtime_mode, ticker)
             );
 
             CREATE INDEX IF NOT EXISTS ix_preopen_candidates_session_eligible_score
-            ON preopen_candidates(session_date, market, eligible, deterministic_score DESC);
+            ON preopen_candidates(session_date, market, runtime_mode, eligible, deterministic_score DESC);
 
             CREATE INDEX IF NOT EXISTS ix_preopen_candidates_source_hash
             ON preopen_candidates(source_row_hash);
@@ -594,9 +740,11 @@ def init_schema(db_path: str | Path | None = None) -> None:
             ON preopen_claude_decisions(check_id, case_id);
 
             CREATE INDEX IF NOT EXISTS ix_preopen_outcomes_decision_join
-            ON preopen_outcomes(session_date, market, ticker, actual_selected, actual_trade_ready, actual_ordered);
+            ON preopen_outcomes(session_date, market, runtime_mode, ticker, actual_selected, actual_trade_ready, actual_ordered);
             """
         )
+        _migrate_runtime_mode_identity_keys(conn)
+        _ensure_secondary_indexes(conn)
 
 
 def _start_run(
@@ -783,19 +931,19 @@ def _upsert_candidate(conn: sqlite3.Connection, payload: dict[str, Any]) -> int:
     payload.setdefault("created_at", now)
     columns = list(payload.keys())
     placeholders = ", ".join("?" for _ in columns)
-    update_columns = [col for col in columns if col not in {"id", "session_date", "market", "ticker", "created_at"}]
+    update_columns = [col for col in columns if col not in {"id", "session_date", "market", "runtime_mode", "ticker", "created_at"}]
     update_sql = ", ".join(f"{col}=excluded.{col}" for col in update_columns)
     conn.execute(
         f"""
         INSERT INTO preopen_candidates ({', '.join(columns)})
         VALUES ({placeholders})
-        ON CONFLICT(session_date, market, ticker) DO UPDATE SET {update_sql}
+        ON CONFLICT(session_date, market, runtime_mode, ticker) DO UPDATE SET {update_sql}
         """,
         [payload[col] for col in columns],
     )
     row = conn.execute(
-        "SELECT id FROM preopen_candidates WHERE session_date=? AND market=? AND ticker=?",
-        (payload["session_date"], payload["market"], payload["ticker"]),
+        "SELECT id FROM preopen_candidates WHERE session_date=? AND market=? AND runtime_mode=? AND ticker=?",
+        (payload["session_date"], payload["market"], payload["runtime_mode"], payload["ticker"]),
     ).fetchone()
     return int(row["id"])
 
@@ -974,6 +1122,7 @@ def _feature_payload(
     return {
         "session_date": str(candidate["session_date"]),
         "market": str(candidate["market"]),
+        "runtime_mode": str(candidate["runtime_mode"] or "live"),
         "ticker": ticker,
         "offset_min": int(offset_min),
         "regular_open_price": open_price,
@@ -1080,8 +1229,8 @@ def record_feature_snapshots(
     init_schema(db_path)
     with _db(db_path) as conn:
         if not conn.execute(
-            "SELECT 1 FROM preopen_candidates WHERE session_date=? AND market=? LIMIT 1",
-            (session_date, market_key),
+            "SELECT 1 FROM preopen_candidates WHERE session_date=? AND market=? AND runtime_mode=? LIMIT 1",
+            (session_date, market_key, runtime_mode),
         ).fetchone():
             collect_candidates(market_key, session_date=session_date, mode=runtime_mode, db_path=db_path)
         run_id = _start_run(
@@ -1094,8 +1243,8 @@ def record_feature_snapshots(
             config={"offset_min": int(offset_min)},
         )
         rows = conn.execute(
-            "SELECT * FROM preopen_candidates WHERE session_date=? AND market=? ORDER BY preopen_rank, ticker",
-            (session_date, market_key),
+            "SELECT * FROM preopen_candidates WHERE session_date=? AND market=? AND runtime_mode=? ORDER BY preopen_rank, ticker",
+            (session_date, market_key, runtime_mode),
         ).fetchall()
         sampled = 0
         missing = 0
@@ -1120,9 +1269,9 @@ def record_feature_snapshots(
             source_state_path=str(state_path(market_key, session_date, mode=runtime_mode)),
             source_outcome_log_path=outcome_path,
             source_candidate_count=len(rows),
-            eligible_count=_eligible_count(conn, session_date, market_key),
+            eligible_count=_eligible_count(conn, session_date, market_key, runtime_mode),
         )
-        _refresh_outcomes(conn, session_date=session_date, market=market_key)
+        _refresh_outcomes(conn, session_date=session_date, market=market_key, runtime_mode=runtime_mode)
     return {
         "market": market_key,
         "mode": runtime_mode,
@@ -1135,10 +1284,10 @@ def record_feature_snapshots(
     }
 
 
-def _eligible_count(conn: sqlite3.Connection, session_date: str, market: str) -> int:
+def _eligible_count(conn: sqlite3.Connection, session_date: str, market: str, runtime_mode: str) -> int:
     row = conn.execute(
-        "SELECT COUNT(*) AS c FROM preopen_candidates WHERE session_date=? AND market=? AND eligible=1",
-        (session_date, market),
+        "SELECT COUNT(*) AS c FROM preopen_candidates WHERE session_date=? AND market=? AND runtime_mode=? AND eligible=1",
+        (session_date, market, runtime_mode),
     ).fetchone()
     return int(row["c"] if row else 0)
 
@@ -1179,11 +1328,11 @@ def _close_offset_min(market: str, session_date: str) -> int | None:
         return None
 
 
-def _refresh_outcomes(conn: sqlite3.Connection, *, session_date: str, market: str) -> None:
+def _refresh_outcomes(conn: sqlite3.Connection, *, session_date: str, market: str, runtime_mode: str) -> None:
     decisions = _latest_decisions(conn, session_date, market)
     candidates = conn.execute(
-        "SELECT * FROM preopen_candidates WHERE session_date=? AND market=?",
-        (session_date, market),
+        "SELECT * FROM preopen_candidates WHERE session_date=? AND market=? AND runtime_mode=?",
+        (session_date, market, runtime_mode),
     ).fetchall()
     for candidate in candidates:
         cid = int(candidate["id"])
@@ -1217,6 +1366,7 @@ def _refresh_outcomes(conn: sqlite3.Connection, *, session_date: str, market: st
         payload = {
             "session_date": session_date,
             "market": market,
+            "runtime_mode": str(candidate["runtime_mode"] or runtime_mode),
             "ticker": str(candidate["ticker"]),
             "ret_5m": ret.get(5),
             "ret_30m": ret.get(30),
@@ -1257,26 +1407,26 @@ def _refresh_outcomes(conn: sqlite3.Connection, *, session_date: str, market: st
 
 def _upsert_outcome(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
     columns = list(payload.keys())
-    update_columns = [col for col in columns if col not in {"id", "session_date", "market", "ticker"}]
+    update_columns = [col for col in columns if col not in {"id", "session_date", "market", "runtime_mode", "ticker"}]
     conn.execute(
         f"""
         INSERT INTO preopen_outcomes ({', '.join(columns)})
         VALUES ({', '.join('?' for _ in columns)})
-        ON CONFLICT(session_date, market, ticker) DO UPDATE SET
+        ON CONFLICT(session_date, market, runtime_mode, ticker) DO UPDATE SET
         {', '.join(f'{col}=excluded.{col}' for col in update_columns)}
         """,
         [payload[col] for col in columns],
     )
 
 
-def _daily_called_count(conn: sqlite3.Connection, session_date: str, market: str) -> int:
+def _daily_called_count(conn: sqlite3.Connection, session_date: str, market: str, runtime_mode: str) -> int:
     row = conn.execute(
         """
         SELECT COUNT(*) AS c
         FROM preopen_claude_checks
-        WHERE session_date=? AND market=? AND status IN ('called', 'parse_failed') AND smart_skip=0
+        WHERE session_date=? AND market=? AND runtime_mode=? AND status IN ('called', 'parse_failed') AND smart_skip=0
         """,
-        (session_date, market),
+        (session_date, market, runtime_mode),
     ).fetchone()
     return int(row["c"] if row else 0)
 
@@ -1286,6 +1436,7 @@ def _next_check_attempt_no(
     *,
     session_date: str,
     market: str,
+    runtime_mode: str,
     offset_min: int,
     fingerprint: str,
 ) -> int:
@@ -1293,9 +1444,9 @@ def _next_check_attempt_no(
         """
         SELECT MAX(attempt_no) AS max_attempt
         FROM preopen_claude_checks
-        WHERE session_date=? AND market=? AND eval_offset_min=? AND fingerprint=?
+        WHERE session_date=? AND market=? AND runtime_mode=? AND eval_offset_min=? AND fingerprint=?
         """,
-        (session_date, market, int(offset_min), fingerprint),
+        (session_date, market, runtime_mode, int(offset_min), fingerprint),
     ).fetchone()
     return int(row["max_attempt"] or 0) + 1 if row else 1
 
@@ -1317,10 +1468,12 @@ def build_eval_cases(
     *,
     session_date: str,
     market: str,
+    mode: str = "live",
     offset_min: int,
     max_candidates: int = DEFAULT_MAX_CANDIDATES,
 ) -> tuple[list[EvalCase], str]:
     market_key = normalize_market(market)
+    runtime_mode = normalize_mode(mode)
     path = _resolve_db_path(db_path)
     if not path.exists():
         return [], "db_missing"
@@ -1334,10 +1487,10 @@ def build_eval_cases(
                 FROM preopen_candidates c
                 LEFT JOIN preopen_feature_snapshots fs
                   ON fs.candidate_id=c.id AND fs.offset_min=?
-                WHERE c.session_date=? AND c.market=? AND c.eligible=1
+                WHERE c.session_date=? AND c.market=? AND c.runtime_mode=? AND c.eligible=1
                 ORDER BY c.deterministic_score DESC, c.preopen_rank ASC, c.ticker ASC
                 """,
-                (int(offset_min), session_date, market_key),
+                (int(offset_min), session_date, market_key, runtime_mode),
             ).fetchall()
     except sqlite3.Error:
         return [], "db_schema_unavailable"
@@ -1532,16 +1685,16 @@ def _insert_decisions(conn: sqlite3.Connection, check_id: int, cases: list[EvalC
         )
 
 
-def _fingerprint_seen(conn: sqlite3.Connection, session_date: str, market: str, offset_min: int, fingerprint: str) -> bool:
+def _fingerprint_seen(conn: sqlite3.Connection, session_date: str, market: str, runtime_mode: str, offset_min: int, fingerprint: str) -> bool:
     return bool(
         conn.execute(
             """
             SELECT 1 FROM preopen_claude_checks
-            WHERE session_date=? AND market=? AND eval_offset_min=? AND fingerprint=?
+            WHERE session_date=? AND market=? AND runtime_mode=? AND eval_offset_min=? AND fingerprint=?
               AND parse_ok=1 AND status='called'
             LIMIT 1
             """,
-            (session_date, market, int(offset_min), fingerprint),
+            (session_date, market, runtime_mode, int(offset_min), fingerprint),
         ).fetchone()
     )
 
@@ -1720,6 +1873,7 @@ def run_eval(
         db_path,
         session_date=session_date,
         market=market_key,
+        mode=runtime_mode,
         offset_min=int(offset_min),
         max_candidates=int(max_candidates),
     )
@@ -1748,11 +1902,12 @@ def run_eval(
             offset_min=int(offset_min),
             config={"max_candidates": max_candidates, "no_claude": no_claude},
         )
-        daily_before = _daily_called_count(conn, session_date, market_key)
+        daily_before = _daily_called_count(conn, session_date, market_key, runtime_mode)
         base_attempt_no = _next_check_attempt_no(
             conn,
             session_date=session_date,
             market=market_key,
+            runtime_mode=runtime_mode,
             offset_min=int(offset_min),
             fingerprint=fingerprint,
         )
@@ -1780,7 +1935,7 @@ def run_eval(
             check_id = _insert_check(conn, {**base_check, "smart_skip": 1, "skip_reason": readiness, "parse_ok": 0, "status": "skipped"})
             _finish_run(conn, run_id, status="skipped", evaluated_count=0)
             return {"status": "skipped", "skip_reason": readiness, "check_id": check_id, "candidate_count": len(cases)}
-        if _fingerprint_seen(conn, session_date, market_key, int(offset_min), fingerprint):
+        if _fingerprint_seen(conn, session_date, market_key, runtime_mode, int(offset_min), fingerprint):
             check_id = _insert_check(conn, {**base_check, "smart_skip": 1, "skip_reason": "fingerprint_seen", "parse_ok": 1, "status": "skipped"})
             _finish_run(conn, run_id, status="skipped", evaluated_count=len(cases))
             return {"status": "skipped", "skip_reason": "fingerprint_seen", "check_id": check_id, "candidate_count": len(cases)}
@@ -1871,7 +2026,7 @@ def run_eval(
         )
         if parse_ok:
             _insert_decisions(conn, check_id, cases, parsed, session_date=session_date, market=market_key, offset_min=int(offset_min))
-            _refresh_outcomes(conn, session_date=session_date, market=market_key)
+            _refresh_outcomes(conn, session_date=session_date, market=market_key, runtime_mode=runtime_mode)
             _finish_run(conn, run_id, status="success", evaluated_count=len(cases))
             return {"status": "called", "check_id": check_id, "candidate_count": len(cases), "parse_ok": True}
 
@@ -1946,7 +2101,7 @@ def run_eval(
         )
         if retry_parse_ok:
             _insert_decisions(conn, retry_check_id, cases, retry_parsed, session_date=session_date, market=market_key, offset_min=int(offset_min))
-            _refresh_outcomes(conn, session_date=session_date, market=market_key)
+            _refresh_outcomes(conn, session_date=session_date, market=market_key, runtime_mode=runtime_mode)
             _finish_run(conn, run_id, status="success", evaluated_count=len(cases))
             return {
                 "status": "called",
@@ -1992,25 +2147,36 @@ def _percentile(values: list[float], pct: float) -> float | None:
     return round(nums[idx], 4)
 
 
+def _claude_called_checks(checks: list[sqlite3.Row]) -> list[sqlite3.Row]:
+    return [
+        row
+        for row in checks
+        if str(row["status"] or "") in {"called", "parse_failed"}
+        and int(row["smart_skip"] or 0) == 0
+    ]
+
+
 def build_report_payload(
     db_path: str | Path | None = None,
     *,
     market: str = "US",
+    mode: str = "live",
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> dict[str, Any]:
     market_key = normalize_market(market)
+    runtime_mode = normalize_mode(mode)
     path = _resolve_db_path(db_path)
     if not path.exists():
-        return _empty_report_payload(market_key, date_from=date_from, date_to=date_to, missing_db=str(path))
+        return _empty_report_payload(market_key, mode=runtime_mode, date_from=date_from, date_to=date_to, missing_db=str(path))
     try:
         with _readonly_db(path) as conn:
-            candidate_params: list[Any] = [market_key]
-            check_params: list[Any] = [market_key]
-            outcome_params: list[Any] = [market_key]
-            candidate_where = ""
-            check_where = ""
-            outcome_where = ""
+            candidate_params: list[Any] = [market_key, runtime_mode]
+            check_params: list[Any] = [market_key, runtime_mode]
+            outcome_params: list[Any] = [market_key, runtime_mode]
+            candidate_where = " AND runtime_mode=?"
+            check_where = " AND ch.runtime_mode=?"
+            outcome_where = " AND o.runtime_mode=?"
             if date_from:
                 candidate_where += " AND session_date>=?"
                 check_where += " AND ch.session_date>=?"
@@ -2045,6 +2211,7 @@ def build_report_payload(
     except sqlite3.Error as exc:
         return _empty_report_payload(
             market_key,
+            mode=runtime_mode,
             date_from=date_from,
             date_to=date_to,
             schema_error=str(exc)[:240],
@@ -2065,7 +2232,7 @@ def build_report_payload(
             "avg_mae": _safe_avg(row["mae"] for row in items),
             "bad_rate_close": _win_rate((-_num(row["ret_close"]) if _num(row["ret_close"]) is not None else None) for row in items),
         }
-    called = [row for row in checks if str(row["status"] or "") == "called"]
+    called = _claude_called_checks(checks)
     parse_success = [row for row in called if int(row["parse_ok"] or 0) == 1]
     skip_reasons: dict[str, int] = {}
     for row in checks:
@@ -2083,6 +2250,7 @@ def build_report_payload(
     recommendation = _recommendation(candidates=candidates, rows=rows, decision_stats=decision_stats, checks=checks)
     return {
         "market": market_key,
+        "mode": runtime_mode,
         "date_from": date_from,
         "date_to": date_to,
         "candidate_count": len(candidates),
@@ -2113,6 +2281,7 @@ def build_report_payload(
 def _empty_report_payload(
     market: str,
     *,
+    mode: str = "live",
     date_from: str | None = None,
     date_to: str | None = None,
     missing_db: str = "",
@@ -2120,6 +2289,7 @@ def _empty_report_payload(
 ) -> dict[str, Any]:
     payload = {
         "market": market,
+        "mode": normalize_mode(mode),
         "date_from": date_from,
         "date_to": date_to,
         "candidate_count": 0,
@@ -2152,7 +2322,7 @@ def _recommendation(*, candidates: list[sqlite3.Row], rows: list[sqlite3.Row], d
     complete_count = sum(1 for row in rows if _num(row["ret_close"]) is not None)
     promote_count = int(decision_stats.get("PROMOTE", {}).get("count") or 0)
     drop_count = int(decision_stats.get("DROP", {}).get("count") or 0)
-    called = [row for row in checks if str(row["status"] or "") == "called"]
+    called = _claude_called_checks(checks)
     parse_rate = (sum(1 for row in called if int(row["parse_ok"] or 0) == 1) / len(called) * 100.0) if called else 100.0
     if eligible_count < 50 or evaluated_count < 35 or promote_count < 8 or drop_count < 8 or parse_rate < 95.0:
         return "shadow_continue"
@@ -2180,6 +2350,7 @@ def render_report_markdown(payload: dict[str, Any]) -> str:
         "# Preopen Continuation Shadow Report",
         "",
         f"- market: {payload.get('market')}",
+        f"- mode: {payload.get('mode')}",
         f"- range: {payload.get('date_from') or '-'} ~ {payload.get('date_to') or '-'}",
         f"- recommendation: `{payload.get('recommendation')}`",
         "",
@@ -2262,13 +2433,13 @@ def backfill_outcomes(
             dates = [
                 str(row["session_date"])
                 for row in conn.execute(
-                    "SELECT DISTINCT session_date FROM preopen_candidates WHERE market=? ORDER BY session_date",
-                    (market_key,),
+                    "SELECT DISTINCT session_date FROM preopen_candidates WHERE market=? AND runtime_mode=? ORDER BY session_date",
+                    (market_key, runtime_mode),
                 ).fetchall()
             ]
         updated = 0
         for date_value in dates:
-            _refresh_outcomes(conn, session_date=date_value, market=market_key)
+            _refresh_outcomes(conn, session_date=date_value, market=market_key, runtime_mode=runtime_mode)
             updated += _backfill_selection_links(
                 conn,
                 session_date=date_value,
@@ -2291,8 +2462,18 @@ def _backfill_selection_links(
     candidate_audit_db_path: str | Path | None,
     ml_decisions_db_path: str | Path | None,
 ) -> int:
-    selection = _load_ticker_selection_map(ticker_selection_db_path, session_date=session_date, market=market)
-    audit = _load_candidate_audit_map(candidate_audit_db_path, session_date=session_date, market=market)
+    selection = _load_ticker_selection_map(
+        ticker_selection_db_path,
+        session_date=session_date,
+        market=market,
+        runtime_mode=runtime_mode,
+    )
+    audit = _load_candidate_audit_map(
+        candidate_audit_db_path,
+        session_date=session_date,
+        market=market,
+        runtime_mode=runtime_mode,
+    )
     ml_decisions = _load_ml_decision_map(
         ml_decisions_db_path,
         session_date=session_date,
@@ -2300,8 +2481,8 @@ def _backfill_selection_links(
         runtime_mode=runtime_mode,
     )
     outcomes = conn.execute(
-        "SELECT * FROM preopen_outcomes WHERE session_date=? AND market=?",
-        (session_date, market),
+        "SELECT * FROM preopen_outcomes WHERE session_date=? AND market=? AND runtime_mode=?",
+        (session_date, market, runtime_mode),
     ).fetchall()
     updated = 0
     for row in outcomes:
@@ -2364,20 +2545,32 @@ def _backfill_selection_links(
     return updated
 
 
-def _load_ticker_selection_map(path: str | Path | None, *, session_date: str, market: str) -> dict[str, dict[str, Any]]:
+def _load_ticker_selection_map(
+    path: str | Path | None,
+    *,
+    session_date: str,
+    market: str,
+    runtime_mode: str,
+) -> dict[str, dict[str, Any]]:
     db = Path(path) if path else get_runtime_path("data", "ticker_selection_log.db", make_parents=False)
     if not db.exists():
         return {}
     try:
         with _readonly_db(db) as ro:
+            columns = _table_columns(ro, "ticker_selection_log")
+            where = ["date=?", "market=?"]
+            params: list[Any] = [session_date, market]
+            if "runtime_mode" in columns:
+                where.append("runtime_mode=?")
+                params.append(runtime_mode)
             rows = ro.execute(
-                """
+                f"""
                 SELECT *
                 FROM ticker_selection_log
-                WHERE date=? AND market=?
+                WHERE {' AND '.join(where)}
                 ORDER BY id DESC
                 """,
-                (session_date, market),
+                params,
             ).fetchall()
     except Exception:
         return {}
@@ -2456,7 +2649,13 @@ def _load_ml_decision_map(
     return {}
 
 
-def _load_candidate_audit_map(path: str | Path | None, *, session_date: str, market: str) -> dict[str, dict[str, Any]]:
+def _load_candidate_audit_map(
+    path: str | Path | None,
+    *,
+    session_date: str,
+    market: str,
+    runtime_mode: str,
+) -> dict[str, dict[str, Any]]:
     db = Path(path) if path else get_runtime_path("data", "audit", "candidate_audit.db", make_parents=False)
     if not db.exists():
         return {}
@@ -2469,6 +2668,7 @@ def _load_candidate_audit_map(path: str | Path | None, *, session_date: str, mar
                 col
                 for col in (
                     "candidate_key",
+                    "runtime_mode",
                     "ticker",
                     "market",
                     "session_date",
@@ -2485,9 +2685,14 @@ def _load_candidate_audit_map(path: str | Path | None, *, session_date: str, mar
             ]
             if "ticker" not in select_cols:
                 return {}
+            where = ["session_date=?", "market=?"]
+            params: list[Any] = [session_date, market]
+            if "runtime_mode" in columns:
+                where.append("runtime_mode=?")
+                params.append(runtime_mode)
             rows = ro.execute(
-                f"SELECT {', '.join(select_cols)} FROM audit_candidate_rows WHERE session_date=? AND market=?",
-                (session_date, market),
+                f"SELECT {', '.join(select_cols)} FROM audit_candidate_rows WHERE {' AND '.join(where)}",
+                params,
             ).fetchall()
     except Exception:
         return {}

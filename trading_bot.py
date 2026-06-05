@@ -9722,6 +9722,105 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _preopen_runtime_mode(self) -> str:
         return "paper" if getattr(self, "is_paper", True) else "live"
 
+    def _load_saved_preopen_watch_snapshot(self, market: str, session_date: str) -> dict:
+        market_key = str(market or "").upper()
+        runtime_mode = self._preopen_runtime_mode()
+        paths = [
+            _judgment_runtime_path(runtime_mode, session_date, market_key),
+            JUDGMENT_DIR / f"{str(session_date or '').replace('-', '')}_{market_key}.json",
+        ]
+        seen: set[Path] = set()
+        for path in paths:
+            if path in seen:
+                continue
+            seen.add(path)
+            if not path.exists():
+                continue
+            try:
+                saved = json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                log.warning(f"[preopen watch reuse] saved snapshot load failed {market_key}: {exc}")
+                continue
+            if not isinstance(saved, dict):
+                continue
+            saved_market = str(saved.get("market") or "").strip().upper()
+            if saved_market and saved_market != market_key:
+                continue
+            saved_mode = str(saved.get("mode") or saved.get("runtime_mode") or "").strip().lower()
+            if saved_mode in {"paper", "live"} and saved_mode != runtime_mode:
+                continue
+            saved_session = str(saved.get("session_date") or saved.get("date") or "").strip()[:10]
+            if saved_session and saved_session != str(session_date or "")[:10]:
+                continue
+            basis = saved.get("judgment_context_basis") or {}
+            if not isinstance(basis, dict):
+                basis = {}
+            context = saved.get("preopen_context") or {}
+            if not isinstance(context, dict):
+                context = {}
+            phase = str(basis.get("phase") or context.get("phase") or "").strip()
+            if phase != _JUDGMENT_PHASE_PREOPEN:
+                continue
+            meta = saved.get("selection_meta") or {}
+            if not isinstance(meta, dict):
+                meta = {}
+            selected = list(saved.get("tickers") or meta.get("watchlist") or [])
+            if not selected:
+                continue
+            saved["_preopen_watch_snapshot_path"] = str(path)
+            return saved
+        return {}
+
+    def _restore_preopen_watch_snapshot(self, market: str, saved: dict, *, source: str = "preopen_watch_reuse") -> list[str]:
+        market_key = str(market or "").upper()
+        meta = dict(saved.get("selection_meta") or {})
+        selected = list(dict.fromkeys(list(saved.get("tickers") or []) or list(meta.get("watchlist") or [])))
+        if not meta.get("watchlist"):
+            meta["watchlist"] = selected
+        reasons = saved.get("ticker_reasons") or (saved.get("preopen_context") or {}).get("reasons") or {}
+        if not isinstance(reasons, dict):
+            reasons = {}
+        basis = dict(saved.get("judgment_context_basis") or {})
+        basis.update(
+            {
+                "phase": _JUDGMENT_PHASE_PREOPEN,
+                "execution_authority": _EXECUTION_AUTHORITY_NONE,
+                "source": source,
+                "digest_preopen": True,
+                "live_index_context_ok": False,
+                "intraday_context_included": False,
+            }
+        )
+        context = dict(saved.get("preopen_context") or {})
+        context.update(
+            {
+                "phase": _JUDGMENT_PHASE_PREOPEN,
+                "source": source,
+                "selected": selected,
+                "reasons": reasons,
+            }
+        )
+        self.today_tickers[market_key] = selected
+        self.today_ticker_reasons[market_key] = reasons
+        self.today_judgment = {
+            **saved,
+            "date": str(saved.get("date") or saved.get("session_date") or self._current_session_date_str(market_key)),
+            "market": market_key,
+            "judgments": saved.get("judgments") if isinstance(saved.get("judgments"), dict) else {},
+            "consensus": saved.get("consensus") if isinstance(saved.get("consensus"), dict) else {},
+            "tickers": selected,
+            "selection_meta": meta,
+            "selection_stages": dict(saved.get("selection_stages") or {}),
+            "trade_ready_tickers": [],
+            "preopen_context": context,
+            "judgment_context_basis": basis,
+        }
+        clean_meta = self._force_preopen_watch_only(market_key, meta)
+        self.today_judgment["selection_meta"] = clean_meta
+        self.today_judgment["selection_stages"] = self.selection_stages.get(market_key, {})
+        self.today_judgment["trade_ready_tickers"] = []
+        return selected
+
     def _load_preopen_state(self, market: str) -> dict:
         try:
             from preopen.storage import load_preopen_state
@@ -26072,6 +26171,44 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     log.info(f"[universe] {market} loaded {len(universe_tickers)} tickers")
         # ── 재시작 시 당일 판단 재사용 ───────────────────────────────────────
         if self._current_judgment_phase(market) == _JUDGMENT_PHASE_PREOPEN:
+            saved_preopen = self._load_saved_preopen_watch_snapshot(market, today)
+            if saved_preopen:
+                selected = self._restore_preopen_watch_snapshot(
+                    market,
+                    saved_preopen,
+                    source="session_open_preopen_reuse",
+                )
+                self._entry_timing_mark_candidates(market, selected, "preopen_watch_reuse")
+                try:
+                    self._funnel[market]["selected"] += len(selected)
+                except Exception:
+                    pass
+                self._persist_live_judgment(market)
+                try:
+                    self._pre_session_sell_queue[market] = []
+                    pending_count = sum(
+                        1 for p in self.risk.positions
+                        if self._ticker_market(p.get("ticker", "")) == market
+                        and p.get("pending_next_open_sell")
+                    )
+                    if pending_count:
+                        log.info(
+                            f"[preopen position review] {market} skipped; "
+                            f"pending SELL {pending_count}건은 기존 경로 유지"
+                        )
+                except Exception as _psr_e:
+                    log.warning(f"[preopen position review skip] {market}: {_psr_e}")
+                self._reset_session_live_caches(market, selected)
+                self._start_ws_for_market(market, selected)
+                self._session_open_at[market] = time.time()
+                self._session_startup_guard_sec[market] = self._compute_startup_guard_sec(market, trigger)
+                log.info(
+                    f"[preopen watch reuse] {market}: watch={selected} trade_ready=[] "
+                    f"source={saved_preopen.get('_preopen_watch_snapshot_path', '')}"
+                )
+                self._maybe_push_dashboard(force=True)
+                self._leave_market_task(market, "session_open")
+                return
             digest = {}
             digest_prompt = ""
             candidates: list[dict] = []

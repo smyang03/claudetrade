@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import inspect
 import os
+import tempfile
 import time
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -190,6 +192,63 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
         self.assertEqual(bot.trade_ready_tickers["KR"], [])
         self.assertEqual(bot.today_judgment["trade_ready_tickers"], [])
 
+    def test_preopen_watch_snapshot_restore_stays_watch_only(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot.is_paper = False
+        bot._current_session_date_str = lambda market: "2026-05-15"
+        bot.selection_meta = {"US": {}}
+        bot.trade_ready_tickers = {"US": ["AAPL"]}
+        bot.selection_stages = {"US": {}}
+        bot.today_tickers = {"US": []}
+        bot.today_ticker_reasons = {"US": {}}
+        saved = {
+            "date": "2026-05-15",
+            "market": "US",
+            "mode": "live",
+            "judgments": {},
+            "consensus": {},
+            "tickers": ["AAPL", "MSFT"],
+            "ticker_reasons": {"AAPL": "saved"},
+            "selection_meta": {
+                "watchlist": ["AAPL", "MSFT"],
+                "trade_ready": ["AAPL"],
+                "price_targets": {"AAPL": {"buy_zone_low": 100.0}},
+                "_pathb_wait_tickers": ["AAPL"],
+            },
+            "judgment_context_basis": {"phase": "preopen_watch", "execution_authority": "NONE"},
+        }
+
+        selected = trading_bot.TradingBot._restore_preopen_watch_snapshot(bot, "US", saved)
+
+        self.assertEqual(selected, ["AAPL", "MSFT"])
+        self.assertEqual(bot.today_tickers["US"], ["AAPL", "MSFT"])
+        self.assertEqual(bot.selection_meta["US"]["trade_ready"], [])
+        self.assertEqual(bot.selection_meta["US"]["price_targets"], {})
+        self.assertEqual(bot.selection_meta["US"]["_pathb_wait_tickers"], [])
+        self.assertEqual(bot.trade_ready_tickers["US"], [])
+        self.assertEqual(bot.today_judgment["judgment_context_basis"]["phase"], "preopen_watch")
+        self.assertEqual(bot.today_judgment["judgment_context_basis"]["execution_authority"], "NONE")
+
+    def test_load_saved_preopen_watch_snapshot_matches_mode_and_session(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot.is_paper = False
+        saved = {
+            "date": "2026-05-15",
+            "market": "US",
+            "mode": "live",
+            "tickers": ["AAPL"],
+            "selection_meta": {"watchlist": ["AAPL"], "trade_ready": []},
+            "judgment_context_basis": {"phase": "preopen_watch"},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            path = tmp_dir / "live_20260515_US.json"
+            path.write_text(json.dumps(saved), encoding="utf-8")
+            with patch.object(trading_bot, "JUDGMENT_DIR", tmp_dir):
+                loaded = trading_bot.TradingBot._load_saved_preopen_watch_snapshot(bot, "US", "2026-05-15")
+
+        self.assertEqual(loaded["tickers"], ["AAPL"])
+
     def test_saved_preopen_judgment_requires_refresh_after_open(self) -> None:
         bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
         bot._market_after_open_refresh_time = lambda market: True
@@ -326,6 +385,11 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
         self.assertIn("_trade_ready_resume_guard", source)
         self.assertIn("_last_trade_ready_resume_guard[market] = dict(_resume_guard)", source)
         self.assertIn("_failclose_trade_ready_after_resume_rescreen_empty", source)
+
+    def test_session_open_reuses_preopen_snapshot_before_select_tickers(self) -> None:
+        source = inspect.getsource(trading_bot.TradingBot.session_open)
+
+        self.assertLess(source.index("_load_saved_preopen_watch_snapshot"), source.index("select_tickers("))
 
     def test_resume_rescreen_empty_failcloses_trade_ready_state(self) -> None:
         bot = self._resume_bot()

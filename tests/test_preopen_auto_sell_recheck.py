@@ -138,6 +138,40 @@ class PreopenAutoSellRecheckTests(unittest.TestCase):
             self.assertTrue(ok)
             precheck.assert_called_once()
             self.assertEqual(run["plan"]["preopen_exit_policy_decision"], "DEFER_OPEN_RECHECK")
+            self.assertEqual(run["plan"]["preopen_exit_policy_status"], "shadow_observed")
+            self.assertFalse(bool(run["plan"].get("preopen_exit_defer_active")))
+
+    def test_preopen_shadow_ignores_legacy_active_defer_after_open(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan, pos = _runtime(tmp)
+            runtime.store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "preopen_exit_defer_active": True,
+                    "preopen_exit_defer_status": "waiting_open",
+                    "preopen_exit_defer_reason": "hard_stop",
+                    "preopen_exit_defer_close_reason": "CLOSED_HARD_STOP",
+                    "preopen_exit_defer_recorded_at": "2026-06-04T22:20:00+09:00",
+                },
+                merge_plan=True,
+            )
+            runtime._now_kst = lambda: datetime(2026, 6, 4, 22, 31, tzinfo=KST)  # type: ignore[method-assign]
+
+            with patch.dict(
+                os.environ,
+                {"PATHB_PREOPEN_EXIT_POLICY_MODE": "shadow", "CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "false"},
+                clear=False,
+            ), patch("runtime.pathb_runtime.precheck_order", return_value={"ok": True}) as precheck, patch(
+                "runtime.pathb_runtime.place_order", return_value={"success": True, "order_no": "sell1"}
+            ):
+                ok = runtime._submit_sell(
+                    plan,
+                    pos,
+                    ExitSignal(True, "hard_stop", "CLOSED_HARD_STOP", 99.4, plan.path_run_id),
+                )
+
+            self.assertTrue(ok)
+            precheck.assert_called_once()
 
     def test_preopen_severe_and_boundary_stops_sell_now(self) -> None:
         cases = [

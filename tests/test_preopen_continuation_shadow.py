@@ -40,7 +40,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
             self.addCleanup(item.stop)
         self.addCleanup(self.tmp.cleanup)
 
-    def _save_us_state(self) -> None:
+    def _save_us_state(self, *, mode: str = "live", alpha_name: str = "Alpha") -> None:
         captured_at = datetime.now(KST).isoformat(timespec="seconds")
         save_preopen_state(
             "US",
@@ -54,7 +54,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
                 "candidates": [
                     {
                         "ticker": "AAA",
-                        "name": "Alpha",
+                        "name": alpha_name,
                         "market": "US",
                         "session_date": "2026-06-04",
                         "source": "day_gainers",
@@ -85,10 +85,10 @@ class PreopenContinuationShadowTests(unittest.TestCase):
                 ],
             },
             session_date="2026-06-04",
-            mode="live",
+            mode=mode,
         )
 
-    def _save_outcome(self) -> None:
+    def _save_outcome(self, *, mode: str = "live", price: float = 11.0) -> None:
         save_outcome_record(
             "US",
             "2026-06-04",
@@ -101,15 +101,15 @@ class PreopenContinuationShadowTests(unittest.TestCase):
                 "token_status": "ok",
                 "anchor_price": 9.0,
                 "regular_open_price": 10.0,
-                "price": 11.0,
-                "high": 12.0,
+                "price": price,
+                "high": max(12.0, price),
                 "low": 9.5,
                 "volume": 1_500_000,
                 "post_open_return_pct": 22.2222,
-                "post_open_30m_return_pct": 22.2222,
+                "post_open_30m_return_pct": (price - 9.0) / 9.0 * 100.0,
                 "price_source": "test",
             },
-            mode="live",
+            mode=mode,
         )
 
     def test_us_only_guard(self) -> None:
@@ -136,6 +136,38 @@ class PreopenContinuationShadowTests(unittest.TestCase):
         self.assertEqual(rows[1]["ticker"], "BBB")
         self.assertEqual(rows[1]["eligible"], 0)
         self.assertIn("gap_2_20", rows[1]["exclusion_reason"])
+
+    def test_shadow_db_separates_live_and_paper_candidates_outcomes_and_checks(self) -> None:
+        self._save_us_state(mode="live", alpha_name="Live Alpha")
+        self._save_us_state(mode="paper", alpha_name="Paper Alpha")
+        self._save_outcome(mode="live", price=11.0)
+        self._save_outcome(mode="paper", price=12.0)
+
+        cs.collect_candidates("US", session_date="2026-06-04", mode="live", db_path=self.db_path)
+        cs.collect_candidates("US", session_date="2026-06-04", mode="paper", db_path=self.db_path)
+        cs.record_feature_snapshots("US", session_date="2026-06-04", mode="live", offset_min=30, db_path=self.db_path)
+        cs.record_feature_snapshots("US", session_date="2026-06-04", mode="paper", offset_min=30, db_path=self.db_path)
+        live_eval = cs.run_eval("US", session_date="2026-06-04", mode="live", db_path=self.db_path, no_claude=True)
+        paper_eval = cs.run_eval("US", session_date="2026-06-04", mode="paper", db_path=self.db_path, no_claude=True)
+
+        self.assertEqual(live_eval["status"], "skipped")
+        self.assertEqual(paper_eval["status"], "skipped")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            candidates = conn.execute(
+                "SELECT runtime_mode, name FROM preopen_candidates WHERE ticker='AAA' ORDER BY runtime_mode"
+            ).fetchall()
+            outcomes = conn.execute(
+                "SELECT runtime_mode, ret_30m FROM preopen_outcomes WHERE ticker='AAA' ORDER BY runtime_mode"
+            ).fetchall()
+            checks = conn.execute(
+                "SELECT runtime_mode, attempt_no FROM preopen_claude_checks WHERE skip_reason='no_claude' ORDER BY runtime_mode"
+            ).fetchall()
+
+        self.assertEqual([(row["runtime_mode"], row["name"]) for row in candidates], [("live", "Live Alpha"), ("paper", "Paper Alpha")])
+        self.assertEqual([row["runtime_mode"] for row in outcomes], ["live", "paper"])
+        self.assertNotEqual(outcomes[0]["ret_30m"], outcomes[1]["ret_30m"])
+        self.assertEqual([(row["runtime_mode"], row["attempt_no"]) for row in checks], [("live", 1), ("paper", 1)])
 
     def test_feature_snapshot_separates_open_and_anchor_basis(self) -> None:
         self._save_us_state()
@@ -294,6 +326,15 @@ class PreopenContinuationShadowTests(unittest.TestCase):
         self.assertEqual(checks[1]["attempt_no"], 2)
         self.assertEqual(checks[1]["parse_ok"], 1)
         self.assertEqual(decision["decision"], "KEEP")
+        payload = cs.build_report_payload(
+            self.db_path,
+            market="US",
+            mode="live",
+            date_from="2026-06-04",
+            date_to="2026-06-04",
+        )
+        self.assertEqual(payload["claude"]["called"], 2)
+        self.assertEqual(payload["claude"]["parse_success_rate"], 50.0)
 
     def test_existing_selection_db_backfill_writes_only_shadow_db(self) -> None:
         self._save_us_state()
@@ -401,6 +442,24 @@ class PreopenContinuationShadowTests(unittest.TestCase):
             self.assertEqual(conn.execute("PRAGMA query_only").fetchone()[0], 1)
             with self.assertRaises(sqlite3.OperationalError):
                 conn.execute("INSERT INTO sample (id) VALUES (1)")
+
+    def test_readonly_source_connection_reads_live_wal_rows(self) -> None:
+        source_db = self.root / "source" / "wal_source.db"
+        source_db.parent.mkdir(parents=True, exist_ok=True)
+        writer = sqlite3.connect(source_db)
+        try:
+            writer.execute("PRAGMA journal_mode=WAL")
+            writer.execute("PRAGMA wal_autocheckpoint=0")
+            writer.execute("CREATE TABLE sample (id INTEGER)")
+            writer.commit()
+            writer.execute("INSERT INTO sample (id) VALUES (7)")
+            writer.commit()
+
+            with cs._readonly_db(source_db) as conn:
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM sample").fetchone()[0], 1)
+                self.assertEqual(conn.execute("SELECT id FROM sample").fetchone()[0], 7)
+        finally:
+            writer.close()
 
     def test_shadow_writer_refuses_protected_operating_db_paths(self) -> None:
         protected_paths = [
