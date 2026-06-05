@@ -498,6 +498,7 @@ class PathBRuntimeTests(unittest.TestCase):
                 "path_type": "claude_price",
                 "pathb_path_run_id": plan.path_run_id,
             }
+            bot.risk.positions.append(pos)
 
             with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}), patch(
                 "runtime.pathb_runtime.precheck_order", return_value={"ok": True}
@@ -660,6 +661,7 @@ class PathBRuntimeTests(unittest.TestCase):
                 "path_type": "claude_price",
                 "pathb_path_run_id": plan.path_run_id,
             }
+            bot.risk.positions.append(pos)
             signal = ExitSignal(True, "claude_sell_target", "CLOSED_CLAUDE_PRICE_TARGET", 190.0, plan.path_run_id)
 
             with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}), patch(
@@ -712,6 +714,7 @@ class PathBRuntimeTests(unittest.TestCase):
                 "path_type": "claude_price",
                 "pathb_path_run_id": plan.path_run_id,
             }
+            bot.risk.positions.append(pos)
 
             with patch("minority_report.hold_advisor.ask", return_value={"action": "SELL", "confidence": 0.9}), patch(
                 "runtime.pathb_runtime.precheck_order",

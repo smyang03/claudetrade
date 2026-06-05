@@ -2115,6 +2115,8 @@ class PathBRuntime:
                 )
             if exit_signal.signal:
                 self._submit_sell(plan, pos, exit_signal)
+            else:
+                self._pathb_clear_deferred_exit_if_recovered(plan, pos, current, run=run)
 
     def on_buy_fill(self, order: dict[str, Any], *, position: dict[str, Any] | None = None, partial: bool = False) -> None:
         path_run_id = str(order.get("pathb_path_run_id", "") or "")
@@ -2935,6 +2937,433 @@ class PathBRuntime:
         if pnl_pct <= -threshold:
             return True, f"loss {pnl_pct:.2f}% <= force threshold -{threshold:.2f}%"
         return False, ""
+
+    def _now_kst(self) -> datetime:
+        return datetime.now(KST)
+
+    @staticmethod
+    def _pathb_preopen_exit_policy_mode() -> str:
+        raw = str(os.getenv("PATHB_PREOPEN_EXIT_POLICY_MODE", "off") or "off").strip().lower()
+        return raw if raw in {"off", "shadow", "enforce"} else "off"
+
+    def _pathb_open_confirm_delay_min(self, market: str) -> int:
+        market_key = str(market or "").upper()
+        return max(
+            0,
+            _env_int(
+                f"{market_key}_PATHB_OPEN_CONFIRM_RECHECK_MIN",
+                _env_int("PATHB_OPEN_CONFIRM_RECHECK_MIN", 5),
+            ),
+        )
+
+    def _pathb_preopen_exit_window_min(self, market: str) -> int:
+        market_key = str(market or "").upper()
+        return max(
+            1,
+            _env_int(
+                f"{market_key}_PATHB_PREOPEN_EXIT_DEFER_WINDOW_MIN",
+                _env_int("PATHB_PREOPEN_EXIT_DEFER_WINDOW_MIN", 90),
+            ),
+        )
+
+    def _pathb_preopen_exit_session_context(self, market: str, *, now: datetime | None = None) -> dict[str, Any]:
+        market_key = str(market or "").upper()
+        now_dt = self._ensure_kst(now or self._now_kst())
+        session_date = self._session_date(market_key)
+        try:
+            open_dt, close_dt = self._advisor_market_open_close(market_key, session_date, now_dt)
+        except Exception:
+            return {
+                "session_phase": "unknown",
+                "regular_open_at": "",
+                "minutes_to_regular_open": 0.0,
+                "opening_recheck_earliest_at": "",
+                "opening_recheck_deadline": "",
+            }
+        open_dt = self._ensure_kst(open_dt)
+        close_dt = self._ensure_kst(close_dt)
+        minutes_to_open = (open_dt - now_dt).total_seconds() / 60.0
+        recheck_at = open_dt + timedelta(minutes=self._pathb_open_confirm_delay_min(market_key))
+        deadline = open_dt + timedelta(minutes=15)
+        if now_dt < open_dt:
+            phase = "preopen"
+        elif now_dt < recheck_at:
+            phase = "opening_wait"
+        elif now_dt < close_dt:
+            phase = "opening_confirm" if now_dt <= deadline else "regular"
+        else:
+            phase = "closed"
+        return {
+            "session_phase": phase,
+            "regular_open_at": open_dt.isoformat(timespec="seconds"),
+            "minutes_to_regular_open": round(minutes_to_open, 3),
+            "opening_recheck_earliest_at": recheck_at.isoformat(timespec="seconds"),
+            "opening_recheck_deadline": deadline.isoformat(timespec="seconds"),
+        }
+
+    @staticmethod
+    def _pathb_preopen_stop_reason(signal: ExitSignal) -> bool:
+        reason_key = str(signal.reason or "").strip().lower()
+        close_reason = str(signal.close_reason or "").strip().upper()
+        return reason_key in {"hard_stop", "loss_cap", "claude_stop_loss"} or close_reason in {
+            "CLOSED_HARD_STOP",
+            "CLOSED_LOSS_CAP",
+            "CLOSED_CLAUDE_PRICE_STOP",
+        }
+
+    def _pathb_signal_stop_distance_pct(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        signal: ExitSignal,
+        current_native: float,
+    ) -> tuple[float | None, float]:
+        close_reason = str(signal.close_reason or "").strip().upper()
+        reason_key = str(signal.reason or "").strip().lower()
+        stop_price = 0.0
+        if close_reason == "CLOSED_LOSS_CAP" or reason_key == "loss_cap":
+            stop_price = float(self._native_loss_cap_stop(pos, plan.market) or 0.0)
+        elif close_reason == "CLOSED_CLAUDE_PRICE_STOP" or reason_key == "claude_stop_loss":
+            stop_price = float(plan.stop_loss or 0.0)
+        else:
+            stop_price = float(self._native_hard_stop(pos, plan.market) or 0.0)
+            if stop_price <= 0 and float(plan.stop_loss or 0) > 0:
+                stop_price = float(plan.stop_loss or 0)
+        if stop_price <= 0 or current_native <= 0:
+            return None, stop_price
+        return ((float(current_native) / stop_price) - 1.0) * 100.0, stop_price
+
+    @staticmethod
+    def _pathb_preopen_exit_severity(pnl_pct: float, stop_distance_pct: float | None) -> str:
+        if pnl_pct > 0:
+            return "profit_protective_stop"
+        if pnl_pct <= -2.5 or (stop_distance_pct is not None and stop_distance_pct <= -1.0):
+            return "severe_loss_stop"
+        if pnl_pct > -1.5 and (stop_distance_pct is None or stop_distance_pct >= -0.75):
+            return "shallow_loss_stop"
+        return "boundary_loss_stop"
+
+    def _pathb_defer_record_throttled(self, run_plan: dict[str, Any], now: datetime) -> bool:
+        try:
+            interval = max(0, _env_int("PATHB_PREOPEN_EXIT_DEFER_RECORD_THROTTLE_SEC", 60))
+        except Exception:
+            interval = 60
+        if interval <= 0:
+            return False
+        last_at = self._parse_kst_iso(run_plan.get("preopen_exit_defer_recorded_at"))
+        return last_at is not None and (now - last_at).total_seconds() < float(interval)
+
+    def _record_pathb_preopen_exit_policy(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        signal: ExitSignal,
+        *,
+        decision: str,
+        severity: str,
+        pnl_pct: float,
+        stop_distance_pct: float | None,
+        stop_price: float,
+        mode: str,
+        now: datetime,
+        status: str = "",
+        throttle_ok: bool = True,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        session_ctx = self._pathb_preopen_exit_session_context(plan.market, now=now)
+        payload: dict[str, Any] = {
+            "preopen_exit_policy_mode": mode,
+            "preopen_exit_policy_decision": decision,
+            "preopen_exit_policy_status": status or ("waiting_open" if decision == "DEFER_OPEN_RECHECK" else "observed"),
+            "preopen_exit_policy_reason": str(signal.reason or ""),
+            "preopen_exit_policy_close_reason": str(signal.close_reason or ""),
+            "preopen_exit_policy_severity": severity,
+            "preopen_exit_policy_pnl_pct": round(float(pnl_pct or 0.0), 4),
+            "preopen_exit_policy_stop_distance_pct": (
+                round(float(stop_distance_pct), 4) if stop_distance_pct is not None else None
+            ),
+            "preopen_exit_policy_stop_price": float(stop_price or 0.0),
+            "preopen_exit_policy_price_native": float(signal.price or 0.0),
+            "preopen_exit_policy_recorded_at": now.isoformat(timespec="seconds"),
+            "preopen_exit_policy_session": self._session_date(plan.market),
+            "preopen_exit_policy_session_phase": session_ctx.get("session_phase", ""),
+            "preopen_exit_policy_regular_open_at": session_ctx.get("regular_open_at", ""),
+            "preopen_exit_policy_recheck_earliest_at": session_ctx.get("opening_recheck_earliest_at", ""),
+            "preopen_exit_policy_recheck_deadline": session_ctx.get("opening_recheck_deadline", ""),
+        }
+        if severity == "boundary_loss_stop":
+            payload["severity_boundary_case"] = True
+        if decision == "DEFER_OPEN_RECHECK":
+            payload.update(
+                {
+                    "preopen_exit_defer_active": True,
+                    "preopen_exit_defer_status": "waiting_open",
+                    "preopen_exit_defer_reason": str(signal.reason or ""),
+                    "preopen_exit_defer_close_reason": str(signal.close_reason or ""),
+                    "preopen_exit_defer_recorded_at": now.isoformat(timespec="seconds"),
+                    "preopen_exit_defer_price_native": float(signal.price or 0.0),
+                    "preopen_exit_defer_stop_distance_pct": payload["preopen_exit_policy_stop_distance_pct"],
+                    "preopen_exit_defer_recheck_earliest_at": session_ctx.get("opening_recheck_earliest_at", ""),
+                    "preopen_exit_defer_deadline": session_ctx.get("opening_recheck_deadline", ""),
+                }
+            )
+        if extra:
+            payload.update(extra)
+        if throttle_ok:
+            try:
+                self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)
+            except Exception:
+                pass
+            try:
+                pos.update(payload)
+                self._save_positions_if_possible()
+            except Exception:
+                pass
+        return payload
+
+    def _pathb_deferred_exit_active(self, run_plan: dict[str, Any], signal: ExitSignal | None = None) -> bool:
+        if not bool(run_plan.get("preopen_exit_defer_active")):
+            return False
+        if str(run_plan.get("preopen_exit_defer_status", "") or "") not in {"waiting_open", "waiting_fresh_quote"}:
+            return False
+        if signal is None:
+            return True
+        reason = str(run_plan.get("preopen_exit_defer_reason", "") or "").lower()
+        close_reason = str(run_plan.get("preopen_exit_defer_close_reason", "") or "").upper()
+        if reason and reason != str(signal.reason or "").lower():
+            return False
+        if close_reason and close_reason != str(signal.close_reason or "").upper():
+            return False
+        return True
+
+    def _pathb_open_confirm_recheck_ready(self, market: str, *, now: datetime | None = None) -> bool:
+        ctx = self._pathb_preopen_exit_session_context(market, now=now)
+        raw = str(ctx.get("opening_recheck_earliest_at", "") or "")
+        if not raw:
+            return False
+        recheck_at = self._parse_kst_iso(raw)
+        if recheck_at is None:
+            return False
+        return self._ensure_kst(now or self._now_kst()) >= recheck_at
+
+    def _pathb_preopen_exit_policy_decision(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        signal: ExitSignal,
+        *,
+        run: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        mode = self._pathb_preopen_exit_policy_mode()
+        if mode == "off":
+            return {"action": "PROCEED", "mode": mode}
+        market = str(plan.market or "").upper()
+        if market != "US" or not self._pathb_preopen_stop_reason(signal):
+            return {"action": "PROCEED", "mode": mode}
+        now = self._now_kst()
+        run_plan = dict((run or self.store.find_path_run(plan.path_run_id) or {}).get("plan") or {})
+        session_ctx = self._pathb_preopen_exit_session_context(market, now=now)
+        session_phase = str(session_ctx.get("session_phase", "") or "")
+        current_native = float(signal.price or 0.0)
+        pnl_pct = self._pathb_review_position_pnl_pct(pos, market, current_native=current_native)
+        stop_distance_pct, stop_price = self._pathb_signal_stop_distance_pct(plan, pos, signal, current_native)
+        severity = self._pathb_preopen_exit_severity(pnl_pct, stop_distance_pct)
+        active_defer = self._pathb_deferred_exit_active(run_plan, signal)
+
+        if active_defer and session_phase in {"opening_wait", "opening_confirm", "regular"}:
+            if not self._pathb_open_confirm_recheck_ready(market, now=now):
+                payload = self._record_pathb_preopen_exit_policy(
+                    plan,
+                    pos,
+                    signal,
+                    decision="WAIT_FRESH_OPEN_QUOTE",
+                    severity=severity,
+                    pnl_pct=pnl_pct,
+                    stop_distance_pct=stop_distance_pct,
+                    stop_price=stop_price,
+                    mode=mode,
+                    now=now,
+                    status="waiting_fresh_quote",
+                    throttle_ok=not self._pathb_defer_record_throttled(run_plan, now),
+                )
+                return {"action": "DEFER", **payload}
+            payload = self._record_pathb_preopen_exit_policy(
+                plan,
+                pos,
+                signal,
+                decision="SELL_NOW_AFTER_OPEN_CONFIRM",
+                severity=severity,
+                pnl_pct=pnl_pct,
+                stop_distance_pct=stop_distance_pct,
+                stop_price=stop_price,
+                mode=mode,
+                now=now,
+                status="open_confirm_recheck_sell",
+                extra={
+                    "preopen_exit_defer_active": False,
+                    "preopen_exit_defer_status": "open_confirm_recheck_sell",
+                    "open_confirm_recheck_result": "SELL_NOW_AFTER_OPEN_CONFIRM",
+                    "open_confirm_recheck_at": now.isoformat(timespec="seconds"),
+                },
+            )
+            return {"action": "PROCEED", **payload}
+
+        if session_phase != "preopen":
+            return {"action": "PROCEED", "mode": mode}
+        try:
+            minutes_to_open = float(session_ctx.get("minutes_to_regular_open") or 0.0)
+        except Exception:
+            minutes_to_open = 0.0
+        if minutes_to_open < 0 or minutes_to_open > self._pathb_preopen_exit_window_min(market):
+            return {"action": "PROCEED", "mode": mode}
+        if severity in {"severe_loss_stop", "profit_protective_stop", "boundary_loss_stop"}:
+            decision = "SELL_NOW"
+            status = "boundary_sell_now" if severity == "boundary_loss_stop" else "sell_now"
+            payload = self._record_pathb_preopen_exit_policy(
+                plan,
+                pos,
+                signal,
+                decision=decision,
+                severity=severity,
+                pnl_pct=pnl_pct,
+                stop_distance_pct=stop_distance_pct,
+                stop_price=stop_price,
+                mode=mode,
+                now=now,
+                status=status,
+            )
+            return {"action": "PROCEED", **payload}
+        decision = "DEFER_OPEN_RECHECK"
+        payload = self._record_pathb_preopen_exit_policy(
+            plan,
+            pos,
+            signal,
+            decision=decision,
+            severity=severity,
+            pnl_pct=pnl_pct,
+            stop_distance_pct=stop_distance_pct,
+            stop_price=stop_price,
+            mode=mode,
+            now=now,
+            throttle_ok=not self._pathb_defer_record_throttled(run_plan, now),
+        )
+        if mode == "shadow":
+            return {"action": "PROCEED", "shadow_decision": decision, **payload}
+        return {"action": "DEFER", **payload}
+
+    def _pathb_clear_deferred_exit_if_recovered(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        current_native: float,
+        *,
+        run: dict[str, Any] | None = None,
+    ) -> None:
+        mode = self._pathb_preopen_exit_policy_mode()
+        if mode == "off":
+            return
+        run_obj = run or self.store.find_path_run(plan.path_run_id) or {}
+        run_plan = dict(run_obj.get("plan") or {})
+        if not self._pathb_deferred_exit_active(run_plan):
+            return
+        now = self._now_kst()
+        payload = {
+            "preopen_exit_defer_active": False,
+            "preopen_exit_defer_status": "cleared_recovered",
+            "preopen_exit_policy_decision": "CLEAR_DEFERRED_STOP",
+            "preopen_exit_policy_status": "cleared_recovered",
+            "open_confirm_recheck_result": "CLEAR_DEFERRED_STOP",
+            "open_confirm_recheck_at": now.isoformat(timespec="seconds"),
+            "open_confirm_recheck_price_native": float(current_native or 0.0),
+        }
+        try:
+            self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)
+            pos.update(payload)
+            self._save_positions_if_possible()
+        except Exception:
+            pass
+        log.info(f"[PathB preopen exit defer cleared] {plan.market} {plan.ticker} price={current_native:g}")
+
+    def _pathb_stale_or_closed_review_skip(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        run: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        status = str((run or {}).get("status", "") or "").upper()
+        current_pos = self._find_position(plan.market, plan.ticker, path_run_id=plan.path_run_id)
+        qty = int(pos.get("qty", 0) or 0)
+        reason = ""
+        if status in {"CLOSED", "CANCELLED", "EXPIRED"}:
+            reason = f"path_run_{status.lower()}"
+        elif current_pos is None:
+            reason = "local_position_missing"
+        elif qty <= 0:
+            reason = "qty_zero"
+        if not reason:
+            return None
+        now_iso = self._now_kst().isoformat(timespec="seconds")
+        payload = {
+            "skip_stale_or_closed_review": True,
+            "skip_stale_or_closed_review_at": now_iso,
+            "skip_stale_or_closed_review_reason": reason,
+            "auto_sell_review_action": "SKIP_STALE_OR_CLOSED",
+        }
+        try:
+            self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)
+        except Exception:
+            pass
+        log.info(f"[PathB auto sell review skipped stale/closed] {plan.market} {plan.ticker} reason={reason}")
+        return payload
+
+    def _pathb_exit_advisor_context(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        signal: ExitSignal,
+        current_native: float,
+    ) -> dict[str, Any]:
+        ctx = dict(pos.get("advisor_context_v2") or {})
+        session_ctx = self._pathb_preopen_exit_session_context(plan.market)
+        pnl_pct = self._pathb_review_position_pnl_pct(pos, plan.market, current_native=current_native)
+        stop_distance_pct, stop_price = self._pathb_signal_stop_distance_pct(plan, pos, signal, current_native)
+        severity = self._pathb_preopen_exit_severity(pnl_pct, stop_distance_pct)
+        selected_reason = (
+            ctx.get("selected_reason")
+            or pos.get("selected_reason")
+            or pos.get("pathb_origin_reason")
+            or plan.origin_reason
+            or ""
+        )
+        ctx.update(
+            {
+                "session_phase": session_ctx.get("session_phase", ""),
+                "regular_open_at": session_ctx.get("regular_open_at", ""),
+                "minutes_to_regular_open": session_ctx.get("minutes_to_regular_open", 0.0),
+                "opening_recheck_deadline": session_ctx.get("opening_recheck_deadline", ""),
+                "or_status_reason": "regular_market_not_open"
+                if session_ctx.get("session_phase") == "preopen"
+                else ctx.get("or_status_reason", ""),
+                "premarket_quote_quality": pos.get("premarket_quote_quality", "unknown"),
+                "bid_ask_spread_pct": pos.get("bid_ask_spread_pct", pos.get("spread_pct", "")),
+                "last_quote_age_sec": pos.get("last_quote_age_sec", ""),
+                "exit_signal_severity": severity,
+                "exit_signal_reason": str(signal.reason or ""),
+                "exit_signal_close_reason": str(signal.close_reason or ""),
+                "exit_signal_stop_price": float(stop_price or 0.0),
+                "exit_signal_stop_distance_pct": stop_distance_pct,
+                "recover_above": round(float(stop_price or 0.0) * 1.002, 4) if stop_price > 0 else 0.0,
+                "original_selected_reason": selected_reason,
+                "selected_reason": selected_reason,
+                "pathb_plan_target": float(plan.sell_target or 0.0),
+                "pathb_plan_stop": float(plan.stop_loss or 0.0),
+                "pathb_reference_target": ctx.get("pathb_reference_target") or float(plan.sell_target or 0.0),
+                "pathb_reference_stop": ctx.get("pathb_reference_stop") or float(plan.stop_loss or 0.0),
+            }
+        )
+        if stop_distance_pct is not None:
+            ctx["hard_stop_distance_pct"] = round(float(stop_distance_pct), 4)
+        return ctx
 
     def _pathb_submit_safety_block_keeps_waiting(self, plan: PricePlan, decision: Any) -> bool:
         reason = str(getattr(decision, "reason_code", "") or "")
@@ -4574,6 +5003,12 @@ class PathBRuntime:
                     review_pos = builder(review_pos, plan.market)
                 except Exception:
                     pass
+            review_pos["advisor_context_v2"] = self._pathb_exit_advisor_context(
+                plan,
+                review_pos,
+                signal,
+                current_native,
+            )
             advice = advisor_ask(
                 review_pos,
                 plan.market,
@@ -4719,6 +5154,9 @@ class PathBRuntime:
         keep_lock = False
         try:
             run = self.store.find_path_run(plan.path_run_id) or {}
+            stale_skip = self._pathb_stale_or_closed_review_skip(plan, pos, run)
+            if stale_skip is not None:
+                return False
             if self._pathb_sellability_untrusted(run, pos):
                 log.warning(
                     f"[PathB sell skipped] {market} {plan.ticker} sellable qty untrusted; "
@@ -4734,6 +5172,13 @@ class PathBRuntime:
             qty = int(pos.get("qty", 0) or 0)
             order_price = self._compute_sell_order_price(market, signal.price)
             if qty <= 0 or order_price < 0:
+                return False
+            preopen_policy = self._pathb_preopen_exit_policy_decision(plan, pos, signal, run=run)
+            if str(preopen_policy.get("action", "") or "").upper() == "DEFER":
+                log.info(
+                    f"[PathB preopen exit deferred] {market} {plan.ticker} "
+                    f"reason={signal.reason} severity={preopen_policy.get('preopen_exit_policy_severity', '')}"
+                )
                 return False
             if self._pathb_sell_observation_required(run, pos):
                 observation = self._observe_pathb_sellability_before_submit(
