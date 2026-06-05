@@ -584,12 +584,22 @@ def _write_json_safe(path: Path, payload: dict) -> dict:
 
 
 _POSITIVE_SUPPLEMENT_METRICS = {"vix", "dxy", "vkospi", "usd_krw", "oil_wti", "tnx"}
+_DICT_SUPPLEMENT_KEYS = {
+    "sectors", "kr_sectors", "sp500", "nasdaq", "kospi", "kosdaq",
+    "kospi_trend", "kosdaq_trend", "hyg", "premarket", "us_prev",
+}
 
 
 def _merge_live_context_with_supp(live: dict, supp: dict) -> dict:
     merged = dict(live or {})
     for key, value in (supp or {}).items():
         if key in _POSITIVE_SUPPLEMENT_METRICS and _positive_float_or_none(value) is None and key in merged:
+            continue
+        # supp의 None이 live의 유효값을 덮어쓰지 않는다
+        if value is None and merged.get(key) is not None:
+            continue
+        # dict 타입 키: supp가 빈 값이면 live의 비어 있지 않은 dict를 보존한다
+        if key in _DICT_SUPPLEMENT_KEYS and not value and isinstance(merged.get(key), dict) and merged[key]:
             continue
         merged[key] = value
     return merged
@@ -1359,7 +1369,7 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         "us_prev":         supp.get("us_prev", {}),
         "fomc":            target_date in FOMC_DATES,
         "options_expiry":  supp.get("options_expiry", False),
-        "kr_sectors":      supp.get("kr_sectors", {}),
+        "kr_sectors":      {k: v for k, v in (supp.get("kr_sectors") or {}).items() if v is not None},
         "data_quality_flags": supp.get("data_quality_flags", []),
         "data_sources":    supp.get("sources", {}),
         "fallback_used":   supp.get("fallback_used", {}),
@@ -1553,7 +1563,7 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
         "tnx":        _us_tnx,                    # 10년 국채금리 (%)
         "hyg":        supp.get("hyg", {}),         # 하이일드 ETF 등락
         # 섹터 ETF 등락 (시장 흐름 파악)
-        "sectors":    supp.get("sectors", {}),
+        "sectors":    {k: v for k, v in (supp.get("sectors") or {}).items() if v is not None},
         # 시장 레짐 자동 감지
         "regime":     detect_market_regime(
             sp500_change=supp.get("sp500", {}).get("change_pct", 0) if isinstance(supp.get("sp500"), dict) else 0,
@@ -1820,7 +1830,7 @@ def digest_to_prompt(digest: dict) -> str:
         sectors = ctx.get("sectors", {})
         if sectors:
             sec_str = " | ".join(
-                f"{k} {v:+.2f}%" for k, v in sectors.items() if v != 0
+                f"{k} {v:+.2f}%" for k, v in sectors.items() if v is not None and v != 0
             )
             if sec_str:
                 lines.append(f"  섹터: {sec_str}")
