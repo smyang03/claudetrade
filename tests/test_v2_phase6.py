@@ -188,6 +188,50 @@ class V2Phase6Tests(unittest.TestCase):
         self.assertEqual(summary["lifecycle"]["order_unknown_event_history_count"], 1)
         self.assertTrue(summary["path_b_live"]["order_unknown"][0]["manual_reconciliation_required"])
 
+    def test_pathb_ops_summary_exposes_preopen_exit_policy_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            store.create_path_run(
+                path_run_id="path_preopen_defer",
+                decision_id="dec_20260604_US_NVDA",
+                path_type="claude_price",
+                market="US",
+                runtime_mode="live",
+                session_date="2026-06-04",
+                ticker="NVDA",
+                status="FILLED",
+                plan={
+                    "buy_zone_low": 210.0,
+                    "buy_zone_high": 212.0,
+                    "sell_target": 225.0,
+                    "stop_loss": 214.0,
+                    "preopen_exit_policy_mode": "shadow",
+                    "preopen_exit_policy_decision": "DEFER_OPEN_RECHECK",
+                    "preopen_exit_policy_status": "waiting_open",
+                    "preopen_exit_policy_severity": "shallow_loss_stop",
+                    "preopen_exit_policy_pnl_pct": -0.3046,
+                    "preopen_exit_policy_stop_distance_pct": -0.124,
+                    "preopen_exit_policy_recheck_earliest_at": "2026-06-04T22:35:00+09:00",
+                    "preopen_exit_defer_active": True,
+                    "preopen_exit_defer_status": "waiting_open",
+                    "open_confirm_recheck_result": "",
+                    "skip_stale_or_closed_review": False,
+                },
+            )
+
+            summary = build_v2_ops_summary(
+                store=store,
+                market="US",
+                runtime_mode="live",
+                session_date="2026-06-04",
+            )
+
+        run = summary["path_b_live"]["active"][0]
+        self.assertEqual(run["preopen_exit_policy_mode"], "shadow")
+        self.assertEqual(run["preopen_exit_policy_decision"], "DEFER_OPEN_RECHECK")
+        self.assertEqual(run["preopen_exit_policy_severity"], "shallow_loss_stop")
+        self.assertTrue(run["preopen_exit_defer_active"])
+
     def test_broker_truth_summary_exposes_freshness_fields(self):
         evaluated_at = datetime(2026, 6, 2, 17, 0, tzinfo=timezone.utc)
         evaluated_iso = evaluated_at.isoformat(timespec="seconds").replace("+00:00", "Z")

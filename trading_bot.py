@@ -445,13 +445,17 @@ _KR_NO_SIGNAL_SWAP_MIN = int(os.getenv("KR_NO_SIGNAL_SWAP_MIN", "60"))   # KR: �
 _US_NO_SIGNAL_SWAP_CYCLES = int(os.getenv("US_NO_SIGNAL_SWAP_CYCLES", "8"))  # US: 무신호 8사이클 시 교체
 # KR: session_open(8:50)과 실제 장 시작(9:00) 사이 오프셋 (분)
 _KR_MARKET_OPEN_OFFSET_MIN = int(os.getenv("KR_MARKET_OPEN_OFFSET_MIN", "10"))
-_KR_OPENING_JUDGMENT_REFRESH_MIN = int(os.getenv("KR_OPENING_JUDGMENT_REFRESH_MIN", "3"))
-_US_OPENING_JUDGMENT_REFRESH_MIN = int(os.getenv("US_OPENING_JUDGMENT_REFRESH_MIN", "3"))
+_KR_OPENING_JUDGMENT_REFRESH_MIN = int(os.getenv("KR_OPENING_JUDGMENT_REFRESH_MIN", "5"))
+_US_OPENING_JUDGMENT_REFRESH_MIN = int(os.getenv("US_OPENING_JUDGMENT_REFRESH_MIN", "5"))
 _JUDGMENT_PHASE_PREOPEN = "preopen_watch"
 _JUDGMENT_PHASE_OPENING = "opening_confirm"
 _JUDGMENT_PHASE_INTRADAY = "intraday_live"
 _JUDGMENT_PHASE_UNCONFIRMED = "intraday_live_unconfirmed"
 _EXECUTABLE_JUDGMENT_PHASES = {_JUDGMENT_PHASE_OPENING, _JUDGMENT_PHASE_INTRADAY}
+_EXECUTION_AUTHORITY_NONE = "NONE"
+_EXECUTION_AUTHORITY_BUY_SELL_RECHECK = "BUY_SELL_RECHECK"
+_EXECUTION_AUTHORITY_BUY_SELL_LIVE = "BUY_SELL_LIVE"
+_EXECUTION_AUTHORITY_NO_NEW_BUY = "NO_NEW_BUY"
 # KIS 지수 캐시 TTL(초) — API 일시 실패 시 이전 성공 값 재사용
 _KIS_INDEX_CACHE_TTL_SEC = int(os.getenv("KIS_INDEX_CACHE_TTL_SEC", "600"))
 # unconfirmed phase 진입 허용 시 사이즈 상한 (%)
@@ -9584,6 +9588,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
         if not str(meta.get("selection_snapshot_ts") or "").strip():
             meta["selection_snapshot_ts"] = datetime.now(KST).isoformat(timespec="seconds")
+        preopen_source = (
+            route_source == _JUDGMENT_PHASE_PREOPEN
+            or str(mode or "").upper() == "PREOPEN_WATCH"
+        )
+        if preopen_source:
+            meta = self._preopen_watch_only_meta_payload(meta)
         stages = {
             "raw": {
                 "watchlist": list(dict.fromkeys(raw_meta.get("watchlist") or selected or [])),
@@ -9645,7 +9655,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             meta["v2_decision_ids"] = v2_ids
             self.selection_meta[market] = meta
             self._candidate_audit_update_selection_decision_ids(market, meta)
-        if getattr(self, "pathb", None) is not None:
+        if getattr(self, "pathb", None) is not None and not preopen_source:
             try:
                 pathb_runs = self.pathb.register_from_selection_meta(market, meta)
                 if pathb_runs:
@@ -9659,9 +9669,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self.today_judgment["selection_stages"] = stages
         return meta
 
-    def _force_preopen_watch_only(self, market: str, meta: Optional[dict] = None) -> dict:
-        """Demote a preopen candidate preparation result to watch-only runtime state."""
-        market = str(market or "").upper()
+    def _preopen_watch_only_meta_payload(self, meta: Optional[dict] = None) -> dict:
         clean = dict(meta or {})
         watchlist = list(dict.fromkeys(clean.get("watchlist") or []))
         clean["watchlist"] = watchlist
@@ -9674,9 +9682,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "risk_budget_pct",
             "size_reason",
             "price_targets",
+            "_pathb_price_targets",
+            "_pathb_wait_origins",
         ):
             clean[key] = {}
+        clean["_pathb_wait_tickers"] = []
+        clean.pop("_pathb_registration_scope", None)
+        clean["_preopen_pathb_carry_allowed"] = True
+        clean["_preopen_pathb_registration_blocked"] = True
         clean["_forced_watch_only_phase"] = _JUDGMENT_PHASE_PREOPEN
+        return clean
+
+    def _force_preopen_watch_only(self, market: str, meta: Optional[dict] = None) -> dict:
+        """Demote a preopen candidate preparation result to watch-only runtime state."""
+        market = str(market or "").upper()
+        clean = self._preopen_watch_only_meta_payload(meta)
+        watchlist = list(dict.fromkeys(clean.get("watchlist") or []))
         if not hasattr(self, "selection_meta"):
             self.selection_meta = {}
         if not hasattr(self, "trade_ready_tickers"):
@@ -13635,6 +13656,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "digest_preopen": self._digest_payload_built_before_open(market, digest_payload),
             "phase": phase or "unknown",
         }
+        basis["execution_authority"] = self._judgment_execution_authority(
+            market,
+            str(basis.get("phase") or ""),
+            basis,
+        )
         market_key = str(market or "").upper()
         if market_key in {"KR", "US"} and basis["phase"] != _JUDGMENT_PHASE_PREOPEN and basis["digest_preopen"]:
             override_context = self._build_market_judgment_override_context(market, digest_payload)
@@ -13644,6 +13670,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "live_index_context_ok": live_ok,
                 "phase": (phase or _JUDGMENT_PHASE_INTRADAY) if live_ok else "intraday_live_unconfirmed",
             })
+            basis["execution_authority"] = self._judgment_execution_authority(
+                market,
+                str(basis.get("phase") or ""),
+                basis,
+            )
             return (
                 "[INTRADAY_CONTEXT - CURRENT MARKET OVERRIDE]\n"
                 "For current market direction, prioritize this section over the pre-open/daily digest "
@@ -22048,6 +22079,44 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         pos["intraday_review_last_at"] = now_iso
         pos["intraday_review_last_pnl_pct"] = round(float(pnl_pct), 4)
 
+    def _position_still_live_for_intraday_review(self, pos: dict, market: str) -> tuple[bool, str, dict | None]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker = str((pos or {}).get("ticker", "") or "").strip()
+        if not ticker:
+            return False, "missing_ticker", None
+        path_run_id = str((pos or {}).get("pathb_path_run_id", "") or "")
+        current_pos = None
+        for item in list(getattr(self.risk, "positions", []) or []):
+            if self._ticker_market(item.get("ticker", "")) != market_key:
+                continue
+            if str(item.get("ticker", "") or "").strip() != ticker:
+                continue
+            if path_run_id and str(item.get("pathb_path_run_id", "") or "") != path_run_id:
+                continue
+            current_pos = item
+            break
+        if current_pos is None:
+            return False, "local_position_missing", None
+        try:
+            qty = int(float(current_pos.get("qty", 0) or 0))
+        except Exception:
+            qty = 0
+        if qty <= 0:
+            return False, "qty_zero", current_pos
+        if str(current_pos.get("pathb_closing", "") or "") or str(current_pos.get("pathb_pending_sell_order_no", "") or ""):
+            return False, "pathb_sell_in_flight", current_pos
+        if path_run_id:
+            try:
+                pathb = getattr(self, "pathb", None)
+                store = getattr(pathb, "store", None)
+                run = store.find_path_run(path_run_id) if store is not None else None
+                status = str((run or {}).get("status", "") or "").upper()
+                if status in {"CLOSED", "SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED", "CANCELLED", "EXPIRED"}:
+                    return False, f"pathb_run_{status.lower()}", current_pos
+            except Exception:
+                pass
+        return True, "ok", current_pos
+
     def _intraday_position_review(self, market: str, force: bool = False,
                                    ticker_filter: str = ""):
         """장 중 1시간 주기 보유 포지션 Claude 점검.
@@ -22127,6 +22196,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     f"count={gate.get('count')} remaining={gate.get('remaining_min')}"
                 )
                 continue
+            live_ok, live_reason, current_pos = self._position_still_live_for_intraday_review(pos, market)
+            if not live_ok:
+                lines.append(
+                    f"{pnl_icon} <b>{disp}</b>  {pnl:+.2f}%  {net_str}\n"
+                    f"  Claude: <b>검토 생략</b> ({live_reason})"
+                )
+                log.info(f"[intraday review skipped stale/closed] {market} {ticker} reason={live_reason}")
+                continue
+            if current_pos is not None and current_pos is not pos:
+                pos = current_pos
             self._mark_intraday_review_attempt(pos, market, pnl_pct=float(pnl))
             try:
                 from minority_report.hold_advisor import ask as advisor_ask
@@ -26120,6 +26199,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 },
                 "judgment_context_basis": {
                     "phase": _JUDGMENT_PHASE_PREOPEN,
+                    "execution_authority": _EXECUTION_AUTHORITY_NONE,
                     "source": "session_open_preopen",
                     "trigger": trigger,
                     "digest_preopen": True,
@@ -27552,6 +27632,33 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         refresh_at = self._market_regular_open_dt(market) + timedelta(minutes=max(0, minutes))
         return datetime.now(KST) >= refresh_at
 
+    def _judgment_execution_authority(self, market: str, phase: str, basis: Optional[dict] = None) -> str:
+        market = str(market or "").upper()
+        phase = str(phase or "").strip()
+        if phase == _JUDGMENT_PHASE_PREOPEN:
+            return _EXECUTION_AUTHORITY_NONE
+        if phase == _JUDGMENT_PHASE_UNCONFIRMED:
+            return _EXECUTION_AUTHORITY_NO_NEW_BUY
+        if phase == _JUDGMENT_PHASE_OPENING:
+            try:
+                if not self._market_after_open_refresh_time(market):
+                    return _EXECUTION_AUTHORITY_NONE
+            except Exception:
+                return _EXECUTION_AUTHORITY_NONE
+            return _EXECUTION_AUTHORITY_BUY_SELL_RECHECK
+        if phase == _JUDGMENT_PHASE_INTRADAY:
+            basis = basis if isinstance(basis, dict) else {}
+            if basis.get("live_index_context_ok") is False and basis.get("intraday_context_included") is True:
+                return _EXECUTION_AUTHORITY_NO_NEW_BUY
+            return _EXECUTION_AUTHORITY_BUY_SELL_LIVE
+        return _EXECUTION_AUTHORITY_NONE
+
+    def _execution_authority_allows_new_buy(self, authority: str) -> bool:
+        return str(authority or "").strip() in {
+            _EXECUTION_AUTHORITY_BUY_SELL_RECHECK,
+            _EXECUTION_AUTHORITY_BUY_SELL_LIVE,
+        }
+
     def _current_judgment_phase(self, market: str, now_dt: Optional[datetime] = None) -> str:
         market = str(market or "").upper()
         if market not in {"KR", "US"}:
@@ -27595,6 +27702,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         phase = str(basis.get("phase") or "").strip()
         if not self._is_executable_judgment_phase(phase):
             return False, f"non_executable_judgment_phase:{phase or 'missing'}"
+        authority = str(basis.get("execution_authority") or "").strip()
+        if not authority:
+            authority = self._judgment_execution_authority(market, phase, basis)
+        if not self._execution_authority_allows_new_buy(authority):
+            return False, f"non_executable_judgment_authority:{authority or 'missing'}"
         if phase == _JUDGMENT_PHASE_UNCONFIRMED:
             return True, "ok_unconfirmed"
         return True, "ok"
@@ -32533,6 +32645,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "phase": self._current_judgment_phase(market) if live_index_context_ok else "intraday_live_unconfirmed",
                 "intraday_context_included": bool(intraday_context),
             }
+            new_basis["execution_authority"] = self._judgment_execution_authority(
+                market,
+                str(new_basis.get("phase") or ""),
+                new_basis,
+            )
             refresh_selection, refresh_reason = self._should_refresh_selection_after_reinvoke(
                 old_consensus,
                 new_consensus,

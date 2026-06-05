@@ -219,6 +219,21 @@ class PreSessionSellQueueTests(unittest.TestCase):
 
         bot._intraday_position_review.assert_not_called()
 
+    def test_pending_next_open_sell_recheck_blocks_preopen_phase(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.session_active = True
+        bot.current_market = "US"
+        bot.risk = type("Risk", (), {"positions": [{"ticker": "QCOM", "pending_next_open_sell": True}]})()
+        bot._current_judgment_phase = lambda market: "preopen_watch"  # type: ignore[method-assign]
+        bot._is_executable_judgment_phase = lambda phase: False  # type: ignore[method-assign]
+        bot._market_after_open_refresh_time = lambda market: True  # type: ignore[method-assign]
+        bot._ticker_market = lambda ticker: "US"  # type: ignore[method-assign]
+        bot._intraday_position_review = Mock()  # type: ignore[method-assign]
+
+        bot._maybe_recheck_pending_next_open_sells("US")
+
+        bot._intraday_position_review.assert_not_called()
+
     def test_pending_next_open_sell_recheck_uses_intraday_review_after_open(self) -> None:
         bot = TradingBot.__new__(TradingBot)
         bot.session_active = True

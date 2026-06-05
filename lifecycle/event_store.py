@@ -25,16 +25,24 @@ class ClosingConnection(sqlite3.Connection):
 
 
 class EventStore:
-    def __init__(self, path: str | Path | None = None):
+    def __init__(self, path: str | Path | None = None, *, read_only: bool = False, initialize: bool = True):
         self.path = Path(path) if path is not None else get_runtime_path("data", "v2_event_store.db")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.init()
+        self.read_only = bool(read_only)
+        if not self.read_only:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        if initialize and not self.read_only:
+            self.init()
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.path), timeout=30, factory=ClosingConnection)
+        if self.read_only:
+            uri = f"file:{self.path.resolve().as_posix()}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True, timeout=30, factory=ClosingConnection)
+        else:
+            conn = sqlite3.connect(str(self.path), timeout=30, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        if not self.read_only:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 

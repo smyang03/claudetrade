@@ -1317,18 +1317,33 @@ def _ask_one(analyst_type: str, pos: dict, market: str,
             ctx_lines.append(f"  {label}: {value}")
 
         _ctx_add("entry thesis", advisor_ctx.get("selected_reason"))
+        _ctx_add("original entry thesis", advisor_ctx.get("original_selected_reason"))
         _ctx_add("source type", advisor_ctx.get("source_type"))
         _ctx_add("entry route", advisor_ctx.get("entry_route") or advisor_ctx.get("route_source"))
+        _ctx_add("session phase", advisor_ctx.get("session_phase"))
+        _ctx_add("regular open at", advisor_ctx.get("regular_open_at"))
+        _ctx_add("minutes to regular open", advisor_ctx.get("minutes_to_regular_open"))
+        _ctx_add("OR status reason", advisor_ctx.get("or_status_reason"))
+        _ctx_add("premarket quote quality", advisor_ctx.get("premarket_quote_quality"))
+        _ctx_add("bid ask spread pct", advisor_ctx.get("bid_ask_spread_pct"))
+        _ctx_add("last quote age sec", advisor_ctx.get("last_quote_age_sec"))
         _ctx_add("hold minutes", advisor_ctx.get("hold_min_since_entry"))
         _ctx_add("OR formed", advisor_ctx.get("or_formed"))
         if advisor_ctx.get("or_high") or advisor_ctx.get("or_low"):
             _ctx_add("OR high/low", f"{advisor_ctx.get('or_high')} / {advisor_ctx.get('or_low')}")
         _ctx_add("entry vs OR high pct", advisor_ctx.get("entry_vs_or_high_pct"))
         _ctx_add("hard stop distance pct", advisor_ctx.get("hard_stop_distance_pct"))
+        _ctx_add("exit signal severity", advisor_ctx.get("exit_signal_severity"))
+        _ctx_add("exit signal reason", advisor_ctx.get("exit_signal_reason"))
+        _ctx_add("exit signal stop/distance", f"{advisor_ctx.get('exit_signal_stop_price')} / {advisor_ctx.get('exit_signal_stop_distance_pct')}")
+        _ctx_add("recover above", advisor_ctx.get("recover_above"))
+        _ctx_add("opening recheck deadline", advisor_ctx.get("opening_recheck_deadline"))
         if advisor_ctx.get("selection_reference_target") or advisor_ctx.get("selection_reference_stop"):
             _ctx_add("selection target/stop", f"{advisor_ctx.get('selection_reference_target')} / {advisor_ctx.get('selection_reference_stop')}")
         if advisor_ctx.get("pathb_reference_target") or advisor_ctx.get("pathb_reference_stop"):
             _ctx_add("pathb target/stop", f"{advisor_ctx.get('pathb_reference_target')} / {advisor_ctx.get('pathb_reference_stop')}")
+        if advisor_ctx.get("pathb_plan_target") or advisor_ctx.get("pathb_plan_stop"):
+            _ctx_add("pathb plan target/stop", f"{advisor_ctx.get('pathb_plan_target')} / {advisor_ctx.get('pathb_plan_stop')}")
         _ctx_add("invalid if", advisor_ctx.get("invalid_if"))
         _ctx_add("pending intraday recheck", advisor_ctx.get("pending_intraday_recheck"))
         if ctx_lines:

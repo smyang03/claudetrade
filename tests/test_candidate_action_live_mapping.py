@@ -935,6 +935,49 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertIn("GXO", bot.v2.registered_meta["trade_ready"])
         self.assertEqual(bot.v2.registered_meta["_pathb_wait_origins"]["GXO"]["origin_action"], "PULLBACK_WAIT")
 
+    def test_preopen_pullback_wait_is_watch_only_and_does_not_register_pathb(self) -> None:
+        bot = _make_bot()
+        raw_meta = {
+            "watchlist": ["INTC", "GXO"],
+            "trade_ready": ["GXO"],
+            "candidate_actions": [
+                {
+                    "ticker": "GXO",
+                    "action": "PULLBACK_WAIT",
+                    "confidence": 0.72,
+                    "price_targets": {
+                        "buy_zone_low": 40.0,
+                        "buy_zone_high": 41.0,
+                        "sell_target": 44.0,
+                        "stop_loss": 39.0,
+                        "hold_days": 1,
+                        "confidence": 0.72,
+                    },
+                }
+            ],
+            "price_targets": {"GXO": {"buy_zone_low": 40.0, "buy_zone_high": 41.0}},
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(
+                bot,
+                "US",
+                ["INTC", "GXO"],
+                mode="PREOPEN_WATCH",
+                source="preopen_watch",
+            )
+
+        self.assertEqual(meta["trade_ready"], [])
+        self.assertEqual(meta["price_targets"], {})
+        self.assertEqual(meta["_pathb_wait_tickers"], [])
+        self.assertEqual(meta["_pathb_price_targets"], {})
+        self.assertEqual(meta["_pathb_wait_origins"], {})
+        self.assertNotIn("_pathb_registration_scope", meta)
+        self.assertTrue(meta["_preopen_pathb_registration_blocked"])
+        self.assertEqual(bot.trade_ready_tickers["US"], [])
+        self.assertEqual(bot.v2.registered_meta["trade_ready"], [])
+        self.assertIsNone(bot.pathb.registered_meta)
+
     def test_us_disabled_momentum_is_not_active_or_voted(self) -> None:
         bot = _make_bot()
 

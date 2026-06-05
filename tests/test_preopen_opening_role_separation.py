@@ -65,6 +65,7 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
 
     def test_judgment_phase_contract_allows_opening_and_intraday(self) -> None:
         bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot._market_after_open_refresh_time = lambda market: True
 
         for phase in ("opening_confirm", "intraday_live"):
             bot.today_judgment = {
@@ -77,6 +78,50 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
 
             self.assertTrue(allowed)
             self.assertEqual(reason, "ok")
+
+    def test_opening_phase_without_refresh_barrier_blocks_new_buy(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot._market_after_open_refresh_time = lambda market: False
+        bot.today_judgment = {
+            "market": "US",
+            "consensus": {"mode": "MILD_BULL", "size": 50},
+            "judgment_context_basis": {"phase": "opening_confirm"},
+        }
+
+        allowed, reason = trading_bot.TradingBot._new_entry_judgment_gate(bot, "US")
+
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "non_executable_judgment_authority:NONE")
+
+    def test_explicit_opening_execution_authority_allows_new_buy(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot._market_after_open_refresh_time = lambda market: False
+        bot.today_judgment = {
+            "market": "US",
+            "consensus": {"mode": "MILD_BULL", "size": 50},
+            "judgment_context_basis": {
+                "phase": "opening_confirm",
+                "execution_authority": "BUY_SELL_RECHECK",
+            },
+        }
+
+        allowed, reason = trading_bot.TradingBot._new_entry_judgment_gate(bot, "US")
+
+        self.assertTrue(allowed)
+        self.assertEqual(reason, "ok")
+
+    def test_unconfirmed_phase_blocks_new_buy_by_authority(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot.today_judgment = {
+            "market": "KR",
+            "consensus": {"mode": "MILD_BULL", "size": 50},
+            "judgment_context_basis": {"phase": "intraday_live_unconfirmed"},
+        }
+
+        allowed, reason = trading_bot.TradingBot._new_entry_judgment_gate(bot, "KR")
+
+        self.assertFalse(allowed)
+        self.assertIn("non_executable_judgment_authority:NO_NEW_BUY", reason)
 
     def test_current_phase_common_for_preopen_opening_and_intraday(self) -> None:
         bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
@@ -126,6 +171,10 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
                 "max_order_cap_pct": {"005930": 20},
                 "risk_budget_pct": {"005930": 0.3},
                 "price_targets": {"005930": {"buy_zone_low": 70000}},
+                "_pathb_wait_tickers": ["005930"],
+                "_pathb_price_targets": {"005930": {"buy_zone_low": 70000}},
+                "_pathb_wait_origins": {"005930": {"origin_action": "PULLBACK_WAIT"}},
+                "_pathb_registration_scope": "candidate_actions_wait_only",
             },
         )
 
@@ -133,6 +182,11 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
         self.assertEqual(meta["trade_ready"], [])
         self.assertEqual(meta["recommended_strategy"], {})
         self.assertEqual(meta["price_targets"], {})
+        self.assertEqual(meta["_pathb_wait_tickers"], [])
+        self.assertEqual(meta["_pathb_price_targets"], {})
+        self.assertEqual(meta["_pathb_wait_origins"], {})
+        self.assertNotIn("_pathb_registration_scope", meta)
+        self.assertTrue(meta["_preopen_pathb_registration_blocked"])
         self.assertEqual(bot.trade_ready_tickers["KR"], [])
         self.assertEqual(bot.today_judgment["trade_ready_tickers"], [])
 
@@ -832,7 +886,10 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
             "consensus": {"mode": "DEFENSIVE", "size": 20},
             "judgments": {},
             "digest_raw": {"context": {}},
-            "judgment_context_basis": {"phase": "opening_confirm"},
+            "judgment_context_basis": {
+                "phase": "opening_confirm",
+                "execution_authority": "BUY_SELL_RECHECK",
+            },
         }
         bot.today_tickers = {"US": ["AAPL"]}
         bot.today_ticker_reasons = {"US": {}}
