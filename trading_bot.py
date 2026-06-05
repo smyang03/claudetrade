@@ -27840,7 +27840,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not self._is_executable_judgment_phase(phase):
             return False, f"non_executable_judgment_phase:{phase or 'missing'}"
         authority = str(basis.get("execution_authority") or "").strip()
-        if not authority:
+        if not authority or (phase == _JUDGMENT_PHASE_OPENING and authority == _EXECUTION_AUTHORITY_NONE):
             authority = self._judgment_execution_authority(market, phase, basis)
         if not self._execution_authority_allows_new_buy(authority):
             return False, f"non_executable_judgment_authority:{authority or 'missing'}"

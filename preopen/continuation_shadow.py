@@ -2611,6 +2611,9 @@ def _load_ticker_selection_map(
             if "runtime_mode" in columns:
                 where.append("runtime_mode=?")
                 params.append(runtime_mode)
+            elif "bot_mode" in columns:
+                where.append("bot_mode=?")
+                params.append(runtime_mode)
             rows = ro.execute(
                 f"""
                 SELECT *
