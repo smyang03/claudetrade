@@ -10538,6 +10538,22 @@ function formatOrderableBreakdown(today) {
   return parts.join(' | ');
 }
 
+function formatTodayTradeSummary(today) {
+  const turnover = today.trade_turnover || {};
+  const fillCount = Number(today.today_trade_fill_count ?? turnover.fill_count ?? 0);
+  const buyCount = Number(turnover.buy_count ?? 0);
+  const sellCount = Number(turnover.sell_count ?? 0);
+  const closedCount = Number(today.trades || 0);
+  if (MODE === 'live' && String(turnover.source || '') === 'broker_today_fills') {
+    const sideBits = [];
+    if (buyCount > 0) sideBits.push(`매수 ${buyCount}`);
+    if (sellCount > 0) sideBits.push(`매도 ${sellCount}`);
+    const sideText = sideBits.length ? ` (${sideBits.join('/')})` : '';
+    return `체결 ${Number.isFinite(fillCount) ? fillCount : 0}건${sideText}`;
+  }
+  return `거래 ${Number.isFinite(closedCount) ? closedCount : 0}건`;
+}
+
 function accountFocusUsdValue(usd, krw) {
   const usdNum = Number(usd || 0);
   const krwNum = Number(krw || 0);
@@ -12328,8 +12344,9 @@ async function loadSummary() {
   const orderBreakdown = formatOrderableBreakdown(t);
   const executionLabels = t.execution_issue_labels || t.execution_issues || [];
   const executionBadge = t.execution_contaminated ? '실행오염' : (t.execution_warning ? '실행경고' : '');
+  const tradeSummary = formatTodayTradeSummary(t);
   document.getElementById('today-mode').innerHTML =
-    `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span>&nbsp; 거래 ${t.trades}건${t.mode_order_limit_krw ? ` | 최대매수 ${fmt.asset(t.mode_order_limit_krw)}` : ''}${orderBreakdown ? ` | 주문가능 ${orderBreakdown}` : ''}${executionBadge ? ` <span style="color:#f59e0b">| ${executionBadge} ${(executionLabels.slice(0,2)).join(', ')}</span>` : ''}`;
+    `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span>&nbsp; ${tradeSummary}${t.mode_order_limit_krw ? ` | 최대매수 ${fmt.asset(t.mode_order_limit_krw)}` : ''}${orderBreakdown ? ` | 주문가능 ${orderBreakdown}` : ''}${executionBadge ? ` <span style="color:#f59e0b">| ${executionBadge} ${(executionLabels.slice(0,2)).join(', ')}</span>` : ''}`;
 
   const wrEl = document.getElementById('win-rate');
   wrEl.textContent = p.win_rate + '%';
@@ -13463,6 +13480,7 @@ async function loadSummary() {
   const todayMode = document.getElementById('today-mode');
   if (todayMode) {
     const orderTxt = t.mode_order_limit_krw ? ` | 최대매수 ${fmt.asset(t.mode_order_limit_krw)}` : '';
+    const tradeSummary = formatTodayTradeSummary(t);
     const cashBreakdown = formatOrderableBreakdown(t);
     const cashTxt = cashBreakdown ? ` | 주문가능 ${cashBreakdown}` : '';
     const brokerTxt = t.broker_trust ? ` | 브로커 ${t.broker_trust}${t.broker_last_ok_at ? ' ' + String(t.broker_last_ok_at).slice(11, 19) : ''}` : '';
@@ -13482,7 +13500,7 @@ async function loadSummary() {
     const brokerRefreshHtml = MODE === 'live'
       ? ` <button id="broker-refresh-btn" type="button" onclick="refreshBrokerSnapshot(this)" style="margin-left:8px;padding:3px 8px;border:1px solid rgba(6,182,212,0.45);border-radius:4px;background:rgba(6,182,212,0.10);color:#67e8f9;font-size:11px;cursor:pointer">브로커 갱신</button><span id="broker-refresh-status" style="margin-left:6px;color:var(--muted);font-size:11px"></span>`
       : '';
-    todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span> 거래 ${t.trades || 0}건${orderTxt}${cashTxt}${sessTxt}${riskText}${brokerTxt}${brokerWarnTxt}${brokerRefreshHtml}${descTxt}${alertTxt}`;
+    todayMode.innerHTML = `모드: <span class="mode-badge mode-${t.mode}">${koMode(t.mode)}</span> ${tradeSummary}${orderTxt}${cashTxt}${sessTxt}${riskText}${brokerTxt}${brokerWarnTxt}${brokerRefreshHtml}${descTxt}${alertTxt}`;
   }
 
   const wrEl = document.getElementById('win-rate');
