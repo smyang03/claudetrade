@@ -113,7 +113,7 @@ def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
     return bool(row)
 
 
-def _candidate_snapshot(db_path: Path, market: str, session_date: str, mode: str = "live") -> dict[str, Any]:
+def _candidate_snapshot(db_path: Path, market: str, session_date: str) -> dict[str, Any]:
     empty = {
         "available": False,
         "rows": 0,
@@ -137,7 +137,7 @@ def _candidate_snapshot(db_path: Path, market: str, session_date: str, mode: str
             return {**empty, "error": "audit_candidate_latest_rows_missing"}
         columns = {row[1] for row in conn.execute("PRAGMA table_info(audit_candidate_latest_rows)").fetchall()}
         mode_clause = "AND runtime_mode=?" if "runtime_mode" in columns else ""
-        mode_params = (mode,) if "runtime_mode" in columns else ()
+        mode_params = ("live",) if "runtime_mode" in columns else ()
         rows = [
             dict(row)
             for row in conn.execute(
@@ -400,12 +400,12 @@ def _render_rows(label: str, rows: list[dict[str, Any]], *, kind: str) -> list[s
     return lines
 
 
-def build_snapshot(market: str, session_date: str, mode: str = "live") -> dict[str, Any]:
+def build_snapshot(market: str, session_date: str) -> dict[str, Any]:
     return {
         "now": _now_kst().isoformat(timespec="seconds"),
         "market": market,
         "session_date": session_date,
-        "candidate": _candidate_snapshot(ROOT / "data" / "audit" / "candidate_audit.db", market, session_date, mode=mode),
+        "candidate": _candidate_snapshot(ROOT / "data" / "audit" / "candidate_audit.db", market, session_date),
         "preopen": _preopen_snapshot(market, session_date),
         "screener": _screener_snapshot(market, session_date),
         "route_shadow": _route_shadow_snapshot(market, session_date),
@@ -490,7 +490,6 @@ def run(args: argparse.Namespace) -> int:
     end_at = _parse_dt(args.end_at)
     market = str(args.market or "US").upper()
     session_date = str(args.session_date or _default_session_date(_now_kst()))
-    mode = str(args.mode or "live").strip().lower()
     log_path = Path(args.log_file) if args.log_file else None
     while True:
         now = _now_kst()
@@ -500,7 +499,7 @@ def run(args: argparse.Namespace) -> int:
             _append_log(log_path, wait_line)
             time.sleep(min(max(1, args.interval_sec), max(1, int((start_at - now).total_seconds()))))
             continue
-        text = render(build_snapshot(market, session_date, mode=mode))
+        text = render(build_snapshot(market, session_date))
         print(text, flush=True)
         _append_log(log_path, text)
         if args.once:
@@ -516,7 +515,6 @@ def run(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Read-only US live selection/PlanA/PathB console monitor.")
     parser.add_argument("--market", default="US")
-    parser.add_argument("--mode", default="live", choices=["live", "paper"])
     parser.add_argument("--session-date", default="")
     parser.add_argument("--start-at", default="")
     parser.add_argument("--end-at", default="")
