@@ -15,25 +15,27 @@ from runtime.pathb_runtime import KST, PathBRuntime
 from trading_bot import TradingBot
 
 
-class _USPathBBot:
+class _PathBBot:
     token = "token"
     session_active = True
-    current_market = "US"
     usd_krw_rate = 1.0
 
-    def __init__(self) -> None:
+    def __init__(self, market: str = "US") -> None:
+        self.current_market = str(market or "US").upper()
         self.risk = SimpleNamespace(positions=[])
         self.pending_orders = []
         self.price_cache_raw = {}
         self.price_cache = {}
-        self.v2 = SimpleNamespace(brain_snapshot_ids={"US": "brain"})
+        self.v2 = SimpleNamespace(brain_snapshot_ids={self.current_market: "brain"})
         self.today_judgment = {"digest_prompt": ""}
         self.saved_positions = 0
 
     def _current_session_date_str(self, market: str) -> str:
-        return "2026-06-04"
+        return "2026-06-04" if str(market or "").upper() == "US" else "2026-06-05"
 
     def _market_regular_open_dt(self, market: str, session_date: str | None = None, now_dt=None) -> datetime:
+        if str(market or "").upper() == "KR":
+            return datetime(2026, 6, 5, 9, 0, tzinfo=KST)
         return datetime(2026, 6, 4, 22, 30, tzinfo=KST)
 
     def _minutes_to_close(self, market: str) -> float:
@@ -52,15 +54,18 @@ class _USPathBBot:
         return "token"
 
 
-def _runtime(tmp: str) -> tuple[PathBRuntime, object, dict]:
-    bot = _USPathBBot()
+def _runtime(tmp: str, *, market: str = "US") -> tuple[PathBRuntime, object, dict]:
+    market_key = str(market or "US").upper()
+    bot = _PathBBot(market_key)
     store = EventStore(Path(tmp) / "events.db")
     runtime = PathBRuntime(bot, is_paper=False, store=store)
+    session_date = "2026-06-04" if market_key == "US" else "2026-06-05"
+    ticker = "TEST" if market_key == "US" else "005930"
     plan = make_price_plan(
-        decision_id="dec-us",
-        ticker="TEST",
-        market="US",
-        session_date="2026-06-04",
+        decision_id=f"dec-{market_key.lower()}",
+        ticker=ticker,
+        market=market_key,
+        session_date=session_date,
         buy_zone_low=98,
         buy_zone_high=101,
         sell_target=110,
@@ -78,8 +83,8 @@ def _runtime(tmp: str) -> tuple[PathBRuntime, object, dict]:
         brain_snapshot_id="brain",
     )
     pos = {
-        "ticker": "TEST",
-        "market": "US",
+        "ticker": ticker,
+        "market": market_key,
         "qty": 1,
         "entry": 100.0,
         "display_avg_price": 100.0,
@@ -115,6 +120,78 @@ class PreopenAutoSellRecheckTests(unittest.TestCase):
             self.assertEqual(run["plan"]["preopen_exit_policy_decision"], "DEFER_OPEN_RECHECK")
             self.assertEqual(run["plan"]["preopen_exit_policy_severity"], "shallow_loss_stop")
             self.assertNotIn("auto_sell_review_action", run["plan"])
+
+    def test_kr_preopen_shallow_hard_stop_deferred_with_market_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan, pos = _runtime(tmp, market="KR")
+            runtime._now_kst = lambda: datetime(2026, 6, 5, 8, 50, tzinfo=KST)  # type: ignore[method-assign]
+
+            with patch.dict(
+                os.environ,
+                {"PATHB_PREOPEN_EXIT_POLICY_MODE": "off", "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce"},
+                clear=False,
+            ), patch(
+                "minority_report.hold_advisor.ask"
+            ) as advisor, patch("runtime.pathb_runtime.precheck_order") as precheck:
+                ok = runtime._submit_sell(
+                    plan,
+                    pos,
+                    ExitSignal(True, "hard_stop", "CLOSED_HARD_STOP", 99.4, plan.path_run_id),
+                )
+
+            run = runtime.store.find_path_run(plan.path_run_id)
+            self.assertFalse(ok)
+            advisor.assert_not_called()
+            precheck.assert_not_called()
+            self.assertEqual(run["plan"]["preopen_exit_policy_decision"], "DEFER_OPEN_RECHECK")
+            self.assertEqual(run["plan"]["preopen_exit_policy_severity"], "shallow_loss_stop")
+            self.assertEqual(run["plan"]["preopen_exit_policy_session_phase"], "preopen")
+
+    def test_kr_market_off_override_blocks_global_enforce(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan, pos = _runtime(tmp, market="KR")
+            runtime._now_kst = lambda: datetime(2026, 6, 5, 8, 50, tzinfo=KST)  # type: ignore[method-assign]
+
+            with patch.dict(
+                os.environ,
+                {"PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce", "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "off"},
+                clear=False,
+            ), patch("runtime.pathb_runtime.precheck_order", return_value={"ok": True}) as precheck, patch(
+                "runtime.pathb_runtime.place_order", return_value={"success": True, "order_no": "sell1"}
+            ):
+                ok = runtime._submit_sell(
+                    plan,
+                    pos,
+                    ExitSignal(True, "hard_stop", "CLOSED_HARD_STOP", 99.4, plan.path_run_id),
+                )
+
+            run = runtime.store.find_path_run(plan.path_run_id)
+            self.assertTrue(ok)
+            precheck.assert_called_once()
+            self.assertNotIn("preopen_exit_policy_decision", run["plan"])
+
+    def test_us_market_override_enforce_beats_global_off(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan, pos = _runtime(tmp, market="US")
+            runtime._now_kst = lambda: datetime(2026, 6, 4, 22, 20, tzinfo=KST)  # type: ignore[method-assign]
+
+            with patch.dict(
+                os.environ,
+                {"PATHB_PREOPEN_EXIT_POLICY_MODE": "off", "US_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce"},
+                clear=False,
+            ), patch("minority_report.hold_advisor.ask") as advisor, patch("runtime.pathb_runtime.precheck_order") as precheck:
+                ok = runtime._submit_sell(
+                    plan,
+                    pos,
+                    ExitSignal(True, "hard_stop", "CLOSED_HARD_STOP", 99.4, plan.path_run_id),
+                )
+
+            run = runtime.store.find_path_run(plan.path_run_id)
+            self.assertFalse(ok)
+            advisor.assert_not_called()
+            precheck.assert_not_called()
+            self.assertEqual(run["plan"]["preopen_exit_policy_decision"], "DEFER_OPEN_RECHECK")
+            self.assertEqual(run["plan"]["preopen_exit_policy_severity"], "shallow_loss_stop")
 
     def test_preopen_shadow_records_but_keeps_existing_sell_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

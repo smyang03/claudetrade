@@ -103,6 +103,11 @@ LIVE_CONFIG_KEYS = {
     "PATHB_PRE_CLOSE_MARKET_FALLBACK",
     "PATHB_PRE_CLOSE_TIMEOUT_MINUTES",
     "PATHB_EMERGENCY_DISABLE",
+    "PATHB_PREOPEN_EXIT_POLICY_MODE",
+    "US_PATHB_PREOPEN_EXIT_POLICY_MODE",
+    "KR_PATHB_PREOPEN_EXIT_POLICY_MODE",
+    "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US",
+    "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR",
     "KR_REENTRY_COOLDOWN_MINUTES",
     "US_REENTRY_COOLDOWN_MINUTES",
     "USD_KRW_RATE",
@@ -197,6 +202,9 @@ RUNTIME_CONFIG_DRIFT_KEYS = {
     "PATHB_MAX_POSITIONS",
     "PATHB_MAX_DAILY_ENTRIES",
     "PATHB_FIXED_ORDER_KRW",
+    "PATHB_PREOPEN_EXIT_POLICY_MODE",
+    "US_PATHB_PREOPEN_EXIT_POLICY_MODE",
+    "KR_PATHB_PREOPEN_EXIT_POLICY_MODE",
     "ACTIVE_LESSONS_ENABLED",
     "ACTIVE_LESSONS_SHADOW",
     "ACTIVE_LESSONS_MAX_ITEMS",
@@ -250,6 +258,8 @@ CRITICAL_RUNTIME_CONFIG_DRIFT_KEYS = {
     "PATHB_MAX_POSITIONS",
     "PATHB_MAX_DAILY_ENTRIES",
     "PATHB_FIXED_ORDER_KRW",
+    "US_PATHB_PREOPEN_EXIT_POLICY_MODE",
+    "KR_PATHB_PREOPEN_EXIT_POLICY_MODE",
 }
 
 REQUIRED_TABLE_COLUMNS = {
@@ -1402,34 +1412,53 @@ CONFIG_SOURCE_MEANING_KEYS: dict[str, dict[str, str]] = {
         "used_by": "PathB entry guard",
         "meaning": "PathB-specific maximum active positions",
     },
+    "PATHB_PREOPEN_EXIT_POLICY_MODE": {
+        "used_by": "US fallback for PathB preopen shallow-stop defer policy",
+        "meaning": "legacy/global policy mode; KR does not inherit this value",
+    },
+    "US_PATHB_PREOPEN_EXIT_POLICY_MODE": {
+        "used_by": "US PathB preopen shallow-stop defer policy",
+        "meaning": "market-scoped US mode; overrides PATHB_PREOPEN_EXIT_POLICY_MODE",
+    },
+    "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": {
+        "used_by": "KR PathB preopen shallow-stop defer policy",
+        "meaning": "market-scoped KR mode; current live policy is off unless explicitly approved",
+    },
+    "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": {
+        "used_by": "preflight expectation for US PathB preopen exit policy",
+        "meaning": "operator-approved expected US mode used by preflight only",
+    },
+    "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": {
+        "used_by": "preflight expectation for KR PathB preopen exit policy",
+        "meaning": "operator-approved expected KR mode used by preflight only",
+    },
 }
 
 
-def _config_source_meaning_check(config: dict[str, Any]) -> CheckResult:
+def _config_key_source(config: dict[str, Any], key: str) -> dict[str, str]:
     base_env = dict(config.get("base_env") or {})
     overrides = dict(config.get("overrides") or {})
     start_config = dict(config.get("start_config") or {})
-    effective = dict(config.get("effective") or {})
     env_path = str(config.get("env_path") or "")
     start_path = str(config.get("start_config_path") or "")
+    if key in overrides:
+        return {"source": "v2_start_config.env_overrides", "source_path": start_path}
+    if key in base_env:
+        return {"source": "env_file", "source_path": env_path}
+    if key in start_config:
+        return {"source": "v2_start_config.top_level", "source_path": start_path}
+    return {"source": "missing", "source_path": ""}
+
+
+def _config_source_meaning_check(config: dict[str, Any]) -> CheckResult:
+    effective = dict(config.get("effective") or {})
     rows: dict[str, dict[str, Any]] = {}
     for key, meta in CONFIG_SOURCE_MEANING_KEYS.items():
-        if key in overrides:
-            source = "v2_start_config.env_overrides"
-            source_path = start_path
-        elif key in base_env:
-            source = "env_file"
-            source_path = env_path
-        elif key in start_config:
-            source = "v2_start_config.top_level"
-            source_path = start_path
-        else:
-            source = "missing"
-            source_path = ""
+        source_info = _config_key_source(config, key)
         rows[key] = {
             "effective_value": effective.get(key, ""),
-            "source": source,
-            "source_path": source_path,
+            "source": source_info["source"],
+            "source_path": source_info["source_path"],
             "used_by": meta["used_by"],
             "meaning": meta["meaning"],
         }
@@ -1438,6 +1467,83 @@ def _config_source_meaning_check(config: dict[str, Any]) -> CheckResult:
         "PASS",
         "critical config sources and gate meanings captured",
         {"keys": rows, "config_change_allowed": False},
+    )
+
+
+def _pathb_preopen_exit_policy_check(config: dict[str, Any]) -> CheckResult:
+    effective = dict(config.get("effective") or {})
+
+    def normalized_mode(raw: Any) -> str:
+        mode = str(raw or "").strip().lower()
+        return mode if mode in {"off", "shadow", "enforce"} else "off"
+
+    global_mode = normalized_mode(effective.get("PATHB_PREOPEN_EXIT_POLICY_MODE", "off"))
+    market_modes: dict[str, str] = {}
+    source_by_market: dict[str, dict[str, str]] = {}
+    configured_values = {
+        "PATHB_PREOPEN_EXIT_POLICY_MODE": str(effective.get("PATHB_PREOPEN_EXIT_POLICY_MODE", "")),
+        "US_PATHB_PREOPEN_EXIT_POLICY_MODE": str(effective.get("US_PATHB_PREOPEN_EXIT_POLICY_MODE", "")),
+        "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": str(effective.get("KR_PATHB_PREOPEN_EXIT_POLICY_MODE", "")),
+        "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": str(effective.get("PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US", "")),
+        "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": str(effective.get("PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR", "")),
+    }
+    for market in ("US", "KR"):
+        market_key = f"{market}_PATHB_PREOPEN_EXIT_POLICY_MODE"
+        if str(effective.get(market_key, "")).strip():
+            market_modes[market] = normalized_mode(effective.get(market_key))
+            source_by_market[market] = {"key": market_key, **_config_key_source(config, market_key)}
+        elif market == "US":
+            market_modes[market] = global_mode
+            source_by_market[market] = {
+                "key": "PATHB_PREOPEN_EXIT_POLICY_MODE",
+                **_config_key_source(config, "PATHB_PREOPEN_EXIT_POLICY_MODE"),
+                "fallback": "US only",
+            }
+        else:
+            market_modes[market] = "off"
+            source_by_market[market] = {"key": market_key, "source": "default", "source_path": "", "fallback": "KR defaults off"}
+
+    expected = {
+        "US": normalized_mode(effective.get("PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US", "enforce")),
+        "KR": normalized_mode(effective.get("PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR", "off")),
+    }
+    violations = [
+        f"{market} expected {expected_mode} but effective {market_modes.get(market)}"
+        for market, expected_mode in expected.items()
+        if market_modes.get(market) != expected_mode
+    ]
+    status = "WARN" if violations else "PASS"
+    detail = (
+        "PathB preopen exit policy market modes differ from current policy"
+        if violations
+        else "PathB preopen exit policy market modes match current policy"
+    )
+    return CheckResult(
+        "config.pathb_preopen_exit_policy",
+        status,
+        detail,
+        {
+            "effective_modes": market_modes,
+            "configured_values": configured_values,
+            "source_by_market": source_by_market,
+            "current_policy": expected,
+            "expected_policy": expected,
+            "expected_source_by_market": {
+                "US": {
+                    "key": "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US",
+                    **_config_key_source(config, "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US"),
+                },
+                "KR": {
+                    "key": "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR",
+                    **_config_key_source(config, "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR"),
+                },
+            },
+            "violations": violations,
+            "source_of_truth": "config/v2_start_config.json env_overrides for live mode",
+            "env_live_note": "do not duplicate market-scoped values in .env.live unless changing the source-of-truth policy",
+            "operator_action": "keep KR off unless KR preopen defer is explicitly approved",
+            "config_change_allowed": False,
+        },
     )
 
 
@@ -1997,6 +2103,7 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
     important = {key: effective.get(key, "") for key in sorted(LIVE_CONFIG_KEYS) if key in effective}
     checks.append(CheckResult("config.effective_values", "PASS", "effective live values captured", {"values": important}))
     checks.append(_config_source_meaning_check(config))
+    checks.append(_pathb_preopen_exit_policy_check(config))
     checks.append(_kr_live_expansion_guard_check(effective))
     checks.append(_kr_cap40_confirmation_enforce_check(effective))
     checks.append(_runtime_config_drift_check(config, mode))

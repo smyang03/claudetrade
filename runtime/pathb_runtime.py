@@ -2942,8 +2942,15 @@ class PathBRuntime:
         return datetime.now(KST)
 
     @staticmethod
-    def _pathb_preopen_exit_policy_mode() -> str:
-        raw = str(os.getenv("PATHB_PREOPEN_EXIT_POLICY_MODE", "off") or "off").strip().lower()
+    def _pathb_preopen_exit_policy_mode(market: str = "") -> str:
+        market_key = str(market or "").strip().upper()
+        market_raw = os.getenv(f"{market_key}_PATHB_PREOPEN_EXIT_POLICY_MODE") if market_key in {"KR", "US"} else None
+        if market_raw is not None:
+            raw = str(market_raw or "off").strip().lower()
+        elif market_key == "US":
+            raw = str(os.getenv("PATHB_PREOPEN_EXIT_POLICY_MODE", "off") or "off").strip().lower()
+        else:
+            raw = "off"
         return raw if raw in {"off", "shadow", "enforce"} else "off"
 
     def _pathb_open_confirm_delay_min(self, market: str) -> int:
@@ -3155,11 +3162,11 @@ class PathBRuntime:
         *,
         run: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        mode = self._pathb_preopen_exit_policy_mode()
+        mode = self._pathb_preopen_exit_policy_mode(plan.market)
         if mode == "off":
             return {"action": "PROCEED", "mode": mode}
         market = str(plan.market or "").upper()
-        if market != "US" or not self._pathb_preopen_stop_reason(signal):
+        if market not in {"KR", "US"} or not self._pathb_preopen_stop_reason(signal):
             return {"action": "PROCEED", "mode": mode}
         now = self._now_kst()
         run_plan = dict((run or self.store.find_path_run(plan.path_run_id) or {}).get("plan") or {})
@@ -3262,7 +3269,7 @@ class PathBRuntime:
         *,
         run: dict[str, Any] | None = None,
     ) -> None:
-        mode = self._pathb_preopen_exit_policy_mode()
+        mode = self._pathb_preopen_exit_policy_mode(plan.market)
         if mode == "off":
             return
         run_obj = run or self.store.find_path_run(plan.path_run_id) or {}

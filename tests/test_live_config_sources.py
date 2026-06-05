@@ -17,6 +17,7 @@ from tools.live_preflight import (
     _pathb_lifecycle_window_check_result,
     _market_session_calendar_check,
     _pathb_market_live_gate_check,
+    _pathb_preopen_exit_policy_check,
     _runtime_config_drift_check,
     _runtime_config_drift_payload,
     load_effective_config,
@@ -66,6 +67,10 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertEqual(effective.get("KR_CONTINUATION_NEW_ENTRY_BLOCK"), "true")
         self.assertEqual(effective.get("PATHB_US_LIVE_ENABLED"), "true")
         self.assertEqual(effective.get("PATHB_INTRADAY_ONLY"), "false")
+        self.assertEqual(effective.get("US_PATHB_PREOPEN_EXIT_POLICY_MODE"), "enforce")
+        self.assertEqual(effective.get("KR_PATHB_PREOPEN_EXIT_POLICY_MODE"), "off")
+        self.assertEqual(effective.get("PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US"), "enforce")
+        self.assertEqual(effective.get("PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR"), "off")
         self.assertEqual(effective.get("KR_MAX_SINGLE_LOSS_PCT"), "-2.0")
         self.assertEqual(effective.get("KR_LOSS_CAP_SHADOW_PCT"), "1.5")
         self.assertEqual(effective.get("KR_REENTRY_COOLDOWN_MINUTES"), "60")
@@ -81,18 +86,29 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertIn("env_overrides", config["start_config"])
         self.assertEqual(config["effective"].get("PATHB_MODE"), "min_size_live")
 
-    def test_config_source_meaning_describes_daily_loss_and_position_caps(self) -> None:
+    def test_config_source_meaning_describes_daily_loss_position_caps_and_preopen_policy(self) -> None:
         config = {
             "env_path": ".env.live",
             "start_config_path": "config/v2_start_config.json",
             "base_env": {"MAX_DAILY_LOSS_PCT": "-8.0", "MAX_POSITIONS": "10"},
-            "overrides": {"DAILY_LOSS_LIMIT_PCT": "-2.0", "PATHB_MAX_POSITIONS": "15"},
+            "overrides": {
+                "DAILY_LOSS_LIMIT_PCT": "-2.0",
+                "PATHB_MAX_POSITIONS": "15",
+                "US_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
+                "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "off",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": "enforce",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "off",
+            },
             "start_config": {"env_overrides": {"DAILY_LOSS_LIMIT_PCT": "-2.0"}},
             "effective": {
                 "MAX_DAILY_LOSS_PCT": "-8.0",
                 "DAILY_LOSS_LIMIT_PCT": "-2.0",
                 "MAX_POSITIONS": "10",
                 "PATHB_MAX_POSITIONS": "15",
+                "US_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
+                "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "off",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": "enforce",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "off",
             },
         }
 
@@ -103,7 +119,73 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertEqual(keys["MAX_DAILY_LOSS_PCT"]["source"], "env_file")
         self.assertEqual(keys["DAILY_LOSS_LIMIT_PCT"]["source"], "v2_start_config.env_overrides")
         self.assertIn("PathB", keys["PATHB_MAX_POSITIONS"]["used_by"])
+        self.assertEqual(keys["US_PATHB_PREOPEN_EXIT_POLICY_MODE"]["source"], "v2_start_config.env_overrides")
+        self.assertEqual(keys["KR_PATHB_PREOPEN_EXIT_POLICY_MODE"]["source"], "v2_start_config.env_overrides")
+        self.assertEqual(keys["PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US"]["source"], "v2_start_config.env_overrides")
+        self.assertEqual(keys["PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR"]["source"], "v2_start_config.env_overrides")
+        self.assertIn("KR does not inherit", keys["PATHB_PREOPEN_EXIT_POLICY_MODE"]["meaning"])
         self.assertFalse(check.data["config_change_allowed"])
+
+    def test_pathb_preopen_exit_policy_check_exposes_market_modes_and_source(self) -> None:
+        config = {
+            "env_path": ".env.live",
+            "start_config_path": "config/v2_start_config.json",
+            "base_env": {"PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce"},
+            "overrides": {
+                "PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
+                "US_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
+                "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "off",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": "enforce",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "off",
+            },
+            "start_config": {},
+            "effective": {
+                "PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
+                "US_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
+                "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "off",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": "enforce",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "off",
+            },
+        }
+
+        check = _pathb_preopen_exit_policy_check(config)
+
+        self.assertEqual(check.status, "PASS")
+        self.assertEqual(check.data["effective_modes"], {"US": "enforce", "KR": "off"})
+        self.assertEqual(check.data["source_by_market"]["US"]["source"], "v2_start_config.env_overrides")
+        self.assertEqual(check.data["source_by_market"]["KR"]["source"], "v2_start_config.env_overrides")
+        self.assertEqual(check.data["expected_source_by_market"]["US"]["source"], "v2_start_config.env_overrides")
+        self.assertEqual(check.data["expected_source_by_market"]["KR"]["source"], "v2_start_config.env_overrides")
+        self.assertEqual(check.data["expected_policy"], {"US": "enforce", "KR": "off"})
+        self.assertEqual(check.data["source_of_truth"], "config/v2_start_config.json env_overrides for live mode")
+
+    def test_pathb_preopen_exit_policy_check_uses_expected_config_values(self) -> None:
+        config = {
+            "env_path": ".env.live",
+            "start_config_path": "config/v2_start_config.json",
+            "base_env": {"PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce"},
+            "overrides": {
+                "US_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
+                "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "shadow",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": "enforce",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "shadow",
+            },
+            "start_config": {},
+            "effective": {
+                "PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
+                "US_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
+                "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "shadow",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": "enforce",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "shadow",
+            },
+        }
+
+        check = _pathb_preopen_exit_policy_check(config)
+
+        self.assertEqual(check.status, "PASS")
+        self.assertEqual(check.data["effective_modes"], {"US": "enforce", "KR": "shadow"})
+        self.assertEqual(check.data["current_policy"], {"US": "enforce", "KR": "shadow"})
+        self.assertEqual(check.data["expected_policy"], {"US": "enforce", "KR": "shadow"})
 
     def test_kr_live_expansion_guard_requires_shadow_probe_before_strategy_flags(self) -> None:
         check = _kr_live_expansion_guard_check(

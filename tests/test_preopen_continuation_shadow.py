@@ -88,6 +88,56 @@ class PreopenContinuationShadowTests(unittest.TestCase):
             mode=mode,
         )
 
+    def _save_kr_state(self, *, mode: str = "live") -> None:
+        captured_at = datetime.now(KST).isoformat(timespec="seconds")
+        save_preopen_state(
+            "KR",
+            {
+                "market": "KR",
+                "session_date": "2026-06-05",
+                "captured_at": captured_at,
+                "collector_status": "ok",
+                "provider": "kis_volume_rank",
+                "data_quality": "kis_volume_rank",
+                "candidates": [
+                    {
+                        "ticker": "005930",
+                        "name": "Samsung",
+                        "market": "KR",
+                        "session_date": "2026-06-05",
+                        "source": "kis_screen_market_kr",
+                        "shadow_preopen_rank": 5,
+                        "extended_change_pct": 4.2,
+                        "extended_price": 70000.0,
+                        "extended_volume": 100000,
+                        "prior_day_traded_value": 7_000_000_000,
+                        "extended_dollar_volume": 7_000_000_000,
+                        "regular_open_price": 71000.0,
+                        "news_or_earnings_flag": True,
+                        "risk_tags": ["open_auction"],
+                        "actual_selected": True,
+                        "actual_selection_rank": 3,
+                    },
+                    {
+                        "ticker": "000020",
+                        "name": "Low Liquidity",
+                        "market": "KR",
+                        "session_date": "2026-06-05",
+                        "source": "kis_screen_market_kr",
+                        "shadow_preopen_rank": 8,
+                        "extended_change_pct": 2.0,
+                        "extended_price": 5000.0,
+                        "extended_volume": 10000,
+                        "prior_day_traded_value": 500_000_000,
+                        "extended_dollar_volume": 500_000_000,
+                        "regular_open_price": 5050.0,
+                    },
+                ],
+            },
+            session_date="2026-06-05",
+            mode=mode,
+        )
+
     def _save_outcome(self, *, mode: str = "live", price: float = 11.0) -> None:
         save_outcome_record(
             "US",
@@ -112,9 +162,75 @@ class PreopenContinuationShadowTests(unittest.TestCase):
             mode=mode,
         )
 
-    def test_us_only_guard(self) -> None:
-        with self.assertRaisesRegex(cs.ContinuationShadowError, "preopen_continuation_shadow_supports_us_only"):
-            cs.collect_candidates("KR", session_date="2026-06-04", db_path=self.db_path)
+    def _save_kr_outcome(self, *, mode: str = "live", price: float = 72420.0) -> None:
+        save_outcome_record(
+            "KR",
+            "2026-06-05",
+            {
+                "ticker": "005930",
+                "name": "Samsung",
+                "offset_min": 30,
+                "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "outcome_status": "WIN",
+                "anchor_price": 70000.0,
+                "regular_open_price": 71000.0,
+                "price": price,
+                "high": max(73000.0, price),
+                "low": 70400.0,
+                "volume": 250000,
+                "post_open_30m_return_pct": (price - 71000.0) / 71000.0 * 100.0,
+                "price_source": "test",
+            },
+            mode=mode,
+        )
+
+    def test_unsupported_market_guard(self) -> None:
+        with self.assertRaisesRegex(cs.ContinuationShadowError, "preopen_continuation_shadow_supports_kr_us_only"):
+            cs.collect_candidates("JP", session_date="2026-06-04", db_path=self.db_path)
+
+    def test_collect_kr_candidates_uses_kr_eligibility_rules(self) -> None:
+        self._save_kr_state()
+
+        result = cs.collect_candidates("KR", session_date="2026-06-05", db_path=self.db_path)
+
+        self.assertEqual(result["written"], 2)
+        self.assertEqual(result["eligible_count"], 1)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = {
+                row["ticker"]: row
+                for row in conn.execute(
+                    "SELECT ticker, eligible, exclusion_reason, eligible_components_json FROM preopen_candidates"
+                ).fetchall()
+            }
+
+        self.assertEqual(rows["005930"]["eligible"], 1)
+        self.assertEqual(rows["000020"]["eligible"], 0)
+        self.assertIn("indicative_3_20", rows["000020"]["exclusion_reason"])
+        self.assertIn("kr_traded_value_3b", rows["000020"]["exclusion_reason"])
+
+    def test_kr_feature_snapshot_builds_eval_case(self) -> None:
+        self._save_kr_state()
+        self._save_kr_outcome()
+        cs.collect_candidates("KR", session_date="2026-06-05", db_path=self.db_path)
+        cs.record_feature_snapshots("KR", session_date="2026-06-05", offset_min=30, db_path=self.db_path)
+
+        cases, readiness = cs.build_eval_cases(
+            self.db_path,
+            session_date="2026-06-05",
+            market="KR",
+            offset_min=30,
+        )
+
+        self.assertEqual(readiness, "ready")
+        self.assertEqual(len(cases), 1)
+        self.assertEqual(cases[0].ticker, "005930")
+        self.assertEqual(cases[0].payload["market"], "KR")
+        self.assertIsNone(cases[0].payload["dv_bucket"])
+        self.assertEqual(cases[0].payload["liquidity_bucket"], "KRW_3B_10B")
+        prompt = cs.build_prompt(cases)
+        self.assertIn("Judge KR preopen continuation candidates", prompt)
+        self.assertIn("KRW traded-value bucket", prompt)
 
     def test_collect_candidates_is_idempotent_and_keeps_exclusions(self) -> None:
         self._save_us_state()
@@ -168,6 +284,67 @@ class PreopenContinuationShadowTests(unittest.TestCase):
         self.assertEqual([row["runtime_mode"] for row in outcomes], ["live", "paper"])
         self.assertNotEqual(outcomes[0]["ret_30m"], outcomes[1]["ret_30m"])
         self.assertEqual([(row["runtime_mode"], row["attempt_no"]) for row in checks], [("live", 1), ("paper", 1)])
+
+    def test_shadow_db_separates_kr_and_us_candidates_and_outcomes(self) -> None:
+        self._save_us_state()
+        self._save_kr_state()
+        self._save_outcome()
+        self._save_kr_outcome()
+
+        cs.collect_candidates("US", session_date="2026-06-04", db_path=self.db_path)
+        cs.collect_candidates("KR", session_date="2026-06-05", db_path=self.db_path)
+        cs.record_feature_snapshots("US", session_date="2026-06-04", offset_min=30, db_path=self.db_path)
+        cs.record_feature_snapshots("KR", session_date="2026-06-05", offset_min=30, db_path=self.db_path)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            candidates = conn.execute(
+                "SELECT market, COUNT(*) AS c FROM preopen_candidates GROUP BY market ORDER BY market"
+            ).fetchall()
+            outcomes = conn.execute(
+                "SELECT market, COUNT(*) AS c FROM preopen_outcomes GROUP BY market ORDER BY market"
+            ).fetchall()
+
+        self.assertEqual([(row["market"], row["c"]) for row in candidates], [("KR", 2), ("US", 2)])
+        self.assertEqual([(row["market"], row["c"]) for row in outcomes], [("KR", 2), ("US", 2)])
+
+    def test_outcome_latest_decision_is_filtered_by_runtime_mode(self) -> None:
+        self._save_us_state(mode="live", alpha_name="Live Alpha")
+        self._save_us_state(mode="paper", alpha_name="Paper Alpha")
+        self._save_outcome(mode="live", price=11.0)
+        self._save_outcome(mode="paper", price=12.0)
+
+        for mode in ("live", "paper"):
+            cs.collect_candidates("US", session_date="2026-06-04", mode=mode, db_path=self.db_path)
+            cs.record_feature_snapshots("US", session_date="2026-06-04", mode=mode, offset_min=30, db_path=self.db_path)
+
+        responses = [
+            ('{"cases":[["C01","PROMOTE",0.8,"LIVE_OK"]]}', 40, 10, 6),
+            ('{"cases":[["C01","DROP",0.7,"PAPER_DROP"]]}', 40, 10, 6),
+        ]
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test"}, clear=False), patch(
+            "preopen.continuation_shadow._call_claude", side_effect=responses
+        ), patch("preopen.continuation_shadow._save_eval_raw_call", side_effect=["live.json", "paper.json"]), patch(
+            "preopen.continuation_shadow._record_eval_credit"
+        ):
+            live_eval = cs.run_eval("US", session_date="2026-06-04", mode="live", db_path=self.db_path)
+            paper_eval = cs.run_eval("US", session_date="2026-06-04", mode="paper", db_path=self.db_path)
+
+        self.assertEqual(live_eval["status"], "called")
+        self.assertEqual(paper_eval["status"], "called")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT o.runtime_mode, d.decision
+                FROM preopen_outcomes o
+                LEFT JOIN preopen_claude_decisions d ON d.id=o.latest_decision_id
+                WHERE o.ticker='AAA'
+                ORDER BY o.runtime_mode
+                """
+            ).fetchall()
+
+        self.assertEqual([(row["runtime_mode"], row["decision"]) for row in rows], [("live", "PROMOTE"), ("paper", "DROP")])
 
     def test_feature_snapshot_separates_open_and_anchor_basis(self) -> None:
         self._save_us_state()

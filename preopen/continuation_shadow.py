@@ -21,6 +21,7 @@ SCHEMA_VERSION = "preopen_continuation_shadow.v1"
 PROMPT_VERSION = "preopen_continuation_eval.v1"
 DEFAULT_DB_FILENAME = "preopen_continuation.db"
 SUPPORTED_MARKET = "US"
+SUPPORTED_MARKETS = {"KR", "US"}
 EVAL_LABEL = "preopen_continuation_eval"
 DEFAULT_MAX_CANDIDATES = 15
 DEFAULT_SOURCE_LIMIT = 60
@@ -89,8 +90,8 @@ def _ensure_shadow_write_db_path(db_path: str | Path | None = None) -> Path:
 
 def normalize_market(market: str) -> str:
     market_key = str(market or "").strip().upper()
-    if market_key != SUPPORTED_MARKET:
-        raise ContinuationShadowError("preopen_continuation_shadow_supports_us_only")
+    if market_key not in SUPPORTED_MARKETS:
+        raise ContinuationShadowError("preopen_continuation_shadow_supports_kr_us_only")
     return market_key
 
 
@@ -371,6 +372,21 @@ def _candidate_dollar_volume(row: dict[str, Any]) -> float | None:
     return round(price * volume, 2)
 
 
+def _liquidity_bucket(market: str, value: float | None) -> str:
+    if value is None:
+        return "missing"
+    market_key = normalize_market(market)
+    if market_key == "KR":
+        if value >= 30_000_000_000:
+            return "KRW_30B_PLUS"
+        if value >= 10_000_000_000:
+            return "KRW_10B_30B"
+        if value >= 3_000_000_000:
+            return "KRW_3B_10B"
+        return "KRW_LT_3B"
+    return bucket_dollar_volume(value)
+
+
 def _regular_open_price(row: dict[str, Any]) -> float | None:
     return _first_num(row, ("regular_open_price", "open_price"))
 
@@ -383,38 +399,60 @@ def _news_flag(row: dict[str, Any]) -> bool:
 
 
 def deterministic_candidate_result(row: dict[str, Any], *, require_regular_open: bool = True) -> dict[str, Any]:
-    market = str((row or {}).get("market") or SUPPORTED_MARKET).upper()
+    market = normalize_market(str((row or {}).get("market") or SUPPORTED_MARKET))
     gap = _candidate_gap_pct(row)
     dollar_volume = _candidate_dollar_volume(row)
     rank = _candidate_rank(row)
     regular_open = _regular_open_price(row)
-    components = {
-        "market_us": market == "US",
-        "gap_positive": gap is not None and gap > 0,
-        "gap_2_20": gap is not None and 2.0 <= gap <= 20.0,
-        "extended_dollar_volume_50m": dollar_volume is not None and dollar_volume >= 50_000_000,
-        "rank_le_40": rank is not None and rank <= 40,
-        "regular_open_price_available": regular_open is not None and regular_open > 0,
-    }
+    components = {"market_supported": market in SUPPORTED_MARKETS}
+    if market == "KR":
+        components.update(
+            {
+                "indicative_positive": gap is not None and gap > 0,
+                "indicative_3_20": gap is not None and 3.0 <= gap <= 20.0,
+                "kr_traded_value_3b": dollar_volume is not None and dollar_volume >= 3_000_000_000,
+                "rank_le_40": rank is not None and rank <= 40,
+                "regular_open_price_available": regular_open is not None and regular_open > 0,
+            }
+        )
+    else:
+        components.update(
+            {
+                "gap_positive": gap is not None and gap > 0,
+                "gap_2_20": gap is not None and 2.0 <= gap <= 20.0,
+                "extended_dollar_volume_50m": dollar_volume is not None and dollar_volume >= 50_000_000,
+                "rank_le_40": rank is not None and rank <= 40,
+                "regular_open_price_available": regular_open is not None and regular_open > 0,
+            }
+        )
     if not require_regular_open:
         components["regular_open_price_available"] = True
 
     exclusion = [key for key, ok in components.items() if not ok]
     score = 0.0
     if gap is not None:
-        if 2.0 <= gap <= 10.0:
+        lower_gap = 3.0 if market == "KR" else 2.0
+        if lower_gap <= gap <= 10.0:
             score += 30.0
         elif 10.0 < gap <= 20.0:
             score += 18.0
         elif gap > 20.0:
             score -= 30.0
     if dollar_volume is not None:
-        if dollar_volume >= 300_000_000:
-            score += 30.0
-        elif dollar_volume >= 100_000_000:
-            score += 20.0
-        elif dollar_volume >= 50_000_000:
-            score += 10.0
+        if market == "KR":
+            if dollar_volume >= 30_000_000_000:
+                score += 30.0
+            elif dollar_volume >= 10_000_000_000:
+                score += 20.0
+            elif dollar_volume >= 3_000_000_000:
+                score += 10.0
+        else:
+            if dollar_volume >= 300_000_000:
+                score += 30.0
+            elif dollar_volume >= 100_000_000:
+                score += 20.0
+            elif dollar_volume >= 50_000_000:
+                score += 10.0
     if rank is not None:
         if rank <= 10:
             score += 25.0
@@ -919,7 +957,7 @@ def _candidate_db_payload(
         "pattern_tags_json": _json(row.get("pattern_tags") or []),
         "news_or_earnings_count": _int(row.get("news_or_earnings_count")),
         "news_or_earnings_sources_json": _json(news_sources or []),
-        "eligible_rule_version": "preopen_continuation.eligible.v1",
+        "eligible_rule_version": "preopen_continuation.eligible.v2",
         "eligible_components_json": _json(result["components"]),
     }
     return payload
@@ -1292,19 +1330,21 @@ def _eligible_count(conn: sqlite3.Connection, session_date: str, market: str, ru
     return int(row["c"] if row else 0)
 
 
-def _latest_decisions(conn: sqlite3.Connection, session_date: str, market: str) -> dict[int, sqlite3.Row]:
+def _latest_decisions(conn: sqlite3.Connection, session_date: str, market: str, runtime_mode: str) -> dict[int, sqlite3.Row]:
     rows = conn.execute(
         """
         SELECT d.*
         FROM preopen_claude_decisions d
+        JOIN preopen_claude_checks ch ON ch.id=d.check_id
         JOIN (
-            SELECT candidate_id, MAX(id) AS id
-            FROM preopen_claude_decisions
-            WHERE session_date=? AND market=?
-            GROUP BY candidate_id
+            SELECT d2.candidate_id, MAX(d2.id) AS id
+            FROM preopen_claude_decisions d2
+            JOIN preopen_claude_checks ch2 ON ch2.id=d2.check_id
+            WHERE d2.session_date=? AND d2.market=? AND ch2.runtime_mode=?
+            GROUP BY d2.candidate_id
         ) latest ON latest.id=d.id
         """,
-        (session_date, market),
+        (session_date, market, runtime_mode),
     ).fetchall()
     return {int(row["candidate_id"]): row for row in rows if row["candidate_id"] is not None}
 
@@ -1329,7 +1369,7 @@ def _close_offset_min(market: str, session_date: str) -> int | None:
 
 
 def _refresh_outcomes(conn: sqlite3.Connection, *, session_date: str, market: str, runtime_mode: str) -> None:
-    decisions = _latest_decisions(conn, session_date, market)
+    decisions = _latest_decisions(conn, session_date, market, runtime_mode)
     candidates = conn.execute(
         "SELECT * FROM preopen_candidates WHERE session_date=? AND market=? AND runtime_mode=?",
         (session_date, market, runtime_mode),
@@ -1507,11 +1547,14 @@ def build_eval_cases(
             risk_tags = json.loads(row["risk_tags_json"] or "[]")
         except Exception:
             risk_tags = []
+        liquidity_bucket = _liquidity_bucket(market_key, row["extended_dollar_volume"])
         payload = {
             "id": case_id,
+            "market": market_key,
             "gap": row["gap_pct"],
             "rank": row["preopen_rank"],
-            "dv_bucket": bucket_dollar_volume(row["extended_dollar_volume"]),
+            "dv_bucket": bucket_dollar_volume(row["extended_dollar_volume"]) if market_key == "US" else None,
+            "liquidity_bucket": liquidity_bucket,
             "news": bool(row["news_or_earnings_flag"]),
             "r30": row["return_from_open_pct"],
             "mfe30": row["mfe_from_open_pct"],
@@ -1548,6 +1591,7 @@ def fingerprint_cases(*, session_date: str, market: str, offset_min: int, cases:
                 "t": case.ticker,
                 "gap": bucket_pct(_num(case.payload.get("gap")), (2, 5, 10, 20)),
                 "dv": case.payload.get("dv_bucket"),
+                "liquidity": case.payload.get("liquidity_bucket"),
                 "rank": bucket_rank(_int(case.payload.get("rank"))),
                 "news": 1 if case.payload.get("news") else 0,
                 "r30": bucket_pct(_num(case.payload.get("r30"))),
@@ -1562,8 +1606,10 @@ def fingerprint_cases(*, session_date: str, market: str, offset_min: int, cases:
 
 
 def build_prompt(cases: list[EvalCase]) -> str:
+    markets = sorted({str(case.payload.get("market") or "") for case in cases if case.payload.get("market")})
+    market_label = "/".join(markets) if markets else "KR/US"
     payload = {
-        "task": "Judge US preopen continuation candidates using only visible early-session features.",
+        "task": f"Judge {market_label} preopen continuation candidates using only visible early-session features.",
         "schema": {"cases": [["case_id", "PROMOTE|KEEP|DROP", "confidence_0_to_1", "REASON_CODE"]]},
         "rules": [
             "Return strict JSON only.",
@@ -1571,6 +1617,8 @@ def build_prompt(cases: list[EvalCase]) -> str:
             "No explanation outside JSON.",
             "Do not infer from future outcomes.",
             "Action ceiling is WATCH.",
+            "For US cases, dv_bucket is an extended dollar-volume bucket.",
+            "For KR cases, liquidity_bucket is a KRW traded-value bucket.",
         ],
         "cases": [case.payload for case in cases],
     }

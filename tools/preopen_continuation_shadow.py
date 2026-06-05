@@ -22,7 +22,7 @@ from preopen.continuation_shadow import (
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="US preopen continuation shadow pipeline")
+    parser = argparse.ArgumentParser(description="KR/US preopen continuation shadow pipeline")
     parser.add_argument("--market", default="US")
     parser.add_argument("--date", dest="session_date")
     parser.add_argument("--mode", choices=["live", "paper"], default="live")

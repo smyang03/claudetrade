@@ -13,7 +13,7 @@ from preopen.continuation_shadow import build_report_payload, render_report_mark
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build US preopen continuation shadow report")
+    parser = argparse.ArgumentParser(description="Build KR/US preopen continuation shadow report")
     parser.add_argument("--market", default="US")
     parser.add_argument("--mode", choices=["live", "paper"], default="live")
     parser.add_argument("--from", dest="date_from")
