@@ -298,7 +298,7 @@
     }
   ],
   "end_at": "2026-06-07T09:00:00+09:00",
-  "generated_at": "2026-06-07T02:59:36+09:00",
+  "generated_at": "2026-06-07T03:14:45+09:00",
   "hold_advisor_cost_observation": {
     "by_label": {
       "hold_advisor_challenge": 2,
@@ -333,7 +333,7 @@
       "source": "raw_call_scan_fallback"
     },
     "api_usage_today": {},
-    "at": "2026-06-07T02:59:34+09:00",
+    "at": "2026-06-07T03:14:42+09:00",
     "broker_truth": {
       "error": "",
       "last_attempt_at": "2026-06-06T17:20:28+00:00",
@@ -362,7 +362,7 @@
       "market": "US",
       "news": {
         "digest": {
-          "age_min": 1703.73,
+          "age_min": 1718.87,
           "bytes": 24368,
           "corp_news_tickers": 0,
           "exists": true,
@@ -373,7 +373,7 @@
           "top_news_count": 5
         },
         "preopen": {
-          "age_min": 1719.15,
+          "age_min": 1734.29,
           "bytes": 245540,
           "corp_news_tickers": 60,
           "corp_news_total": 411,
@@ -388,7 +388,7 @@
           "snapshot_written_at": "2026-06-05T22:20:25+09:00"
         },
         "regular": {
-          "age_min": 1700.46,
+          "age_min": 1715.6,
           "bytes": 104572,
           "corp_news_tickers": 13,
           "corp_news_total": 136,
@@ -405,7 +405,7 @@
       },
       "preopen": {
         "candidates": {
-          "age_min": 1739.17,
+          "age_min": 1754.31,
           "bytes": 1325720,
           "exists": true,
           "last_write_at": "2026-06-05T22:00:23+09:00",
@@ -413,7 +413,7 @@
           "path": "logs\\preopen\\20260605_US_candidates.jsonl"
         },
         "outcome": {
-          "age_min": 1348.73,
+          "age_min": 1363.86,
           "bytes": 2289586,
           "exists": true,
           "last_write_at": "2026-06-06T04:30:50+09:00",
@@ -421,7 +421,7 @@
           "path": "logs\\preopen\\20260605_US_outcome.jsonl"
         },
         "rank_diff": {
-          "age_min": 1702.09,
+          "age_min": 1717.23,
           "bytes": 36944,
           "exists": true,
           "last_write_at": "2026-06-05T22:37:28+09:00",
@@ -429,7 +429,7 @@
           "path": "logs\\preopen\\20260605_US_rank_diff.jsonl"
         },
         "scheduler": {
-          "age_min": 1620.27,
+          "age_min": 1635.41,
           "bytes": 150910,
           "exists": true,
           "last_write_at": "2026-06-05T23:59:17+09:00",
@@ -437,7 +437,7 @@
           "path": "logs\\preopen\\20260605_scheduler_live.jsonl"
         },
         "screener_projected_volume": {
-          "age_min": 1623.31,
+          "age_min": 1638.45,
           "bytes": 205428,
           "exists": true,
           "last_write_at": "2026-06-05T23:56:15+09:00",
@@ -451,84 +451,84 @@
           "dir": "data\\price\\us",
           "latest": [
             {
-              "age_min": 262.35,
+              "age_min": 277.49,
               "bytes": 7770,
               "exists": true,
               "last_write_at": "2026-06-06T22:37:13+09:00",
               "path": "data\\price\\us\\us_YSS.csv"
             },
             {
-              "age_min": 262.55,
+              "age_min": 277.69,
               "bytes": 1841,
               "exists": true,
               "last_write_at": "2026-06-06T22:37:01+09:00",
               "path": "data\\price\\us\\us_XE.csv"
             },
             {
-              "age_min": 262.7,
+              "age_min": 277.84,
               "bytes": 1081,
               "exists": true,
               "last_write_at": "2026-06-06T22:36:52+09:00",
               "path": "data\\price\\us\\us_WSE.csv"
             },
             {
-              "age_min": 263.52,
+              "age_min": 278.66,
               "bytes": 7168,
               "exists": true,
               "last_write_at": "2026-06-06T22:36:03+09:00",
               "path": "data\\price\\us\\us_VSNT.csv"
             },
             {
-              "age_min": 263.77,
+              "age_min": 278.91,
               "bytes": 21585,
               "exists": true,
               "last_write_at": "2026-06-06T22:35:48+09:00",
               "path": "data\\price\\us\\us_VOYG.csv"
             },
             {
-              "age_min": 264.08,
+              "age_min": 279.22,
               "bytes": 4373,
               "exists": true,
               "last_write_at": "2026-06-06T22:35:29+09:00",
               "path": "data\\price\\us\\us_VGNT.csv"
             },
             {
-              "age_min": 266.04,
+              "age_min": 281.18,
               "bytes": 30633,
               "exists": true,
               "last_write_at": "2026-06-06T22:33:32+09:00",
               "path": "data\\price\\us\\us_TPH.csv"
             },
             {
-              "age_min": 266.85,
+              "age_min": 281.99,
               "bytes": 28944,
               "exists": true,
               "last_write_at": "2026-06-06T22:32:43+09:00",
               "path": "data\\price\\us\\us_TERN.csv"
             },
             {
-              "age_min": 267.59,
+              "age_min": 282.73,
               "bytes": 6084,
               "exists": true,
               "last_write_at": "2026-06-06T22:31:58+09:00",
               "path": "data\\price\\us\\us_SUNB.csv"
             },
             {
-              "age_min": 267.67,
+              "age_min": 282.81,
               "bytes": 11641,
               "exists": true,
               "last_write_at": "2026-06-06T22:31:53+09:00",
               "path": "data\\price\\us\\us_STUB.csv"
             },
             {
-              "age_min": 268.25,
+              "age_min": 283.39,
               "bytes": 661,
               "exists": true,
               "last_write_at": "2026-06-06T22:31:19+09:00",
               "path": "data\\price\\us\\us_SPEGR.csv"
             },
             {
-              "age_min": 268.39,
+              "age_min": 283.53,
               "bytes": 10324,
               "exists": true,
               "last_write_at": "2026-06-06T22:31:11+09:00",
@@ -542,84 +542,84 @@
           "dir": "data\\price\\minute\\us",
           "latest": [
             {
-              "age_min": 847.75,
+              "age_min": 862.88,
               "bytes": 58922,
               "exists": true,
               "last_write_at": "2026-06-06T12:51:49+09:00",
               "path": "data\\price\\minute\\us\\us_WBD.csv"
             },
             {
-              "age_min": 847.75,
+              "age_min": 862.89,
               "bytes": 51278,
               "exists": true,
               "last_write_at": "2026-06-06T12:51:49+09:00",
               "path": "data\\price\\minute\\us\\us_TXRH.csv"
             },
             {
-              "age_min": 847.77,
+              "age_min": 862.9,
               "bytes": 56244,
               "exists": true,
               "last_write_at": "2026-06-06T12:51:48+09:00",
               "path": "data\\price\\minute\\us\\us_TTAN.csv"
             },
             {
-              "age_min": 847.78,
+              "age_min": 862.92,
               "bytes": 458693,
               "exists": true,
               "last_write_at": "2026-06-06T12:51:47+09:00",
               "path": "data\\price\\minute\\us\\us_TSLA.csv"
             },
             {
-              "age_min": 847.79,
+              "age_min": 862.92,
               "bytes": 116561,
               "exists": true,
               "last_write_at": "2026-06-06T12:51:47+09:00",
               "path": "data\\price\\minute\\us\\us_TE.csv"
             },
             {
-              "age_min": 847.8,
+              "age_min": 862.93,
               "bytes": 116986,
               "exists": true,
               "last_write_at": "2026-06-06T12:51:46+09:00",
               "path": "data\\price\\minute\\us\\us_T.csv"
             },
             {
-              "age_min": 847.81,
+              "age_min": 862.95,
               "bytes": 410320,
               "exists": true,
               "last_write_at": "2026-06-06T12:51:45+09:00",
               "path": "data\\price\\minute\\us\\us_SOFI.csv"
             },
             {
-              "age_min": 847.82,
+              "age_min": 862.96,
               "bytes": 462739,
               "exists": true,
               "last_write_at": "2026-06-06T12:51:45+09:00",
               "path": "data\\price\\minute\\us\\us_SMCI.csv"
             },
             {
-              "age_min": 847.83,
+              "age_min": 862.97,
               "bytes": 57764,
               "exists": true,
               "last_write_at": "2026-06-06T12:51:44+09:00",
               "path": "data\\price\\minute\\us\\us_SBRA.csv"
             },
             {
-              "age_min": 847.84,
+              "age_min": 862.98,
               "bytes": 50113,
               "exists": true,
               "last_write_at": "2026-06-06T12:51:44+09:00",
               "path": "data\\price\\minute\\us\\us_RLI.csv"
             },
             {
-              "age_min": 847.85,
+              "age_min": 862.99,
               "bytes": 408353,
               "exists": true,
               "last_write_at": "2026-06-06T12:51:43+09:00",
               "path": "data\\price\\minute\\us\\us_RGTI.csv"
             },
             {
-              "age_min": 847.86,
+              "age_min": 863.0,
               "bytes": 349449,
               "exists": true,
               "last_write_at": "2026-06-06T12:51:42+09:00",
@@ -655,9 +655,9 @@
         {
           "classification": "hard_fail",
           "data": {
-            "age_sec": 2297.53,
+            "age_sec": 3000.427,
             "error": "",
-            "evaluated_at": "2026-06-06T17:58:45Z",
+            "evaluated_at": "2026-06-06T18:10:28Z",
             "last_attempt_at": "2026-06-06T17:20:28+00:00",
             "last_success_at": "2026-06-06T17:20:28+00:00",
             "stale": true,
@@ -666,7 +666,7 @@
             "stale_recomputed": true,
             "stored_stale": false,
             "stored_ttl_sec": 180,
-            "ttl_margin_sec": -2117.53,
+            "ttl_margin_sec": -2820.427,
             "ttl_sec": 180
           },
           "detail": "US snapshot stale",
@@ -679,13 +679,13 @@
         "healthy": true,
         "last_error": "",
         "last_error_at": "",
-        "last_started_at": "2026-06-07T02:59:25+09:00",
-        "last_success_at": "2026-06-07T02:59:25+09:00",
-        "last_tick_at": "2026-06-07T02:59:25+09:00",
+        "last_started_at": "2026-06-07T03:10:57+09:00",
+        "last_success_at": "2026-06-07T03:10:57+09:00",
+        "last_tick_at": "2026-06-07T03:10:57+09:00",
         "next_expected_at": "",
         "pid": 43524,
         "process": "live_guardian",
-        "report_path": "E:\\code\\claudetrade\\data\\v2_reports\\live_guardian_20260607_025925.json",
+        "report_path": "E:\\code\\claudetrade\\data\\v2_reports\\live_guardian_20260607_031057.json",
         "status": "blocked"
       },
       "market_gate": {
@@ -694,9 +694,9 @@
           {
             "classification": "hard_fail",
             "data": {
-              "age_sec": 2297.53,
+              "age_sec": 3000.427,
               "error": "",
-              "evaluated_at": "2026-06-06T17:58:45Z",
+              "evaluated_at": "2026-06-06T18:10:28Z",
               "last_attempt_at": "2026-06-06T17:20:28+00:00",
               "last_success_at": "2026-06-06T17:20:28+00:00",
               "stale": true,
@@ -705,7 +705,7 @@
               "stale_recomputed": true,
               "stored_stale": false,
               "stored_ttl_sec": 180,
-              "ttl_margin_sec": -2117.53,
+              "ttl_margin_sec": -2820.427,
               "ttl_sec": 180
             },
             "detail": "US snapshot stale",
@@ -727,9 +727,9 @@
             {
               "classification": "hard_fail",
               "data": {
-                "age_sec": 2297.53,
+                "age_sec": 3000.427,
                 "error": "",
-                "evaluated_at": "2026-06-06T17:58:45Z",
+                "evaluated_at": "2026-06-06T18:10:28Z",
                 "last_attempt_at": "2026-06-06T17:20:27+00:00",
                 "last_success_at": "2026-06-06T17:20:28+00:00",
                 "stale": true,
@@ -738,7 +738,7 @@
                 "stale_recomputed": true,
                 "stored_stale": false,
                 "stored_ttl_sec": 180,
-                "ttl_margin_sec": -2117.53,
+                "ttl_margin_sec": -2820.427,
                 "ttl_sec": 180
               },
               "detail": "KR snapshot stale",
@@ -759,9 +759,9 @@
             {
               "classification": "hard_fail",
               "data": {
-                "age_sec": 2297.53,
+                "age_sec": 3000.427,
                 "error": "",
-                "evaluated_at": "2026-06-06T17:58:45Z",
+                "evaluated_at": "2026-06-06T18:10:28Z",
                 "last_attempt_at": "2026-06-06T17:20:28+00:00",
                 "last_success_at": "2026-06-06T17:20:28+00:00",
                 "stale": true,
@@ -770,7 +770,7 @@
                 "stale_recomputed": true,
                 "stored_stale": false,
                 "stored_ttl_sec": 180,
-                "ttl_margin_sec": -2117.53,
+                "ttl_margin_sec": -2820.427,
                 "ttl_sec": 180
               },
               "detail": "US snapshot stale",
@@ -859,13 +859,13 @@
           "healthy": true,
           "last_error": "",
           "last_error_at": "",
-          "last_started_at": "2026-06-07T02:59:25+09:00",
-          "last_success_at": "2026-06-07T02:59:25+09:00",
-          "last_tick_at": "2026-06-07T02:59:25+09:00",
+          "last_started_at": "2026-06-07T03:10:57+09:00",
+          "last_success_at": "2026-06-07T03:10:57+09:00",
+          "last_tick_at": "2026-06-07T03:10:57+09:00",
           "next_expected_at": "",
           "pid": 43524,
           "process": "live_guardian",
-          "report_path": "E:\\code\\claudetrade\\data\\v2_reports\\live_guardian_20260607_025925.json",
+          "report_path": "E:\\code\\claudetrade\\data\\v2_reports\\live_guardian_20260607_031057.json",
           "status": "blocked"
         }
       },
@@ -879,11 +879,11 @@
           "last_error": "",
           "last_error_at": "",
           "last_job": {},
-          "last_started_at": "2026-06-07T02:59:01+09:00",
-          "last_success_at": "2026-06-07T02:59:01+09:00",
-          "last_tick_at": "2026-06-07T02:59:01+09:00",
+          "last_started_at": "2026-06-07T03:14:02+09:00",
+          "last_success_at": "2026-06-07T03:14:02+09:00",
+          "last_tick_at": "2026-06-07T03:14:02+09:00",
           "mode": "live",
-          "next_expected_at": "2026-06-07T03:00:01+09:00",
+          "next_expected_at": "2026-06-07T03:15:02+09:00",
           "pid": 56860,
           "process": "preopen_scheduler",
           "status": "idle"
@@ -895,9 +895,9 @@
   "log_issue_counts_since_start": {
     "analyst_new_buy_block": 240,
     "broker_sync_protected": 2,
-    "broker_truth_untrusted": 262,
-    "data_collection_minute_price_stale": 167,
-    "guardian_block_start": 235,
+    "broker_truth_untrusted": 265,
+    "data_collection_minute_price_stale": 170,
+    "guardian_block_start": 237,
     "log_warning": 274,
     "pending_sell_local_state": 1,
     "telegram": 4

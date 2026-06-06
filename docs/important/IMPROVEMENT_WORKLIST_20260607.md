@@ -49,8 +49,8 @@ Updated: 2026-06-07
 | P0-5 | Candidate audit source attribution fallback | 코드/테스트 | `candidate_source` 컬럼은 있으나 신규 live audit row 대부분이 blank로 기록된다. |
 | P0-6 | Candidate audit outcome freshness 복구 | DB 감사/분석 | `daily_pending=1551` 상태에서는 candidate audit을 selection evidence로 쓰면 안 된다. |
 | P0-7 | KR/KIS evidence degraded visibility | 코드/로그 가시성 | ticker-level hard fail-closed와 session/provider degraded warning을 분리해야 운영 판단이 가능하다. |
-| P0-8 | KR `trade_ready -> NO_SIGNAL` / ORP timing report | DB/전략 분석 | 최근 KR trade_ready 8건이 모두 no-signal이고, KR live 확장 전 선행 gate다. |
-| P0-9 | PathB `INVALID_PRICE` miss diagnostics | DB/execution 분석 | US `INVALID_PRICE` miss가 zone reentry와 30m MFE를 동반하므로 execution 품질을 분리해야 한다. |
+| P0-8 | KR `trade_ready -> NO_SIGNAL` / ORP timing report | DB/전략 분석 | 최근 KR trade_ready 8건 재현은 smoke이고, 30일 primary/full available까지 봐야 KR live 확장 전 선행 gate로 쓸 수 있다. |
+| P0-9 | PathB `INVALID_PRICE` miss diagnostics | DB/execution 분석 | US `INVALID_PRICE` miss baseline은 full available로 재현하고, recent window와 비교해 execution 품질을 분리해야 한다. |
 | P1-1 | KR trade-ready carry 효과 측정 | DB/운영 측정 | carry 구현은 있으므로 실제 live 분포를 검증해야 한다. |
 | P1-2 | KR screener exposure/ranking 분석 | DB/selection 분석 | source attribution이 비어 있고 hard-cap/watch-miss 품질을 아직 평가하지 못한다. |
 | P1-3 | Lesson candidate basis metadata | learning memory | refreshed ledger 전 lesson 승격은 오염 위험이 크다. |
@@ -350,6 +350,31 @@ python -m pytest tests/test_candidate_action_live_mapping.py::CandidateActionLiv
   - `opening_range_pullback=2`, 모두 no-signal
   - `mean_reversion=1`, no-signal
 
+#### 검증 기간
+
+| Window | 기본 범위 | 목적 |
+| --- | --- | --- |
+| recent | 2026-06-01~2026-06-05 | 알려진 증상 재현. 이 window만으로 결론을 내리지 않는다. |
+| primary | `--lookback-days 30` 기본값 | 실제 판단 기준. 최근 5일 착시와 특정 장세 집중을 줄인다. |
+| full_available | `ticker_selection_log` live 전체 가용 기간 | 누적 경향과 전략별 장기 분포를 확인한다. |
+
+#### CLI / Output 요구
+
+- 신규 스크립트 기본안: `tools/kr_nosignal_orp_report.py`
+- CLI:
+  - `--market KR` 기본값
+  - `--lookback-days 30` 기본값
+  - `--date-from`, `--date-to` 선택 지정
+  - `--windows recent,primary,full_available` 기본값
+  - `--json` JSON 출력
+  - `--output <path>` 선택 저장
+- 핵심 output fields:
+  - `window`, `date_from`, `date_to`
+  - `market`, `total_selection_rows`, `trade_ready`, `signal_fired`, `traded`, `no_signal`
+  - `strategy`, `ticker`, `selected_at`, `signal_at`, `source_type`, `recommended_strategy`
+  - `orp_block_reason`, `entry_window_elapsed_min`, `window_phase`
+  - `nosignal_bucket`, `evidence_bucket`, `risk_order_bucket`
+
 #### 작업
 
 1. `trade_ready=1 AND signal_fired=0` row를 날짜/전략/시각/소스별로 집계한다.
@@ -369,6 +394,9 @@ python -m pytest tests/test_candidate_action_live_mapping.py::CandidateActionLiv
 - `NO_SIGNAL`을 매수 차단 오류로 오해하지 않는다.
 - ORP trade_ready가 window 안에서 나온 것인지, window 밖에서 나온 것인지 수치로 확인된다.
 - entry window 확대는 forward outcome 근거가 있을 때만 별도 제안한다.
+- recent window에서 알려진 KR `trade_ready=8`, `signal_fired=0`, `traded=0` 증상을 재현한다.
+- primary와 full_available window의 원인 분포를 함께 출력한다.
+- 완료 판정은 recent 재현만으로 하지 않는다.
 
 ### P0-9. PathB `INVALID_PRICE` Miss Diagnostics
 
@@ -377,6 +405,35 @@ python -m pytest tests/test_candidate_action_live_mapping.py::CandidateActionLiv
 - `pathb_miss_quality` 기준 US `INVALID_PRICE`는 29건이다.
 - 이 중 zone reentered는 26건이다.
 - 평균 30m MFE는 +1.222%다.
+
+#### 검증 기간
+
+| Window | 기본 범위 | 목적 |
+| --- | --- | --- |
+| recent | `--lookback-days 30` 또는 명시한 `--date-from/--date-to` | 최신 miss 양상이 baseline과 달라졌는지 확인한다. |
+| full_available | `pathb_miss_quality` 전체 가용 기간 | US `INVALID_PRICE n=29`, `zone_reentered=26`, `avg_mfe_30m=+1.222%` baseline을 재현한다. |
+
+#### CLI / Output 요구
+
+- 신규 스크립트 기본안: `tools/pathb_invalid_price_miss_report.py`
+- CLI:
+  - `--market US` 기본값
+  - `--reason INVALID_PRICE` 기본값
+  - `--lookback-days 30`
+  - `--date-from`, `--date-to` 선택 지정
+  - `--windows recent,full_available` 기본값
+  - `--json` JSON 출력
+  - `--output <path>` 선택 저장
+- 데이터 소스:
+  - `data/v2_event_store.db::pathb_miss_quality`
+  - 필요 시 같은 DB의 `v2_path_runs`, `lifecycle_events`를 read-only 보조 join
+- 핵심 output fields:
+  - `window`, `market`, `cancel_reason`, `n`
+  - `zone_reentered`, `zone_reentered_rate`
+  - `avg_mfe_30m_pct`, `avg_mae_30m_pct`
+  - `ticker`, `path_run_id`, `session_date`, `cancelled_at`
+  - `current_at_plan`, `buy_zone_low`, `buy_zone_high`, `reference_price`, `baseline_price`
+  - `price_diagnostic_bucket`, `quote_age_bucket`, `conversion_bucket`, `order_timing_bucket`
 
 #### 작업
 
@@ -390,6 +447,8 @@ python -m pytest tests/test_candidate_action_live_mapping.py::CandidateActionLiv
 - `INVALID_PRICE`가 실제 가격 조회 실패인지, stale quote인지, 단위 변환/호가 단위 문제인지 분리된다.
 - broker truth fail-closed, sizing reason split, slippage cap, order submit policy는 완화되지 않는다.
 - missed opportunity와 safety block이 같은 표에서 섞이지 않는다.
+- full_available baseline에서 US `INVALID_PRICE n=29`, `zone_reentered=26`, `avg_mfe_30m=+1.222%`를 재현한다.
+- recent window와 baseline의 차이를 별도 summary로 출력한다.
 
 ## P1 Work Items
 

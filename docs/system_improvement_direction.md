@@ -158,6 +158,14 @@ Worklist cross-reference: `docs/important/IMPROVEMENT_WORKLIST_20260607.md`의 `
 - KR ORP block은 `orp_entry_window_expired=395`가 가장 많다.
 - 이 항목은 기존 worklist의 P1 분석 항목이었지만, 최신 종합 판단에서는 KR live 확장 여부를 가르는 선행 조건이므로 P0로 승격한다.
 
+검증 기간:
+
+| window | 기본 범위 | 목적 |
+|---|---|---|
+| recent | 2026-06-01 ~ 2026-06-05 | 최근 알려진 KR `trade_ready=8`, `signal_fired=0`, `traded=0` 증상 재현 |
+| primary | 기본 `--lookback-days 30` | 실제 판단 기준. 최근 5일 착시를 줄이고 최근 운용 흐름을 본다. |
+| full_available | `ticker_selection_log` live 전체 가용 기간 | 누적 경향 확인. 현재 DB 기준 KR은 2026-04-08부터 가용하다. |
+
 작업 방향:
 
 1. `ticker_selection_log`의 KR trade_ready row와 `intraday_strategy_log`를 날짜/티커/전략 기준으로 조인한다.
@@ -176,6 +184,8 @@ Acceptance:
 - KR trade_ready row마다 "왜 signal이 안 났는지"가 하나 이상의 원인 bucket으로 설명된다.
 - strategy threshold 변경은 이 리포트 이후 별도 작업으로만 제안한다.
 - 공유 strategy 변경 전 US PathB 영향 범위를 따로 검토한다.
+- recent, primary, full_available 세 window의 count와 원인 분포가 함께 산출된다.
+- 완료 판정은 5일 recent 재현만으로 하지 않고 primary/full_available 경향까지 확인한다.
 
 ### P0-5. Candidate audit source/outcome freshness 보강
 
@@ -207,6 +217,13 @@ Worklist cross-reference: `docs/important/IMPROVEMENT_WORKLIST_20260607.md`의 `
 - 26건이 cancel 후 zone reentry.
 - 평균 30m MFE +1.222%.
 
+검증 기간:
+
+| window | 기본 범위 | 목적 |
+|---|---|---|
+| recent | 최근 30 calendar days 또는 명시한 `--date-from/--date-to` | 최신 miss 양상이 계속되는지 확인 |
+| full_available | `pathb_miss_quality` 전체 가용 기간 | 기준 수치인 US `INVALID_PRICE n=29`, `zone_reentered=26`, `avg_mfe_30m=+1.222%` 재현 |
+
 작업 방향:
 
 1. `pathb_miss_quality`에서 cancel reason, zone reentry, 30m MFE/MAE를 정기 리포트화한다.
@@ -217,6 +234,7 @@ Acceptance:
 
 - `INVALID_PRICE`가 실제 가격 조회 실패인지, 단위 변환 문제인지, stale price인지 분리된다.
 - broker truth fail-closed, sizing, slippage cap은 유지된다.
+- full_available 기준 baseline 수치를 재현하고, recent window와의 차이를 표시한다.
 
 ## 5. P1 개선 방향
 
