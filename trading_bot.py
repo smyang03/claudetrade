@@ -856,6 +856,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.trade_ready_tickers: dict[str, list[str]] = {"KR": [], "US": []}
         self.selection_meta: dict[str, dict] = {"KR": {}, "US": {}}
         self.selection_stages: dict[str, dict] = {"KR": {}, "US": {}}
+        self._selection_freshness_metrics: dict[str, dict] = {"KR": {}, "US": {}}
         self.candidate_health_trackers: dict[str, Optional[CandidateHealthTracker]] = {"KR": None, "US": None}
         self.today_universe: dict = {}
         self._applied_fill_keys: set[str] = set()
@@ -3328,6 +3329,237 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             }},
         )
         log.info(f"  [{ticker}] partial_data guard block: {reason}")
+
+    def _strategy_feasibility_map(self, market: str, meta: dict) -> dict[str, dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        out: dict[str, dict] = {}
+        direct = (
+            (meta or {}).get("_strategy_feasibility_by_ticker")
+            or (meta or {}).get("strategy_feasibility_by_ticker")
+            or {}
+        )
+        if isinstance(direct, dict):
+            for raw_ticker, value in direct.items():
+                key = self._selection_ticker_key(market_key, raw_ticker)
+                if key and isinstance(value, dict):
+                    out[key] = dict(value)
+        for row in (meta or {}).get("_final_prompt_pool") or (meta or {}).get("final_prompt_pool") or []:
+            if not isinstance(row, dict):
+                continue
+            key = self._selection_ticker_key(market_key, row.get("ticker"))
+            pack = row.get("strategy_feasibility")
+            if key and isinstance(pack, dict):
+                out.setdefault(key, dict(pack))
+        return out
+
+    def _selection_recommended_strategy_runtime(self, market: str, ticker: str, meta: dict, pack: dict | None = None) -> str:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        recommended = (meta or {}).get("recommended_strategy") or {}
+        raw_strategy = ""
+        if isinstance(recommended, dict):
+            raw_strategy = recommended.get(ticker, "") or recommended.get(key, "")
+            if not raw_strategy and market_key == "US":
+                for raw_key, raw_value in recommended.items():
+                    if str(raw_key or "").strip().upper() == key:
+                        raw_strategy = raw_value
+                        break
+        strategy = _normalize_strategy_name(raw_strategy)
+        if strategy:
+            return strategy
+        for action in (meta or {}).get("candidate_actions") or []:
+            if not isinstance(action, dict):
+                continue
+            if self._selection_ticker_key(market_key, action.get("ticker")) == key:
+                strategy = _normalize_strategy_name(action.get("strategy") or action.get("recommended_strategy"))
+                if strategy:
+                    return strategy
+        routes = (meta or {}).get("_candidate_action_routes") or {}
+        route = None
+        if isinstance(routes, dict):
+            route = routes.get(key) or routes.get(ticker)
+        elif isinstance(routes, list):
+            for raw_route in routes:
+                if not isinstance(raw_route, dict):
+                    continue
+                if self._selection_ticker_key(market_key, raw_route.get("ticker")) == key:
+                    route = raw_route
+                    break
+        if isinstance(route, dict):
+            strategy = _normalize_strategy_name(route.get("strategy") or route.get("recommended_strategy"))
+            if strategy:
+                return strategy
+        if isinstance(pack, dict) and pack:
+            for row in (meta or {}).get("_final_prompt_pool") or (meta or {}).get("final_prompt_pool") or []:
+                if not isinstance(row, dict):
+                    continue
+                if self._selection_ticker_key(market_key, row.get("ticker")) != key:
+                    continue
+                strategy = _normalize_strategy_name(
+                    row.get("execution_fit_strategy")
+                    or row.get("raw_execution_fit_strategy")
+                    or ""
+                )
+                if strategy and strategy in pack and strategy != "observe":
+                    return strategy
+        return ""
+
+    def _strategy_feasibility_block_reason(self, strategy: str, pack: dict | None) -> str:
+        strategy_name = _normalize_strategy_name(strategy)
+        if not strategy_name:
+            return "missing_recommended_strategy"
+        if strategy_name == "observe":
+            return "observe_not_trade_ready"
+        if not isinstance(pack, dict) or not pack:
+            return ""
+        detail = pack.get(strategy_name)
+        if not isinstance(detail, dict):
+            return "unknown_strategy"
+        ceiling = str(detail.get("action_ceiling") or detail.get("ceiling") or "BUY_READY").strip().upper()
+        if ceiling in {"BUY_READY", "PROBE_READY"}:
+            return ""
+        reason = str(detail.get("reason") or detail.get("state") or "watch_only").strip()
+        return reason or "watch_only"
+
+    def _strategy_session_cooldown_reason(self, market: str, ticker: str, strategy: str) -> str:
+        strategy_name = _normalize_strategy_name(strategy)
+        if not strategy_name:
+            return ""
+        try:
+            entry = self._candidate_health_tracker(market).strategy_cooldown_for(ticker, strategy_name)
+        except Exception:
+            return ""
+        if not isinstance(entry, dict) or not entry:
+            return ""
+        scope = str(entry.get("scope") or "session").strip().lower()
+        if scope and scope != "session":
+            return ""
+        reason = str(entry.get("reason") or "strategy_cooldown").strip()
+        return f"session_cooldown:{reason}"
+
+    def _append_selection_factor(self, item: dict, key: str, value: str) -> None:
+        factors = item.get(key)
+        if not isinstance(factors, list):
+            factors = []
+        if value and value not in factors:
+            factors.append(value)
+        item[key] = factors
+
+    def _demote_strategy_feasibility_action(self, market: str, meta: dict, ticker_key: str, reason: str) -> None:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        plan_a_actions = {"BUY_READY", "PROBE_READY"}
+        for action in meta.get("candidate_actions") or []:
+            if not isinstance(action, dict):
+                continue
+            if self._selection_ticker_key(market_key, action.get("ticker")) != ticker_key:
+                continue
+            action_name = str(action.get("action") or "").strip().upper()
+            if action_name not in plan_a_actions:
+                continue
+            action["strategy_feasibility_demoted_from"] = action_name
+            action["strategy_feasibility_applied"] = True
+            action["strategy_feasibility_reason"] = reason
+            action["action"] = "WATCH"
+            action["final_action"] = "WATCH"
+            action["route"] = "WATCH"
+            action["size_intent"] = "none"
+            action["action_ceiling_ack"] = "WATCH"
+            action["reason_code"] = "STRATEGY_FEASIBILITY"
+            action["reason"] = f"strategy_feasibility:{reason}"
+            action["price_targets"] = {}
+            self._append_selection_factor(action, "blocking_factors", f"strategy_feasibility:{reason}")
+            self._append_selection_factor(action, "warnings", "strategy_feasibility_applied")
+        routes = meta.get("_candidate_action_routes")
+        if isinstance(routes, dict):
+            route = routes.get(ticker_key)
+            if not isinstance(route, dict) and market_key == "US":
+                for raw_key, raw_route in routes.items():
+                    if self._selection_ticker_key(market_key, raw_key) == ticker_key and isinstance(raw_route, dict):
+                        route = raw_route
+                        ticker_key = raw_key
+                        break
+            if isinstance(route, dict):
+                final_action = str(route.get("final_action") or route.get("action") or "").strip().upper()
+                if final_action in plan_a_actions:
+                    route["strategy_feasibility_demoted_from"] = final_action
+                    route["strategy_feasibility_applied"] = True
+                    route["strategy_feasibility_reason"] = reason
+                    route["final_action"] = "WATCH"
+                    route["action"] = "WATCH"
+                    route["route"] = "WATCH"
+                    route["size_intent"] = "none"
+                    route["reason_code"] = "STRATEGY_FEASIBILITY"
+                    route["reason"] = f"strategy_feasibility:{reason}"
+                    route["price_targets"] = {}
+                    self._append_selection_factor(route, "blocking_factors", f"strategy_feasibility:{reason}")
+                    self._append_selection_factor(route, "warnings", "strategy_feasibility_applied")
+        elif isinstance(routes, list):
+            for route in routes:
+                if not isinstance(route, dict):
+                    continue
+                if self._selection_ticker_key(market_key, route.get("ticker")) != ticker_key:
+                    continue
+                final_action = str(route.get("final_action") or route.get("action") or "").strip().upper()
+                if final_action not in plan_a_actions:
+                    continue
+                route["strategy_feasibility_demoted_from"] = final_action
+                route["strategy_feasibility_applied"] = True
+                route["strategy_feasibility_reason"] = reason
+                route["final_action"] = "WATCH"
+                route["action"] = "WATCH"
+                route["route"] = "WATCH"
+                route["size_intent"] = "none"
+                route["reason_code"] = "STRATEGY_FEASIBILITY"
+                route["reason"] = f"strategy_feasibility:{reason}"
+                route["price_targets"] = {}
+                self._append_selection_factor(route, "blocking_factors", f"strategy_feasibility:{reason}")
+                self._append_selection_factor(route, "warnings", "strategy_feasibility_applied")
+
+    def _apply_strategy_feasibility_runtime_filter(
+        self,
+        market: str,
+        meta: dict,
+        ready_candidates: list[str],
+        runtime_filtered: dict[str, str],
+    ) -> list[str]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        feasibility_by_ticker = self._strategy_feasibility_map(market_key, meta)
+        filtered: list[str] = []
+        demoted: dict[str, str] = {}
+        demoted_from: dict[str, str] = {}
+        for ticker in ready_candidates:
+            key = self._selection_ticker_key(market_key, ticker)
+            pack = feasibility_by_ticker.get(key)
+            if not isinstance(pack, dict):
+                pack = {}
+            strategy = self._selection_recommended_strategy_runtime(market_key, ticker, meta, pack)
+            reason = self._strategy_feasibility_block_reason(strategy, pack) if pack else ""
+            if not reason:
+                reason = self._strategy_session_cooldown_reason(market_key, key, strategy)
+            if not reason:
+                filtered.append(ticker)
+                continue
+            reason_code = f"strategy_feasibility:{reason}"
+            runtime_filtered[ticker] = reason_code
+            demoted[key] = reason_code
+            demoted_from[key] = strategy or ""
+            self._demote_strategy_feasibility_action(market_key, meta, key, reason)
+
+        if demoted:
+            meta["_strategy_feasibility_applied"] = True
+            meta["_strategy_feasibility_demoted_tickers"] = list(demoted.keys())
+            meta["_strategy_feasibility_demoted_reasons"] = demoted
+            meta["_strategy_feasibility_demoted_strategy"] = demoted_from
+            targets = meta.get("price_targets")
+            if isinstance(targets, dict):
+                for key in demoted:
+                    targets.pop(key, None)
+                    if market_key == "US":
+                        for raw_key in list(targets.keys()):
+                            if self._selection_ticker_key(market_key, raw_key) == key:
+                                targets.pop(raw_key, None)
+        return filtered
+
     def _trade_ready_slot_config(self, mode: str, market: str = "") -> dict[str, int]:
         family = _mode_family(mode)
         config = dict(_TRADE_READY_SLOT_LIMITS.get(family, _TRADE_READY_SLOT_LIMITS["BALANCED"]))
@@ -3414,6 +3646,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     continue
                 filtered_ready.append(ticker)
             ready_candidates = filtered_ready
+        ready_candidates = self._apply_strategy_feasibility_runtime_filter(
+            market_key,
+            normalized_meta,
+            ready_candidates,
+            runtime_filtered,
+        )
         filtered_ready = []
         for ticker in ready_candidates:
             try:
@@ -7920,6 +8158,77 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "raw": raw,
         }
 
+    def _no_signal_strategy_cooldown_payload(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        strategy_hint: str = "",
+        reason_detail: str = "",
+        block_meta: Optional[dict] = None,
+    ) -> dict:
+        meta = dict(block_meta or {})
+        strategy = _normalize_strategy_name(
+            strategy_hint
+            or meta.get("strategy")
+            or meta.get("recommended_strategy")
+            or ""
+        )
+        if not strategy:
+            order = meta.get("strategy_order")
+            if isinstance(order, list) and order:
+                strategy = _normalize_strategy_name(order[0])
+        if strategy != "opening_range_pullback":
+            return {}
+        rejection = str(meta.get("rejection_reason") or "").strip()
+        hard_reasons = {
+            "orp_entry_window_expired",
+            "orp_bad_or_range",
+            "orp_range_too_low",
+            "orp_range_too_high",
+        }
+        cooldown_reason = rejection if rejection in hard_reasons else ""
+        elapsed_min = self._extract_elapsed_min(reason_detail)
+        or_minutes = 15.0 if str(market or "").upper() == "US" else 10.0
+        if rejection == "orp_not_formed" and elapsed_min > (or_minutes + 60.0):
+            cooldown_reason = "orp_not_formed_after_window"
+        if not cooldown_reason:
+            return {}
+        try:
+            session_date = self._current_session_date_str(market)
+        except Exception:
+            session_date = datetime.now(KST).date().isoformat()
+        evidence = {
+            "market": "US" if str(market or "").upper() == "US" else "KR",
+            "session_date": session_date,
+            "ticker": str(ticker or "").strip(),
+            "strategy": strategy,
+            "reason": cooldown_reason,
+            "elapsed_min_bucket": int(max(0.0, elapsed_min) // 5 * 5) if elapsed_min > 0 else None,
+            "rejection_reason": rejection,
+            "volume_state": str(meta.get("volume_state") or ""),
+        }
+        raw = json.dumps(evidence, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        return {
+            "strategy": strategy,
+            "reason": cooldown_reason,
+            "evidence_hash": hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16],
+            "payload": {key: value for key, value in evidence.items() if value is not None},
+        }
+
+    def _extract_elapsed_min(self, text: str) -> float:
+        raw = str(text or "")
+        marker = "elapsed="
+        pos = raw.find(marker)
+        if pos < 0:
+            return 0.0
+        tail = raw[pos + len(marker):]
+        token = tail.split()[0].split("|")[0].strip().rstrip("m,;")
+        try:
+            return float(token)
+        except Exception:
+            return 0.0
+
     def _record_trade_ready_no_submit(
         self,
         market: str,
@@ -7966,6 +8275,29 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "signal_flags": dict(signal_flags or {}),
             "block_meta": dict(block_meta or {}),
         }
+        if reason_code == "NO_SIGNAL":
+            try:
+                cooldown_payload = self._no_signal_strategy_cooldown_payload(
+                    market_key,
+                    ticker_key,
+                    strategy_hint=strategy_hint or payload.get("strategy_hint") or "",
+                    reason_detail=payload.get("reason_detail") or "",
+                    block_meta=payload.get("block_meta") or {},
+                )
+                if cooldown_payload:
+                    cooldown_entry = self._candidate_health_tracker(market_key).record_strategy_cooldown(
+                        ticker_key,
+                        cooldown_payload.get("strategy"),
+                        reason=str(cooldown_payload.get("reason") or ""),
+                        evidence_hash=str(cooldown_payload.get("evidence_hash") or ""),
+                        payload=dict(cooldown_payload.get("payload") or {}),
+                    )
+                    payload["block_meta"]["strategy_cooldown_recorded"] = True
+                    payload["block_meta"]["strategy_cooldown_reason"] = cooldown_payload.get("reason")
+                    payload["block_meta"]["strategy_cooldown_evidence_hash"] = cooldown_payload.get("evidence_hash")
+                    payload["block_meta"]["strategy_cooldown_count"] = cooldown_entry.get("count")
+            except Exception as exc:
+                log.debug(f"[trade_ready no-submit] strategy cooldown failed {market_key} {ticker_key}: {exc}")
         try:
             self._v2_record_lifecycle_event(
                 "TRADE_READY_NO_SUBMIT",
@@ -9499,6 +9831,133 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             tmp.replace(path)
         except Exception as exc:
             log.debug(f"[candidate trainer] snapshot failed {market_key} {phase}: {exc}")
+
+    def _pathb_waiting_plan_count_for_selection_metrics(self, market: str) -> int:
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        pathb = getattr(self, "pathb", None)
+        if pathb is None:
+            return 0
+        try:
+            session_date_fn = getattr(pathb, "_session_date", None)
+            if callable(session_date_fn):
+                session_date = str(session_date_fn(market_key) or "")
+            else:
+                session_date = str(self._current_session_date_str(market_key) or "")
+            runtime_mode = str(getattr(pathb, "mode", getattr(self, "_mode", "live")) or "live")
+            store = getattr(pathb, "store", None)
+            if store is not None and hasattr(store, "path_runs_for_session"):
+                runs = store.path_runs_for_session(
+                    market=market_key,
+                    runtime_mode=runtime_mode,
+                    session_date=session_date,
+                    path_type="claude_price",
+                )
+                return sum(1 for run in runs or [] if str((run or {}).get("status") or "") == "WAITING")
+            adapter = getattr(pathb, "adapter", None)
+            if adapter is not None and hasattr(adapter, "get_waiting_runs"):
+                runs = adapter.get_waiting_runs(market_key, runtime_mode, session_date)
+                return len(list(runs or []))
+        except Exception as exc:
+            log.debug(f"[selection freshness] {market_key} PathB waiting count failed: {exc}")
+        return 0
+
+    def _record_selection_freshness_metrics(
+        self,
+        market: str,
+        meta: dict,
+        *,
+        source: str = "",
+        preopen_source: bool = False,
+    ) -> None:
+        if preopen_source:
+            return
+        market_key = "US" if str(market).upper() == "US" else "KR"
+        metrics_by_market = getattr(self, "_selection_freshness_metrics", None)
+        if not isinstance(metrics_by_market, dict):
+            metrics_by_market = {"KR": {}, "US": {}}
+            self._selection_freshness_metrics = metrics_by_market
+        state = metrics_by_market.setdefault(market_key, {})
+        now_ts = time.time()
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        last_fresh_ts = float(state.get("last_fresh_ts") or 0.0)
+        gap_min = round((now_ts - last_fresh_ts) / 60.0, 2) if last_fresh_ts > 0 else None
+        if gap_min is not None:
+            state["max_fresh_gap_min"] = round(max(float(state.get("max_fresh_gap_min") or 0.0), gap_min), 2)
+        else:
+            state.setdefault("max_fresh_gap_min", 0.0)
+
+        source_key = str(source or (meta or {}).get("_selection_source_type") or "").strip() or "selection"
+        smart_skip_reused = bool((meta or {}).get("_smart_skip_reused"))
+        has_payload = bool(
+            (meta or {}).get("watchlist")
+            or (meta or {}).get("candidate_actions")
+            or (meta or {}).get("_candidate_action_routes")
+        )
+        unusable_reason = ""
+        if str((meta or {}).get("_fallback_mode") or "").strip():
+            unusable_reason = "fallback_mode"
+        elif bool((meta or {}).get("_candidate_actions_missing_contract")):
+            unusable_reason = "candidate_actions_missing_contract"
+        elif str((meta or {}).get("_forced_watch_only_phase") or "").strip():
+            unusable_reason = "forced_watch_only"
+        elif not has_payload:
+            unusable_reason = "empty_selection_payload"
+
+        if smart_skip_reused:
+            state["smart_skip_reuse_count"] = int(state.get("smart_skip_reuse_count") or 0) + 1
+            event = "smart_skip_reuse"
+        else:
+            state["fresh_attempt_count"] = int(state.get("fresh_attempt_count") or 0) + 1
+            if unusable_reason:
+                state["fresh_unusable_count"] = int(state.get("fresh_unusable_count") or 0) + 1
+                event = "fresh_unusable"
+            else:
+                state["fresh_count"] = int(state.get("fresh_count") or 0) + 1
+                state["last_fresh_ts"] = now_ts
+                state["last_fresh_at"] = now_iso
+                state["last_fresh_source"] = source_key
+                event = "fresh"
+
+        waiting_count = self._pathb_waiting_plan_count_for_selection_metrics(market_key)
+        payload = {
+            "event": "selection_freshness",
+            "market": market_key,
+            "source": source_key,
+            "kind": event,
+            "fresh_count": int(state.get("fresh_count") or 0),
+            "fresh_attempt_count": int(state.get("fresh_attempt_count") or 0),
+            "fresh_unusable_count": int(state.get("fresh_unusable_count") or 0),
+            "smart_skip_reuse_count": int(state.get("smart_skip_reuse_count") or 0),
+            "gap_since_last_fresh_min": gap_min,
+            "max_fresh_gap_min": float(state.get("max_fresh_gap_min") or 0.0),
+            "active_waiting_plan_count": waiting_count,
+            "watchlist_count": len(list((meta or {}).get("watchlist") or [])),
+            "trade_ready_count": len(list((meta or {}).get("trade_ready") or [])),
+            "smart_skip_scope": str((meta or {}).get("_smart_skip_scope") or ""),
+            "smart_skip_cached_at": str((meta or {}).get("_smart_skip_cached_at") or ""),
+            "unusable_reason": unusable_reason,
+        }
+        log.info(
+            f"[selection freshness] {market_key} kind={event} source={source_key} "
+            f"gap_min={gap_min if gap_min is not None else '-'} "
+            f"max_gap_min={payload['max_fresh_gap_min']:.2f} "
+            f"fresh={payload['fresh_count']} reuse={payload['smart_skip_reuse_count']} "
+            f"waiting={waiting_count}"
+        )
+        analysis_log.info(
+            f"[selection freshness] {market_key} {event} source={source_key}",
+            extra={"extra": payload},
+        )
+        try:
+            warn_min = max(1.0, float(os.getenv("SELECTION_FRESH_GAP_WARN_MIN", "60") or 60))
+        except Exception:
+            warn_min = 60.0
+        if gap_min is not None and gap_min >= warn_min:
+            log.warning(
+                f"[selection freshness stale] {market_key} gap_min={gap_min:.2f} "
+                f">={warn_min:.0f} source={source_key} waiting={waiting_count}"
+            )
+
     def _apply_selection_meta(
         self,
         market: str,
@@ -9675,6 +10134,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         self.selection_meta[market] = meta
                 except Exception as _reconcile_e:
                     log.warning(f"[PathB reconcile skip] {market} {route_source}: {_reconcile_e}", exc_info=True)
+        try:
+            self._record_selection_freshness_metrics(
+                market,
+                meta,
+                source=route_source,
+                preopen_source=preopen_source,
+            )
+        except Exception as _freshness_e:
+            log.debug(f"[selection freshness] metrics skipped {market}: {_freshness_e}")
         if self.today_judgment.get("market") == market:
             self.today_judgment["selection_meta"] = meta
             self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
@@ -13223,6 +13691,546 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 except Exception as exc:
                     log.debug(f"[intraday evidence jsonl failed] {market_key}: {exc}")
         return features_by_ticker
+
+    def _safe_float_value(self, value: Any, default: float = 0.0) -> float:
+        try:
+            return float(str(value or "").replace(",", ""))
+        except Exception:
+            return float(default)
+
+    def _strategy_feasibility_evidence_hash(self, market: str, ticker: str, strategy: str, detail: dict) -> str:
+        keys = (
+            "session_date",
+            "session_phase",
+            "state",
+            "reason",
+            "action_ceiling",
+            "data_state",
+            "volume_state",
+            "elapsed_min_bucket",
+            "or_high",
+            "or_low",
+            "or_range_pct",
+            "gap_pct",
+            "vol_ratio",
+            "pullback_depth_pct",
+            "rsi",
+            "bb_pct",
+            "close",
+        )
+        payload = {
+            "market": str(market or "").upper(),
+            "ticker": str(ticker or ""),
+            "strategy": _normalize_strategy_name(strategy),
+        }
+        for key in keys:
+            if key not in detail:
+                continue
+            value = detail.get(key)
+            if isinstance(value, float):
+                payload[key] = round(value, 4)
+            else:
+                payload[key] = value
+        raw = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+    def _finalize_strategy_feasibility_pack_context(
+        self,
+        market: str,
+        ticker: str,
+        pack: dict,
+        *,
+        phase: dict | None = None,
+    ) -> dict:
+        if not isinstance(pack, dict):
+            return {}
+        try:
+            session_date = self._current_session_date_str(market)
+        except Exception:
+            session_date = datetime.now(KST).date().isoformat()
+        phase_name = str((phase or {}).get("phase") or "")
+        out: dict[str, dict] = {}
+        for raw_strategy, raw_detail in pack.items():
+            strategy = _normalize_strategy_name(raw_strategy)
+            if not strategy or not isinstance(raw_detail, dict):
+                continue
+            detail = dict(raw_detail)
+            detail.setdefault("session_date", session_date)
+            detail.setdefault("session_phase", phase_name)
+            detail["evidence_hash"] = self._strategy_feasibility_evidence_hash(market, ticker, strategy, detail)
+            out[strategy] = detail
+        return out
+
+    def _strategy_feasibility_entry(
+        self,
+        market: str,
+        ticker: str,
+        strategy: str,
+        *,
+        state: str,
+        reason: str,
+        action_ceiling: str = "WATCH",
+        hard_block: bool = False,
+        mutable: bool = True,
+        data_state: str = "complete",
+        volume_state: str = "ok",
+        evidence: dict | None = None,
+    ) -> dict:
+        detail = {
+            "state": str(state or "unknown"),
+            "reason": str(reason or "unknown"),
+            "action_ceiling": str(action_ceiling or "WATCH").upper(),
+            "hard_block": bool(hard_block),
+            "mutable": bool(mutable),
+            "data_state": str(data_state or "complete"),
+            "volume_state": str(volume_state or "ok"),
+        }
+        if evidence:
+            for key, value in dict(evidence).items():
+                if value is None:
+                    continue
+                if isinstance(value, float):
+                    detail[key] = round(float(value), 6)
+                else:
+                    detail[key] = value
+        detail["evidence_hash"] = self._strategy_feasibility_evidence_hash(market, ticker, strategy, detail)
+        return detail
+
+    def _row_volume_state(self, row: dict, *, ratio_key: str = "vol_ratio") -> tuple[str, float]:
+        if ratio_key in row:
+            ratio = self._safe_float_value(row.get(ratio_key), 0.0)
+            return ("ok" if ratio > 0 else "missing", ratio)
+        volume = self._safe_float_value(row.get("volume"), 0.0)
+        vol_avg = self._safe_float_value(row.get("vol_avg20"), 0.0)
+        if volume <= 0 or vol_avg <= 0:
+            return "missing", 0.0
+        return "ok", volume / vol_avg
+
+    def _strategy_feasibility_params(
+        self,
+        strategy_name: str,
+        market: str,
+        mode: str,
+        conf: float,
+        context: dict,
+        phase: dict,
+        ticker: str,
+        or_minutes: int,
+    ) -> dict:
+        try:
+            params = _adaptive_params(strategy_name, market, mode or "NEUTRAL", conf, context=context or {})
+        except Exception:
+            params = {}
+        params = dict(params or {})
+        params["session_elapsed_min"] = float((phase or {}).get("elapsed_min", 0.0) or 0.0)
+        if strategy_name == "opening_range_pullback":
+            or_low_raw = self._or_low.get(ticker, float("inf"))
+            params.update(
+                {
+                    "or_high": float(self._or_high.get(ticker, 0.0) or 0.0),
+                    "or_low": 0.0 if or_low_raw == float("inf") else float(or_low_raw or 0.0),
+                    "or_formed": bool(self._or_formed.get(ticker, False)),
+                    "or_minutes": int(or_minutes),
+                }
+            )
+        return params
+
+    def _strategy_feasibility_orp(
+        self,
+        market: str,
+        ticker: str,
+        sig_df,
+        index: int,
+        params: dict,
+    ) -> dict:
+        try:
+            diag = orp_diag(sig_df, index, params)
+        except Exception as exc:
+            return self._strategy_feasibility_entry(
+                market,
+                ticker,
+                "opening_range_pullback",
+                state="error",
+                reason=f"diag_error:{type(exc).__name__}",
+                hard_block=False,
+                mutable=True,
+                data_state="missing",
+                volume_state="missing",
+            )
+        reason = str(diag.get("reason") or "unknown")
+        elapsed = float(diag.get("elapsed_min") or params.get("session_elapsed_min") or 0.0)
+        or_minutes = float(diag.get("or_minutes") or params.get("or_minutes") or 0.0)
+        entry_window = float(diag.get("entry_window_min") or params.get("entry_window_min") or 60.0)
+        volume_state = "ok"
+        if not bool(diag.get("volume_column_present", True)) or not bool(diag.get("vol_avg20_column_present", True)):
+            volume_state = "missing"
+        elif self._safe_float_value(diag.get("vol_ratio"), 0.0) <= 0 and reason in {"orp_volume_low"}:
+            volume_state = "missing"
+        evidence = {
+            "elapsed_min_bucket": int(max(0.0, elapsed) // 5 * 5),
+            "or_high": self._safe_float_value(diag.get("or_high"), 0.0),
+            "or_low": self._safe_float_value(diag.get("or_low"), 0.0),
+            "or_range_pct": self._safe_float_value(diag.get("or_range_pct"), 0.0),
+            "pullback_depth_pct": self._safe_float_value(diag.get("pullback_depth_pct"), 0.0),
+            "vol_ratio": self._safe_float_value(diag.get("vol_ratio"), 0.0),
+        }
+        if bool(diag.get("fired")):
+            return self._strategy_feasibility_entry(
+                market,
+                ticker,
+                "opening_range_pullback",
+                state="ready",
+                reason="ready",
+                action_ceiling="BUY_READY",
+                evidence=evidence,
+            )
+        if volume_state == "missing" and reason == "orp_volume_low":
+            reason = "volume_missing"
+        hard_reasons = {"orp_entry_window_expired", "orp_bad_or_range", "orp_range_too_low", "orp_range_too_high"}
+        hard_block = reason in hard_reasons
+        if reason == "orp_not_formed" and elapsed > (or_minutes + entry_window):
+            reason = "orp_not_formed_after_window"
+            hard_block = True
+        state = {
+            "orp_forming": "forming",
+            "orp_not_formed": "or_missing",
+            "orp_not_formed_after_window": "or_missing",
+            "orp_entry_window_expired": "expired",
+            "orp_bad_or_range": "range_invalid",
+            "orp_range_too_low": "range_invalid",
+            "orp_range_too_high": "range_invalid",
+            "orp_pullback_too_shallow": "wait_pullback",
+            "orp_pullback_too_deep": "wait_pullback",
+            "orp_volume_low": "volume_wait",
+            "volume_missing": "volume_missing",
+            "orp_data_insufficient": "data_insufficient",
+        }.get(reason, "watch")
+        return self._strategy_feasibility_entry(
+            market,
+            ticker,
+            "opening_range_pullback",
+            state=state,
+            reason=reason,
+            hard_block=hard_block,
+            mutable=not hard_block,
+            data_state="insufficient" if reason == "orp_data_insufficient" else "complete",
+            volume_state=volume_state,
+            evidence=evidence,
+        )
+
+    def _strategy_feasibility_gap(self, market: str, ticker: str, sig_df, index: int, params: dict) -> dict:
+        if params.get("disabled"):
+            return self._strategy_feasibility_entry(market, ticker, "gap_pullback", state="disabled", reason="disabled", hard_block=True, mutable=False)
+        if index < 5:
+            return self._strategy_feasibility_entry(market, ticker, "gap_pullback", state="data_insufficient", reason="data_insufficient", data_state="insufficient", volume_state="missing")
+        try:
+            if gap_sig(sig_df, index, params):
+                return self._strategy_feasibility_entry(market, ticker, "gap_pullback", state="ready", reason="ready", action_ceiling="BUY_READY")
+        except Exception:
+            pass
+        row = sig_df.iloc[index].to_dict()
+        elapsed = float(params.get("session_elapsed_min", 999) or 999)
+        in_opening = 0 < elapsed <= float(params.get("opening_window_min", 30) or 30)
+        gap_min = float(params.get("opening_gap_min", 0.030) if in_opening else params.get("gap_min", 0.015))
+        vol_mult = float(params.get("opening_vol_mult", 0.15) if in_opening else params.get("vol_mult", 1.8))
+        gap = self._safe_float_value(row.get("gap_pct"), 0.0) / 100.0
+        volume_state, vol_ratio = self._row_volume_state(row)
+        o = self._safe_float_value(row.get("open"), 0.0)
+        h = self._safe_float_value(row.get("high"), 0.0)
+        l = self._safe_float_value(row.get("low"), 0.0)
+        c = self._safe_float_value(row.get("close"), 0.0)
+        pb_min = float(params.get("opening_pullback_min_pct", 0.006) if in_opening else params.get("pullback_min_pct", 0.010))
+        pb_max = float(params.get("opening_pullback_max_pct", 0.050) if in_opening else params.get("pullback_max_pct", 0.040))
+        pb_depth = ((h - l) / h) if h > 0 else 0.0
+        open_dd = ((o - l) / o) if o > 0 and l < o else 0.0
+        recovered = l > 0 and c >= l * (1 + float(params.get("recovery_min_pct", 0.003))) and c >= o * (1 - float(params.get("open_reclaim_buffer_pct", 0.003)))
+        pullback = pb_min <= pb_depth <= pb_max and open_dd <= float(params.get("open_drawdown_max_pct", 0.025)) and recovered
+        if volume_state == "missing":
+            reason = "volume_missing"
+            state = "volume_missing"
+        elif gap <= gap_min:
+            reason = "gap_below_min"
+            state = "threshold_not_met"
+        elif vol_ratio <= vol_mult:
+            reason = "volume_low"
+            state = "volume_wait"
+        elif h == l == o:
+            reason = "no_intraday_movement"
+            state = "data_insufficient"
+        elif not pullback:
+            reason = "pullback_not_ready"
+            state = "wait_pullback"
+        else:
+            reason = "strategy_signal_not_met"
+            state = "watch"
+        return self._strategy_feasibility_entry(
+            market,
+            ticker,
+            "gap_pullback",
+            state=state,
+            reason=reason,
+            volume_state=volume_state,
+            evidence={
+                "elapsed_min_bucket": int(max(0.0, elapsed) // 5 * 5),
+                "gap_pct": gap,
+                "vol_ratio": vol_ratio,
+                "pullback_depth_pct": pb_depth,
+            },
+        )
+
+    def _strategy_feasibility_momentum(self, market: str, ticker: str, sig_df, index: int, params: dict) -> dict:
+        if params.get("disabled"):
+            return self._strategy_feasibility_entry(market, ticker, "momentum", state="disabled", reason="disabled", hard_block=True, mutable=False)
+        try:
+            fired = bool(mom_sig(sig_df, index, params))
+            diag = mom_diag(sig_df, index, params)
+        except Exception:
+            fired = False
+            diag = {}
+        if fired:
+            return self._strategy_feasibility_entry(market, ticker, "momentum", state="ready", reason="ready", action_ceiling="BUY_READY")
+        volume_state = "missing" if self._safe_float_value(diag.get("volume"), 0.0) <= 0 or self._safe_float_value(diag.get("vol_avg20"), 0.0) <= 0 else "ok"
+        if not bool(diag.get("ready")):
+            reason = "data_insufficient"
+            state = "data_insufficient"
+        elif not bool(diag.get("ma_ok")):
+            reason = "ma_stack_not_ready"
+            state = "threshold_not_met"
+        elif not bool(diag.get("macd_ok")):
+            reason = "macd_not_ready"
+            state = "threshold_not_met"
+        elif volume_state == "missing":
+            reason = "volume_missing"
+            state = "volume_missing"
+        elif not bool(diag.get("vol_ok")):
+            reason = "volume_low"
+            state = "volume_wait"
+        elif not bool(diag.get("high_ok")):
+            reason = "breakout_not_ready"
+            state = "threshold_not_met"
+        else:
+            reason = "strategy_signal_not_met"
+            state = "watch"
+        return self._strategy_feasibility_entry(
+            market,
+            ticker,
+            "momentum",
+            state=state,
+            reason=reason,
+            data_state="insufficient" if reason == "data_insufficient" else "complete",
+            volume_state=volume_state,
+            evidence={"vol_ratio": self._safe_float_value(diag.get("volume"), 0.0) / self._safe_float_value(diag.get("vol_avg20"), 1.0)},
+        )
+
+    def _strategy_feasibility_mean_reversion(self, market: str, ticker: str, sig_df, index: int, params: dict) -> dict:
+        if params.get("disabled"):
+            return self._strategy_feasibility_entry(market, ticker, "mean_reversion", state="disabled", reason="disabled", hard_block=True, mutable=False)
+        if index < 20:
+            return self._strategy_feasibility_entry(market, ticker, "mean_reversion", state="data_insufficient", reason="data_insufficient", data_state="insufficient")
+        try:
+            if mr_sig(sig_df, index, params):
+                return self._strategy_feasibility_entry(market, ticker, "mean_reversion", state="ready", reason="ready", action_ceiling="BUY_READY")
+        except Exception:
+            pass
+        row = sig_df.iloc[index].to_dict()
+        rsi = self._safe_float_value(row.get("rsi"), 50.0)
+        bb_pct = self._safe_float_value(row.get("bb_pct"), 50.0)
+        vol_ratio = self._safe_float_value(row.get("vol_ratio"), 0.0)
+        close = self._safe_float_value(row.get("close"), 0.0)
+        ma60 = self._safe_float_value(row.get("ma60"), 0.0)
+        if rsi >= float(params.get("rsi_thr", 32)):
+            reason = "rsi_above_threshold"
+        elif bb_pct >= float(params.get("bb_thr", 20)):
+            reason = "bb_above_threshold"
+        elif vol_ratio <= 0:
+            reason = "volume_missing"
+        elif vol_ratio >= float(params.get("vol_limit", 2.5)):
+            reason = "volume_above_limit"
+        elif close <= ma60 * float(params.get("ma60_thr", 0.95)):
+            reason = "ma60_fail"
+        else:
+            reason = "strategy_signal_not_met"
+        return self._strategy_feasibility_entry(
+            market,
+            ticker,
+            "mean_reversion",
+            state="threshold_not_met" if reason != "volume_missing" else "volume_missing",
+            reason=reason,
+            volume_state="missing" if reason == "volume_missing" else "ok",
+            evidence={"rsi": rsi, "bb_pct": bb_pct, "vol_ratio": vol_ratio, "close": close},
+        )
+
+    def _strategy_feasibility_vb(self, market: str, ticker: str, sig_df, index: int, params: dict) -> dict:
+        if params.get("disabled"):
+            return self._strategy_feasibility_entry(market, ticker, "volatility_breakout", state="disabled", reason="disabled", hard_block=True, mutable=False)
+        if index < 5:
+            return self._strategy_feasibility_entry(market, ticker, "volatility_breakout", state="data_insufficient", reason="data_insufficient", data_state="insufficient")
+        try:
+            if vb_sig(sig_df, index, params):
+                return self._strategy_feasibility_entry(market, ticker, "volatility_breakout", state="ready", reason="ready", action_ceiling="BUY_READY")
+        except Exception:
+            pass
+        row = sig_df.iloc[index].to_dict()
+        prev = sig_df.iloc[index - 1].to_dict()
+        target = self._safe_float_value(prev.get("open"), 0.0) + (
+            self._safe_float_value(prev.get("high"), 0.0) - self._safe_float_value(prev.get("low"), 0.0)
+        ) * float(params.get("k", 0.45) or 0.45)
+        close = self._safe_float_value(row.get("close"), 0.0)
+        vol_ratio = self._safe_float_value(row.get("vol_ratio"), 0.0)
+        if close <= target:
+            reason = "target_not_broken"
+        elif vol_ratio <= 0:
+            reason = "volume_missing"
+        elif vol_ratio <= float(params.get("vol_mult", 2.0)):
+            reason = "volume_low"
+        else:
+            reason = "strategy_signal_not_met"
+        return self._strategy_feasibility_entry(
+            market,
+            ticker,
+            "volatility_breakout",
+            state="threshold_not_met" if reason != "volume_missing" else "volume_missing",
+            reason=reason,
+            volume_state="missing" if reason == "volume_missing" else "ok",
+            evidence={"close": close, "vol_ratio": vol_ratio},
+        )
+
+    def _strategy_feasibility_continuation(self, market: str, ticker: str, sig_df, index: int, params: dict) -> dict:
+        if params.get("disabled"):
+            return self._strategy_feasibility_entry(market, ticker, "continuation", state="disabled", reason="disabled", hard_block=True, mutable=False)
+        try:
+            fired = bool(cont_sig(sig_df, index, params))
+            diag = cont_diag(sig_df, index, params)
+        except Exception:
+            fired = False
+            diag = {}
+        if fired:
+            return self._strategy_feasibility_entry(market, ticker, "continuation", state="ready", reason="ready", action_ceiling="BUY_READY")
+        if not bool(diag.get("in_window", diag.get("ready", True))):
+            reason = "entry_window_not_open"
+        elif not bool(diag.get("gap_ok", True)):
+            reason = "gap_below_min"
+        elif not bool(diag.get("vol_ok", True)):
+            reason = "volume_low"
+        elif not bool(diag.get("cont_ok", True)):
+            reason = "continuation_not_ready"
+        elif not bool(diag.get("overheat_ok", True)):
+            reason = "overheat"
+        else:
+            reason = "strategy_signal_not_met"
+        return self._strategy_feasibility_entry(
+            market,
+            ticker,
+            "continuation",
+            state="threshold_not_met",
+            reason=reason,
+            evidence={
+                "elapsed_min_bucket": int(self._safe_float_value(diag.get("elapsed_min"), 0.0) // 5 * 5),
+                "gap_pct": self._safe_float_value(diag.get("gap"), 0.0) / 100.0,
+                "vol_ratio": self._safe_float_value(diag.get("vol_ratio"), 0.0),
+            },
+        )
+
+    def _apply_strategy_cooldowns_to_feasibility_pack(self, market: str, ticker: str, pack: dict) -> dict:
+        if not isinstance(pack, dict) or not pack:
+            return pack
+        try:
+            cooldowns = self._candidate_health_tracker(market).strategy_cooldowns_for(ticker)
+        except Exception:
+            return pack
+        if not isinstance(cooldowns, dict) or not cooldowns:
+            return pack
+        out = dict(pack)
+        for raw_strategy, cooldown in cooldowns.items():
+            strategy = _normalize_strategy_name(raw_strategy)
+            if not strategy or strategy not in out or not isinstance(cooldown, dict):
+                continue
+            reason = str(cooldown.get("reason") or "strategy_cooldown").strip()
+            entry = dict(out.get(strategy) or {})
+            entry.update(
+                {
+                    "state": "session_cooldown",
+                    "reason": f"session_cooldown:{reason}",
+                    "action_ceiling": "WATCH",
+                    "hard_block": True,
+                    "mutable": False,
+                    "session_cooldown": True,
+                    "cooldown_count": int(cooldown.get("count") or 0),
+                    "cooldown_last_at": str(cooldown.get("last_at") or ""),
+                    "cooldown_evidence_hash": str(cooldown.get("evidence_hash") or ""),
+                }
+            )
+            entry["evidence_hash"] = self._strategy_feasibility_evidence_hash(market, ticker, strategy, entry)
+            out[strategy] = entry
+        return out
+
+    def _build_strategy_feasibility_pack(
+        self,
+        market: str,
+        ticker: str,
+        sig_df,
+        active_strategies: list[str],
+        mode: str,
+        conf: float,
+        context: dict,
+        phase: dict,
+        or_minutes: int,
+    ) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        strategies = [_normalize_strategy_name(strategy) for strategy in (active_strategies or [])]
+        strategies = [strategy for strategy in dict.fromkeys(strategies) if strategy]
+        if not strategies:
+            return {}
+        if sig_df is None or getattr(sig_df, "empty", True):
+            missing_pack = {
+                strategy: self._strategy_feasibility_entry(
+                    market_key,
+                    ticker,
+                    strategy,
+                    state="data_missing",
+                    reason="data_missing",
+                    data_state="missing",
+                    volume_state="missing",
+                )
+                for strategy in strategies
+            }
+            missing_pack = self._finalize_strategy_feasibility_pack_context(
+                market_key,
+                ticker,
+                missing_pack,
+                phase=phase,
+            )
+            return self._apply_strategy_cooldowns_to_feasibility_pack(market_key, ticker, missing_pack)
+        index = len(sig_df) - 1
+        pack: dict[str, dict] = {}
+        for strategy in strategies:
+            params = self._strategy_feasibility_params(strategy, market_key, mode, conf, context, phase, ticker, or_minutes)
+            if not self._live_plan_a_signal_allowed(market_key, strategy, mode):
+                pack[strategy] = self._strategy_feasibility_entry(
+                    market_key,
+                    ticker,
+                    strategy,
+                    state="disabled",
+                    reason="plan_a_signal_disabled",
+                    hard_block=True,
+                    mutable=False,
+                )
+                continue
+            if strategy == "opening_range_pullback":
+                pack[strategy] = self._strategy_feasibility_orp(market_key, ticker, sig_df, index, params)
+            elif strategy == "gap_pullback":
+                pack[strategy] = self._strategy_feasibility_gap(market_key, ticker, sig_df, index, params)
+            elif strategy == "momentum":
+                pack[strategy] = self._strategy_feasibility_momentum(market_key, ticker, sig_df, index, params)
+            elif strategy == "mean_reversion":
+                pack[strategy] = self._strategy_feasibility_mean_reversion(market_key, ticker, sig_df, index, params)
+            elif strategy == "volatility_breakout":
+                pack[strategy] = self._strategy_feasibility_vb(market_key, ticker, sig_df, index, params)
+            elif strategy == "continuation":
+                pack[strategy] = self._strategy_feasibility_continuation(market_key, ticker, sig_df, index, params)
+        pack = self._finalize_strategy_feasibility_pack_context(market_key, ticker, pack, phase=phase)
+        return self._apply_strategy_cooldowns_to_feasibility_pack(market_key, ticker, pack)
+
     def _annotate_selection_execution_features(
         self,
         market: str,
@@ -13316,6 +14324,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 row.setdefault("repeated_failed_ready_count", int(stale_cycle_info.get("repeated_failed_ready_count") or 0))
                 row.setdefault("no_fill_cycle_count", int(stale_cycle_info.get("no_fill_cycle_count") or 0))
                 row.setdefault("failed_ready_reasons", list(stale_cycle_info.get("failed_ready_reasons") or []))
+                if isinstance(health.get("strategy_cooldowns"), dict) and health.get("strategy_cooldowns"):
+                    row.setdefault("strategy_cooldowns", dict(health.get("strategy_cooldowns") or {}))
             except Exception:
                 pass
             try:
@@ -13345,6 +14355,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 candles = self._get_ohlcv_cached(ticker, market_key)
                 sig_df = calc_all(candles) if not getattr(candles, "empty", True) else None
                 if sig_df is not None and not getattr(sig_df, "empty", True):
+                    feasibility_pack = self._build_strategy_feasibility_pack(
+                        market_key,
+                        ticker,
+                        sig_df,
+                        active_strategies,
+                        mode or "NEUTRAL",
+                        conf,
+                        ctx,
+                        phase,
+                        or_minutes,
+                    )
+                    if feasibility_pack:
+                        row["strategy_feasibility"] = feasibility_pack
                     sig_row = sig_df.iloc[-1].to_dict()
                     price_ref = float(row.get("price", 0) or 0) or float(sig_row.get("close", 0) or 0)
                     atr_val = float(sig_row.get("atr", 0) or 0)
@@ -13400,6 +14423,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 row["selection_bias"] = "watch_only"
                                 row["selection_bias_reason"] = "kr_momentum_shrink:" + ",".join(shrink_signals)
                                 row["kr_momentum_shrink_signals"] = list(shrink_signals)
+                else:
+                    feasibility_pack = self._build_strategy_feasibility_pack(
+                        market_key,
+                        ticker,
+                        None,
+                        active_strategies,
+                        mode or "NEUTRAL",
+                        conf,
+                        ctx,
+                        phase,
+                        or_minutes,
+                    )
+                    if feasibility_pack:
+                        row["strategy_feasibility"] = feasibility_pack
             except Exception:
                 pass
             try:

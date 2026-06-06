@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
 
+log = logging.getLogger(__name__)
 DISCOVERY_OVERLAY_VERSION = "discovery_overlay_v1"
 USEFUL_SIGNAL_FAMILIES = {
     "near_breakout",
@@ -30,6 +32,14 @@ BAD_DATA_STATES = {
 }
 LOW_LIQUIDITY_BUCKETS = {"low", "thin", "very_low", "illiquid", "micro", "poor"}
 HIGH_LIQUIDITY_BUCKETS = {"high", "very_high", "leader", "liquidity_leader", "deep"}
+PROVIDER_CATEGORY_BUCKETS = {
+    "day_gainers",
+    "day_losers",
+    "gainers",
+    "losers",
+    "most_actives",
+    "actives",
+}
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -192,7 +202,57 @@ def _is_same_day_stopped(row: dict[str, Any]) -> bool:
     return bool(row.get("same_day_stopped")) or str(row.get("status") or "").strip().lower() == "same_day_stopped"
 
 
-def _candidate_from_excluded(item: dict[str, Any]) -> dict[str, Any]:
+def _bucket_classifier_needed(row: dict[str, Any], *, market: str) -> bool:
+    primary = _signal_token(row.get("primary_bucket"), market)
+    category = _signal_token(row.get("category"), market)
+    if primary in {"", "unclassified", "unknown", "none"}:
+        return True
+    if primary in PROVIDER_CATEGORY_BUCKETS or category in PROVIDER_CATEGORY_BUCKETS:
+        return True
+    return not signal_family(row, market=market)
+
+
+def _enrich_bucket_classifier(row: dict[str, Any], *, market: str) -> dict[str, Any]:
+    if not _bucket_classifier_needed(row, market=market):
+        return row
+    try:
+        from bot.bucket_classifier import classify_candidate_bucket
+
+        classified = classify_candidate_bucket(row, market)
+    except Exception as exc:
+        log.debug(
+            "discovery bucket classifier failed market=%s ticker=%s: %s",
+            _market_key(market),
+            _ticker_key(row.get("ticker"), market),
+            exc,
+        )
+        return row
+    if not isinstance(classified, dict):
+        return row
+
+    enriched = dict(row)
+    classified_primary = _signal_token(classified.get("primary_bucket"), market)
+    current_primary = _signal_token(enriched.get("primary_bucket"), market)
+    current_category = _signal_token(enriched.get("category"), market)
+    if classified_primary and classified_primary not in {"unclassified", "unknown", "none"}:
+        if (
+            current_primary in {"", "unclassified", "unknown", "none"}
+            or current_primary in PROVIDER_CATEGORY_BUCKETS
+            or current_category in PROVIDER_CATEGORY_BUCKETS
+        ):
+            enriched["primary_bucket"] = classified_primary
+
+    if not _list_values(enriched.get("secondary_buckets")) and classified.get("secondary_buckets"):
+        enriched["secondary_buckets"] = list(classified.get("secondary_buckets") or [])
+    if not enriched.get("bucket_reasons") and classified.get("bucket_reasons"):
+        enriched["bucket_reasons"] = dict(classified.get("bucket_reasons") or {})
+    if classified.get("bucket_data_gaps") and not enriched.get("bucket_data_gaps"):
+        enriched["bucket_data_gaps"] = list(classified.get("bucket_data_gaps") or [])
+    enriched["discovery_bucket_classifier_applied"] = True
+    return enriched
+
+
+def _candidate_from_excluded(item: dict[str, Any], *, market: str) -> dict[str, Any]:
     inner = item.get("candidate")
     row = dict(inner) if isinstance(inner, dict) else dict(item)
     for key in (
@@ -209,7 +269,7 @@ def _candidate_from_excluded(item: dict[str, Any]) -> dict[str, Any]:
             row[key] = item.get(key)
     if row.get("prompt_excluded_reason") in (None, ""):
         row["prompt_excluded_reason"] = item.get("prompt_excluded_reason") or item.get("reason") or ""
-    return row
+    return _enrich_bucket_classifier(row, market=market)
 
 
 def _is_cap_excluded(row: dict[str, Any]) -> bool:
@@ -273,6 +333,8 @@ def _eligible(row: dict[str, Any], *, market: str) -> tuple[bool, list[str], str
         if change_pct >= max_change:
             return False, signals, "us_extreme_chase"
         signal_set = set(signals)
+        if signal_set == {"liquidity_leader"} and change_pct < 0.0:
+            return False, signals, "us_liquidity_loser_only"
         if state == "PLAN_A":
             return True, signals, ""
         if state == "PLAN_B" and _score(row) >= _as_float(os.getenv("DISCOVERY_US_PLAN_B_MIN_SCORE"), 65.0):
@@ -341,7 +403,7 @@ def apply_discovery_overlay(
     for item in list(meta.get("excluded_from_prompt") or []):
         if not isinstance(item, dict):
             continue
-        row = _candidate_from_excluded(item)
+        row = _candidate_from_excluded(item, market=market_key)
         key = _ticker_key(row.get("ticker"), market_key)
         if not key or key in core_keys or key in seen:
             continue

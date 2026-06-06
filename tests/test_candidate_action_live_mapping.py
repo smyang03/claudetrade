@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import builtins
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import tempfile
@@ -142,6 +143,42 @@ def _make_bot() -> TradingBot:
 
 
 class CandidateActionLiveMappingTests(unittest.TestCase):
+    def test_selection_freshness_metrics_tracks_max_gap_and_smart_skip_reuse(self) -> None:
+        bot = _make_bot()
+
+        TradingBot._record_selection_freshness_metrics(
+            bot,
+            "US",
+            {"watchlist": ["AAPL"], "candidate_actions": [{"ticker": "AAPL", "action": "WATCH"}]},
+            source="rescreen",
+        )
+        bot._selection_freshness_metrics["US"]["last_fresh_ts"] = time.time() - 15 * 60
+        TradingBot._record_selection_freshness_metrics(
+            bot,
+            "US",
+            {
+                "watchlist": ["AAPL"],
+                "candidate_actions": [{"ticker": "AAPL", "action": "WATCH"}],
+                "_smart_skip_reused": True,
+                "_smart_skip_scope": "US|BALANCED|intraday_live",
+            },
+            source="rescreen",
+        )
+        bot._selection_freshness_metrics["US"]["last_fresh_ts"] = time.time() - 65 * 60
+        TradingBot._record_selection_freshness_metrics(
+            bot,
+            "US",
+            {"watchlist": ["MSFT"], "candidate_actions": [{"ticker": "MSFT", "action": "WATCH"}]},
+            source="manual_rescreen",
+        )
+
+        state = bot._selection_freshness_metrics["US"]
+        self.assertEqual(state["fresh_count"], 2)
+        self.assertEqual(state["fresh_attempt_count"], 2)
+        self.assertEqual(state["smart_skip_reuse_count"], 1)
+        self.assertGreaterEqual(state["max_fresh_gap_min"], 64.9)
+        self.assertEqual(state["last_fresh_source"], "manual_rescreen")
+
     def test_discovery_live_allow_flags_remain_off_in_start_config(self) -> None:
         config_path = Path(__file__).resolve().parents[1] / "config" / "v2_start_config.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))

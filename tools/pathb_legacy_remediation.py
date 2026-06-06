@@ -204,6 +204,36 @@ def _terminal_missing_events(
     return missing
 
 
+def _cross_run_closed_lifecycle_evidence(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    inconsistent: list[dict[str, Any]] = []
+    for row in runs:
+        plan = _load_plan(row.get("plan_json", ""))
+        evidence = plan.get("pathb_closed_lifecycle_evidence")
+        if not isinstance(evidence, dict):
+            continue
+        path_run_id = str(row.get("path_run_id") or "")
+        evidence_path_run_id = _path_run_id_from_payload(evidence)
+        if not path_run_id or not evidence_path_run_id or evidence_path_run_id == path_run_id:
+            continue
+        inconsistent.append(
+            {
+                "path_run_id": path_run_id,
+                "evidence_path_run_id": evidence_path_run_id,
+                "market": row.get("market"),
+                "runtime_mode": row.get("runtime_mode"),
+                "session_date": row.get("session_date"),
+                "ticker": row.get("ticker"),
+                "status": row.get("status"),
+                "evidence_event_id": evidence.get("event_id"),
+                "evidence_execution_id": evidence.get("execution_id"),
+                "exit_execution_id": plan.get("exit_execution_id"),
+                "close_reason": plan.get("close_reason"),
+                "pending_close_reason": plan.get("pending_close_reason"),
+            }
+        )
+    return inconsistent
+
+
 def _pathb_like_events_missing_path_run_id(
     events: list[dict[str, Any]],
     decision_ids_with_runs: set[str],
@@ -306,6 +336,7 @@ def _build_remediation_plan(
     stale_active: list[dict[str, Any]],
     missing_events: list[dict[str, Any]],
     events_missing_path_run_id: list[dict[str, Any]],
+    cross_run_closed_evidence: list[dict[str, Any]],
 ) -> dict[str, Any]:
     order_unknown_items = [
         _remediation_item(row, category="current_order_unknown", recommended_action="block_new_entries_until_broker_reconciled")
@@ -350,6 +381,26 @@ def _build_remediation_plan(
         }
         for row in events_missing_path_run_id
     ]
+    cross_run_items = [
+        {
+            "category": "cross_run_closed_lifecycle_evidence",
+            "market": row.get("market"),
+            "runtime_mode": row.get("runtime_mode"),
+            "session_date": row.get("session_date"),
+            "ticker": row.get("ticker"),
+            "path_run_id": row.get("path_run_id"),
+            "evidence_path_run_id": row.get("evidence_path_run_id"),
+            "evidence_event_id": row.get("evidence_event_id"),
+            "evidence_execution_id": row.get("evidence_execution_id"),
+            "exit_execution_id": row.get("exit_execution_id"),
+            "close_reason": row.get("close_reason"),
+            "pending_close_reason": row.get("pending_close_reason"),
+            "recommended_action": "audit_plan_json_and_append_correct_run_scoped_close_evidence_before_learning_use",
+            "source_of_truth_required": ["path_run_status", "broker_fills", "lifecycle_event_payload", "operator_review"],
+            "production_write": False,
+        }
+        for row in cross_run_closed_evidence
+    ]
     apply_eligible_count = sum(
         1
         for item in [*order_unknown_items, *stale_items]
@@ -364,12 +415,14 @@ def _build_remediation_plan(
             "stale_active_items": len(stale_items),
             "missing_lifecycle_event_items": len(lifecycle_items),
             "event_payload_link_items": len(payload_items),
+            "cross_run_closed_evidence_items": len(cross_run_items),
             "apply_eligible_items": apply_eligible_count,
         },
         "order_unknown": order_unknown_items,
         "stale_active": stale_items,
         "lifecycle_backfill_candidates": lifecycle_items,
         "event_payload_link_candidates": payload_items,
+        "cross_run_closed_evidence_candidates": cross_run_items,
     }
 
 
@@ -418,7 +471,7 @@ def build_report(
         ).fetchall()
         recent_runs = conn.execute(
             """
-            SELECT path_run_id, market, runtime_mode, session_date, ticker, status
+            SELECT path_run_id, market, runtime_mode, session_date, ticker, status, plan_json
             FROM v2_path_runs
             WHERE runtime_mode=? AND path_type='claude_price'
             ORDER BY updated_at DESC
@@ -437,7 +490,7 @@ def build_report(
         ).fetchall()
         full_runs = conn.execute(
             """
-            SELECT path_run_id, market, runtime_mode, session_date, ticker, status
+            SELECT path_run_id, market, runtime_mode, session_date, ticker, status, plan_json
             FROM v2_path_runs
             WHERE runtime_mode=? AND path_type='claude_price'
             ORDER BY updated_at DESC
@@ -482,10 +535,11 @@ def build_report(
     full_events_dict = [_row_dict(row) for row in full_events]
     full_runs_dict = [_row_dict(row) for row in full_runs]
     decision_ids_with_runs = {str(row["decision_id"] or "") for row in decision_id_rows}
-    missing_events = _terminal_missing_events(recent_runs_dict, recent_events_dict)
+    missing_events = _terminal_missing_events(recent_runs_dict, full_events_dict)
     events_missing = _pathb_like_events_missing_path_run_id(recent_events_dict, decision_ids_with_runs)
     events_missing_path_run_id = events_missing["rows"]
     full_missing_events = _terminal_missing_events(full_runs_dict, full_events_dict)
+    cross_run_closed_evidence = _cross_run_closed_lifecycle_evidence(full_runs_dict)
 
     status_counts = Counter(str(item.get("status") or "") for item in stale_active)
     market_counts = Counter(str(item.get("market") or "") for item in stale_active)
@@ -495,6 +549,7 @@ def build_report(
         stale_active=stale_active,
         missing_events=missing_events,
         events_missing_path_run_id=events_missing_path_run_id,
+        cross_run_closed_evidence=cross_run_closed_evidence,
     )
     return {
         "generated_at": _now_kst().isoformat(timespec="seconds"),
@@ -535,6 +590,11 @@ def build_report(
             "pathb_post_run_events_missing_path_run_id_count": len(events_missing["post_run"]),
             "decision_id_linkable_count": events_missing["decision_id_linkable_count"],
             "decision_id_unlinkable_count": events_missing["decision_id_unlinkable_count"],
+            "terminal_event_basis": "recent_runs_against_full_lifecycle_events",
+        },
+        "cross_run_closed_lifecycle_evidence": {
+            "count": len(cross_run_closed_evidence),
+            "rows": cross_run_closed_evidence,
         },
         "lifecycle_full_consistency": {
             "missing_events_count": len(full_missing_events),
@@ -544,10 +604,11 @@ def build_report(
             "checked_events": len(full_events_dict),
         },
         "lifecycle_consistency": {
-            "basis": "recent_window",
+            "basis": "recent_runs_against_full_lifecycle_events",
             "missing_events_count": len(missing_events),
             "events_missing_path_run_id_count": len(events_missing_path_run_id),
             "full_terminal_missing_events_count": len(full_missing_events),
+            "cross_run_closed_evidence_count": len(cross_run_closed_evidence),
             "missing_events": missing_events,
             "events_missing_path_run_id": events_missing_path_run_id,
         },
@@ -580,6 +641,7 @@ def _to_markdown(report: dict[str, Any]) -> str:
         f"- stale active rows: {report['stale_active']['count']}",
         f"- recent-window missing lifecycle events: {report['lifecycle_window_consistency']['missing_events_count']}",
         f"- full terminal missing lifecycle events: {report['lifecycle_full_consistency']['missing_events_count']}",
+        f"- cross-run closed lifecycle evidence: {report['cross_run_closed_lifecycle_evidence']['count']}",
         f"- events missing payload_json.path_run_id: {report['lifecycle_window_consistency']['events_missing_path_run_id_count']}",
         f"- remediation plan dry-run only: {report['remediation_plan']['dry_run_only']}",
         "",
@@ -631,6 +693,7 @@ def main() -> int:
         print(f"stale_active={report['stale_active']['count']}")
         print(f"broker_truth_loaded={report['broker_truth']['snapshot_loaded']}")
         print(f"missing_lifecycle_events={report['lifecycle_consistency']['missing_events_count']}")
+        print(f"cross_run_closed_evidence={report['lifecycle_consistency']['cross_run_closed_evidence_count']}")
         print(f"events_missing_path_run_id={report['lifecycle_consistency']['events_missing_path_run_id_count']}")
         if report.get("report_paths"):
             print(f"json={report['report_paths']['json']}")

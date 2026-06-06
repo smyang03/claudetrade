@@ -965,12 +965,16 @@ class TradingBotGateTests(unittest.TestCase):
             }
         }
 
-        result = bot._risk_off_mr_exception(
-            "US",
-            "CAUTIOUS_BEAR",
-            "mean_reversion",
-            {"vol_ratio": 1.4},
-        )
+        # _risk_off_mr_exception prefers live/current market change helpers;
+        # pin them so this low-volume exception case is not market-time dependent.
+        with patch.object(bot, "_get_market_change_pct", return_value=-0.8), \
+             patch.object(bot, "_get_secondary_change_pct", return_value=-1.2):
+            result = bot._risk_off_mr_exception(
+                "US",
+                "CAUTIOUS_BEAR",
+                "mean_reversion",
+                {"vol_ratio": 1.4},
+            )
 
         self.assertTrue(result["allowed"])
         self.assertEqual(result["size_cap"], 40)

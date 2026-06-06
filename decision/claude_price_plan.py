@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from typing import Any
 
 from config.v2 import DEFAULT_V2_CONFIG
@@ -15,6 +16,8 @@ VALID_PROMPT_STAGES = {
     "INTRADAY_REVIEW",
     "PRE_CLOSE",
 }
+
+DEFAULT_CANCEL_ABOVE_ZONE_MULTIPLIER = 1.05
 
 
 def _as_float(value: Any) -> float:
@@ -42,6 +45,34 @@ def _as_str_list(value: Any) -> list[str]:
         return [str(item).strip() for item in value if str(item).strip()][:8]
     text = str(value).strip()
     return [text] if text else []
+
+
+def _cancel_above_zone_multiplier(market: str) -> float:
+    market_key = str(market or "").upper()
+    for key in (
+        f"{market_key}_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER",
+        "PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER",
+    ):
+        raw = os.getenv(key)
+        if raw in (None, ""):
+            continue
+        try:
+            parsed = float(str(raw).replace(",", "").strip())
+        except Exception:
+            continue
+        if parsed > 0:
+            return parsed
+    return DEFAULT_CANCEL_ABOVE_ZONE_MULTIPLIER
+
+
+def _default_cancel_if_open_above(market: str, buy_zone_high: float) -> float | None:
+    try:
+        high = float(buy_zone_high or 0)
+    except Exception:
+        high = 0.0
+    if high <= 0:
+        return None
+    return high * _cancel_above_zone_multiplier(market)
 
 
 @dataclass(frozen=True)
@@ -270,7 +301,7 @@ def parse_plan_from_claude(
             cancel_if_open_above=(
                 _as_float(raw.get("cancel_if_open_above"))
                 if raw.get("cancel_if_open_above") not in (None, "")
-                else None
+                else _default_cancel_if_open_above(market, _as_float(raw.get("buy_zone_high")))
             ),
             target_basis=str(raw.get("target_basis", "") or ""),
             invalid_if=str(raw.get("invalid_if", "") or ""),

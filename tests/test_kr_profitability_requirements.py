@@ -24,6 +24,15 @@ class _FakeAuditStore:
         return 1
 
 
+class _FakeHealthTracker:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def record_strategy_cooldown(self, ticker, strategy, **kwargs):
+        self.calls.append({"ticker": ticker, "strategy": strategy, **kwargs})
+        return {"count": len(self.calls)}
+
+
 class KrProfitabilityRequirementsTests(unittest.TestCase):
     def test_trade_ready_no_submit_records_one_share_cap_reason(self) -> None:
         bot = TradingBot.__new__(TradingBot)
@@ -59,6 +68,51 @@ class KrProfitabilityRequirementsTests(unittest.TestCase):
         self.assertEqual(lifecycle_events[0]["event_type"], "TRADE_READY_NO_SUBMIT")
         self.assertEqual(lifecycle_events[0]["reason_code"], "ONE_SHARE_OVER_BUDGET_MAX_KRW")
         self.assertEqual(audit_store.calls[0]["values"]["no_submit_reason_code"], "ONE_SHARE_OVER_BUDGET_MAX_KRW")
+
+    def test_trade_ready_no_signal_records_orp_strategy_cooldown(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.is_paper = False
+        bot.today_judgment = {"consensus": {"mode": "MILD_BULL"}}
+        bot.selection_meta = {"US": {"recommended_strategy": {"QCOM": "opening_range_pullback"}}}
+        bot.trade_ready_tickers = {"KR": [], "US": ["QCOM"]}
+        bot.risk = SimpleNamespace(cash=1_000_000)
+        bot._current_session_date_str = lambda market: "2026-06-01"  # type: ignore[method-assign]
+        bot._v2_decision_id_for_ticker = lambda market, ticker: "dec-qcom"  # type: ignore[method-assign]
+        lifecycle_events: list[dict] = []
+        bot._v2_record_lifecycle_event = lambda event_type, market, ticker, **kw: lifecycle_events.append(  # type: ignore[method-assign]
+            {"event_type": event_type, "market": market, "ticker": ticker, **kw}
+        )
+        audit_store = _FakeAuditStore()
+        tracker = _FakeHealthTracker()
+        bot._candidate_audit_store = lambda: audit_store  # type: ignore[method-assign]
+        bot._candidate_health_tracker = lambda market: tracker  # type: ignore[method-assign]
+
+        payload = bot._record_trade_ready_no_submit(
+            "US",
+            "QCOM",
+            reason="no_signal",
+            reason_detail="OR pullback: reason=orp_entry_window_expired range=1.20% pullback=0.00% vol=1.10 elapsed=82m",
+            final_action="BUY_READY",
+            route="PlanA.buy",
+            strategy_hint="opening_range_pullback",
+            signal_flags=TradingBot._plan_a_signal_flags({}, signal_fired=False, strategy="opening_range_pullback"),
+            block_meta={
+                "stage": "plan_a_signal_check",
+                "local_reason": "no_signal",
+                "rejection_reason": "orp_entry_window_expired",
+                "volume_state": "ok",
+                "strategy_order": ["opening_range_pullback"],
+            },
+        )
+
+        self.assertTrue(payload["block_meta"]["strategy_cooldown_recorded"])
+        self.assertEqual(payload["block_meta"]["strategy_cooldown_reason"], "orp_entry_window_expired")
+        self.assertTrue(payload["block_meta"]["strategy_cooldown_evidence_hash"])
+        self.assertEqual(tracker.calls[0]["ticker"], "QCOM")
+        self.assertEqual(tracker.calls[0]["strategy"], "opening_range_pullback")
+        self.assertEqual(tracker.calls[0]["reason"], "orp_entry_window_expired")
+        self.assertEqual(lifecycle_events[0]["payload"]["block_meta"]["strategy_cooldown_count"], 1)
+        self.assertEqual(audit_store.calls[0]["values"]["no_submit_reason_code"], "NO_SIGNAL")
 
     def test_preopen_scheduler_lock_blocks_live_peer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

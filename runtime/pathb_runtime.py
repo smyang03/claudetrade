@@ -222,6 +222,15 @@ class PathBRuntime:
         except Exception:
             return int(default)
 
+    def _runtime_float(self, key: str, default: float = 0.0) -> float:
+        value = self._runtime_value(key, default)
+        if value is None or str(value).strip() == "":
+            return float(default)
+        try:
+            return float(str(value).replace(",", "").replace("%", "").strip())
+        except Exception:
+            return float(default)
+
     @staticmethod
     def _execution_safety_payload() -> dict[str, Any]:
         return {
@@ -1377,6 +1386,237 @@ class PathBRuntime:
         raw_plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
         return bool(raw_plan.get("shadow_only"))
 
+    def _pathb_cancel_above_zone_multiplier(self, market: str) -> float:
+        market_key = str(market or "").upper()
+        global_multiplier = self._runtime_float("PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER", 1.05)
+        multiplier = self._runtime_float(
+            f"{market_key}_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER",
+            global_multiplier,
+        )
+        return float(multiplier) if float(multiplier or 0) > 0 else 1.05
+
+    def _pathb_cancel_above_from_zone_high(self, market: str, buy_zone_high: float) -> float:
+        high = float(buy_zone_high or 0.0)
+        if high <= 0:
+            return 0.0
+        return high * self._pathb_cancel_above_zone_multiplier(market)
+
+    def _pathb_zone_update_mode(self, market: str) -> str:
+        if not self._runtime_bool("PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED", False):
+            return "off"
+        market_key = str(market or "").upper()
+        raw = self._runtime_value(f"{market_key}_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE", "")
+        if raw is None or str(raw).strip() == "":
+            raw = self._runtime_value("PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE", "enforce")
+        mode = str(raw or "enforce").strip().lower()
+        return mode if mode in {"off", "shadow", "enforce"} else "enforce"
+
+    def _pathb_zone_update_allowed_from_meta(
+        self,
+        market: str,
+        meta: dict[str, Any],
+        *,
+        shadow_registration: bool = False,
+    ) -> bool:
+        if shadow_registration:
+            return False
+        if self._pathb_zone_update_mode(market) != "enforce":
+            return False
+        clean = meta or {}
+        source = str(clean.get("_selection_source_type") or clean.get("_entry_route_source") or "").strip()
+        fresh_sources = {
+            "session_open",
+            "session_reuse_rescreen",
+            "manual_rescreen",
+            "rescreen",
+            "analyst_reinvoke",
+            "tuning_rescreen",
+        }
+        if source not in fresh_sources:
+            return False
+        if bool(clean.get("_smart_skip_reused")):
+            return False
+        if bool(clean.get("_candidate_actions_missing_contract")):
+            return False
+        if str(clean.get("_forced_watch_only_phase") or "").strip():
+            return False
+        if str(clean.get("_fallback_mode") or "").strip():
+            return False
+        return True
+
+    def _emit_pathb_zone_updated_event(
+        self,
+        run: dict[str, Any],
+        *,
+        meta: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> None:
+        try:
+            self.store.append(
+                LifecycleEvent(
+                    event_type=LifecycleEventType.PATHB_ZONE_UPDATED,
+                    market=str(run.get("market") or ""),
+                    runtime_mode=self.mode,
+                    session_date=str(run.get("session_date") or ""),
+                    ticker=str(run.get("ticker") or ""),
+                    decision_id=str(run.get("decision_id") or ""),
+                    prompt_version=str((run.get("plan") or {}).get("prompt_version") or "pathb_price_v1"),
+                    brain_snapshot_id=self._brain_snapshot_id(str(run.get("market") or "")),
+                    reason_code="pathb_zone_updated",
+                    payload={
+                        **self._execution_safety_payload(),
+                        "event": "PATHB_ZONE_UPDATED",
+                        "selection_snapshot_ts": str((meta or {}).get("selection_snapshot_ts") or ""),
+                        "selection_call_id": str(
+                            (meta or {}).get("selection_call_id")
+                            or (meta or {}).get("_selection_call_id")
+                            or ""
+                        ),
+                        "selection_meta_hash": self._selection_reconcile_meta_hash(meta or {}),
+                        **dict(payload or {}),
+                    },
+                )
+            )
+        except Exception as exc:
+            log.debug(f"[PathB zone update audit failed] {run.get('market')} {run.get('ticker')}: {exc}")
+
+    def _maybe_update_active_waiting_zone_from_selection(
+        self,
+        active_run: dict[str, Any],
+        raw_plan: Any,
+        meta: dict[str, Any],
+        *,
+        shadow_registration: bool = False,
+    ) -> bool:
+        market = str(active_run.get("market") or "").upper()
+        if not self._pathb_zone_update_allowed_from_meta(
+            market,
+            meta or {},
+            shadow_registration=shadow_registration,
+        ):
+            return False
+        if str(active_run.get("status") or "") != "WAITING":
+            return False
+        if not isinstance(raw_plan, dict) or not raw_plan:
+            return False
+        existing_plan = self._plan_from_run(active_run)
+        if existing_plan is None:
+            return False
+
+        current = self._current_native_price(market, existing_plan.ticker)
+        if current <= 0:
+            return False
+        old_low = float(existing_plan.buy_zone_low or 0.0)
+        old_high = float(existing_plan.buy_zone_high or 0.0)
+        current_in_old_zone = bool(old_low > 0 and old_high >= old_low and old_low <= current <= old_high)
+        if current_in_old_zone:
+            return False
+
+        new_plan, errors = parse_plan_from_claude(
+            decision_id=str(active_run.get("decision_id") or existing_plan.decision_id or ""),
+            ticker=existing_plan.ticker,
+            market=market,
+            session_date=str(active_run.get("session_date") or existing_plan.session_date or ""),
+            raw=raw_plan,
+            prompt_stage=str(existing_plan.prompt_stage or "PRE_SESSION"),
+            prompt_version=str(existing_plan.prompt_version or "pathb_price_v1.0"),
+            min_confidence=0.0,
+        )
+        if new_plan is None:
+            log.debug(
+                f"[PathB zone update skipped] {market} {existing_plan.ticker} invalid raw_plan errors={errors}"
+            )
+            return False
+
+        new_low = float(new_plan.buy_zone_low or 0.0)
+        new_high = float(new_plan.buy_zone_high or 0.0)
+        new_cancel_above = self._pathb_cancel_above_from_zone_high(market, new_high)
+        candidate_values = {
+            field: getattr(existing_plan, field)
+            for field in PricePlan.__dataclass_fields__.keys()
+        }
+        candidate_values.update(
+            {
+                "buy_zone_low": new_low,
+                "buy_zone_high": new_high,
+                "cancel_if_open_above": new_cancel_above if new_cancel_above > 0 else None,
+            }
+        )
+        try:
+            candidate_plan = PricePlan(**candidate_values)
+        except Exception as exc:
+            log.debug(f"[PathB zone update skipped] {market} {existing_plan.ticker} rebuild failed: {exc}")
+            return False
+        validation_errors = candidate_plan.validate(min_confidence=0.0)
+        if validation_errors:
+            log.info(
+                f"[PathB zone update skipped] {market} {existing_plan.ticker} validation={validation_errors}"
+            )
+            return False
+
+        prev_cancel = float(existing_plan.cancel_if_open_above or 0.0)
+        unchanged = (
+            math.isclose(old_low, new_low, rel_tol=0.0, abs_tol=1e-9)
+            and math.isclose(old_high, new_high, rel_tol=0.0, abs_tol=1e-9)
+            and math.isclose(prev_cancel, new_cancel_above, rel_tol=0.0, abs_tol=1e-9)
+        )
+        if unchanged:
+            return False
+
+        current_in_new_zone = bool(new_low > 0 and new_high >= new_low and new_low <= current <= new_high)
+        multiplier = self._pathb_cancel_above_zone_multiplier(market)
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        path_run_id = str(active_run.get("path_run_id") or existing_plan.path_run_id or "")
+        update_payload = {
+            "buy_zone_low": new_low,
+            "buy_zone_high": new_high,
+            "cancel_if_open_above": new_cancel_above if new_cancel_above > 0 else None,
+            "pathb_zone_updated": True,
+            "pathb_zone_updated_at": now_iso,
+            "pathb_zone_update_source": str((meta or {}).get("_selection_source_type") or ""),
+            "pathb_zone_update_selection_snapshot_ts": str((meta or {}).get("selection_snapshot_ts") or ""),
+            "pathb_zone_update_selection_meta_hash": self._selection_reconcile_meta_hash(meta or {}),
+        }
+        self.store.update_path_run(path_run_id, plan=update_payload, merge_plan=True)
+        event_payload = {
+            "market": market,
+            "runtime_mode": self.mode,
+            "session_date": str(active_run.get("session_date") or ""),
+            "ticker": existing_plan.ticker,
+            "path_run_id": path_run_id,
+            "decision_id": str(active_run.get("decision_id") or existing_plan.decision_id or ""),
+            "source": str((meta or {}).get("_selection_source_type") or ""),
+            "prev_buy_zone_low": old_low,
+            "prev_buy_zone_high": old_high,
+            "new_buy_zone_low": new_low,
+            "new_buy_zone_high": new_high,
+            "prev_cancel_if_open_above": prev_cancel if prev_cancel > 0 else None,
+            "new_cancel_if_open_above": new_cancel_above if new_cancel_above > 0 else None,
+            "current_price": float(current or 0.0),
+            "current_price_in_old_zone": False,
+            "current_price_in_new_zone": current_in_new_zone,
+            "multiplier": float(multiplier),
+            "updated_fields": ["buy_zone_low", "buy_zone_high", "cancel_if_open_above"],
+            "protected_fields_unchanged": [
+                "sell_target",
+                "stop_loss",
+                "confidence",
+                "hold_days",
+                "sizing",
+                "hard_stop",
+                "loss_cap",
+                "profit_ladder",
+                "broker_truth",
+            ],
+        }
+        self._emit_pathb_zone_updated_event(active_run, meta=meta or {}, payload=event_payload)
+        log.info(
+            f"[PathB zone updated] {market} {existing_plan.ticker} "
+            f"zone={old_low:g}-{old_high:g}->{new_low:g}-{new_high:g} "
+            f"cancel_above={new_cancel_above:g} current={float(current or 0):g}"
+        )
+        return True
+
     def register_from_selection_meta(self, market: str, meta: dict[str, Any]) -> list[str]:
         if not self.is_enabled():
             return []
@@ -1495,11 +1735,19 @@ class PathBRuntime:
                 )
             for ticker in trade_ready:
                 key = self._ticker_key(market, ticker)
+                raw_plan = price_targets.get(ticker) or price_targets.get(key)
                 if shadow_registration:
                     if self._active_path_for_ticker(market, key) or self._shadow_path_for_ticker(market, key):
                         continue
                 else:
-                    if self._active_path_for_ticker(market, key):
+                    active_run = self._active_path_for_ticker(market, key)
+                    if active_run:
+                        self._maybe_update_active_waiting_zone_from_selection(
+                            active_run,
+                            raw_plan,
+                            meta,
+                            shadow_registration=False,
+                        )
                         continue
                     shadow_run = self._shadow_path_for_ticker(market, key)
                     if shadow_run and str(shadow_run.get("status") or "") == "SHADOW_WAITING":
@@ -1521,7 +1769,6 @@ class PathBRuntime:
                 )
                 if not decision_id:
                     continue
-                raw_plan = price_targets.get(ticker) or price_targets.get(key)
                 if not raw_plan:
                     missing_price_targets.append(key)
                     self._record_blocked(
@@ -2088,6 +2335,110 @@ class PathBRuntime:
             )
         return hit_count
 
+    def _pathb_scan_burst_cap_state(self, market: str) -> dict[str, Any]:
+        market_key = str(market or "").upper()
+        enabled = self._runtime_bool(
+            f"{market_key}_PATHB_SCAN_BURST_CAP_ENABLED",
+            self._runtime_bool("PATHB_SCAN_BURST_CAP_ENABLED", True),
+        )
+        global_cap = self._runtime_int("PATHB_SCAN_BURST_CAP_MAX_SUBMITS_PER_SCAN", 1)
+        max_submits = self._runtime_int(
+            f"{market_key}_PATHB_SCAN_BURST_CAP_MAX_SUBMITS_PER_SCAN",
+            global_cap,
+        )
+        global_threshold = self._runtime_float("PATHB_SCAN_BURST_CAP_ANALYST_SIZE_PCT", 40.0)
+        size_threshold = self._runtime_float(
+            f"{market_key}_PATHB_SCAN_BURST_CAP_ANALYST_SIZE_PCT",
+            global_threshold,
+        )
+        mode_default = str(
+            self._runtime_value(
+                "PATHB_SCAN_BURST_CAP_MODES",
+                "MILD_BEAR,CAUTIOUS_BEAR,DEFENSIVE,HALT",
+            )
+            or ""
+        )
+        raw_modes = str(self._runtime_value(f"{market_key}_PATHB_SCAN_BURST_CAP_MODES", mode_default) or "")
+        cap_modes = {
+            item.strip().upper()
+            for item in raw_modes.replace(";", ",").split(",")
+            if item.strip()
+        }
+
+        judgment = getattr(getattr(self, "bot", None), "today_judgment", {}) or {}
+        consensus = dict((judgment or {}).get("consensus") or {})
+        mode = str(consensus.get("mode") or (judgment or {}).get("mode") or "").strip().upper()
+        size_raw = consensus.get("size", (judgment or {}).get("size"))
+        analyst_size: float | None = None
+        try:
+            if size_raw not in (None, ""):
+                analyst_size = float(str(size_raw).replace("%", "").replace(",", "").strip())
+        except Exception:
+            analyst_size = None
+
+        trigger_reasons: list[str] = []
+        if analyst_size is not None and analyst_size < float(size_threshold):
+            trigger_reasons.append("analyst_size_below_threshold")
+        if mode and mode in cap_modes:
+            trigger_reasons.append("market_mode")
+
+        active = bool(enabled and max_submits > 0 and trigger_reasons)
+        return {
+            "active": active,
+            "enabled": bool(enabled),
+            "market": market_key,
+            "market_mode": mode,
+            "analyst_size_pct": analyst_size,
+            "analyst_size_threshold_pct": float(size_threshold),
+            "max_submits_per_scan": max(0, int(max_submits or 0)),
+            "cap_modes": sorted(cap_modes),
+            "trigger_reasons": trigger_reasons,
+            "candidate_priority": "confidence_desc_then_existing_order",
+        }
+
+    def _pathb_block_scan_burst_cap(
+        self,
+        plan: PricePlan,
+        signal: EntrySignal,
+        cap_state: dict[str, Any],
+        *,
+        submitted_count: int,
+    ) -> None:
+        reason = "PATHB_SCAN_BURST_CAP"
+        blocked_at = datetime.now(KST)
+        payload = {
+            **self._execution_safety_payload(),
+            "stage": "pathb_waiting_scan",
+            "scope": "market",
+            "reason": "pathb_scan_burst_cap",
+            "price": float(signal.price or 0.0),
+            "limit_price": float(signal.limit_price or 0.0),
+            "signal_reason": str(signal.reason or ""),
+            "submitted_count": int(submitted_count or 0),
+            **dict(cap_state or {}),
+        }
+        should_log_block = not self._recent_pathb_submit_block(plan.path_run_id, reason)
+        self.store.update_path_run(
+            plan.path_run_id,
+            plan={
+                "last_submit_block_reason": reason,
+                "last_submit_block_at": blocked_at.isoformat(timespec="seconds"),
+                "last_submit_block_gate": payload,
+                "submit_block_keeps_waiting": True,
+                "submit_block_keep_reason": "pathb_scan_burst_cap",
+            },
+            merge_plan=True,
+        )
+        if should_log_block:
+            self._record_blocked(
+                plan.market,
+                plan.ticker,
+                plan.decision_id,
+                reason,
+                payload,
+                plan.path_run_id,
+            )
+
     def scan_waiting_entries(self, market: str, *, force: bool = False) -> None:
         market = str(market or "").upper()
         if not self.is_enabled():
@@ -2124,10 +2475,24 @@ class PathBRuntime:
             self._log_entry_scan_blocked(market, entry_gate)
             return
         kr_blocked_tickers: list[str] = []
-        for run in self.adapter.get_waiting_runs(market, self.mode, self._session_date(market)):
+        burst_cap = self._pathb_scan_burst_cap_state(market)
+        burst_submitted = 0
+        burst_blocked_tickers: list[str] = []
+        waiting_items = []
+        for idx, run in enumerate(self.adapter.get_waiting_runs(market, self.mode, self._session_date(market))):
             plan = self._plan_from_run(run)
             if plan is None:
                 continue
+            waiting_items.append((idx, run, plan))
+        if bool(burst_cap.get("active")):
+            def _confidence_sort_value(item: tuple[int, dict[str, Any], PricePlan]) -> float:
+                try:
+                    return float(getattr(item[2], "confidence", 0.0) or 0.0)
+                except Exception:
+                    return 0.0
+
+            waiting_items.sort(key=lambda item: (-_confidence_sort_value(item), item[0]))
+        for _, run, plan in waiting_items:
             current = self._current_native_price(market, plan.ticker)
             if current <= 0:
                 continue
@@ -2223,12 +2588,33 @@ class PathBRuntime:
                         plan.path_run_id,
                     )
                 continue
-            self._submit_buy(plan, signal)
+            if (
+                bool(burst_cap.get("active"))
+                and burst_submitted >= int(burst_cap.get("max_submits_per_scan") or 0)
+            ):
+                burst_blocked_tickers.append(plan.ticker)
+                self._pathb_block_scan_burst_cap(
+                    plan,
+                    signal,
+                    burst_cap,
+                    submitted_count=burst_submitted,
+                )
+                continue
+            if self._submit_buy(plan, signal):
+                burst_submitted += 1
         if kr_blocked_tickers:
             sample = ",".join(kr_blocked_tickers[:8])
             log.warning(
                 f"[PathB entry scan blocked] KR KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK "
                 f"count={len(kr_blocked_tickers)} tickers={sample}"
+            )
+        if burst_blocked_tickers:
+            sample = ",".join(burst_blocked_tickers[:8])
+            log.warning(
+                f"[PathB entry scan burst cap] {market} submitted={burst_submitted} "
+                f"cap={burst_cap.get('max_submits_per_scan')} count={len(burst_blocked_tickers)} "
+                f"tickers={sample} mode={burst_cap.get('market_mode')} "
+                f"size={burst_cap.get('analyst_size_pct')}"
             )
 
     def reconcile_buy_pending_cancel_above(self, market: str, *, force: bool = False) -> dict[str, Any]:

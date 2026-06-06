@@ -1,0 +1,2448 @@
+{
+  "claude_usage_since_start": {
+    "by_label": {
+      "analyst_bear_r1": 1,
+      "analyst_bear_r2": 1,
+      "analyst_bull_r1": 1,
+      "analyst_bull_r2": 1,
+      "analyst_neutral_r1": 1,
+      "analyst_neutral_r2": 1,
+      "hold_advisor_challenge": 2,
+      "hold_advisor_triage": 21,
+      "param_tuner": 1,
+      "postmortem": 1,
+      "preopen_continuation_blind_eval_30m": 1,
+      "preopen_continuation_blind_eval_5m": 1,
+      "preopen_continuation_blind_eval_5m_small": 1,
+      "preopen_continuation_blind_eval_preopen": 1,
+      "preopen_continuation_blind_eval_retry": 1,
+      "select_tickers": 13,
+      "tune_120min": 1,
+      "tune_150min": 1,
+      "tune_180min": 1,
+      "tune_210min": 1,
+      "tune_240min": 1,
+      "tune_270min": 1,
+      "tune_300min": 1,
+      "tune_30min": 1,
+      "tune_330min": 1,
+      "tune_360min": 1,
+      "tune_390min": 1,
+      "tune_420min": 1,
+      "tune_60min": 1,
+      "tune_90min": 1
+    },
+    "by_model": {
+      "claude-sonnet-4-6": 63
+    },
+    "calls_since_start_observed_from_raw_files": 63,
+    "samples": [
+      {
+        "duration_ms": 7676,
+        "input_tokens": 1732,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 356,
+        "path": "logs\\raw_calls\\20260604_US_hold_advisor_triage_222015676545_efb617830e.json",
+        "timestamp": "2026-06-04T22:20:15.676545"
+      },
+      {
+        "duration_ms": 6756,
+        "input_tokens": 1733,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 317,
+        "path": "logs\\raw_calls\\20260604_US_hold_advisor_triage_222025951469_e84f067dbb.json",
+        "timestamp": "2026-06-04T22:20:25.951469"
+      },
+      {
+        "duration_ms": 7677,
+        "input_tokens": 1642,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 343,
+        "path": "logs\\raw_calls\\20260604_US_hold_advisor_triage_222234781978_9bba632a2e.json",
+        "timestamp": "2026-06-04T22:22:34.781978"
+      },
+      {
+        "duration_ms": 7191,
+        "input_tokens": 1640,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 322,
+        "path": "logs\\raw_calls\\20260604_US_hold_advisor_triage_222243461278_1438c03687.json",
+        "timestamp": "2026-06-04T22:22:43.461278"
+      },
+      {
+        "duration_ms": 6369,
+        "input_tokens": 1672,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 337,
+        "path": "logs\\raw_calls\\20260604_US_hold_advisor_triage_222252327811_5f0bd028f4.json",
+        "timestamp": "2026-06-04T22:22:52.327811"
+      },
+      {
+        "duration_ms": 33720,
+        "input_tokens": 12499,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1860,
+        "path": "logs\\raw_calls\\20260604_US_select_tickers_222219677003_a838fc6747.json",
+        "timestamp": "2026-06-04T22:22:19.677003"
+      },
+      {
+        "duration_ms": 39105,
+        "input_tokens": 12805,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 2039,
+        "path": "logs\\raw_calls\\20260604_US_select_tickers_222357700078_995ad9dfa4.json",
+        "timestamp": "2026-06-04T22:23:57.700078"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1242,
+        "label": "tune_30min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 297,
+        "path": "logs\\raw_calls\\20260604_US_tune_30min_222406461859_42c6c89393.json",
+        "timestamp": "2026-06-04T22:24:06.461859"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1030,
+        "label": "param_tuner",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 675,
+        "path": "logs\\raw_calls\\20260604_US_param_tuner_222415200723_9166d0c7cf.json",
+        "timestamp": "2026-06-04T22:24:15.200723"
+      },
+      {
+        "duration_ms": 37490,
+        "input_tokens": 12814,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 2200,
+        "path": "logs\\raw_calls\\20260604_US_select_tickers_222507182511_da977f74f9.json",
+        "timestamp": "2026-06-04T22:25:07.182511"
+      },
+      {
+        "duration_ms": 5766,
+        "input_tokens": 1710,
+        "label": "hold_advisor_challenge",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 302,
+        "path": "logs\\raw_calls\\20260604_US_hold_advisor_challenge_222541806581_98b0db8795.json",
+        "timestamp": "2026-06-04T22:25:41.806581"
+      },
+      {
+        "duration_ms": 7744,
+        "input_tokens": 1732,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 373,
+        "path": "logs\\raw_calls\\20260604_US_hold_advisor_triage_222536019897_5ebc12f069.json",
+        "timestamp": "2026-06-04T22:25:36.019897"
+      },
+      {
+        "duration_ms": 8557,
+        "input_tokens": 7039,
+        "label": "analyst_bear_r1",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 337,
+        "path": "logs\\raw_calls\\20260604_US_analyst_bear_r1_223448703636_20db636666.json",
+        "timestamp": "2026-06-04T22:34:48.703636"
+      },
+      {
+        "duration_ms": 11441,
+        "input_tokens": 2976,
+        "label": "analyst_bear_r2",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 456,
+        "path": "logs\\raw_calls\\20260604_US_analyst_bear_r2_223522080427_49b73b3e64.json",
+        "timestamp": "2026-06-04T22:35:22.080427"
+      },
+      {
+        "duration_ms": 7443,
+        "input_tokens": 6786,
+        "label": "analyst_bull_r1",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 235,
+        "path": "logs\\raw_calls\\20260604_US_analyst_bull_r1_223438618658_551d2286fd.json",
+        "timestamp": "2026-06-04T22:34:38.618658"
+      },
+      {
+        "duration_ms": 9032,
+        "input_tokens": 2766,
+        "label": "analyst_bull_r2",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 511,
+        "path": "logs\\raw_calls\\20260604_US_analyst_bull_r2_223509116697_5306bb64fa.json",
+        "timestamp": "2026-06-04T22:35:09.116697"
+      },
+      {
+        "duration_ms": 8311,
+        "input_tokens": 6935,
+        "label": "analyst_neutral_r1",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 291,
+        "path": "logs\\raw_calls\\20260604_US_analyst_neutral_r1_223458544954_57eb1f618a.json",
+        "timestamp": "2026-06-04T22:34:58.544954"
+      },
+      {
+        "duration_ms": 8082,
+        "input_tokens": 2882,
+        "label": "analyst_neutral_r2",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 410,
+        "path": "logs\\raw_calls\\20260604_US_analyst_neutral_r2_223531687266_8927e43f89.json",
+        "timestamp": "2026-06-04T22:35:31.687266"
+      },
+      {
+        "duration_ms": 18888,
+        "input_tokens": 11740,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1453,
+        "path": "logs\\raw_calls\\20260604_US_select_tickers_223609092167_ec309c3836.json",
+        "timestamp": "2026-06-04T22:36:09.092167"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1566,
+        "label": "tune_60min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 224,
+        "path": "logs\\raw_calls\\20260604_US_tune_60min_225518046972_2ca182865b.json",
+        "timestamp": "2026-06-04T22:55:18.046972"
+      },
+      {
+        "duration_ms": 20912,
+        "input_tokens": 11947,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1592,
+        "path": "logs\\raw_calls\\20260604_US_select_tickers_232436277666_fe4d10ab00.json",
+        "timestamp": "2026-06-04T23:24:36.277666"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1565,
+        "label": "tune_90min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 332,
+        "path": "logs\\raw_calls\\20260604_US_tune_90min_232536999249_817b1499d6.json",
+        "timestamp": "2026-06-04T23:25:36.999249"
+      },
+      {
+        "duration_ms": 19553,
+        "input_tokens": 12096,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1458,
+        "path": "logs\\raw_calls\\20260604_US_select_tickers_235626363646_03d2d2ac5b.json",
+        "timestamp": "2026-06-04T23:56:26.363646"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1602,
+        "label": "tune_120min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 286,
+        "path": "logs\\raw_calls\\20260604_US_tune_120min_235550672417_0c646c7690.json",
+        "timestamp": "2026-06-04T23:55:50.672417"
+      },
+      {
+        "duration_ms": 7017,
+        "input_tokens": 1638,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 341,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_000158513057_5e34decce1.json",
+        "timestamp": "2026-06-05T00:01:58.513057"
+      },
+      {
+        "duration_ms": 17057,
+        "input_tokens": 2174,
+        "label": "preopen_continuation_blind_eval_retry",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 723,
+        "path": "logs\\raw_calls\\20260605_US_preopen_continuation_blind_eval_retry_001837983158_c94342fee8.json",
+        "timestamp": "2026-06-05T00:18:37.983158"
+      },
+      {
+        "duration_ms": 6897,
+        "input_tokens": 1608,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 346,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_002307278833_b8ab4cc33a.json",
+        "timestamp": "2026-06-05T00:23:07.278833"
+      },
+      {
+        "duration_ms": 15098,
+        "input_tokens": 2715,
+        "label": "preopen_continuation_blind_eval_30m",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 580,
+        "path": "logs\\raw_calls\\20260605_US_preopen_continuation_blind_eval_30m_002344923773_156ae979a1.json",
+        "timestamp": "2026-06-05T00:23:44.923773"
+      },
+      {
+        "duration_ms": 19635,
+        "input_tokens": 2266,
+        "label": "preopen_continuation_blind_eval_5m",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 900,
+        "path": "logs\\raw_calls\\20260605_US_preopen_continuation_blind_eval_5m_002329788922_70ef41d085.json",
+        "timestamp": "2026-06-05T00:23:29.788922"
+      },
+      {
+        "duration_ms": 14619,
+        "input_tokens": 1443,
+        "label": "preopen_continuation_blind_eval_preopen",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 619,
+        "path": "logs\\raw_calls\\20260605_US_preopen_continuation_blind_eval_preopen_002310114580_e28a1caa6e.json",
+        "timestamp": "2026-06-05T00:23:10.114580"
+      },
+      {
+        "duration_ms": 13113,
+        "input_tokens": 1243,
+        "label": "preopen_continuation_blind_eval_5m_small",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 300,
+        "path": "logs\\raw_calls\\20260605_US_preopen_continuation_blind_eval_5m_small_002506556614_cd79c4d2a0.json",
+        "timestamp": "2026-06-05T00:25:06.556614"
+      },
+      {
+        "duration_ms": 22697,
+        "input_tokens": 12139,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1509,
+        "path": "logs\\raw_calls\\20260605_US_select_tickers_002517047284_3d54b58a5b.json",
+        "timestamp": "2026-06-05T00:25:17.047284"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1602,
+        "label": "tune_150min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 402,
+        "path": "logs\\raw_calls\\20260605_US_tune_150min_002637301042_53f71911a6.json",
+        "timestamp": "2026-06-05T00:26:37.301042"
+      },
+      {
+        "duration_ms": 8686,
+        "input_tokens": 1642,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 364,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_003220721005_54724c5a30.json",
+        "timestamp": "2026-06-05T00:32:20.721005"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1654,
+        "label": "tune_180min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 267,
+        "path": "logs\\raw_calls\\20260605_US_tune_180min_005644187697_2d83623a4b.json",
+        "timestamp": "2026-06-05T00:56:44.187697"
+      },
+      {
+        "duration_ms": 8045,
+        "input_tokens": 1641,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 315,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_010241619796_1c57dc92a6.json",
+        "timestamp": "2026-06-05T01:02:41.619796"
+      },
+      {
+        "duration_ms": 6828,
+        "input_tokens": 1627,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 336,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_012318013713_65811e77df.json",
+        "timestamp": "2026-06-05T01:23:18.013713"
+      },
+      {
+        "duration_ms": 20308,
+        "input_tokens": 12094,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1554,
+        "path": "logs\\raw_calls\\20260605_US_select_tickers_012555851234_9717ab6b9b.json",
+        "timestamp": "2026-06-05T01:25:55.851234"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1654,
+        "label": "tune_210min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 335,
+        "path": "logs\\raw_calls\\20260605_US_tune_210min_012651509954_13de015a3c.json",
+        "timestamp": "2026-06-05T01:26:51.509954"
+      },
+      {
+        "duration_ms": 6877,
+        "input_tokens": 1627,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 350,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_013302181302_db99811035.json",
+        "timestamp": "2026-06-05T01:33:02.181302"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1655,
+        "label": "tune_240min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 379,
+        "path": "logs\\raw_calls\\20260605_US_tune_240min_015700155061_a994b0cb52.json",
+        "timestamp": "2026-06-05T01:57:00.155061"
+      },
+      {
+        "duration_ms": 20740,
+        "input_tokens": 12112,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1478,
+        "path": "logs\\raw_calls\\20260605_US_select_tickers_015732316499_6c0090c21d.json",
+        "timestamp": "2026-06-05T01:57:32.316499"
+      },
+      {
+        "duration_ms": 10295,
+        "input_tokens": 1627,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 362,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_020324120479_e9275bd1e8.json",
+        "timestamp": "2026-06-05T02:03:24.120479"
+      },
+      {
+        "duration_ms": 7626,
+        "input_tokens": 1597,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 378,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_022329711703_2308c2c455.json",
+        "timestamp": "2026-06-05T02:23:29.711703"
+      },
+      {
+        "duration_ms": 24227,
+        "input_tokens": 12140,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1714,
+        "path": "logs\\raw_calls\\20260605_US_select_tickers_022637677845_6306831b59.json",
+        "timestamp": "2026-06-05T02:26:37.677845"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1655,
+        "label": "tune_270min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 284,
+        "path": "logs\\raw_calls\\20260605_US_tune_270min_022739594978_ba5a341c0e.json",
+        "timestamp": "2026-06-05T02:27:39.594978"
+      },
+      {
+        "duration_ms": 7570,
+        "input_tokens": 1625,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 328,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_023353538353_70bb0d9009.json",
+        "timestamp": "2026-06-05T02:33:53.538353"
+      },
+      {
+        "duration_ms": 6984,
+        "input_tokens": 1640,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 358,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_023406648687_8fd69d2d8b.json",
+        "timestamp": "2026-06-05T02:34:06.648687"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1655,
+        "label": "tune_300min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 365,
+        "path": "logs\\raw_calls\\20260605_US_tune_300min_025749088147_8d790a98c9.json",
+        "timestamp": "2026-06-05T02:57:49.088147"
+      },
+      {
+        "duration_ms": 5860,
+        "input_tokens": 1722,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 300,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_030418211961_c609513aa5.json",
+        "timestamp": "2026-06-05T03:04:18.211961"
+      },
+      {
+        "duration_ms": 6491,
+        "input_tokens": 1642,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 323,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_030427914980_5c520cbd1c.json",
+        "timestamp": "2026-06-05T03:04:27.914980"
+      },
+      {
+        "duration_ms": 5989,
+        "input_tokens": 1615,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 325,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_032340700926_e0050a5500.json",
+        "timestamp": "2026-06-05T03:23:40.700926"
+      },
+      {
+        "duration_ms": 25061,
+        "input_tokens": 12176,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1657,
+        "path": "logs\\raw_calls\\20260605_US_select_tickers_032722847713_35a6ec8d72.json",
+        "timestamp": "2026-06-05T03:27:22.847713"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1605,
+        "label": "tune_330min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 352,
+        "path": "logs\\raw_calls\\20260605_US_tune_330min_032758210445_e10c30c998.json",
+        "timestamp": "2026-06-05T03:27:58.210445"
+      },
+      {
+        "duration_ms": 6278,
+        "input_tokens": 1659,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 285,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_033446067115_c6f5acaed8.json",
+        "timestamp": "2026-06-05T03:34:46.067115"
+      },
+      {
+        "duration_ms": 3565,
+        "input_tokens": 1701,
+        "label": "hold_advisor_challenge",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 172,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_challenge_035213054766_b4b79bf6a5.json",
+        "timestamp": "2026-06-05T03:52:13.054766"
+      },
+      {
+        "duration_ms": 6852,
+        "input_tokens": 1748,
+        "label": "hold_advisor_triage",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 311,
+        "path": "logs\\raw_calls\\20260605_US_hold_advisor_triage_035209471283_4e9c747333.json",
+        "timestamp": "2026-06-05T03:52:09.471283"
+      },
+      {
+        "duration_ms": 24536,
+        "input_tokens": 10971,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1696,
+        "path": "logs\\raw_calls\\20260605_US_select_tickers_035845016205_fe9d77120c.json",
+        "timestamp": "2026-06-05T03:58:45.016205"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1565,
+        "label": "tune_360min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 338,
+        "path": "logs\\raw_calls\\20260605_US_tune_360min_035806711513_a57b0e727f.json",
+        "timestamp": "2026-06-05T03:58:06.711513"
+      },
+      {
+        "duration_ms": 21556,
+        "input_tokens": 12162,
+        "label": "select_tickers",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 1526,
+        "path": "logs\\raw_calls\\20260605_US_select_tickers_042804740256_569d91ec4c.json",
+        "timestamp": "2026-06-05T04:28:04.740256"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1565,
+        "label": "tune_390min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 271,
+        "path": "logs\\raw_calls\\20260605_US_tune_390min_042853090555_0ba7a592af.json",
+        "timestamp": "2026-06-05T04:28:53.090555"
+      },
+      {
+        "duration_ms": 0,
+        "input_tokens": 1567,
+        "label": "tune_420min",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 251,
+        "path": "logs\\raw_calls\\20260605_US_tune_420min_045910422337_403aa52ec7.json",
+        "timestamp": "2026-06-05T04:59:10.422337"
+      },
+      {
+        "duration_ms": 48547,
+        "input_tokens": 9306,
+        "label": "postmortem",
+        "market": "US",
+        "model": "claude-sonnet-4-6",
+        "output_tokens": 2500,
+        "path": "logs\\raw_calls\\20260604_US_postmortem_postmortem_US_2026-06-04_946033d76b.json",
+        "timestamp": "2026-06-05T05:00:52.209736"
+      }
+    ],
+    "tokens_observed_from_raw_files": {
+      "duration_ms": 670767,
+      "input_tokens": 267628,
+      "output_tokens": 42200
+    }
+  },
+  "decision_events_since_start": [
+    {
+      "broker_fill_confirmed": true,
+      "broker_fill_source": "pathb_broker_truth",
+      "entry_price_native": null,
+      "exit_price_native": 214.0756,
+      "exit_reason": "hard_stop",
+      "hold_action": null,
+      "market": "US",
+      "order_no": "0031612367",
+      "pnl_krw": -1003.0538770445761,
+      "pnl_pct": -0.30462089049301877,
+      "qty": 1,
+      "queued_sell": null,
+      "strategy": "claude_price",
+      "ticker": "NVDA",
+      "timestamp": "2026-06-04T22:22:22+09:00",
+      "type": "closed"
+    },
+    {
+      "broker_fill_confirmed": true,
+      "broker_fill_source": "pathb_broker_truth",
+      "entry_price_native": null,
+      "exit_price_native": 358.35,
+      "exit_reason": "hard_stop",
+      "hold_action": null,
+      "market": "US",
+      "order_no": "0031616402",
+      "pnl_krw": -2394.188071724924,
+      "pnl_pct": -0.43380079739128363,
+      "qty": 1,
+      "queued_sell": null,
+      "strategy": "claude_price",
+      "ticker": "GOOGL",
+      "timestamp": "2026-06-04T22:22:23+09:00",
+      "type": "closed"
+    },
+    {
+      "broker_fill_confirmed": true,
+      "broker_fill_source": "pathb_broker_truth",
+      "entry_price_native": null,
+      "exit_price_native": 52.86999999999999,
+      "exit_reason": "claude_price_stop",
+      "hold_action": null,
+      "market": "US",
+      "order_no": "0031616690",
+      "pnl_krw": -16920.018142725003,
+      "pnl_pct": -4.006728061828722,
+      "qty": 5,
+      "queued_sell": null,
+      "strategy": "claude_price",
+      "ticker": "HPE",
+      "timestamp": "2026-06-04T22:22:24+09:00",
+      "type": "closed"
+    },
+    {
+      "broker_fill_confirmed": true,
+      "broker_fill_source": "pathb_broker_truth",
+      "entry_price_native": null,
+      "exit_price_native": 431.48,
+      "exit_reason": "hard_stop",
+      "hold_action": null,
+      "market": "US",
+      "order_no": "0031644893",
+      "pnl_krw": 8428.646015820066,
+      "pnl_pct": 1.2903056217581503,
+      "qty": 1,
+      "queued_sell": null,
+      "strategy": "claude_price",
+      "ticker": "MSFT",
+      "timestamp": "2026-06-04T22:26:13+09:00",
+      "type": "closed"
+    },
+    {
+      "broker_fill_confirmed": true,
+      "broker_fill_source": "pathb_broker_truth",
+      "entry_price_native": 381.2,
+      "exit_price_native": null,
+      "exit_reason": null,
+      "hold_action": null,
+      "market": "US",
+      "order_no": "0031735655",
+      "pnl_krw": null,
+      "pnl_pct": null,
+      "qty": 1,
+      "queued_sell": null,
+      "strategy": "claude_price",
+      "ticker": "ARM",
+      "timestamp": "2026-06-04T23:36:37+09:00",
+      "type": "entry"
+    },
+    {
+      "broker_fill_confirmed": true,
+      "broker_fill_source": "pathb_broker_truth",
+      "entry_price_native": 118.32,
+      "exit_price_native": null,
+      "exit_reason": null,
+      "hold_action": null,
+      "market": "US",
+      "order_no": "0031772650",
+      "pnl_krw": null,
+      "pnl_pct": null,
+      "qty": 2,
+      "queued_sell": null,
+      "strategy": "claude_price",
+      "ticker": "RKLB",
+      "timestamp": "2026-06-05T00:27:05+09:00",
+      "type": "entry"
+    },
+    {
+      "broker_fill_confirmed": true,
+      "broker_fill_source": "pathb_broker_truth",
+      "entry_price_native": null,
+      "exit_price_native": 396.31,
+      "exit_reason": "target",
+      "hold_action": null,
+      "market": "US",
+      "order_no": "0031819552",
+      "pnl_krw": 23082.883397415037,
+      "pnl_pct": 3.9482039611752424,
+      "qty": 1,
+      "queued_sell": null,
+      "strategy": "claude_price",
+      "ticker": "ARM",
+      "timestamp": "2026-06-05T03:05:32+09:00",
+      "type": "closed"
+    },
+    {
+      "broker_fill_confirmed": true,
+      "broker_fill_source": "pathb_broker_truth",
+      "entry_price_native": null,
+      "exit_price_native": 120.92,
+      "exit_reason": "profit_ladder",
+      "hold_action": null,
+      "market": "US",
+      "order_no": "0031828352",
+      "pnl_krw": 7919.551861560024,
+      "pnl_pct": 2.182101081812042,
+      "qty": 2,
+      "queued_sell": null,
+      "strategy": "claude_price",
+      "ticker": "RKLB",
+      "timestamp": "2026-06-05T03:54:51+09:00",
+      "type": "closed"
+    }
+  ],
+  "end_at": "2026-06-05T07:00:00+09:00",
+  "generated_at": "2026-06-05T07:00:02+09:00",
+  "hold_advisor_cost_observation": {
+    "by_label": {
+      "hold_advisor_challenge": 2,
+      "hold_advisor_triage": 21
+    },
+    "cache_enabled": false,
+    "observed_calls": 23,
+    "safety_critical_cache_bypass": [
+      "hard_stop",
+      "broker_truth_untrusted",
+      "stale_or_error_truth",
+      "order_failure",
+      "pathb_auto_sell_hold_cooldown_guard",
+      "plan_a_hard_guard_soft_cache_bypass",
+      "plan_a_hard_guard_cooldown_bypass"
+    ],
+    "saved_calls_estimate": 0
+  },
+  "latest_snapshot": {
+    "api_usage_delta_since_start": {
+      "api_negative_delta_detected": true,
+      "api_negative_fields": [
+        "calls",
+        "input_tokens",
+        "output_tokens",
+        "cost_usd"
+      ],
+      "calls": 63,
+      "cost_usd": 0.0,
+      "input_tokens": 267628,
+      "output_tokens": 42200,
+      "source": "raw_call_scan_fallback"
+    },
+    "api_usage_today": {
+      "by_model": {
+        "claude-sonnet-4-6": {
+          "calls": 34,
+          "cost_usd": 0.737988,
+          "input_tokens": 135636,
+          "output_tokens": 22072
+        }
+      },
+      "calls": 34,
+      "cost_usd": 0.737988,
+      "input_tokens": 135636,
+      "output_tokens": 22072
+    },
+    "at": "2026-06-05T07:00:00+09:00",
+    "broker_truth": {
+      "error": "",
+      "last_attempt_at": "2026-06-04T20:13:01+00:00",
+      "last_success_at": "2026-06-04T20:13:02+00:00",
+      "missing": false,
+      "open_orders": [],
+      "open_orders_count": 0,
+      "positions": [],
+      "positions_count": 0,
+      "stale": true,
+      "today_fills": [
+        {
+          "avg_price": 214.0756,
+          "fill_time": "222016",
+          "filled_qty": 1,
+          "market": "US",
+          "order_no": "0031612367",
+          "order_price": 214.0,
+          "order_qty": 1,
+          "order_status": "filled",
+          "order_time": "222016",
+          "remaining_qty": 0,
+          "side": "sell",
+          "ticker": "NVDA"
+        },
+        {
+          "avg_price": 358.35,
+          "fill_time": "222026",
+          "filled_qty": 1,
+          "market": "US",
+          "order_no": "0031616402",
+          "order_price": 358.34,
+          "order_qty": 1,
+          "order_status": "filled",
+          "order_time": "222026",
+          "remaining_qty": 0,
+          "side": "sell",
+          "ticker": "GOOGL"
+        },
+        {
+          "avg_price": 52.87,
+          "fill_time": "222027",
+          "filled_qty": 5,
+          "market": "US",
+          "order_no": "0031616690",
+          "order_price": 52.86,
+          "order_qty": 5,
+          "order_status": "filled",
+          "order_time": "222027",
+          "remaining_qty": 0,
+          "side": "sell",
+          "ticker": "HPE"
+        },
+        {
+          "avg_price": 431.48,
+          "fill_time": "222542",
+          "filled_qty": 1,
+          "market": "US",
+          "order_no": "0031644893",
+          "order_price": 431.44,
+          "order_qty": 1,
+          "order_status": "filled",
+          "order_time": "222542",
+          "remaining_qty": 0,
+          "side": "sell",
+          "ticker": "MSFT"
+        },
+        {
+          "avg_price": 381.2,
+          "fill_time": "233407",
+          "filled_qty": 1,
+          "market": "US",
+          "order_no": "0031735655",
+          "order_price": 381.2,
+          "order_qty": 1,
+          "order_status": "filled",
+          "order_time": "233407",
+          "remaining_qty": 0,
+          "side": "buy",
+          "ticker": "ARM"
+        },
+        {
+          "avg_price": 118.32,
+          "fill_time": "002522",
+          "filled_qty": 2,
+          "market": "US",
+          "order_no": "0031772650",
+          "order_price": 118.51,
+          "order_qty": 2,
+          "order_status": "filled",
+          "order_time": "002522",
+          "remaining_qty": 0,
+          "side": "buy",
+          "ticker": "RKLB"
+        },
+        {
+          "avg_price": 396.31,
+          "fill_time": "030418",
+          "filled_qty": 1,
+          "market": "US",
+          "order_no": "0031819552",
+          "order_price": 396.31,
+          "order_qty": 1,
+          "order_status": "filled",
+          "order_time": "030418",
+          "remaining_qty": 0,
+          "side": "sell",
+          "ticker": "ARM"
+        },
+        {
+          "avg_price": 120.92,
+          "fill_time": "035213",
+          "filled_qty": 2,
+          "market": "US",
+          "order_no": "0031828352",
+          "order_price": 120.88,
+          "order_qty": 2,
+          "order_status": "filled",
+          "order_time": "035213",
+          "remaining_qty": 0,
+          "side": "sell",
+          "ticker": "RKLB"
+        }
+      ],
+      "today_fills_count": 8,
+      "ttl_sec": 180
+    },
+    "data_collection": {
+      "expected_times": {
+        "preopen_news_due_at": "2026-06-04T22:10:00+09:00",
+        "regular_open_at": "2026-06-04T22:30:00+09:00"
+      },
+      "issues": [],
+      "market": "US",
+      "news": {
+        "digest": {
+          "age_min": 518.6,
+          "bytes": 25648,
+          "corp_news_tickers": 0,
+          "exists": true,
+          "last_write_at": "2026-06-04T22:21:24+09:00",
+          "market_news_count": 0,
+          "parse_status": "ok",
+          "path": "data\\daily_digest\\2026-06-04_US.json",
+          "top_news_count": 5
+        },
+        "preopen": {
+          "age_min": 519.51,
+          "bytes": 251590,
+          "corp_news_tickers": 60,
+          "corp_news_total": 378,
+          "coverage_ratio": 0.85,
+          "covered_ticker_count": 51,
+          "exists": true,
+          "last_write_at": "2026-06-04T22:20:30+09:00",
+          "market_news_count": 20,
+          "parse_status": "ok",
+          "path": "data\\news\\us\\2026-06-04_preopen.json",
+          "preopen_snapshot": true,
+          "snapshot_written_at": "2026-06-04T22:20:30+09:00"
+        },
+        "regular": {
+          "age_min": 499.84,
+          "bytes": 99081,
+          "corp_news_tickers": 13,
+          "corp_news_total": 135,
+          "coverage_ratio": 1.0,
+          "covered_ticker_count": 13,
+          "exists": true,
+          "last_write_at": "2026-06-04T22:40:10+09:00",
+          "market_news_count": 20,
+          "parse_status": "ok",
+          "path": "data\\news\\us\\2026-06-04.json",
+          "preopen_snapshot": false,
+          "snapshot_written_at": ""
+        }
+      },
+      "preopen": {
+        "candidates": {
+          "age_min": 539.75,
+          "bytes": 1328228,
+          "exists": true,
+          "last_write_at": "2026-06-04T22:00:15+09:00",
+          "line_count": 660,
+          "path": "logs\\preopen\\20260604_US_candidates.jsonl"
+        },
+        "outcome": {
+          "age_min": 149.02,
+          "bytes": 2280385,
+          "exists": true,
+          "last_write_at": "2026-06-05T04:30:59+09:00",
+          "line_count": 780,
+          "path": "logs\\preopen\\20260604_US_outcome.jsonl"
+        },
+        "rank_diff": {
+          "age_min": 517.66,
+          "bytes": 37954,
+          "exists": true,
+          "last_write_at": "2026-06-04T22:22:20+09:00",
+          "line_count": 60,
+          "path": "logs\\preopen\\20260604_US_rank_diff.jsonl"
+        },
+        "scheduler": {
+          "age_min": 420.64,
+          "bytes": 200556,
+          "exists": true,
+          "last_write_at": "2026-06-04T23:59:21+09:00",
+          "line_count": 1460,
+          "path": "logs\\preopen\\20260604_scheduler_live.jsonl"
+        },
+        "screener_projected_volume": {
+          "age_min": 420.33,
+          "bytes": 129241,
+          "exists": true,
+          "last_write_at": "2026-06-04T23:59:40+09:00",
+          "line_count": 34,
+          "path": "logs\\screener\\20260604_US_projected_dollar_volume_shadow.jsonl"
+        }
+      },
+      "price": {
+        "daily": {
+          "count": 1089,
+          "dir": "data\\price\\us",
+          "latest": [
+            {
+              "age_min": 28.85,
+              "bytes": 7675,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:31:09+09:00",
+              "path": "data\\price\\us\\us_YSS.csv"
+            },
+            {
+              "age_min": 28.86,
+              "bytes": 1014,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:31:08+09:00",
+              "path": "data\\price\\us\\us_WSE.csv"
+            },
+            {
+              "age_min": 28.95,
+              "bytes": 7075,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:31:03+09:00",
+              "path": "data\\price\\us\\us_VSNT.csv"
+            },
+            {
+              "age_min": 28.96,
+              "bytes": 21494,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:31:02+09:00",
+              "path": "data\\price\\us\\us_VOYG.csv"
+            },
+            {
+              "age_min": 28.97,
+              "bytes": 4277,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:31:02+09:00",
+              "path": "data\\price\\us\\us_VGNT.csv"
+            },
+            {
+              "age_min": 29.0,
+              "bytes": 30730,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:31:00+09:00",
+              "path": "data\\price\\us\\us_TPH.csv"
+            },
+            {
+              "age_min": 29.02,
+              "bytes": 29036,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:30:59+09:00",
+              "path": "data\\price\\us\\us_TERN.csv"
+            },
+            {
+              "age_min": 29.04,
+              "bytes": 5992,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:30:58+09:00",
+              "path": "data\\price\\us\\us_SUNB.csv"
+            },
+            {
+              "age_min": 29.05,
+              "bytes": 11548,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:30:57+09:00",
+              "path": "data\\price\\us\\us_STUB.csv"
+            },
+            {
+              "age_min": 29.06,
+              "bytes": 661,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:30:56+09:00",
+              "path": "data\\price\\us\\us_SPEGR.csv"
+            },
+            {
+              "age_min": 29.08,
+              "bytes": 10233,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:30:55+09:00",
+              "path": "data\\price\\us\\us_SOLS.csv"
+            },
+            {
+              "age_min": 29.09,
+              "bytes": 27443,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:30:55+09:00",
+              "path": "data\\price\\us\\us_SNDK.csv"
+            }
+          ],
+          "pattern": "us_*.csv"
+        },
+        "minute": {
+          "count": 226,
+          "dir": "data\\price\\minute\\us",
+          "latest": [
+            {
+              "age_min": 6.55,
+              "bytes": 113601,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:53:27+09:00",
+              "path": "data\\price\\minute\\us\\us_VRT.csv"
+            },
+            {
+              "age_min": 6.56,
+              "bytes": 57155,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:53:26+09:00",
+              "path": "data\\price\\minute\\us\\us_UNH.csv"
+            },
+            {
+              "age_min": 6.57,
+              "bytes": 115020,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:53:26+09:00",
+              "path": "data\\price\\minute\\us\\us_TXG.csv"
+            },
+            {
+              "age_min": 6.58,
+              "bytes": 401131,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:53:25+09:00",
+              "path": "data\\price\\minute\\us\\us_TSLA.csv"
+            },
+            {
+              "age_min": 6.59,
+              "bytes": 112523,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:53:24+09:00",
+              "path": "data\\price\\minute\\us\\us_TGTX.csv"
+            },
+            {
+              "age_min": 6.6,
+              "bytes": 85448,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:53:24+09:00",
+              "path": "data\\price\\minute\\us\\us_SYRE.csv"
+            },
+            {
+              "age_min": 6.61,
+              "bytes": 105432,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:53:23+09:00",
+              "path": "data\\price\\minute\\us\\us_STRL.csv"
+            },
+            {
+              "age_min": 6.62,
+              "bytes": 351400,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:53:23+09:00",
+              "path": "data\\price\\minute\\us\\us_SOFI.csv"
+            },
+            {
+              "age_min": 6.63,
+              "bytes": 115096,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:53:22+09:00",
+              "path": "data\\price\\minute\\us\\us_SNAP.csv"
+            },
+            {
+              "age_min": 6.64,
+              "bytes": 404920,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:53:21+09:00",
+              "path": "data\\price\\minute\\us\\us_SMCI.csv"
+            },
+            {
+              "age_min": 6.65,
+              "bytes": 32057,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:53:21+09:00",
+              "path": "data\\price\\minute\\us\\us_SEZL.csv"
+            },
+            {
+              "age_min": 6.66,
+              "bytes": 290936,
+              "exists": true,
+              "last_write_at": "2026-06-05T06:53:20+09:00",
+              "path": "data\\price\\minute\\us\\us_RKLB.csv"
+            }
+          ],
+          "pattern": "us_*.csv"
+        }
+      },
+      "session_date": "2026-06-04"
+    },
+    "guardian": {
+      "alert": {
+        "fingerprint": "[{\"classification\": \"hard_fail\", \"detail\": \"KR snapshot stale\", \"kind\": \"finding\", \"name\": \"broker_truth.kr_stale_state\", \"status\": \"WARN\"}, {\"classification\": \"hard_fail\", \"detail\": \"US snapshot stale\", \"kind\": \"finding\", \"name\": \"broker_truth.us_stale_state\", \"status\": \"WARN\"}]",
+        "gate": "BLOCK_START",
+        "updated_at": "2026-06-05T05:16:48+09:00"
+      },
+      "block_start_causes": [
+        {
+          "blocking": true,
+          "code": "broker_truth.us_stale_state",
+          "message": "US snapshot stale",
+          "operator_action": "broker truth snapshot freshness와 토큰/조회 오류를 먼저 복구",
+          "remediation_tool": "tools/live_preflight.py --mode live --skip-dashboard --json",
+          "risk_level": "P1"
+        }
+      ],
+      "counts": {
+        "action_fail": 0,
+        "current_blockers": 1
+      },
+      "findings": [
+        {
+          "classification": "hard_fail",
+          "data": {
+            "age_sec": 6254.974,
+            "error": "",
+            "evaluated_at": "2026-06-04T21:57:16Z",
+            "last_attempt_at": "2026-06-04T20:13:01+00:00",
+            "last_success_at": "2026-06-04T20:13:02+00:00",
+            "stale": true,
+            "stale_reason": "age_gt_ttl",
+            "stale_recompute_error": "",
+            "stale_recomputed": true,
+            "stored_stale": false,
+            "stored_ttl_sec": 180,
+            "ttl_margin_sec": -6074.974,
+            "ttl_sec": 180
+          },
+          "detail": "US snapshot stale",
+          "name": "broker_truth.us_stale_state",
+          "status": "WARN"
+        }
+      ],
+      "gate": "BLOCK_START",
+      "heartbeat": {
+        "healthy": true,
+        "last_error": "",
+        "last_error_at": "",
+        "last_started_at": "2026-06-05T06:58:16+09:00",
+        "last_success_at": "2026-06-05T06:58:16+09:00",
+        "last_tick_at": "2026-06-05T06:58:16+09:00",
+        "next_expected_at": "",
+        "pid": 53556,
+        "process": "live_guardian",
+        "report_path": "E:\\code\\claudetrade\\data\\v2_reports\\live_guardian_20260605_065816.json",
+        "status": "blocked"
+      },
+      "market_gate": {
+        "action_blockers": [],
+        "blockers": [
+          {
+            "classification": "hard_fail",
+            "data": {
+              "age_sec": 6254.974,
+              "error": "",
+              "evaluated_at": "2026-06-04T21:57:16Z",
+              "last_attempt_at": "2026-06-04T20:13:01+00:00",
+              "last_success_at": "2026-06-04T20:13:02+00:00",
+              "stale": true,
+              "stale_reason": "age_gt_ttl",
+              "stale_recompute_error": "",
+              "stale_recomputed": true,
+              "stored_stale": false,
+              "stored_ttl_sec": 180,
+              "ttl_margin_sec": -6074.974,
+              "ttl_sec": 180
+            },
+            "detail": "US snapshot stale",
+            "name": "broker_truth.us_stale_state",
+            "status": "WARN"
+          }
+        ],
+        "counts": {
+          "action_fail": 0,
+          "current_blockers": 1
+        },
+        "gate": "BLOCK_START",
+        "ok": false
+      },
+      "market_gates": {
+        "KR": {
+          "action_blockers": [],
+          "blockers": [
+            {
+              "classification": "hard_fail",
+              "data": {
+                "age_sec": 7043.974,
+                "error": "",
+                "evaluated_at": "2026-06-04T21:57:16Z",
+                "last_attempt_at": "2026-06-04T19:59:53+00:00",
+                "last_success_at": "2026-06-04T19:59:53+00:00",
+                "stale": true,
+                "stale_reason": "age_gt_ttl",
+                "stale_recompute_error": "",
+                "stale_recomputed": true,
+                "stored_stale": true,
+                "stored_ttl_sec": 60,
+                "ttl_margin_sec": -6983.974,
+                "ttl_sec": 60
+              },
+              "detail": "KR snapshot stale",
+              "name": "broker_truth.kr_stale_state",
+              "status": "WARN"
+            }
+          ],
+          "counts": {
+            "action_fail": 0,
+            "current_blockers": 1
+          },
+          "gate": "BLOCK_START",
+          "ok": false
+        },
+        "US": {
+          "action_blockers": [],
+          "blockers": [
+            {
+              "classification": "hard_fail",
+              "data": {
+                "age_sec": 6254.974,
+                "error": "",
+                "evaluated_at": "2026-06-04T21:57:16Z",
+                "last_attempt_at": "2026-06-04T20:13:01+00:00",
+                "last_success_at": "2026-06-04T20:13:02+00:00",
+                "stale": true,
+                "stale_reason": "age_gt_ttl",
+                "stale_recompute_error": "",
+                "stale_recomputed": true,
+                "stored_stale": false,
+                "stored_ttl_sec": 180,
+                "ttl_margin_sec": -6074.974,
+                "ttl_sec": 180
+              },
+              "detail": "US snapshot stale",
+              "name": "broker_truth.us_stale_state",
+              "status": "WARN"
+            }
+          ],
+          "counts": {
+            "action_fail": 0,
+            "current_blockers": 1
+          },
+          "gate": "BLOCK_START",
+          "ok": false
+        }
+      },
+      "ok": false,
+      "top_level_gate": "BLOCK_START",
+      "top_level_ok": false
+    },
+    "hard_guard_review_bypass": {
+      "available": true,
+      "by_reason": {},
+      "by_ticker": {},
+      "event_counts": {},
+      "latest_event": {},
+      "log_dir": "E:\\code\\claudetrade\\logs\\funnel",
+      "market": "US",
+      "policy_change_allowed": false,
+      "samples": [],
+      "session_date": "2026-06-04",
+      "total_count": 0
+    },
+    "open_positions": [],
+    "open_positions_count": 0,
+    "order_unknown_event_count_us_total": 19,
+    "pathb_remediation": {
+      "apply_eligible_items": 0,
+      "available": true,
+      "current_order_unknown_count": 0,
+      "current_session_rows": [],
+      "dry_run": true,
+      "previous_order_unknown_count": 0,
+      "previous_session_cleanup_candidates": [],
+      "stale_active_count": 0,
+      "write_supported": false
+    },
+    "pending_sells": [],
+    "pid_state": [
+      {
+        "alive": false,
+        "name": "trading_bot",
+        "path": "E:\\code\\claudetrade\\state\\live_trading_bot.pid",
+        "pid": 0,
+        "raw": {}
+      },
+      {
+        "alive": true,
+        "name": "dashboard",
+        "path": "E:\\code\\claudetrade\\state\\dashboard_server.pid",
+        "pid": 32812,
+        "raw": {
+          "command": [
+            "C:\\Users\\Unknown\\anaconda3\\envs\\upbit\\python.exe",
+            "E:\\code\\claudetrade\\dashboard\\dashboard_server.py"
+          ],
+          "pid": 32812,
+          "process": "dashboard_server",
+          "started_at": "2026-06-04T23:58:04.109657+09:00"
+        }
+      },
+      {
+        "alive": true,
+        "name": "guardian",
+        "path": "E:\\code\\claudetrade\\state\\live_guardian_heartbeat.json",
+        "pid": 53556,
+        "raw": {
+          "healthy": true,
+          "last_error": "",
+          "last_error_at": "",
+          "last_started_at": "2026-06-05T06:58:16+09:00",
+          "last_success_at": "2026-06-05T06:58:16+09:00",
+          "last_tick_at": "2026-06-05T06:58:16+09:00",
+          "next_expected_at": "",
+          "pid": 53556,
+          "process": "live_guardian",
+          "report_path": "E:\\code\\claudetrade\\data\\v2_reports\\live_guardian_20260605_065816.json",
+          "status": "blocked"
+        }
+      },
+      {
+        "alive": false,
+        "name": "preopen_scheduler",
+        "path": "E:\\code\\claudetrade\\state\\preopen_scheduler_heartbeat.json",
+        "pid": 9052,
+        "raw": {
+          "healthy": true,
+          "last_error": "",
+          "last_error_at": "",
+          "last_job": {},
+          "last_started_at": "2026-06-05T05:45:02+09:00",
+          "last_success_at": "2026-06-05T05:45:02+09:00",
+          "last_tick_at": "2026-06-05T05:45:02+09:00",
+          "mode": "live",
+          "next_expected_at": "2026-06-05T05:46:02+09:00",
+          "pid": 9052,
+          "process": "preopen_scheduler",
+          "status": "idle"
+        }
+      }
+    ],
+    "protected_positions": []
+  },
+  "log_issue_counts_since_start": {
+    "broker_sync_protected": 2,
+    "broker_truth_untrusted": 155,
+    "data_collection_minute_price_stale": 4,
+    "data_collection_preopen_news_missing": 5,
+    "guardian_block_start": 153,
+    "log_error": 4,
+    "log_warning": 386,
+    "order_unknown": 2,
+    "pending_sell_local_state": 8,
+    "traceback": 2
+  },
+  "log_issue_samples": [
+    {
+      "at": "2026-06-04T22:31:27+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:31:27+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:31:27+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:31:27+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:31:27+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:30:26 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:31:27+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:30:36 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:31:27+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:30:47 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:31:27+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:30:56 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:31:27+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:31:07 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:31:27+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:31:17 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[NEW_BUY_BLOCKED] US * sector_play ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:31:27 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:31:37 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:31:47 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:31:57 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:32:07 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:32:17 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:32:28 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:32:29+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:32:28 [WARNING ] _record_new_buy_block:9119 | [NEW_BUY_BLOCKED] US * sector_play ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:33:32+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:33:32+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:33:32+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:33:32+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:33:32+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:33:32+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:33:32+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:32:37 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:33:32+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:32:47 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:33:32+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:32:57 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:33:32+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:33:08 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:33:32+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:33:18 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:33:32+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:33:28 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[opening judgment refresh] US pre-open digest -> intraday analyst judgment",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[긴급 재판단 시작] US | 트리거: market_open_refresh",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:33:38 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:33:48 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:33:58 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:34:09 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:34:18 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:34:28 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:34:29 [WARNING ] _maybe_refresh_opening_judgment:27703 | [opening judgment refresh] US pre-open digest -> intraday analyst judgment",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:34:35+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:34:29 [WARNING ] _reinvoke_analysts:32469 | [긴급 재판단 시작] US | 트리거: market_open_refresh",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[긴급 재판단 완료] CAUTIOUS → MILD_BEAR size=23%",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[screen_quality degraded] US phase=screen_market_candidates fresh=30 previous=67 merged=81 reasons=['count_collapse:30/67', 'source_collapse:NMS:11/32']",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:34:39 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:34:49 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:34:59 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US ENTRY_BLACKOUT scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:35:10 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:35:19 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:35:29 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:35:33 [WARNING ] _reinvoke_analysts:32563 | [긴급 재판단 완료] CAUTIOUS → MILD_BEAR size=23%",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:35:38+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:35:35 [WARNING ] _screen_quality_guard:3038 | [screen_quality degraded] US phase=screen_market_candidates fresh=30 previous=67 merged=81 reasons=['count_collapse:30/67', 'source_collapse:NMS:11/32']",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[screen_quality degraded] US phase=screen_market_candidates fresh=33 previous=67 merged=84 reasons=['source_collapse:NMS:11/32']",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[NEW_BUY_BLOCKED] US * sector_play STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:35:39 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:35:49 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:35:59 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:36:10 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:36:15 [WARNING ] _screen_quality_guard:3038 | [screen_quality degraded] US phase=screen_market_candidates fresh=33 previous=67 merged=84 reasons=['source_collapse:NMS:11/32']",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:36:18 [WARNING ] _record_new_buy_block:9119 | [NEW_BUY_BLOCKED] US * sector_play STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:36:19 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:36:29 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:36:41+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:36:39 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:37:44+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:37:44+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:37:44+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:37:44+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:37:44+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[NEW_BUY_BLOCKED] US * sector_play STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:37:44+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:37:44+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:37:44+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:36:50 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:37:44+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:37:00 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:37:44+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:37:10 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:37:44+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:37:20 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:37:44+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:37:23 [WARNING ] _record_new_buy_block:9119 | [NEW_BUY_BLOCKED] US * sector_play STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:37:44+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:37:30 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:37:44+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:37:40 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:38:47+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:38:47+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:38:47+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:38:47+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:38:47+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:38:47+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:38:47+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:37:50 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:38:47+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:38:00 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:38:47+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:38:10 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:38:47+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:38:20 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:38:47+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:38:31 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:38:47+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:38:40 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    },
+    {
+      "at": "2026-06-04T22:39:50+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:39:50+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:39:50+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:39:50+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:39:50+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "[stop cluster reset] US count 4->0 by=dashboard keep_stopped=True stopped=['GOOGL', 'HPE', 'MSFT', 'NVDA']",
+      "path": "logs\\system\\live_trading_20260604.jsonl"
+    },
+    {
+      "at": "2026-06-04T22:39:50+09:00",
+      "kind": "log_warning",
+      "level": "WARNING",
+      "message": "2026-06-04 22:38:50 [WARNING ] _log_entry_scan_blocked:670 | [PathB entry scan blocked] US STOP_CLUSTER_MARKET_BLOCK scope=market",
+      "path": "logs\\system\\live_trading_20260604.log"
+    }
+  ],
+  "market": "US",
+  "mode": "live",
+  "operator_summary": {
+    "action_required": [
+      "broker_truth_untrusted",
+      "guardian_block_start"
+    ],
+    "attention": [],
+    "current_trading_risk": {
+      "broker_open_orders": 0,
+      "broker_truth_action_required": 1,
+      "current_order_unknown": 0,
+      "guardian_action_required": 1,
+      "manual_action_required": 0,
+      "pending_sells": 0
+    },
+    "normal": [
+      "no_previous_session_cleanup_backlog"
+    ],
+    "previous_session_cleanup": {
+      "apply_eligible_items": 0,
+      "historical_order_unknown_total": 19,
+      "previous_order_unknown": 0,
+      "stale_active": 0
+    },
+    "status": "action_required"
+  },
+  "output_dir": "E:\\code\\claudetrade\\docs\\reports\\overnight_us_monitor_20260604_2200_to_20260605_0700",
+  "read_only": true,
+  "risk_axes": {
+    "broker_open_orders": 0,
+    "broker_positions": 0,
+    "broker_truth_action_required": 1,
+    "current_order_unknown": 0,
+    "current_trading_risk": {
+      "broker_open_orders": 0,
+      "broker_truth_action_required": 1,
+      "current_order_unknown": 0,
+      "guardian_action_required": 1,
+      "manual_action_required": 0,
+      "pending_sells": 0
+    },
+    "guardian_action_required": 1,
+    "historical_order_unknown_total": 19,
+    "local_open_positions": 0,
+    "manual_action_required": 0,
+    "order_unknown_events": 19,
+    "pending_sells": 0,
+    "previous_order_unknown": 0,
+    "previous_session_cleanup": {
+      "apply_eligible_items": 0,
+      "historical_order_unknown_total": 19,
+      "previous_order_unknown": 0,
+      "stale_active": 0
+    },
+    "protected_positions": 0,
+    "stale_active": 0
+  },
+  "session_date": "2026-06-04",
+  "snapshots_recorded": 200,
+  "start_at": "2026-06-04T22:00:00+09:00",
+  "state_observation_counts_since_start": {},
+  "state_observation_samples": [],
+  "status": "running"
+}

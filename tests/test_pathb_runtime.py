@@ -12,6 +12,7 @@ import kis_api
 from config.v2 import V2Config
 from decision.claude_price_plan import make_price_plan
 from execution.claude_price_adapter import EntrySignal
+from execution.safety_gate import validate_reason_code
 from execution.claude_price_sell_manager import ExitSignal
 from lifecycle.event_store import EventStore
 from lifecycle.models import LifecycleEvent
@@ -219,6 +220,64 @@ class PathBRuntimeTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._pathb_env.stop()
+
+    def _register_us_waiting_plan(
+        self,
+        runtime: PathBRuntime,
+        ticker: str,
+        *,
+        confidence: float = 0.7,
+    ) -> str:
+        plan = make_price_plan(
+            decision_id=f"dec_us_{ticker}",
+            ticker=ticker,
+            market="US",
+            session_date="2026-04-27",
+            buy_zone_low=100.0,
+            buy_zone_high=110.0,
+            sell_target=118.0,
+            stop_loss=95.0,
+            hold_days=1,
+            confidence=confidence,
+        )
+        runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain-us")
+        return plan.path_run_id
+
+    def _register_us_waiting_zone_plan(
+        self,
+        runtime: PathBRuntime,
+        ticker: str = "AAPL",
+        *,
+        status: str = "WAITING",
+    ) -> str:
+        decision_id = f"dec_us_zone_{ticker}"
+        runtime.store.create_decision(
+            decision_id=decision_id,
+            market="US",
+            runtime_mode="live",
+            session_date="2026-04-27",
+            ticker=ticker,
+            prompt_version="pathb_price_v1.0",
+            brain_snapshot_id="brain-us",
+            status="CLAUDE_TRADE_READY",
+        )
+        plan = make_price_plan(
+            decision_id=decision_id,
+            ticker=ticker,
+            market="US",
+            session_date="2026-04-27",
+            buy_zone_low=100.0,
+            buy_zone_high=105.0,
+            sell_target=140.0,
+            stop_loss=95.0,
+            hold_days=1,
+            confidence=0.8,
+            cancel_if_open_above=110.0,
+        )
+        runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain-us")
+        if status != "WAITING":
+            runtime.store.update_path_run(plan.path_run_id, status=status)
+        return plan.path_run_id
 
     def test_bot_token_helper_uses_market_token_when_available(self) -> None:
         bot = _MarketTokenBot()
@@ -926,6 +985,202 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertIsNotNone(run)
             self.assertEqual(run["status"], "WAITING")
             self.assertEqual(run["path_type"], "claude_price")
+
+    def test_register_from_selection_meta_updates_active_waiting_zone_from_fresh_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            bot = _Bot()
+            bot.price_cache_raw["AAPL"] = 112.0
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            path_run_id = self._register_us_waiting_zone_plan(runtime, "AAPL")
+
+            env = {
+                "PATHB_US_LIVE_ENABLED": "true",
+                "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED": "true",
+                "US_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE": "enforce",
+                "US_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER": "1.05",
+            }
+            meta = {
+                "_selection_source_type": "rescreen",
+                "selection_snapshot_ts": "2026-04-27T10:00:00+09:00",
+                "selection_call_id": "sel-zone-1",
+                "trade_ready": ["AAPL"],
+                "v2_decision_ids": {"AAPL": "dec_us_zone_new"},
+                "price_targets": {
+                    "AAPL": {
+                        "buy_zone_low": 111.0,
+                        "buy_zone_high": 113.0,
+                        "sell_target": 160.0,
+                        "stop_loss": 100.0,
+                        "hold_days": 1,
+                        "confidence": 0.8,
+                    }
+                },
+            }
+            with patch.dict("os.environ", env, clear=False):
+                runs = runtime.register_from_selection_meta("US", meta)
+
+            self.assertEqual(runs, [])
+            run = store.find_path_run(path_run_id)
+            self.assertEqual(run["status"], "WAITING")
+            self.assertEqual(run["plan"]["buy_zone_low"], 111.0)
+            self.assertEqual(run["plan"]["buy_zone_high"], 113.0)
+            self.assertAlmostEqual(run["plan"]["cancel_if_open_above"], 118.65)
+            self.assertEqual(run["plan"]["sell_target"], 140.0)
+            self.assertEqual(run["plan"]["stop_loss"], 95.0)
+            events = store.events_for_decision("dec_us_zone_AAPL")
+            self.assertIn("PATHB_ZONE_UPDATED", [event["event_type"] for event in events])
+            decision = store.find_decision(
+                market="US",
+                runtime_mode="live",
+                session_date="2026-04-27",
+                ticker="AAPL",
+            )
+            self.assertEqual(decision["status"], "CLAUDE_PRICE_WAITING")
+
+    def test_register_from_selection_meta_does_not_update_hit_zone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            bot = _Bot()
+            bot.price_cache_raw["AAPL"] = 112.0
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            path_run_id = self._register_us_waiting_zone_plan(runtime, "AAPL", status="HIT")
+            meta = {
+                "_selection_source_type": "rescreen",
+                "trade_ready": ["AAPL"],
+                "v2_decision_ids": {"AAPL": "dec_us_zone_new"},
+                "price_targets": {
+                    "AAPL": {
+                        "buy_zone_low": 111.0,
+                        "buy_zone_high": 113.0,
+                        "sell_target": 160.0,
+                        "stop_loss": 100.0,
+                        "hold_days": 1,
+                        "confidence": 0.8,
+                    }
+                },
+            }
+            env = {
+                "PATHB_US_LIVE_ENABLED": "true",
+                "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED": "true",
+                "US_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE": "enforce",
+            }
+            with patch.dict("os.environ", env, clear=False):
+                runs = runtime.register_from_selection_meta("US", meta)
+
+            self.assertEqual(runs, [])
+            run = store.find_path_run(path_run_id)
+            self.assertEqual(run["status"], "HIT")
+            self.assertEqual(run["plan"]["buy_zone_low"], 100.0)
+            self.assertEqual(run["plan"]["buy_zone_high"], 105.0)
+
+    def test_register_from_selection_meta_does_not_update_when_current_inside_old_zone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            bot = _Bot()
+            bot.price_cache_raw["AAPL"] = 102.0
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            path_run_id = self._register_us_waiting_zone_plan(runtime, "AAPL")
+            meta = {
+                "_selection_source_type": "rescreen",
+                "trade_ready": ["AAPL"],
+                "v2_decision_ids": {"AAPL": "dec_us_zone_new"},
+                "price_targets": {
+                    "AAPL": {
+                        "buy_zone_low": 101.0,
+                        "buy_zone_high": 104.0,
+                        "sell_target": 160.0,
+                        "stop_loss": 98.0,
+                        "hold_days": 1,
+                        "confidence": 0.8,
+                    }
+                },
+            }
+            env = {
+                "PATHB_US_LIVE_ENABLED": "true",
+                "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED": "true",
+                "US_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE": "enforce",
+            }
+            with patch.dict("os.environ", env, clear=False):
+                runtime.register_from_selection_meta("US", meta)
+
+            run = store.find_path_run(path_run_id)
+            self.assertEqual(run["plan"]["buy_zone_low"], 100.0)
+            self.assertEqual(run["plan"]["buy_zone_high"], 105.0)
+
+    def test_register_from_selection_meta_does_not_update_invalid_merged_zone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            bot = _Bot()
+            bot.price_cache_raw["AAPL"] = 132.0
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            path_run_id = self._register_us_waiting_zone_plan(runtime, "AAPL")
+            meta = {
+                "_selection_source_type": "rescreen",
+                "trade_ready": ["AAPL"],
+                "v2_decision_ids": {"AAPL": "dec_us_zone_new"},
+                "price_targets": {
+                    "AAPL": {
+                        "buy_zone_low": 130.0,
+                        "buy_zone_high": 135.0,
+                        "sell_target": 160.0,
+                        "stop_loss": 125.0,
+                        "hold_days": 1,
+                        "confidence": 0.8,
+                    }
+                },
+            }
+            env = {
+                "PATHB_US_LIVE_ENABLED": "true",
+                "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED": "true",
+                "US_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE": "enforce",
+            }
+            with patch.dict("os.environ", env, clear=False):
+                runtime.register_from_selection_meta("US", meta)
+
+            run = store.find_path_run(path_run_id)
+            self.assertEqual(run["plan"]["buy_zone_low"], 100.0)
+            self.assertEqual(run["plan"]["buy_zone_high"], 105.0)
+
+    def test_register_from_selection_meta_does_not_update_zone_on_smart_skip_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            bot = _Bot()
+            bot.price_cache_raw["AAPL"] = 112.0
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            path_run_id = self._register_us_waiting_zone_plan(runtime, "AAPL")
+            meta = {
+                "_selection_source_type": "rescreen",
+                "_smart_skip_reused": True,
+                "trade_ready": ["AAPL"],
+                "v2_decision_ids": {"AAPL": "dec_us_zone_new"},
+                "price_targets": {
+                    "AAPL": {
+                        "buy_zone_low": 111.0,
+                        "buy_zone_high": 113.0,
+                        "sell_target": 160.0,
+                        "stop_loss": 100.0,
+                        "hold_days": 1,
+                        "confidence": 0.8,
+                    }
+                },
+            }
+            env = {
+                "PATHB_US_LIVE_ENABLED": "true",
+                "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED": "true",
+                "US_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE": "enforce",
+            }
+            with patch.dict("os.environ", env, clear=False):
+                runtime.register_from_selection_meta("US", meta)
+
+            run = store.find_path_run(path_run_id)
+            self.assertEqual(run["plan"]["buy_zone_low"], 100.0)
+            self.assertEqual(run["plan"]["buy_zone_high"], 105.0)
 
     def test_register_from_selection_meta_preserves_pullback_wait_origin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1852,6 +2107,139 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(store.find_path_run(plan.path_run_id)["status"], "WAITING")
             events = store.events_for_decision("dec_live_waiting")
             self.assertNotIn("CLAUDE_PRICE_HIT", [event["event_type"] for event in events])
+
+    def test_scan_waiting_entries_caps_burst_when_analyst_size_is_low(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lifecycle_events: list[tuple[tuple, dict]] = []
+            bot = _Bot()
+            bot.today_judgment = {"consensus": {"mode": "NEUTRAL", "size": 28}}
+            bot._v2_record_lifecycle_event = lambda *args, **kwargs: lifecycle_events.append((args, kwargs))
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.reconcile_order_unknowns = Mock()
+            runtime.reconcile_buy_pending_cancel_above = Mock()
+            runtime.process_miss_quality_followups = Mock()
+            runtime._entry_scan_broker_truth_gate = Mock(return_value={"allowed": True})
+            runtime._current_native_price = Mock(return_value=105.0)
+            runtime._submit_buy = Mock(return_value=True)
+
+            blocked_ids = [
+                self._register_us_waiting_plan(runtime, "AMZN"),
+                self._register_us_waiting_plan(runtime, "GOOGL"),
+                self._register_us_waiting_plan(runtime, "TSLA"),
+            ]
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "PATHB_US_LIVE_ENABLED": "true",
+                    "PATHB_SCAN_BURST_CAP_ANALYST_SIZE_PCT": "40%",
+                },
+            ):
+                runtime.scan_waiting_entries("US", force=True)
+
+            self.assertEqual(runtime._submit_buy.call_count, 1)
+            submitted_ticker = runtime._submit_buy.call_args_list[0].args[0].ticker
+            self.assertEqual(submitted_ticker, "AMZN")
+            self.assertTrue(validate_reason_code("PATHB_SCAN_BURST_CAP"))
+            self.assertEqual(len(lifecycle_events), 2)
+            self.assertEqual({args[2] for args, _ in lifecycle_events}, {"GOOGL", "TSLA"})
+            for args, kwargs in lifecycle_events:
+                self.assertEqual(args[0], "SAFETY_BLOCKED")
+                self.assertEqual(args[1], "US")
+                self.assertEqual(kwargs["reason_code"], "PATHB_SCAN_BURST_CAP")
+                self.assertEqual(kwargs["payload"]["candidate_priority"], "confidence_desc_then_existing_order")
+            for path_run_id in blocked_ids[1:]:
+                run = store.find_path_run(path_run_id)
+                self.assertEqual(run["status"], "WAITING")
+                self.assertEqual(run["plan"]["last_submit_block_reason"], "PATHB_SCAN_BURST_CAP")
+                self.assertEqual(run["plan"]["submit_block_keep_reason"], "pathb_scan_burst_cap")
+                gate = run["plan"]["last_submit_block_gate"]
+                self.assertEqual(gate["max_submits_per_scan"], 1)
+                self.assertEqual(gate["analyst_size_pct"], 28.0)
+                self.assertIn("analyst_size_below_threshold", gate["trigger_reasons"])
+
+    def test_scan_waiting_entries_prioritizes_confidence_when_burst_capped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            bot.today_judgment = {"consensus": {"mode": "NEUTRAL", "size": 28}}
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.reconcile_order_unknowns = Mock()
+            runtime.reconcile_buy_pending_cancel_above = Mock()
+            runtime.process_miss_quality_followups = Mock()
+            runtime._entry_scan_broker_truth_gate = Mock(return_value={"allowed": True})
+            runtime._current_native_price = Mock(return_value=105.0)
+            runtime._submit_buy = Mock(return_value=True)
+
+            self._register_us_waiting_plan(runtime, "AMZN", confidence=0.55)
+            high_conf_id = self._register_us_waiting_plan(runtime, "GOOGL", confidence=0.91)
+            self._register_us_waiting_plan(runtime, "TSLA", confidence=0.72)
+
+            with patch.dict("os.environ", {"PATHB_US_LIVE_ENABLED": "true"}):
+                runtime.scan_waiting_entries("US", force=True)
+
+            self.assertEqual(runtime._submit_buy.call_count, 1)
+            submitted_plan = runtime._submit_buy.call_args_list[0].args[0]
+            self.assertEqual(submitted_plan.ticker, "GOOGL")
+            self.assertEqual(submitted_plan.path_run_id, high_conf_id)
+            blocked_tickers = {
+                run["ticker"]
+                for run in store.path_runs_for_session(market="US", runtime_mode="live", status="WAITING")
+                if (run.get("plan") or {}).get("last_submit_block_reason") == "PATHB_SCAN_BURST_CAP"
+            }
+            self.assertEqual(blocked_tickers, {"AMZN", "TSLA"})
+
+    def test_scan_waiting_entries_does_not_cap_burst_when_analyst_size_is_normal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            bot.today_judgment = {"consensus": {"mode": "NEUTRAL", "size": 45}}
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.reconcile_order_unknowns = Mock()
+            runtime.reconcile_buy_pending_cancel_above = Mock()
+            runtime.process_miss_quality_followups = Mock()
+            runtime._entry_scan_broker_truth_gate = Mock(return_value={"allowed": True})
+            runtime._current_native_price = Mock(return_value=105.0)
+            runtime._submit_buy = Mock(return_value=True)
+
+            for ticker in ("AMZN", "GOOGL", "TSLA"):
+                self._register_us_waiting_plan(runtime, ticker)
+
+            with patch.dict("os.environ", {"PATHB_US_LIVE_ENABLED": "true"}):
+                runtime.scan_waiting_entries("US", force=True)
+
+            self.assertEqual(runtime._submit_buy.call_count, 3)
+
+    def test_scan_waiting_entries_caps_burst_when_market_mode_is_bearish(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            bot.today_judgment = {"consensus": {"mode": "MILD_BEAR", "size": 50}}
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.reconcile_order_unknowns = Mock()
+            runtime.reconcile_buy_pending_cancel_above = Mock()
+            runtime.process_miss_quality_followups = Mock()
+            runtime._entry_scan_broker_truth_gate = Mock(return_value={"allowed": True})
+            runtime._current_native_price = Mock(return_value=105.0)
+            runtime._submit_buy = Mock(return_value=True)
+
+            blocked_ids = [
+                self._register_us_waiting_plan(runtime, "AMZN"),
+                self._register_us_waiting_plan(runtime, "GOOGL"),
+            ]
+
+            with patch.dict("os.environ", {"PATHB_US_LIVE_ENABLED": "true"}):
+                runtime.scan_waiting_entries("US", force=True)
+
+            self.assertEqual(runtime._submit_buy.call_count, 1)
+            run = store.find_path_run(blocked_ids[1])
+            self.assertEqual(run["plan"]["last_submit_block_reason"], "PATHB_SCAN_BURST_CAP")
+            self.assertIn("market_mode", run["plan"]["last_submit_block_gate"]["trigger_reasons"])
 
     def test_kr_shadow_scan_cancel_if_open_above_uses_shadow_cancel_status(self) -> None:
         meta = {

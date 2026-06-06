@@ -1,0 +1,1985 @@
+{
+  "avg_duration_ms": 13710.0,
+  "avg_input_tokens": 5093.6,
+  "avg_output_tokens": 653.8,
+  "by_label": [
+    {
+      "avg_duration_ms": 24127.3,
+      "avg_input_tokens": 11821.6,
+      "avg_output_tokens": 1595.9,
+      "calls": 14,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 14,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 8,
+        "prompt_input_tokens_ge_8000": 6
+      },
+      "input_tokens": 165502,
+      "label": "select_tickers",
+      "output_issues": {
+        "response_fenced_json": 2,
+        "response_has_preamble_or_wrapper": 2,
+        "response_not_strict_json": 2,
+        "slow_call_30s": 2
+      },
+      "output_tokens": 22342,
+      "parse_errors": 0,
+      "total_tokens": 187844
+    },
+    {
+      "avg_duration_ms": 8610.2,
+      "avg_input_tokens": 6056.2,
+      "avg_output_tokens": 317.0,
+      "calls": 4,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 4,
+      "input_issues": {
+        "prompt_mojibake_hangul_compat_jamo": 3
+      },
+      "input_tokens": 24225,
+      "label": "analyst_bear_r1",
+      "output_issues": {},
+      "output_tokens": 1268,
+      "parse_errors": 0,
+      "total_tokens": 25493
+    },
+    {
+      "avg_duration_ms": 8494.2,
+      "avg_input_tokens": 5863.2,
+      "avg_output_tokens": 301.8,
+      "calls": 4,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 4,
+      "input_issues": {
+        "prompt_mojibake_hangul_compat_jamo": 3
+      },
+      "input_tokens": 23453,
+      "label": "analyst_neutral_r1",
+      "output_issues": {},
+      "output_tokens": 1207,
+      "parse_errors": 0,
+      "total_tokens": 24660
+    },
+    {
+      "avg_duration_ms": 7918.5,
+      "avg_input_tokens": 5742.2,
+      "avg_output_tokens": 273.8,
+      "calls": 4,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 4,
+      "input_issues": {
+        "prompt_mojibake_hangul_compat_jamo": 3
+      },
+      "input_tokens": 22969,
+      "label": "analyst_bull_r1",
+      "output_issues": {},
+      "output_tokens": 1095,
+      "parse_errors": 0,
+      "total_tokens": 24064
+    },
+    {
+      "avg_duration_ms": 7989.5,
+      "avg_input_tokens": 3085.2,
+      "avg_output_tokens": 404.0,
+      "calls": 4,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 4,
+      "input_issues": {},
+      "input_tokens": 12341,
+      "label": "analyst_bear_r2",
+      "output_issues": {},
+      "output_tokens": 1616,
+      "parse_errors": 0,
+      "total_tokens": 13957
+    },
+    {
+      "avg_duration_ms": 8914.0,
+      "avg_input_tokens": 2963.2,
+      "avg_output_tokens": 421.2,
+      "calls": 4,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 4,
+      "input_issues": {},
+      "input_tokens": 11853,
+      "label": "analyst_neutral_r2",
+      "output_issues": {},
+      "output_tokens": 1685,
+      "parse_errors": 0,
+      "total_tokens": 13538
+    },
+    {
+      "avg_duration_ms": 8053.0,
+      "avg_input_tokens": 2847.2,
+      "avg_output_tokens": 379.5,
+      "calls": 4,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 4,
+      "input_issues": {},
+      "input_tokens": 11389,
+      "label": "analyst_bull_r2",
+      "output_issues": {},
+      "output_tokens": 1518,
+      "parse_errors": 0,
+      "total_tokens": 12907
+    },
+    {
+      "avg_duration_ms": 7482.0,
+      "avg_input_tokens": 1700.5,
+      "avg_output_tokens": 352.7,
+      "calls": 6,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 6,
+      "input_issues": {},
+      "input_tokens": 10203,
+      "label": "hold_advisor_triage",
+      "output_issues": {},
+      "output_tokens": 2116,
+      "parse_errors": 0,
+      "total_tokens": 12319
+    },
+    {
+      "avg_duration_ms": 49702.0,
+      "avg_input_tokens": 8120.0,
+      "avg_output_tokens": 2500.0,
+      "calls": 1,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 1,
+      "input_issues": {
+        "prompt_input_tokens_ge_8000": 1
+      },
+      "input_tokens": 8120,
+      "label": "postmortem",
+      "output_issues": {
+        "output_tokens_ge_2000": 1,
+        "response_fenced_json": 1,
+        "response_has_preamble_or_wrapper": 1,
+        "response_not_strict_json": 1,
+        "slow_call_30s": 1
+      },
+      "output_tokens": 2500,
+      "parse_errors": 0,
+      "total_tokens": 10620
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1443.3,
+      "avg_output_tokens": 300.7,
+      "calls": 3,
+      "duration_missing_calls": 3,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 4330,
+      "label": "tune_30min",
+      "output_issues": {},
+      "output_tokens": 902,
+      "parse_errors": 0,
+      "total_tokens": 5232
+    },
+    {
+      "avg_duration_ms": 6039.0,
+      "avg_input_tokens": 1695.5,
+      "avg_output_tokens": 262.5,
+      "calls": 2,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 2,
+      "input_issues": {},
+      "input_tokens": 3391,
+      "label": "hold_advisor_challenge",
+      "output_issues": {},
+      "output_tokens": 525,
+      "parse_errors": 0,
+      "total_tokens": 3916
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1529.5,
+      "avg_output_tokens": 355.5,
+      "calls": 2,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 3059,
+      "label": "tune_120min",
+      "output_issues": {},
+      "output_tokens": 711,
+      "parse_errors": 0,
+      "total_tokens": 3770
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1530.0,
+      "avg_output_tokens": 339.5,
+      "calls": 2,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 3060,
+      "label": "tune_150min",
+      "output_issues": {},
+      "output_tokens": 679,
+      "parse_errors": 0,
+      "total_tokens": 3739
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1511.0,
+      "avg_output_tokens": 284.5,
+      "calls": 2,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 3022,
+      "label": "tune_90min",
+      "output_issues": {},
+      "output_tokens": 569,
+      "parse_errors": 0,
+      "total_tokens": 3591
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1511.0,
+      "avg_output_tokens": 265.0,
+      "calls": 2,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 3022,
+      "label": "tune_60min",
+      "output_issues": {},
+      "output_tokens": 530,
+      "parse_errors": 0,
+      "total_tokens": 3552
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1404.0,
+      "avg_output_tokens": 316.0,
+      "calls": 2,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 2808,
+      "label": "param_tuner",
+      "output_issues": {},
+      "output_tokens": 632,
+      "parse_errors": 0,
+      "total_tokens": 3440
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1528.0,
+      "avg_output_tokens": 337.0,
+      "calls": 1,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 1528,
+      "label": "tune_210min",
+      "output_issues": {},
+      "output_tokens": 337,
+      "parse_errors": 0,
+      "total_tokens": 1865
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1528.0,
+      "avg_output_tokens": 305.0,
+      "calls": 1,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 1528,
+      "label": "tune_180min",
+      "output_issues": {},
+      "output_tokens": 305,
+      "parse_errors": 0,
+      "total_tokens": 1833
+    }
+  ],
+  "by_model": {
+    "claude-sonnet-4-6": 62
+  },
+  "by_time_bucket": [
+    {
+      "avg_duration_ms": 37087.0,
+      "avg_input_tokens": 8931.7,
+      "avg_output_tokens": 1355.7,
+      "bucket_start": "2026-06-05T08:30+09:00",
+      "calls": 3,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 2,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 2
+      },
+      "input_tokens": 26795,
+      "output_issues": {
+        "response_fenced_json": 2,
+        "response_has_preamble_or_wrapper": 2,
+        "response_not_strict_json": 2,
+        "slow_call_30s": 2
+      },
+      "output_tokens": 4067,
+      "parse_errors": 0,
+      "top_labels": {
+        "select_tickers": 2,
+        "tune_30min": 1
+      },
+      "total_tokens": 30862
+    },
+    {
+      "avg_duration_ms": 9690.0,
+      "avg_input_tokens": 4964.6,
+      "avg_output_tokens": 458.8,
+      "bucket_start": "2026-06-05T09:00+09:00",
+      "calls": 8,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 7,
+      "input_issues": {
+        "prompt_input_tokens_ge_8000": 1
+      },
+      "input_tokens": 39717,
+      "output_issues": {},
+      "output_tokens": 3670,
+      "parse_errors": 0,
+      "top_labels": {
+        "analyst_bear_r1": 1,
+        "analyst_bear_r2": 1,
+        "analyst_bull_r1": 1,
+        "analyst_bull_r2": 1,
+        "analyst_neutral_r1": 1
+      },
+      "total_tokens": 43387
+    },
+    {
+      "avg_duration_ms": 22303.0,
+      "avg_input_tokens": 6865.0,
+      "avg_output_tokens": 940.0,
+      "bucket_start": "2026-06-05T09:30+09:00",
+      "calls": 2,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 1,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 13730,
+      "output_issues": {},
+      "output_tokens": 1880,
+      "parse_errors": 0,
+      "top_labels": {
+        "select_tickers": 1,
+        "tune_90min": 1
+      },
+      "total_tokens": 15610
+    },
+    {
+      "avg_duration_ms": 12351.7,
+      "avg_input_tokens": 3836.0,
+      "avg_output_tokens": 634.2,
+      "bucket_start": "2026-06-05T10:00+09:00",
+      "calls": 4,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 3,
+      "input_issues": {
+        "prompt_input_tokens_ge_8000": 1
+      },
+      "input_tokens": 15344,
+      "output_issues": {},
+      "output_tokens": 2537,
+      "parse_errors": 0,
+      "top_labels": {
+        "hold_advisor_challenge": 1,
+        "hold_advisor_triage": 1,
+        "select_tickers": 1,
+        "tune_120min": 1
+      },
+      "total_tokens": 17881
+    },
+    {
+      "avg_duration_ms": 14564.5,
+      "avg_input_tokens": 5136.0,
+      "avg_output_tokens": 747.3,
+      "bucket_start": "2026-06-05T10:30+09:00",
+      "calls": 3,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 2,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 15408,
+      "output_issues": {},
+      "output_tokens": 2242,
+      "parse_errors": 0,
+      "top_labels": {
+        "hold_advisor_triage": 1,
+        "select_tickers": 1,
+        "tune_150min": 1
+      },
+      "total_tokens": 17650
+    },
+    {
+      "avg_duration_ms": 7190.5,
+      "avg_input_tokens": 1630.7,
+      "avg_output_tokens": 343.0,
+      "bucket_start": "2026-06-05T11:00+09:00",
+      "calls": 3,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 2,
+      "input_issues": {},
+      "input_tokens": 4892,
+      "output_issues": {},
+      "output_tokens": 1029,
+      "parse_errors": 0,
+      "top_labels": {
+        "hold_advisor_triage": 2,
+        "tune_180min": 1
+      },
+      "total_tokens": 5921
+    },
+    {
+      "avg_duration_ms": 10101.8,
+      "avg_input_tokens": 3809.0,
+      "avg_output_tokens": 536.4,
+      "bucket_start": "2026-06-05T11:30+09:00",
+      "calls": 5,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 4,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1
+      },
+      "input_tokens": 19045,
+      "output_issues": {},
+      "output_tokens": 2682,
+      "parse_errors": 0,
+      "top_labels": {
+        "hold_advisor_challenge": 1,
+        "hold_advisor_triage": 2,
+        "select_tickers": 1,
+        "tune_210min": 1
+      },
+      "total_tokens": 21727
+    },
+    {
+      "avg_duration_ms": 10834.4,
+      "avg_input_tokens": 5056.1,
+      "avg_output_tokens": 509.6,
+      "bucket_start": "2026-06-05T12:30+09:00",
+      "calls": 16,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 14,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 2,
+        "prompt_mojibake_hangul_compat_jamo": 6
+      },
+      "input_tokens": 80897,
+      "output_issues": {},
+      "output_tokens": 8153,
+      "parse_errors": 0,
+      "top_labels": {
+        "analyst_bear_r1": 2,
+        "analyst_bear_r2": 2,
+        "analyst_bull_r1": 2,
+        "analyst_bull_r2": 2,
+        "analyst_neutral_r1": 2
+      },
+      "total_tokens": 89050
+    },
+    {
+      "avg_duration_ms": 0.0,
+      "avg_input_tokens": 1532.0,
+      "avg_output_tokens": 261.0,
+      "bucket_start": "2026-06-05T13:00+09:00",
+      "calls": 1,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 0,
+      "input_issues": {},
+      "input_tokens": 1532,
+      "output_issues": {},
+      "output_tokens": 261,
+      "parse_errors": 0,
+      "top_labels": {
+        "tune_60min": 1
+      },
+      "total_tokens": 1793
+    },
+    {
+      "avg_duration_ms": 22269.0,
+      "avg_input_tokens": 6184.5,
+      "avg_output_tokens": 978.5,
+      "bucket_start": "2026-06-05T13:30+09:00",
+      "calls": 2,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 1,
+      "input_issues": {
+        "prompt_input_tokens_ge_8000": 1
+      },
+      "input_tokens": 12369,
+      "output_issues": {},
+      "output_tokens": 1957,
+      "parse_errors": 0,
+      "top_labels": {
+        "select_tickers": 1,
+        "tune_90min": 1
+      },
+      "total_tokens": 14326
+    },
+    {
+      "avg_duration_ms": 20946.0,
+      "avg_input_tokens": 6104.0,
+      "avg_output_tokens": 966.5,
+      "bucket_start": "2026-06-05T14:30+09:00",
+      "calls": 2,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 1,
+      "input_issues": {
+        "prompt_input_tokens_ge_8000": 1
+      },
+      "input_tokens": 12208,
+      "output_issues": {},
+      "output_tokens": 1933,
+      "parse_errors": 0,
+      "top_labels": {
+        "select_tickers": 1,
+        "tune_120min": 1
+      },
+      "total_tokens": 14141
+    },
+    {
+      "avg_duration_ms": 21010.5,
+      "avg_input_tokens": 6326.0,
+      "avg_output_tokens": 945.5,
+      "bucket_start": "2026-06-05T15:00+09:00",
+      "calls": 4,
+      "duration_missing_calls": 2,
+      "duration_observed_calls": 2,
+      "input_issues": {
+        "prompt_input_tokens_ge_8000": 2
+      },
+      "input_tokens": 25304,
+      "output_issues": {},
+      "output_tokens": 3782,
+      "parse_errors": 0,
+      "top_labels": {
+        "param_tuner": 1,
+        "select_tickers": 2,
+        "tune_150min": 1
+      },
+      "total_tokens": 29086
+    },
+    {
+      "avg_duration_ms": 10353.3,
+      "avg_input_tokens": 5055.2,
+      "avg_output_tokens": 480.5,
+      "bucket_start": "2026-06-05T15:30+09:00",
+      "calls": 8,
+      "duration_missing_calls": 1,
+      "duration_observed_calls": 7,
+      "input_issues": {
+        "prompt_input_tokens_ge_12000": 1,
+        "prompt_mojibake_hangul_compat_jamo": 3
+      },
+      "input_tokens": 40442,
+      "output_issues": {},
+      "output_tokens": 3844,
+      "parse_errors": 0,
+      "top_labels": {
+        "analyst_bear_r1": 1,
+        "analyst_bear_r2": 1,
+        "analyst_bull_r1": 1,
+        "analyst_bull_r2": 1,
+        "analyst_neutral_r1": 1
+      },
+      "total_tokens": 44286
+    },
+    {
+      "avg_duration_ms": 49702.0,
+      "avg_input_tokens": 8120.0,
+      "avg_output_tokens": 2500.0,
+      "bucket_start": "2026-06-05T16:00+09:00",
+      "calls": 1,
+      "duration_missing_calls": 0,
+      "duration_observed_calls": 1,
+      "input_issues": {
+        "prompt_input_tokens_ge_8000": 1
+      },
+      "input_tokens": 8120,
+      "output_issues": {
+        "output_tokens_ge_2000": 1,
+        "response_fenced_json": 1,
+        "response_has_preamble_or_wrapper": 1,
+        "response_not_strict_json": 1,
+        "slow_call_30s": 1
+      },
+      "output_tokens": 2500,
+      "parse_errors": 0,
+      "top_labels": {
+        "postmortem": 1
+      },
+      "total_tokens": 10620
+    }
+  ],
+  "calls": 62,
+  "duration_missing_calls": 15,
+  "duration_observed_calls": 47,
+  "end_at": "2026-06-06T00:00:00+09:00",
+  "generated_at": "2026-06-07T02:45:22+09:00",
+  "input_issue_counts": {
+    "prompt_input_tokens_ge_12000": 8,
+    "prompt_input_tokens_ge_8000": 7,
+    "prompt_mojibake_hangul_compat_jamo": 9
+  },
+  "input_tokens": 315803,
+  "issue_samples": [
+    {
+      "duration_ms": 8352,
+      "input_issues": [
+        "prompt_mojibake_hangul_compat_jamo"
+      ],
+      "input_tokens": 5798,
+      "label": "analyst_bear_r1",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 318,
+      "path": "logs\\raw_calls\\20260605_KR_analyst_bear_r1_123053556241_2113d4f399.json",
+      "timestamp": "2026-06-05T12:30:53+09:00"
+    },
+    {
+      "duration_ms": 7636,
+      "input_issues": [
+        "prompt_mojibake_hangul_compat_jamo"
+      ],
+      "input_tokens": 6129,
+      "label": "analyst_bear_r1",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 287,
+      "path": "logs\\raw_calls\\20260605_KR_analyst_bear_r1_124053076398_f124bb3397.json",
+      "timestamp": "2026-06-05T12:40:53+09:00"
+    },
+    {
+      "duration_ms": 9428,
+      "input_issues": [
+        "prompt_mojibake_hangul_compat_jamo"
+      ],
+      "input_tokens": 6131,
+      "label": "analyst_bear_r1",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 325,
+      "path": "logs\\raw_calls\\20260605_KR_analyst_bear_r1_155415189092_76c015529e.json",
+      "timestamp": "2026-06-05T15:54:15+09:00"
+    },
+    {
+      "duration_ms": 8424,
+      "input_issues": [
+        "prompt_mojibake_hangul_compat_jamo"
+      ],
+      "input_tokens": 5484,
+      "label": "analyst_bull_r1",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 302,
+      "path": "logs\\raw_calls\\20260605_KR_analyst_bull_r1_123043673914_91a857b1c7.json",
+      "timestamp": "2026-06-05T12:30:43+09:00"
+    },
+    {
+      "duration_ms": 7734,
+      "input_issues": [
+        "prompt_mojibake_hangul_compat_jamo"
+      ],
+      "input_tokens": 5815,
+      "label": "analyst_bull_r1",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 264,
+      "path": "logs\\raw_calls\\20260605_KR_analyst_bull_r1_124043908356_561fcb8068.json",
+      "timestamp": "2026-06-05T12:40:43+09:00"
+    },
+    {
+      "duration_ms": 8573,
+      "input_issues": [
+        "prompt_mojibake_hangul_compat_jamo"
+      ],
+      "input_tokens": 5817,
+      "label": "analyst_bull_r1",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 302,
+      "path": "logs\\raw_calls\\20260605_KR_analyst_bull_r1_155404231546_d1450163e0.json",
+      "timestamp": "2026-06-05T15:54:04+09:00"
+    },
+    {
+      "duration_ms": 7869,
+      "input_issues": [
+        "prompt_mojibake_hangul_compat_jamo"
+      ],
+      "input_tokens": 5605,
+      "label": "analyst_neutral_r1",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 287,
+      "path": "logs\\raw_calls\\20260605_KR_analyst_neutral_r1_123102957068_47dec24594.json",
+      "timestamp": "2026-06-05T12:31:02+09:00"
+    },
+    {
+      "duration_ms": 9446,
+      "input_issues": [
+        "prompt_mojibake_hangul_compat_jamo"
+      ],
+      "input_tokens": 5936,
+      "label": "analyst_neutral_r1",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 342,
+      "path": "logs\\raw_calls\\20260605_KR_analyst_neutral_r1_124104063737_7c2faf76a9.json",
+      "timestamp": "2026-06-05T12:41:04+09:00"
+    },
+    {
+      "duration_ms": 8374,
+      "input_issues": [
+        "prompt_mojibake_hangul_compat_jamo"
+      ],
+      "input_tokens": 5938,
+      "label": "analyst_neutral_r1",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 302,
+      "path": "logs\\raw_calls\\20260605_KR_analyst_neutral_r1_155425095668_cf599e2c3a.json",
+      "timestamp": "2026-06-05T15:54:25+09:00"
+    },
+    {
+      "duration_ms": 49702,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 8120,
+      "label": "postmortem",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "output_tokens_ge_2000",
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json",
+        "slow_call_30s"
+      ],
+      "output_tokens": 2500,
+      "path": "logs\\raw_calls\\20260605_KR_postmortem_postmortem_KR_2026-06-05_dfbb273657.json",
+      "timestamp": "2026-06-05T16:00:56+09:00"
+    },
+    {
+      "duration_ms": 39704,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12651,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json",
+        "slow_call_30s"
+      ],
+      "output_tokens": 1985,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_085357394862_cab877f988.json",
+      "timestamp": "2026-06-05T08:53:57+09:00"
+    },
+    {
+      "duration_ms": 34470,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12878,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [
+        "response_fenced_json",
+        "response_has_preamble_or_wrapper",
+        "response_not_strict_json",
+        "slow_call_30s"
+      ],
+      "output_tokens": 1774,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_085457385699_e418ddce34.json",
+      "timestamp": "2026-06-05T08:54:57+09:00"
+    },
+    {
+      "duration_ms": 20016,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 11773,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1473,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_090507314511_07e0f86f67.json",
+      "timestamp": "2026-06-05T09:05:07+09:00"
+    },
+    {
+      "duration_ms": 22303,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12240,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1622,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_095549637979_2f5934abb6.json",
+      "timestamp": "2026-06-05T09:55:49+09:00"
+    },
+    {
+      "duration_ms": 22738,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 10491,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1518,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_102706645892_f973a4349f.json",
+      "timestamp": "2026-06-05T10:27:06+09:00"
+    },
+    {
+      "duration_ms": 20827,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12187,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1548,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_105638898810_44012b905d.json",
+      "timestamp": "2026-06-05T10:56:38+09:00"
+    },
+    {
+      "duration_ms": 20437,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12306,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1437,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_115730453751_f05a8672a3.json",
+      "timestamp": "2026-06-05T11:57:30+09:00"
+    },
+    {
+      "duration_ms": 29376,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12427,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1682,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_123230283796_1d7bfa1763.json",
+      "timestamp": "2026-06-05T12:32:30+09:00"
+    },
+    {
+      "duration_ms": 21767,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12414,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1476,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_125841147439_a0e0f5ca94.json",
+      "timestamp": "2026-06-05T12:58:41+09:00"
+    },
+    {
+      "duration_ms": 22269,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 10837,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1646,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_135934325366_b6e02185a0.json",
+      "timestamp": "2026-06-05T13:59:34+09:00"
+    },
+    {
+      "duration_ms": 20946,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 10676,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1566,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_143051725424_8d84940a27.json",
+      "timestamp": "2026-06-05T14:30:51+09:00"
+    },
+    {
+      "duration_ms": 19511,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 10614,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1502,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_150025142081_fd06a596b5.json",
+      "timestamp": "2026-06-05T15:00:25+09:00"
+    },
+    {
+      "duration_ms": 22510,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 11754,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1628,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_152442388966_a2dd8fcffa.json",
+      "timestamp": "2026-06-05T15:24:42+09:00"
+    },
+    {
+      "duration_ms": 20908,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12254,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_issues": [],
+      "output_tokens": 1485,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_155540419960_52df314ad3.json",
+      "timestamp": "2026-06-05T15:55:40+09:00"
+    }
+  ],
+  "market": "KR",
+  "output_issue_counts": {
+    "output_tokens_ge_2000": 1,
+    "response_fenced_json": 3,
+    "response_has_preamble_or_wrapper": 3,
+    "response_not_strict_json": 3,
+    "slow_call_30s": 3
+  },
+  "output_tokens": 40537,
+  "parse_errors": 0,
+  "prompt_warning_samples": [
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": false,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 30,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12878,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1774,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_085457385699_e418ddce34.json",
+      "prompt_chars": 28964,
+      "timestamp": "2026-06-05T08:54:57+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 13914,
+          "lines": 38,
+          "section": "header"
+        },
+        {
+          "chars": 4908,
+          "lines": 78,
+          "section": "hard_soft_boundary"
+        },
+        {
+          "chars": 3451,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2512,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 2127,
+          "lines": 29,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 699,
+          "lines": 9,
+          "section": "selection_feedback"
+        },
+        {
+          "chars": 300,
+          "lines": 14,
+          "section": "runtime_evidence"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": false,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 30,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12651,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1985,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_085357394862_cab877f988.json",
+      "prompt_chars": 28485,
+      "timestamp": "2026-06-05T08:53:57+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 13901,
+          "lines": 38,
+          "section": "header"
+        },
+        {
+          "chars": 4866,
+          "lines": 78,
+          "section": "hard_soft_boundary"
+        },
+        {
+          "chars": 3438,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2127,
+          "lines": 29,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 2101,
+          "lines": 38,
+          "section": "digest_news"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 699,
+          "lines": 9,
+          "section": "selection_feedback"
+        },
+        {
+          "chars": 300,
+          "lines": 14,
+          "section": "runtime_evidence"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 16,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12427,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1682,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_123230283796_1d7bfa1763.json",
+      "prompt_chars": 26705,
+      "timestamp": "2026-06-05T12:32:30+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14187,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3543,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2527,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1569,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 1131,
+          "lines": 16,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 16,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12414,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1476,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_125841147439_a0e0f5ca94.json",
+      "prompt_chars": 26685,
+      "timestamp": "2026-06-05T12:58:41+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14267,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3443,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2527,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1569,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 1131,
+          "lines": 16,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 22,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12306,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1437,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_115730453751_f05a8672a3.json",
+      "prompt_chars": 26469,
+      "timestamp": "2026-06-05T11:57:30+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14020,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3493,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2512,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1569,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 1131,
+          "lines": 16,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12254,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1485,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_155540419960_52df314ad3.json",
+      "prompt_chars": 26942,
+      "timestamp": "2026-06-05T15:55:40+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 14446,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3525,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2527,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1569,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 1131,
+          "lines": 16,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12240,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1622,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_095549637979_2f5934abb6.json",
+      "prompt_chars": 26333,
+      "timestamp": "2026-06-05T09:55:49+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 13887,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3490,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2512,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1569,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 1131,
+          "lines": 16,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_12000"
+      ],
+      "input_tokens": 12187,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1548,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_105638898810_44012b905d.json",
+      "prompt_chars": 26239,
+      "timestamp": "2026-06-05T10:56:38+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 13863,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3420,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2512,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1569,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 1131,
+          "lines": 16,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 30,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 11773,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1473,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_090507314511_07e0f86f67.json",
+      "prompt_chars": 26318,
+      "timestamp": "2026-06-05T09:05:07+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 13852,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3508,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2512,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1569,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 1131,
+          "lines": 16,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 4,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 11754,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1628,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_152442388966_a2dd8fcffa.json",
+      "prompt_chars": 26030,
+      "timestamp": "2026-06-05T15:24:42+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 13555,
+          "lines": 34,
+          "section": "candidates"
+        },
+        {
+          "chars": 3500,
+          "lines": 2,
+          "section": "runtime_evidence"
+        },
+        {
+          "chars": 2527,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1569,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 1131,
+          "lines": 16,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 5,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 10837,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1646,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_135934325366_b6e02185a0.json",
+      "prompt_chars": 22784,
+      "timestamp": "2026-06-05T13:59:34+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 13881,
+          "lines": 35,
+          "section": "candidates"
+        },
+        {
+          "chars": 2527,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1569,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 1131,
+          "lines": 16,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        },
+        {
+          "chars": 699,
+          "lines": 9,
+          "section": "selection_feedback"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 5,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 10676,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1566,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_143051725424_8d84940a27.json",
+      "prompt_chars": 22538,
+      "timestamp": "2026-06-05T14:30:51+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 13635,
+          "lines": 35,
+          "section": "candidates"
+        },
+        {
+          "chars": 2527,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1569,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 1131,
+          "lines": 16,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        },
+        {
+          "chars": 699,
+          "lines": 9,
+          "section": "selection_feedback"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 5,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 10614,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1502,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_150025142081_fd06a596b5.json",
+      "prompt_chars": 22529,
+      "timestamp": "2026-06-05T15:00:25+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 13626,
+          "lines": 35,
+          "section": "candidates"
+        },
+        {
+          "chars": 2527,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1569,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 1131,
+          "lines": 16,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        },
+        {
+          "chars": 699,
+          "lines": 9,
+          "section": "selection_feedback"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 199,
+      "active_lesson_count": 1,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": true,
+      "evidence_omitted_count": 5,
+      "evidence_pack_count": 5,
+      "evidence_requested_count": 26,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 10491,
+      "label": "select_tickers",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 1518,
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_102706645892_f973a4349f.json",
+      "prompt_chars": 22368,
+      "timestamp": "2026-06-05T10:27:06+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 13484,
+          "lines": 35,
+          "section": "candidates"
+        },
+        {
+          "chars": 2512,
+          "lines": 42,
+          "section": "digest_news"
+        },
+        {
+          "chars": 1569,
+          "lines": 23,
+          "section": "output_contract"
+        },
+        {
+          "chars": 1131,
+          "lines": 16,
+          "section": "rules"
+        },
+        {
+          "chars": 845,
+          "lines": 3,
+          "section": "tuning_contract"
+        },
+        {
+          "chars": 780,
+          "lines": 11,
+          "section": "decision_contract"
+        },
+        {
+          "chars": 718,
+          "lines": 6,
+          "section": "hard_soft_boundary"
+        },
+        {
+          "chars": 699,
+          "lines": 9,
+          "section": "selection_feedback"
+        }
+      ]
+    },
+    {
+      "active_lesson_chars": 0,
+      "active_lesson_count": 0,
+      "candidate_lines": 0,
+      "compact_evidence_pack_enabled": false,
+      "compact_schema_enabled": false,
+      "evidence_omitted_count": 0,
+      "evidence_pack_count": 0,
+      "evidence_requested_count": 0,
+      "input_issues": [
+        "prompt_input_tokens_ge_8000"
+      ],
+      "input_tokens": 8120,
+      "label": "postmortem",
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 2500,
+      "path": "logs\\raw_calls\\20260605_KR_postmortem_postmortem_KR_2026-06-05_dfbb273657.json",
+      "prompt_chars": 11978,
+      "timestamp": "2026-06-05T16:00:56+09:00",
+      "top_prompt_sections": [
+        {
+          "chars": 11978,
+          "lines": 198,
+          "section": "header"
+        }
+      ]
+    }
+  ],
+  "raw_dir": "E:\\code\\claudetrade\\logs\\raw_calls",
+  "recommendations": [
+    {
+      "area": "input_quality",
+      "priority": "P1",
+      "recommendation": "Fix the prompt text encoding path before changing trading policy; garbled Korean weakens evidence interpretation and review rationale."
+    },
+    {
+      "area": "output_contract",
+      "priority": "P1",
+      "recommendation": "Tighten JSON-only enforcement for affected labels or route non-strict responses through a bounded retry; parser recovery should remain fail-safe."
+    },
+    {
+      "area": "latency_cost",
+      "priority": "P2",
+      "recommendation": "Separate timeout-prone labels from normal review flow and keep cache/cooldown guards active for repeated HOLD reviews."
+    },
+    {
+      "area": "token_cost",
+      "priority": "P2",
+      "recommendation": "Reduce high-token prompts by trimming repeated calibration blocks and limiting evidence pack rows before model invocation; review labels with 8k+ input tokens even when the session average looks acceptable."
+    }
+  ],
+  "slow_call_samples": [
+    {
+      "duration_ms": 49702,
+      "label": "postmortem",
+      "path": "logs\\raw_calls\\20260605_KR_postmortem_postmortem_KR_2026-06-05_dfbb273657.json",
+      "timestamp": "2026-06-05T16:00:56+09:00"
+    },
+    {
+      "duration_ms": 39704,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_085357394862_cab877f988.json",
+      "timestamp": "2026-06-05T08:53:57+09:00"
+    },
+    {
+      "duration_ms": 34470,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_085457385699_e418ddce34.json",
+      "timestamp": "2026-06-05T08:54:57+09:00"
+    },
+    {
+      "duration_ms": 20016,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_090507314511_07e0f86f67.json",
+      "timestamp": "2026-06-05T09:05:07+09:00"
+    },
+    {
+      "duration_ms": 22303,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_095549637979_2f5934abb6.json",
+      "timestamp": "2026-06-05T09:55:49+09:00"
+    },
+    {
+      "duration_ms": 22738,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_102706645892_f973a4349f.json",
+      "timestamp": "2026-06-05T10:27:06+09:00"
+    },
+    {
+      "duration_ms": 20827,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_105638898810_44012b905d.json",
+      "timestamp": "2026-06-05T10:56:38+09:00"
+    },
+    {
+      "duration_ms": 20437,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_115730453751_f05a8672a3.json",
+      "timestamp": "2026-06-05T11:57:30+09:00"
+    },
+    {
+      "duration_ms": 29376,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_123230283796_1d7bfa1763.json",
+      "timestamp": "2026-06-05T12:32:30+09:00"
+    },
+    {
+      "duration_ms": 21767,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_125841147439_a0e0f5ca94.json",
+      "timestamp": "2026-06-05T12:58:41+09:00"
+    },
+    {
+      "duration_ms": 22269,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_135934325366_b6e02185a0.json",
+      "timestamp": "2026-06-05T13:59:34+09:00"
+    },
+    {
+      "duration_ms": 20946,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_143051725424_8d84940a27.json",
+      "timestamp": "2026-06-05T14:30:51+09:00"
+    },
+    {
+      "duration_ms": 19511,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_150025142081_fd06a596b5.json",
+      "timestamp": "2026-06-05T15:00:25+09:00"
+    },
+    {
+      "duration_ms": 22510,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_152442388966_a2dd8fcffa.json",
+      "timestamp": "2026-06-05T15:24:42+09:00"
+    },
+    {
+      "duration_ms": 20908,
+      "label": "select_tickers",
+      "path": "logs\\raw_calls\\20260605_KR_select_tickers_155540419960_52df314ad3.json",
+      "timestamp": "2026-06-05T15:55:40+09:00"
+    }
+  ],
+  "start_at": "2026-06-05T00:00:00+09:00",
+  "total_tokens": 356340
+}

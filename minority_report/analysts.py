@@ -677,6 +677,17 @@ def _candidate_execution_hint(candidate: dict) -> str:
         parts.append(f"ep={ep_bucket}")
     if fit_strategy:
         parts.append(f"fit={fit_strategy}")
+    feasibility = candidate.get("strategy_feasibility")
+    if isinstance(feasibility, dict) and feasibility:
+        feas_strategy = fit_strategy if fit_strategy in feasibility else ""
+        if not feas_strategy and len(feasibility) == 1:
+            feas_strategy = next(iter(feasibility.keys()))
+        if feas_strategy and isinstance(feasibility.get(feas_strategy), dict):
+            detail = feasibility.get(feas_strategy) or {}
+            ceiling = str(detail.get("action_ceiling") or detail.get("ceiling") or "WATCH").strip().upper()
+            reason = str(detail.get("reason") or detail.get("state") or "").strip()
+            if ceiling or reason:
+                parts.append(f"feas={feas_strategy}:{ceiling}:{reason}")
     selection_bias = str(candidate.get("selection_bias", "") or "").strip()
     if selection_bias:
         parts.append(f"bias={selection_bias}")
@@ -2495,6 +2506,7 @@ execution_phase: {execution_phase or 'unspecified'}
 - preopen_pin=HARD confirm=required_before_trade_ready 후보는 anchor 대비 현재가 안정, OR/전략 신호, 개장 후 품질 확인 전에는 trade_ready로 올리지 마세요.
 - Use intraday context session_phase/active_strategies/runtime gates to judge execution feasibility, not just strength.
 - Treat exec= hints (or/atr/ep/fit/tclose/blackout) as real execution constraints. Strong names with poor exec hints should stay watch_only.
+- Treat exec= feas=<strategy>:<ceiling>:<reason> as an execution ceiling. Do not make trade_ready above the listed ceiling for the selected strategy.
 - Use recent selection feedback to calibrate trade_ready aggressiveness.
 - Recent selection feedback is historical only. Do not promote a ticker to trade_ready solely because it moved after watch_only earlier in the same session.
 - Tuning feedback is a calibration contract only. It may tighten soft gates or add similar-failure cautions, but it cannot create BUY_READY without current live evidence.
@@ -2582,6 +2594,7 @@ Rules:
 {evidence_rule_block}
 - Choose only from supplied candidates.
 - Use live execution context and exec= hints as constraints.
+- Treat exec= feas=<strategy>:<ceiling>:<reason> as an execution ceiling for trade_ready decisions.
 - Strong names with poor execution hints should remain WATCH.
 - Use recent selection feedback to calibrate trade_ready aggressiveness.
 - Recent feedback and tuning feedback are calibration only, not permission to chase.
@@ -2616,6 +2629,20 @@ Rules:
         enriched["_prompt_pool_hard_cap"] = prompt_pool_meta.get("hard_cap")
         enriched["_prompt_pool_metrics"] = dict(prompt_pool_meta.get("metrics") or {})
         enriched["_final_prompt_pool"] = list(prompt_pool_meta.get("prompt_pool") or prompt_candidates or [])
+        feasibility_by_ticker = {}
+        for row in enriched["_final_prompt_pool"]:
+            if not isinstance(row, dict):
+                continue
+            ticker_key = str(row.get("ticker") or "").strip()
+            if not ticker_key:
+                continue
+            if str(market or "").upper() == "US":
+                ticker_key = ticker_key.upper()
+            pack = row.get("strategy_feasibility")
+            if isinstance(pack, dict) and pack:
+                feasibility_by_ticker[ticker_key] = dict(pack)
+        if feasibility_by_ticker:
+            enriched["_strategy_feasibility_by_ticker"] = feasibility_by_ticker
         enriched["_excluded_from_prompt"] = list(prompt_pool_meta.get("excluded_from_prompt") or [])
         enriched["_safe_empty_prompt_pool"] = bool(prompt_pool_meta.get("safe_empty_prompt_pool"))
         enriched["_prompt_pool_empty_reason"] = str(prompt_pool_meta.get("prompt_pool_empty_reason") or "")

@@ -280,6 +280,83 @@ class CandidateDiscoveryOverlayTests(unittest.TestCase):
         self.assertEqual(out_meta["_discovery_reject_counts"]["low_liquidity"], 1)
         self.assertEqual(out_meta["_discovery_reject_counts"]["us_extreme_chase"], 1)
 
+    def test_provider_category_candidate_recovers_bucket_signal(self) -> None:
+        meta = {
+            "excluded_from_prompt": [
+                {
+                    "ticker": "CB",
+                    "reason": "prompt_cap",
+                    "category": "day_gainers",
+                    "price": 100.0,
+                    "volume": 4_000_000,
+                    "change_rate": 3.8,
+                    "vol_ratio": 1.0,
+                    "liquidity_bucket": "mid",
+                    "from_high_pct": -1.0,
+                    "trainer_score_rank": 36,
+                }
+            ]
+        }
+
+        with patch.dict("os.environ", {"DISCOVERY_PROMPT_ENABLED": "true"}, clear=False):
+            rows, out_meta = apply_discovery_overlay([], meta, market="US")
+
+        self.assertEqual([row["ticker"] for row in rows], ["CB"])
+        self.assertTrue(rows[0]["discovery_bucket_classifier_applied"])
+        self.assertEqual(rows[0]["candidate_pool_role"], "DISCOVERY")
+        self.assertIn("near_breakout", rows[0]["discovery_signal_family"])
+        self.assertEqual(out_meta["_discovery_added_tickers"], ["CB"])
+
+    def test_provider_category_liquidity_loser_only_is_not_discovery(self) -> None:
+        meta = {
+            "excluded_from_prompt": [
+                {
+                    "ticker": "FALL",
+                    "reason": "prompt_cap",
+                    "category": "day_losers",
+                    "price": 20.0,
+                    "volume": 20_000_000,
+                    "change_rate": -8.0,
+                    "vol_ratio": 1.0,
+                    "liquidity_bucket": "mid",
+                    "trainer_score_rank": 36,
+                    "trainer_prompt_score": 80.0,
+                    "trainer_candidate_state": "PLAN_B",
+                }
+            ]
+        }
+
+        with patch.dict("os.environ", {"DISCOVERY_PROMPT_ENABLED": "true"}, clear=False):
+            rows, out_meta = apply_discovery_overlay([], meta, market="US")
+
+        self.assertEqual(rows, [])
+        self.assertEqual(out_meta["_discovery_reject_counts"]["us_liquidity_loser_only"], 1)
+
+    def test_bucket_classifier_failure_logs_debug_and_falls_back(self) -> None:
+        meta = {
+            "excluded_from_prompt": [
+                {
+                    "ticker": "CB",
+                    "reason": "prompt_cap",
+                    "category": "day_gainers",
+                    "price": 100.0,
+                    "volume": 4_000_000,
+                    "change_rate": 3.8,
+                    "liquidity_bucket": "mid",
+                    "trainer_score_rank": 36,
+                }
+            ]
+        }
+
+        with patch.dict("os.environ", {"DISCOVERY_PROMPT_ENABLED": "true"}, clear=False), \
+             patch("bot.bucket_classifier.classify_candidate_bucket", side_effect=RuntimeError("boom")), \
+             self.assertLogs("runtime.candidate_discovery_overlay", level="DEBUG") as logs:
+            rows, out_meta = apply_discovery_overlay([], meta, market="US")
+
+        self.assertEqual(rows, [])
+        self.assertEqual(out_meta["_discovery_reject_counts"]["no_useful_signal"], 1)
+        self.assertTrue(any("market=US ticker=CB" in message for message in logs.output))
+
 
 if __name__ == "__main__":
     unittest.main()

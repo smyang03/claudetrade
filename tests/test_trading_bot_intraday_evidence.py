@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
+
 from runtime.intraday_minute_cache import IntradayMinuteCache
 from runtime.post_open_features import append_feature_snapshot_payload
 from trading_bot import KST, TradingBot
@@ -44,6 +46,20 @@ def _candles(prefix: str = "2026-05-13T09") -> list[dict]:
         {"ts": f"{prefix}:04:00", "open": 103, "high": 105, "low": 103, "close": 104, "volume": 100},
         {"ts": f"{prefix}:05:00", "open": 104, "high": 106, "low": 104, "close": 105, "volume": 100},
         {"ts": f"{prefix}:06:00", "open": 105, "high": 107, "low": 105, "close": 107, "volume": 100},
+    ]
+
+
+def _long_candles(prefix: str = "2026-05-13T09") -> list[dict]:
+    return [
+        {
+            "ts": f"{prefix}:{minute:02d}:00",
+            "open": 100 + minute * 0.1,
+            "high": 101 + minute * 0.1,
+            "low": 99 + minute * 0.1,
+            "close": 100 + minute * 0.1,
+            "volume": 1000 + minute,
+        }
+        for minute in range(80)
     ]
 
 
@@ -127,6 +143,29 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertAlmostEqual(features["ret_5m_pct"], 5.0)
         self.assertEqual(bot._last_post_open_features_by_ticker["KR"]["005930"]["data_quality"], "minute_complete")
         self.assertEqual(bot._last_funnel_event[0], "selection_intraday_evidence_coverage")
+
+    def test_annotation_adds_strategy_feasibility_pack(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles())
+        bot.runtime_config.values["KR_PLAN_A_ORP_SIGNAL_ENABLED"] = True
+        bot._market_elapsed_min = lambda _market: 80.0
+        bot._get_ohlcv_cached = lambda ticker, market: pd.DataFrame(_long_candles())  # type: ignore[method-assign]
+
+        rows = TradingBot._annotate_selection_execution_features(
+            bot,
+            "KR",
+            [{"ticker": "005930", "price": 107}],
+            "MILD_BULL",
+            prefetch_intraday_evidence=False,
+        )
+
+        pack = rows[0]["strategy_feasibility"]
+        orp = pack["opening_range_pullback"]
+        self.assertEqual(orp["action_ceiling"], "WATCH")
+        self.assertEqual(orp["reason"], "orp_not_formed_after_window")
+        self.assertEqual(orp["session_date"], "2026-05-13")
+        self.assertEqual(orp["session_phase"], "mid")
+        self.assertTrue(orp["hard_block"])
+        self.assertTrue(orp["evidence_hash"])
 
     def test_minute_complete_feature_updates_or_cache(self) -> None:
         bot = _make_bot(lambda **kwargs: _candles())

@@ -202,6 +202,56 @@ class PathBLegacyRemediationTests(unittest.TestCase):
             self.assertEqual(store.find_path_run("path_prev_unknown")["status"], "ORDER_UNKNOWN")
             self.assertEqual(store.find_path_run("path_prev_filled")["status"], "FILLED")
 
+    def test_report_flags_cross_run_closed_lifecycle_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "events.db"
+            store = EventStore(db_path)
+            store.create_path_run(
+                path_run_id="path_previous",
+                decision_id="dec_nbis",
+                path_type="claude_price",
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-28",
+                ticker="NBIS",
+                status="CLOSED",
+                plan={},
+            )
+            store.create_path_run(
+                path_run_id="path_current",
+                decision_id="dec_nbis",
+                path_type="claude_price",
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-28",
+                ticker="NBIS",
+                status="CLOSED",
+                plan={
+                    "pathb_closed_lifecycle_evidence": {
+                        "path_run_id": "path_previous",
+                        "event_id": 3915,
+                        "execution_id": "0031323229",
+                    },
+                    "exit_execution_id": "0031323229",
+                    "close_reason": "CLOSED_CLAUDE_PRICE_TARGET",
+                },
+            )
+
+            report = build_report(
+                db_path=db_path,
+                mode="live",
+                current_sessions={"KR": "2026-05-29", "US": "2026-05-29"},
+            )
+
+            self.assertEqual(report["cross_run_closed_lifecycle_evidence"]["count"], 1)
+            row = report["cross_run_closed_lifecycle_evidence"]["rows"][0]
+            self.assertEqual(row["path_run_id"], "path_current")
+            self.assertEqual(row["evidence_path_run_id"], "path_previous")
+            self.assertEqual(report["remediation_plan"]["summary"]["cross_run_closed_evidence_items"], 1)
+            candidate = report["remediation_plan"]["cross_run_closed_evidence_candidates"][0]
+            self.assertFalse(candidate["production_write"])
+            self.assertIn("broker_fills", candidate["source_of_truth_required"])
+
 
 if __name__ == "__main__":
     unittest.main()

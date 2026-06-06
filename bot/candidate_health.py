@@ -182,6 +182,66 @@ class CandidateHealthTracker:
             counts[key] = counts.get(key, 0) + 1
         return counts
 
+    def record_strategy_cooldown(
+        self,
+        ticker: Any,
+        strategy: Any,
+        *,
+        reason: str,
+        evidence_hash: str = "",
+        scope: str = "session",
+        now: datetime | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        ticker_key = normalize_ticker(self.market, ticker)
+        strategy_key = _strategy_key(strategy)
+        reason_key = str(reason or "").strip()
+        if not ticker_key or not strategy_key or not reason_key:
+            return {}
+
+        ts = (now or datetime.now()).isoformat(timespec="seconds")
+        rec = self._record(ticker_key)
+        cooldowns = rec.setdefault("strategy_cooldowns", {})
+        if not isinstance(cooldowns, dict):
+            cooldowns = {}
+            rec["strategy_cooldowns"] = cooldowns
+        existing = cooldowns.get(strategy_key)
+        if not isinstance(existing, dict):
+            existing = {}
+        entry = {
+            "strategy": strategy_key,
+            "reason": reason_key,
+            "scope": str(scope or "session"),
+            "evidence_hash": str(evidence_hash or ""),
+            "first_at": str(existing.get("first_at") or ts),
+            "last_at": ts,
+            "count": int(existing.get("count") or 0) + 1,
+        }
+        if payload:
+            entry["payload"] = dict(payload)
+        cooldowns[strategy_key] = entry
+        rec["last_seen_at"] = ts
+        rec["last_status"] = "STRATEGY_COOLDOWN"
+        self.data["updated_at"] = ts
+        self.save()
+        return dict(entry)
+
+    def strategy_cooldown_for(self, ticker: Any, strategy: Any) -> dict[str, Any]:
+        ticker_key = normalize_ticker(self.market, ticker)
+        strategy_key = _strategy_key(strategy)
+        rec = (self.data.get("tickers") or {}).get(ticker_key) or {}
+        cooldowns = rec.get("strategy_cooldowns") if isinstance(rec, dict) else {}
+        entry = (cooldowns or {}).get(strategy_key) if isinstance(cooldowns, dict) else {}
+        return dict(entry) if isinstance(entry, dict) else {}
+
+    def strategy_cooldowns_for(self, ticker: Any) -> dict[str, dict[str, Any]]:
+        ticker_key = normalize_ticker(self.market, ticker)
+        rec = (self.data.get("tickers") or {}).get(ticker_key) or {}
+        cooldowns = rec.get("strategy_cooldowns") if isinstance(rec, dict) else {}
+        if not isinstance(cooldowns, dict):
+            return {}
+        return {str(key): dict(value) for key, value in cooldowns.items() if isinstance(value, dict)}
+
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
@@ -228,10 +288,12 @@ class CandidateHealthTracker:
                 "failed_ready_count": 0,
                 "stale_cycle_count": 0,
                 "failed_ready_reasons": [],
+                "strategy_cooldowns": {},
                 "last_failed_ready_at": "",
                 "last_status": "",
             }
             tickers[ticker] = rec
+        rec.setdefault("strategy_cooldowns", {})
         return rec
 
     def _touch_seen(self, ticker: str, price: float, ts: str, phase: str, *, status: str) -> None:
@@ -295,6 +357,8 @@ class CandidateHealthTracker:
             ready = int(rec.get("ready_count") or 0)
             if seen < ready:
                 rec["seen_count"] = ready
+            if not isinstance(rec.get("strategy_cooldowns"), dict):
+                rec["strategy_cooldowns"] = {}
 
 
 def _market_key(market: str) -> str:
@@ -332,6 +396,10 @@ def _unique_norm(market: str, values: list[Any]) -> list[str]:
 
 def _threshold(table: dict[str, float], market: str) -> float:
     return float(table.get(_market_key(market), table.get("KR", 0.0)))
+
+
+def _strategy_key(strategy: Any) -> str:
+    return str(strategy or "").strip().lower()
 
 
 def _interesting_sort_key(state: dict[str, Any]) -> tuple[int, float]:

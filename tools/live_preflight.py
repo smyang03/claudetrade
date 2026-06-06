@@ -112,6 +112,13 @@ LIVE_CONFIG_KEYS = {
     "PATHB_SELECTION_RECONCILE_MODE",
     "US_PATHB_SELECTION_RECONCILE_MODE",
     "KR_PATHB_SELECTION_RECONCILE_MODE",
+    "PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER",
+    "US_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER",
+    "KR_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER",
+    "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED",
+    "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
+    "US_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
+    "KR_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
     "PATHB_SELECTION_RECONCILE_CANCEL_INVALID",
     "PATHB_SELECTION_RECONCILE_CANCEL_SUSPENDED",
     "PATHB_SELECTION_RECONCILE_UPDATE_VALID_TARGETS",
@@ -218,6 +225,13 @@ RUNTIME_CONFIG_DRIFT_KEYS = {
     "PATHB_SELECTION_RECONCILE_MODE",
     "US_PATHB_SELECTION_RECONCILE_MODE",
     "KR_PATHB_SELECTION_RECONCILE_MODE",
+    "PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER",
+    "US_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER",
+    "KR_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER",
+    "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED",
+    "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
+    "US_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
+    "KR_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
     "PATHB_SELECTION_RECONCILE_HIT_SUSPEND_CANCEL",
     "PATHB_RECONCILE_FORCE_FRESH_AFTER_CANCEL",
     "ACTIVE_LESSONS_ENABLED",
@@ -278,6 +292,12 @@ CRITICAL_RUNTIME_CONFIG_DRIFT_KEYS = {
     "PATHB_SELECTION_RECONCILE_ENABLED",
     "US_PATHB_SELECTION_RECONCILE_MODE",
     "KR_PATHB_SELECTION_RECONCILE_MODE",
+    "PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER",
+    "US_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER",
+    "KR_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER",
+    "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED",
+    "US_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
+    "KR_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
 }
 
 REQUIRED_TABLE_COLUMNS = {
@@ -497,6 +517,38 @@ def _pathb_terminal_missing_events(
             }
         )
     return missing
+
+
+def _pathb_cross_run_closed_lifecycle_evidence(
+    run_rows: list[sqlite3.Row] | list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    inconsistent: list[dict[str, Any]] = []
+    for row in run_rows:
+        plan = _safe_json_object(row["plan_json"] if "plan_json" in row.keys() else row.get("plan_json"))
+        evidence = plan.get("pathb_closed_lifecycle_evidence")
+        if not isinstance(evidence, dict):
+            continue
+        path_run_id = str(row["path_run_id"] if "path_run_id" in row.keys() else row.get("path_run_id") or "")
+        evidence_path_run_id = _path_run_id_from_payload(evidence)
+        if not path_run_id or not evidence_path_run_id or evidence_path_run_id == path_run_id:
+            continue
+        inconsistent.append(
+            {
+                "path_run_id": path_run_id,
+                "evidence_path_run_id": evidence_path_run_id,
+                "market": row["market"] if "market" in row.keys() else row.get("market"),
+                "runtime_mode": row["runtime_mode"] if "runtime_mode" in row.keys() else row.get("runtime_mode"),
+                "session_date": row["session_date"] if "session_date" in row.keys() else row.get("session_date"),
+                "ticker": row["ticker"] if "ticker" in row.keys() else row.get("ticker"),
+                "status": row["status"] if "status" in row.keys() else row.get("status"),
+                "evidence_event_id": evidence.get("event_id"),
+                "evidence_execution_id": evidence.get("execution_id"),
+                "exit_execution_id": plan.get("exit_execution_id"),
+                "close_reason": plan.get("close_reason"),
+                "pending_close_reason": plan.get("pending_close_reason"),
+            }
+        )
+    return inconsistent
 
 
 def _pathb_lifecycle_window_check_result(
@@ -1236,7 +1288,10 @@ def _runtime_config_drift_check(config: dict[str, Any], mode: str) -> CheckResul
     if written_dt is not None and pid_started_dt is not None:
         if written_dt.tzinfo is not None and pid_started_dt.tzinfo is not None:
             pid_started_dt = pid_started_dt.astimezone(written_dt.tzinfo)
-        snapshot_after_pid_start = written_dt >= pid_started_dt
+        # EffectiveRuntimeConfig snapshots are written with second precision while
+        # pid files keep fractional seconds. Treat same-second startup snapshots
+        # as fresh instead of reporting a false post-restart drift warning.
+        snapshot_after_pid_start = written_dt >= (pid_started_dt - timedelta(seconds=1))
         snapshot_fresh_for_process = bool(snapshot_after_pid_start)
         if not snapshot_fresh_for_process and status == "PASS":
             status = "WARN"
@@ -1460,7 +1515,31 @@ CONFIG_SOURCE_MEANING_KEYS: dict[str, dict[str, str]] = {
     },
     "KR_PATHB_SELECTION_RECONCILE_MODE": {
         "used_by": "KR PathB selection-plan reconciliation",
-        "meaning": "market-scoped KR mode; shadow logs without cancelling live plans",
+        "meaning": "market-scoped KR mode; enforce can cancel stale WAITING plans when configured",
+    },
+    "PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER": {
+        "used_by": "PathB Claude price plan parsing",
+        "meaning": "global fallback multiplier for default cancel_if_open_above when Claude omits it",
+    },
+    "US_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER": {
+        "used_by": "US PathB Claude price plan parsing",
+        "meaning": "market-scoped US multiplier for default cancel_if_open_above",
+    },
+    "KR_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER": {
+        "used_by": "KR PathB Claude price plan parsing",
+        "meaning": "market-scoped KR multiplier for default cancel_if_open_above",
+    },
+    "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED": {
+        "used_by": "PathB active WAITING plan zone-only update",
+        "meaning": "enables Fresh selection zone patching when active WAITING plan blocks new plan registration",
+    },
+    "US_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE": {
+        "used_by": "US PathB active WAITING plan zone-only update",
+        "meaning": "market-scoped US mode; enforce updates buy_zone_low/high and cancel cap only",
+    },
+    "KR_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE": {
+        "used_by": "KR PathB active WAITING plan zone-only update",
+        "meaning": "market-scoped KR mode; enforce updates buy_zone_low/high and cancel cap only",
     },
 }
 
@@ -1601,6 +1680,30 @@ def _pathb_selection_reconcile_check(config: dict[str, Any]) -> CheckResult:
                 "fallback": "global",
             }
 
+    zone_update_enabled = _truthy(effective.get("PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED"))
+    zone_global_mode = normalized_mode(effective.get("PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE", "enforce"))
+    zone_update_modes: dict[str, str] = {}
+    zone_source_by_market: dict[str, dict[str, str]] = {}
+    cancel_above_multipliers: dict[str, float] = {}
+    global_multiplier = _float_value(effective.get("PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER", "1.05"), 1.05)
+    for market in ("US", "KR"):
+        zone_mode_key = f"{market}_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE"
+        if str(effective.get(zone_mode_key, "")).strip():
+            zone_update_modes[market] = normalized_mode(effective.get(zone_mode_key))
+            zone_source_by_market[market] = {"key": zone_mode_key, **_config_key_source(config, zone_mode_key)}
+        else:
+            zone_update_modes[market] = zone_global_mode
+            zone_source_by_market[market] = {
+                "key": "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
+                **_config_key_source(config, "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE"),
+                "fallback": "global",
+            }
+        multiplier_key = f"{market}_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER"
+        cancel_above_multipliers[market] = _float_value(
+            effective.get(multiplier_key, effective.get("PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER", global_multiplier)),
+            global_multiplier,
+        )
+
     risky_flags = {
         "PATHB_SELECTION_RECONCILE_UPDATE_VALID_TARGETS": _truthy(effective.get("PATHB_SELECTION_RECONCILE_UPDATE_VALID_TARGETS")),
         "PATHB_SELECTION_RECONCILE_HIT_SUSPEND_CANCEL": _truthy(effective.get("PATHB_SELECTION_RECONCILE_HIT_SUSPEND_CANCEL")),
@@ -1614,11 +1717,19 @@ def _pathb_selection_reconcile_check(config: dict[str, Any]) -> CheckResult:
     warnings: list[str] = []
     if not enabled:
         warnings.append("PATHB_SELECTION_RECONCILE_ENABLED is false")
+    if not zone_update_enabled:
+        warnings.append("PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED is false")
     for key, value in risky_flags.items():
         if value:
             warnings.append(f"{key} is true")
     for market, mode in invalid_modes.items():
         warnings.append(f"{market} mode is invalid: {mode}")
+    for market, mode in zone_update_modes.items():
+        if mode != "enforce":
+            warnings.append(f"{market} zone update mode is {mode}, expected enforce")
+    for market, multiplier in cancel_above_multipliers.items():
+        if multiplier <= 0:
+            warnings.append(f"{market} cancel-above multiplier is nonpositive")
 
     status = "WARN" if warnings else "PASS"
     return CheckResult(
@@ -1633,6 +1744,13 @@ def _pathb_selection_reconcile_check(config: dict[str, Any]) -> CheckResult:
                 "PATHB_SELECTION_RECONCILE_MODE": str(effective.get("PATHB_SELECTION_RECONCILE_MODE", "")),
                 "US_PATHB_SELECTION_RECONCILE_MODE": str(effective.get("US_PATHB_SELECTION_RECONCILE_MODE", "")),
                 "KR_PATHB_SELECTION_RECONCILE_MODE": str(effective.get("KR_PATHB_SELECTION_RECONCILE_MODE", "")),
+                "PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER": str(effective.get("PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER", "")),
+                "US_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER": str(effective.get("US_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER", "")),
+                "KR_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER": str(effective.get("KR_PATHB_CANCEL_ABOVE_ZONE_MULTIPLIER", "")),
+                "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED": str(effective.get("PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED", "")),
+                "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE": str(effective.get("PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE", "")),
+                "US_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE": str(effective.get("US_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE", "")),
+                "KR_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE": str(effective.get("KR_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE", "")),
                 "PATHB_SELECTION_RECONCILE_CANCEL_INVALID": str(effective.get("PATHB_SELECTION_RECONCILE_CANCEL_INVALID", "")),
                 "PATHB_SELECTION_RECONCILE_CANCEL_SUSPENDED": str(effective.get("PATHB_SELECTION_RECONCILE_CANCEL_SUSPENDED", "")),
                 "PATHB_SELECTION_RECONCILE_UPDATE_VALID_TARGETS": str(effective.get("PATHB_SELECTION_RECONCILE_UPDATE_VALID_TARGETS", "")),
@@ -1640,6 +1758,12 @@ def _pathb_selection_reconcile_check(config: dict[str, Any]) -> CheckResult:
                 "PATHB_RECONCILE_FORCE_FRESH_AFTER_CANCEL": str(effective.get("PATHB_RECONCILE_FORCE_FRESH_AFTER_CANCEL", "")),
             },
             "source_by_market": source_by_market,
+            "zone_update": {
+                "enabled": zone_update_enabled,
+                "effective_modes": zone_update_modes,
+                "source_by_market": zone_source_by_market,
+                "cancel_above_multipliers": cancel_above_multipliers,
+            },
             "risky_flags": risky_flags,
             "warnings": warnings,
             "operator_action": "review risky flags before enabling target updates, HIT cancel, or force-fresh behavior",
@@ -2771,7 +2895,7 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
         ).fetchall()
         full_runs = conn.execute(
             """
-            SELECT path_run_id, market, runtime_mode, session_date, ticker, status
+            SELECT path_run_id, market, runtime_mode, session_date, ticker, status, plan_json
             FROM v2_path_runs
             WHERE runtime_mode=? AND path_type='claude_price'
             ORDER BY updated_at DESC
@@ -2805,6 +2929,30 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                         if full_missing
                         else "none"
                     ),
+                },
+            )
+        )
+        cross_run_closed_evidence = _pathb_cross_run_closed_lifecycle_evidence(list(full_runs))
+        checks.append(
+            CheckResult(
+                "db.pathb_closed_lifecycle_evidence_consistency",
+                "WARN" if cross_run_closed_evidence else "PASS",
+                (
+                    f"PathB CLOSED lifecycle evidence references another run={len(cross_run_closed_evidence)}"
+                    if cross_run_closed_evidence
+                    else "PathB CLOSED lifecycle evidence is scoped to the same path_run_id"
+                ),
+                {
+                    "cross_run_evidence": cross_run_closed_evidence[:30],
+                    "cross_run_evidence_count": len(cross_run_closed_evidence),
+                    "accepted_exception": False,
+                    "remediation_required": bool(cross_run_closed_evidence),
+                    "operator_action": (
+                        "audit affected historical rows before using path_run plan_json as realized performance"
+                        if cross_run_closed_evidence
+                        else "none"
+                    ),
+                    "blocked_if_live_start": False,
                 },
             )
         )

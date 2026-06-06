@@ -14,6 +14,7 @@ from tools.live_preflight import (
     _config_checks,
     _kr_live_expansion_guard_check,
     _kr_cap40_confirmation_enforce_check,
+    _pathb_cross_run_closed_lifecycle_evidence,
     _pathb_lifecycle_window_check_result,
     _market_session_calendar_check,
     _pathb_market_live_gate_check,
@@ -98,6 +99,8 @@ class LiveConfigSourceTests(unittest.TestCase):
                 "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "off",
                 "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": "enforce",
                 "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "off",
+                "US_PATHB_SELECTION_RECONCILE_MODE": "enforce",
+                "KR_PATHB_SELECTION_RECONCILE_MODE": "enforce",
             },
             "start_config": {"env_overrides": {"DAILY_LOSS_LIMIT_PCT": "-2.0"}},
             "effective": {
@@ -109,6 +112,8 @@ class LiveConfigSourceTests(unittest.TestCase):
                 "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "off",
                 "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": "enforce",
                 "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "off",
+                "US_PATHB_SELECTION_RECONCILE_MODE": "enforce",
+                "KR_PATHB_SELECTION_RECONCILE_MODE": "enforce",
             },
         }
 
@@ -123,6 +128,9 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertEqual(keys["KR_PATHB_PREOPEN_EXIT_POLICY_MODE"]["source"], "v2_start_config.env_overrides")
         self.assertEqual(keys["PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US"]["source"], "v2_start_config.env_overrides")
         self.assertEqual(keys["PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR"]["source"], "v2_start_config.env_overrides")
+        self.assertEqual(keys["KR_PATHB_SELECTION_RECONCILE_MODE"]["source"], "v2_start_config.env_overrides")
+        self.assertIn("enforce can cancel stale WAITING plans", keys["KR_PATHB_SELECTION_RECONCILE_MODE"]["meaning"])
+        self.assertNotIn("shadow logs", keys["KR_PATHB_SELECTION_RECONCILE_MODE"]["meaning"])
         self.assertIn("KR does not inherit", keys["PATHB_PREOPEN_EXIT_POLICY_MODE"]["meaning"])
         self.assertFalse(check.data["config_change_allowed"])
 
@@ -388,6 +396,31 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertFalse(check.data["accepted_exception"])
         self.assertTrue(check.data["remediation_required"])
 
+    def test_pathb_cross_run_closed_lifecycle_evidence_is_reported(self) -> None:
+        rows = [
+            {
+                "path_run_id": "path_current",
+                "market": "US",
+                "runtime_mode": "live",
+                "session_date": "2026-05-28",
+                "ticker": "NBIS",
+                "status": "CLOSED",
+                "plan_json": (
+                    '{"pathb_closed_lifecycle_evidence": {"path_run_id": "path_previous", '
+                    '"event_id": 3915, "execution_id": "0031323229"}, '
+                    '"exit_execution_id": "0031323229", '
+                    '"close_reason": "CLOSED_CLAUDE_PRICE_TARGET"}'
+                ),
+            }
+        ]
+
+        inconsistent = _pathb_cross_run_closed_lifecycle_evidence(rows)
+
+        self.assertEqual(len(inconsistent), 1)
+        self.assertEqual(inconsistent[0]["path_run_id"], "path_current")
+        self.assertEqual(inconsistent[0]["evidence_path_run_id"], "path_previous")
+        self.assertEqual(inconsistent[0]["evidence_event_id"], 3915)
+
     def test_runtime_config_drift_payload_compares_operational_caps(self) -> None:
         config = {
             "effective": {
@@ -473,6 +506,31 @@ class LiveConfigSourceTests(unittest.TestCase):
 
         self.assertEqual(check.status, "WARN")
         self.assertFalse(check.data["snapshot_fresh_for_process"])
+
+    def test_runtime_config_drift_treats_same_second_snapshot_as_fresh(self) -> None:
+        config = {"effective": {"US_DAILY_ENTRY_CAP": "40"}}
+        snapshot = {
+            "written_at": "2026-05-21T12:00:00+09:00",
+            "runtime_mode": "live",
+            "effective": {"US_DAILY_ENTRY_CAP": "40"},
+        }
+
+        with patch(
+            "tools.live_preflight._latest_runtime_config_snapshot",
+            return_value=(Path("effective_config_live.redacted.json"), snapshot),
+        ), patch(
+            "tools.live_preflight._runtime_pid_state",
+            return_value={
+                "pid_path": "state/live_trading_bot.pid",
+                "pid": 100,
+                "pid_started_at": "2026-05-21T12:00:00.334146+09:00",
+                "pid_alive": True,
+            },
+        ):
+            check = _runtime_config_drift_check(config, "live")
+
+        self.assertEqual(check.status, "PASS")
+        self.assertTrue(check.data["snapshot_fresh_for_process"])
 
     def test_runtime_config_drift_warns_when_live_pid_freshness_is_unverifiable(self) -> None:
         config = {"effective": {"US_DAILY_ENTRY_CAP": "40"}}

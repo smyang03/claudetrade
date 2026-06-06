@@ -152,6 +152,28 @@ class CandidateHealthTrackerTests(unittest.TestCase):
     def test_compact_session_date(self) -> None:
         self.assertEqual(compact_session_date("2026-04-29"), "20260429")
 
+    def test_strategy_cooldown_persists_by_strategy(self) -> None:
+        tracker, path = self._tracker("US")
+        entry = tracker.record_strategy_cooldown(
+            "qcom",
+            "opening_range_pullback",
+            reason="orp_entry_window_expired",
+            evidence_hash="abc123",
+            now=datetime(2026, 4, 29, 10, 10),
+            payload={"elapsed_min_bucket": 60},
+        )
+
+        self.assertEqual(entry["strategy"], "opening_range_pullback")
+        self.assertEqual(entry["reason"], "orp_entry_window_expired")
+        self.assertEqual(entry["count"], 1)
+
+        reloaded = CandidateHealthTracker("US", "2026-04-29", path=path)
+        cooldown = reloaded.strategy_cooldown_for("QCOM", "opening_range_pullback")
+        self.assertEqual(cooldown["reason"], "orp_entry_window_expired")
+        self.assertEqual(cooldown["evidence_hash"], "abc123")
+        self.assertEqual(cooldown["payload"]["elapsed_min_bucket"], 60)
+        self.assertEqual(reloaded.state_for("QCOM")["last_status"], "STRATEGY_COOLDOWN")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,8 +1,8 @@
 # TODO Roadmap
 
-Updated: 2026-06-04
+Updated: 2026-06-07
 
-Compact active backlog only. Details and verification notes live in [../ACTIVE_WORK.md](../ACTIVE_WORK.md). Do not keep separate active plan files under `docs/reports/`.
+Compact active backlog only. Details and verification notes live in [../ACTIVE_WORK.md](../ACTIVE_WORK.md) and [../IMPROVEMENT_WORKLIST_20260607.md](../IMPROVEMENT_WORKLIST_20260607.md). Do not keep separate active plan files under `docs/reports/`.
 
 ## P0
 
@@ -11,8 +11,9 @@ Compact active backlog only. Details and verification notes live in [../ACTIVE_W
 | V2 performance sync | Back up DBs, rerun live dry-run, execute live sync, verify audited broker backfill rows and new columns. |
 | Performance reports | Recalculate KR/US, PathA/PathB, strategy vs audited backfill, portfolio-realized vs learning-allowed views. |
 | Ticker selection DB | Review remaining 23 contaminated live traded rows: 10 watch-only split candidates, 3 time-delta rows, 1 legacy-only IREN row, and 10 no-touch exclusions. |
+| Candidate audit source | Standardize `candidate_source` fallback for new live audit rows; do not bulk-mutate legacy rows without audited remediation. |
 | Candidate audit outcomes | Clear or explain `daily_pending=1551` before using daily candidate outcomes as KR selection evidence. |
-| Live ops reflection | Confirm runtime drift is gone and broker truth snapshots are fresh after restart/refresh. |
+| Live ops reflection | Confirm runtime drift is gone, `KR_PATHB_SELECTION_RECONCILE_MODE` runtime snapshot is `enforce`, and broker truth snapshots are fresh after restart/refresh. |
 | KR/KIS evidence | Split ticker-level fail-closed from session/provider degraded warning while preserving hard fail-closed for full evidence outages. |
 
 ## P1
@@ -20,7 +21,7 @@ Compact active backlog only. Details and verification notes live in [../ACTIVE_W
 | Area | Task |
 | --- | --- |
 | KR post-carry evaluation | Measure daily `trade_ready`, signal, trade, `NO_SIGNAL`, and watch-only transitions after KR carry. |
-| KR signal quality | Analyze `trade_ready -> NO_SIGNAL` by strategy before changing KR-only thresholds or strategy order. |
+| KR signal quality | Analyze `trade_ready -> NO_SIGNAL` by strategy, including ORP selection-time versus entry-window expiry, before changing KR-only thresholds or strategy order. |
 | KR exposure/ranking | Review prompt cap, excluded candidates, and watch misses; consider only bounded overlay exposure. |
 | Lessons | Add basis metadata and `truth_status` to lesson candidates after refreshed ledger sync; do not auto-promote to `state/brain.json`. |
 | Hold advisor cost/risk | Review `PRE_CLOSE_CARRY` challenge cost, pending intraday retry state, missed-runup bucket reporting, and read-only PathB block reporting. |
