@@ -173,6 +173,12 @@ _PREOPEN_PIN_SAFE_FIELDS = {
     "spread_pct",
     "quote_timestamp",
     "news_or_earnings_flag",
+    "news_or_earnings_count",
+    "news_or_earnings_sources",
+    "news_or_earnings_sample_title",
+    "news_quality",
+    "news_date_quality",
+    "news_quality_tags",
     "open_volume_confirmation",
     "display_enrichment_source",
     "anchor_price",
@@ -1264,6 +1270,7 @@ def load_preopen_dashboard(
         f"raw_source={state.get('source_status', '') if state else '-'} "
         f"raw_data={state.get('data_quality', '') if state else '-'}"
     )
+    news_enrichment = state.get("news_enrichment") if isinstance(state.get("news_enrichment"), dict) else {}
     return {
         "market": market_key,
         "session_date": session_date,
@@ -1299,6 +1306,11 @@ def load_preopen_dashboard(
             "operator_status": operator_status,
             "raw_status": raw_status,
             "empty_reason": empty_reason,
+            "news_enrichment": news_enrichment,
+            "news_stale_filtered_count": int((news_enrichment or {}).get("stale_filtered_count", 0) or 0),
+            "news_unknown_date_count": int((news_enrichment or {}).get("unknown_date_count", 0) or 0),
+            "news_broad_weak_count": int((news_enrichment or {}).get("broad_weak_count", 0) or 0),
+            "news_usable_item_count": int((news_enrichment or {}).get("usable_item_count", 0) or 0),
             "has_data": bool(candidates or rank_diff or outcome),
         },
         "candidates": candidates,

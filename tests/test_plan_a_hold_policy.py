@@ -415,6 +415,91 @@ class PlanAHoldPolicyBotTests(unittest.TestCase):
 
         self.assertEqual(vote["hold_mode"], "profit_pullback")
 
+    def test_hold_advisor_prompt_includes_position_scoped_news_context(self) -> None:
+        captured = {}
+
+        def fake_create(*, model, max_tokens, messages):
+            captured["prompt"] = messages[0]["content"]
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        text=(
+                            '{"action":"HOLD","hold_mode":"profit_pullback","confidence":0.8,'
+                            '"trail_pct":0.03,"protective_stop":170.0,"next_review_min":10,'
+                            '"invalid_if":"loses support","reason":"thesis intact"}'
+                        )
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        pos = _us_position(
+            news_or_earnings_flag=True,
+            news_or_earnings_count=1,
+            news_or_earnings_sources=["Finnhub"],
+            news_or_earnings_sample_title="QCOM acquisition headline",
+            news_quality="weak",
+            news_date_quality="unknown_date",
+        )
+        with patch.object(hold_advisor.client.messages, "create", side_effect=fake_create), \
+             patch.object(hold_advisor, "credit_record", lambda *args, **kwargs: None), \
+             patch.object(hold_advisor, "save_raw_call", lambda *args, **kwargs: None):
+            hold_advisor._ask_one(
+                "bull",
+                pos,
+                "US",
+                "General market context without company headlines",
+                rt_context="",
+                decision_stage="AUTO_SELL_REVIEW",
+                default_policy="review current sell signal",
+            )
+
+        self.assertIn("Position news", captured["prompt"])
+        self.assertIn("count=1", captured["prompt"])
+        self.assertIn("sources=Finnhub", captured["prompt"])
+        self.assertIn("quality=weak", captured["prompt"])
+        self.assertIn("date=unknown_date", captured["prompt"])
+        self.assertIn("QCOM acquisition headline", captured["prompt"])
+
+    def test_hold_advisor_triage_payload_includes_position_news_only_when_present(self) -> None:
+        with_news = _us_position(
+            news_or_earnings_flag=True,
+            news_or_earnings_count=2,
+            news_or_earnings_sources=["SEC", "Finnhub"],
+            news_or_earnings_sample_title="QCOM contract filing",
+            news_quality="normal",
+            news_date_quality="dated",
+        )
+        without_news = _us_position()
+
+        payload_with = hold_advisor._triage_case_payload(
+            with_news,
+            "US",
+            "General market context",
+            "",
+            "AUTO_SELL_REVIEW",
+            "review current sell signal",
+            None,
+            False,
+        )
+        payload_without = hold_advisor._triage_case_payload(
+            without_news,
+            "US",
+            "General market context",
+            "",
+            "AUTO_SELL_REVIEW",
+            "review current sell signal",
+            None,
+            False,
+        )
+
+        self.assertEqual(payload_with["position_news"]["count"], 2)
+        self.assertEqual(payload_with["position_news"]["sources"], ["SEC", "Finnhub"])
+        self.assertEqual(payload_with["position_news"]["quality"], "normal")
+        self.assertNotIn("date_quality", payload_with["position_news"])
+        self.assertEqual(payload_with["position_news"]["sample_title"], "QCOM contract filing")
+        self.assertNotIn("position_news", payload_without)
+
     def test_hold_review_stores_valid_policy(self) -> None:
         bot = _bot()
         cand = {**bot.risk.positions[0], "exit_price": 106.0, "reason": "trail_stop"}

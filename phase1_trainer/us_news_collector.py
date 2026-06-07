@@ -313,12 +313,30 @@ def fetch_kis_news(ticker: str, target_date: str) -> list[dict]:
     data = resp.json()
     items = data.get("outblock1", []) or data.get("output", []) or []
 
+    target_ymd = target_date.replace("-", "")
+    requested_symbol = ticker.upper()
     results = []
-    for item in items[:15]:
+    seen_titles = set()
+    for item in items:
         published_date = target_date
         data_dt = str(item.get("data_dt") or "").strip()
         if len(data_dt) == 8 and data_dt.isdigit():
+            if data_dt != target_ymd:
+                continue
             published_date = f"{data_dt[:4]}-{data_dt[4:6]}-{data_dt[6:8]}"
+        raw_symbol = str(
+            item.get("symb")
+            or item.get("SYMB")
+            or item.get("symbol")
+            or item.get("rsym")
+            or ""
+        ).strip().upper()
+        if raw_symbol and raw_symbol != requested_symbol:
+            continue
+        title = str(item.get("title", "") or item.get("hts_pbnt_titl_cntt", "") or "").strip()
+        if not title or title in seen_titles:
+            continue
+        seen_titles.add(title)
         published_time = str(item.get("data_tm") or "").strip()
         published_at = published_date
         if len(published_time) == 6 and published_time.isdigit():
@@ -328,15 +346,17 @@ def fetch_kis_news(ticker: str, target_date: str) -> list[dict]:
             "provider": item.get("source", "") or "KIS",
             "date": published_date,
             "published_at": published_at,
-            "title": item.get("title", "") or item.get("hts_pbnt_titl_cntt", ""),
+            "title": title,
             "content": "",
             "url": "",
-            "ticker": item.get("symb", "") or ticker.upper(),
+            "ticker": raw_symbol or requested_symbol,
             "news_id": item.get("news_key", ""),
             "sentiment_score": 0.0,
             "sentiment_label": "Neutral",
             "relevance": 1.0,
         })
+        if len(results) >= 15:
+            break
 
     log.debug(f"KIS [{ticker}] {target_date}: {len(results)}건")
     return results

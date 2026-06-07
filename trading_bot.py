@@ -17106,6 +17106,32 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if call_screener_quality:
                     break
 
+        def _preopen_news_enrichment_for_audit() -> dict:
+            existing = (meta or {}).get("news_enrichment")
+            if isinstance(existing, dict):
+                return dict(existing)
+            try:
+                from preopen.storage import load_preopen_state
+
+                state = load_preopen_state(
+                    market_key,
+                    session_date=session_date,
+                    max_age_min=24 * 60,
+                    mode=self._preopen_runtime_mode(),
+                )
+            except Exception:
+                return {}
+            summary = state.get("news_enrichment") if isinstance(state, dict) else {}
+            return dict(summary) if isinstance(summary, dict) else {}
+
+        preopen_news_enrichment = _preopen_news_enrichment_for_audit()
+
+        def _audit_int_value(value) -> int:
+            try:
+                return int(float(value or 0))
+            except Exception:
+                return 0
+
         _scorer_snapshot_keys = (
             "ticker",
             "market",
@@ -17156,6 +17182,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "repeated_failed_ready_count",
             "post_open_features",
             "post_open_momentum_state",
+            "news_or_earnings_flag",
+            "news_or_earnings_count",
+            "news_or_earnings_sources",
+            "news_or_earnings_sample_title",
+            "news_quality",
+            "news_date_quality",
+            "news_quality_tags",
+            "news_stale_filtered_count",
         )
 
         def _scorer_input_snapshot(row: dict) -> dict:
@@ -17229,6 +17263,35 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "discovery_action_ceiling": row.get("discovery_action_ceiling"),
                 "discovery_baseline_trainer_rank": row.get("discovery_baseline_trainer_rank"),
                 "discovery_overlay_rank": row.get("discovery_overlay_rank"),
+            }
+
+        def _news_audit_fields(row: dict, *, included: bool) -> dict:
+            source = row if isinstance(row, dict) else {}
+            try:
+                count = int(float(source.get("news_or_earnings_count") or 0))
+            except Exception:
+                count = 0
+            sources = _audit_list(source.get("news_or_earnings_sources") or source.get("news_or_earnings_sources_json"))
+            sample_title = str(source.get("news_or_earnings_sample_title") or source.get("news_sample_title") or "").strip()
+            tags = _audit_list(source.get("news_quality_tags") or source.get("news_quality_tags_json"))
+            has_news = bool(source.get("news_or_earnings_flag")) or count > 0 or bool(sources) or bool(sample_title)
+            quality = str(source.get("news_quality") or "").strip()
+            date_quality = str(source.get("news_date_quality") or "").strip()
+            if not date_quality and "unknown_date" in {str(tag) for tag in tags}:
+                date_quality = "unknown_date"
+            try:
+                stale_filtered_count = int(float(source.get("news_stale_filtered_count") or 0))
+            except Exception:
+                stale_filtered_count = 0
+            return {
+                "news_in_prompt": bool(included and has_news),
+                "news_or_earnings_count": max(0, count),
+                "news_or_earnings_sources_json": sources,
+                "news_or_earnings_sample_title": sample_title,
+                "news_quality": quality,
+                "news_date_quality": date_quality,
+                "news_quality_tags_json": tags,
+                "news_stale_filtered_count": max(0, stale_filtered_count),
             }
 
         def _first_nonblank(*values):
@@ -17484,6 +17547,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "watchlist_count": len(watchlist),
                     "trade_ready_count": len(trade_ready),
                     "candidate_action_count": len(actions),
+                    "news_stale_filtered_count": _audit_int_value(preopen_news_enrichment.get("stale_filtered_count")),
+                    "news_unknown_date_count": _audit_int_value(preopen_news_enrichment.get("unknown_date_count")),
+                    "news_broad_weak_count": _audit_int_value(preopen_news_enrichment.get("broad_weak_count")),
                     "payload": {
                         "candidate_actions_source": (meta or {}).get("_candidate_actions_source", ""),
                         "selection_source_type": (meta or {}).get("_selection_source_type", ""),
@@ -17541,6 +17607,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "shadow_overlay_plan_a_added": int((meta or {}).get("_shadow_overlay_plan_a_added") or 0),
                         "screener_quality_state": call_screener_quality.get("screener_quality_state", ""),
                         "screener_quality": call_screener_quality,
+                        "news_enrichment": preopen_news_enrichment,
+                        "news_stale_filtered_count": _audit_int_value(preopen_news_enrichment.get("stale_filtered_count")),
+                        "news_unknown_date_count": _audit_int_value(preopen_news_enrichment.get("unknown_date_count")),
+                        "news_broad_weak_count": _audit_int_value(preopen_news_enrichment.get("broad_weak_count")),
                         "shadow_only": self._runtime_bool("ENABLE_CANDIDATE_AUDIT_SHADOW", False)
                         and not self._runtime_bool("ENABLE_CANDIDATE_AUDIT_LIVE", False),
                     },
@@ -17605,6 +17675,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "route_suspend_pathb": bool(route.get("suspend_pathb")),
                         "route_warnings": list(route.get("warnings") or []),
                         **_trainer_audit_fields(prompt_row, included=actual_prompt_included),
+                        **_news_audit_fields(prompt_row, included=actual_prompt_included),
                         **_candidate_role_audit_fields(key, prompt_row),
                         "evidence_version": str((meta or {}).get("evidence_version") or ""),
                         "schema_version": str(action.get("schema_version") or ""),
@@ -17705,6 +17776,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         **_actual_prompt_audit_fields(key, row, included=True),
                         **_v2_decision_audit_fields(key),
                         **_trainer_audit_fields(row, included=True),
+                        **_news_audit_fields(row, included=True),
                         **_candidate_role_audit_fields(key, row),
                         **self._strength_capture_shadow_fields(
                             row,
@@ -17773,6 +17845,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         **_actual_prompt_audit_fields(key, row, included=False),
                         **_v2_decision_audit_fields(key),
                         **_trainer_audit_fields(row, included=False, excluded_reason=excluded_reason),
+                        **_news_audit_fields(row, included=False),
                         **_candidate_role_audit_fields(key, row),
                         **self._strength_capture_shadow_fields(
                             row,

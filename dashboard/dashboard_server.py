@@ -7011,6 +7011,9 @@ _PREOPEN_CANDIDATE_FIELDS = {
     "news_or_earnings_count",
     "news_or_earnings_sources",
     "news_or_earnings_sample_title",
+    "news_quality",
+    "news_date_quality",
+    "news_quality_tags",
     "reason",
     "reasons",
     "risk_tags",
@@ -8701,6 +8704,137 @@ def _candidate_audit_trainer_summary(conn: sqlite3.Connection, params: tuple[str
         return {"available": False, "error": str(exc)}
 
 
+def _candidate_audit_news_summary(
+    conn: sqlite3.Connection,
+    params: tuple[str, str, str],
+    *,
+    row_source: str = "audit_candidate_rows",
+) -> dict[str, Any]:
+    columns = _candidate_audit_columns(conn)
+    wanted = {
+        "news_in_prompt",
+        "news_or_earnings_count",
+        "news_quality",
+        "news_date_quality",
+        "news_stale_filtered_count",
+    }
+    if not columns.intersection(wanted):
+        return {"available": False}
+    pieces = ["COUNT(*) AS rows"]
+    if "news_in_prompt" in columns:
+        pieces.append("COALESCE(SUM(CASE WHEN news_in_prompt=1 THEN 1 ELSE 0 END), 0) AS news_in_prompt_rows")
+    if "news_or_earnings_count" in columns:
+        pieces.append(
+            "COALESCE(SUM(CASE WHEN COALESCE(news_or_earnings_count,0)>0 THEN 1 ELSE 0 END), 0) AS news_rows"
+        )
+        pieces.append("COALESCE(SUM(COALESCE(news_or_earnings_count,0)), 0) AS news_item_count")
+    if "news_quality" in columns:
+        pieces.append("COALESCE(SUM(CASE WHEN news_quality='weak' THEN 1 ELSE 0 END), 0) AS weak_rows")
+        pieces.append("COALESCE(SUM(CASE WHEN news_quality='mixed' THEN 1 ELSE 0 END), 0) AS mixed_quality_rows")
+    if "news_date_quality" in columns:
+        pieces.append(
+            "COALESCE(SUM(CASE WHEN news_date_quality='unknown_date' THEN 1 ELSE 0 END), 0) AS unknown_date_rows"
+        )
+        pieces.append("COALESCE(SUM(CASE WHEN news_date_quality='mixed_date' THEN 1 ELSE 0 END), 0) AS mixed_date_rows")
+    if "news_stale_filtered_count" in columns:
+        pieces.append("COALESCE(MAX(COALESCE(news_stale_filtered_count,0)), 0) AS stale_filtered_count")
+    if "news_or_earnings_count" in columns:
+        news_presence_clause = "COALESCE(news_or_earnings_count, 0) > 0"
+    elif "news_in_prompt" in columns:
+        news_presence_clause = "COALESCE(news_in_prompt, 0) > 0"
+    else:
+        news_presence_clause = "1=1"
+    try:
+        totals = dict(
+            conn.execute(
+                f"""
+                SELECT {', '.join(pieces)}
+                FROM {row_source}
+                WHERE session_date=? AND market=? AND runtime_mode=?
+                """,
+                params,
+            ).fetchone()
+            or {}
+        )
+        totals["available"] = True
+        totals.setdefault("news_in_prompt_rows", None)
+        totals.setdefault("news_rows", None)
+        totals.setdefault("news_item_count", None)
+        totals.setdefault("weak_rows", None)
+        totals.setdefault("mixed_quality_rows", None)
+        totals.setdefault("unknown_date_rows", None)
+        totals.setdefault("mixed_date_rows", None)
+        totals.setdefault("stale_filtered_count", None)
+        totals.setdefault("source_unknown_date_count", None)
+        totals.setdefault("source_broad_weak_count", None)
+        call_columns = _candidate_audit_call_columns(conn)
+        call_pieces: list[str] = []
+        if "news_stale_filtered_count" in call_columns:
+            call_pieces.append("COALESCE(MAX(news_stale_filtered_count), 0) AS call_stale_filtered_count")
+        if "news_unknown_date_count" in call_columns:
+            call_pieces.append("COALESCE(MAX(news_unknown_date_count), 0) AS source_unknown_date_count")
+        if "news_broad_weak_count" in call_columns:
+            call_pieces.append("COALESCE(MAX(news_broad_weak_count), 0) AS source_broad_weak_count")
+        if call_pieces:
+            call_totals = dict(
+                conn.execute(
+                    f"""
+                    SELECT {', '.join(call_pieces)}
+                    FROM audit_claude_calls
+                    WHERE session_date=? AND market=? AND runtime_mode=?
+                    """,
+                    params,
+                ).fetchone()
+                or {}
+            )
+            if call_totals.get("call_stale_filtered_count") is not None:
+                totals["stale_filtered_count"] = max(
+                    int(totals.get("stale_filtered_count") or 0),
+                    int(call_totals.get("call_stale_filtered_count") or 0),
+                )
+            totals["source_unknown_date_count"] = call_totals.get("source_unknown_date_count")
+            totals["source_broad_weak_count"] = call_totals.get("source_broad_weak_count")
+        quality_counts: list[dict[str, Any]] = []
+        if "news_quality" in columns:
+            quality_counts = [
+                dict(row)
+                for row in conn.execute(
+                    f"""
+                    SELECT COALESCE(NULLIF(news_quality,''), '-') AS quality, COUNT(*) AS rows
+                    FROM {row_source}
+                    WHERE session_date=? AND market=? AND runtime_mode=?
+                      AND ({news_presence_clause})
+                    GROUP BY COALESCE(NULLIF(news_quality,''), '-')
+                    ORDER BY rows DESC, quality ASC
+                    LIMIT 8
+                    """,
+                    params,
+                )
+            ]
+        date_counts: list[dict[str, Any]] = []
+        if "news_date_quality" in columns:
+            date_counts = [
+                dict(row)
+                for row in conn.execute(
+                    f"""
+                    SELECT COALESCE(NULLIF(news_date_quality,''), '-') AS date_quality, COUNT(*) AS rows
+                    FROM {row_source}
+                    WHERE session_date=? AND market=? AND runtime_mode=?
+                      AND ({news_presence_clause})
+                    GROUP BY COALESCE(NULLIF(news_date_quality,''), '-')
+                    ORDER BY rows DESC, date_quality ASC
+                    LIMIT 8
+                    """,
+                    params,
+                )
+            ]
+        totals["quality_counts"] = quality_counts
+        totals["date_quality_counts"] = date_counts
+        return totals
+    except Exception as exc:
+        return {"available": False, "error": str(exc)}
+
+
 def _candidate_audit_contract_summary(conn: sqlite3.Connection, params: tuple[str, str, str]) -> dict[str, Any]:
     columns = _candidate_audit_columns(conn)
     wanted = {
@@ -8777,6 +8911,7 @@ def api_candidate_audit_summary():
             "routing_delta": {},
             "latency_sla": {},
             "watch_trigger_shadow_summary": {},
+            "news_summary": {"available": False},
             "trainer_summary": {"available": False},
         })
     params = (session_date, market, mode)
@@ -8891,6 +9026,7 @@ def api_candidate_audit_summary():
             watch_trigger_shadow_summary = {}
         contract_summary = _candidate_audit_contract_summary(conn, params)
         trainer_summary = _candidate_audit_trainer_summary(conn, params)
+        news_summary = _candidate_audit_news_summary(conn, params, row_source=row_source)
         return jsonify({
             "ok": True,
             "exists": True,
@@ -8916,6 +9052,7 @@ def api_candidate_audit_summary():
             "routing_delta": routing_delta,
             "latency_sla": latency_sla,
             "watch_trigger_shadow_summary": watch_trigger_shadow_summary,
+            "news_summary": news_summary,
             "contract_summary": contract_summary,
             "trainer_summary": trainer_summary,
         })
@@ -8980,6 +9117,16 @@ def api_candidate_audit_rows():
             _candidate_audit_optional_expr(columns, "candidate_pool_version"),
             _candidate_audit_optional_expr(columns, "prompt_pool_version"),
         ]
+        news_select = [
+            _candidate_audit_optional_expr(columns, "news_in_prompt"),
+            _candidate_audit_optional_expr(columns, "news_or_earnings_count"),
+            _candidate_audit_optional_expr(columns, "news_or_earnings_sources_json"),
+            _candidate_audit_optional_expr(columns, "news_or_earnings_sample_title"),
+            _candidate_audit_optional_expr(columns, "news_quality"),
+            _candidate_audit_optional_expr(columns, "news_date_quality"),
+            _candidate_audit_optional_expr(columns, "news_quality_tags_json"),
+            _candidate_audit_optional_expr(columns, "news_stale_filtered_count"),
+        ]
         query_params = [outcome_horizon, *params]
         rows = [
             dict(row)
@@ -8995,6 +9142,7 @@ def api_candidate_audit_rows():
                        r.execution_decision_id, r.execution_event_id,
                        r.classification, r.payload_json,
                        {', '.join(trainer_select)},
+                       {', '.join(news_select)},
                        o.status AS outcome_status,
                        o.return_pct AS outcome_return_pct,
                        o.max_runup_pct AS outcome_max_runup_pct,
@@ -9024,6 +9172,15 @@ def api_candidate_audit_rows():
             row["screener_degraded"] = bool(screener_quality.get("screener_degraded"))
             row["screener_degraded_reason"] = str(screener_quality.get("screener_degraded_reason") or "")
             row["screener_cache_skipped_reason"] = str(screener_quality.get("screener_cache_skipped_reason") or "")
+            for json_key, out_key in (
+                ("news_or_earnings_sources_json", "news_or_earnings_sources"),
+                ("news_quality_tags_json", "news_quality_tags"),
+            ):
+                try:
+                    parsed = json.loads(str(row.get(json_key) or "[]"))
+                    row[out_key] = parsed if isinstance(parsed, list) else []
+                except Exception:
+                    row[out_key] = []
         return jsonify({
             "ok": True,
             "exists": True,
@@ -15772,6 +15929,17 @@ function preopenReturnCell(v, status) {
 function tags(v) {
   return Array.isArray(v) ? v.join(', ') : (v || '-');
 }
+function preopenNewsCell(r) {
+  if (!r || !r.news_or_earnings_flag) return '-';
+  const count = Number(r.news_or_earnings_count || 0);
+  const quality = String(r.news_quality || '').trim();
+  const dateQuality = String(r.news_date_quality || '').trim();
+  const parts = [];
+  if (count > 0) parts.push(`뉴스 ${count}`);
+  if (quality) parts.push(quality);
+  if (dateQuality && dateQuality !== 'dated') parts.push(dateQuality);
+  return parts.length ? parts.join(' · ') : '뉴스';
+}
 function preopenEscapeHtml(v) {
   return String(v ?? '').replace(/[&<>"']/g, ch => ({
     '&': '&amp;',
@@ -15899,14 +16067,16 @@ async function loadPreopen(button) {
     document.getElementById('preopen-scheduler-job').textContent =
       lastJob.event ? `${lastJob.market || '-'} ${lastJob.kind || '-'} ${koResult(lastJob.event || '')}` : '-';
     const sourceEl = document.getElementById('preopen-source-status');
-    sourceEl.textContent = s.operator_status || `세션 ${d.session_date || '-'} · ${koPreopenReason(s.empty_reason)}`;
+    const newsLine = `뉴스 필터 stale ${s.news_stale_filtered_count ?? 0} · unknown ${s.news_unknown_date_count ?? 0} · weak ${s.news_broad_weak_count ?? 0}`;
+    sourceEl.textContent = `${s.operator_status || `세션 ${d.session_date || '-'} · ${koPreopenReason(s.empty_reason)}`} · ${newsLine}`;
     sourceEl.title = s.raw_status || '';
     document.getElementById('preopen-candidates').innerHTML = tableOrEmpty(
       d.candidates || [],
-      ['순위','종목','선점가','점수','등급','변동%','거래대금','스프레드','태그'],
+      ['순위','종목','선점가','점수','등급','변동%','거래대금','스프레드','뉴스','태그'],
       r => [fmtPreopen(r.shadow_preopen_rank), preopenDisplayTicker(r), fmtPreopenPrice(r.anchor_price ?? r.price ?? r.extended_price),
             fmtPreopen(r.preopen_score), r.preopen_grade || '',
-            fmtPreopen(r.extended_change_pct ?? r.gap_pct), fmtPreopen(r.extended_dollar_volume), fmtPreopen(r.spread_pct), tags(r.risk_tags)]
+            fmtPreopen(r.extended_change_pct ?? r.gap_pct), fmtPreopen(r.extended_dollar_volume), fmtPreopen(r.spread_pct),
+            preopenNewsCell(r), tags(r.risk_tags)]
     );
     document.getElementById('preopen-rank-diff').innerHTML = tableOrEmpty(
       d.rank_diff || [],
@@ -16097,6 +16267,11 @@ PAGE_CANDIDATE_AUDIT_HTML = """
   </section>
 
   <section class="section">
+    <div class="section-title">뉴스 입력 품질</div>
+    <div id="candidate-audit-news" class="table-wrap"><div class="muted">로딩 중...</div></div>
+  </section>
+
+  <section class="section">
     <div class="section-title">분류별 사후 성과</div>
     <div id="candidate-audit-buckets" class="table-wrap"><div class="muted">로딩 중...</div></div>
   </section>
@@ -16175,6 +16350,21 @@ function auditTrainerStatePill(state) {
   const cls = ['PLAN_A'].includes(s) ? 'good' : (['QUARANTINE', 'BENCH'].includes(s) ? 'bad' : 'warn');
   return `<span class="audit-pill ${cls}">${auditLabel(s)}</span>`;
 }
+function auditNewsCell(row) {
+  const count = Number(row.news_or_earnings_count || 0);
+  const inPrompt = Number(row.news_in_prompt || 0) === 1;
+  const quality = String(row.news_quality || '').trim();
+  const dateQuality = String(row.news_date_quality || '').trim();
+  const stale = Number(row.news_stale_filtered_count || 0);
+  if (!count && !inPrompt && !quality && !dateQuality && !stale) return '-';
+  const cls = inPrompt ? 'good' : 'warn';
+  const parts = [];
+  if (count) parts.push(`count ${count}`);
+  if (quality) parts.push(quality);
+  if (dateQuality && dateQuality !== 'dated') parts.push(dateQuality);
+  if (stale) parts.push(`stale ${stale}`);
+  return `<span class="audit-pill ${cls}">${inPrompt ? 'IN' : 'OUT'}</span><div class="audit-note">${auditLabel(parts.join(' · ') || 'news')}</div>`;
+}
 function auditParams() {
   const params = new URLSearchParams();
   params.set('market', MARKET);
@@ -16207,6 +16397,7 @@ function renderCandidateAuditMissing(data) {
   document.getElementById('candidate-audit-missed').innerHTML = '<div class="muted">데이터 없음</div>';
   document.getElementById('candidate-audit-routing-delta').innerHTML = '<div class="muted">데이터 없음</div>';
   document.getElementById('candidate-audit-trainer').innerHTML = '<div class="muted">데이터 없음</div>';
+  document.getElementById('candidate-audit-news').innerHTML = '<div class="muted">데이터 없음</div>';
   document.getElementById('candidate-audit-watch-trigger').innerHTML = '<div class="muted">데이터 없음</div>';
   document.getElementById('candidate-audit-rows').innerHTML = '<div class="muted">데이터 없음</div>';
 }
@@ -16249,6 +16440,7 @@ function renderCandidateAuditSummary(data) {
   renderCandidateAuditMissed(data.missed_winners || []);
   renderCandidateAuditRoutingDelta(data.routing_delta || {});
   renderCandidateAuditTrainer(data.trainer_summary || {});
+  renderCandidateAuditNews(data.news_summary || {});
   renderCandidateAuditWatchTrigger(data.watch_trigger_shadow_summary || {});
   renderCandidateAuditBuckets(data.outcome_buckets || []);
   renderCandidateAuditRouteShadow(data.route_shadow_summary || {});
@@ -16382,6 +16574,35 @@ function renderCandidateAuditTrainer(summary) {
   </table>` : '';
   el.innerHTML = head + stateTable + reasonTable;
 }
+function renderCandidateAuditNews(summary) {
+  const el = document.getElementById('candidate-audit-news');
+  if (!summary || !summary.available) {
+    el.innerHTML = `<div class="muted">${auditLabel((summary && summary.error) || 'news audit 데이터 없음')}</div>`;
+    return;
+  }
+  const quality = summary.quality_counts || [];
+  const dateQuality = summary.date_quality_counts || [];
+  const head = `<div class="audit-note" style="margin-bottom:8px">
+    rows ${auditInt(summary.rows)} · 뉴스 row ${auditInt(summary.news_rows)} · prompt 뉴스 ${auditInt(summary.news_in_prompt_rows)}
+    · 뉴스 item ${auditInt(summary.news_item_count)} · stale filtered ${auditInt(summary.stale_filtered_count)}
+    · weak row ${auditInt(summary.weak_rows)} · unknown date row ${auditInt(summary.unknown_date_rows)}
+    · source weak ${auditInt(summary.source_broad_weak_count)} · source unknown ${auditInt(summary.source_unknown_date_count)}
+  </div>`;
+  const table = `<table class="audit-compact-table">
+    <thead><tr><th>quality</th><th>rows</th><th>date quality</th><th>rows</th></tr></thead>
+    <tbody>${Array.from({length: Math.max(quality.length, dateQuality.length, 1)}).map((_, idx) => {
+      const q = quality[idx] || {};
+      const d = dateQuality[idx] || {};
+      return `<tr>
+        <td>${auditLabel(q.quality || '-')}</td>
+        <td>${q.rows === undefined ? '-' : auditInt(q.rows)}</td>
+        <td>${auditLabel(d.date_quality || '-')}</td>
+        <td>${d.rows === undefined ? '-' : auditInt(d.rows)}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+  el.innerHTML = head + table;
+}
 function renderCandidateAuditWatchTrigger(summary) {
   const el = document.getElementById('candidate-audit-watch-trigger');
   if (!summary || summary.error) {
@@ -16497,7 +16718,7 @@ function renderCandidateAuditRows(data) {
   }
   el.innerHTML = `<table class="audit-compact-table">
     <thead><tr>
-      <th>시간</th><th>종목</th><th>분류</th><th>prompt</th><th>trainer</th><th>Claude</th><th>Route</th>
+      <th>시간</th><th>종목</th><th>분류</th><th>prompt</th><th>뉴스</th><th>trainer</th><th>Claude</th><th>Route</th>
       <th>가격</th><th>등락</th><th>체결</th><th>실현</th><th>사후수익</th><th>MFE</th><th>MAE</th><th>outcome</th><th>사유</th>
     </tr></thead>
     <tbody>${rows.map(row => {
@@ -16521,6 +16742,7 @@ function renderCandidateAuditRows(data) {
           <span class="audit-pill ${included ? 'good' : 'warn'}">${included ? 'IN' : 'OUT'}</span>
           <div class="audit-note">raw ${auditLabel(rawRank)} · score ${auditLabel(scoreRank)} · prompt ${auditLabel(promptRank)}</div>
         </td>
+        <td>${auditNewsCell(row)}</td>
         <td>${trainer}</td>
         <td>${auditLabel(row.claude_action)}</td>
         <td>${auditLabel(row.route_final_action)}</td>

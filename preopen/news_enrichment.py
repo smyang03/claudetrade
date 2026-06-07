@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -111,6 +112,190 @@ def _title_text(item: Any) -> str:
     return str(item or "").strip()
 
 
+def _entry_name(entry: dict[str, Any]) -> str:
+    for key in ("name", "company_name", "corp_name", "stock_name"):
+        value = str((entry or {}).get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _payload_date(payload: dict[str, Any]) -> str:
+    for key in ("date", "session_date", "target_date"):
+        value = _date_part(str((payload or {}).get(key) or ""))
+        if value:
+            return value
+    return ""
+
+
+def _item_date_part(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    for key in ("date", "published_at", "report_date", "rcept_dt"):
+        text = str(item.get(key) or "").strip()
+        if not text:
+            continue
+        if len(text) >= 10 and text[4:5] == "-" and text[7:8] == "-":
+            return text[:10]
+        if len(text) >= 8 and text[:8].isdigit():
+            return f"{text[:4]}-{text[4:6]}-{text[6:8]}"
+    return ""
+
+
+def _item_date_quality(item: Any, payload_date: str) -> str:
+    item_date = _item_date_part(item)
+    if not item_date:
+        return "unknown_date"
+    if payload_date and item_date != payload_date:
+        return "stale"
+    return "dated"
+
+
+def _item_matches_payload_date(item: Any, payload_date: str) -> bool:
+    return _item_date_quality(item, payload_date) != "stale"
+
+
+_US_NAME_STOPWORDS = {
+    "INC",
+    "INCORPORATED",
+    "CORP",
+    "CORPORATION",
+    "COMPANY",
+    "CO",
+    "LTD",
+    "PLC",
+    "HOLDINGS",
+    "GROUP",
+    "THE",
+    "AND",
+    "CLASS",
+    "COMMON",
+    "STOCK",
+}
+
+
+def _name_tokens(name: str) -> list[str]:
+    tokens = [token.upper() for token in re.findall(r"[A-Za-z0-9]+", str(name or ""))]
+    return [token for token in tokens if len(token) >= 3 and token not in _US_NAME_STOPWORDS][:4]
+
+
+def _title_mentions_ticker_or_name(market: str, ticker: str, name: str, item: Any) -> bool:
+    title = _title_text(item)
+    if not title:
+        return False
+    market_key = _market_key(market)
+    ticker_key = _normalize_ticker(market_key, ticker)
+    if market_key == "US":
+        upper_title = title.upper()
+        if ticker_key and re.search(rf"(?<![A-Z0-9]){re.escape(ticker_key)}(?![A-Z0-9])", upper_title):
+            return True
+        return any(token in upper_title for token in _name_tokens(name))
+    if ticker_key and ticker_key in title:
+        return True
+    compact_name = str(name or "").strip()
+    return bool(compact_name and compact_name in title)
+
+
+def _related_ticker_match(market: str, ticker: str, item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    ticker_key = _normalize_ticker(market, ticker)
+    values: list[Any] = []
+    for key in ("related_tickers", "ticker_sentiment"):
+        raw = item.get(key)
+        if isinstance(raw, list):
+            values.extend(raw)
+        elif raw not in (None, ""):
+            values.append(raw)
+    for value in values:
+        if isinstance(value, dict):
+            raw = value.get("ticker") or value.get("symbol") or value.get("iscd")
+        else:
+            raw = value
+        if _normalize_ticker(market, raw) == ticker_key:
+            return True
+    return False
+
+
+def _item_is_broad_weak(market: str, ticker: str, name: str, item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    source = _source_name(item).lower()
+    if any(marker in source for marker in ("sec", "dart")):
+        return False
+    if _related_ticker_match(market, ticker, item):
+        return False
+    if "kis" in source and str(item.get("matched_by") or "") == "kis_iscd":
+        return False
+    if _title_mentions_ticker_or_name(market, ticker, name, item):
+        return False
+    return any(marker in source for marker in ("finnhub", "alphavantage", "alpha vantage", "news"))
+
+
+def _empty_filter_summary(payload_date: str) -> dict[str, Any]:
+    return {
+        "payload_date": payload_date,
+        "raw_corp_item_count": 0,
+        "raw_disclosure_item_count": 0,
+        "usable_corp_item_count": 0,
+        "usable_disclosure_item_count": 0,
+        "stale_filtered_count": 0,
+        "unknown_date_count": 0,
+        "broad_weak_count": 0,
+    }
+
+
+def _filter_items_for_payload_date(
+    items: list[Any],
+    payload_date: str,
+    *,
+    summary: dict[str, Any],
+    raw_count_key: str,
+    usable_count_key: str,
+    market: str = "",
+    ticker: str = "",
+    name: str = "",
+    classify_broad: bool = False,
+) -> tuple[list[Any], dict[str, int]]:
+    filtered: list[Any] = []
+    counters = {"unknown_date": 0, "broad_weak": 0}
+    summary[raw_count_key] = int(summary.get(raw_count_key, 0) or 0) + len(items)
+    for item in items:
+        date_quality = _item_date_quality(item, payload_date)
+        if date_quality == "stale":
+            summary["stale_filtered_count"] = int(summary.get("stale_filtered_count", 0) or 0) + 1
+            continue
+        if date_quality == "unknown_date":
+            counters["unknown_date"] += 1
+            summary["unknown_date_count"] = int(summary.get("unknown_date_count", 0) or 0) + 1
+        if classify_broad and _item_is_broad_weak(market, ticker, name, item):
+            counters["broad_weak"] += 1
+            summary["broad_weak_count"] = int(summary.get("broad_weak_count", 0) or 0) + 1
+        filtered.append(item)
+    summary[usable_count_key] = int(summary.get(usable_count_key, 0) or 0) + len(filtered)
+    return filtered, counters
+
+
+def _quality_from_counts(count: int, weak_count: int) -> str:
+    if count <= 0:
+        return ""
+    if weak_count >= count:
+        return "weak"
+    if weak_count > 0:
+        return "mixed"
+    return "normal"
+
+
+def _date_quality_from_counts(count: int, unknown_date_count: int) -> str:
+    if count <= 0:
+        return ""
+    if unknown_date_count >= count:
+        return "unknown_date"
+    if unknown_date_count > 0:
+        return "mixed_date"
+    return "dated"
+
+
 def _add_hit(
     index: dict[str, dict[str, Any]],
     ticker: str,
@@ -118,63 +303,141 @@ def _add_hit(
     count: int,
     source: str,
     sample_title: str = "",
+    weak_count: int = 0,
+    unknown_date_count: int = 0,
 ) -> None:
     if not ticker or count <= 0:
         return
     info = index.setdefault(
         ticker,
-        {"count": 0, "sources": set(), "sample_title": ""},
+        {
+            "count": 0,
+            "sources": set(),
+            "sample_title": "",
+            "weak_count": 0,
+            "unknown_date_count": 0,
+            "quality_tags": set(),
+        },
     )
     info["count"] = int(info.get("count", 0) or 0) + int(count)
+    info["weak_count"] = int(info.get("weak_count", 0) or 0) + max(0, int(weak_count or 0))
+    info["unknown_date_count"] = int(info.get("unknown_date_count", 0) or 0) + max(0, int(unknown_date_count or 0))
+    if weak_count > 0:
+        info["quality_tags"].add("broad_weak")
+    if unknown_date_count > 0:
+        info["quality_tags"].add("unknown_date")
     if source:
         info["sources"].add(str(source))
     if sample_title and not info.get("sample_title"):
         info["sample_title"] = sample_title
 
 
-def build_news_index(market: str, payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def build_news_index_with_summary(
+    market: str,
+    payload: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     market_key = _market_key(market)
     index: dict[str, dict[str, Any]] = {}
+    payload_date = _payload_date(payload)
+    summary = _empty_filter_summary(payload_date)
     corp_news = payload.get("corp_news") if isinstance(payload, dict) else {}
     if isinstance(corp_news, dict):
         for raw_ticker, entry in corp_news.items():
             if not isinstance(entry, dict):
                 continue
             ticker = _normalize_ticker(market_key, raw_ticker)
-            items = entry.get("items") or []
-            if not isinstance(items, list):
-                items = []
-            try:
-                count = int(entry.get("count", len(items)) or 0)
-            except Exception:
+            name = _entry_name(entry)
+            raw_items = entry.get("items") or []
+            if not isinstance(raw_items, list):
+                raw_items = []
+            items, counters = _filter_items_for_payload_date(
+                raw_items,
+                payload_date,
+                summary=summary,
+                raw_count_key="raw_corp_item_count",
+                usable_count_key="usable_corp_item_count",
+                market=market_key,
+                ticker=ticker,
+                name=name,
+                classify_broad=True,
+            )
+            if raw_items:
                 count = len(items)
-            count = max(count, len(items))
+            else:
+                try:
+                    count = int(entry.get("count", 0) or 0)
+                except Exception:
+                    count = 0
+                if count > 0:
+                    counters = {"unknown_date": count, "broad_weak": 0}
+                    summary["unknown_date_count"] = int(summary.get("unknown_date_count", 0) or 0) + count
+                    summary["usable_corp_item_count"] = int(summary.get("usable_corp_item_count", 0) or 0) + count
             if count <= 0:
                 continue
             sources = sorted(set(src for src in (_source_name(item) for item in items) if src)) or ["news"]
             sample_title = next((_title_text(item) for item in items if _title_text(item)), "")
-            _add_hit(index, ticker, count=count, source=sources[0], sample_title=sample_title)
+            _add_hit(
+                index,
+                ticker,
+                count=count,
+                source=sources[0],
+                sample_title=sample_title,
+                weak_count=counters.get("broad_weak", 0),
+                unknown_date_count=counters.get("unknown_date", 0),
+            )
             index[ticker]["sources"].update(sources[1:])
 
     disclosures = payload.get("disclosures") if isinstance(payload, dict) else {}
     if isinstance(disclosures, dict):
         for raw_ticker, items in disclosures.items():
             ticker = _normalize_ticker(market_key, raw_ticker)
-            rows = items if isinstance(items, list) else []
+            raw_rows = items if isinstance(items, list) else []
+            rows, counters = _filter_items_for_payload_date(
+                raw_rows,
+                payload_date,
+                summary=summary,
+                raw_count_key="raw_disclosure_item_count",
+                usable_count_key="usable_disclosure_item_count",
+            )
             if not rows:
                 continue
             sample_title = next((_title_text(item) for item in rows if _title_text(item)), "")
-            _add_hit(index, ticker, count=len(rows), source="DART", sample_title=sample_title)
+            _add_hit(
+                index,
+                ticker,
+                count=len(rows),
+                source="DART",
+                sample_title=sample_title,
+                unknown_date_count=counters.get("unknown_date", 0),
+            )
 
     normalized: dict[str, dict[str, Any]] = {}
     for ticker, info in index.items():
         sources = sorted(str(src) for src in (info.get("sources") or set()) if str(src or "").strip())
+        count = int(info.get("count", 0) or 0)
+        weak_count = int(info.get("weak_count", 0) or 0)
+        unknown_date_count = int(info.get("unknown_date_count", 0) or 0)
+        quality_tags = sorted(str(tag) for tag in (info.get("quality_tags") or set()) if str(tag or "").strip())
         normalized[ticker] = {
-            "count": int(info.get("count", 0) or 0),
+            "count": count,
             "sources": sources,
             "sample_title": str(info.get("sample_title") or ""),
+            "news_quality": _quality_from_counts(count, weak_count),
+            "news_date_quality": _date_quality_from_counts(count, unknown_date_count),
+            "news_quality_tags": quality_tags,
+            "weak_count": weak_count,
+            "unknown_date_count": unknown_date_count,
         }
-    return normalized
+    summary["news_ticker_count"] = len(normalized)
+    summary["usable_item_count"] = int(summary.get("usable_corp_item_count", 0) or 0) + int(
+        summary.get("usable_disclosure_item_count", 0) or 0
+    )
+    return normalized, summary
+
+
+def build_news_index(market: str, payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    index, _summary = build_news_index_with_summary(market, payload)
+    return index
 
 
 def _score_without_rank_reorder(market: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -213,7 +476,7 @@ def enrich_candidates_with_news(
             "allow_rank_reorder": bool(allow_rank_reorder),
         }
 
-    index = build_news_index(market_key, payload)
+    index, filter_summary = build_news_index_with_summary(market_key, payload)
     enriched: list[dict[str, Any]] = []
     flagged = 0
     changed = 0
@@ -231,14 +494,21 @@ def enrich_candidates_with_news(
             row["news_or_earnings_count"] = int(hit.get("count", 0) or 0)
             row["news_or_earnings_sources"] = list(hit.get("sources") or [])
             row["news_or_earnings_sample_title"] = str(hit.get("sample_title") or "")
+            row["news_quality"] = str(hit.get("news_quality") or "normal")
+            row["news_date_quality"] = str(hit.get("news_date_quality") or "dated")
+            row["news_quality_tags"] = list(hit.get("news_quality_tags") or [])
             quality_tags = list(row.get("quality_tags") or [])
             quality_tags.append("news_or_earnings")
+            quality_tags.extend(list(hit.get("news_quality_tags") or []))
             row["quality_tags"] = sorted(set(str(tag) for tag in quality_tags if str(tag or "").strip()))
         else:
             row["news_or_earnings_flag"] = False
             row["news_or_earnings_count"] = 0
             row["news_or_earnings_sources"] = []
             row["news_or_earnings_sample_title"] = ""
+            row["news_quality"] = ""
+            row["news_date_quality"] = ""
+            row["news_quality_tags"] = []
         after = (
             bool(row.get("news_or_earnings_flag")),
             int(row.get("news_or_earnings_count") or 0),
@@ -260,6 +530,12 @@ def enrich_candidates_with_news(
         "flagged_count": flagged,
         "changed_count": changed,
         "news_ticker_count": len(index),
+        "news_filter_summary": filter_summary,
+        "stale_filtered_count": int(filter_summary.get("stale_filtered_count", 0) or 0),
+        "unknown_date_count": int(filter_summary.get("unknown_date_count", 0) or 0),
+        "broad_weak_count": int(filter_summary.get("broad_weak_count", 0) or 0),
+        "usable_item_count": int(filter_summary.get("usable_item_count", 0) or 0),
+        "payload_date": str(filter_summary.get("payload_date") or ""),
         "news_path": source_path,
         "target_source": str(payload.get("target_source") or ""),
         "allow_rank_reorder": bool(allow_rank_reorder),

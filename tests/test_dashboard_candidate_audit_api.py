@@ -24,6 +24,7 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
         self.assertIn(b"candidate-audit-missed", response.data)
         self.assertIn(b"candidate-audit-watch-trigger", response.data)
         self.assertIn(b"candidate-audit-trainer", response.data)
+        self.assertIn(b"candidate-audit-news", response.data)
         self.assertIn(b"/candidate-audit", response.data)
 
     def test_candidate_audit_page_honors_market_and_mode_query_params(self) -> None:
@@ -292,6 +293,75 @@ class DashboardCandidateAuditApiTests(unittest.TestCase):
             self.assertEqual(by_ticker["NVTS"]["execution_decision_id"], "v2_decision_nvts")
             self.assertEqual(by_ticker["NVTS"]["execution_event_id"], 77)
             self.assertEqual(by_ticker["WEAK"]["prompt_excluded_reason"], "trainer_quarantine")
+
+    def test_candidate_audit_api_exposes_news_prompt_quality_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_call(
+                {
+                    "call_id": "call_news",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-06-05",
+                    "called_at": "2026-06-05T22:30:00+09:00",
+                    "prompt_candidate_count": 1,
+                    "actual_prompt_count": 1,
+                    "news_stale_filtered_count": 3,
+                    "news_unknown_date_count": 4,
+                    "news_broad_weak_count": 5,
+                }
+            )
+            store.upsert_candidate(
+                {
+                    "call_id": "call_news",
+                    "runtime_mode": "live",
+                    "market": "US",
+                    "session_date": "2026-06-05",
+                    "known_at": "2026-06-05T22:30:00+09:00",
+                    "ticker": "AAPL",
+                    "prompt_rank": 1,
+                    "in_prompt": True,
+                    "final_prompt_included": True,
+                    "news_in_prompt": True,
+                    "news_or_earnings_count": 2,
+                    "news_or_earnings_sources_json": ["Finnhub"],
+                    "news_or_earnings_sample_title": "Apple supplier headline",
+                    "news_quality": "weak",
+                    "news_date_quality": "unknown_date",
+                    "news_quality_tags_json": ["broad_weak", "unknown_date"],
+                    "news_stale_filtered_count": 3,
+                    "classification": "watch_only",
+                }
+            )
+
+            import dashboard.dashboard_server as dashboard_server
+
+            with patch.object(dashboard_server, "_candidate_audit_db_path", return_value=db_path):
+                summary = dashboard_server.app.test_client().get(
+                    "/api/candidate-audit/summary?market=US&date=2026-06-05&mode=live"
+                )
+                rows = dashboard_server.app.test_client().get(
+                    "/api/candidate-audit/rows?market=US&date=2026-06-05&mode=live"
+                )
+
+        self.assertEqual(summary.status_code, 200)
+        summary_data = summary.get_json()
+        self.assertTrue(summary_data["news_summary"]["available"])
+        self.assertEqual(summary_data["news_summary"]["news_in_prompt_rows"], 1)
+        self.assertEqual(summary_data["news_summary"]["weak_rows"], 1)
+        self.assertEqual(summary_data["news_summary"]["unknown_date_rows"], 1)
+        self.assertEqual(summary_data["news_summary"]["stale_filtered_count"], 3)
+        self.assertEqual(summary_data["news_summary"]["source_unknown_date_count"], 4)
+        self.assertEqual(summary_data["news_summary"]["source_broad_weak_count"], 5)
+
+        self.assertEqual(rows.status_code, 200)
+        rows_data = rows.get_json()
+        self.assertEqual(rows_data["rows"][0]["ticker"], "AAPL")
+        self.assertEqual(rows_data["rows"][0]["news_in_prompt"], 1)
+        self.assertEqual(rows_data["rows"][0]["news_or_earnings_count"], 2)
+        self.assertEqual(rows_data["rows"][0]["news_or_earnings_sources"], ["Finnhub"])
+        self.assertEqual(rows_data["rows"][0]["news_quality_tags"], ["broad_weak", "unknown_date"])
 
     def test_candidate_audit_summary_missing_db_is_non_fatal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -98,6 +98,57 @@ class SelectionPromptStabilityTests(unittest.TestCase):
         self.assertIn("Digest news excerpt:", captured["prompt"])
         self.assertIn("Tesla supplier headline", captured["prompt"])
 
+    def test_select_tickers_prompt_includes_ticker_scoped_news_hint_only_for_matching_candidate(self) -> None:
+        captured = {}
+
+        def fake_create(*, model, max_tokens, messages):
+            captured["prompt"] = messages[0]["content"]
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        text='{"watchlist":["AAPL","MSFT"],"trade_ready":[],"reasons":{"AAPL":"watch","MSFT":"watch"}}'
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        candidates = [
+            {
+                "ticker": "AAPL",
+                "price": 200.0,
+                "volume": 1_000_000,
+                "change_rate": 2.4,
+                "news_or_earnings_flag": True,
+                "news_or_earnings_count": 2,
+                "news_or_earnings_sources": ["Finnhub", "SEC"],
+                "news_or_earnings_sample_title": "Apple product launch catalyst",
+                "news_quality": "mixed",
+                "news_date_quality": "unknown_date",
+            },
+            {
+                "ticker": "MSFT",
+                "price": 420.0,
+                "volume": 900_000,
+                "change_rate": 1.1,
+            },
+        ]
+
+        env = {
+            "CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED": "false",
+            "CANDIDATE_QUALITY_TRAINER_ENABLED": "false",
+        }
+        with patch.dict(os.environ, env, clear=False), \
+             patch.object(analysts_module.client.messages, "create", side_effect=fake_create), \
+             patch.object(analysts_module, "credit_record", lambda *args, **kwargs: None), \
+             patch.object(analysts_module, "save_raw_call", lambda *args, **kwargs: None):
+            analysts_module.select_tickers("US", "Market context without company headlines", "NEUTRAL", candidates)
+
+        prompt_lines = captured["prompt"].splitlines()
+        aapl_line = next(line for line in prompt_lines if line.startswith("AAPL "))
+        msft_line = next(line for line in prompt_lines if line.startswith("MSFT "))
+        self.assertIn("news=count=2|src=Finnhub,SEC|quality=mixed|date=unknown_date|title=Apple product launch catalyst", aapl_line)
+        self.assertNotIn("news=", msft_line)
+
 
 if __name__ == "__main__":
     unittest.main()

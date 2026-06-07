@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 from bot.session_date import KST
 from preopen.news_enrichment import (
+    build_news_index,
+    build_news_index_with_summary,
     enrich_candidates_with_news,
     enrich_preopen_state,
     load_preopen_news_payload,
@@ -64,6 +66,77 @@ class PreopenNewsEnrichmentTests(unittest.TestCase):
         self.assertIn("Finnhub", enriched[0]["news_or_earnings_sources"])
         self.assertIn("catalyst", enriched[0]["preopen_reason"])
         self.assertGreaterEqual(enriched[0]["preopen_score"], 0.73)
+
+    def test_build_news_index_ignores_stale_dated_corp_news_items(self) -> None:
+        payload = {
+            "date": "2026-06-05",
+            "corp_news": {
+                "ADPT": {
+                    "count": 2,
+                    "items": [
+                        {"source": "KIS", "date": "2025-08-04", "title": "Old unrelated headline"},
+                        {"source": "KIS", "published_at": "2026-06-05T09:10:00+09:00", "title": "Current ADPT headline"},
+                    ],
+                },
+                "CAI": {
+                    "count": 1,
+                    "items": [
+                        {"source": "KIS", "published_at": "2025-08-14T09:03:33+09:00", "title": "Stale CAI headline"},
+                    ],
+                },
+            },
+        }
+
+        index, summary = build_news_index_with_summary("US", payload)
+
+        self.assertEqual(index["ADPT"]["count"], 1)
+        self.assertEqual(index["ADPT"]["sample_title"], "Current ADPT headline")
+        self.assertNotIn("CAI", index)
+        self.assertEqual(summary["stale_filtered_count"], 2)
+        self.assertEqual(summary["usable_corp_item_count"], 1)
+
+        legacy_index = build_news_index("US", payload)
+        self.assertEqual(legacy_index["ADPT"]["count"], 1)
+        self.assertNotIn("CAI", legacy_index)
+
+    def test_news_enrichment_marks_unknown_date_and_broad_weak_news(self) -> None:
+        candidates = [
+            {
+                "ticker": "AAPL",
+                "name": "Apple Inc.",
+                "market": "US",
+                "extended_change_pct": 4.0,
+                "extended_dollar_volume": 5_000_000,
+                "spread_pct": 0.2,
+            }
+        ]
+        payload = {
+            "date": "2026-06-05",
+            "corp_news": {
+                "AAPL": {
+                    "name": "Apple Inc.",
+                    "items": [
+                        {"source": "Finnhub", "title": "Technology stocks rise before the open"},
+                        {"source": "Finnhub", "date": "2026-06-05", "title": "Apple unveils AI roadmap"},
+                    ],
+                }
+            },
+        }
+
+        enriched, summary = enrich_candidates_with_news(
+            "US",
+            candidates,
+            session_date="2026-06-05",
+            news_payload=payload,
+        )
+
+        self.assertEqual(summary["unknown_date_count"], 1)
+        self.assertEqual(summary["broad_weak_count"], 1)
+        self.assertEqual(summary["stale_filtered_count"], 0)
+        self.assertEqual(enriched[0]["news_quality"], "mixed")
+        self.assertEqual(enriched[0]["news_date_quality"], "mixed_date")
+        self.assertIn("broad_weak", enriched[0]["news_quality_tags"])
+        self.assertIn("unknown_date", enriched[0]["news_quality_tags"])
 
     def test_enrich_preopen_state_preserves_rank_after_outcome_started(self) -> None:
         payload = {

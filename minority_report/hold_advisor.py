@@ -492,6 +492,74 @@ def _pathb_revenue_path_context(
     }
 
 
+def _compact_news_prompt_text(value, max_chars: int = 120) -> str:
+    text = " ".join(str(value or "").replace("|", " ").split())
+    return text[: max(1, int(max_chars))].strip()
+
+
+def _position_news_payload(pos: dict) -> dict:
+    source = pos if isinstance(pos, dict) else {}
+    advisor_ctx = source.get("advisor_context_v2") if isinstance(source.get("advisor_context_v2"), dict) else {}
+
+    def _value(key: str):
+        value = source.get(key)
+        if value not in (None, "", []):
+            return value
+        return advisor_ctx.get(key)
+
+    try:
+        count = int(float(_value("news_or_earnings_count") or 0))
+    except Exception:
+        count = 0
+    raw_sources = _value("news_or_earnings_sources")
+    if isinstance(raw_sources, (list, tuple, set)):
+        sources = [_compact_news_prompt_text(src, 32) for src in raw_sources]
+    elif raw_sources:
+        sources = [_compact_news_prompt_text(raw_sources, 80)]
+    else:
+        sources = []
+    sources = [src for src in sources if src][:4]
+    sample_title = _compact_news_prompt_text(
+        _value("news_or_earnings_sample_title") or _value("news_sample_title"),
+        140,
+    )
+    flagged = bool(_value("news_or_earnings_flag")) or count > 0 or bool(sources) or bool(sample_title)
+    if not flagged:
+        return {}
+    payload = {"flag": True}
+    if count > 0:
+        payload["count"] = count
+    if sources:
+        payload["sources"] = sources
+    quality = _compact_news_prompt_text(_value("news_quality"), 32)
+    if quality:
+        payload["quality"] = quality
+    date_quality = _compact_news_prompt_text(_value("news_date_quality"), 32)
+    if date_quality and date_quality != "dated":
+        payload["date_quality"] = date_quality
+    if sample_title:
+        payload["sample_title"] = sample_title
+    return payload
+
+
+def _position_news_context_text(pos: dict) -> str:
+    payload = _position_news_payload(pos)
+    if not payload:
+        return ""
+    parts = []
+    if payload.get("count"):
+        parts.append(f"count={payload.get('count')}")
+    if payload.get("sources"):
+        parts.append("sources=" + ",".join(payload.get("sources") or []))
+    if payload.get("quality"):
+        parts.append("quality=" + str(payload.get("quality")))
+    if payload.get("date_quality"):
+        parts.append("date=" + str(payload.get("date_quality")))
+    if payload.get("sample_title"):
+        parts.append("sample_title=" + str(payload.get("sample_title")))
+    return "\n━━━ Position news ━━━\n  " + " | ".join(parts or ["flag=true"]) + "\n"
+
+
 def _triage_case_payload(
     pos: dict,
     market: str,
@@ -550,6 +618,9 @@ def _triage_case_payload(
         "pathb_revenue_path_context": revenue_context,
         "market_context": (rt_context or digest_prompt or "")[:1800],
     }
+    position_news = _position_news_payload(pos)
+    if position_news:
+        payload["position_news"] = position_news
     if hard_guard["breached"]:
         payload["hard_guard"] = _scrub_triage_prompt_value(hard_guard)
     return payload
@@ -1463,6 +1534,7 @@ def _ask_one(analyst_type: str, pos: dict, market: str,
         if ctx_lines:
             advisor_context_text = "\n━━━ Execution Context V2 ━━━\n" + "\n".join(ctx_lines) + "\n"
 
+    position_news_text = _position_news_context_text(pos)
     context_text = rt_context or (digest_prompt[:300] if digest_prompt else "  (정보 없음)")
     if minutes_to_close is None:
         minutes_to_close_text = "unknown"
@@ -1489,7 +1561,7 @@ def _ask_one(analyst_type: str, pos: dict, market: str,
   진입가: {entry_str}  현재가: {cp_str}  수익률: {pnl_pct:+.2f}%
   보유시간: {held_str}
 {drawdown_str}{mode_line}  포지션 상태: {status_line}
-{advisor_context_text}
+{advisor_context_text}{position_news_text}
 
 ━━━ 현재 시장 (실시간) ━━━
 {context_text}

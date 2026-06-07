@@ -776,6 +776,49 @@ def _candidate_earnings_hint(candidate: dict) -> str:
     return " ".join(parts)
 
 
+def _compact_news_prompt_text(value, max_chars: int = 96) -> str:
+    text = " ".join(str(value or "").replace("|", " ").split())
+    return text[: max(1, int(max_chars))].strip()
+
+
+def _candidate_news_hint(candidate: dict) -> str:
+    try:
+        count = int(float(candidate.get("news_or_earnings_count") or 0))
+    except Exception:
+        count = 0
+    raw_sources = candidate.get("news_or_earnings_sources")
+    if isinstance(raw_sources, (list, tuple, set)):
+        sources = [_compact_news_prompt_text(src, 28) for src in raw_sources]
+    elif raw_sources:
+        sources = [_compact_news_prompt_text(raw_sources, 64)]
+    else:
+        sources = []
+    sources = [src for src in sources if src][:3]
+    title = _compact_news_prompt_text(
+        candidate.get("news_or_earnings_sample_title") or candidate.get("news_sample_title"),
+        96,
+    )
+    flagged = bool(candidate.get("news_or_earnings_flag")) or count > 0 or bool(sources) or bool(title)
+    if not flagged:
+        return ""
+    parts = []
+    if count > 0:
+        parts.append(f"count={count}")
+    elif bool(candidate.get("news_or_earnings_flag")):
+        parts.append("flag=true")
+    if sources:
+        parts.append("src=" + ",".join(sources))
+    quality = _compact_news_prompt_text(candidate.get("news_quality"), 24)
+    if quality:
+        parts.append("quality=" + quality)
+    date_quality = _compact_news_prompt_text(candidate.get("news_date_quality"), 24)
+    if date_quality and date_quality != "dated":
+        parts.append("date=" + date_quality)
+    if title:
+        parts.append("title=" + title)
+    return "news=" + "|".join(parts) if parts else "news=flag"
+
+
 def _candidate_preopen_pin_hint(candidate: dict) -> str:
     tier = str(candidate.get("preopen_pin_tier", "") or "").strip().upper()
     pinned = bool(candidate.get("preopen_pinned")) or tier == "HARD"
@@ -2320,6 +2363,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             _candidate_quality_hint(candidate),
             _candidate_evidence_hint(candidate),
             _candidate_earnings_hint(candidate),
+            _candidate_news_hint(candidate),
             _candidate_preopen_pin_hint(candidate),
             _candidate_post_open_hint(candidate),
             (

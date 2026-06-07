@@ -86,6 +86,14 @@ EXTRA_CANDIDATE_COLUMNS: dict[str, str] = {
     "actual_prompt_included": "INTEGER",
     "actual_prompt_rank": "INTEGER",
     "reported_input_to_claude": "INTEGER",
+    "news_in_prompt": "INTEGER",
+    "news_or_earnings_count": "INTEGER",
+    "news_or_earnings_sources_json": "TEXT",
+    "news_or_earnings_sample_title": "TEXT",
+    "news_quality": "TEXT",
+    "news_date_quality": "TEXT",
+    "news_quality_tags_json": "TEXT",
+    "news_stale_filtered_count": "INTEGER",
     "prompt_join_delta_sec": "REAL",
     "final_prompt_included": "INTEGER",
     "prompt_rank_after_trim": "INTEGER",
@@ -165,6 +173,9 @@ EXTRA_CANDIDATE_COLUMNS: dict[str, str] = {
 
 EXTRA_CALL_COLUMNS: dict[str, str] = {
     "actual_prompt_count": "INTEGER DEFAULT 0",
+    "news_stale_filtered_count": "INTEGER DEFAULT 0",
+    "news_unknown_date_count": "INTEGER DEFAULT 0",
+    "news_broad_weak_count": "INTEGER DEFAULT 0",
 }
 
 _MISSING = object()
@@ -178,6 +189,7 @@ _INT_BOOL_COLUMNS = {
     "tuning_feedback_applied",
     "actual_prompt_included",
     "reported_input_to_claude",
+    "news_in_prompt",
     "data_quality_missing",
     "final_prompt_included",
     "stale_cycle",
@@ -608,6 +620,24 @@ class CandidateAuditStore:
                     now,
                 ),
             )
+            extra_updates = {}
+            for column in EXTRA_CALL_COLUMNS:
+                if column == "actual_prompt_count":
+                    continue
+                value = call[column] if column in call else payload.get(column)
+                if value is None or value == "":
+                    continue
+                try:
+                    extra_updates[column] = int(float(value or 0))
+                except Exception:
+                    extra_updates[column] = 0
+            if extra_updates:
+                extra_updates["updated_at"] = now
+                set_clause = ", ".join(f"{column}=?" for column in extra_updates)
+                conn.execute(
+                    f"UPDATE audit_claude_calls SET {set_clause} WHERE call_id=?",
+                    [*extra_updates.values(), str(call.get("call_id", ""))],
+                )
             conn.commit()
         finally:
             conn.close()
