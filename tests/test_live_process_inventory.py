@@ -51,6 +51,16 @@ class LiveProcessInventoryTests(unittest.TestCase):
         self.assertEqual(_classify_repo_process_role(["python", "trading_bot.py", "--paper"]), "paper_bot")
         self.assertEqual(_classify_repo_process_role(["python", "trading_bot.py", "--live"]), "live_bot")
 
+    def test_live_stack_sidecars_are_classified_by_role(self) -> None:
+        self.assertEqual(
+            _classify_repo_process_role(["python", "tools/broker_truth_scheduler.py", "--mode", "live"]),
+            "broker_truth_scheduler",
+        )
+        self.assertEqual(
+            _classify_repo_process_role(["python", "tools/run_counterfactual_pipeline.py"]),
+            "counterfactual_pipeline",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

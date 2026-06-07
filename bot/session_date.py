@@ -14,6 +14,35 @@ except Exception:  # pragma: no cover - python<3.9 fallback
 
 KST = ZoneInfo("Asia/Seoul")
 
+_KNOWN_MARKET_HOLIDAYS = {
+    # KRX announced these 2026 full-market closures after the installed
+    # exchange_calendars package data was generated.
+    "KR": frozenset(
+        {
+            date(2026, 6, 3),
+            date(2026, 7, 17),
+        }
+    ),
+}
+
+
+def _coerce_date(value) -> date | None:
+    try:
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        return datetime.fromisoformat(str(value)).date()
+    except Exception:
+        return None
+
+
+def is_known_market_holiday(market: str, check_date) -> bool:
+    day = _coerce_date(check_date)
+    if day is None:
+        return False
+    return day in _KNOWN_MARKET_HOLIDAYS.get(str(market or "").upper(), frozenset())
+
 
 def resolve_session_date(market: str, now_dt: datetime | None = None) -> date:
     """Return the trading session date using the bot's KST session boundary rules."""

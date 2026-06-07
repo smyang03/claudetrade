@@ -17,7 +17,7 @@ except Exception:  # pragma: no cover - python<3.9 fallback
 
 from risk_manager import HARD_RULES
 from logger import get_trading_logger
-from bot.session_date import resolve_session_date
+from bot.session_date import is_known_market_holiday, resolve_session_date
 
 log = get_trading_logger()
 KST = ZoneInfo("Asia/Seoul")
@@ -43,9 +43,12 @@ def _market_close_anchor_at(market: str, now_dt: datetime) -> datetime:
 
 def _is_trading_day(market: str, check_date=None) -> bool:
     """오늘이 해당 시장의 정규 거래일인지 확인 (주말·공휴일 모두 처리)"""
+    market_key = str(market or "").upper()
     if check_date is None:
-        check_date = _market_session_date(market)
-    exchange = _EXCHANGE_MAP.get(market, "XNYS")
+        check_date = _market_session_date(market_key)
+    if is_known_market_holiday(market_key, check_date):
+        return False
+    exchange = _EXCHANGE_MAP.get(market_key, "XNYS")
     try:
         import exchange_calendars as ec
         if exchange not in _ec_cache:
@@ -70,16 +73,21 @@ class MarketUtilsMixin:
         return now_dt < start_block_end or now_dt > end_block_start
 
     def _is_order_allowed_now(self, market: str) -> bool:
-        """정규장 외 주문 차단 — 장전/장종료 주문 실패 반복 방지."""
+        """정규장 외 주문 차단 - 장전/장종료 주문 실패 반복 방지."""
+        market_key = str(market or "").upper()
         now_dt = datetime.now(KST)
-        open_dt = self._market_open_anchor_dt(market)
-        close_dt = self._market_close_anchor_dt(market)
+        session_date = _market_session_date(market_key, now_dt)
+        if not _is_trading_day(market_key, session_date):
+            log.debug(f"[{market_key} 주문차단] 비거래 세션 ({session_date}) — 주문 보류")
+            return False
+        open_dt = self._market_open_anchor_dt(market_key)
+        close_dt = self._market_close_anchor_dt(market_key)
         if open_dt <= now_dt < close_dt:
             return True
-        if market == "US" and now_dt < open_dt:
+        if market_key == "US" and now_dt < open_dt:
             log.debug(f"[US 주문차단] 장 시작 전 ({now_dt.strftime('%H:%M')} < 22:30) — 주문 보류")
         else:
-            log.debug(f"[{market} 주문차단] 정규장 외 시간 ({now_dt.strftime('%H:%M')}) — 주문 보류")
+            log.debug(f"[{market_key} 주문차단] 정규장 외 시간 ({now_dt.strftime('%H:%M')}) — 주문 보류")
         return False
 
     def _intraday_session_progress(self, market: str) -> float:

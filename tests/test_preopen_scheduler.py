@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot.session_date import KST
-from preopen.scheduler import PreopenJob, default_outcome_offsets_min, due_jobs, regular_open_dt
+from preopen.scheduler import PreopenJob, default_outcome_offsets_min, due_jobs, is_trading_day, regular_open_dt
 from preopen.storage import load_preopen_dashboard, load_preopen_scheduler_state
 from tools.preopen_scheduler import _run_job, _scheduler_heartbeat_path, run_scheduler_once
 
@@ -45,6 +45,12 @@ class PreopenSchedulerTests(unittest.TestCase):
             jobs = due_jobs(now_dt=now, markets=["KR"], mode="live")
 
         self.assertEqual(jobs, [])
+
+    def test_known_kr_holiday_override_skips_jobs_even_if_calendar_is_stale(self) -> None:
+        now = datetime(2026, 7, 17, 8, 30, tzinfo=KST)
+
+        self.assertFalse(is_trading_day("KR", "2026-07-17"))
+        self.assertEqual(due_jobs(now_dt=now, markets=["KR"], mode="live"), [])
 
     def test_us_outcome_due_after_regular_open(self) -> None:
         now = datetime(2026, 5, 4, 23, 1, tzinfo=KST)

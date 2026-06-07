@@ -16,6 +16,9 @@ app = dashboard_server.app
 
 
 class DashboardPathBTests(unittest.TestCase):
+    def test_known_kr_holiday_override_blocks_dashboard_trading_day(self) -> None:
+        self.assertFalse(dashboard_server._is_trading_day("KR", date(2026, 7, 17)))
+
     def test_summary_daily_entry_cap_prefers_market_specific_config(self) -> None:
         overrides = {
             "V2_MAX_DAILY_ENTRIES": "20",

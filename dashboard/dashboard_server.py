@@ -48,7 +48,7 @@ KST = ZoneInfo("Asia/Seoul")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from runtime_paths import get_runtime_path
 from runtime.market_resolver import infer_ticker_market, resolve_position_market
-from bot.session_date import resolve_session_date
+from bot.session_date import is_known_market_holiday, resolve_session_date
 try:
     from interface.v2_ops_summary import build_v2_ops_summary
 except Exception:
@@ -5751,6 +5751,8 @@ def _adaptive_param_digest(market: str, mode: str, context: Optional[dict] = Non
 
 def _is_trading_day(market: str, check_date=None) -> bool:
     check_date = check_date or _session_trade_date(market)
+    if is_known_market_holiday(market, check_date):
+        return False
     exchange = _EXCHANGE_CAL_MAP.get(market, "XKRX")
     try:
         import exchange_calendars as ec

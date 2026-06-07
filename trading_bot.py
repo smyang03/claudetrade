@@ -13700,6 +13700,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 features = features_by_ticker.get(ticker)
                 if str((features or {}).get("data_quality")) != "minute_complete":
                     fail_closed_tickers.append(ticker)
+        session_evidence_degraded = bool(
+            requested
+            and not warmup
+            and complete > 0
+            and (partial > 0 or missing > 0 or bool(errors_by_ticker))
+        )
+        session_hard_fail_closed = bool(fail_closed_applied and complete <= 0)
+        session_degraded_reason = ""
+        if session_evidence_degraded:
+            session_degraded_reason = (
+                "coverage_below_threshold"
+                if coverage_ratio < threshold
+                else "partial_or_missing_ticker_evidence"
+            )
         self._mark_intraday_evidence_metadata(
             features_by_ticker,
             provider=provider,
@@ -13755,6 +13769,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "fail_closed_enabled": bool(fail_closed),
                 "fail_closed_applied": bool(fail_closed_applied),
                 "fail_closed_reason": fail_closed_reason,
+                "session_evidence_degraded": bool(session_evidence_degraded),
+                "session_evidence_degraded_reason": session_degraded_reason,
+                "session_hard_fail_closed": bool(session_hard_fail_closed),
+                "confirmed_ticker_count": int(complete),
+                "ticker_fail_closed_count": len(fail_closed_tickers),
                 "demotion_layer": "evidence_fetch" if fail_closed_applied else "",
                 "threshold": float(threshold),
                 "blocked_or_missing_count": len(fail_closed_tickers),
@@ -13790,7 +13809,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 partial=partial,
                 missing=missing,
                 coverage_ratio=coverage_ratio,
-                fail_closed_reason=fail_closed_reason,
+                fail_closed_reason="",
             )
         self._merge_last_post_open_features(market_key, features_by_ticker)
         if self._runtime_bool("ENABLE_POST_OPEN_FEATURE_JSONL", True):

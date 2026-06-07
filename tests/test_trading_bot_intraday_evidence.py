@@ -963,12 +963,12 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         bot = _make_bot(_provider)
         bot._write_funnel_event = lambda event, market_key, payload: events.append((event, market_key, payload))
 
-        TradingBot._prefetch_selection_intraday_evidence(
+        result = TradingBot._prefetch_selection_intraday_evidence(
             bot,
             "KR",
             [
                 {"ticker": "005930", "market": "KR", "price": 100.0},
-                {"ticker": "000660", "market": "KR", "price": 100.0},
+                {"ticker": "000660", "market": "KR", "price": 100.0, "vol_ratio": 1.2},
             ],
             phase={"phase": "mid"},
         )
@@ -979,6 +979,15 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertEqual(coverage["worker_count"], 1)
         self.assertEqual(coverage["timeout_seconds"], 4.0)
         self.assertIn("elapsed_seconds", coverage)
+        self.assertTrue(coverage["session_evidence_degraded"])
+        self.assertEqual(coverage["session_evidence_degraded_reason"], "coverage_below_threshold")
+        self.assertFalse(coverage["session_hard_fail_closed"])
+        self.assertEqual(coverage["confirmed_ticker_count"], 1)
+        self.assertEqual(coverage["ticker_fail_closed_count"], 1)
+        self.assertEqual(result["000660"]["data_quality"], "minute_complete")
+        self.assertFalse(result["000660"].get("fail_closed", False))
+        self.assertEqual(result["005930"]["data_quality"], "minute_missing")
+        self.assertTrue(result["005930"]["fail_closed"])
 
     def test_cached_intraday_evidence_replaces_stale_row_feature_with_missing_state(self) -> None:
         bot = _make_bot(lambda **kwargs: _candles())

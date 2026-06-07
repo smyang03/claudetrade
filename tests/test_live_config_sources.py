@@ -364,6 +364,18 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertTrue(check.data["sessions"]["KR"]["is_session"])
         self.assertTrue(check.data["sessions"]["US"]["is_session"])
 
+    def test_market_session_calendar_applies_known_kr_holiday_override(self) -> None:
+        now = datetime(2026, 7, 17, 10, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+
+        with patch("tools.live_preflight._now_kst", return_value=now):
+            check = _market_session_calendar_check()
+
+        kr = check.data["sessions"]["KR"]
+        self.assertEqual(check.status, "WARN")
+        self.assertTrue(kr["raw_is_session"])
+        self.assertTrue(kr["known_holiday_override"])
+        self.assertFalse(kr["is_session"])
+
     def test_pathb_lifecycle_pre_run_missing_path_ids_are_not_remediation_warnings(self) -> None:
         check = _pathb_lifecycle_window_check_result(
             [],
@@ -613,12 +625,18 @@ class LiveConfigSourceTests(unittest.TestCase):
 
         self.assertEqual(
             [check.name for check in checks],
-            ["runtime.paper_guardian_heartbeat", "runtime.paper_preopen_scheduler_heartbeat"],
+            [
+                "runtime.paper_guardian_heartbeat",
+                "runtime.paper_preopen_scheduler_heartbeat",
+                "runtime.paper_broker_truth_scheduler_heartbeat",
+            ],
         )
         self.assertIn("paper_guardian_heartbeat.json", checks[0].path)
         self.assertIn("paper_preopen_scheduler_heartbeat.json", checks[1].path)
+        self.assertIn("paper_broker_truth_scheduler_heartbeat.json", checks[2].path)
         self.assertEqual(checks[0].kwargs["process"], "paper_guardian")
         self.assertEqual(checks[1].kwargs["process"], "paper_preopen_scheduler")
+        self.assertEqual(checks[2].kwargs["process"], "paper_broker_truth_scheduler")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ import os
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from bot.session_date import KST, resolve_session_date_str
+from bot.session_date import KST, is_known_market_holiday, resolve_session_date_str
 
 
 _EXCHANGE_MAP = {"KR": "XKRX", "US": "XNYS"}
@@ -136,6 +136,8 @@ def default_outcome_offsets_min(market: str, session_date: str) -> tuple[int, ..
 
 
 def is_trading_day(market: str, session_date: str) -> bool:
+    if is_known_market_holiday(market, session_date):
+        return False
     exchange = _EXCHANGE_MAP.get(market_key(market), "XNYS")
     try:
         import exchange_calendars as ec

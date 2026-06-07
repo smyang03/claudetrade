@@ -36,7 +36,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 KST = ZoneInfo("Asia/Seoul") if ZoneInfo is not None else None
 
-from bot.session_date import resolve_session_date
+from bot.session_date import is_known_market_holiday, resolve_session_date
 from runtime.market_resolver import infer_ticker_market
 from runtime.broker_truth_snapshot import age_seconds as _broker_truth_age_seconds
 from runtime_paths import get_runtime_path
@@ -1837,10 +1837,14 @@ def _market_session_calendar_check() -> CheckResult:
         for market, exchange in exchange_by_market.items():
             session_date = str(data[f"{market}_session_date_guess"])
             calendar = ec.get_calendar(exchange)
-            is_session = bool(calendar.is_session(session_date))
+            raw_is_session = bool(calendar.is_session(session_date))
+            known_holiday = is_known_market_holiday(market, session_date)
+            is_session = bool(raw_is_session and not known_holiday)
             item: dict[str, Any] = {
                 "exchange": exchange,
                 "session_date": session_date,
+                "raw_is_session": raw_is_session,
+                "known_holiday_override": known_holiday,
                 "is_session": is_session,
             }
             if is_session:
@@ -1960,6 +1964,8 @@ def _repo_python_processes() -> tuple[list[dict[str, Any]], str, str]:
         "dashboard_server.py",
         "live_guardian.py",
         "preopen_scheduler.py",
+        "broker_truth_scheduler.py",
+        "run_counterfactual_pipeline.py",
     )
     rows: list[dict[str, Any]] = []
     if psutil is not None:
@@ -2014,6 +2020,10 @@ def _classify_repo_process_role(cmdline: list[str]) -> str:
         return "guardian"
     if "tools/preopen_scheduler.py" in command or "preopen_scheduler.py" in command:
         return "preopen_scheduler"
+    if "tools/broker_truth_scheduler.py" in command or "broker_truth_scheduler.py" in command:
+        return "broker_truth_scheduler"
+    if "tools/run_counterfactual_pipeline.py" in command or "run_counterfactual_pipeline.py" in command:
+        return "counterfactual_pipeline"
     return "repo_python"
 
 
@@ -2195,8 +2205,18 @@ def _heartbeat_checks(mode: str) -> list[CheckResult]:
     runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
     guardian_name = "live_guardian_heartbeat.json" if runtime_mode == "live" else f"{runtime_mode}_guardian_heartbeat.json"
     preopen_name = "preopen_scheduler_heartbeat.json" if runtime_mode == "live" else f"{runtime_mode}_preopen_scheduler_heartbeat.json"
+    broker_truth_name = (
+        "broker_truth_scheduler_heartbeat.json"
+        if runtime_mode == "live"
+        else f"{runtime_mode}_broker_truth_scheduler_heartbeat.json"
+    )
     guardian_process = "live_guardian" if runtime_mode == "live" else f"{runtime_mode}_guardian"
     preopen_process = "preopen_scheduler" if runtime_mode == "live" else f"{runtime_mode}_preopen_scheduler"
+    broker_truth_process = (
+        "broker_truth_scheduler"
+        if runtime_mode == "live"
+        else f"{runtime_mode}_broker_truth_scheduler"
+    )
     return [
         _heartbeat_check(
             f"runtime.{runtime_mode}_guardian_heartbeat",
@@ -2209,6 +2229,12 @@ def _heartbeat_checks(mode: str) -> list[CheckResult]:
             get_runtime_path("state", preopen_name, make_parents=False),
             max_age_sec=900,
             process=preopen_process,
+        ),
+        _heartbeat_check(
+            f"runtime.{runtime_mode}_broker_truth_scheduler_heartbeat",
+            get_runtime_path("state", broker_truth_name, make_parents=False),
+            max_age_sec=300,
+            process=broker_truth_process,
         ),
     ]
 
