@@ -6202,6 +6202,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 age_min = max(0.0, (current - detected_at).total_seconds() / 60.0)
             except Exception:
                 age_min = None
+        if not snapshot and detected_raw:
+            snapshot = {
+                "snapshot_source": "candidate_entry_timing_context_fallback",
+                "candidate_detected_at": detected_raw,
+                "candidate_age_min": round(age_min, 4) if age_min is not None else None,
+                "candidate_age_source": age_source,
+                "candidate_source": candidate_source or route_source,
+                "route_source": route_source,
+                "market": market_key,
+                "ticker": key,
+                "session_date": self._current_session_date_str(market_key),
+            }
         return {
             "candidate_detected_at": detected_raw,
             "candidate_age_min": round(age_min, 4) if age_min is not None else None,
@@ -10686,6 +10698,88 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if strategy:
                 return strategy, source
         return "", ""
+
+    def _watch_trigger_shadow_candidate_score(self, market: str, ticker: str) -> float:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        lookup = self._selection_ticker_key(market_key, ticker)
+        meta = self.selection_meta.get(market_key, {}) if hasattr(self, "selection_meta") else {}
+
+        def _num(value: Any) -> float | None:
+            try:
+                if value in (None, ""):
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        def _row_score(row: dict) -> float:
+            values = [
+                _num(row.get(key))
+                for key in (
+                    "watch_trigger_priority",
+                    "trainer_prompt_score",
+                    "candidate_quality_score",
+                    "score_current",
+                    "entry_priority_score",
+                    "quality_score",
+                    "change_pct",
+                    "change_rate",
+                )
+            ]
+            score = max([value for value in values if value is not None] or [0.0])
+            role = str(row.get("candidate_pool_role") or row.get("prompt_overlay_type") or "").lower()
+            source = str(row.get("candidate_source") or row.get("source_type") or row.get("selection_source_type") or "").lower()
+            if "discovery" in role or "discovery" in source:
+                score += 5.0
+            if "sub_screener" in source:
+                score += 4.0
+            return score
+
+        best = 0.0
+        for pool_key in ("candidate_actions", "_final_prompt_pool", "watchlist_candidates", "candidates"):
+            for row in list((meta or {}).get(pool_key) or []):
+                if not isinstance(row, dict):
+                    continue
+                if self._selection_ticker_key(market_key, row.get("ticker", "")) != lookup:
+                    continue
+                best = max(best, _row_score(row))
+        for row in list((getattr(self, "_last_screen_candidates", {}) or {}).get(market_key, []) or []):
+            if not isinstance(row, dict):
+                continue
+            if self._selection_ticker_key(market_key, row.get("ticker", "")) != lookup:
+                continue
+            best = max(best, _row_score(row))
+        skip_counts = getattr(self, "_watch_trigger_shadow_skip_counts", {}) or {}
+        skipped = int(skip_counts.get((market_key, lookup), 0) or 0)
+        if skipped > 0:
+            best += min(skipped, 10) * 0.25
+        return float(best)
+
+    def _watch_trigger_shadow_rank_candidates(
+        self,
+        market: str,
+        tickers: list[str],
+        mode: str,
+        cycle_cap: int,
+    ) -> set[str]:
+        cap = max(0, int(cycle_cap or 0))
+        if cap <= 0 or str(mode or "").upper() in {"DEFENSIVE", "HALT"}:
+            return set()
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        scored: list[tuple[float, int, str]] = []
+        for idx, ticker in enumerate(list(tickers or [])):
+            key = self._selection_ticker_key(market_key, ticker)
+            if not key or self._is_trade_ready_ticker(market_key, key):
+                continue
+            if self._watch_only_bucket(market_key, key) != "SOFT":
+                continue
+            strategy, _source = self._watch_trigger_shadow_strategy_for_ticker(market_key, key)
+            if not strategy:
+                continue
+            scored.append((self._watch_trigger_shadow_candidate_score(market_key, key), idx, key))
+        scored.sort(key=lambda item: (-item[0], item[1], item[2]))
+        return {key for _score, _idx, key in scored[:cap]}
+
     def _log_watch_trigger_not_evaluated(
         self,
         market: str,
@@ -10697,10 +10791,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         watch_only_reason: str = "",
         reason: str = "soft_watch_promotion_disabled",
     ) -> None:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = self._selection_ticker_key(market_key, ticker)
+        skip_counts = getattr(self, "_watch_trigger_shadow_skip_counts", None)
+        if not isinstance(skip_counts, dict):
+            skip_counts = {}
+            self._watch_trigger_shadow_skip_counts = skip_counts
+        skipped_cycles = int(skip_counts.get((market_key, ticker_key), 0) or 0) + 1
+        skip_counts[(market_key, ticker_key)] = skipped_cycles
+        next_eval_due_at = ""
+        try:
+            interval_min = max(1.0, float(self._entry_scan_interval_sec(market_key)) / 60.0)
+            next_eval_due_at = (datetime.now(KST) + timedelta(minutes=interval_min)).isoformat(timespec="seconds")
+        except Exception:
+            next_eval_due_at = ""
         payload = {
             "event": "watch_trigger_not_evaluated",
-            "market": market,
-            "ticker": ticker,
+            "market": market_key,
+            "ticker": ticker_key,
             "price": float(price or 0.0),
             "mode": mode,
             "watch_bucket": watch_bucket,
@@ -10709,12 +10817,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "shadow_enabled": bool(getattr(self, "enable_watch_trigger_shadow", False)),
             "shadow_only": True,
             "reason": reason,
+            "skip_reason": reason,
+            "skipped_cycles": skipped_cycles,
+            "next_eval_due_at": next_eval_due_at,
         }
         analysis_log.info(
-            f"[watch_trigger_not_evaluated {market}] {ticker} {reason}",
+            f"[watch_trigger_not_evaluated {market_key}] {ticker_key} {reason}",
             extra={"extra": payload},
         )
-        self._write_funnel_event("watch_trigger_not_evaluated", market, payload)
+        self._write_funnel_event("watch_trigger_not_evaluated", market_key, payload)
     def _log_watch_trigger_shadow(
         self,
         market: str,
@@ -10731,10 +10842,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         blocked_reason: str = "",
         detail: str = "",
     ) -> None:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = self._selection_ticker_key(market_key, ticker)
+        skip_counts = getattr(self, "_watch_trigger_shadow_skip_counts", None)
+        skipped_cycles = 0
+        if isinstance(skip_counts, dict):
+            skipped_cycles = int(skip_counts.pop((market_key, ticker_key), 0) or 0)
         payload = {
             "event": "watch_trigger_shadow",
-            "market": market,
-            "ticker": ticker,
+            "market": market_key,
+            "ticker": ticker_key,
             "price": float(price or 0.0),
             "mode": mode,
             "watch_bucket": watch_bucket,
@@ -10748,12 +10865,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "promotion_enabled": bool(getattr(self, "enable_soft_watch_promotion", False)),
             "shadow_only": True,
             "detail": detail,
+            "skipped_cycles_before_eval": skipped_cycles,
         }
         analysis_log.info(
-            f"[watch_trigger_shadow {market}] {ticker} {payload['result']}",
+            f"[watch_trigger_shadow {market_key}] {ticker_key} {payload['result']}",
             extra={"extra": payload},
         )
-        self._write_funnel_event("watch_trigger_shadow", market, payload)
+        self._write_funnel_event("watch_trigger_shadow", market_key, payload)
     def _promote_trade_ready_ticker(
         self,
         market: str,
@@ -26304,9 +26422,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         try:
             _perf_strategy = str(ex.get("strategy", "unknown") or "unknown")
             if _perf_strategy not in ("broker_sync", "broker_balance", "") and self._runtime_bool("BRAIN_PERF_AUTO_WRITE_ENABLED", False):
-                BrainDB.update_strategy_performance(
-                    market, _perf_strategy,
-                    ex.get("pnl_pct", 0), ex.get("pnl", 0) > 0
+                log.info(
+                    f"[strategy brain update skipped] {market} {_perf_strategy} "
+                    "approval workflow required"
                 )
         except Exception as e:
             log.warning(f"strategy brain update failed: {e}")
@@ -26349,10 +26467,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 # TP 도달 → 즉시 청산 자체는 수익 실현
                 success = ex.get("pnl", 0) > 0
                 extra_pnl_pct = ex.get("pnl_pct", 0.0)
-            # brain.json 누적 — BRAIN_PERF_AUTO_WRITE_ENABLED=1 시에만 기록
+            # brain.json direct policy/stat writes are approval-gated.
             if self._runtime_bool("BRAIN_PERF_AUTO_WRITE_ENABLED", False):
-                BrainDB.update_hold_advisor_performance(
-                    market, ex["ticker"], decision, success, extra_pnl_pct
+                self._submit_hold_advisor_performance_candidate(
+                    ex=ex,
+                    market=market,
+                    decision=decision,
+                    success=success,
+                    extra_pnl_pct=extra_pnl_pct,
+                    exit_price=exit_price,
+                    tp_price=tp_price,
+                    entry_price=entry_price,
                 )
             # JSONL outcome 업데이트
             self._update_hold_advisor_jsonl_outcome(
@@ -26366,6 +26491,60 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
         except Exception as e:
             log.warning(f"[hold_advisor] 결과 기록 실패: {e}")
+
+    def _submit_hold_advisor_performance_candidate(
+        self,
+        *,
+        ex: dict,
+        market: str,
+        decision: str,
+        success: bool,
+        extra_pnl_pct: float,
+        exit_price: float,
+        tp_price: float,
+        entry_price: float,
+    ) -> bool:
+        try:
+            from learning.approval_queue import BrainApprovalQueue
+
+            runtime_mode = str(getattr(self, "_mode", os.getenv("TRADING_BOT_MODE", "live")) or "live").lower()
+            ticker = str(ex.get("ticker") or "")
+            candidate = {
+                "type": "hold_advisor_performance",
+                "candidate_type": "hold_advisor_performance",
+                "source": "trading_bot._record_hold_advisor_outcome",
+                "market": str(market or "").upper(),
+                "ticker": ticker,
+                "decision": str(decision or "").upper(),
+                "success": bool(success),
+                "extra_pnl_pct": round(float(extra_pnl_pct or 0.0), 4),
+                "exit_price": float(exit_price or 0.0),
+                "tp_price": float(tp_price or 0.0),
+                "entry_price": float(entry_price or 0.0),
+                "pnl_pct": float(ex.get("pnl_pct") or 0.0),
+                "pnl": float(ex.get("pnl") or 0.0),
+                "closed_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "prompt_visible": False,
+                "requires_operator_approval": True,
+                "direct_brain_write_blocked": True,
+            }
+            queued = BrainApprovalQueue().submit(
+                candidate=candidate,
+                runtime_mode=runtime_mode,
+                data_quality="clean",
+                forward_complete=True,
+            )
+            if queued:
+                log.info(f"[hold_advisor] brain approval candidate queued: {ticker} {decision}")
+            else:
+                log.info(
+                    f"[hold_advisor] brain approval candidate skipped: mode={runtime_mode} ticker={ticker}"
+                )
+            return bool(queued)
+        except Exception as e:
+            log.warning(f"[hold_advisor] brain approval candidate queue failed: {e}")
+            return False
+
     def _update_hold_advisor_jsonl_outcome(
         self, ticker: str, decision: str, success: bool,
         exit_price: float, extra_pnl_pct: float
@@ -28298,9 +28477,27 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         real_elapsed = self._market_elapsed_min(market)
         if 0 < real_elapsed <= _ENTRY_SCAN_OPENING_MIN:
             return _ENTRY_SCAN_OPENING_INTERVAL_MIN * 60   # 개장: 2분 (KR/US 동일)
+        if self._entry_scan_hot_fast_condition(market):
+            return _ENTRY_SCAN_OPENING_INTERVAL_MIN * 60
         if market == "US":
             return int(os.getenv("US_ENTRY_SCAN_REGULAR_INTERVAL_MIN", "5")) * 60
         return _ENTRY_SCAN_REGULAR_INTERVAL_MIN * 60
+
+    def _entry_scan_hot_fast_condition(self, market: str) -> bool:
+        if not _env_bool("PATHA_ENTRY_SCAN_HOT_FAST_ENABLED", False):
+            return False
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            if 0 < float(self._market_elapsed_min(market_key)) <= _ENTRY_SCAN_OPENING_MIN:
+                return False
+        except Exception:
+            pass
+        if self._trade_ready_set(market_key):
+            return True
+        meta = self.selection_meta.get(market_key, {}) if hasattr(self, "selection_meta") else {}
+        discovery_added = list((meta or {}).get("_discovery_added_tickers") or [])
+        discovery_count = int((meta or {}).get("_prompt_pool_discovery_count") or 0)
+        return bool(discovery_added or discovery_count > 0)
     def _maybe_update_candidate_audit_outcomes_intraday(self, market: str) -> None:
         if not self._runtime_bool("CANDIDATE_AUDIT_INTRADAY_OUTCOME_UPDATE_ENABLED", True):
             return
@@ -28640,10 +28837,37 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if dedupe_ttl_sec > 0:
             try:
                 if sub_screener.is_duplicate_trigger(market_key, today, result, ttl_sec=dedupe_ttl_sec):
-                    sub_screener.record_dedupe_suppressed(market_key, today, result, ttl_sec=dedupe_ttl_sec)
+                    triage_result: dict[str, Any] = {"added_tickers": [], "skipped_tickers": [], "reason": "triage_disabled"}
+                    triage_allowed = False
+                    if _env_bool("SUB_SCREENER_TRIAGE_ENABLED", True):
+                        triage_allowed = True
+                        try:
+                            triage_result = self._apply_sub_screener_triage(market_key, result)
+                            if list(triage_result.get("added_tickers") or []):
+                                sub_screener.record_triage_success(
+                                    market_key,
+                                    today,
+                                    result,
+                                    added_tickers=list(triage_result.get("added_tickers") or []),
+                                    skipped_tickers=list(triage_result.get("skipped_tickers") or []),
+                                )
+                        except Exception as exc:
+                            triage_result = {"added_tickers": [], "skipped_tickers": [], "reason": f"triage_error:{type(exc).__name__}"}
+                            log.warning(f"[sub_screener] {market_key} duplicate triage failed: {exc}")
+                    sub_screener.record_dedupe_suppressed(
+                        market_key,
+                        today,
+                        result,
+                        ttl_sec=dedupe_ttl_sec,
+                        triage_allowed=triage_allowed,
+                        triage_reason=str(triage_result.get("reason") or ""),
+                        added_tickers=list(triage_result.get("added_tickers") or []),
+                        skipped_tickers=list(triage_result.get("skipped_tickers") or []),
+                    )
                     log.info(
                         f"[sub_screener] {market_key} dedupe_suppressed "
-                        f"reason={result.trigger_reason}"
+                        f"reason={result.trigger_reason} "
+                        f"triage_added={triage_result.get('added_tickers', [])}"
                     )
                     return
             except Exception as exc:
@@ -29285,6 +29509,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             0,
             int(getattr(self, "watch_trigger_shadow_max_per_cycle", 0) or 0),
         )
+        _watch_trigger_shadow_allowed_tickers: set[str] = set()
+        _watch_trigger_shadow_priority_ranking_active = False
+        if _watch_trigger_shadow_enabled and not bool(getattr(self, "enable_soft_watch_promotion", False)):
+            try:
+                _watch_trigger_shadow_allowed_tickers = self._watch_trigger_shadow_rank_candidates(
+                    market,
+                    list(tickers or []),
+                    mode,
+                    _watch_trigger_shadow_max_per_cycle,
+                )
+                _watch_trigger_shadow_priority_ranking_active = (
+                    _watch_trigger_shadow_max_per_cycle > 0
+                    and str(mode or "").upper() not in {"DEFENSIVE", "HALT"}
+                )
+            except Exception as exc:
+                log.debug(f"[watch_trigger_shadow rank failed] {market}: {exc}")
+                _watch_trigger_shadow_allowed_tickers = set()
+                _watch_trigger_shadow_priority_ranking_active = False
         for ticker in tickers:
             try:
                 candles = None
@@ -29591,6 +29833,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 )
                                 _shadow_block_logged = True
                                 _skip_reason = "missing_strategy"
+                            elif (
+                                _watch_trigger_shadow_priority_ranking_active
+                                and self._selection_ticker_key(market, ticker) not in _watch_trigger_shadow_allowed_tickers
+                            ):
+                                _skip_reason = "shadow_priority_deferred"
                             else:
                                 _watch_trigger_shadow_candidate = True
                                 _watch_trigger_shadow_evaluated_this_cycle += 1
@@ -34956,11 +35203,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             f"watch_miss={(_ops_metrics.get('watch_only_missed_runup_ratio') or {}).get('value', 'N/A')}%"
         )
         log.info(f"[lesson candidates {market}] {len(lesson_candidates)} items")
-        for event in [e for e in self.decision_event_log if e.get("market") == market]:
-            try:
-                BrainDB.update_execution_pattern(market, event)
-            except Exception as e:
-                log.warning(f"[{market}] execution pattern update failed: {e}")
+        execution_pattern_events = [e for e in self.decision_event_log if e.get("market") == market]
+        if execution_pattern_events:
+            log.info(
+                f"[{market}] execution pattern brain update skipped: "
+                f"events={len(execution_pattern_events)} approval workflow required"
+            )
         judgment_log.info(
             f"[close {today} {market}] pnl={actual['pnl_pct']:+.2f}% mode={self.today_judgment.get('consensus', {}).get('mode', '-')}",
             extra={"extra": {

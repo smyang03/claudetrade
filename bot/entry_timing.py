@@ -287,6 +287,9 @@ class EntryTimingTracker:
         out["candidate_to_signal_delay_min"] = _minutes_between(
             state.get("candidate_detected_at"), state.get("signal_fired_at")
         )
+        out["candidate_to_first_signal_check_delay_min"] = _minutes_between(
+            state.get("candidate_detected_at"), state.get("first_signal_checked_at")
+        )
         out["signal_to_order_delay_min"] = _minutes_between(
             state.get("signal_fired_at"), state.get("order_sent_at")
         )
@@ -361,6 +364,8 @@ def build_entry_timing_summary(
     states = [dict((row.get("state") or {})) for row in latest_by_key.values()]
     counts = Counter(str(row.get("event") or "") for row in rows)
     averages = {
+        "candidate_to_first_signal_check_delay_min": _average_metric(states, "candidate_to_first_signal_check_delay_min"),
+        "candidate_to_signal_delay_min": _average_metric(states, "candidate_to_signal_delay_min"),
         "candidate_to_order_delay_min": _average_metric(states, "candidate_to_order_delay_min"),
         "signal_to_order_delay_min": _average_metric(states, "signal_to_order_delay_min"),
         "order_to_fill_delay_sec": _average_metric(states, "order_to_fill_delay_sec"),
@@ -419,6 +424,8 @@ def _compact_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "candidate_source": state.get("candidate_source", ""),
         "strategy": state.get("signal_strategy") or state.get("order_strategy") or "",
         "signal_check_count": state.get("signal_check_count", 0),
+        "candidate_to_first_signal_check_delay_min": state.get("candidate_to_first_signal_check_delay_min"),
+        "candidate_to_signal_delay_min": state.get("candidate_to_signal_delay_min"),
         "candidate_to_order_delay_min": state.get("candidate_to_order_delay_min"),
         "signal_to_order_delay_min": state.get("signal_to_order_delay_min"),
         "order_to_fill_delay_sec": state.get("order_to_fill_delay_sec"),

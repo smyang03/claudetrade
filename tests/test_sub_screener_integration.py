@@ -268,6 +268,8 @@ class SubScreenerIntegrationTests(unittest.TestCase):
         bot._screen_market_candidates = lambda market, mode, *, force_refresh=False: [{"ticker": "SPOT"}]
         bot._reinvoke_analysts = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("reinvoke should not run"))
         bot.manual_rescreen = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("rescreen should not run"))
+        calls: list[str] = []
+        bot._apply_sub_screener_triage = lambda *args, **kwargs: calls.append("triage") or {"added_tickers": ["SPOT"], "skipped_tickers": []}
 
         with tempfile.TemporaryDirectory() as tmp, \
             patch.dict(os.environ, {"SUB_SCREENER_STATE_DIR": tmp, "SUB_SCREENER_DEDUPE_TTL_MIN": "60"}, clear=False):
@@ -279,9 +281,13 @@ class SubScreenerIntegrationTests(unittest.TestCase):
 
             state = sub_screener.load_session_counter("US", "2026-05-22")
 
+        self.assertEqual(calls, ["triage"])
         self.assertEqual(state["attempt_count"], 1)
+        self.assertEqual(state["triage_success_count"], 1)
         self.assertEqual(state["dedupe_suppressed_count"], 1)
         self.assertEqual(state["last_dedupe_suppressed"]["new_tickers"], ["SPOT"])
+        self.assertTrue(state["last_dedupe_suppressed"]["triage_allowed"])
+        self.assertEqual(state["last_dedupe_suppressed"]["triage_added_tickers"], ["SPOT"])
 
     def test_triage_suppresses_reinvoke_and_full_rescreen(self) -> None:
         bot = _base_bot()

@@ -1050,6 +1050,59 @@ def entry_exit_shadow_readiness(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def timing_snapshot_coverage(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(rows)
+    snapshot_rows = 0
+    entry_delay_rows = 0
+    first_signal_check_rows = 0
+    candidate_to_signal_rows = 0
+    candidate_to_order_rows = 0
+    snapshot_source_counts: Counter[str] = Counter()
+    examples_missing: list[dict[str, Any]] = []
+    for row in rows:
+        snapshot = _json_dict(row.get("entry_timing_snapshot_json"))
+        has_snapshot = bool(snapshot)
+        if has_snapshot:
+            snapshot_rows += 1
+            source = str(snapshot.get("snapshot_source") or snapshot.get("candidate_source") or "entry_timing").strip()
+            snapshot_source_counts[source or "unknown"] += 1
+            if _to_float(snapshot.get("candidate_to_first_signal_check_delay_min")) is not None:
+                first_signal_check_rows += 1
+            if _to_float(snapshot.get("candidate_to_signal_delay_min")) is not None:
+                candidate_to_signal_rows += 1
+            if _to_float(snapshot.get("candidate_to_order_delay_min")) is not None:
+                candidate_to_order_rows += 1
+        if _to_float(row.get("entry_delay_min")) is not None:
+            entry_delay_rows += 1
+        if not has_snapshot and len(examples_missing) < 10:
+            examples_missing.append(
+                {
+                    "market": row.get("market"),
+                    "session_date": row.get("session_date"),
+                    "ticker": row.get("ticker"),
+                    "classification": row.get("classification"),
+                    "call_id": row.get("call_id"),
+                    "known_at": row.get("known_at"),
+                }
+            )
+    return {
+        "rows": total,
+        "entry_timing_snapshot_rows": snapshot_rows,
+        "entry_timing_snapshot_rate": _round(snapshot_rows / total if total else None),
+        "entry_delay_rows": entry_delay_rows,
+        "entry_delay_rate": _round(entry_delay_rows / total if total else None),
+        "candidate_to_first_signal_check_rows": first_signal_check_rows,
+        "candidate_to_first_signal_check_rate": _round(first_signal_check_rows / total if total else None),
+        "candidate_to_signal_rows": candidate_to_signal_rows,
+        "candidate_to_signal_rate": _round(candidate_to_signal_rows / total if total else None),
+        "candidate_to_order_rows": candidate_to_order_rows,
+        "candidate_to_order_rate": _round(candidate_to_order_rows / total if total else None),
+        "snapshot_source_counts": dict(snapshot_source_counts.most_common()),
+        "missing_examples": examples_missing,
+        "interpretation": "queryable" if total else "no_candidate_rows",
+    }
+
+
 def _coverage_maturity(coverage_rate: float | None) -> str:
     if coverage_rate is None:
         return "missing"
@@ -1744,6 +1797,7 @@ def analyze_candidate_audit(
         "actual_prompt_profit_visibility": actual_prompt_profit_visibility(rows),
         "bucket_source_score_quality": bucket_source_score_quality(rows, limit=limit),
         "entry_exit_shadow_readiness": entry_exit_shadow_readiness(rows),
+        "timing_snapshot_coverage": timing_snapshot_coverage(rows),
         "buckets": buckets,
         "missed_winners": missed_winners(
             rows,

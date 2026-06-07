@@ -67,6 +67,8 @@ class EntryTimingTests(unittest.TestCase):
 
             self.assertEqual(order_snapshot["candidate_source"], "session_open")
             self.assertEqual(order_snapshot["signal_check_count"], 1)
+            self.assertEqual(order_snapshot["candidate_to_first_signal_check_delay_min"], 2.0)
+            self.assertEqual(order_snapshot["candidate_to_signal_delay_min"], 4.0)
             self.assertEqual(order_snapshot["candidate_to_order_delay_min"], 6.0)
             self.assertEqual(order_snapshot["signal_to_order_delay_min"], 2.0)
             self.assertAlmostEqual(order_snapshot["price_change_candidate_to_order_pct"], 4.0)
@@ -83,7 +85,10 @@ class EntryTimingTests(unittest.TestCase):
             self.assertEqual(summary["events"]["candidate_detected"], 1)
             self.assertEqual(summary["events"]["order_sent"], 1)
             self.assertEqual(summary["events"]["filled"], 1)
+            self.assertEqual(summary["averages"]["candidate_to_first_signal_check_delay_min"], 2.0)
+            self.assertEqual(summary["averages"]["candidate_to_signal_delay_min"], 4.0)
             self.assertEqual(summary["averages"]["candidate_to_order_delay_min"], 6.0)
+            self.assertEqual(summary["recent"][-1]["candidate_to_first_signal_check_delay_min"], 2.0)
             self.assertEqual(summary["recent"][-1]["event"], "filled")
 
     def test_summary_handles_missing_file(self):

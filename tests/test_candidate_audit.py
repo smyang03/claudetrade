@@ -15,6 +15,7 @@ from tools.analyze_candidate_audit import (
     analyze_candidate_audit,
     classify_strategy_match,
     normalize_candidate_action,
+    timing_snapshot_coverage,
     watch_trigger_funnel_summary,
 )
 from tools.backfill_candidate_audit import backfill_candidate_audit
@@ -975,6 +976,45 @@ class CandidateAuditBackfillTests(unittest.TestCase):
         self.assertEqual(summary["watch_trigger_blocked_count"], 1)
         self.assertEqual(summary["blocked_reason_counts"]["missing_strategy"], 1)
         self.assertEqual(summary["strategy_source_counts"]["candidate_action.primary_bucket"], 1)
+
+    def test_timing_snapshot_coverage_counts_first_signal_check_metric(self) -> None:
+        rows = [
+            {
+                "market": "KR",
+                "session_date": "2026-06-05",
+                "ticker": "005930",
+                "classification": "ready_no_signal",
+                "call_id": "call_1",
+                "known_at": "2026-06-05T09:05:00+09:00",
+                "entry_timing_snapshot_json": json.dumps(
+                    {
+                        "candidate_source": "session_open",
+                        "candidate_to_first_signal_check_delay_min": 2.0,
+                        "candidate_to_signal_delay_min": 5.0,
+                    }
+                ),
+                "entry_delay_min": None,
+            },
+            {
+                "market": "KR",
+                "session_date": "2026-06-05",
+                "ticker": "000660",
+                "classification": "not_in_prompt",
+                "call_id": "call_1",
+                "known_at": "2026-06-05T09:05:00+09:00",
+                "entry_timing_snapshot_json": "{}",
+                "entry_delay_min": None,
+            },
+        ]
+
+        coverage = timing_snapshot_coverage(rows)
+
+        self.assertEqual(coverage["rows"], 2)
+        self.assertEqual(coverage["entry_timing_snapshot_rows"], 1)
+        self.assertEqual(coverage["candidate_to_first_signal_check_rows"], 1)
+        self.assertEqual(coverage["candidate_to_signal_rows"], 1)
+        self.assertEqual(coverage["candidate_to_order_rows"], 0)
+        self.assertEqual(coverage["missing_examples"][0]["ticker"], "000660")
 
     def test_backfill_builds_separate_candidate_audit_db(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

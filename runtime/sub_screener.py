@@ -263,10 +263,16 @@ def record_dedupe_suppressed(
     result: SubScanResult,
     *,
     ttl_sec: float,
+    triage_allowed: bool = False,
+    triage_reason: str = "",
+    added_tickers: list[str] | None = None,
+    skipped_tickers: list[str] | None = None,
 ) -> None:
     state = load_session_counter(market, date)
     now = _now_iso()
     fingerprint = trigger_fingerprint(market, result)
+    added = [str(ticker or "").strip() for ticker in list(added_tickers or []) if str(ticker or "").strip()]
+    skipped = [str(ticker or "").strip() for ticker in list(skipped_tickers or []) if str(ticker or "").strip()]
     state["dedupe_suppressed_count"] = int(state.get("dedupe_suppressed_count") or 0) + 1
     state["last_dedupe_suppressed"] = {
         "at": now,
@@ -275,6 +281,10 @@ def record_dedupe_suppressed(
         "fingerprint": fingerprint,
         "ttl_sec": float(ttl_sec or 0.0),
         "last_attempt_at": str(state.get("last_attempt_at") or ""),
+        "triage_allowed": bool(triage_allowed),
+        "triage_reason": str(triage_reason or ""),
+        "triage_added_tickers": added,
+        "triage_skipped_tickers": skipped,
     }
     save_session_counter(market, date, state)
 

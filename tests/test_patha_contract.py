@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 import unittest
@@ -172,6 +173,64 @@ class PathAContractTests(unittest.TestCase):
 
         self.assertEqual(strategy, "gap_pullback")
         self.assertEqual(source, "candidate_action.strategy")
+
+    def test_watch_trigger_shadow_rank_candidates_prioritizes_high_score_soft_watch(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.selection_meta = {
+            "KR": {},
+            "US": {
+                "candidate_actions": [
+                    {"ticker": "LOW", "strategy": "momentum", "trainer_prompt_score": 10.0},
+                    {"ticker": "HIGH", "strategy": "momentum", "trainer_prompt_score": 90.0},
+                ],
+            },
+        }
+        bot._last_screen_candidates = {"KR": [], "US": []}
+        bot._watch_only_bucket = lambda market, ticker: "SOFT"
+        bot._is_trade_ready_ticker = lambda market, ticker: False
+
+        allowed = TradingBot._watch_trigger_shadow_rank_candidates(
+            bot,
+            "US",
+            ["LOW", "HIGH"],
+            "BALANCED",
+            1,
+        )
+
+        self.assertEqual(allowed, {"HIGH"})
+
+    def test_candidate_entry_timing_context_builds_fallback_snapshot(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.entry_timing = None
+        bot._current_session_date_str = lambda market: "2026-06-05"
+        now = datetime(2026, 6, 5, 9, 7, tzinfo=timezone(timedelta(hours=9)))
+
+        timing = TradingBot._candidate_entry_timing_context(
+            bot,
+            "KR",
+            "005930",
+            action={"first_seen_at": "2026-06-05T09:05:00+09:00"},
+            meta={"selection_snapshot_ts": "2026-06-05T09:06:00+09:00"},
+            now_dt=now,
+        )
+
+        snapshot = timing["entry_timing_snapshot"]
+        self.assertEqual(timing["candidate_age_source"], "action_first_seen_at")
+        self.assertEqual(snapshot["snapshot_source"], "candidate_entry_timing_context_fallback")
+        self.assertEqual(snapshot["candidate_age_min"], 2.0)
+        self.assertEqual(snapshot["ticker"], "005930")
+
+    def test_entry_scan_hot_fast_condition_requires_env_flag(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot._market_elapsed_min = lambda market: 45.0
+        bot.trade_ready_tickers = {"KR": ["005930"], "US": []}
+        bot.selection_meta = {"KR": {}, "US": {}}
+
+        with patch.dict("os.environ", {"PATHA_ENTRY_SCAN_HOT_FAST_ENABLED": "false"}, clear=False):
+            self.assertEqual(TradingBot._entry_scan_interval_sec(bot, "KR"), 300)
+
+        with patch.dict("os.environ", {"PATHA_ENTRY_SCAN_HOT_FAST_ENABLED": "true"}, clear=False):
+            self.assertEqual(TradingBot._entry_scan_interval_sec(bot, "KR"), 120)
 
     def test_pathb_disable_flags_do_not_block_path_a_safety_gate(self) -> None:
         gate = SafetyGate(V2Config(pathb_enabled=False, pathb_emergency_disable=True))

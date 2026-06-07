@@ -608,3 +608,40 @@ PathB 관측성 패치:
 
 - PathB broker-truth fail-closed, buy zone evidence gate, sizing, profit ladder, pre-close 청산은 변경하지 않는다.
 - hit 이후 order submit 조건을 완화하지 않는다.
+
+## 19. 2026-06-07 구현 반영 상태
+
+MD 18번 작업표와 실제 반영 내용을 비교한 결과, 이번 패치는 PathA 신호 포착 관측성, ORP timing attribution, sub-screener dedupe/triage, watch trigger 평가 우선순위, scan interval gate까지만 포함한다. 주문 수량, 주문 금액, broker truth, risk gate, PathB sizing/profit ladder/pre-close/hold advisor 보호 영역은 변경하지 않았다.
+
+### 반영 완료
+
+| MD 항목 | 반영 파일 | 구현 상태 | 검증 |
+|---|---|---|---|
+| 18.1 ORP timing attribution report | `tools/orp_timing_attribution_report.py`, `tests/test_orp_timing_attribution_report.py` | `ticker_selection_log`와 `intraday_strategy_log`를 `session_date + ticker` 기준으로 조인하고 ORP expired/window elapsed와 selected -> signal 지연을 분리 출력 | fixture test, KR live DB read-only smoke |
+| 18.2 EntryTimingTracker 첫 signal check 지표 | `bot/entry_timing.py`, `tests/test_entry_timing.py` | `candidate_to_first_signal_check_delay_min`과 `candidate_to_signal_delay_min`을 snapshot, summary, recent row에 추가 | `tests/test_entry_timing.py` |
+| 18.3 Candidate audit timing coverage | `tools/analyze_candidate_audit.py`, `trading_bot.py`, `tests/test_candidate_audit.py`, `tests/test_patha_contract.py` | analyzer에 timing snapshot coverage를 추가하고 tracker snapshot이 비어도 candidate timing fallback snapshot을 생성 | candidate audit fixture, PathA contract fixture, historical KR audit smoke |
+| 18.5 Sub-screener dedupe와 WATCH-only triage 분리 | `trading_bot.py`, `runtime/sub_screener.py`, `tests/test_sub_screener_integration.py` | duplicate trigger에서는 full reinvoke/rescreen을 계속 차단하되 WATCH-only triage는 허용하고 suppressed state에 triage 결과를 기록 | sub-screener integration |
+| 18.6 Watch trigger 평가량 보강 | `trading_bot.py`, `tests/test_patha_contract.py` | shadow 후보 top-N ranking helper와 skip count/next eval telemetry를 추가해 `shadow_cycle_cap_exceeded`를 설명 가능하게 함 | PathA ranking fixture, 기존 funnel summary test |
+| 18.7 PathA scan interval 조건부 단축 | `trading_bot.py`, `tools/live_preflight.py`, `tests/test_patha_contract.py` | `PATHA_ENTRY_SCAN_HOT_FAST_ENABLED` gate를 추가했다. 기본값은 off이며 trade_ready/discovery 후보가 있을 때만 opening interval 재사용 가능 | PathA contract fixture, live preflight |
+
+### 보존 또는 후속
+
+| MD 항목 | 처리 | 이유 |
+|---|---|---|
+| 18.1 feasibility demotion 코드 | 신규 동작 변경 없음 | 기존 `test_strategy_feasibility_demotes_expired_orp_without_slot_replacement`가 통과하며, ORP window/threshold 변경은 read-only join 이후 승인 작업으로 분리 |
+| 18.4 Discovery overlay WATCH ceiling | 신규 동작 변경 없음 | 이번 병목은 prompt coverage 관측성과 watch trigger 평가량에 집중했다. discovery 후보의 BUY_READY 승격 금지는 보존 |
+| 18.6 compact report 확장 | 부분 반영 | 신규 telemetry는 funnel event에 기록된다. 별도 compact report 컬럼 확장은 운영 데이터가 쌓인 뒤 후속으로 판단 |
+| 18.7 실제 scan interval 운영값 변경 | 미적용 | env/config 변경은 운영자 승인 항목이다. 이번 패치는 live에서 기본 off인 gate만 추가 |
+| 18.8 PathB waiting price coverage | 미적용 | PathB 보호 영역과 직접 맞닿는 P2 항목이다. hit -> order p90은 이미 빠르므로 이번 신호 포착 개선 범위에서는 read-only 후속으로 유지 |
+
+### 운영 검증 요약
+
+- `tools/orp_timing_attribution_report.py --market KR --runtime-mode live --limit 5` 결과, ORP selection과 expired event join이 가능하며 `expired_join_rows=205`, `expired_after_selected_count=144`로 ORP window timing이 KR p90 지연 해석에 직접 관련됨을 확인했다.
+- `tools/analyze_candidate_audit.py --date 2026-06-05 --market KR --runtime-mode live --limit 3` 결과, 과거 row는 timing snapshot coverage가 0으로 남아 있다. 이는 신규 producer 필드가 과거 데이터에 소급되지 않기 때문이며, 이후 세션부터 prospective coverage로 확인한다.
+- `tools/live_preflight.py --mode live --skip-dashboard --json` 결과는 `ok=true`, `fail_count=0`이다. 시장 비활성 시간대 stale broker truth와 PathB overnight idle warning은 운영상 비차단 잔여 경고로 분리한다.
+
+### MD 비교 차이와 누락점
+
+- MD 18.7의 "SLA 초과 시 fast scan" 조건은 이번 구현에서 `PATHA_ENTRY_SCAN_HOT_FAST_ENABLED`와 hot 후보 존재 조건으로 축소했다. SLA 기반 자동 단축까지 바로 넣으면 운영 scan 부하 정책 변경이 되므로 운영 데이터 확인 후 후속으로 둔다.
+- 18.6의 compact report 확장은 신규 이벤트 필드가 쌓인 뒤 리포트 컬럼을 고정하는 편이 안전하다. 현재는 skip reason, skipped cycles, next eval due를 event payload에 먼저 남긴다.
+- 18.8 PathB waiting price coverage는 보호 영역을 건드리는 항목이므로 이번 변경에서 제외했다. 별도 작업 시 `runtime/pathb_runtime.py` 집중 테스트와 MD 위반 사항 필요 여부를 먼저 판단한다.
