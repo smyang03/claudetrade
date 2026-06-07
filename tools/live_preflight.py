@@ -2641,9 +2641,16 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
                 "db.event_store_schema",
                 "FAIL" if schema_missing else "PASS",
                 "schema mismatch found" if schema_missing else "required event-store tables are present",
-                {"missing": schema_missing},
+                {
+                    "missing": schema_missing,
+                    "path": str(store.path),
+                    "operator_action": "initialize or migrate event store schema before live start" if schema_missing else "none",
+                    "blocked_if_live_start": bool(schema_missing),
+                },
             )
         )
+        if schema_missing:
+            return checks
         invalid_json = 0
         for row in conn.execute("SELECT path_run_id, plan_json FROM v2_path_runs ORDER BY updated_at DESC LIMIT 200").fetchall():
             try:

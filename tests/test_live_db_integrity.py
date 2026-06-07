@@ -46,6 +46,26 @@ class LiveDbIntegrityTests(unittest.TestCase):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_db_checks_reports_empty_event_store_schema_without_crashing(self) -> None:
+        tmp = tempfile.mkdtemp()
+        try:
+            db_path = Path(tmp) / "data" / "v2_event_store.db"
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            sqlite3.connect(db_path).close()
+
+            with patch(
+                "lifecycle.event_store.get_runtime_path",
+                side_effect=lambda *parts, **kwargs: Path(tmp).joinpath(*parts),
+            ):
+                checks = _db_checks("live")
+
+            by_name = {check.name: check for check in checks}
+            self.assertEqual(by_name["db.live_path"].status, "PASS")
+            self.assertEqual(by_name["db.event_store_schema"].status, "FAIL")
+            self.assertTrue(by_name["db.event_store_schema"].data["blocked_if_live_start"])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_event_store_context_manager_closes_connection(self) -> None:
         tmp = tempfile.mkdtemp()
         try:
