@@ -50,6 +50,22 @@ _SYSTEM_TERMS = (
     "연결 실패",
     "장애",
 )
+_PROMPT_SCOPE_ALIASES = {
+    "": "selection",
+    "select": "selection",
+    "selection": "selection",
+    "select_tickers": "selection",
+    "selection_retry": "selection",
+    "retry": "selection",
+    "r1": "market_judgment",
+    "r2": "market_judgment",
+    "analyst": "market_judgment",
+    "analysts": "market_judgment",
+    "judgment": "market_judgment",
+    "market": "market_judgment",
+    "market_judgment": "market_judgment",
+    "market_debate": "market_judgment",
+}
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -141,6 +157,30 @@ def _as_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _normalize_prompt_scope(value: Any) -> str:
+    key = str(value or "").strip().lower()
+    return _PROMPT_SCOPE_ALIASES.get(key, key or "selection")
+
+
+def _allowed_prompt_scopes(item: dict[str, Any]) -> list[str]:
+    raw_allowed = item.get("allowed_prompt_scopes")
+    if isinstance(raw_allowed, (list, tuple, set)):
+        scopes = [
+            _normalize_prompt_scope(value)
+            for value in raw_allowed
+            if str(value or "").strip()
+        ]
+        if scopes:
+            return list(dict.fromkeys(scopes))
+    target_scope = str(item.get("target_prompt_scope") or "").strip()
+    if target_scope:
+        return [_normalize_prompt_scope(target_scope)]
+    raw_scope = str(item.get("scope") or "").strip().lower()
+    if raw_scope in {"market", "market_judgment", "judgment", "analyst", "analysts"}:
+        return ["market_judgment"]
+    return ["selection"]
+
+
 def _score_item(item: dict[str, Any], today: date) -> float:
     severity = str(item.get("severity") or "info").lower()
     sample_count = _as_int(item.get("sample_count"), 0)
@@ -173,6 +213,8 @@ def _append_item(
     confidence: float = 0.0,
     sample_count: int = 0,
     generated_at: Any = "",
+    allowed_prompt_scopes: list[str] | None = None,
+    target_prompt_scope: str = "",
     idx: int = 0,
     text_limit: int = 220,
 ) -> None:
@@ -189,6 +231,8 @@ def _append_item(
             "market": market,
             "source": source,
             "scope": str(scope or "selection"),
+            "target_prompt_scope": str(target_prompt_scope or (allowed_prompt_scopes or ["selection"])[0]),
+            "allowed_prompt_scopes": list(allowed_prompt_scopes or ["selection"]),
             "text": cleaned,
             "severity": str(severity or "info").lower(),
             "confidence": round(min(max(float(confidence or 0.0), 0.0), 1.0), 2),
@@ -198,7 +242,13 @@ def _append_item(
     )
 
 
-def _collect_lesson_candidate_items(market: str, today: date, ignored: list[dict[str, str]]) -> list[dict[str, Any]]:
+def _collect_lesson_candidate_items(
+    market: str,
+    today: date,
+    ignored: list[dict[str, str]],
+    *,
+    prompt_scope: str,
+) -> list[dict[str, Any]]:
     payload = _load_lesson_candidates()
     rows = list((payload.get("markets") or {}).get(market, []) or [])
     items: list[dict[str, Any]] = []
@@ -218,8 +268,16 @@ def _collect_lesson_candidate_items(market: str, today: date, ignored: list[dict
         if truth_status != "fresh":
             ignored.append({"source": "lesson_candidates", "reason": f"truth_status_{truth_status}"})
             continue
-        if str(row.get("scope") or "").lower() in {"execution", "consensus", "strategy"}:
+        row_scope = str(row.get("scope") or "").lower()
+        if row_scope in {"execution", "consensus", "strategy"}:
             ignored.append({"source": "lesson_candidates", "reason": "non_selection_scope"})
+            continue
+        allowed_scopes = _allowed_prompt_scopes(row)
+        if prompt_scope not in allowed_scopes:
+            ignored.append({
+                "source": "lesson_candidates",
+                "reason": f"prompt_scope_excluded_{prompt_scope}",
+            })
             continue
         action_hint = str(row.get("action_hint") or "").strip()
         if not action_hint:
@@ -250,13 +308,21 @@ def _collect_lesson_candidate_items(market: str, today: date, ignored: list[dict
             confidence=_as_float(row.get("confidence"), 0.0),
             sample_count=sample_count,
             generated_at=row.get("generated_at"),
+            allowed_prompt_scopes=allowed_scopes,
+            target_prompt_scope=row.get("target_prompt_scope") or allowed_scopes[0],
             idx=idx,
             text_limit=500,
         )
     return items
 
 
-def _collect_brain_items(market: str, today: date, ignored: list[dict[str, str]]) -> list[dict[str, Any]]:
+def _collect_brain_items(
+    market: str,
+    today: date,
+    ignored: list[dict[str, str]],
+    *,
+    prompt_scope: str,
+) -> list[dict[str, Any]]:
     brain = _load_brain()
     market_data = (brain.get("markets") or {}).get(market, {})
     if not isinstance(market_data, dict):
@@ -283,6 +349,9 @@ def _collect_brain_items(market: str, today: date, ignored: list[dict[str, str]]
         if not allow_recent_days:
             ignored.append({"source": "recent_day", "reason": "recent_day_disabled"})
             continue
+        if prompt_scope != "selection":
+            ignored.append({"source": "recent_day", "reason": f"prompt_scope_excluded_{prompt_scope}"})
+            continue
         _append_item(
             items,
             ignored,
@@ -291,6 +360,8 @@ def _collect_brain_items(market: str, today: date, ignored: list[dict[str, str]]
             raw_id=row.get("date") or idx,
             text=lesson,
             scope="selection",
+            allowed_prompt_scopes=["selection"],
+            target_prompt_scope="selection",
             severity="medium",
             confidence=0.55,
             sample_count=_as_int(row.get("trades"), 0),
@@ -304,6 +375,9 @@ def _collect_brain_items(market: str, today: date, ignored: list[dict[str, str]]
     if _env_bool("ACTIVE_LESSONS_ALLOW_LEGACY_BRAIN", False):
         beliefs = market_data.get("current_beliefs") or {}
         for idx, lesson in enumerate(list(beliefs.get("learned_lessons") or [])[-8:]):
+            if prompt_scope != "selection":
+                ignored.append({"source": "learned_lessons", "reason": f"prompt_scope_excluded_{prompt_scope}"})
+                continue
             _append_item(
                 items,
                 ignored,
@@ -312,6 +386,8 @@ def _collect_brain_items(market: str, today: date, ignored: list[dict[str, str]]
                 raw_id=idx,
                 text=lesson,
                 scope="selection",
+                allowed_prompt_scopes=["selection"],
+                target_prompt_scope="selection",
                 severity="low",
                 confidence=0.35,
                 sample_count=0,
@@ -321,11 +397,11 @@ def _collect_brain_items(market: str, today: date, ignored: list[dict[str, str]]
     return items
 
 
-def _select_items(market: str, max_items: int) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+def _select_items(market: str, max_items: int, *, prompt_scope: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     today = date.today()
     ignored: list[dict[str, str]] = []
-    items = _collect_lesson_candidate_items(market, today, ignored)
-    items.extend(_collect_brain_items(market, today, ignored))
+    items = _collect_lesson_candidate_items(market, today, ignored, prompt_scope=prompt_scope)
+    items.extend(_collect_brain_items(market, today, ignored, prompt_scope=prompt_scope))
 
     deduped: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -384,6 +460,7 @@ def build_active_lesson_context(
     market: str,
     *,
     retry: bool = False,
+    prompt_scope: str = "selection",
     max_items: int | None = None,
     max_chars: int | None = None,
 ) -> dict[str, Any]:
@@ -395,6 +472,7 @@ def build_active_lesson_context(
     char_default = 400 if retry else 700
     char_env = "ACTIVE_LESSONS_RETRY_MAX_CHARS" if retry else "ACTIVE_LESSONS_MAX_CHARS"
     char_limit = max_chars if max_chars is not None else _env_int(char_env, char_default, 120, 3000)
+    normalized_prompt_scope = _normalize_prompt_scope(prompt_scope)
     enabled = _env_bool("ACTIVE_LESSONS_ENABLED", False)
     shadow = _env_bool("ACTIVE_LESSONS_SHADOW", True)
     if not enabled:
@@ -407,6 +485,7 @@ def build_active_lesson_context(
                 "enabled": enabled,
                 "shadow": shadow,
                 "retry": bool(retry),
+                "prompt_scope": normalized_prompt_scope,
                 "injected": False,
                 "lesson_injected": False,
                 "ids": [],
@@ -417,27 +496,41 @@ def build_active_lesson_context(
                 "lesson_max_chars": char_limit,
                 "ignored_count": 0,
                 "ignored_reasons": {},
+                "scope_filtered_count": 0,
                 "disabled_skipped": True,
             },
         }
 
-    selected, ignored = _select_items(normalized_market, item_limit)
+    selected, ignored = _select_items(normalized_market, item_limit, prompt_scope=normalized_prompt_scope)
     preview = _format_section(selected, char_limit)
     injected = bool(enabled and not shadow and preview)
+    prompt_scope_counts = dict(Counter(str(item.get("target_prompt_scope") or "") for item in selected))
+    ignored_reasons = dict(Counter(str(item.get("reason") or "unknown") for item in ignored))
+    scope_filtered_count = sum(
+        count
+        for reason, count in ignored_reasons.items()
+        if str(reason).startswith("prompt_scope_excluded_")
+    )
+    if scope_filtered_count:
+        ignored_reasons.setdefault("scope_mismatch", scope_filtered_count)
     metadata = {
         "enabled": enabled,
         "shadow": shadow,
         "retry": bool(retry),
+        "prompt_scope": normalized_prompt_scope,
         "injected": injected,
         "lesson_injected": injected,
         "ids": [str(item.get("id")) for item in selected],
+        "target_prompt_scopes": [str(item.get("target_prompt_scope") or "") for item in selected],
+        "prompt_scope_counts": prompt_scope_counts,
         "count": len(selected),
         "lesson_count": len(selected),
         "chars": len(preview),
         "lesson_chars": len(preview),
         "lesson_max_chars": char_limit,
         "ignored_count": len(ignored),
-        "ignored_reasons": dict(Counter(str(item.get("reason") or "unknown") for item in ignored)),
+        "ignored_reasons": ignored_reasons,
+        "scope_filtered_count": scope_filtered_count,
     }
     return {
         "section": preview if injected else "",

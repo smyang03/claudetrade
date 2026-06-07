@@ -11,6 +11,21 @@ from runtime_paths import get_runtime_path
 from lifecycle.quality import live_clean_learning_allowed
 
 
+APPROVAL_CANDIDATE_SCHEMA_VERSION = "brain_approval_candidate.v1"
+
+
+def _normalize_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(candidate or {})
+    payload.setdefault("candidate_schema", APPROVAL_CANDIDATE_SCHEMA_VERSION)
+    payload.setdefault("candidate_type", str(payload.get("type") or "generic"))
+    payload.setdefault("source", str(payload.get("source") or "unknown"))
+    payload["prompt_visible"] = bool(payload.get("prompt_visible", False))
+    payload["requires_operator_approval"] = bool(
+        payload.get("requires_operator_approval", payload["prompt_visible"])
+    )
+    return payload
+
+
 class BrainApprovalQueue:
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path) if path else get_runtime_path("state", "brain_approval_queue.jsonl")
@@ -30,10 +45,13 @@ class BrainApprovalQueue:
             forward_complete=forward_complete,
         ):
             return False
+        normalized_candidate = _normalize_candidate(candidate)
         payload = {
             "status": "PENDING_APPROVAL",
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "candidate": candidate,
+            "candidate_schema": APPROVAL_CANDIDATE_SCHEMA_VERSION,
+            "candidate_type": str(normalized_candidate.get("candidate_type") or "generic"),
+            "candidate": normalized_candidate,
             "runtime_mode": runtime_mode,
             "data_quality": data_quality,
             "forward_complete": bool(forward_complete),

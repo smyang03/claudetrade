@@ -139,6 +139,23 @@ def _review_reason(*sources: Any) -> str:
     return "unknown"
 
 
+def _completeness_score(value: Any) -> float | None:
+    payload = value if isinstance(value, dict) else {}
+    return _to_float(payload.get("score"))
+
+
+def _completeness_low(value: Any) -> bool:
+    score = _completeness_score(value)
+    return bool(score is not None and score < 0.8)
+
+
+def _pathb_revenue_exit_reason(value: Any) -> str:
+    payload = value if isinstance(value, dict) else {}
+    if not bool(payload.get("is_pathb")):
+        return "not_pathb"
+    return str(payload.get("exit_reason") or "other")
+
+
 def _read_json_file(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
@@ -161,6 +178,8 @@ def _load_raw_call_rows(raw_dir: Path, *, start_date: str, end_date: str, market
         extra = data.get("extra") if isinstance(data.get("extra"), dict) else {}
         tokens = data.get("tokens") if isinstance(data.get("tokens"), dict) else {}
         parsed = data.get("parsed") if isinstance(data.get("parsed"), dict) else {}
+        completeness = extra.get("input_completeness") if isinstance(extra.get("input_completeness"), dict) else {}
+        revenue_context = extra.get("pathb_revenue_path_context") if isinstance(extra.get("pathb_revenue_path_context"), dict) else {}
         row = {
             "source": "raw_call",
             "call_id": str(data.get("call_id") or path.stem),
@@ -177,6 +196,12 @@ def _load_raw_call_rows(raw_dir: Path, *, start_date: str, end_date: str, market
             "duration_ms": _to_int(data.get("duration_ms")),
             "input_tokens": int(tokens.get("input") or 0),
             "output_tokens": int(tokens.get("output") or 0),
+            "fallback": bool(parsed.get("fallback") or extra.get("fallback")),
+            "input_completeness": completeness,
+            "completeness_score": _completeness_score(completeness),
+            "completeness_low": _completeness_low(completeness),
+            "pathb_revenue_path_context": revenue_context,
+            "pathb_revenue_exit_reason": _pathb_revenue_exit_reason(revenue_context),
         }
         if _in_scope(row, start_date=start_date, end_date=end_date, market=market):
             rows.append(row)
@@ -226,6 +251,8 @@ def _load_db_call_rows(db_path: Path, *, start_date: str, end_date: str, market:
     for item in rows:
         payload = _parse_json(item.get("payload_json")) or {}
         extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
+        completeness = extra.get("input_completeness") if isinstance(extra.get("input_completeness"), dict) else {}
+        revenue_context = extra.get("pathb_revenue_path_context") if isinstance(extra.get("pathb_revenue_path_context"), dict) else {}
         row = {
             "source": "agent_call_events",
             "call_id": str(item.get("call_id") or ""),
@@ -241,6 +268,12 @@ def _load_db_call_rows(db_path: Path, *, start_date: str, end_date: str, market:
             "duration_ms": _to_int(item.get("duration_ms")),
             "input_tokens": int(item.get("input_tokens") or 0),
             "output_tokens": int(item.get("output_tokens") or 0),
+            "fallback": bool(extra.get("fallback")),
+            "input_completeness": completeness,
+            "completeness_score": _completeness_score(completeness),
+            "completeness_low": _completeness_low(completeness),
+            "pathb_revenue_path_context": revenue_context,
+            "pathb_revenue_exit_reason": _pathb_revenue_exit_reason(revenue_context),
         }
         if _in_scope(row, start_date=start_date, end_date=end_date, market=market):
             out.append(row)
@@ -274,6 +307,12 @@ def _load_decision_rows(decision_dir: Path, *, start_date: str, end_date: str, m
                     "review_reason": _review_reason(data, data.get("advisor_context_v2")),
                     "duration_ms": _to_int(data.get("duration_ms")),
                     "votes": data.get("votes") if isinstance(data.get("votes"), dict) else {},
+                    "fallback": bool(data.get("fallback")),
+                    "input_completeness": data.get("input_completeness") if isinstance(data.get("input_completeness"), dict) else {},
+                    "completeness_score": _completeness_score(data.get("input_completeness")),
+                    "completeness_low": _completeness_low(data.get("input_completeness")),
+                    "pathb_revenue_path_context": data.get("pathb_revenue_path_context") if isinstance(data.get("pathb_revenue_path_context"), dict) else {},
+                    "pathb_revenue_exit_reason": _pathb_revenue_exit_reason(data.get("pathb_revenue_path_context")),
                 }
                 if _in_scope(row, start_date=start_date, end_date=end_date, market=market):
                     rows.append(row)
@@ -313,6 +352,8 @@ def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "max_ms": _round(max(clean) if clean else None),
         "input_tokens": sum(int(row.get("input_tokens") or 0) for row in rows),
         "output_tokens": sum(int(row.get("output_tokens") or 0) for row in rows),
+        "fallback_count": sum(1 for row in rows if bool(row.get("fallback"))),
+        "completeness_low_count": sum(1 for row in rows if bool(row.get("completeness_low"))),
     }
 
 
@@ -371,6 +412,12 @@ def _vote_rows_from_decisions(decision_rows: list[dict[str, Any]]) -> list[dict[
                     "duration_ms": _to_int(vote.get("duration_ms")),
                     "input_tokens": 0,
                     "output_tokens": 0,
+                    "fallback": bool(vote.get("fallback")),
+                    "input_completeness": decision.get("input_completeness") if isinstance(decision.get("input_completeness"), dict) else {},
+                    "completeness_score": decision.get("completeness_score"),
+                    "completeness_low": bool(decision.get("completeness_low")),
+                    "pathb_revenue_path_context": decision.get("pathb_revenue_path_context") if isinstance(decision.get("pathb_revenue_path_context"), dict) else {},
+                    "pathb_revenue_exit_reason": decision.get("pathb_revenue_exit_reason") or "not_pathb",
                 }
             )
     return rows
@@ -455,6 +502,11 @@ def analyze_hold_advisor_latency(
                 ("market", "decision_stage", "decision"),
                 limit=limit,
             ),
+            "by_pathb_revenue_path_decision": _group_summary(
+                decision_rows,
+                ("market", "pathb_revenue_exit_reason", "decision"),
+                limit=limit,
+            ),
             "by_symbol": _group_summary(decision_rows, ("market", "ticker"), limit=limit),
             "slowest": _slow_rows(decision_rows, limit=limit),
         },
@@ -499,7 +551,8 @@ def to_markdown(payload: dict[str, Any]) -> str:
     lines.append(
         f"calls={summary.get('calls', 0)}, duration_count={summary.get('duration_count', 0)}, "
         f"missing_duration={summary.get('missing_duration_count', 0)}, "
-        f"p50={summary.get('p50_ms')}ms, p95={summary.get('p95_ms')}ms"
+        f"p50={summary.get('p50_ms')}ms, p95={summary.get('p95_ms')}ms, "
+        f"fallback={summary.get('fallback_count', 0)}, completeness_low={summary.get('completeness_low_count', 0)}"
     )
     lines.append("")
     lines.append("### By Analyst")
@@ -529,7 +582,8 @@ def to_markdown(payload: dict[str, Any]) -> str:
     lines.append(
         f"requests={req_summary.get('calls', 0)}, duration_count={req_summary.get('duration_count', 0)}, "
         f"missing_duration={req_summary.get('missing_duration_count', 0)}, "
-        f"p50={req_summary.get('p50_ms')}ms, p95={req_summary.get('p95_ms')}ms"
+        f"p50={req_summary.get('p50_ms')}ms, p95={req_summary.get('p95_ms')}ms, "
+        f"fallback={req_summary.get('fallback_count', 0)}, completeness_low={req_summary.get('completeness_low_count', 0)}"
     )
     lines.append("")
     lines.append("### By Market / Stage / Decision")
@@ -544,6 +598,21 @@ def to_markdown(payload: dict[str, Any]) -> str:
             ("requests", "calls"),
             ("p50_ms", "p50_ms"),
             ("p95_ms", "p95_ms"),
+        ],
+    )
+    lines.append("### By PathB Revenue Path / Decision")
+    lines.append("")
+    _table(
+        lines,
+        (payload.get("decision_requests") or {}).get("by_pathb_revenue_path_decision") or [],
+        [
+            ("market", "market"),
+            ("path", "pathb_revenue_exit_reason"),
+            ("decision", "decision"),
+            ("requests", "calls"),
+            ("fallback", "fallback_count"),
+            ("low_input", "completeness_low_count"),
+            ("p50_ms", "p50_ms"),
         ],
     )
     lines.append("### Slowest Requests")

@@ -1,6 +1,6 @@
 # Developed Work
 
-Updated: 2026-05-27
+Updated: 2026-06-07
 
 Completed work is summarized here so it does not reappear as active work. An item is treated as complete only when a commit exists and the current code path still contains the operating behavior. Working-tree-only implementations remain in `ACTIVE_WORK.md` until reviewed, tested, and committed.
 
@@ -31,6 +31,8 @@ These are implemented and test-covered in the current working tree, but remain o
 | --- | --- | --- |
 | KIS `EGW00133` token rate-limit core | `KISTokenRateLimitError`, classifier/cooldown marker, shared KR/US marker, cached-token preservation, startup fail-closed tests. | Keep only preflight/dashboard operator-visible status and environment QA in active P0. |
 | PathB entry broker-truth dependency fail-closed | live token/provider unavailable returns `BLOCKED_BROKER_TRUTH`; unit and PathB regression tests pass. | Keep only TTL/attempt/latency/skip reason ops visibility in active P0. |
+| KR `NO_SIGNAL` / ORP timing read-only report | `tools/kr_nosignal_orp_report.py`, `tests/test_kr_nosignal_orp_report.py`, and read-only live DB run reproduce recent/primary/full_available counts. | Implementation is no longer active coding work; report-output review remains in `ACTIVE_WORK.md`. |
+| PathB `INVALID_PRICE` miss diagnostics read-only report | `tools/pathb_invalid_price_miss_report.py`, `tests/test_pathb_invalid_price_miss_report.py`, and read-only live DB run reproduce US `INVALID_PRICE n=29`, `zone_reentered=26`, `avg_mfe_30m_pct=1.2224`. | Implementation is no longer active coding work; remediation design remains in `ACTIVE_WORK.md` and must preserve PathB protected safety gates. |
 
 ## Not Counted Complete Yet
 

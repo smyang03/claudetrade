@@ -18,8 +18,9 @@ def _brain_payload() -> dict:
     }
 
 
-def _active_context(market: str) -> dict:
+def _active_context(market: str, **kwargs) -> dict:
     assert market == "US"
+    assert kwargs.get("prompt_scope", "selection") == "selection"
     assert os.getenv("ACTIVE_LESSONS_ENABLED") == "true"
     assert os.getenv("ACTIVE_LESSONS_SHADOW") == "false"
     assert os.getenv("ACTIVE_LESSONS_ALLOW_RECENT_DAYS") is None
@@ -32,6 +33,8 @@ def _active_context(market: str) -> dict:
                 "market": "US",
                 "source": "lesson_candidates",
                 "scope": "selection",
+                "target_prompt_scope": "selection",
+                "allowed_prompt_scopes": ["selection"],
                 "text": "promote watch candidates when veto is weak.",
                 "severity": "high",
                 "confidence": 0.91,
@@ -99,3 +102,23 @@ def test_analytics_page_contains_active_lesson_panel() -> None:
     body = response.get_data(as_text=True)
     assert "active-lessons-list" in body
     assert "Claude 주입 교훈" in body
+
+
+def test_hold_advisor_summary_api_exposes_pathb_revenue_groups() -> None:
+    client = dashboard_server.app.test_client()
+    fake_payload = {
+        "generated_at": "2026-06-07T09:00:00+09:00",
+        "scope": {"market": "US"},
+        "decision_requests": {
+            "by_pathb_revenue_path_decision": [
+                {"market": "US", "pathb_revenue_exit_reason": "profit_ladder", "decision": "HOLD", "calls": 2}
+            ]
+        },
+    }
+    with patch("tools.analyze_hold_advisor_latency.analyze_hold_advisor_latency", return_value=fake_payload):
+        response = client.get("/api/hold-advisor/summary?market=US&days=5")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["decision_requests"]["by_pathb_revenue_path_decision"][0]["pathb_revenue_exit_reason"] == "profit_ladder"

@@ -10,7 +10,7 @@ import time
 import anthropic
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_trading_logger
@@ -390,6 +390,108 @@ def _derive_hold_mode(pos: dict, exit_driver: str) -> str:
     return "profit_pullback"
 
 
+def _input_completeness(pos: dict, market: str, decision_stage: str, rt_context: str) -> dict[str, Any]:
+    advisor_ctx = pos.get("advisor_context_v2") if isinstance(pos.get("advisor_context_v2"), dict) else {}
+    entry = _as_float(pos.get("entry") or pos.get("avg_price") or pos.get("display_avg_price"), 0.0)
+    current = _as_float(pos.get("current_price") or pos.get("display_current_price") or pos.get("exit_price"), 0.0)
+    target = _as_float(
+        pos.get("tp")
+        or pos.get("display_tp_price")
+        or pos.get("pathb_reference_target")
+        or advisor_ctx.get("pathb_reference_target")
+        or advisor_ctx.get("selection_reference_target"),
+        0.0,
+    )
+    stop = _as_float(
+        pos.get("sl")
+        or pos.get("trail_sl")
+        or pos.get("pathb_reference_stop")
+        or advisor_ctx.get("pathb_reference_stop")
+        or advisor_ctx.get("selection_reference_stop")
+        or advisor_ctx.get("hard_stop_price"),
+        0.0,
+    )
+    is_pathb = bool(
+        str(pos.get("path_type") or pos.get("strategy_used") or pos.get("source_strategy") or "").lower() == "claude_price"
+        or pos.get("pathb_plan")
+        or pos.get("pathb_path_run_id")
+        or pos.get("path_run_id")
+    )
+    checks = {
+        "entry_ok": entry > 0,
+        "current_ok": current > 0,
+        "pnl_ok": pos.get("pnl_pct") not in (None, "") or (entry > 0 and current > 0),
+        "target_ok": target > 0,
+        "stop_ok": stop > 0,
+        "advisor_context_v2_ok": bool(advisor_ctx),
+        "pathb_reference_ok": (not is_pathb) or (
+            _as_float(pos.get("pathb_reference_target") or advisor_ctx.get("pathb_reference_target"), 0.0) > 0
+            and _as_float(pos.get("pathb_reference_stop") or advisor_ctx.get("pathb_reference_stop"), 0.0) > 0
+        ),
+        "market_context_ok": bool(str(rt_context or "").strip()),
+        "minutes_to_close_ok": str(decision_stage or "").upper() != "PRE_CLOSE_CARRY"
+        or pos.get("minutes_to_close") not in (None, ""),
+    }
+    missing = [key for key, ok in checks.items() if not bool(ok)]
+    score = (len(checks) - len(missing)) / max(1, len(checks))
+    return {**checks, "missing": missing, "score": round(score, 4)}
+
+
+def _pathb_revenue_path_context(
+    pos: dict,
+    decision_stage: str,
+    default_policy: str,
+    minutes_to_close: Optional[float],
+) -> dict[str, Any]:
+    advisor_ctx = pos.get("advisor_context_v2") if isinstance(pos.get("advisor_context_v2"), dict) else {}
+    plan = pos.get("pathb_plan") if isinstance(pos.get("pathb_plan"), dict) else {}
+    is_pathb = bool(
+        plan
+        or pos.get("pathb_path_run_id")
+        or pos.get("path_run_id")
+        or str(pos.get("path_type") or pos.get("strategy_used") or pos.get("source_strategy") or "").lower() == "claude_price"
+    )
+    reason_text = " ".join(
+        str(value or "").lower()
+        for value in (
+            decision_stage,
+            default_policy,
+            pos.get("auto_sell_reason"),
+            pos.get("auto_sell_close_reason"),
+            advisor_ctx.get("exit_signal_reason"),
+            advisor_ctx.get("exit_signal_close_reason"),
+        )
+    )
+    if str(decision_stage or "").upper() == "PRE_CLOSE_CARRY":
+        exit_reason = "pre_close"
+    elif "profit_ladder" in reason_text or "profit_floor" in reason_text:
+        exit_reason = "profit_ladder"
+    elif "target" in reason_text or "take_profit" in reason_text:
+        exit_reason = "target"
+    elif "loss_cap" in reason_text:
+        exit_reason = "loss_cap"
+    elif "hard_stop" in reason_text or "stop_loss" in reason_text:
+        exit_reason = "hard_stop"
+    else:
+        exit_reason = "other"
+    return {
+        "is_pathb": is_pathb,
+        "path_run_id": str(pos.get("pathb_path_run_id") or pos.get("path_run_id") or plan.get("path_run_id") or ""),
+        "origin_action": str(pos.get("pathb_origin_action") or plan.get("origin_action") or ""),
+        "exit_reason": exit_reason,
+        "reference_target": _as_float(
+            pos.get("pathb_reference_target") or advisor_ctx.get("pathb_reference_target") or plan.get("sell_target"),
+            0.0,
+        ),
+        "reference_stop": _as_float(
+            pos.get("pathb_reference_stop") or advisor_ctx.get("pathb_reference_stop") or plan.get("stop_loss"),
+            0.0,
+        ),
+        "profit_ladder_tier": str(pos.get("pathb_profit_ladder_tier") or advisor_ctx.get("pathb_profit_ladder_tier") or ""),
+        "minutes_to_close": float(minutes_to_close) if minutes_to_close is not None else None,
+    }
+
+
 def _triage_case_payload(
     pos: dict,
     market: str,
@@ -411,6 +513,8 @@ def _triage_case_payload(
         pnl_pct = (native_current / native_entry - 1.0) * 100.0
     advisor_ctx = pos.get("advisor_context_v2") if isinstance(pos.get("advisor_context_v2"), dict) else {}
     pathb_exit_signal = pos.get("pathb_exit_signal") if isinstance(pos.get("pathb_exit_signal"), dict) else {}
+    completeness = _input_completeness(pos, market, decision_stage, rt_context or digest_prompt)
+    revenue_context = _pathb_revenue_path_context(pos, decision_stage, default_policy, minutes_to_close)
     hard_guard = {
         "breached": bool(pos.get("hard_guard_breached") or pos.get("_hard_guard_breach_detail")),
         "reason": pos.get("hard_guard_reason", ""),
@@ -442,6 +546,8 @@ def _triage_case_payload(
         "auto_sell_close_reason": pos.get("auto_sell_close_reason", ""),
         "pathb_exit_signal": _scrub_triage_prompt_value(pathb_exit_signal),
         "advisor_context_v2": _scrub_triage_prompt_value(advisor_ctx),
+        "input_completeness": completeness,
+        "pathb_revenue_path_context": revenue_context,
         "market_context": (rt_context or digest_prompt or "")[:1800],
     }
     if hard_guard["breached"]:
@@ -645,6 +751,8 @@ def _ask_challenge(
         force_exit_window,
         triage,
     )
+    completeness = _input_completeness(pos, market, decision_stage, rt_context or digest_prompt)
+    revenue_context = _pathb_revenue_path_context(pos, decision_stage, default_policy, minutes_to_close)
     call_started = time.perf_counter()
     try:
         max_tokens = _challenge_max_tokens()
@@ -670,6 +778,8 @@ def _ask_challenge(
             extra={
                 "decision_stage": decision_stage,
                 "default_policy": default_policy,
+                "input_completeness": completeness,
+                "pathb_revenue_path_context": revenue_context,
                 "triage_category": triage.get("exit_category", ""),
                 "triage_driver": triage.get("exit_driver", ""),
                 "token_budget": {"max_tokens": max_tokens},
@@ -851,6 +961,8 @@ def _ask_triage(
         minutes_to_close,
         force_exit_window,
     )
+    completeness = _input_completeness(pos, market, decision_stage, rt_context or digest_prompt)
+    revenue_context = _pathb_revenue_path_context(pos, decision_stage, default_policy, minutes_to_close)
     call_started = time.perf_counter()
     try:
         max_tokens = _triage_max_tokens()
@@ -877,6 +989,8 @@ def _ask_triage(
                 "decision_stage": decision_stage,
                 "default_policy": default_policy,
                 "prompt_mode": prompt_mode,
+                "input_completeness": completeness,
+                "pathb_revenue_path_context": revenue_context,
                 "token_budget": {"max_tokens": max_tokens},
             },
         )
@@ -1424,6 +1538,8 @@ JSON으로만 응답:
 }}"""
 
     call_started = time.perf_counter()
+    completeness = _input_completeness(pos, market, decision_stage, rt_context or digest_prompt)
+    revenue_context = _pathb_revenue_path_context(pos, decision_stage, default_policy_text, minutes_to_close)
     try:
         resp = client.messages.create(
             model=MODEL, max_tokens=700,
@@ -1445,6 +1561,8 @@ JSON으로만 응답:
                 "decision_stage": decision_stage,
                 "default_policy": default_policy_text,
                 "advisor_context_v2": advisor_ctx if isinstance(advisor_ctx, dict) else {},
+                "input_completeness": completeness,
+                "pathb_revenue_path_context": revenue_context,
             },
         )
         vote = _coerce_vote(result, decision_stage=decision_stage, default_policy=default_policy_text)
@@ -1819,6 +1937,12 @@ def _log_decision(ticker: str, market: str, pos: dict,
             if advisor_fallback
             else action_key
         )
+        try:
+            minutes_to_close = float(pos.get("minutes_to_close")) if pos.get("minutes_to_close") not in (None, "") else None
+        except Exception:
+            minutes_to_close = None
+        input_completeness = _input_completeness(pos, market, decision_stage, "")
+        revenue_context = _pathb_revenue_path_context(pos, decision_stage, default_policy, minutes_to_close)
 
         entry = {
             "ts":         datetime.now().isoformat(timespec="seconds"),
@@ -1839,6 +1963,9 @@ def _log_decision(ticker: str, market: str, pos: dict,
             "default_policy": default_policy,
             "duration_ms": int(duration_ms or 0),
             "advisor_context_v2": pos.get("advisor_context_v2", {}) if isinstance(pos, dict) else {},
+            "input_completeness": input_completeness,
+            "pathb_revenue_path_context": revenue_context,
+            "hold_boundary_invalid": bool((triage or {}).get("hold_boundary_invalid", False)),
             "trail_pct":  trail_pct,
             "votes": vote_rows,
             "outcome":    None,   # 청산 후 채워짐

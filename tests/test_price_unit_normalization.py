@@ -98,6 +98,57 @@ class PriceUnitNormalizationTests(unittest.TestCase):
         self.assertEqual(row["pending_outcome_label"], "fallback_hold")
         self.assertTrue(row["votes"]["bull"]["fallback"])
 
+    def test_hold_advisor_log_preserves_input_completeness_and_pathb_context(self) -> None:
+        votes = {
+            "bull": {"action": "HOLD", "confidence": 0.8, "reason": "target intact"},
+            "bear": {"action": "SELL", "confidence": 0.5, "reason": "protect"},
+            "neutral": {"action": "HOLD", "confidence": 0.7, "reason": "bounded"},
+        }
+        pos = {
+            "ticker": "NVDA",
+            "entry": 100.0,
+            "current_price": 105.0,
+            "tp": 110.0,
+            "sl": 98.0,
+            "pnl_pct": 5.0,
+            "path_type": "claude_price",
+            "pathb_path_run_id": "run-1",
+            "pathb_origin_action": "PULLBACK_WAIT",
+            "pathb_reference_target": 110.0,
+            "pathb_reference_stop": 98.0,
+            "pathb_profit_ladder_tier": "tier1",
+            "auto_sell_reason": "profit_ladder",
+            "auto_sell_close_reason": "CLOSED_PROFIT_LADDER",
+            "advisor_context_v2": {"pathb_reference_target": 110.0, "pathb_reference_stop": 98.0},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def _runtime_path(*parts, make_parents=False):
+                path = root.joinpath(*parts)
+                if make_parents:
+                    path.mkdir(parents=True, exist_ok=True)
+                return path
+
+            with patch.object(hold_advisor, "get_runtime_path", side_effect=_runtime_path):
+                hold_advisor._log_decision(
+                    "NVDA",
+                    "US",
+                    pos,
+                    "HOLD",
+                    0.03,
+                    votes,
+                    "AUTO_SELL_REVIEW",
+                    "policy",
+                )
+
+            row = json.loads(next((root / "logs" / "hold_advisor").glob("decisions_*.jsonl")).read_text(encoding="utf-8"))
+
+        self.assertGreaterEqual(row["input_completeness"]["score"], 0.8)
+        self.assertTrue(row["pathb_revenue_path_context"]["is_pathb"])
+        self.assertEqual(row["pathb_revenue_path_context"]["exit_reason"], "profit_ladder")
+        self.assertEqual(row["pathb_revenue_path_context"]["profit_ladder_tier"], "tier1")
+
     def test_hold_advisor_outcome_preserves_fallback_and_cooldown_labels(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

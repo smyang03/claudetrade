@@ -267,6 +267,53 @@ class ActiveLessonBuilderTests(unittest.TestCase):
         self.assertEqual(result["metadata"]["ignored_reasons"]["truth_status_stale"], 1)
         self.assertEqual(result["metadata"]["ignored_reasons"]["truth_status_manual_review_required"], 1)
 
+    def test_prompt_scope_keeps_selection_lesson_out_of_market_judgment(self) -> None:
+        with patch.object(active_lessons, "_load_lesson_candidates", return_value=_lesson_payload()), \
+             patch.object(active_lessons, "_load_brain", return_value={"markets": {"US": {}}}), \
+             patch.dict(os.environ, {"ACTIVE_LESSONS_ENABLED": "true", "ACTIVE_LESSONS_SHADOW": "false"}, clear=False):
+            selection = active_lessons.build_active_lesson_context("US", prompt_scope="selection")
+            judgment = active_lessons.build_active_lesson_context("US", prompt_scope="market_judgment")
+
+        self.assertIn("watch_only missed runup", selection["section"])
+        self.assertEqual(selection["metadata"]["prompt_scope"], "selection")
+        self.assertEqual(selection["metadata"]["target_prompt_scopes"], ["selection"])
+        self.assertNotIn("watch_only missed runup", judgment["section"])
+        self.assertEqual(judgment["metadata"]["prompt_scope"], "market_judgment")
+        self.assertEqual(judgment["metadata"]["ignored_reasons"]["prompt_scope_excluded_market_judgment"], 1)
+
+    def test_market_judgment_prompt_scope_accepts_explicit_market_lesson(self) -> None:
+        payload = {
+            "markets": {
+                "US": [
+                    {
+                        "id": "breadth_lesson",
+                        "market": "US",
+                        "scope": "market",
+                        "target_prompt_scope": "market_judgment",
+                        "allowed_prompt_scopes": ["market_judgment"],
+                        "action_hint": "When breadth deteriorates with VIX up, lower market mode.",
+                        "claude_actionable": True,
+                        "ops_flag": False,
+                        "min_sample": 1,
+                        "breached": True,
+                        "severity": "medium",
+                        "confidence": 0.8,
+                        "sample_count": 5,
+                        "generated_at": "2026-05-01T23:00:00",
+                        "expires_at": "2099-01-01T00:00:00",
+                    }
+                ]
+            }
+        }
+        with patch.object(active_lessons, "_load_lesson_candidates", return_value=payload), \
+             patch.object(active_lessons, "_load_brain", return_value={"markets": {"US": {}}}), \
+             patch.dict(os.environ, {"ACTIVE_LESSONS_ENABLED": "true", "ACTIVE_LESSONS_SHADOW": "false"}, clear=False):
+            result = active_lessons.build_active_lesson_context("US", prompt_scope="r1")
+
+        self.assertIn("breadth deteriorates", result["section"])
+        self.assertEqual(result["metadata"]["prompt_scope"], "market_judgment")
+        self.assertEqual(result["items"][0]["target_prompt_scope"], "market_judgment")
+
     def test_recent_day_cap_and_execution_excluded_flags(self) -> None:
         brain = {
             "markets": {
@@ -423,7 +470,7 @@ class ActiveLessonSelectionPromptTests(unittest.TestCase):
             "section": "[active lessons]\n- selection: active action hint",
             "metadata": {"enabled": True, "shadow": False, "injected": True, "count": 1, "ignored_reasons": {"ops_flag": 1}},
         }
-        with patch.object(analysts_module, "build_active_lesson_context", return_value=active), \
+        with patch.object(analysts_module, "build_active_lesson_context", return_value=active) as build_lessons, \
              patch.object(analysts_module, "call_analyst", side_effect=_fake_r1), \
              patch.object(analysts_module, "call_analyst_debate", side_effect=_fake_r2), \
              patch("claude_memory.brain.generate_analyst_summary", return_value=""), \
@@ -438,6 +485,7 @@ class ActiveLessonSelectionPromptTests(unittest.TestCase):
                 lesson_context="legacy summary should not be used",
             )
 
+        build_lessons.assert_called_with("US", prompt_scope="market_judgment")
         self.assertEqual(len(r1_contexts), 3)
         self.assertEqual(len(r2_contexts), 3)
         self.assertTrue(all("active action hint" in ctx for ctx in r1_contexts + r2_contexts))
@@ -477,6 +525,29 @@ class ActiveLessonSelectionPromptTests(unittest.TestCase):
         self.assertTrue(raw_calls[0]["extra"]["lesson_context"]["injected"])
         self.assertEqual(captured["model"], "bear-model")
         self.assertIn("미국 주식 헤지펀드 리스크 매니저", str(captured["prompt"]))
+
+    def test_us_r1_prompt_uses_us_market_interpretation_guide(self) -> None:
+        from minority_report import analysts as analysts_module
+
+        captured: dict[str, object] = {}
+
+        def _fake_create(*, model, max_tokens, messages):
+            captured["prompt"] = messages[0]["content"]
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"stance":"NEUTRAL","confidence":0.5,"key_reason":"mixed"}')],
+                usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+            )
+
+        with patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
+             patch.object(analysts_module, "credit_record", lambda *args, **kwargs: None), \
+             patch.object(analysts_module, "save_raw_call", lambda **kwargs: None):
+            analysts_module.call_analyst("bull", "digest", "brain", "correction", market="US")
+
+        prompt = str(captured["prompt"])
+        self.assertIn("US 전용", prompt)
+        self.assertIn("VIX/DXY/TNX/HYG", prompt)
+        self.assertNotIn("VKOSPI 결측", prompt)
+        self.assertNotIn("외국인/기관 N/A", prompt)
 
     def test_enabled_lessons_reach_primary_retry_and_raw_metadata(self) -> None:
         from minority_report import analysts as analysts_module

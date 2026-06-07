@@ -164,7 +164,7 @@ Worklist cross-reference: `docs/important/IMPROVEMENT_WORKLIST_20260607.md`의 `
 |---|---|---|
 | recent | 2026-06-01 ~ 2026-06-05 | 최근 알려진 KR `trade_ready=8`, `signal_fired=0`, `traded=0` 증상 재현 |
 | primary | 기본 `--lookback-days 30` | 실제 판단 기준. 최근 5일 착시를 줄이고 최근 운용 흐름을 본다. |
-| full_available | `ticker_selection_log` live 전체 가용 기간 | 누적 경향 확인. 현재 DB 기준 KR은 2026-04-08부터 가용하다. |
+| full_available | `ticker_selection_log` live 전체 가용 기간 | 누적 경향 확인. 2026-06-07 read-only 실행 기준 KR live 가용 범위는 2026-04-20부터다. |
 
 작업 방향:
 
@@ -186,6 +186,13 @@ Acceptance:
 - 공유 strategy 변경 전 US PathB 영향 범위를 따로 검토한다.
 - recent, primary, full_available 세 window의 count와 원인 분포가 함께 산출된다.
 - 완료 판정은 5일 recent 재현만으로 하지 않고 primary/full_available 경향까지 확인한다.
+
+구현 상태 (2026-06-07):
+
+- `tools/kr_nosignal_orp_report.py`와 `tests/test_kr_nosignal_orp_report.py`가 추가됐다.
+- 운영 DB read-only 실행으로 recent `trade_ready=8`, `signal_fired=0`, `traded=0`, `no_signal=8`을 재현했다.
+- primary 30-day는 `trade_ready=37`, `signal_fired=6`, `traded=6`, `no_signal=31`, full_available은 `trade_ready=130`, `signal_fired=24`, `traded=20`, `no_signal=106`이다.
+- 이 구현은 threshold/window/order 정책 변경을 포함하지 않는다.
 
 ### P0-5. Candidate audit source/outcome freshness 보강
 
@@ -235,6 +242,13 @@ Acceptance:
 - `INVALID_PRICE`가 실제 가격 조회 실패인지, 단위 변환 문제인지, stale price인지 분리된다.
 - broker truth fail-closed, sizing, slippage cap은 유지된다.
 - full_available 기준 baseline 수치를 재현하고, recent window와의 차이를 표시한다.
+
+구현 상태 (2026-06-07):
+
+- `tools/pathb_invalid_price_miss_report.py`와 `tests/test_pathb_invalid_price_miss_report.py`가 추가됐다.
+- 운영 DB read-only 실행으로 US full_available baseline `n=29`, `zone_reentered=26`, `zone_reentered_rate=89.66%`, `avg_mfe_30m_pct=1.2224`, `avg_mae_30m_pct=0.0294`를 재현했다.
+- 현재 bucket은 `current_missing_but_followup_quotes_available=29`, `cent_tick_plausible=29`이므로 1차 개선 방향은 safety gate 완화가 아니라 plan 시점 current price capture/adapter 진단 보강이다.
+- `v2_path_runs`, `lifecycle_events`는 있으면 보조 메타데이터로만 붙고, broker truth fail-closed/sizing/slippage/order submit 정책은 변경하지 않는다.
 
 ## 5. P1 개선 방향
 

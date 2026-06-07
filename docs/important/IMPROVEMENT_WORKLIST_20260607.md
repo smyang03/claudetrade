@@ -398,6 +398,21 @@ python -m pytest tests/test_candidate_action_live_mapping.py::CandidateActionLiv
 - primary와 full_available window의 원인 분포를 함께 출력한다.
 - 완료 판정은 recent 재현만으로 하지 않는다.
 
+#### 구현 상태 — 2026-06-07
+
+- 구현 파일: `tools/kr_nosignal_orp_report.py`
+- 테스트 파일: `tests/test_kr_nosignal_orp_report.py`
+- CLI는 요구한 `--market`, `--lookback-days`, `--date-from`, `--date-to`, `--windows`, `--json`, `--output`을 지원한다.
+- `signal_fired`와 `traded` summary는 `trade_ready` row 기준으로 출력하고, 전체 selection 기준 카운트는 `total_signal_fired_rows`, `total_traded_rows`로 별도 출력한다.
+- 운영 DB read-only 실행 결과:
+  - recent `2026-06-01..2026-06-05`: `selection=1299`, `trade_ready=8`, `signal_fired=0`, `traded=0`, `no_signal=8`
+  - primary `2026-05-07..2026-06-05`: `selection=3065`, `trade_ready=37`, `signal_fired=6`, `traded=6`, `no_signal=31`
+  - full_available `2026-04-20..2026-06-05`: `selection=3576`, `trade_ready=130`, `signal_fired=24`, `traded=20`, `no_signal=106`
+- 검증 명령:
+  - `python -m py_compile tools/kr_nosignal_orp_report.py tools/pathb_invalid_price_miss_report.py`
+  - `python -m pytest tests/test_kr_nosignal_orp_report.py tests/test_pathb_invalid_price_miss_report.py -q`
+  - `python tools/kr_nosignal_orp_report.py --market KR --windows recent,primary,full_available --json --sample-limit 5`
+
 ### P0-9. PathB `INVALID_PRICE` Miss Diagnostics
 
 #### 현재 근거
@@ -433,7 +448,7 @@ python -m pytest tests/test_candidate_action_live_mapping.py::CandidateActionLiv
   - `avg_mfe_30m_pct`, `avg_mae_30m_pct`
   - `ticker`, `path_run_id`, `session_date`, `cancelled_at`
   - `current_at_plan`, `buy_zone_low`, `buy_zone_high`, `reference_price`, `baseline_price`
-  - `price_diagnostic_bucket`, `quote_age_bucket`, `conversion_bucket`, `order_timing_bucket`
+  - `price_source_bucket`, `price_diagnostic_bucket`, `quote_age_bucket`, `tick_size_bucket`, `conversion_bucket`, `order_timing_bucket`
 
 #### 작업
 
@@ -449,6 +464,24 @@ python -m pytest tests/test_candidate_action_live_mapping.py::CandidateActionLiv
 - missed opportunity와 safety block이 같은 표에서 섞이지 않는다.
 - full_available baseline에서 US `INVALID_PRICE n=29`, `zone_reentered=26`, `avg_mfe_30m=+1.222%`를 재현한다.
 - recent window와 baseline의 차이를 별도 summary로 출력한다.
+
+#### 구현 상태 — 2026-06-07
+
+- 구현 파일: `tools/pathb_invalid_price_miss_report.py`
+- 테스트 파일: `tests/test_pathb_invalid_price_miss_report.py`
+- CLI는 요구한 `--market`, `--reason`, `--lookback-days`, `--date-from`, `--date-to`, `--windows`, `--json`, `--output`을 지원한다.
+- `pathb_miss_quality`를 기준 테이블로 읽고, 같은 DB의 `v2_path_runs`, `lifecycle_events`가 있으면 read-only 보조 메타데이터를 붙인다.
+- `price_source_bucket`, `tick_size_bucket`, `quote_age_bucket`, `conversion_bucket`을 별도 summary로 출력해 source/stale/tick-size/unit 문제를 섞지 않는다.
+- 운영 DB read-only 실행 결과:
+  - recent `2026-04-27..2026-05-26`: `n=29`, `zone_reentered=26`, `zone_reentered_rate=89.66%`, `avg_mfe_30m_pct=1.2224`, `avg_mae_30m_pct=0.0294`
+  - full_available `2026-05-11..2026-05-26`: `n=29`, `zone_reentered=26`, `zone_reentered_rate=89.66%`, `avg_mfe_30m_pct=1.2224`, `avg_mae_30m_pct=0.0294`
+  - current available history가 30일 window 안에 모두 들어와 recent와 full_available baseline row set이 같다.
+  - `price_diagnostic_bucket`: `current_missing_but_followup_quotes_available=29`
+  - `tick_size_bucket`: `cent_tick_plausible=29`
+- 검증 명령:
+  - `python -m py_compile tools/kr_nosignal_orp_report.py tools/pathb_invalid_price_miss_report.py`
+  - `python -m pytest tests/test_kr_nosignal_orp_report.py tests/test_pathb_invalid_price_miss_report.py -q`
+  - `python tools/pathb_invalid_price_miss_report.py --market US --reason INVALID_PRICE --windows recent,full_available --json --sample-limit 3`
 
 ## P1 Work Items
 

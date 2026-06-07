@@ -1,7 +1,7 @@
 # US Overnight Monitor Report
 
 - status: running
-- generated_at: 2026-06-07T03:14:45+09:00
+- generated_at: 2026-06-07T09:00:02+09:00
 - monitor_window: 2026-06-06T02:51:43+09:00 ~ 2026-06-07T09:00:00+09:00
 - mode/market/session: live / US / 2026-06-05
 - read_only: True
@@ -27,14 +27,14 @@
 ## Data Collection
 
 - expected_open/news_due: 2026-06-05T22:30:00+09:00 / 2026-06-05T22:10:00+09:00
-- minute_price_latest: data\price\minute\us\us_WBD.csv age_min=862.88 files=249
-- daily_price_latest: data\price\us\us_YSS.csv age_min=277.49 files=1111
-- preopen_candidates: exists=True lines=660 age_min=1754.31
-- preopen_scheduler: exists=True lines=1085 age_min=1635.41
-- screener_projected_volume: exists=True lines=42 age_min=1638.45
-- preopen_news: exists=True corp_news_total=411 coverage=0.8667 age_min=1734.29
-- regular_news: exists=True corp_news_total=136 coverage=1.0 age_min=1715.6
-- daily_digest: exists=True top_news=5 age_min=1718.87
+- minute_price_latest: data\price\minute\us\us_WBD.csv age_min=1208.18 files=249
+- daily_price_latest: data\price\us\us_YSS.csv age_min=118.98 files=1111
+- preopen_candidates: exists=True lines=660 age_min=2099.61
+- preopen_scheduler: exists=True lines=1085 age_min=1980.71
+- screener_projected_volume: exists=True lines=42 age_min=1983.74
+- preopen_news: exists=True corp_news_total=411 coverage=0.8667 age_min=2079.58
+- regular_news: exists=True corp_news_total=136 coverage=1.0 age_min=2060.9
+- daily_digest: exists=True top_news=5 age_min=2064.16
 
 ## Risk Axes
 
@@ -77,11 +77,11 @@
 
 ## Issues
 
+- broker_truth_untrusted: 334
+- guardian_block_start: 299
 - log_warning: 274
-- broker_truth_untrusted: 265
 - analyst_new_buy_block: 240
-- guardian_block_start: 237
-- data_collection_minute_price_stale: 170
+- data_collection_minute_price_stale: 239
 - telegram: 4
 - broker_sync_protected: 2
 - pending_sell_local_state: 1

@@ -35,13 +35,22 @@ def _fmt_pct(value: Any) -> str:
     return f"{_as_float(value):.1f}%"
 
 
-def _base_fields(*, claude_actionable: bool, ops_flag: bool, action_hint: str, min_sample: int) -> dict[str, Any]:
+def _base_fields(
+    *,
+    claude_actionable: bool,
+    ops_flag: bool,
+    action_hint: str,
+    min_sample: int,
+    target_prompt_scope: str = "selection",
+) -> dict[str, Any]:
     return {
         "quality_version": QUALITY_VERSION,
         "claude_actionable": bool(claude_actionable),
         "ops_flag": bool(ops_flag),
         "action_hint": str(action_hint or ""),
         "min_sample": int(min_sample),
+        "target_prompt_scope": str(target_prompt_scope or "selection"),
+        "allowed_prompt_scopes": [str(target_prompt_scope or "selection")],
     }
 
 

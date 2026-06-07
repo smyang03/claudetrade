@@ -25,6 +25,7 @@ MOJIBAKE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("common_korean_mojibake", re.compile(r"\?[\uac00-\ud7a3]|[\uac00-\ud7a3]\?{2,}|\?{2,}[\uac00-\ud7a3]")),
     ("double_question_mark", re.compile(r"(?<!\?)\?\?(?!\?)")),
 )
+HANGUL_COMPAT_JAMO_ALLOWLIST = {"\u318d"}  # U+318D 아래아: 정상 한국어 특수문자
 
 SELECTION_LABELS = {"select_tickers", "selection", "pathb_selection"}
 STRICT_JSON_LABEL_PREFIXES = (
@@ -139,12 +140,25 @@ def _jsonish_response(raw_response: str) -> bool:
     return "{" in text and "}" in text
 
 
-def _mojibake_reasons(text: str) -> list[str]:
-    reasons = []
+def _mojibake_matches(text: str) -> list[dict[str, Any]]:
+    matches: list[dict[str, Any]] = []
     for reason, pattern in MOJIBAKE_PATTERNS:
-        if pattern.search(text or ""):
-            reasons.append(reason)
-    return reasons
+        found = []
+        for match in pattern.finditer(text or ""):
+            sample = match.group(0)
+            if reason == "hangul_compat_jamo" and all(ch in HANGUL_COMPAT_JAMO_ALLOWLIST for ch in sample):
+                continue
+            found.append(sample)
+            if len(found) >= 3:
+                break
+        if found:
+            codepoints = sorted({f"U+{ord(ch):04X}" for sample in found for ch in sample})
+            matches.append({"reason": reason, "samples": found, "codepoints": codepoints})
+    return matches
+
+
+def _mojibake_reasons(text: str) -> list[str]:
+    return [str(item.get("reason") or "") for item in _mojibake_matches(text)]
 
 
 def _duplicates(values: Any) -> list[str]:
@@ -254,6 +268,43 @@ def _fallback_or_timeout(row: dict[str, Any], parsed: dict[str, Any]) -> list[st
     return sorted(set(issues))
 
 
+def _fallback_authority_metadata(row: dict[str, Any], parsed: dict[str, Any]) -> dict[str, Any]:
+    extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+    normalized = parsed.get("_normalized") if isinstance(parsed.get("_normalized"), dict) else {}
+    fallback = any(
+        bool(payload.get("fallback") or payload.get("_fallback_mode") or payload.get("triage_parse_error"))
+        for payload in (row, parsed, extra, normalized)
+        if isinstance(payload, dict)
+    )
+    action = str(
+        parsed.get("action")
+        or parsed.get("decision")
+        or parsed.get("category")
+        or parsed.get("final_category")
+        or ""
+    ).upper()
+    trade_ready = normalized.get("trade_ready") if isinstance(normalized, dict) else []
+    if not isinstance(trade_ready, list):
+        trade_ready = parsed.get("trade_ready") if isinstance(parsed.get("trade_ready"), list) else parsed.get("tr")
+    has_selection_authority = bool(trade_ready) if isinstance(trade_ready, list) else False
+    has_hold_sell_authority = action in {"SELL", "STOP_LOSS"}
+    computed_authority = bool(has_selection_authority or has_hold_sell_authority)
+    explicit = None
+    for payload in (extra, parsed, row):
+        if isinstance(payload, dict) and "fallback_created_execution_authority" in payload:
+            explicit = bool(payload.get("fallback_created_execution_authority"))
+            break
+    created = bool(explicit) if explicit is not None else bool(fallback and computed_authority)
+    return {
+        "fallback": fallback,
+        "declared": explicit is not None,
+        "fallback_created_execution_authority": created,
+        "computed_execution_authority": computed_authority,
+        "action": action,
+        "trade_ready_count": len(trade_ready) if isinstance(trade_ready, list) else 0,
+    }
+
+
 def _quality_issues_for_call(row: dict[str, Any]) -> tuple[list[str], list[str]]:
     label = str(row.get("label") or "unknown")
     prompt = str(row.get("prompt") or "")
@@ -289,6 +340,11 @@ def _quality_issues_for_call(row: dict[str, Any]) -> tuple[list[str], list[str]]
     if output_tokens >= 2000:
         output_issues.append("output_tokens_ge_2000")
     output_issues.extend(_fallback_or_timeout(row, parsed))
+    fallback_authority = _fallback_authority_metadata(row, parsed)
+    if fallback_authority["fallback"] and not fallback_authority["declared"]:
+        output_issues.append("fallback_authority_not_declared")
+    if fallback_authority["fallback_created_execution_authority"]:
+        output_issues.append("fallback_created_execution_authority")
 
     if _is_selection_call(label, parsed):
         output_issues.extend(_selection_quality_issues(parsed))
@@ -442,6 +498,8 @@ def build_quality_report(
     issue_samples: list[dict[str, Any]] = []
     slow_samples: list[dict[str, Any]] = []
     prompt_warning_samples: list[dict[str, Any]] = []
+    fallback_authority_samples: list[dict[str, Any]] = []
+    mojibake_samples: list[dict[str, Any]] = []
 
     total_input = 0
     total_output = 0
@@ -457,6 +515,10 @@ def build_quality_report(
         duration_observed = _has_duration_ms(row)
         duration_ms = _safe_int(row.get("duration_ms")) if duration_observed else 0
         input_issues, output_issues = _quality_issues_for_call(row)
+        fallback_authority = _fallback_authority_metadata(
+            row,
+            row.get("parsed") if isinstance(row.get("parsed"), dict) else {},
+        )
         parse_error = bool(row.get("parse_error"))
 
         item = by_label[label]
@@ -504,6 +566,31 @@ def build_quality_report(
                     "duration_ms": duration_ms,
                     "input_issues": input_issues,
                     "output_issues": output_issues,
+                    "path": _tail_path(row.get("_path")),
+                }
+            )
+        if fallback_authority["fallback"]:
+            fallback_authority_samples.append(
+                {
+                    "timestamp": row.get("_timestamp_kst") or row.get("timestamp"),
+                    "label": label,
+                    "fallback_created_execution_authority": fallback_authority["fallback_created_execution_authority"],
+                    "declared": fallback_authority["declared"],
+                    "computed_execution_authority": fallback_authority["computed_execution_authority"],
+                    "action": fallback_authority["action"],
+                    "trade_ready_count": fallback_authority["trade_ready_count"],
+                    "path": _tail_path(row.get("_path")),
+                }
+            )
+        prompt_mojibake = _mojibake_matches(str(row.get("prompt") or ""))
+        response_mojibake = _mojibake_matches(str(row.get("raw_response") or ""))
+        if prompt_mojibake or response_mojibake:
+            mojibake_samples.append(
+                {
+                    "timestamp": row.get("_timestamp_kst") or row.get("timestamp"),
+                    "label": label,
+                    "prompt": prompt_mojibake,
+                    "response": response_mojibake,
                     "path": _tail_path(row.get("_path")),
                 }
             )
@@ -603,6 +690,8 @@ def build_quality_report(
         "output_issue_counts": dict(output_issues_total.most_common()),
         "issue_samples": issue_samples[:80],
         "prompt_warning_samples": sorted(prompt_warning_samples, key=lambda row: -_safe_int(row.get("input_tokens")))[:80],
+        "fallback_authority_samples": fallback_authority_samples[:80],
+        "mojibake_samples": mojibake_samples[:80],
         "slow_call_samples": slow_samples[:40],
         "recommendations": recommendations,
     }
@@ -655,6 +744,22 @@ def _recommendations(
                 "priority": "P1",
                 "area": "parser_safety",
                 "recommendation": "Review parse-error samples and confirm fallback decisions cannot create BUY/SELL authority without runtime gates.",
+            }
+        )
+    if output_issues.get("fallback_created_execution_authority", 0) > 0:
+        recs.append(
+            {
+                "priority": "P1",
+                "area": "fallback_authority",
+                "recommendation": "Inspect fallback-created execution authority samples; fallback parsing must not create BUY/SELL authority without an explicit runtime owner.",
+            }
+        )
+    if output_issues.get("fallback_authority_not_declared", 0) > 0:
+        recs.append(
+            {
+                "priority": "P2",
+                "area": "fallback_observability",
+                "recommendation": "Add fallback_created_execution_authority=false to safe fallback raw-call metadata so parser recovery authority is auditable.",
             }
         )
     if any(key.startswith("hold_boundary_missing_") for key in output_issues):
@@ -768,6 +873,26 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
             lines.append(
                 f"- {row.get('timestamp')} {row.get('label')} input={row.get('input_issues')} "
                 f"output={row.get('output_issues')} path={row.get('path')}"
+            )
+    fallback_samples = report.get("fallback_authority_samples") or []
+    if fallback_samples:
+        lines.extend(["", "## Fallback Authority Samples", ""])
+        for row in fallback_samples[:30]:
+            lines.append(
+                f"- {row.get('timestamp')} {row.get('label')} declared={row.get('declared')} "
+                f"created_authority={row.get('fallback_created_execution_authority')} "
+                f"computed_authority={row.get('computed_execution_authority')} action={row.get('action')} "
+                f"trade_ready_count={row.get('trade_ready_count')} path={row.get('path')}"
+            )
+    mojibake_samples = report.get("mojibake_samples") or []
+    if mojibake_samples:
+        lines.extend(["", "## Mojibake Samples", ""])
+        for row in mojibake_samples[:30]:
+            lines.append(
+                f"- {row.get('timestamp')} {row.get('label')} "
+                f"prompt={json.dumps(row.get('prompt') or [], ensure_ascii=False)} "
+                f"response={json.dumps(row.get('response') or [], ensure_ascii=False)} "
+                f"path={row.get('path')}"
             )
     prompt_warnings = report.get("prompt_warning_samples") or []
     if prompt_warnings:

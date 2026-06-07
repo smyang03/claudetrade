@@ -10,6 +10,7 @@
 import os, json, re, sys, time, uuid
 import anthropic
 from pathlib import Path
+from typing import Any
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_judgment_logger, get_minority_logger
 from claude_memory import brain as BrainDB
@@ -62,6 +63,8 @@ def _append_lesson_candidate(
             "id": new_id,
             "market": market,
             "scope": "selection",
+            "target_prompt_scope": "selection",
+            "allowed_prompt_scopes": ["selection"],
             "breached": bull_result == "MISS",
             "claude_actionable": True,
             "ops_flag": False,
@@ -76,6 +79,9 @@ def _append_lesson_candidate(
             "expires_at": expires,
             "quality_version": "postmortem.v1",
             "source": "postmortem",
+            "truth_status": "manual_review_required",
+            "requires_operator_approval": True,
+            "prompt_visible_after_approval": True,
             "hit_result": bull_result,
         })
         store["markets"][market] = market_list
@@ -355,10 +361,92 @@ def _prompt_policy_exclusion(actual_result: dict, *, execution_learning_excluded
         excluded = bool(explicit)
         return excluded, explicit_reason if excluded else ""
     if actual_result.get("selection_evidence_verified"):
-        return False, ""
+        return True, "postmortem_policy_requires_approval"
     if actual_result.get("execution_contaminated"):
         return True, explicit_reason or "execution_contaminated"
     return True, "postmortem_policy_requires_approval"
+
+
+def _postmortem_policy_candidate_runtime(actual_result: dict) -> tuple[str, str, bool]:
+    runtime_mode = str(
+        actual_result.get("runtime_mode")
+        or actual_result.get("mode")
+        or os.getenv("TRADING_RUNTIME_MODE", "")
+        or os.getenv("RUNTIME_MODE", "")
+        or ""
+    ).strip()
+    data_quality = str(actual_result.get("data_quality") or "").strip().upper()
+    if not data_quality:
+        data_quality = "CLEAN" if bool(actual_result.get("data_quality_clean", False)) else "DIRTY"
+    forward_complete = bool(
+        actual_result.get("forward_complete")
+        or actual_result.get("forward_complete_at")
+        or actual_result.get("selection_evidence_verified")
+    )
+    return runtime_mode, data_quality, forward_complete
+
+
+def _submit_postmortem_policy_candidate(
+    market: str,
+    target_date: str,
+    pm: dict,
+    actual_result: dict,
+    *,
+    policy_exclusion_reason: str,
+) -> dict[str, Any]:
+    lesson = str(((pm.get("brain_updates") or {}).get("new_lesson") or pm.get("key_lesson") or "")).strip()
+    correction_guide = pm.get("correction_guide") if isinstance(pm.get("correction_guide"), dict) else {}
+    market_regime = str(((pm.get("brain_updates") or {}).get("market_regime") or "")).strip()
+    issue_type = str(pm.get("issue_type") or "").strip()
+    if pm.get("_system_error") or _is_placeholder_lesson(lesson):
+        return {"submitted": False, "reason": "not_prompt_policy_candidate"}
+    candidate = {
+        "candidate_type": "market_lesson",
+        "market": market,
+        "source": "postmortem",
+        "summary": lesson[:500],
+        "prompt_visible": True,
+        "requires_operator_approval": True,
+        "truth_status": "manual_review_required",
+        "target_prompt_scope": "selection",
+        "allowed_prompt_scopes": ["selection"],
+        "evidence": {
+            "date": target_date,
+            "bull_result": pm.get("bull_result"),
+            "bear_result": pm.get("bear_result"),
+            "neutral_result": pm.get("neutral_result"),
+            "market_regime": market_regime,
+            "issue_type": issue_type,
+            "issue_desc": str(pm.get("issue_desc") or "")[:500],
+            "pattern_id": pm.get("pattern_id"),
+            "correction_guide": correction_guide,
+            "policy_exclusion_reason": policy_exclusion_reason,
+        },
+    }
+    runtime_mode, data_quality, forward_complete = _postmortem_policy_candidate_runtime(actual_result)
+    try:
+        from learning.approval_queue import BrainApprovalQueue
+
+        submitted = BrainApprovalQueue().submit(
+            candidate=candidate,
+            runtime_mode=runtime_mode,
+            data_quality=data_quality,
+            forward_complete=forward_complete,
+        )
+    except Exception as exc:
+        return {
+            "submitted": False,
+            "reason": f"approval_queue_error:{str(exc)[:160]}",
+            "candidate_type": "market_lesson",
+        }
+    return {
+        "submitted": bool(submitted),
+        "reason": "queued" if submitted else "approval_queue_gate_rejected",
+        "candidate_type": "market_lesson",
+        "runtime_mode": runtime_mode,
+        "data_quality": data_quality,
+        "forward_complete": forward_complete,
+    }
 
 
 def run(market: str, date: str, today_judgment: dict,
@@ -664,7 +752,6 @@ def run(market: str, date: str, today_judgment: dict,
         actual_result,
         execution_learning_excluded=execution_learning_excluded,
     )
-    prompt_policy_allowed = not prompt_policy_excluded
 
     # ── brain 업데이트 ───────────────────────────────────────────────
     if not execution_learning_excluded:
@@ -682,20 +769,20 @@ def run(market: str, date: str, today_judgment: dict,
     bu = pm.get("brain_updates", {})
     # new_lesson 없으면 key_lesson을 fallback으로 사용
     lesson_to_save = bu.get("new_lesson") or pm.get("key_lesson")
-    if prompt_policy_allowed and not pm.get("_system_error") and lesson_to_save and not _is_placeholder_lesson(lesson_to_save):
-        BrainDB.update_beliefs(market, {"new_lesson": lesson_to_save})
-    if prompt_policy_allowed and not pm.get("_system_error") and bu.get("market_regime") and bu["market_regime"] != "unknown":
-        BrainDB.update_beliefs(market, {"market_regime": bu["market_regime"]})
-
-    if prompt_policy_allowed and not pm.get("_system_error") and not pm.get("_skip_issue_pattern"):
-        BrainDB.update_issue_pattern(market, {
-            "matched_id":  pm.get("pattern_id"),
-            "type":        pm.get("issue_type", "unknown"),
-            "description": pm.get("issue_desc", ""),
-            "bull_hit":    pm["bull_result"] == "HIT",
-            "pnl_pct":     actual_result.get("pnl_pct", 0),
-            "insight":     "" if _is_placeholder_lesson(pm.get("key_lesson", "")) else pm.get("key_lesson", ""),
-        })
+    policy_candidate_result = _submit_postmortem_policy_candidate(
+        market,
+        date,
+        pm,
+        actual_result,
+        policy_exclusion_reason=policy_exclusion_reason,
+    )
+    if policy_candidate_result.get("submitted"):
+        log.info(f"[postmortem policy candidate] {date} {market} queued for approval")
+    elif lesson_to_save and not pm.get("_system_error"):
+        log.info(
+            f"[postmortem policy candidate] {date} {market} not queued: "
+            f"{policy_candidate_result.get('reason')}"
+        )
 
     fallback_note = pm.get("key_lesson", "") if pm.get("_system_error") else ""
     daily_key_lesson = "" if execution_learning_excluded else pm.get("key_lesson", "")
@@ -737,6 +824,7 @@ def run(market: str, date: str, today_judgment: dict,
         "execution_issue_labels": actual_result.get("execution_issue_labels", []),
         "execution_issue_details": actual_result.get("execution_issue_details", []),
         "selection_feedback": BrainDB.get_recent_selection_feedback_text(market, days=20, max_chars=400),
+        "policy_candidate": policy_candidate_result,
     })
 
     # lesson_candidates.json 자동 append
@@ -760,10 +848,7 @@ def run(market: str, date: str, today_judgment: dict,
         except Exception as e:
             log.warning(f"토론 결과 업데이트 실패: {e}")
 
-    # 당일 Claude 보정 지침 업데이트
-    cg = pm.get("correction_guide", {})
-    if cg and not pm.get("_system_error") and prompt_policy_allowed:
-        BrainDB.update_correction_guide(market, cg)
+    # 당일 Claude 보정 지침은 prompt-visible 정책 메모리이므로 approval candidate에만 보존한다.
 
     log.info(
         f"[postmortem {date}] Bull:{pm['bull_result']} Bear:{pm['bear_result']} "

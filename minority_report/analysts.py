@@ -137,6 +137,39 @@ def _json_array_object_cap(items: list[dict], max_chars: int) -> tuple[str, list
     return "[" + ",".join(parts) + "]", included, omitted
 
 
+def _compact_selection_candidate_lines(
+    lines: list[str],
+    *,
+    max_line_chars: int,
+    max_total_chars: int,
+) -> tuple[str, dict]:
+    kept: list[str] = []
+    omitted = 0
+    total = 0
+    line_limit = max(80, int(max_line_chars or 0))
+    total_limit = max(line_limit, int(max_total_chars or 0))
+    for raw_line in lines or []:
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+        if len(line) > line_limit:
+            line = line[: line_limit - 3].rstrip() + "..."
+        next_total = total + len(line) + (1 if kept else 0)
+        if next_total > total_limit:
+            omitted += 1
+            continue
+        kept.append(line)
+        total = next_total
+    return "\n".join(kept), {
+        "candidate_line_count": len(lines or []),
+        "candidate_line_included_count": len(kept),
+        "candidate_line_omitted_count": omitted,
+        "candidate_line_max_chars": line_limit,
+        "candidate_total_max_chars": total_limit,
+        "candidate_prompt_chars": total,
+    }
+
+
 def _compact_evidence_num(value) -> float | None:
     try:
         if value in (None, ""):
@@ -1677,6 +1710,30 @@ BREADTH_FIRST_CONTRACT = """[시장 breadth 우선 계약 — 반드시 준수]
 • breadth 60%+ 인데 장중 실시간 지수가 하락 중일 때: breadth를 방향 판단의 기준으로 삼고, 장중 하락은 confidence 조정에만 반영하세요. 장 초반·중반의 일시 하락을 종가 방향으로 단정하지 마세요."""
 
 
+def _market_interpretation_guide(market: str) -> str:
+    market_key = str(market or "").upper()
+    if market_key == "US":
+        return """[데이터 해석 가이드 — US 전용, 반드시 준수]
+• SPY/QQQ/IWM의 1d/5d 흐름과 breadth를 먼저 확인하세요.
+• VIX/DXY/TNX/HYG가 N/A이면 안정 신호가 아니라 data_quality 불확실성입니다.
+• VIX 상승 + HYG 약세 + TNX/DXY 급등은 risk-off 신호입니다.
+• 섹터 ETF(XLK/XLF/XLE 등)는 시장 판단의 보조 근거이며, 개별 대형주 1~3개만으로 mode를 결정하지 마세요.
+• premarket/after-hours 데이터는 정규장 breadth보다 신뢰도가 낮습니다. confidence 조정에 우선 반영하세요.
+• FOMC/CPI/고용/대형 실적 발표 당일은 1d 방향이 발표 전후로 바뀔 수 있으므로 5d 추세와 이벤트 리스크를 함께 보세요.
+• KR 전용 지표(VKOSPI, 외국인 선물, USD/KRW)를 US mode 판단의 주 근거로 쓰지 마세요."""
+    return """[데이터 해석 가이드 — KR 전용, 반드시 준수]
+• 코스피: "1d X% / 5d Y%" 형태 — 1d는 전일 대비, 5d는 주간 추세. 둘 다 확인할 것.
+• USD/KRW: "1,465 (1d -0.8%, 5d -3.8%, 20일고점대비 -4.2%)" 형태
+  - 1d 음수 = KRW 강세(위험 완화), 양수 = KRW 약세(위험)
+  - 20일고점대비 -5% 이상이면 환율 위험은 단기 해소 국면
+• VKOSPI 결측: 데이터 없음. 중간 불확실성(보통 수준)으로 처리. DEFENSIVE 판단 근거로 쓰지 말 것.
+• 오늘 요일: 월요일이면 금요일 종가 기준임을 감안. 주말 사이 갭 가능성 포함.
+• 외국인/기관 N/A: 데이터 없음. 0(순매도도 순매수도 없음)과 다름. 판단 유보.
+• MACD 골든크로스(확대중): 추세 강화 신호. MACD 골든크로스(축소중): 추세 약화 주의.
+• 이벤트 ⚠️ 표시(FOMC, CPI, 실적 집중 주간): confidence를 0.05~0.08 하향 후 출력. key_reason에 이벤트 리스크 인지 여부 반드시 언급. 5d 추세를 1d보다 우선 참고.
+• FOMC 결과 발표 당일: 발표 전후로 1d 수치 방향이 뒤집힐 수 있음. 5d 추세 우선. 1d 단독 과신 금지."""
+
+
 def _persona_for(analyst_type: str, market: str = "") -> str:
     if analyst_type == "bear" and str(market or "").upper() == "US":
         return US_BEAR_PERSONA
@@ -1708,17 +1765,7 @@ def call_analyst(analyst_type: str, digest_prompt: str,
 {COMMON_DECISION_CONTRACT}
 {HARD_SOFT_RULE_CONTRACT}
 {feedback_section}{lesson_section}
-[데이터 해석 가이드 — 반드시 준수]
-• 코스피: "1d X% / 5d Y%" 형태 — 1d는 전일 대비, 5d는 주간 추세. 둘 다 확인할 것.
-• USD/KRW: "1,465 (1d -0.8%, 5d -3.8%, 20일고점대비 -4.2%)" 형태
-  - 1d 음수 = KRW 강세(위험 완화), 양수 = KRW 약세(위험)
-  - 20일고점대비 -5% 이상이면 환율 위험은 단기 해소 국면
-• VKOSPI 결측: 데이터 없음. 중간 불확실성(보통 수준)으로 처리. DEFENSIVE 판단 근거로 쓰지 말 것.
-• 오늘 요일: 월요일이면 금요일 종가 기준임을 감안. 주말 사이 갭 가능성 포함.
-• 외국인/기관 N/A: 데이터 없음. 0(순매도도 순매수도 없음)과 다름. 판단 유보.
-• MACD 골든크로스(확대중): 추세 강화 신호. MACD 골든크로스(축소중): 추세 약화 주의.
-• 이벤트 ⚠️ 표시(FOMC, CPI, 실적 집중 주간): confidence를 0.05~0.08 하향 후 출력. key_reason에 이벤트 리스크 인지 여부 반드시 언급. 5d 추세를 1d보다 우선 참고.
-• FOMC 결과 발표 당일: 발표 전후로 1d 수치 방향이 뒤집힐 수 있음. 5d 추세 우선. 1d 단독 과신 금지.
+{_market_interpretation_guide(market)}
 
 [시장 전체 메모리]
 {brain_summary}
@@ -1940,7 +1987,7 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
 
     active_lesson_meta: Optional[dict] = None
     try:
-        active_lessons = build_active_lesson_context(market)
+        active_lessons = build_active_lesson_context(market, prompt_scope="market_judgment")
         active_lesson_meta = dict(active_lessons.get("metadata") or {})
         lesson_context = str(active_lessons.get("section") or "")
         log.info(
@@ -2041,14 +2088,13 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
         else:
             log.info(f"  [{atype}] 의견 유지: {r2[atype]['stance']}")
 
-    # 토론 결과를 brain.json에 저장
+    # 토론 결과는 prompt-visible 정책 메모리이므로 기본 런타임에서는 brain.json에 직접 저장하지 않는다.
     try:
         from datetime import date as _date
         today_str = _date.today().isoformat()
-        BrainDB.save_debate_result(market, today_str, r1, r2)
-        log.info(f"[토론 기록 저장] {today_str} {market} 변경={len(changes)}건")
+        log.info(f"[토론 기록 승인대기] {today_str} {market} direct brain 저장 생략 변경={len(changes)}건")
     except Exception as e:
-        log.warning(f"[토론 기록 저장 실패] {e}")
+        log.warning(f"[토론 기록 승인대기 처리 실패] {e}")
 
     unavailable_roles = [
         atype for atype in ("bull", "bear", "neutral")
@@ -2427,7 +2473,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         log.debug(f"[ticker-selection] tuner context skipped: {_e}")
 
     selection_feedback = _recent_selection_feedback_section(market)
-    active_lessons = build_active_lesson_context(market)
+    active_lessons = build_active_lesson_context(market, prompt_scope="selection")
     active_lesson_meta = dict(active_lessons.get("metadata") or {})
     log.info(
         f"[active_lessons] {market} selected={active_lesson_meta.get('count', 0)} "
@@ -2556,9 +2602,14 @@ execution_phase: {execution_phase or 'unspecified'}
       "exit_rationale":"near resistance",
       "rationale":"buy near support, sell into resistance"
     }}
-  }}{candidate_actions_example}
+    }}{candidate_actions_example}
 }}"""
 
+    selection_prompt_budget_meta = {
+        "compact_prompt_budget_enabled": False,
+        "candidate_prompt_chars": len(cand_text),
+        "evidence_prompt_chars": len(evidence_section),
+    }
     smart_skip_watch_cap = watch_max
     smart_skip_trade_cap = trade_max
     smart_skip_prompt_contract = "selection_rank_v3+execution_plan_v1"
@@ -2574,17 +2625,33 @@ execution_phase: {execution_phase or 'unspecified'}
         smart_skip_watch_cap = compact_watch_max
         smart_skip_trade_cap = compact_trade_max
         smart_skip_prompt_contract = "selection_compact.v1"
+        compact_cand_text, compact_candidate_meta = _compact_selection_candidate_lines(
+            cand_lines,
+            max_line_chars=_env_int_bound("CLAUDE_SELECTION_COMPACT_CANDIDATE_LINE_MAX_CHARS", 260, 120, 800),
+            max_total_chars=_env_int_bound("CLAUDE_SELECTION_COMPACT_CANDIDATES_MAX_CHARS", 6000, 1000, 20000),
+        )
+        compact_digest_limit = _env_int_bound("CLAUDE_SELECTION_COMPACT_DIGEST_MAX_CHARS", 160, 80, 800)
+        compact_feedback_limit = _env_int_bound("CLAUDE_SELECTION_COMPACT_FEEDBACK_MAX_CHARS", 500, 120, 1200)
+        selection_prompt_budget_meta.update(
+            {
+                "compact_prompt_budget_enabled": True,
+                "candidate_prompt_chars": len(compact_cand_text),
+                "digest_max_chars": compact_digest_limit,
+                "selection_feedback_max_chars": compact_feedback_limit,
+                **compact_candidate_meta,
+            }
+        )
         prompt = f"""{phase_instruction}
 execution_phase: {execution_phase or 'unspecified'}
 market: {market}
 mode: {consensus_mode}
 
 Candidates:
-{cand_text}
+{compact_cand_text}
 {evidence_section}
 
 Market context:
-{digest_prompt[:220]}{digest_news_section}{intraday_section}{brain_section}{tuner_section}{lesson_section}{selection_feedback[:700]}{tuning_feedback_section}
+{digest_prompt[:compact_digest_limit]}{digest_news_section}{intraday_section}{brain_section}{tuner_section}{lesson_section}{selection_feedback[:compact_feedback_limit]}{tuning_feedback_section}
 {COMMON_DECISION_CONTRACT}
 {HARD_SOFT_RULE_CONTRACT}
 {compact_output_contract(watch_max=compact_watch_max, trade_max=compact_trade_max)}
@@ -2604,6 +2671,8 @@ Rules:
 - KR market: momentum strategy is prohibited in tr (trade_ready). WATCH only.
 - KR market: tickers 078150/264850/024840 are prohibited in tr. WATCH only.
 """
+    selection_prompt_budget_meta["prompt_chars"] = len(prompt)
+    selection_prompt_budget_meta["market_context_chars"] = len(str(digest_prompt[:220] or ""))
 
     fallback_meta = normalize_selection_result(
         {
@@ -2936,6 +3005,8 @@ Rules:
                 "stop_reason": stop_reason,
                 "max_tokens": selection_max_tokens,
                 "compact_schema_enabled": bool(compact_selection_enabled),
+                "fallback_created_execution_authority": False,
+                "prompt_budget": dict(selection_prompt_budget_meta),
                 "selection_reference_prices": selection_reference_prices,
                 "prompt_contract": "selection_compact.v1" if compact_selection_enabled else "selection_rank_v3+execution_plan_v1",
                 **evidence_alignment_extra,
@@ -2944,7 +3015,7 @@ Rules:
         if result.get("_fallback_mode") == "selection_partial" and not compact_selection_enabled:
             retry_candidates = _pick_selection_retry_candidates(prompt_candidates, result, market)
             if retry_candidates:
-                retry_active_lessons = build_active_lesson_context(market, retry=True)
+                retry_active_lessons = build_active_lesson_context(market, retry=True, prompt_scope="selection")
                 retry_active_lesson_meta = dict(retry_active_lessons.get("metadata") or {})
                 retry_prompt = _build_selection_retry_prompt(
                     market,

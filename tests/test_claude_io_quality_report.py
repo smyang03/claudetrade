@@ -134,6 +134,82 @@ class ClaudeIoQualityReportTests(unittest.TestCase):
             self.assertNotIn("hold_boundary_missing_protective_stop", output)
             self.assertEqual(output["response_mojibake_double_question_mark"], 1)
 
+    def test_mojibake_detector_allows_korean_middle_dot_but_reports_real_jamo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_dir = Path(tmp)
+            _write_raw(
+                raw_dir / "middle_dot.json",
+                {
+                    "timestamp": "2026-06-01T23:10:00",
+                    "market": "US",
+                    "label": "select_tickers",
+                    "model": "claude-test",
+                    "prompt": "한국\u318d미국 시장. Return strict JSON only.",
+                    "raw_response": "{\"wl\":[],\"tr\":[],\"ca\":[]}",
+                    "parsed": {"wl": [], "tr": [], "ca": []},
+                    "tokens": {"input": 100, "output": 10},
+                },
+            )
+            _write_raw(
+                raw_dir / "bad_jamo.json",
+                {
+                    "timestamp": "2026-06-01T23:11:00",
+                    "market": "US",
+                    "label": "hold_advisor_bull",
+                    "model": "claude-test",
+                    "prompt": "Return strict JSON only.",
+                    "raw_response": "{\"action\":\"HOLD\",\"confidence\":0.7,\"reason\":\"\u3131 broken\"}",
+                    "parsed": {"action": "HOLD", "confidence": 0.7, "reason": "\u3131 broken"},
+                    "tokens": {"input": 100, "output": 10},
+                },
+            )
+
+            report = build_quality_report(raw_dir=raw_dir, market="US")
+
+        self.assertNotIn("prompt_mojibake_hangul_compat_jamo", report["input_issue_counts"])
+        self.assertEqual(report["output_issue_counts"]["response_mojibake_hangul_compat_jamo"], 1)
+        self.assertEqual(report["mojibake_samples"][0]["response"][0]["codepoints"], ["U+3131"])
+
+    def test_fallback_authority_requires_explicit_false_for_safe_fallbacks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_dir = Path(tmp)
+            _write_raw(
+                raw_dir / "safe_fallback.json",
+                {
+                    "timestamp": "2026-06-01T23:10:00",
+                    "market": "US",
+                    "label": "select_tickers",
+                    "model": "claude-test",
+                    "prompt": "MACHINE-COMPACT OUTPUT CONTRACT. Return strict JSON only.",
+                    "raw_response": "{\"wl\":[\"AAPL\"],\"tr\":[],\"ca\":[]}",
+                    "parsed": {"wl": ["AAPL"], "tr": [], "ca": [], "_fallback_mode": "selection_parse_failed"},
+                    "tokens": {"input": 100, "output": 10},
+                    "extra": {"fallback_created_execution_authority": False},
+                },
+            )
+            _write_raw(
+                raw_dir / "unsafe_fallback.json",
+                {
+                    "timestamp": "2026-06-01T23:11:00",
+                    "market": "US",
+                    "label": "hold_advisor_triage",
+                    "model": "claude-test",
+                    "prompt": "Return strict JSON only.",
+                    "raw_response": "{\"action\":\"SELL\",\"confidence\":0.7}",
+                    "parsed": {"action": "SELL", "confidence": 0.7, "fallback": True},
+                    "tokens": {"input": 100, "output": 10},
+                },
+            )
+
+            report = build_quality_report(raw_dir=raw_dir, market="US")
+
+        output = report["output_issue_counts"]
+        self.assertEqual(output["fallback_created_execution_authority"], 1)
+        self.assertEqual(output["fallback_authority_not_declared"], 1)
+        samples = report["fallback_authority_samples"]
+        self.assertFalse(samples[0]["fallback_created_execution_authority"])
+        self.assertTrue(samples[1]["fallback_created_execution_authority"])
+
     def test_recommends_token_cost_for_single_large_prompt_even_when_average_is_lower(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw_dir = Path(tmp)

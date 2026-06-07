@@ -72,6 +72,12 @@ class AnalyzeHoldAdvisorLatencyTests(unittest.TestCase):
                         "decision_stage": "INTRADAY_REVIEW",
                         "decision": "HOLD",
                         "duration_ms": 500,
+                        "input_completeness": {"score": 0.7, "missing": ["target_ok"]},
+                        "pathb_revenue_path_context": {
+                            "is_pathb": True,
+                            "exit_reason": "profit_ladder",
+                            "path_run_id": "run-1",
+                        },
                         "votes": {
                             "bull": {"action": "HOLD", "duration_ms": 100},
                             "bear": {"action": "SELL", "duration_ms": 300},
@@ -97,8 +103,13 @@ class AnalyzeHoldAdvisorLatencyTests(unittest.TestCase):
         self.assertEqual(by_analyst["bull"]["calls"], 2)
         self.assertEqual(by_analyst["bull"]["p50_ms"], 200.0)
         self.assertEqual(payload["decision_requests"]["summary"]["p95_ms"], 500.0)
+        self.assertEqual(payload["decision_requests"]["summary"]["completeness_low_count"], 1)
+        path_rows = payload["decision_requests"]["by_pathb_revenue_path_decision"]
+        self.assertEqual(path_rows[0]["pathb_revenue_exit_reason"], "profit_ladder")
+        self.assertEqual(path_rows[0]["decision"], "HOLD")
         self.assertEqual(payload["decision_votes"]["summary"]["calls"], 3)
         self.assertIn("Hold Advisor Latency Report", to_markdown(payload))
+        self.assertIn("By PathB Revenue Path / Decision", to_markdown(payload))
 
 
 if __name__ == "__main__":

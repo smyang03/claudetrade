@@ -442,7 +442,7 @@ def _temporary_active_lesson_env(values: dict[str, str]):
                 os.environ[key] = value
 
 
-def _dashboard_active_lessons_payload(market: str, mode: str) -> dict[str, Any]:
+def _dashboard_active_lessons_payload(market: str, mode: str, prompt_scope: str = "selection") -> dict[str, Any]:
     market_key = "US" if str(market or "").upper() == "US" else "KR"
     runtime_mode = _normalize_mode(mode)
     env_values = _active_lesson_env(runtime_mode)
@@ -460,7 +460,7 @@ def _dashboard_active_lessons_payload(market: str, mode: str) -> dict[str, Any]:
     try:
         with _ACTIVE_LESSON_ENV_LOCK:
             with _temporary_active_lesson_env(env_values):
-                context = build_active_lesson_context(market_key)
+                context = build_active_lesson_context(market_key, prompt_scope=prompt_scope)
     except Exception as exc:
         return {
             "ok": False,
@@ -480,6 +480,8 @@ def _dashboard_active_lessons_payload(market: str, mode: str) -> dict[str, Any]:
                 "id": str(item.get("id") or ""),
                 "source": str(item.get("source") or ""),
                 "scope": str(item.get("scope") or ""),
+                "target_prompt_scope": str(item.get("target_prompt_scope") or ""),
+                "allowed_prompt_scopes": list(item.get("allowed_prompt_scopes") or []),
                 "text": str(item.get("text") or ""),
                 "severity": str(item.get("severity") or ""),
                 "confidence": item.get("confidence"),
@@ -7597,7 +7599,33 @@ def api_patterns():
 def api_active_lessons():
     market = request.args.get("market", best_market_with_data())
     mode = _request_mode()
-    return jsonify(_dashboard_active_lessons_payload(market, mode))
+    prompt_scope = request.args.get("prompt_scope", "selection")
+    return jsonify(_dashboard_active_lessons_payload(market, mode, prompt_scope=prompt_scope))
+
+
+@app.route("/api/hold-advisor/summary")
+def api_hold_advisor_summary():
+    market = str(request.args.get("market", "ALL") or "ALL").upper()
+    try:
+        days = max(1, min(30, int(float(request.args.get("days", "5") or 5))))
+    except Exception:
+        days = 5
+    try:
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        from tools.analyze_hold_advisor_latency import analyze_hold_advisor_latency
+
+        today = _dt.now(_tz(_td(hours=9))).date()
+        start_date = (today - _td(days=days - 1)).isoformat()
+        payload = analyze_hold_advisor_latency(
+            start_date=start_date,
+            end_date=today.isoformat(),
+            market=market,
+            source="auto",
+            limit=50,
+        )
+        return jsonify({"ok": True, **payload})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)[:300], "market": market, "days": days}), 500
 
 
 @app.route("/api/credits")

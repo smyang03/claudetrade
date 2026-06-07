@@ -132,6 +132,36 @@ class PricePlanContractTests(unittest.TestCase):
         self.assertIn("declared_reward_risk_below_minimum", errors)
 
 
+class HoldAdvisorBrainWriteContractTests(unittest.TestCase):
+    def test_record_hold_advisor_outcome_queues_candidate_instead_of_direct_brain_write(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.price_cache = {}
+        bot.usd_krw_rate = 1350.0
+        bot._runtime_bool = lambda key, default=False: key == "BRAIN_PERF_AUTO_WRITE_ENABLED"
+        queued: list[dict] = []
+        bot._submit_hold_advisor_performance_candidate = lambda **kwargs: queued.append(kwargs) or True
+        bot._update_hold_advisor_jsonl_outcome = lambda *args, **kwargs: None
+
+        ex = {
+            "ticker": "AAPL",
+            "entry": 90.0,
+            "tp_price": 100.0,
+            "exit_price": 110.0,
+            "pnl": 1200.0,
+            "pnl_pct": 3.5,
+        }
+
+        with patch("trading_bot.BrainDB.update_hold_advisor_performance") as direct_write:
+            bot._record_hold_advisor_outcome(ex, "KR", {"action": "HOLD"})
+
+        direct_write.assert_not_called()
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["market"], "KR")
+        self.assertEqual(queued[0]["decision"], "HOLD")
+        self.assertTrue(queued[0]["success"])
+        self.assertAlmostEqual(queued[0]["extra_pnl_pct"], 10.0)
+
+
 class HoldAdvisorStageContractTests(unittest.TestCase):
     def assertTriageShimVotes(self, result: dict, expected_source: str) -> None:
         self.assertEqual(set(result["votes"]), {"bull", "bear", "neutral"})
@@ -985,6 +1015,9 @@ class SelectionPromptContractTests(unittest.TestCase):
         self.assertEqual(raw_calls[0]["prompt_version"], "selection_rank_v3+compact_v1")
         self.assertEqual(raw_calls[0]["parse_stage"], "strict_compact")
         self.assertEqual(raw_calls[0]["extra"]["prompt_contract"], "selection_compact.v1")
+        self.assertTrue(raw_calls[0]["extra"]["prompt_budget"]["compact_prompt_budget_enabled"])
+        self.assertEqual(raw_calls[0]["extra"]["prompt_budget"]["candidate_line_included_count"], 1)
+        self.assertFalse(raw_calls[0]["extra"]["fallback_created_execution_authority"])
         self.assertEqual(raw_calls[0]["parsed"]["_normalized"]["price_targets"]["AAPL"]["reference_price"], 100.0)
 
     def test_select_tickers_compact_max_tokens_is_watch_only_failure(self) -> None:
@@ -1104,7 +1137,7 @@ class PostmortemPromptContractTests(unittest.TestCase):
                 {"selection_evidence_verified": True, "execution_contaminated": True},
                 execution_learning_excluded=False,
             ),
-            (False, ""),
+            (True, "postmortem_policy_requires_approval"),
         )
         self.assertEqual(
             postmortem._prompt_policy_exclusion(
@@ -1336,6 +1369,98 @@ class PostmortemPromptContractTests(unittest.TestCase):
         self.assertFalse(daily_record["execution_learning_excluded"])
         self.assertTrue(daily_record["prompt_policy_excluded"])
         self.assertEqual(daily_record["policy_exclusion_reason"], "postmortem_policy_requires_approval")
+
+    def test_clean_live_postmortem_writes_approval_candidate_not_brain_policy(self) -> None:
+        calls: dict[str, list] = {
+            "beliefs": [],
+            "issue_patterns": [],
+            "daily_records": [],
+            "correction_guides": [],
+            "queue": [],
+        }
+
+        def _fake_create(*, model, max_tokens, messages):
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        text=(
+                            '{"bull_result":"HIT","bear_result":"MISS","neutral_result":"PARTIAL",'
+                            '"bull_why":"ok","bear_why":"ok","neutral_why":"ok",'
+                            '"best_trade":"SMCI","worst_trade":null,"worst_trade_reason":"",'
+                            '"key_lesson":"Queue this lesson.",'
+                            '"issue_type":"selection","issue_desc":"candidate issue",'
+                            '"pattern_id":"p-normal",'
+                            '"brain_updates":{"new_lesson":"Queued new lesson",'
+                            '"market_regime":"risk_on"},'
+                            '"correction_guide":{"bull_adjustments":["change"],'
+                            '"bear_adjustments":[],"tuning_rules":["new rule"],'
+                            '"today_notes":"notes"}}'
+                        )
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        class _Queue:
+            def submit(self, **kwargs):
+                calls["queue"].append(kwargs)
+                return True
+
+        no_op = lambda *args, **kwargs: None
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(postmortem.client.messages, "create", side_effect=_fake_create))
+            stack.enter_context(patch.object(postmortem, "credit_record", no_op))
+            stack.enter_context(patch.object(postmortem, "save_raw_call", no_op))
+            stack.enter_context(patch.object(postmortem, "_append_lesson_candidate", no_op))
+            stack.enter_context(patch("learning.approval_queue.BrainApprovalQueue", return_value=_Queue()))
+            stack.enter_context(patch.object(postmortem.BrainDB, "generate_prompt_summary", return_value=""))
+            stack.enter_context(patch.object(postmortem.BrainDB, "load", return_value={"markets": {"US": {"recent_days": []}}}))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_analyst", no_op))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_mode_performance", no_op))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_beliefs", side_effect=lambda *a, **k: calls["beliefs"].append((a, k))))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_issue_pattern", side_effect=lambda *a, **k: calls["issue_patterns"].append((a, k))))
+            stack.enter_context(patch.object(postmortem.BrainDB, "add_daily_record", side_effect=lambda *a, **k: calls["daily_records"].append((a, k))))
+            stack.enter_context(patch.object(postmortem.BrainDB, "get_recent_selection_feedback_text", return_value=""))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_strategy_performance", no_op))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_debate_outcome", no_op))
+            stack.enter_context(patch.object(postmortem.BrainDB, "update_correction_guide", side_effect=lambda *a, **k: calls["correction_guides"].append((a, k))))
+            postmortem.run(
+                "US",
+                "2026-05-10",
+                {
+                    "judgments": {
+                        "bull": {"stance": "MILD_BULL", "key_reason": "ok"},
+                        "bear": {"stance": "NEUTRAL", "key_reason": "ok"},
+                        "neutral": {"stance": "NEUTRAL", "key_reason": "ok"},
+                    },
+                    "consensus": {"mode": "MILD_BULL"},
+                },
+                {
+                    "market_change": 1.0,
+                    "pnl_pct": 0.5,
+                    "win": True,
+                    "runtime_mode": "live",
+                    "data_quality": "CLEAN",
+                    "forward_complete": True,
+                    "selection_evidence_verified": True,
+                },
+                "US digest",
+                trade_log=[{"side": "sell", "ticker": "SMCI", "pnl_pct": 0.5}],
+                decision_event_log=[],
+            )
+
+        self.assertEqual(calls["beliefs"], [])
+        self.assertEqual(calls["issue_patterns"], [])
+        self.assertEqual(calls["correction_guides"], [])
+        self.assertEqual(len(calls["queue"]), 1)
+        queued = calls["queue"][0]
+        self.assertEqual(queued["runtime_mode"], "live")
+        self.assertEqual(queued["data_quality"], "CLEAN")
+        self.assertTrue(queued["forward_complete"])
+        self.assertEqual(queued["candidate"]["candidate_type"], "market_lesson")
+        self.assertTrue(queued["candidate"]["prompt_visible"])
+        daily_record = calls["daily_records"][0][0][1]
+        self.assertTrue(daily_record["policy_candidate"]["submitted"])
 
     def test_contaminated_postmortem_without_explicit_learning_flag_skips_stats_by_design(self) -> None:
         calls: dict[str, list] = {

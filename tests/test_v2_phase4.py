@@ -64,6 +64,31 @@ class V2Phase4Tests(unittest.TestCase):
             self.assertFalse(queue.submit(candidate={"id": "dirty"}, runtime_mode="live", data_quality="DIRTY", forward_complete=True))
             self.assertEqual(len(queue.read_all()), 1)
 
+    def test_approval_queue_normalizes_prompt_visible_candidate_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = BrainApprovalQueue(Path(tmp) / "queue.jsonl")
+            ok = queue.submit(
+                candidate={
+                    "candidate_type": "market_lesson",
+                    "market": "US",
+                    "source": "postmortem",
+                    "summary": "lesson",
+                    "prompt_visible": True,
+                    "requires_operator_approval": True,
+                    "evidence": {"date": "2026-06-07"},
+                },
+                runtime_mode="live",
+                data_quality="CLEAN",
+                forward_complete=True,
+            )
+
+            self.assertTrue(ok)
+            row = queue.read_all()[0]
+            self.assertEqual(row["candidate_schema"], "brain_approval_candidate.v1")
+            self.assertEqual(row["candidate_type"], "market_lesson")
+            self.assertTrue(row["candidate"]["prompt_visible"])
+            self.assertTrue(row["candidate"]["requires_operator_approval"])
+
     def test_quality_marker_and_candidate_builder(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")
