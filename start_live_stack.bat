@@ -129,8 +129,8 @@ if errorlevel 1 (
 )
 python tools\broker_truth_scheduler.py --mode live --markets KR,US --once --force --ttl-sec 180 --json
 if errorlevel 1 (
-  echo [ERROR] broker truth startup refresh failed; live stack not started.
-  exit /b 1
+  echo [WARN] broker truth startup refresh failed (KIS unavailable or weekend^); continuing startup...
+  echo [WARN] broker_truth_scheduler will retry automatically after stack starts.
 )
 
 echo [START] opening live stack tabs...
