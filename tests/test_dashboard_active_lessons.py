@@ -95,6 +95,36 @@ def test_patterns_api_exposes_active_lessons_for_dashboard_card() -> None:
     assert payload["active_lessons"]["items"][0]["text"] == "promote watch candidates when veto is weak."
 
 
+def test_patterns_api_preserves_request_mode_for_active_lessons() -> None:
+    client = dashboard_server.app.test_client()
+    records = [
+        {
+            "consensus": {"mode": "MILD_BULL"},
+            "actual_result": {"win": True, "pnl_pct": 1.5},
+            "postmortem": {"key_lesson": "paper lesson"},
+        }
+    ]
+    with patch.object(dashboard_server, "load_records", return_value=records), \
+         patch.object(dashboard_server, "load_brain", return_value=_brain_payload()), \
+         patch.object(dashboard_server, "_runtime_env", return_value={}), \
+         patch.object(
+             dashboard_server,
+             "_start_config_env_overrides",
+             side_effect=lambda mode: {
+                 "ACTIVE_LESSONS_ENABLED": "true",
+                 "ACTIVE_LESSONS_SHADOW": "false",
+                 "ACTIVE_LESSONS_MAX_ITEMS": "7" if mode == "paper" else "3",
+             },
+         ), \
+         patch.object(active_lessons, "build_active_lesson_context", side_effect=_active_context):
+        response = client.get("/api/patterns?market=US&mode=paper")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["active_lessons"]["runtime_mode"] == "paper"
+    assert payload["active_lessons"]["env"]["ACTIVE_LESSONS_MAX_ITEMS"] == "7"
+
+
 def test_analytics_page_contains_active_lesson_panel() -> None:
     response = dashboard_server.app.test_client().get("/analytics")
 

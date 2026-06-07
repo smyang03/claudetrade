@@ -2565,6 +2565,19 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
     from lifecycle.models import LifecycleEvent
 
     store = EventStore(read_only=True, initialize=False)
+    if not store.path.exists():
+        detail = f"event store DB missing: {store.path}"
+        data = {
+            "path": str(store.path),
+            "missing": True,
+            "operator_action": "initialize event store before live start",
+            "blocked_if_live_start": True,
+        }
+        return [
+            CheckResult("db.live_path", "FAIL", detail, data),
+            CheckResult("db.event_store_open", "FAIL", "event store DB is absent", data),
+            CheckResult("db.event_store_schema", "FAIL", "event-store schema unavailable because DB is absent", data),
+        ]
     kr_session = _session_date_guess("KR")
     us_session = _session_date_guess("US")
     current_sessions = {"KR": kr_session, "US": us_session}
@@ -2581,7 +2594,31 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
         "ORDER_UNKNOWN",
     }
     checks.append(CheckResult("db.live_path", "PASS", "live event store path resolved", {"path": str(store.path)}))
-    with store.connect() as conn:
+    try:
+        conn_context = store.connect()
+    except sqlite3.OperationalError as exc:
+        checks.append(
+            CheckResult(
+                "db.event_store_open",
+                "FAIL",
+                f"event store read-only open failed: {exc}",
+                {
+                    "path": str(store.path),
+                    "operator_action": "verify event store path and SQLite file accessibility before live start",
+                    "blocked_if_live_start": True,
+                },
+            )
+        )
+        checks.append(
+            CheckResult(
+                "db.event_store_schema",
+                "FAIL",
+                "event-store schema unavailable because DB could not be opened",
+                {"path": str(store.path), "open_error": str(exc)},
+            )
+        )
+        return checks
+    with conn_context as conn:
         journal = conn.execute("PRAGMA journal_mode").fetchone()[0]
         checks.append(CheckResult("db.wal_mode", "PASS" if str(journal).lower() == "wal" else "FAIL", f"journal_mode={journal}"))
         schema_missing: dict[str, list[str]] = {}

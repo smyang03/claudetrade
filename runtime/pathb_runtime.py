@@ -2163,7 +2163,7 @@ class PathBRuntime:
             log.debug(f"[PathB reconcile audit failed] {run.get('market')} {run.get('ticker')}: {exc}")
 
     def _cancel_waiting_for_selection_reconcile(self, run: dict[str, Any], *, reason: str) -> bool:
-        if str(run.get("status") or "") != "WAITING":
+        if str(run.get("status") or "") not in {"WAITING", "HIT"}:
             return False
         path_run_id = str(run.get("path_run_id") or "")
         if not path_run_id:

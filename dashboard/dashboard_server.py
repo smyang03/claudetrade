@@ -7542,7 +7542,7 @@ def api_market_context_chart():
 @app.route("/api/patterns")
 def api_patterns():
     market  = request.args.get("market", best_market_with_data())
-    mode = _request_mode()
+    request_mode = _request_mode()
     records = load_records(60, market)
     brain = load_brain()
     brain_modes = (brain.get("markets", {}).get(market, {}) or {}).get("mode_performance", {}) or {}
@@ -7552,27 +7552,27 @@ def api_patterns():
         lesson = _clean_lesson(r.get("postmortem", {}).get("key_lesson", ""))
         if lesson:
             lessons[lesson] = lessons.get(lesson, 0) + 1
-        mode   = r.get("consensus", {}).get("mode", "")
+        consensus_mode = r.get("consensus", {}).get("mode", "")
         result = r.get("actual_result", {})
-        if mode:
-            if mode not in modes:
-                modes[mode] = {"count": 0, "wins": 0, "total_pnl": 0}
-            modes[mode]["count"]     += 1
-            modes[mode]["wins"]      += 1 if result.get("win") else 0
-            modes[mode]["total_pnl"] += _normalize_percent_value(result.get("pnl_pct", 0))
+        if consensus_mode:
+            if consensus_mode not in modes:
+                modes[consensus_mode] = {"count": 0, "wins": 0, "total_pnl": 0}
+            modes[consensus_mode]["count"]     += 1
+            modes[consensus_mode]["wins"]      += 1 if result.get("win") else 0
+            modes[consensus_mode]["total_pnl"] += _normalize_percent_value(result.get("pnl_pct", 0))
     for m in modes:
         c = modes[m]["count"]
         modes[m]["win_rate"] = round(modes[m]["wins"] / c * 100, 1) if c else 0
         modes[m]["avg_pnl"]  = round(modes[m]["total_pnl"] / c, 2) if c else 0
     normalized_modes = {}
-    for mode, stats in modes.items():
-        normalized_modes[mode] = stats
-    for mode, perf in brain_modes.items():
+    for consensus_mode, stats in modes.items():
+        normalized_modes[consensus_mode] = stats
+    for brain_mode, perf in brain_modes.items():
         count = int(perf.get("count", 0) or 0)
         if count <= 0:
             continue
-        if mode not in normalized_modes or (normalized_modes[mode].get("count", 0) <= 0 or (normalized_modes[mode].get("win_rate", 0) == 0 and abs(float(normalized_modes[mode].get("avg_pnl", 0) or 0)) < 1e-9)):
-            normalized_modes[mode] = {
+        if brain_mode not in normalized_modes or (normalized_modes[brain_mode].get("count", 0) <= 0 or (normalized_modes[brain_mode].get("win_rate", 0) == 0 and abs(float(normalized_modes[brain_mode].get("avg_pnl", 0) or 0)) < 1e-9)):
+            normalized_modes[brain_mode] = {
                 "count": count,
                 "wins": round(float(perf.get("win_rate", 0) or 0) * count),
                 "total_pnl": _normalize_percent_value(float(perf.get("avg_pnl", 0) or 0)) * count,
@@ -7592,7 +7592,7 @@ def api_patterns():
     return jsonify({
         "lessons": [{"text": k, "count": v} for k, v in top_lessons],
         "modes":   normalized_modes,
-        "active_lessons": _dashboard_active_lessons_payload(market, mode),
+        "active_lessons": _dashboard_active_lessons_payload(market, request_mode),
         "unit": "percent",
     })
 

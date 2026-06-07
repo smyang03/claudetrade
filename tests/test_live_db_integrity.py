@@ -5,6 +5,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from lifecycle.event_store import EventStore
 from tools.live_preflight import REQUIRED_TABLE_COLUMNS, _db_checks, _pathb_broker_truth_conflicts
@@ -25,6 +26,23 @@ class LiveDbIntegrityTests(unittest.TestCase):
                 for table, required in REQUIRED_TABLE_COLUMNS.items():
                     found = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
                     self.assertFalse(required - found, table)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_db_checks_reports_missing_event_store_without_crashing(self) -> None:
+        tmp = tempfile.mkdtemp()
+        try:
+            with patch(
+                "lifecycle.event_store.get_runtime_path",
+                side_effect=lambda *parts, **kwargs: Path(tmp).joinpath(*parts),
+            ):
+                checks = _db_checks("live")
+
+            by_name = {check.name: check for check in checks}
+            self.assertEqual(by_name["db.live_path"].status, "FAIL")
+            self.assertEqual(by_name["db.event_store_open"].status, "FAIL")
+            self.assertEqual(by_name["db.event_store_schema"].status, "FAIL")
+            self.assertTrue(by_name["db.live_path"].data["missing"])
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

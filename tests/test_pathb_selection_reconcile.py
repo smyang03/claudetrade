@@ -154,6 +154,36 @@ class PathBSelectionReconcileTests(unittest.TestCase):
             self.assertEqual(outcomes[0]["action"], "log")
             self.assertEqual(runtime.store.find_path_run(path_run_id)["status"], "HIT")
 
+    def test_hit_negative_route_cancels_when_hit_suspend_cancel_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            _env(PATHB_SELECTION_RECONCILE_HIT_SUSPEND_CANCEL="true"),
+            clear=False,
+        ):
+            runtime = _runtime(tmp)
+            path_run_id = _register_wait(runtime, "NVDA")
+            runtime.adapter.mark_hit(path_run_id, price=100.5, runtime_mode="live", brain_snapshot_id="brain-us")
+
+            outcomes = runtime.reconcile_waiting_from_selection(
+                "US",
+                {
+                    "watchlist": ["NVDA"],
+                    "candidate_actions": [{"ticker": "NVDA", "action": "PULLBACK_WAIT"}],
+                    "_candidate_action_routes": [
+                        {
+                            "ticker": "NVDA",
+                            "final_action": "WATCH",
+                            "reason": "pullback_wait_blocked_negative_context",
+                        }
+                    ],
+                },
+                source="rescreen",
+            )
+
+            self.assertEqual(outcomes[0]["verdict"], "SUSPENDED_CANCEL")
+            self.assertEqual(outcomes[0]["action"], "cancel")
+            self.assertEqual(runtime.store.find_path_run(path_run_id)["status"], "CANCELLED")
+
     def test_kr_shadow_logs_without_cancel(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, _env(), clear=False):
             runtime = _runtime(tmp)
