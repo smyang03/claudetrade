@@ -412,6 +412,7 @@ python -m pytest tests/test_candidate_action_live_mapping.py::CandidateActionLiv
   - `python -m py_compile tools/kr_nosignal_orp_report.py tools/pathb_invalid_price_miss_report.py`
   - `python -m pytest tests/test_kr_nosignal_orp_report.py tests/test_pathb_invalid_price_miss_report.py -q`
   - `python tools/kr_nosignal_orp_report.py --market KR --windows recent,primary,full_available --json --sample-limit 5`
+- 테스트 보강: no-data date range, missing required `ticker_selection_log`, missing optional `intraday_strategy_log` edge case를 포함한다.
 
 ### P0-9. PathB `INVALID_PRICE` Miss Diagnostics
 
@@ -482,6 +483,7 @@ python -m pytest tests/test_candidate_action_live_mapping.py::CandidateActionLiv
   - `python -m py_compile tools/kr_nosignal_orp_report.py tools/pathb_invalid_price_miss_report.py`
   - `python -m pytest tests/test_kr_nosignal_orp_report.py tests/test_pathb_invalid_price_miss_report.py -q`
   - `python tools/pathb_invalid_price_miss_report.py --market US --reason INVALID_PRICE --windows recent,full_available --json --sample-limit 3`
+- 테스트 보강: no-data date range, missing required `pathb_miss_quality` edge case를 포함한다.
 
 ## P1 Work Items
 
