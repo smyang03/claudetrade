@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import csv
+import json
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 
@@ -37,6 +40,8 @@ def _block_summary(results: list[dict[str, Any]]) -> dict[str, int]:
     counts: Counter[str] = Counter()
     for result in results:
         for event in result.get("events") or []:
+            if str(event.get("event_type") or "") != "ENTRY_BLOCKED":
+                continue
             reason = str(event.get("reason") or "")
             if reason:
                 counts[reason] += 1
@@ -89,3 +94,68 @@ def build_simulation_report(results: list[dict[str, Any]]) -> dict[str, Any]:
         "ranking": [_compact_result(result) for result in ranked],
         "results": results,
     }
+
+
+def simulation_csv_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for result in report.get("results") or []:
+        metrics = result.get("metrics") or {}
+        entry_block_reasons = [
+            str(event.get("reason") or "")
+            for event in result.get("events") or []
+            if str(event.get("event_type") or "") == "ENTRY_BLOCKED" and event.get("reason")
+        ]
+        rows.append(
+            {
+                "scenario": result.get("scenario", ""),
+                "market": result.get("market", ""),
+                "ticker": result.get("ticker", ""),
+                "path_type": result.get("path_type", ""),
+                "sweep": json.dumps(result.get("sweep") or {}, ensure_ascii=False, sort_keys=True),
+                "entered": metrics.get("entered", False),
+                "closed": metrics.get("closed", False),
+                "score": metrics.get("score", 0.0),
+                "entry_price": metrics.get("entry_price", ""),
+                "exit_price": metrics.get("exit_price", ""),
+                "qty": metrics.get("qty", 0),
+                "realized_pnl_pct": metrics.get("realized_pnl_pct", 0.0),
+                "realized_pnl_krw": metrics.get("realized_pnl_krw", 0.0),
+                "unrealized_pnl_pct": metrics.get("unrealized_pnl_pct", 0.0),
+                "unrealized_pnl_krw": metrics.get("unrealized_pnl_krw", 0.0),
+                "missed_gain_pct": metrics.get("missed_gain_pct", 0.0),
+                "post_exit_runup_pct": metrics.get("post_exit_runup_pct", 0.0),
+                "block_reasons": ";".join(entry_block_reasons),
+                "hint_signals": ";".join(str(hint.get("signal") or "") for hint in result.get("improvement_hints") or []),
+            }
+        )
+    return rows
+
+
+def write_simulation_csv(report: dict[str, Any], path: Path) -> None:
+    rows = simulation_csv_rows(report)
+    fieldnames = [
+        "scenario",
+        "market",
+        "ticker",
+        "path_type",
+        "sweep",
+        "entered",
+        "closed",
+        "score",
+        "entry_price",
+        "exit_price",
+        "qty",
+        "realized_pnl_pct",
+        "realized_pnl_krw",
+        "unrealized_pnl_pct",
+        "unrealized_pnl_krw",
+        "missed_gain_pct",
+        "post_exit_runup_pct",
+        "block_reasons",
+        "hint_signals",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)

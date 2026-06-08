@@ -434,7 +434,11 @@ def build_report(
     limit: int = 200,
     broker_truth_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    store = EventStore(db_path) if db_path else EventStore()
+    store = (
+        EventStore(db_path, read_only=True, initialize=False)
+        if db_path
+        else EventStore(read_only=True, initialize=False)
+    )
     sessions = current_sessions or _current_sessions()
     limit = max(1, int(limit or 200))
     broker_truth_snapshot, broker_truth_meta = _load_broker_truth_snapshot(mode, broker_truth_path)

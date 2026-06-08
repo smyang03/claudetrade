@@ -13,8 +13,10 @@ from runtime.rehearsal.context import (
     apply_direct_path_overrides,
     assert_repo_live_state_unchanged,
     assert_runtime_objects_sandboxed,
+    compare_protected_static_files,
     install_no_network_guard,
     install_write_guard,
+    snapshot_protected_static_files,
     snapshot_repo_live_state,
 )
 from runtime.rehearsal.fixtures import RehearsalScenarioFixture, all_scenarios, fixture_for_scenario
@@ -143,6 +145,7 @@ def _execute_scenario(
 def run_rehearsal_scenario(context: RehearsalContext, fixture: RehearsalScenarioFixture | None = None) -> dict[str, Any]:
     fixture = fixture or fixture_for_scenario(context.scenario)
     before = snapshot_repo_live_state()
+    protected_before = snapshot_protected_static_files()
     appended_live_arg = _ensure_live_argv()
     try:
         with install_no_network_guard(context) as network_guard:
@@ -178,6 +181,7 @@ def run_rehearsal_scenario(context: RehearsalContext, fixture: RehearsalScenario
                         "write_guard": _guard_summary(write_guard),
                         "network_guard": _guard_summary(network_guard),
                         "network_guard_calls": list(network_guard.get("calls") or []),
+                        "protected_static_files": compare_protected_static_files(protected_before),
                     }
                     context.report_path.parent.mkdir(parents=True, exist_ok=True)
                     context.report_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8")

@@ -176,6 +176,7 @@ class PathBClaudeContractTests(unittest.TestCase):
                 "display_avg_price": 52_200,
                 "display_current_price": 54_600,
                 "current_price": 54_600,
+                "current_price_source": "broker_balance",
                 "sl": 51_000,
                 "path_type": "claude_price",
                 "pathb_path_run_id": runs[0],

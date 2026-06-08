@@ -7,9 +7,11 @@ import importlib
 import json
 import os
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import traceback
 import urllib.request
 from dataclasses import dataclass
@@ -26,6 +28,16 @@ PROTECTED_REPO_PATHS = (
     REPO_ROOT / "logs",
     REPO_ROOT / "config",
     REPO_ROOT / "claude_memory" / "brain.json",
+)
+PROTECTED_STATIC_FILES = (
+    ".env",
+    ".env.live",
+    ".env.paper",
+    "config/v2_start_config.json",
+    "state/brain.json",
+    "state/lesson_candidates.json",
+    "state/brain_approval_queue.jsonl",
+    "claude_memory/brain.json",
 )
 
 
@@ -52,6 +64,26 @@ class RehearsalContext:
     @property
     def report_path(self) -> Path:
         return self.sandbox_root / "reports" / f"{self.scenario}_summary.json"
+
+    @property
+    def brain_path(self) -> Path:
+        return self.sandbox_root / "state" / "brain.json"
+
+    @property
+    def lesson_candidates_path(self) -> Path:
+        return self.sandbox_root / "state" / "lesson_candidates.json"
+
+    @property
+    def brain_approval_queue_path(self) -> Path:
+        return self.sandbox_root / "state" / "brain_approval_queue.jsonl"
+
+    @property
+    def brain_snapshots_dir(self) -> Path:
+        return self.sandbox_root / "state" / "brain_snapshots"
+
+    @property
+    def temp_dir(self) -> Path:
+        return self.sandbox_root / "tmp"
 
 
 def _now_id() -> str:
@@ -84,6 +116,77 @@ def assert_sandbox_runtime_root(path: Path) -> None:
             raise RehearsalGuardError(f"sandbox runtime root must not be inside {protected}")
 
 
+def _default_lesson_candidates() -> dict[str, Any]:
+    return {"generated_at": "", "markets": {"KR": [], "US": []}}
+
+
+def _copy_if_exists(src: Path, dst: Path) -> bool:
+    if not src.exists():
+        return False
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    return True
+
+
+def seed_sandbox_runtime_state(root: Path) -> dict[str, str]:
+    state_dir = root / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (root / "data" / "ml").mkdir(parents=True, exist_ok=True)
+    (root / "data" / "audit").mkdir(parents=True, exist_ok=True)
+    (state_dir / "brain_snapshots").mkdir(parents=True, exist_ok=True)
+
+    seeded: dict[str, str] = {}
+    brain_dst = state_dir / "brain.json"
+    for brain_src in (REPO_ROOT / "state" / "brain.json", REPO_ROOT / "claude_memory" / "brain.json"):
+        if _copy_if_exists(brain_src, brain_dst):
+            seeded["state/brain.json"] = str(brain_src)
+            break
+
+    lessons_dst = state_dir / "lesson_candidates.json"
+    if _copy_if_exists(REPO_ROOT / "state" / "lesson_candidates.json", lessons_dst):
+        seeded["state/lesson_candidates.json"] = str(REPO_ROOT / "state" / "lesson_candidates.json")
+    elif not lessons_dst.exists():
+        lessons_dst.write_text(json.dumps(_default_lesson_candidates(), ensure_ascii=False, indent=2), encoding="utf-8")
+        seeded["state/lesson_candidates.json"] = "empty_fixture"
+
+    queue_dst = state_dir / "brain_approval_queue.jsonl"
+    if _copy_if_exists(REPO_ROOT / "state" / "brain_approval_queue.jsonl", queue_dst):
+        seeded["state/brain_approval_queue.jsonl"] = str(REPO_ROOT / "state" / "brain_approval_queue.jsonl")
+    elif not queue_dst.exists():
+        queue_dst.write_text("", encoding="utf-8")
+        seeded["state/brain_approval_queue.jsonl"] = "empty_fixture"
+
+    return seeded
+
+
+def patch_brain_runtime_paths(
+    context: RehearsalContext,
+    overrides: dict[str, Path | str] | None = None,
+) -> None:
+    module = sys.modules.get("claude_memory.brain")
+    if module is None:
+        return
+    brain_path = context.brain_path
+    if hasattr(module, "BRAIN_PATH"):
+        setattr(module, "BRAIN_PATH", brain_path)
+        if overrides is not None:
+            overrides["claude_memory.brain.BRAIN_PATH"] = brain_path
+    if hasattr(module, "REPO_BRAIN_PATH"):
+        setattr(module, "REPO_BRAIN_PATH", brain_path)
+        if overrides is not None:
+            overrides["claude_memory.brain.REPO_BRAIN_PATH"] = brain_path
+    if hasattr(module, "_BRAIN_LOCK"):
+        try:
+            from filelock import FileLock
+
+            lock = FileLock(str(brain_path) + ".lock", timeout=10)
+            setattr(module, "_BRAIN_LOCK", lock)
+            if overrides is not None:
+                overrides["claude_memory.brain._BRAIN_LOCK"] = str(brain_path) + ".lock"
+        except Exception:
+            pass
+
+
 def create_rehearsal_context(
     *,
     scenario: str,
@@ -97,8 +200,9 @@ def create_rehearsal_context(
         raise RehearsalGuardError("ops rehearsal currently supports backend=fixture only")
     root = _abs(runtime_root or (DEFAULT_REHEARSAL_ROOT / _now_id()))
     assert_sandbox_runtime_root(root)
-    for rel in ("state", "data", "logs", "reports", "data/rehearsal", "data/kis_cache"):
+    for rel in ("state", "data", "logs", "reports", "tmp", "data/rehearsal", "data/kis_cache"):
         (root / rel).mkdir(parents=True, exist_ok=True)
+    seed_sandbox_runtime_state(root)
 
     os.environ["CLAUDETRADE_RUNTIME_DIR"] = str(root)
     os.environ["TRADING_BOT_MODE"] = "live"
@@ -112,6 +216,11 @@ def create_rehearsal_context(
     os.environ["ENABLE_AGENT_CALL_EVENT_STORE"] = os.environ.get("ENABLE_AGENT_CALL_EVENT_STORE", "false")
     os.environ["AGENT_CALL_EVENT_DB_PATH"] = str(root / "data" / "audit" / "agent_call_events.db")
     os.environ["ML_DECISIONS_DB_PATH"] = str(root / "data" / "ml" / "decisions.db")
+    os.environ["OPS_REHEARSAL_BRAIN_PATH"] = str(root / "state" / "brain.json")
+    os.environ["OPS_REHEARSAL_TEMP_DIR"] = str(root / "tmp")
+    os.environ["TMP"] = str(root / "tmp")
+    os.environ["TEMP"] = str(root / "tmp")
+    os.environ["TMPDIR"] = str(root / "tmp")
 
     runtime_paths = sys.modules.get("runtime_paths")
     if runtime_paths is not None and hasattr(runtime_paths, "_RUNTIME_ROOT"):
@@ -121,13 +230,15 @@ def create_rehearsal_context(
     if logger is not None and hasattr(logger, "reset_logger_runtime_dir_for_tests"):
         logger.reset_logger_runtime_dir_for_tests(root / "logs", bot_mode="live")
 
-    return RehearsalContext(
+    context = RehearsalContext(
         profile=profile,
         backend=backend,
         scenario=str(scenario or "all"),
         sandbox_root=root,
         started_at=datetime.now().astimezone().isoformat(timespec="seconds"),
     )
+    patch_brain_runtime_paths(context)
+    return context
 
 
 def _iter_snapshot_files() -> Iterator[Path]:
@@ -158,10 +269,19 @@ def _snapshot_ignored(path: Path) -> bool:
     if name.endswith((".db-wal", ".db-shm")):
         return True
     rel = path.resolve().relative_to(REPO_ROOT).as_posix()
-    return rel in {
-        "state/live_guardian_heartbeat.json",
-        "state/live_runtime_handoff_snapshot.json",
-    }
+    if rel.startswith("data/price/"):
+        return True
+    if rel.startswith("data/") and name.endswith(".db"):
+        return True
+    if rel.startswith("data/audit/") and name.endswith(".db"):
+        return True
+    if rel.startswith("logs/raw_calls/"):
+        return True
+    if rel.startswith("state/live_"):
+        return True
+    if rel == "state/param_tuner_sessions.json":
+        return True
+    return False
 
 
 def _file_fingerprint(path: Path) -> dict[str, Any]:
@@ -191,6 +311,30 @@ def snapshot_repo_live_state() -> dict[str, Any]:
         rel = path.resolve().relative_to(REPO_ROOT).as_posix()
         files[rel] = _file_fingerprint(path)
     return {"repo_root": str(REPO_ROOT), "files": files}
+
+
+def snapshot_protected_static_files() -> dict[str, Any]:
+    files: dict[str, Any] = {}
+    for rel in PROTECTED_STATIC_FILES:
+        files[rel] = _file_fingerprint(REPO_ROOT / rel)
+    return {"repo_root": str(REPO_ROOT), "files": files}
+
+
+def compare_protected_static_files(before: dict[str, Any]) -> dict[str, Any]:
+    after = snapshot_protected_static_files()
+    before_files = dict((before or {}).get("files") or {})
+    after_files = dict(after.get("files") or {})
+    changed: dict[str, dict[str, Any]] = {}
+    for key in sorted(set(before_files) | set(after_files)):
+        if before_files.get(key) != after_files.get(key):
+            changed[key] = {"before": before_files.get(key), "after": after_files.get(key)}
+    return {
+        "changed": sorted(changed),
+        "changed_count": len(changed),
+        "details": changed,
+        "before": before,
+        "after": after,
+    }
 
 
 def assert_repo_live_state_unchanged(before: dict[str, Any]) -> dict[str, Any]:
@@ -240,6 +384,7 @@ def apply_direct_path_overrides(context: RehearsalContext) -> dict[str, Path | s
     _set_module_attr("strategy.param_tuner", "_SESSION_STATE_PATH", root / "state" / "param_tuner_sessions.json", overrides)
     _set_module_attr("minority_report.raw_call_logger", "_RAW_CALLS_DIR", None, overrides)
     _set_module_attr("minority_report.raw_call_logger", "_AGENT_EVENT_STORE", None, overrides)
+    patch_brain_runtime_paths(context, overrides)
 
     kis_api = sys.modules.get("kis_api")
     if kis_api is not None:
@@ -298,6 +443,7 @@ def install_write_guard(context: RehearsalContext) -> Iterator[dict[str, Any]]:
     calls: list[dict[str, str]] = []
     originals: dict[str, Any] = {}
     fd_paths: dict[int, Path] = {}
+    original_tempdir = tempfile.tempdir
 
     def remember(action: str, path: Any) -> None:
         calls.append({"action": action, "path": str(path)})
@@ -440,6 +586,7 @@ def install_write_guard(context: RehearsalContext) -> Iterator[dict[str, Any]]:
     shutil.copy2 = guarded_copy2
     shutil.move = guarded_move
     sqlite3.connect = guarded_sqlite_connect
+    tempfile.tempdir = str(context.temp_dir)
 
     pandas_to_csv_original = None
     try:
@@ -477,6 +624,7 @@ def install_write_guard(context: RehearsalContext) -> Iterator[dict[str, Any]]:
         shutil.copy2 = originals["shutil.copy2"]
         shutil.move = originals["shutil.move"]
         sqlite3.connect = originals["sqlite3.connect"]
+        tempfile.tempdir = original_tempdir
         if pandas_to_csv_original is not None:
             try:
                 import pandas as pd  # type: ignore
@@ -514,6 +662,9 @@ def install_no_network_guard(context: RehearsalContext) -> Iterator[dict[str, An
         pass
 
     patch(urllib.request, "urlopen", block("urllib.request.urlopen"))
+    patch(socket, "create_connection", block("socket.create_connection"))
+    patch(socket.socket, "connect", block("socket.socket.connect"))
+    patch(socket.socket, "connect_ex", block("socket.socket.connect_ex"))
     original_subprocess_run = subprocess.run
     original_subprocess_popen = subprocess.Popen
 
@@ -577,6 +728,7 @@ def _candidate_paths_for_assertion(bot: Any | None = None) -> dict[str, Any]:
     paths: dict[str, Any] = {}
     for module_name, attrs in {
         "trading_bot": ["DECISIONS_FILE", "_DECISIONS_DB_PATH", "JUDGMENT_DIR", "_LESSON_CANDIDATES_PATH", "BOT_PID_FILE"],
+        "claude_memory.brain": ["BRAIN_PATH", "REPO_BRAIN_PATH"],
         "ticker_selection_db": ["DB_PATH"],
         "intraday_strategy_db": ["DB_PATH"],
         "kis_api": ["_EXCHANGE_CACHE_FILE", "_KR_SCREEN_CACHE_PATH", "_US_SCREEN_CACHE_PATH"],
