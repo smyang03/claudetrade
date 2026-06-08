@@ -22,6 +22,41 @@ def grade_from_score(score: float, *, excluded: bool = False) -> str:
     return "C"
 
 
+def _apply_news_quality_score(
+    candidate: dict[str, Any],
+    score: float,
+    reasons: list[str],
+    risk_tags: list[str],
+    quality_tags: list[str],
+    *,
+    core_reason: str,
+) -> float:
+    signal_type = str(candidate.get("news_signal_type") or "").strip()
+    prompt_eligible = bool(candidate.get("news_prompt_eligible"))
+    has_news = bool(candidate.get("news_or_earnings_flag")) or int(_num(candidate.get("news_or_earnings_count"))) > 0
+    if prompt_eligible and signal_type in {"direct_catalyst", "earnings_or_guidance", "disclosure_material"}:
+        score += 0.12
+        reasons.append(core_reason)
+        quality_tags.append("direct_news_catalyst")
+    elif prompt_eligible and signal_type == "analyst_or_report":
+        score += 0.05
+        reasons.append("analyst_news")
+        quality_tags.append("analyst_news")
+    elif prompt_eligible and signal_type == "risk_negative":
+        risk_tags.append("risk_news")
+    elif has_news:
+        quality_tags.append("news_present_unscored")
+        news_quality = str(candidate.get("news_quality") or "").strip().lower()
+        existing_news_tags = {str(tag) for tag in candidate.get("news_quality_tags") or []}
+        if (
+            signal_type in {"theme_broad", "weak_generic", "price_action_only"}
+            or news_quality in {"weak", "mixed"}
+            or "broad_weak" in existing_news_tags
+        ):
+            quality_tags.append("weak_news")
+    return score
+
+
 def score_us_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     score = 0.0
     reasons: list[str] = []
@@ -64,9 +99,14 @@ def score_us_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     elif spread_pct < 999:
         risk_tags.append("wide_spread")
 
-    if bool(candidate.get("news_or_earnings_flag")):
-        score += 0.12
-        reasons.append("catalyst")
+    score = _apply_news_quality_score(
+        candidate,
+        score,
+        reasons,
+        risk_tags,
+        quality_tags,
+        core_reason="catalyst",
+    )
 
     if source_overlap >= 2:
         score += 0.10
@@ -123,9 +163,14 @@ def score_kr_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     elif prior_value > 0:
         risk_tags.append("low_liquidity")
 
-    if bool(candidate.get("news_or_earnings_flag")):
-        score += 0.12
-        reasons.append("disclosure_or_news")
+    score = _apply_news_quality_score(
+        candidate,
+        score,
+        reasons,
+        risk_tags,
+        quality_tags,
+        core_reason="disclosure_or_news",
+    )
 
     if open_confirm > 0:
         score += 0.18

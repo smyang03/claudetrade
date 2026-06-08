@@ -7014,6 +7014,14 @@ _PREOPEN_CANDIDATE_FIELDS = {
     "news_quality",
     "news_date_quality",
     "news_quality_tags",
+    "news_prompt_eligible",
+    "news_signal_type",
+    "news_score",
+    "news_prompt_summary",
+    "risk_news_summary",
+    "prompt_news_ids",
+    "excluded_news_counts",
+    "scored_news_count",
     "reason",
     "reasons",
     "risk_tags",
@@ -8716,6 +8724,8 @@ def _candidate_audit_news_summary(
         "news_or_earnings_count",
         "news_quality",
         "news_date_quality",
+        "news_prompt_eligible",
+        "news_signal_type",
         "news_stale_filtered_count",
     }
     if not columns.intersection(wanted):
@@ -8736,6 +8746,17 @@ def _candidate_audit_news_summary(
             "COALESCE(SUM(CASE WHEN news_date_quality='unknown_date' THEN 1 ELSE 0 END), 0) AS unknown_date_rows"
         )
         pieces.append("COALESCE(SUM(CASE WHEN news_date_quality='mixed_date' THEN 1 ELSE 0 END), 0) AS mixed_date_rows")
+    if "news_prompt_eligible" in columns:
+        pieces.append(
+            "COALESCE(SUM(CASE WHEN COALESCE(news_prompt_eligible,0)=1 THEN 1 ELSE 0 END), 0) AS prompt_eligible_rows"
+        )
+    if "news_signal_type" in columns:
+        pieces.append(
+            "COALESCE(SUM(CASE WHEN news_signal_type IN ('direct_catalyst','earnings_or_guidance','disclosure_material') THEN 1 ELSE 0 END), 0) AS direct_signal_rows"
+        )
+        pieces.append(
+            "COALESCE(SUM(CASE WHEN news_signal_type='risk_negative' THEN 1 ELSE 0 END), 0) AS risk_signal_rows"
+        )
     if "news_stale_filtered_count" in columns:
         pieces.append("COALESCE(MAX(COALESCE(news_stale_filtered_count,0)), 0) AS stale_filtered_count")
     if "news_or_earnings_count" in columns:
@@ -8764,6 +8785,9 @@ def _candidate_audit_news_summary(
         totals.setdefault("mixed_quality_rows", None)
         totals.setdefault("unknown_date_rows", None)
         totals.setdefault("mixed_date_rows", None)
+        totals.setdefault("prompt_eligible_rows", None)
+        totals.setdefault("direct_signal_rows", None)
+        totals.setdefault("risk_signal_rows", None)
         totals.setdefault("stale_filtered_count", None)
         totals.setdefault("source_unknown_date_count", None)
         totals.setdefault("source_broad_weak_count", None)
@@ -8828,8 +8852,26 @@ def _candidate_audit_news_summary(
                     params,
                 )
             ]
+        signal_counts: list[dict[str, Any]] = []
+        if "news_signal_type" in columns:
+            signal_counts = [
+                dict(row)
+                for row in conn.execute(
+                    f"""
+                    SELECT COALESCE(NULLIF(news_signal_type,''), '-') AS signal_type, COUNT(*) AS rows
+                    FROM {row_source}
+                    WHERE session_date=? AND market=? AND runtime_mode=?
+                      AND ({news_presence_clause})
+                    GROUP BY COALESCE(NULLIF(news_signal_type,''), '-')
+                    ORDER BY rows DESC, signal_type ASC
+                    LIMIT 10
+                    """,
+                    params,
+                )
+            ]
         totals["quality_counts"] = quality_counts
         totals["date_quality_counts"] = date_counts
+        totals["signal_counts"] = signal_counts
         return totals
     except Exception as exc:
         return {"available": False, "error": str(exc)}
@@ -9125,6 +9167,16 @@ def api_candidate_audit_rows():
             _candidate_audit_optional_expr(columns, "news_quality"),
             _candidate_audit_optional_expr(columns, "news_date_quality"),
             _candidate_audit_optional_expr(columns, "news_quality_tags_json"),
+            _candidate_audit_optional_expr(columns, "news_prompt_eligible"),
+            _candidate_audit_optional_expr(columns, "news_signal_type"),
+            _candidate_audit_optional_expr(columns, "news_score"),
+            _candidate_audit_optional_expr(columns, "news_prompt_summary"),
+            _candidate_audit_optional_expr(columns, "risk_news_summary"),
+            _candidate_audit_optional_expr(columns, "prompt_news_ids_json"),
+            _candidate_audit_optional_expr(columns, "top_news_json"),
+            _candidate_audit_optional_expr(columns, "risk_news_json"),
+            _candidate_audit_optional_expr(columns, "news_excluded_counts_json"),
+            _candidate_audit_optional_expr(columns, "scored_news_count"),
             _candidate_audit_optional_expr(columns, "news_stale_filtered_count"),
         ]
         query_params = [outcome_horizon, *params]
@@ -9175,12 +9227,20 @@ def api_candidate_audit_rows():
             for json_key, out_key in (
                 ("news_or_earnings_sources_json", "news_or_earnings_sources"),
                 ("news_quality_tags_json", "news_quality_tags"),
+                ("prompt_news_ids_json", "prompt_news_ids"),
+                ("top_news_json", "top_news"),
+                ("risk_news_json", "risk_news"),
             ):
                 try:
                     parsed = json.loads(str(row.get(json_key) or "[]"))
                     row[out_key] = parsed if isinstance(parsed, list) else []
                 except Exception:
                     row[out_key] = []
+            try:
+                parsed_counts = json.loads(str(row.get("news_excluded_counts_json") or "{}"))
+                row["news_excluded_counts"] = parsed_counts if isinstance(parsed_counts, dict) else {}
+            except Exception:
+                row["news_excluded_counts"] = {}
         return jsonify({
             "ok": True,
             "exists": True,
@@ -15934,10 +15994,16 @@ function preopenNewsCell(r) {
   const count = Number(r.news_or_earnings_count || 0);
   const quality = String(r.news_quality || '').trim();
   const dateQuality = String(r.news_date_quality || '').trim();
+  const signal = String(r.news_signal_type || '').trim();
+  const score = Number(r.news_score || 0);
+  const eligible = !!r.news_prompt_eligible;
   const parts = [];
   if (count > 0) parts.push(`뉴스 ${count}`);
   if (quality) parts.push(quality);
   if (dateQuality && dateQuality !== 'dated') parts.push(dateQuality);
+  if (signal) parts.push(signal);
+  if (score) parts.push(`score ${score}`);
+  if (eligible) parts.push('prompt');
   return parts.length ? parts.join(' · ') : '뉴스';
 }
 function preopenEscapeHtml(v) {
@@ -16355,15 +16421,21 @@ function auditNewsCell(row) {
   const inPrompt = Number(row.news_in_prompt || 0) === 1;
   const quality = String(row.news_quality || '').trim();
   const dateQuality = String(row.news_date_quality || '').trim();
+  const signal = String(row.news_signal_type || '').trim();
+  const eligible = Number(row.news_prompt_eligible || 0) === 1;
+  const score = Number(row.news_score || 0);
   const stale = Number(row.news_stale_filtered_count || 0);
-  if (!count && !inPrompt && !quality && !dateQuality && !stale) return '-';
-  const cls = inPrompt ? 'good' : 'warn';
+  if (!count && !inPrompt && !quality && !dateQuality && !signal && !eligible && !score && !stale) return '-';
+  const cls = eligible ? 'good' : 'warn';
   const parts = [];
   if (count) parts.push(`count ${count}`);
   if (quality) parts.push(quality);
   if (dateQuality && dateQuality !== 'dated') parts.push(dateQuality);
+  if (signal) parts.push(signal);
+  if (score) parts.push(`score ${score}`);
+  if (eligible) parts.push('eligible');
   if (stale) parts.push(`stale ${stale}`);
-  return `<span class="audit-pill ${cls}">${inPrompt ? 'IN' : 'OUT'}</span><div class="audit-note">${auditLabel(parts.join(' · ') || 'news')}</div>`;
+  return `<span class="audit-pill ${cls}">${eligible ? 'GOOD' : (inPrompt ? 'IN' : 'OUT')}</span><div class="audit-note">${auditLabel(parts.join(' · ') || 'news')}</div>`;
 }
 function auditParams() {
   const params = new URLSearchParams();
@@ -16582,11 +16654,14 @@ function renderCandidateAuditNews(summary) {
   }
   const quality = summary.quality_counts || [];
   const dateQuality = summary.date_quality_counts || [];
+  const signals = (summary.signal_counts || []).map(row => `${row.signal_type}:${row.rows}`).join(', ');
   const head = `<div class="audit-note" style="margin-bottom:8px">
     rows ${auditInt(summary.rows)} · 뉴스 row ${auditInt(summary.news_rows)} · prompt 뉴스 ${auditInt(summary.news_in_prompt_rows)}
+    · prompt eligible ${auditInt(summary.prompt_eligible_rows)} · direct ${auditInt(summary.direct_signal_rows)} · risk ${auditInt(summary.risk_signal_rows)}
     · 뉴스 item ${auditInt(summary.news_item_count)} · stale filtered ${auditInt(summary.stale_filtered_count)}
     · weak row ${auditInt(summary.weak_rows)} · unknown date row ${auditInt(summary.unknown_date_rows)}
     · source weak ${auditInt(summary.source_broad_weak_count)} · source unknown ${auditInt(summary.source_unknown_date_count)}
+    ${signals ? ` · signals ${auditLabel(signals)}` : ''}
   </div>`;
   const table = `<table class="audit-compact-table">
     <thead><tr><th>quality</th><th>rows</th><th>date quality</th><th>rows</th></tr></thead>

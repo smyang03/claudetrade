@@ -295,6 +295,36 @@ def _metric_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def news_signal_outcomes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        count = int(_to_float(row.get("news_or_earnings_count")) or 0)
+        in_prompt = _truthy_flag(row.get("news_in_prompt"))
+        eligible = _truthy_flag(row.get("news_prompt_eligible"))
+        signal = str(row.get("news_signal_type") or "").strip() or "-"
+        if eligible and signal != "-":
+            bucket = signal
+        elif count > 0 or in_prompt:
+            quality = str(row.get("news_quality") or "").strip()
+            bucket = f"weak_or_unscored:{quality or 'unknown'}"
+        else:
+            bucket = "no_news"
+        groups[bucket].append(row)
+    result = []
+    for bucket, items in groups.items():
+        scores = [_to_float(row.get("news_score")) for row in items]
+        clean_scores = [value for value in scores if value is not None and value > 0]
+        result.append(
+            {
+                "news_bucket": bucket,
+                "mean_news_score": _round(_mean(clean_scores)),
+                **_metric_summary(items),
+            }
+        )
+    result.sort(key=lambda row: (int(row.get("labeled_rows") or 0), int(row.get("rows") or 0)), reverse=True)
+    return result
+
+
 def _where_clause(*, session_date: str, market: str, runtime_mode: str) -> tuple[str, list[Any]]:
     where = ["r.runtime_mode=?"]
     params: list[Any] = [str(runtime_mode or "live").lower()]
@@ -414,6 +444,9 @@ def _load_outcome_rows(
                    {col('trainer_prompt_score')}, {col('trainer_score_rank')},
                    {col('source_tags_json', "'[]'")}, {col('bucket_reasons_json', "'{}'")},
                    {col('bucket_data_gaps_json', "'[]'")},
+                   {col('news_in_prompt', '0')}, {col('news_or_earnings_count', '0')},
+                   {col('news_quality', "''")}, {col('news_prompt_eligible', '0')},
+                   {col('news_signal_type', "''")}, {col('news_score', '0')},
                    r.pnl_pct, r.close_reason, r.route_original_action,
                    r.route_final_action, r.route_route, r.route_reason,
                    {col('route_demoted_to')}, r.route_runtime_gate_reason,
@@ -1795,6 +1828,7 @@ def analyze_candidate_audit(
         "freshness": freshness,
         "outcome_coverage": coverage,
         "actual_prompt_profit_visibility": actual_prompt_profit_visibility(rows),
+        "news_signal_outcomes": news_signal_outcomes(rows),
         "bucket_source_score_quality": bucket_source_score_quality(rows, limit=limit),
         "entry_exit_shadow_readiness": entry_exit_shadow_readiness(rows),
         "timing_snapshot_coverage": timing_snapshot_coverage(rows),

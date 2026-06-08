@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -19,7 +20,8 @@ class PreopenCandidateNewsWrapperTests(unittest.TestCase):
             "news_coverage": {"covered_ticker_count": 1, "coverage_ratio": 0.5},
         }
 
-        with patch("tools.collect_preopen_candidate_news.load_preopen_news_targets", return_value=targets), \
+        with patch.dict(os.environ, {"PREOPEN_INVESTMENT_NEWS_BRIDGE_ENABLED": "false"}), \
+             patch("tools.collect_preopen_candidate_news.load_preopen_news_targets", return_value=targets), \
              patch("phase1_trainer.kr_news_collector.collect_day", return_value=news_payload) as collect_day, \
              patch("tools.collect_preopen_candidate_news.build_kr_digest", return_value={"top_news": [{"title": "x"}]}) as build_digest, \
              patch("tools.collect_preopen_candidate_news.save_preopen_news_snapshot", return_value=Path("preopen.json")), \
@@ -54,7 +56,8 @@ class PreopenCandidateNewsWrapperTests(unittest.TestCase):
             "news_coverage": {"covered_ticker_count": 2, "coverage_ratio": 1.0},
         }
 
-        with patch("tools.collect_preopen_candidate_news.load_preopen_news_targets", return_value=targets), \
+        with patch.dict(os.environ, {"PREOPEN_INVESTMENT_NEWS_BRIDGE_ENABLED": "false"}), \
+             patch("tools.collect_preopen_candidate_news.load_preopen_news_targets", return_value=targets), \
              patch("phase1_trainer.us_news_collector.collect_day", return_value=news_payload) as collect_day, \
              patch("tools.collect_preopen_candidate_news.build_us_digest", return_value={"top_news": []}) as build_digest, \
              patch("tools.collect_preopen_candidate_news.save_preopen_news_snapshot", return_value=Path("preopen.json")), \
@@ -85,7 +88,8 @@ class PreopenCandidateNewsWrapperTests(unittest.TestCase):
             "news_coverage": {"covered_ticker_count": 0, "coverage_ratio": 0.0},
         }
 
-        with patch("tools.collect_preopen_candidate_news.load_preopen_news_targets", return_value=targets), \
+        with patch.dict(os.environ, {"PREOPEN_INVESTMENT_NEWS_BRIDGE_ENABLED": "false"}), \
+             patch("tools.collect_preopen_candidate_news.load_preopen_news_targets", return_value=targets), \
              patch("phase1_trainer.kr_news_collector.collect_day", return_value=news_payload), \
              patch("tools.collect_preopen_candidate_news.build_kr_digest", return_value={"top_news": []}), \
              patch("tools.collect_preopen_candidate_news.save_preopen_news_snapshot", return_value=Path("preopen.json")), \

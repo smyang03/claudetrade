@@ -78,7 +78,19 @@ class SoftExitArbitrationTests(unittest.TestCase):
             bot.selection_meta["US"] = {
                 "price_targets": {
                     "STX": {"sell_target": 672.0, "stop_loss": 641.0, "confidence": 0.6}
-                }
+                },
+                "_final_prompt_pool": [
+                    {
+                        "ticker": "STX",
+                        "news_or_earnings_flag": True,
+                        "news_or_earnings_count": 1,
+                        "news_prompt_eligible": True,
+                        "news_signal_type": "direct_catalyst",
+                        "news_score": 84,
+                        "news_prompt_summary": "direct_catalyst:STX supply contract",
+                        "prompt_news_ids": ["news1"],
+                    }
+                ],
             }
 
             meta = bot._entry_reference_metadata("US", "STX")
@@ -88,6 +100,9 @@ class SoftExitArbitrationTests(unittest.TestCase):
             self.assertEqual(meta["pathb_reference_status"], "cancel_if_open_above")
             self.assertEqual(meta["pathb_reference_path_run_id"], path_run_id)
             self.assertEqual(meta["selection_reference_target"], 672.0)
+            self.assertTrue(meta["news_prompt_eligible"])
+            self.assertEqual(meta["news_signal_type"], "direct_catalyst")
+            self.assertEqual(meta["news_prompt_summary"], "direct_catalyst:STX supply contract")
 
     def test_make_position_copies_reference_metadata_from_order(self) -> None:
         bot = _bot_stub()
@@ -100,12 +115,20 @@ class SoftExitArbitrationTests(unittest.TestCase):
             "sl_pct": 0.02,
             "pathb_reference_target": 665.0,
             "selection_reference_target": 672.0,
+            "news_prompt_eligible": True,
+            "news_signal_type": "direct_catalyst",
+            "news_score": 84,
+            "news_prompt_summary": "direct_catalyst:STX supply contract",
+            "prompt_news_ids": ["news1"],
         }
 
         pos = bot._make_position_from_broker(order, {"avg_price": 654.92, "eval_price": 658.01})
 
         self.assertEqual(pos["pathb_reference_target"], 665.0)
         self.assertEqual(pos["selection_reference_target"], 672.0)
+        self.assertTrue(pos["news_prompt_eligible"])
+        self.assertEqual(pos["news_signal_type"], "direct_catalyst")
+        self.assertEqual(pos["prompt_news_ids"], ["news1"])
 
     def test_profit_floor_hold_sets_floor_count_and_cooldown(self) -> None:
         bot = _bot_stub()

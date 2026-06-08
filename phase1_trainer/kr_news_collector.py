@@ -25,14 +25,18 @@ import os
 import json
 import time
 import requests
+import html
+import re
 from pathlib import Path
 from datetime import datetime, date, timedelta
+from email.utils import parsedate_to_datetime
 from bs4 import BeautifulSoup
 from dotenv import dotenv_values, load_dotenv
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_collector_logger, log_retry, log_call, ProgressLogger
+from bot.session_date import KST
 
 load_dotenv()
 
@@ -47,6 +51,10 @@ if _LIVE_ENV_PATH.exists():
         "KIS_ACCOUNT_NO",
         "KIS_IS_PAPER",
         "KIS_BASE_URL",
+        "NAVER_CLIENT_ID",
+        "NAVER_CLIENT_SECRET",
+        "NAVER_SEARCH_CLIENT_ID",
+        "NAVER_SEARCH_CLIENT_SECRET",
     ):
         if not os.getenv(_env_key):
             _env_value = _live_env_values.get(_env_key)
@@ -57,10 +65,30 @@ from kis_api import _headers, _kis_get, get_access_token, get_kis_market_profile
 
 log = get_collector_logger()
 
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)) or default)
+    except Exception:
+        return default
+
 # ── 설정 ──────────────────────────────────────────────────────────────────────
 
 DART_KEY     = os.getenv("DART_API_KEY", "")
 BIGKINDS_KEY = os.getenv("BIGKINDS_KEY", "")
+NAVER_CLIENT_ID = (
+    os.getenv("NAVER_CLIENT_ID", "").strip()
+    or os.getenv("NAVER_SEARCH_CLIENT_ID", "").strip()
+    or os.getenv("NAVER_API_CLIENT_ID", "").strip()
+)
+NAVER_CLIENT_SECRET = (
+    os.getenv("NAVER_CLIENT_SECRET", "").strip()
+    or os.getenv("NAVER_SEARCH_CLIENT_SECRET", "").strip()
+    or os.getenv("NAVER_API_CLIENT_SECRET", "").strip()
+)
+ENABLE_NAVER_API = os.getenv("KR_NEWS_ENABLE_NAVER_API", "true").lower() in {"1", "true", "yes", "on"}
+NAVER_API_MIN_ITEMS = _env_int("KR_NEWS_NAVER_API_MIN_ITEMS", 3)
+NAVER_API_MAX_RESULTS = _env_int("KR_NEWS_NAVER_API_MAX_RESULTS", 8)
 ENABLE_NAVER_LEGACY = os.getenv("KR_NEWS_ENABLE_NAVER_LEGACY", "false").lower() == "true"
 ENABLE_PREOPEN_BIGKINDS = os.getenv("PREOPEN_NEWS_ENABLE_BIGKINDS", "false").lower() in {"1", "true", "yes", "on"}
 
@@ -472,6 +500,109 @@ def fetch_naver_news_content(url: str) -> str:
 
 # ── BigKinds API ──────────────────────────────────────────────────────────────
 
+def _clean_naver_search_text(value: str) -> str:
+    text = html.unescape(str(value or ""))
+    text = re.sub(r"<[^>]+>", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _naver_search_pub_date(value: str) -> tuple[str, str]:
+    try:
+        parsed = parsedate_to_datetime(str(value or ""))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(KST)
+        return parsed.date().isoformat(), parsed.isoformat(timespec="seconds")
+    except Exception:
+        return "", ""
+
+
+def _naver_search_matches_target(
+    *,
+    title: str,
+    description: str,
+    stock_code: str,
+    name: str,
+) -> bool:
+    haystack = f"{title} {description}".lower()
+    code = "".join(ch for ch in str(stock_code or "") if ch.isdigit())
+    clean_name = str(name or "").strip()
+    if clean_name and clean_name.lower() in haystack:
+        return True
+    if code and code in haystack:
+        return True
+    return False
+
+
+@log_retry(max_retries=2, delay=2.0, logger=log)
+def fetch_naver_api_news(
+    stock_code: str,
+    name: str,
+    target_date: str,
+    max_results: int | None = None,
+) -> list[dict]:
+    if not ENABLE_NAVER_API or not NAVER_CLIENT_ID or not NAVER_CLIENT_SECRET:
+        log.debug("Naver Search API key missing or disabled")
+        return []
+
+    display = max(1, min(int(max_results or NAVER_API_MAX_RESULTS or 8), 100))
+    query_name = str(name or stock_code or "").strip()
+    if not query_name:
+        return []
+
+    response = requests.get(
+        "https://openapi.naver.com/v1/search/news.json",
+        headers={
+            "X-Naver-Client-Id": NAVER_CLIENT_ID,
+            "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+        },
+        params={
+            "query": query_name,
+            "display": display,
+            "start": 1,
+            "sort": "date",
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+    payload = response.json()
+
+    results: list[dict] = []
+    seen_titles: set[str] = set()
+    for item in payload.get("items", []) or []:
+        title = _clean_naver_search_text(item.get("title", ""))
+        description = _clean_naver_search_text(item.get("description", ""))
+        if not title:
+            continue
+        published_date, published_at = _naver_search_pub_date(item.get("pubDate", ""))
+        if published_date != target_date:
+            continue
+        if not _naver_search_matches_target(
+            title=title,
+            description=description,
+            stock_code=stock_code,
+            name=name,
+        ):
+            continue
+        if title in seen_titles:
+            continue
+        seen_titles.add(title)
+        results.append({
+            "source": "Naver Search API",
+            "provider": "Naver",
+            "date": published_date,
+            "published_at": published_at or published_date,
+            "title": title,
+            "content": description[:500],
+            "url": item.get("originallink") or item.get("link") or "",
+            "naver_url": item.get("link") or "",
+            "ticker": stock_code,
+            "matched_by": "naver_search_name",
+        })
+
+    log.debug(f"Naver Search API [{stock_code}] {target_date}: {len(results)} items")
+    return results
+
+
 @log_retry(max_retries=3, delay=2.0, logger=log)
 def fetch_bigkinds_news(keyword: str, target_date: str, max_results: int = 10) -> list[dict]:
     """
@@ -609,6 +740,25 @@ def collect_day(
             time.sleep(0.3)
         except Exception as e:
             log.error(f"KIS news collect failed [{name}]: {e}")
+
+        if len(corp_items) < max(1, NAVER_API_MIN_ITEMS):
+            try:
+                existing_titles = {str(item.get("title") or "").strip() for item in corp_items}
+                news = fetch_naver_api_news(
+                    code,
+                    name,
+                    target_date,
+                    max_results=NAVER_API_MAX_RESULTS,
+                )
+                for item in news:
+                    title = str(item.get("title") or "").strip()
+                    if title and title not in existing_titles:
+                        corp_items.append(item)
+                        existing_titles.add(title)
+                if news:
+                    time.sleep(0.2)
+            except Exception as e:
+                log.warning(f"Naver Search API collect failed [{name}]: {e}")
 
         # Legacy Naver PC scraper is fragile; keep it opt-in only.
         if ENABLE_NAVER_LEGACY and not corp_items:

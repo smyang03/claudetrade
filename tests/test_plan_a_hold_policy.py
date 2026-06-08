@@ -500,6 +500,39 @@ class PlanAHoldPolicyBotTests(unittest.TestCase):
         self.assertEqual(payload_with["position_news"]["sample_title"], "QCOM contract filing")
         self.assertNotIn("position_news", payload_without)
 
+    def test_hold_advisor_position_news_prefers_prompt_summary_fields(self) -> None:
+        pos = _us_position(
+            news_or_earnings_flag=True,
+            news_or_earnings_count=2,
+            news_or_earnings_sources=["SEC", "Finnhub"],
+            news_or_earnings_sample_title="QCOM old sample title",
+            news_prompt_eligible=True,
+            news_signal_type="direct_catalyst",
+            news_score=81,
+            news_prompt_summary="direct_catalyst:QCOM supply contract filing",
+            risk_news_summary="risk_negative:QCOM litigation update",
+            prompt_news_ids=["sec:1", "finnhub:2"],
+        )
+
+        payload = hold_advisor._triage_case_payload(
+            pos,
+            "US",
+            "General market context",
+            "",
+            "AUTO_SELL_REVIEW",
+            "review current sell signal",
+            None,
+            False,
+        )
+
+        self.assertEqual(payload["position_news"]["signal_type"], "direct_catalyst")
+        self.assertEqual(payload["position_news"]["score"], 81)
+        self.assertTrue(payload["position_news"]["prompt_eligible"])
+        self.assertEqual(payload["position_news"]["prompt_summary"], "direct_catalyst:QCOM supply contract filing")
+        self.assertEqual(payload["position_news"]["risk_summary"], "risk_negative:QCOM litigation update")
+        self.assertEqual(payload["position_news"]["prompt_news_ids"], ["sec:1", "finnhub:2"])
+        self.assertNotIn("sample_title", payload["position_news"])
+
     def test_hold_review_stores_valid_policy(self) -> None:
         bot = _bot()
         cand = {**bot.risk.positions[0], "exit_price": 106.0, "reason": "trail_stop"}

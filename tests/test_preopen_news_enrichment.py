@@ -44,10 +44,16 @@ class PreopenNewsEnrichmentTests(unittest.TestCase):
             "target_source": "preopen_top60",
             "corp_news": {
                 "AAPL": {
+                    "name": "Apple",
                     "count": 2,
                     "items": [
-                        {"source": "Finnhub", "title": "Apple catalyst headline"},
-                        {"source": "SEC EDGAR", "title": "Apple filing"},
+                        {
+                            "source": "Finnhub",
+                            "source_type": "company_news",
+                            "importance": "A",
+                            "title": "Apple signs supply contract for new devices",
+                        },
+                        {"source": "SEC EDGAR", "source_type": "disclosure", "title": "Apple filing"},
                     ],
                 }
             },
@@ -64,8 +70,92 @@ class PreopenNewsEnrichmentTests(unittest.TestCase):
         self.assertTrue(enriched[0]["news_or_earnings_flag"])
         self.assertEqual(enriched[0]["news_or_earnings_count"], 2)
         self.assertIn("Finnhub", enriched[0]["news_or_earnings_sources"])
-        self.assertIn("catalyst", enriched[0]["preopen_reason"])
+        self.assertTrue(enriched[0]["news_prompt_eligible"])
+        self.assertEqual(enriched[0]["news_signal_type"], "direct_catalyst")
+        self.assertIn("news_signal_direct_catalyst", enriched[0]["quality_tags"])
         self.assertGreaterEqual(enriched[0]["preopen_score"], 0.73)
+
+    def test_generic_broad_news_is_flagged_but_not_scored_as_catalyst(self) -> None:
+        candidates = [
+            {
+                "ticker": "AAPL",
+                "name": "Apple Inc.",
+                "market": "US",
+                "extended_change_pct": 4.0,
+                "extended_dollar_volume": 5_000_000,
+                "spread_pct": 0.2,
+            }
+        ]
+        payload = {
+            "date": "2026-06-05",
+            "corp_news": {
+                "AAPL": {
+                    "name": "Apple Inc.",
+                    "items": [
+                        {"source": "Finnhub", "date": "2026-06-05", "title": "Technology stocks rise before the open"},
+                    ],
+                }
+            },
+        }
+
+        enriched, summary = enrich_candidates_with_news(
+            "US",
+            candidates,
+            session_date="2026-06-05",
+            news_payload=payload,
+        )
+
+        self.assertEqual(summary["flagged_count"], 1)
+        self.assertEqual(summary["news_prompt_eligible_count"], 0)
+        self.assertTrue(enriched[0]["news_or_earnings_flag"])
+        self.assertFalse(enriched[0]["news_prompt_eligible"])
+        self.assertEqual(enriched[0]["news_signal_type"], "theme_broad")
+        self.assertNotIn("catalyst", enriched[0]["preopen_reason"])
+        self.assertIn("weak_news", enriched[0]["quality_tags"])
+
+    def test_naver_summary_only_company_mention_is_not_prompt_catalyst(self) -> None:
+        candidates = [
+            {
+                "ticker": "005930",
+                "name": "삼성전자",
+                "market": "KR",
+                "extended_change_pct": 4.0,
+                "prior_day_traded_value": 20_000_000_000,
+            }
+        ]
+        payload = {
+            "date": "2026-06-08",
+            "corp_news": {
+                "005930": {
+                    "name": "삼성전자",
+                    "items": [
+                        {
+                            "source": "Naver",
+                            "source_type": "investment",
+                            "importance": "A",
+                            "date": "2026-06-08",
+                            "title": "반도체 투자 사이클 전환, 장비주에 주목",
+                            "summary": "삼성전자 역시 미국 텍사스 파운드리 공장을 중심으로 투자를 이어가고 있다.",
+                            "ticker": "005930",
+                        }
+                    ],
+                }
+            },
+        }
+
+        enriched, summary = enrich_candidates_with_news(
+            "KR",
+            candidates,
+            session_date="2026-06-08",
+            news_payload=payload,
+        )
+
+        self.assertEqual(summary["flagged_count"], 1)
+        self.assertEqual(summary["news_prompt_eligible_count"], 0)
+        self.assertTrue(enriched[0]["news_or_earnings_flag"])
+        self.assertFalse(enriched[0]["news_prompt_eligible"])
+        self.assertNotIn("disclosure_or_news", enriched[0]["preopen_reason"])
+        self.assertIn("weak_news", enriched[0]["quality_tags"])
 
     def test_build_news_index_ignores_stale_dated_corp_news_items(self) -> None:
         payload = {
@@ -143,8 +233,9 @@ class PreopenNewsEnrichmentTests(unittest.TestCase):
             "target_source": "preopen_top60",
             "corp_news": {
                 "MSFT": {
+                    "name": "Microsoft",
                     "count": 1,
-                    "items": [{"source": "Finnhub", "title": "Microsoft catalyst"}],
+                    "items": [{"source": "Finnhub", "source_type": "company_news", "title": "Microsoft signs cloud contract"}],
                 }
             },
         }
@@ -207,8 +298,11 @@ class PreopenNewsEnrichmentTests(unittest.TestCase):
             "target_source": "preopen_top60",
             "corp_news": {
                 "AAPL": {
+                    "name": "Apple",
                     "count": 1,
-                    "items": [{"source": "Finnhub", "title": "Apple preopen catalyst"}],
+                    "items": [
+                        {"source": "Finnhub", "source_type": "company_news", "importance": "A", "title": "Apple signs supply contract"}
+                    ],
                 }
             },
         }
@@ -244,7 +338,8 @@ class PreopenNewsEnrichmentTests(unittest.TestCase):
 
         self.assertEqual(state["news_enrichment"]["flagged_count"], 1)
         self.assertTrue(loaded["candidates"][0]["news_or_earnings_flag"])
-        self.assertIn("catalyst", loaded["candidates"][0]["preopen_reason"])
+        self.assertTrue(loaded["candidates"][0]["news_prompt_eligible"])
+        self.assertEqual(loaded["candidates"][0]["news_signal_type"], "direct_catalyst")
 
 
 if __name__ == "__main__":

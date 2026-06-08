@@ -88,6 +88,53 @@ class KrNewsCollectorKisTests(unittest.TestCase):
         self.assertEqual(called_params["FID_INPUT_ISCD"], "005930")
         self.assertEqual(called_params["FID_INPUT_DATE_1"], "20260515")
 
+    def test_fetch_naver_api_news_filters_date_and_target(self) -> None:
+        response = _FakeKisResponse({
+            "items": [
+                {
+                    "title": "<b>삼성전자</b>, AI 반도체 공급 확대",
+                    "description": "삼성전자 신규 공급 계약",
+                    "originallink": "https://news.example/samsung",
+                    "link": "https://n.news.naver.com/article/001",
+                    "pubDate": "Fri, 15 May 2026 09:30:00 +0900",
+                },
+                {
+                    "title": "삼성전자 전일 기사",
+                    "description": "삼성전자",
+                    "originallink": "https://news.example/old",
+                    "link": "https://n.news.naver.com/article/002",
+                    "pubDate": "Thu, 14 May 2026 09:30:00 +0900",
+                },
+                {
+                    "title": "시장 점검",
+                    "description": "코스피 흐름",
+                    "originallink": "https://news.example/market",
+                    "link": "https://n.news.naver.com/article/003",
+                    "pubDate": "Fri, 15 May 2026 10:00:00 +0900",
+                },
+            ],
+        })
+
+        with patch.object(collector, "NAVER_CLIENT_ID", "client-id"), \
+             patch.object(collector, "NAVER_CLIENT_SECRET", "client-secret"), \
+             patch.object(collector, "ENABLE_NAVER_API", True), \
+             patch.object(collector.requests, "get", return_value=response) as get:
+            items = collector.fetch_naver_api_news("005930", "삼성전자", "2026-05-15", max_results=5)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["source"], "Naver Search API")
+        self.assertEqual(items[0]["provider"], "Naver")
+        self.assertEqual(items[0]["date"], "2026-05-15")
+        self.assertEqual(items[0]["published_at"], "2026-05-15T09:30:00+09:00")
+        self.assertEqual(items[0]["title"], "삼성전자, AI 반도체 공급 확대")
+        self.assertEqual(items[0]["ticker"], "005930")
+        self.assertEqual(items[0]["matched_by"], "naver_search_name")
+        called_kwargs = get.call_args.kwargs
+        self.assertEqual(called_kwargs["params"]["query"], "삼성전자")
+        self.assertEqual(called_kwargs["params"]["sort"], "date")
+        self.assertIn("X-Naver-Client-Id", called_kwargs["headers"])
+        self.assertIn("X-Naver-Client-Secret", called_kwargs["headers"])
+
     def test_collect_day_uses_kis_and_leaves_naver_legacy_disabled(self) -> None:
         kis_item = {
             "source": "KIS",
@@ -116,6 +163,46 @@ class KrNewsCollectorKisTests(unittest.TestCase):
         self.assertEqual(result["target_tickers"], ["005930"])
         self.assertEqual(result["provider_counts"], {"KIS": 1})
         naver.assert_not_called()
+
+    def test_collect_day_uses_naver_api_when_kis_news_is_sparse(self) -> None:
+        naver_item = {
+            "source": "Naver Search API",
+            "provider": "Naver",
+            "date": "2026-05-15",
+            "published_at": "2026-05-15T09:30:00+09:00",
+            "title": "Samsung API headline",
+            "content": "Samsung API summary",
+            "url": "https://news.example/samsung",
+            "ticker": "005930",
+            "matched_by": "naver_search_name",
+        }
+        naver_legacy = Mock(return_value=[])
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             patch.object(collector, "NEWS_DIR", Path(tmpdir)), \
+             patch.object(collector, "TARGET_CORPS", {"005930": "Samsung"}), \
+             patch.object(collector, "ENABLE_NAVER_API", True), \
+             patch.object(collector, "NAVER_API_MIN_ITEMS", 3), \
+             patch.object(collector, "fetch_market_news", return_value=[]), \
+             patch.object(collector, "fetch_kis_news", return_value=[]), \
+             patch.object(collector, "fetch_naver_api_news", return_value=[naver_item]) as naver_api, \
+             patch.object(collector, "ENABLE_NAVER_LEGACY", False), \
+             patch.object(collector, "fetch_naver_news", naver_legacy), \
+             patch.object(collector, "fetch_bigkinds_news", return_value=[]), \
+             patch.object(collector, "get_dart_corp_code", return_value=""), \
+             patch.object(collector.time, "sleep", lambda *_args, **_kwargs: None):
+            result = collector.collect_day("2026-05-15")
+
+        self.assertEqual(result["corp_news"]["005930"]["count"], 1)
+        self.assertEqual(result["corp_news"]["005930"]["items"][0]["source"], "Naver Search API")
+        self.assertEqual(result["provider_counts"], {"Naver": 1})
+        naver_api.assert_called_once_with(
+            "005930",
+            "Samsung",
+            "2026-05-15",
+            max_results=collector.NAVER_API_MAX_RESULTS,
+        )
+        naver_legacy.assert_not_called()
 
     def test_collect_day_force_false_reuses_matching_existing_file(self) -> None:
         existing = {

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from bot.session_date import KST
+from preopen.news_quality import build_news_quality_snapshot, news_item_id
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -201,7 +202,7 @@ def _related_ticker_match(market: str, ticker: str, item: Any) -> bool:
         return False
     ticker_key = _normalize_ticker(market, ticker)
     values: list[Any] = []
-    for key in ("related_tickers", "ticker_sentiment"):
+    for key in ("ticker", "symbol", "tickers", "related_tickers", "ticker_sentiment"):
         raw = item.get(key)
         if isinstance(raw, list):
             values.extend(raw)
@@ -223,13 +224,15 @@ def _item_is_broad_weak(market: str, ticker: str, name: str, item: Any) -> bool:
     source = _source_name(item).lower()
     if any(marker in source for marker in ("sec", "dart")):
         return False
-    if _related_ticker_match(market, ticker, item):
+    if _related_ticker_match(market, ticker, item) and any(
+        marker in source for marker in ("finnhub", "alphavantage", "alpha vantage", "kis")
+    ):
         return False
     if "kis" in source and str(item.get("matched_by") or "") == "kis_iscd":
         return False
     if _title_mentions_ticker_or_name(market, ticker, name, item):
         return False
-    return any(marker in source for marker in ("finnhub", "alphavantage", "alpha vantage", "news"))
+    return any(marker in source for marker in ("finnhub", "alphavantage", "alpha vantage", "news", "naver", "google"))
 
 
 def _empty_filter_summary(payload_date: str) -> dict[str, Any]:
@@ -338,6 +341,10 @@ def build_news_index_with_summary(
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     market_key = _market_key(market)
     index: dict[str, dict[str, Any]] = {}
+    quality_items: dict[str, list[Any]] = {}
+    date_quality_by_id: dict[str, str] = {}
+    broad_weak_ids: set[str] = set()
+    names_by_ticker: dict[str, str] = {}
     payload_date = _payload_date(payload)
     summary = _empty_filter_summary(payload_date)
     corp_news = payload.get("corp_news") if isinstance(payload, dict) else {}
@@ -347,6 +354,8 @@ def build_news_index_with_summary(
                 continue
             ticker = _normalize_ticker(market_key, raw_ticker)
             name = _entry_name(entry)
+            if name:
+                names_by_ticker[ticker] = name
             raw_items = entry.get("items") or []
             if not isinstance(raw_items, list):
                 raw_items = []
@@ -363,6 +372,13 @@ def build_news_index_with_summary(
             )
             if raw_items:
                 count = len(items)
+                bucket = quality_items.setdefault(ticker, [])
+                for item in items:
+                    item_id = news_item_id(item)
+                    date_quality_by_id[item_id] = _item_date_quality(item, payload_date)
+                    if _item_is_broad_weak(market_key, ticker, name, item):
+                        broad_weak_ids.add(item_id)
+                    bucket.append(item)
             else:
                 try:
                     count = int(entry.get("count", 0) or 0)
@@ -401,6 +417,11 @@ def build_news_index_with_summary(
             )
             if not rows:
                 continue
+            bucket = quality_items.setdefault(ticker, [])
+            for row in rows:
+                item_id = news_item_id(row)
+                date_quality_by_id[item_id] = _item_date_quality(row, payload_date)
+                bucket.append(row)
             sample_title = next((_title_text(item) for item in rows if _title_text(item)), "")
             _add_hit(
                 index,
@@ -428,6 +449,15 @@ def build_news_index_with_summary(
             "weak_count": weak_count,
             "unknown_date_count": unknown_date_count,
         }
+        snapshot = build_news_quality_snapshot(
+            market_key,
+            ticker,
+            names_by_ticker.get(ticker, ""),
+            quality_items.get(ticker, []),
+            date_quality_by_id=date_quality_by_id,
+            broad_weak_ids=broad_weak_ids,
+        )
+        normalized[ticker].update(snapshot)
     summary["news_ticker_count"] = len(normalized)
     summary["usable_item_count"] = int(summary.get("usable_corp_item_count", 0) or 0) + int(
         summary.get("usable_disclosure_item_count", 0) or 0
@@ -497,9 +527,24 @@ def enrich_candidates_with_news(
             row["news_quality"] = str(hit.get("news_quality") or "normal")
             row["news_date_quality"] = str(hit.get("news_date_quality") or "dated")
             row["news_quality_tags"] = list(hit.get("news_quality_tags") or [])
+            row["news_prompt_eligible"] = bool(hit.get("news_prompt_eligible"))
+            row["news_signal_type"] = str(hit.get("news_signal_type") or "")
+            row["news_score"] = int(hit.get("news_score") or 0)
+            row["news_prompt_summary"] = str(hit.get("news_prompt_summary") or "")
+            row["risk_news_summary"] = str(hit.get("risk_news_summary") or "")
+            row["prompt_news_ids"] = list(hit.get("prompt_news_ids") or [])
+            row["top_news"] = list(hit.get("top_news") or [])
+            row["risk_news"] = list(hit.get("risk_news") or [])
+            row["excluded_news_counts"] = dict(hit.get("excluded_news_counts") or {})
+            row["scored_news_count"] = int(hit.get("scored_news_count") or 0)
             quality_tags = list(row.get("quality_tags") or [])
             quality_tags.append("news_or_earnings")
             quality_tags.extend(list(hit.get("news_quality_tags") or []))
+            if row["news_prompt_eligible"]:
+                quality_tags.append("news_prompt_eligible")
+            if row["news_signal_type"]:
+                prefix = "news_signal" if row["news_prompt_eligible"] else "news_signal_unscored"
+                quality_tags.append(f"{prefix}_{row['news_signal_type']}")
             row["quality_tags"] = sorted(set(str(tag) for tag in quality_tags if str(tag or "").strip()))
         else:
             row["news_or_earnings_flag"] = False
@@ -509,6 +554,16 @@ def enrich_candidates_with_news(
             row["news_quality"] = ""
             row["news_date_quality"] = ""
             row["news_quality_tags"] = []
+            row["news_prompt_eligible"] = False
+            row["news_signal_type"] = ""
+            row["news_score"] = 0
+            row["news_prompt_summary"] = ""
+            row["risk_news_summary"] = ""
+            row["prompt_news_ids"] = []
+            row["top_news"] = []
+            row["risk_news"] = []
+            row["excluded_news_counts"] = {}
+            row["scored_news_count"] = 0
         after = (
             bool(row.get("news_or_earnings_flag")),
             int(row.get("news_or_earnings_count") or 0),
@@ -529,6 +584,8 @@ def enrich_candidates_with_news(
         "candidate_count": len(candidates or []),
         "flagged_count": flagged,
         "changed_count": changed,
+        "news_prompt_eligible_count": sum(1 for row in enriched if bool(row.get("news_prompt_eligible"))),
+        "risk_news_count": sum(1 for row in enriched if str(row.get("news_signal_type") or "") == "risk_negative"),
         "news_ticker_count": len(index),
         "news_filter_summary": filter_summary,
         "stale_filtered_count": int(filter_summary.get("stale_filtered_count", 0) or 0),

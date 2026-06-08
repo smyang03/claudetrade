@@ -523,7 +523,25 @@ def _position_news_payload(pos: dict) -> dict:
         _value("news_or_earnings_sample_title") or _value("news_sample_title"),
         140,
     )
-    flagged = bool(_value("news_or_earnings_flag")) or count > 0 or bool(sources) or bool(sample_title)
+    prompt_summary = _compact_news_prompt_text(_value("news_prompt_summary"), 180)
+    risk_summary = _compact_news_prompt_text(_value("risk_news_summary"), 160)
+    signal_type = _compact_news_prompt_text(_value("news_signal_type"), 40)
+    raw_prompt_ids = _value("prompt_news_ids")
+    if isinstance(raw_prompt_ids, (list, tuple, set)):
+        prompt_ids = [_compact_news_prompt_text(value, 48) for value in raw_prompt_ids]
+    elif raw_prompt_ids:
+        prompt_ids = [_compact_news_prompt_text(raw_prompt_ids, 48)]
+    else:
+        prompt_ids = []
+    prompt_ids = [value for value in prompt_ids if value][:4]
+    flagged = (
+        bool(_value("news_or_earnings_flag"))
+        or count > 0
+        or bool(sources)
+        or bool(sample_title)
+        or bool(prompt_summary)
+        or bool(risk_summary)
+    )
     if not flagged:
         return {}
     payload = {"flag": True}
@@ -537,8 +555,24 @@ def _position_news_payload(pos: dict) -> dict:
     date_quality = _compact_news_prompt_text(_value("news_date_quality"), 32)
     if date_quality and date_quality != "dated":
         payload["date_quality"] = date_quality
-    if sample_title:
+    if signal_type:
+        payload["signal_type"] = signal_type
+    try:
+        news_score = int(float(_value("news_score") or 0))
+    except Exception:
+        news_score = 0
+    if news_score > 0:
+        payload["score"] = news_score
+    if bool(_value("news_prompt_eligible")):
+        payload["prompt_eligible"] = True
+    if prompt_summary:
+        payload["prompt_summary"] = prompt_summary
+    elif sample_title:
         payload["sample_title"] = sample_title
+    if risk_summary:
+        payload["risk_summary"] = risk_summary
+    if prompt_ids:
+        payload["prompt_news_ids"] = prompt_ids
     return payload
 
 
@@ -555,8 +589,18 @@ def _position_news_context_text(pos: dict) -> str:
         parts.append("quality=" + str(payload.get("quality")))
     if payload.get("date_quality"):
         parts.append("date=" + str(payload.get("date_quality")))
+    if payload.get("signal_type"):
+        parts.append("signal=" + str(payload.get("signal_type")))
+    if payload.get("score"):
+        parts.append("score=" + str(payload.get("score")))
+    if payload.get("prompt_eligible"):
+        parts.append("eligible=true")
+    if payload.get("prompt_summary"):
+        parts.append("summary=" + str(payload.get("prompt_summary")))
     if payload.get("sample_title"):
         parts.append("sample_title=" + str(payload.get("sample_title")))
+    if payload.get("risk_summary"):
+        parts.append("risk=" + str(payload.get("risk_summary")))
     return "\n━━━ Position news ━━━\n  " + " | ".join(parts or ["flag=true"]) + "\n"
 
 

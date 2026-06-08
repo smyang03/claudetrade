@@ -10557,7 +10557,73 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         meta: dict = {}
         meta.update(self._selection_reference_for_ticker(market, ticker))
         meta.update(self._cancelled_pathb_reference_for_ticker(market, ticker))
+        meta.update(self._selection_news_metadata_for_ticker(market, ticker))
         return meta
+    def _selection_news_metadata_for_ticker(self, market: str, ticker: str) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        lookup = self._selection_ticker_key(market_key, ticker)
+        keys = (
+            "news_or_earnings_flag",
+            "news_or_earnings_count",
+            "news_or_earnings_sources",
+            "news_or_earnings_sample_title",
+            "news_quality",
+            "news_date_quality",
+            "news_quality_tags",
+            "news_prompt_eligible",
+            "news_signal_type",
+            "news_score",
+            "news_prompt_summary",
+            "risk_news_summary",
+            "prompt_news_ids",
+            "top_news",
+            "risk_news",
+            "excluded_news_counts",
+            "scored_news_count",
+        )
+        out: dict = {}
+
+        def _present(value) -> bool:
+            return value not in (None, "", [], {})
+
+        def _copy_from(source: dict, source_name: str) -> None:
+            if not isinstance(source, dict):
+                return
+            for key in keys:
+                if key in out:
+                    continue
+                value = source.get(key)
+                if _present(value):
+                    out[key] = value
+            if out and "entry_news_context_source" not in out:
+                out["entry_news_context_source"] = source_name
+
+        for key in keys:
+            value = self._selection_meta_value(market_key, ticker, key)
+            if _present(value):
+                out[key] = value
+        if out:
+            out.setdefault("entry_news_context_source", "selection_meta_map")
+
+        meta = self.selection_meta.get(market_key, {}) if hasattr(self, "selection_meta") else {}
+        for pool_key in ("candidate_actions", "_final_prompt_pool", "final_prompt_pool", "watchlist_candidates", "candidates"):
+            for row in list((meta or {}).get(pool_key) or []):
+                if not isinstance(row, dict):
+                    continue
+                if self._selection_ticker_key(market_key, row.get("ticker", "")) != lookup:
+                    continue
+                _copy_from(row, pool_key)
+                if any(key in out for key in keys):
+                    return out
+        for row in list((getattr(self, "_last_screen_candidates", {}) or {}).get(market_key, []) or []):
+            if not isinstance(row, dict):
+                continue
+            if self._selection_ticker_key(market_key, row.get("ticker", "")) != lookup:
+                continue
+            _copy_from(row, "last_screen_candidate")
+            if any(key in out for key in keys):
+                return out
+        return out
     def _recommended_strategy_for_ticker(self, market: str, ticker: str) -> str:
         return _normalize_strategy_name(
             self._selection_meta_value(market, ticker, "recommended_strategy") or ""
@@ -17189,6 +17255,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "news_quality",
             "news_date_quality",
             "news_quality_tags",
+            "news_prompt_eligible",
+            "news_signal_type",
+            "news_score",
+            "news_prompt_summary",
+            "risk_news_summary",
+            "prompt_news_ids",
+            "top_news",
+            "risk_news",
+            "excluded_news_counts",
+            "scored_news_count",
             "news_stale_filtered_count",
         )
 
@@ -17274,7 +17350,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             sources = _audit_list(source.get("news_or_earnings_sources") or source.get("news_or_earnings_sources_json"))
             sample_title = str(source.get("news_or_earnings_sample_title") or source.get("news_sample_title") or "").strip()
             tags = _audit_list(source.get("news_quality_tags") or source.get("news_quality_tags_json"))
-            has_news = bool(source.get("news_or_earnings_flag")) or count > 0 or bool(sources) or bool(sample_title)
+            prompt_summary = str(source.get("news_prompt_summary") or "").strip()
+            risk_summary = str(source.get("risk_news_summary") or "").strip()
+            has_news = (
+                bool(source.get("news_or_earnings_flag"))
+                or count > 0
+                or bool(sources)
+                or bool(sample_title)
+                or bool(prompt_summary)
+                or bool(risk_summary)
+            )
             quality = str(source.get("news_quality") or "").strip()
             date_quality = str(source.get("news_date_quality") or "").strip()
             if not date_quality and "unknown_date" in {str(tag) for tag in tags}:
@@ -17283,6 +17368,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 stale_filtered_count = int(float(source.get("news_stale_filtered_count") or 0))
             except Exception:
                 stale_filtered_count = 0
+            try:
+                news_score = int(float(source.get("news_score") or 0))
+            except Exception:
+                news_score = 0
+            try:
+                scored_news_count = int(float(source.get("scored_news_count") or 0))
+            except Exception:
+                scored_news_count = 0
             return {
                 "news_in_prompt": bool(included and has_news),
                 "news_or_earnings_count": max(0, count),
@@ -17291,6 +17384,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "news_quality": quality,
                 "news_date_quality": date_quality,
                 "news_quality_tags_json": tags,
+                "news_prompt_eligible": bool(source.get("news_prompt_eligible")),
+                "news_signal_type": str(source.get("news_signal_type") or "").strip(),
+                "news_score": max(0, news_score),
+                "news_prompt_summary": prompt_summary,
+                "risk_news_summary": risk_summary,
+                "prompt_news_ids_json": _audit_list(source.get("prompt_news_ids") or source.get("prompt_news_ids_json")),
+                "top_news_json": _audit_list(source.get("top_news") or source.get("top_news_json")),
+                "risk_news_json": _audit_list(source.get("risk_news") or source.get("risk_news_json")),
+                "news_excluded_counts_json": _audit_dict(source.get("excluded_news_counts") or source.get("news_excluded_counts_json")),
+                "scored_news_count": max(0, scored_news_count),
                 "news_stale_filtered_count": max(0, stale_filtered_count),
             }
 
@@ -21723,6 +21826,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "selection_reference_confidence",
             "selection_reference_source",
             "selection_reference_copied_at",
+            "news_or_earnings_flag",
+            "news_or_earnings_count",
+            "news_or_earnings_sources",
+            "news_or_earnings_sample_title",
+            "news_quality",
+            "news_date_quality",
+            "news_quality_tags",
+            "news_prompt_eligible",
+            "news_signal_type",
+            "news_score",
+            "news_prompt_summary",
+            "risk_news_summary",
+            "prompt_news_ids",
+            "top_news",
+            "risk_news",
+            "excluded_news_counts",
+            "scored_news_count",
+            "entry_news_context_source",
         ):
             if key in order:
                 pos[key] = order.get(key)

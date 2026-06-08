@@ -798,7 +798,17 @@ def _candidate_news_hint(candidate: dict) -> str:
         candidate.get("news_or_earnings_sample_title") or candidate.get("news_sample_title"),
         96,
     )
-    flagged = bool(candidate.get("news_or_earnings_flag")) or count > 0 or bool(sources) or bool(title)
+    prompt_summary = _compact_news_prompt_text(candidate.get("news_prompt_summary"), 140)
+    risk_summary = _compact_news_prompt_text(candidate.get("risk_news_summary"), 120)
+    signal_type = _compact_news_prompt_text(candidate.get("news_signal_type"), 32)
+    flagged = (
+        bool(candidate.get("news_or_earnings_flag"))
+        or count > 0
+        or bool(sources)
+        or bool(title)
+        or bool(prompt_summary)
+        or bool(risk_summary)
+    )
     if not flagged:
         return ""
     parts = []
@@ -814,8 +824,22 @@ def _candidate_news_hint(candidate: dict) -> str:
     date_quality = _compact_news_prompt_text(candidate.get("news_date_quality"), 24)
     if date_quality and date_quality != "dated":
         parts.append("date=" + date_quality)
-    if title:
+    if signal_type:
+        parts.append("signal=" + signal_type)
+    try:
+        news_score = int(float(candidate.get("news_score") or 0))
+    except Exception:
+        news_score = 0
+    if news_score > 0:
+        parts.append(f"score={news_score}")
+    if bool(candidate.get("news_prompt_eligible")):
+        parts.append("eligible=true")
+    if prompt_summary:
+        parts.append("summary=" + prompt_summary)
+    elif title:
         parts.append("title=" + title)
+    if risk_summary:
+        parts.append("risk=" + risk_summary)
     return "news=" + "|".join(parts) if parts else "news=flag"
 
 
