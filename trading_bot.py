@@ -187,12 +187,6 @@ from runtime.action_routing import route_candidate_action
 from runtime.broker_side import broker_row_side_matches
 from runtime.candidate_pool_runtime import build_candidate_pool
 from runtime import sub_screener
-from runtime.early_judge_trigger import (
-    EarlyJudgeTriggerConfig,
-    build_early_judge_candidates,
-    evaluate_early_judge_trigger,
-    rank_trigger_decisions,
-)
 from runtime.tuning_bounds import RUNTIME_ADJUSTMENT_BOUNDS, coerce_runtime_adjustments
 from runtime.exit_lifecycle import (
     DEFAULT_LIVE_BYPASS_REASONS,
@@ -10523,6 +10517,25 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self.today_judgment["selection_meta"] = meta
             self.today_judgment["trade_ready_tickers"] = self.trade_ready_tickers[market]
             self.today_judgment["selection_stages"] = stages
+        if (
+            self._early_judge_enabled(market)
+            and not bool(getattr(self, "_early_judge_post_selection_active", False))
+            and any(str(reason or "").startswith("strategy_feasibility:") for reason in dict(meta.get("_runtime_filtered_trade_ready") or {}).values())
+        ):
+            self._early_judge_post_selection_active = True
+            try:
+                self.maybe_run_early_judge_triggers(
+                    market,
+                    source=f"{route_source or 'selection'}_soft_block",
+                    rows=[],
+                )
+                current_meta = (getattr(self, "selection_meta", {}) or {}).get(market)
+                if isinstance(current_meta, dict) and current_meta is not meta:
+                    return current_meta
+            except Exception as exc:
+                log.warning(f"[early judge] {market} post-selection soft-block judge failed: {exc}")
+            finally:
+                self._early_judge_post_selection_active = False
         return meta
 
     def _should_reconcile_pathb_selection(
@@ -29277,29 +29290,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return False
         return self._runtime_bool(f"{market_key}_EARLY_JUDGE_TRIGGER_ENABLED", True)
 
-    def _early_judge_config(self, market: str) -> EarlyJudgeTriggerConfig:
+    def _early_judge_max_calls_per_run(self, market: str) -> int:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
-        default_score = 70.0 if market_key == "US" else 75.0
-        default_hard_pin = 65.0 if market_key == "US" else 70.0
-        return EarlyJudgeTriggerConfig(
-            enabled=self._early_judge_enabled(market_key),
-            market=market_key,
-            score_min=self._runtime_float(
-                f"{market_key}_EARLY_JUDGE_TRIGGER_SCORE_MIN",
-                self._runtime_float(
-                    f"{market_key}_EARLY_JUDGE_SCORE_MIN",
-                    self._runtime_float("EARLY_JUDGE_TRIGGER_SCORE_MIN", self._runtime_float("EARLY_JUDGE_SCORE_MIN", default_score)),
-                ),
-            ),
-            hard_pin_score_min=self._runtime_float(
-                f"{market_key}_EARLY_JUDGE_HARD_PIN_SCORE_MIN",
-                self._runtime_float("EARLY_JUDGE_HARD_PIN_SCORE_MIN", default_hard_pin),
-            ),
-            max_calls_per_run=self._runtime_int("EARLY_JUDGE_MAX_CALLS_PER_RUN", 3),
-            cooldown_min=self._runtime_float("EARLY_JUDGE_COOLDOWN_MIN", 5.0),
-            reject_ttl_min=self._runtime_float("EARLY_JUDGE_REJECT_TTL_MIN", 180.0),
-            volume_ratio_min=self._runtime_float("EARLY_JUDGE_VOLUME_RATIO_MIN", 1.2),
-            spread_bps_max=self._runtime_float("EARLY_JUDGE_SPREAD_BPS_MAX", 0.0),
+        return self._runtime_int(
+            f"{market_key}_EARLY_JUDGE_MAX_CALLS_PER_RUN",
+            self._runtime_int("EARLY_JUDGE_MAX_CALLS_PER_RUN", 2),
         )
 
     def _early_judge_capacity_remaining(self, market: str) -> int:
@@ -29316,7 +29311,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if seen >= hour_ago:
                 pruned.append(seen)
         self._early_judge_call_times = pruned
-        market_default = 10 if market_key == "US" else 8
+        market_default = 5
         market_cap = self._runtime_int(f"{market_key}_EARLY_JUDGE_MAX_CALLS_PER_SESSION", market_default)
         global_cap = self._runtime_int(
             "EARLY_JUDGE_GLOBAL_MAX_CALLS_PER_SESSION",
@@ -29358,6 +29353,84 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             return []
 
+    def _early_judge_feature_for_ticker(self, market: str, ticker: str, meta: dict | None = None) -> dict[str, Any]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        key = self._selection_ticker_key(market_key, ticker)
+        stores = []
+        if isinstance(meta, dict):
+            stores.append(meta.get("_post_open_features_by_ticker") or {})
+            stores.append(meta.get("post_open_features_by_ticker") or {})
+        stores.append((getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key) or {})
+        for store in stores:
+            if not isinstance(store, dict):
+                continue
+            raw = store.get(key) or store.get(ticker)
+            if isinstance(raw, dict):
+                return dict(raw)
+            if market_key == "US":
+                for raw_key, raw_value in store.items():
+                    if str(raw_key).upper() == key and isinstance(raw_value, dict):
+                        return dict(raw_value)
+        return {}
+
+    def _early_judge_rows_from_soft_blocks(self, market: str, meta: dict | None = None) -> list[dict[str, Any]]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        source_meta = dict(meta or (getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+        runtime_filtered = dict(source_meta.get("_runtime_filtered_trade_ready") or {})
+        if not runtime_filtered:
+            return []
+        action_map = {
+            self._selection_ticker_key(market_key, (action or {}).get("ticker") or ""): dict(action or {})
+            for action in list(source_meta.get("candidate_actions") or [])
+            if isinstance(action, dict)
+        }
+        feasibility_map = (
+            source_meta.get("_strategy_feasibility_by_ticker")
+            or source_meta.get("strategy_feasibility_by_ticker")
+            or {}
+        )
+        rows: list[dict[str, Any]] = []
+        for raw_ticker, raw_reason in runtime_filtered.items():
+            reason = str(raw_reason or "")
+            if not reason.startswith("strategy_feasibility:"):
+                continue
+            key = self._selection_ticker_key(market_key, raw_ticker)
+            if not key:
+                continue
+            action = dict(action_map.get(key) or {})
+            features = self._early_judge_feature_for_ticker(market_key, key, source_meta)
+            row = {
+                "ticker": key,
+                "market": market_key,
+                "source": "strategy_feasibility_soft_block",
+                "early_judge_source": "strategy_feasibility_soft_block",
+                "trainer_candidate_state": "PLAN_B",
+                "trainer_prompt_score": float(action.get("confidence") or 0.0) * 100.0,
+                "original_action": action.get("action"),
+                "original_route": action.get("route"),
+                "strategy": action.get("strategy"),
+                "confidence": action.get("confidence"),
+                "reason": action.get("reason") or reason,
+                "reason_code": action.get("reason_code"),
+                "previous_blocker": reason,
+                "strategy_feasibility_reason": str(action.get("strategy_feasibility_reason") or reason.split(":", 1)[-1]),
+                "ticker_reason": ((getattr(self, "today_judgment", {}) or {}).get("ticker_reasons") or {}).get(key),
+                "risk_tags": list(action.get("risk_tags") or []),
+                "blocking_factors": list(action.get("blocking_factors") or []),
+                "required_confirmations": list(action.get("required_confirmations") or []),
+                "invalidation_condition": action.get("invalidation_condition"),
+                "max_entry_price": action.get("max_entry_price"),
+                "max_chase_pct": action.get("max_chase_pct"),
+                "post_open_features": features,
+            }
+            pack = feasibility_map.get(key) if isinstance(feasibility_map, dict) else {}
+            if isinstance(pack, dict):
+                row["strategy_feasibility"] = dict(pack)
+            rows.append(row)
+        watch_order = [self._selection_ticker_key(market_key, ticker) for ticker in list(source_meta.get("watchlist") or [])]
+        rows.sort(key=lambda row: watch_order.index(row["ticker"]) if row.get("ticker") in watch_order else 999)
+        return rows
+
     def _early_judge_rows_with_runtime_guards(self, market: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         held = self._local_position_keys(market_key)
@@ -29387,32 +29460,88 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             guarded.append(row)
         return guarded
 
+    def _early_judge_hard_skip_reason(self, market: str, row: dict[str, Any], now: datetime) -> str:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker = self._selection_ticker_key(market_key, (row or {}).get("ticker") or "")
+        features = (row or {}).get("post_open_features") if isinstance((row or {}).get("post_open_features"), dict) else {}
+        def _truthy_value(value: Any) -> bool:
+            if isinstance(value, bool):
+                return value
+            return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on", "ok", "pass", "passed"}
+        for key, reason in (
+            ("broker_truth_untrusted", "broker_truth_untrusted"),
+            ("broker_quarantine", "broker_quarantine"),
+            ("has_position", "already_holding"),
+            ("pending_order", "pending_order"),
+            ("same_day_stopped", "same_day_stopped"),
+            ("entry_blackout", "entry_blackout"),
+            ("pathb_waiting", "pathb_already_waiting"),
+            ("pathb_active_order", "pathb_active_order"),
+        ):
+            if _truthy_value((row or {}).get(key) or features.get(key)):
+                return reason
+        quality = str(features.get("data_quality") or (row or {}).get("post_open_data_quality") or "").strip().lower()
+        if quality in {"minute_missing", "missing", "bad", "stale", "invalid", "fail_closed"}:
+            return "data_quality_fail_closed"
+        if ticker:
+            reject_until = str((self._early_judge_reject_until.get(market_key) or {}).get(ticker) or "")
+            if reject_until:
+                try:
+                    if now < datetime.fromisoformat(reject_until.replace("Z", "+00:00")).replace(tzinfo=None):
+                        return "reject_ttl_active"
+                except Exception:
+                    pass
+            last_called = str((self._early_judge_last_called_at.get(market_key) or {}).get(ticker) or "")
+            if last_called:
+                try:
+                    last_dt = datetime.fromisoformat(last_called.replace("Z", "+00:00")).replace(tzinfo=None)
+                    cooldown_min = self._runtime_float("EARLY_JUDGE_COOLDOWN_MIN", 5.0)
+                    if cooldown_min > 0 and (now - last_dt).total_seconds() / 60.0 < cooldown_min:
+                        return "cooldown_active"
+                except Exception:
+                    pass
+        return ""
+
     def _single_symbol_judge_call(self, market: str, candidate: Any) -> dict[str, Any]:
-        row = dict(getattr(candidate, "row", {}) or {})
-        features = dict(getattr(candidate, "features", {}) or {})
-        strategy_feasibility = dict(getattr(candidate, "strategy_feasibility", {}) or {})
+        if isinstance(candidate, dict):
+            row = dict(candidate.get("row") or candidate)
+            features = dict(candidate.get("features") or row.get("post_open_features") or {})
+            strategy_feasibility = dict(candidate.get("strategy_feasibility") or row.get("strategy_feasibility") or {})
+            candidate_market = str(candidate.get("market") or row.get("market") or market)
+            candidate_ticker = str(candidate.get("ticker") or row.get("ticker") or "")
+        else:
+            row = dict(getattr(candidate, "row", {}) or {})
+            features = dict(getattr(candidate, "features", {}) or {})
+            strategy_feasibility = dict(getattr(candidate, "strategy_feasibility", {}) or {})
+            candidate_market = str(getattr(candidate, "market", market))
+            candidate_ticker = str(getattr(candidate, "ticker", row.get("ticker", "")))
+        risk_context = {
+            "feature": "early_judge_pathb_price_plan",
+            "order_quantity": "runtime_owned",
+            "broker_truth": "runtime_gate_required",
+            "pathb_plan_before_registration_only": True,
+            "pullback_wait_requires_structural_buy_zone": True,
+        }
         fake_client = getattr(self, "_single_symbol_judge_client", None)
         if callable(fake_client):
             return normalize_single_symbol_judge_result(
                 fake_client(
-                    market=getattr(candidate, "market", market),
-                    ticker=getattr(candidate, "ticker", row.get("ticker", "")),
+                    market=candidate_market,
+                    ticker=candidate_ticker,
                     candidate=row,
                     features=features,
                     strategy_feasibility=strategy_feasibility,
-                )
+                ),
+                features=features,
+                risk_context=risk_context,
             )
         return call_single_symbol_judge(
-            market=getattr(candidate, "market", market),
-            ticker=getattr(candidate, "ticker", row.get("ticker", "")),
+            market=candidate_market,
+            ticker=candidate_ticker,
             candidate=row,
             features=features,
             strategy_feasibility=strategy_feasibility,
-            risk_context={
-                "feature": "early_judge_trigger",
-                "order_quantity": "runtime_owned",
-                "broker_truth": "runtime_gate_required",
-            },
+            risk_context=risk_context,
         )
 
     def _single_symbol_price_targets(self, result: dict[str, Any]) -> dict[str, Any]:
@@ -29522,8 +29651,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     ) -> dict[str, Any]:
         self._ensure_early_judge_state()
         market_key = "US" if str(market or "").upper() == "US" else "KR"
-        normalized = normalize_single_symbol_judge_result(result)
-        ticker = self._selection_ticker_key(market_key, normalized.get("ticker") or getattr(candidate, "ticker", ""))
+        if isinstance(candidate, dict):
+            candidate_features = dict(candidate.get("features") or candidate.get("post_open_features") or {})
+            candidate_ticker = str(candidate.get("ticker") or (candidate.get("row") or {}).get("ticker") or "")
+        else:
+            candidate_features = dict(getattr(candidate, "features", {}) or {})
+            candidate_ticker = str(getattr(candidate, "ticker", ""))
+        normalized = normalize_single_symbol_judge_result(
+            result,
+            features=candidate_features,
+            risk_context={
+                "feature": "early_judge_pathb_price_plan",
+                "pathb_plan_before_registration_only": True,
+            },
+        )
+        ticker = self._selection_ticker_key(market_key, normalized.get("ticker") or candidate_ticker)
         normalized["ticker"] = ticker
         normalized["market"] = market_key
         if not ticker:
@@ -29586,65 +29728,80 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         if not self._early_judge_enabled(market_key):
             return []
-        if not rows:
-            return []
         self._ensure_early_judge_state()
         capacity = self._early_judge_capacity_remaining(market_key)
         if capacity <= 0:
             log.info(f"[early judge] {market_key} capacity exhausted source={source}")
             return []
         meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
-        feature_store = (getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key) or {}
-        guarded_rows = self._early_judge_rows_with_runtime_guards(market_key, rows)
-        config = self._early_judge_config(market_key)
-        candidates = build_early_judge_candidates(
-            market=market_key,
-            source=source,
-            rows=guarded_rows,
-            selection_meta=meta,
-            feature_store=feature_store,
-            last_called_at=self._early_judge_last_called_at.get(market_key, {}),
-            reject_until=self._early_judge_reject_until.get(market_key, {}),
+        guarded_rows = self._early_judge_rows_with_runtime_guards(market_key, list(rows or []))
+        soft_block_rows = self._early_judge_rows_with_runtime_guards(
+            market_key,
+            self._early_judge_rows_from_soft_blocks(market_key, meta),
         )
+        candidate_rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for raw in list(guarded_rows or []) + list(soft_block_rows or []):
+            if not isinstance(raw, dict):
+                continue
+            ticker = self._selection_ticker_key(market_key, raw.get("ticker") or "")
+            if not ticker or ticker in seen:
+                continue
+            row = dict(raw)
+            row["ticker"] = ticker
+            row.setdefault("market", market_key)
+            row.setdefault("early_judge_source", source)
+            if "post_open_features" not in row:
+                row["post_open_features"] = self._early_judge_feature_for_ticker(market_key, ticker, meta)
+            candidate_rows.append(row)
+            seen.add(ticker)
         now = datetime.now(KST).replace(tzinfo=None)
-        decisions = [evaluate_early_judge_trigger(candidate, config=config, now=now) for candidate in candidates]
-        for decision in decisions:
+        max_calls = max(0, min(capacity, self._early_judge_max_calls_per_run(market_key)))
+        selected_rows: list[dict[str, Any]] = []
+        for row in candidate_rows:
+            ticker = self._selection_ticker_key(market_key, row.get("ticker") or "")
+            hard_skip = self._early_judge_hard_skip_reason(market_key, row, now)
+            should_call = not hard_skip and len(selected_rows) < max_calls
             try:
                 self._write_funnel_event(
                     "early_judge_trigger_eval",
                     market_key,
                     {
-                        "ticker": decision.ticker,
+                        "ticker": ticker,
                         "source": source,
-                        "score": decision.score,
-                        "should_call": decision.should_call,
-                        "reason": decision.reason,
-                        "hard_skip": decision.hard_skip,
-                        "hard_skip_reason": decision.hard_skip_reason,
-                        "event_flags": list(decision.event_flags or []),
+                        "should_call": should_call,
+                        "reason": "soft_block_price_plan_candidate" if should_call else (hard_skip or "run_cap_reached"),
+                        "hard_skip": bool(hard_skip),
+                        "hard_skip_reason": hard_skip,
+                        "soft_block_reason": str(row.get("previous_blocker") or row.get("reason") or ""),
                     },
                 )
             except Exception:
                 pass
-        selected = rank_trigger_decisions(decisions, max_calls=min(capacity, config.max_calls_per_run))
-        if not selected:
+            if should_call:
+                selected_rows.append(row)
+        if not selected_rows:
             return []
-        by_ticker = {candidate.ticker: candidate for candidate in candidates}
         applied: list[dict[str, Any]] = []
-        for decision in selected:
-            candidate = by_ticker.get(decision.ticker)
-            if candidate is None:
-                continue
+        for row in selected_rows:
+            ticker = self._selection_ticker_key(market_key, row.get("ticker") or "")
             call_started = datetime.now(KST).replace(tzinfo=None)
-            self._early_judge_last_called_at[market_key][decision.ticker] = call_started.isoformat(timespec="seconds")
+            self._early_judge_last_called_at[market_key][ticker] = call_started.isoformat(timespec="seconds")
             self._early_judge_session_call_count[market_key] = int(self._early_judge_session_call_count.get(market_key, 0) or 0) + 1
             self._early_judge_call_times.append(call_started)
+            candidate = {
+                "market": market_key,
+                "ticker": ticker,
+                "row": row,
+                "features": dict(row.get("post_open_features") or {}),
+                "strategy_feasibility": dict(row.get("strategy_feasibility") or {}),
+            }
             try:
                 raw_result = self._single_symbol_judge_call(market_key, candidate)
             except Exception as exc:
-                log.warning(f"[early judge] {market_key} {decision.ticker} call failed: {exc}")
+                log.warning(f"[early judge] {market_key} {ticker} call failed: {exc}")
                 raw_result = {
-                    "ticker": decision.ticker,
+                    "ticker": ticker,
                     "market": market_key,
                     "action": "WAIT_RECHECK",
                     "route": "wait",
@@ -29658,8 +29815,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 source=source,
                 candidate=candidate,
             )
-            normalized["trigger_score"] = decision.score
-            normalized["trigger_flags"] = list(decision.event_flags or [])
+            normalized["trigger_flags"] = ["pathb_price_plan_fast_pass"]
+            normalized["soft_block_reason"] = str(row.get("previous_blocker") or row.get("reason") or "")
             applied.append(normalized)
         if applied:
             log.info(
