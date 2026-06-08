@@ -3005,6 +3005,15 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(run["plan"]["filled_qty"], 2)
             self.assertEqual(run["plan"]["actual_entry_price"], 52_200)
             self.assertEqual(bot.risk.positions[0]["pathb_path_run_id"], plan.path_run_id)
+            fill_events = [
+                event
+                for event in store.events_for_decision(plan.decision_id)
+                if event["event_type"] == "FILLED"
+                and (event.get("payload") or {}).get("path_run_id") == plan.path_run_id
+            ]
+            self.assertEqual(len(fill_events), 1)
+            self.assertTrue((fill_events[0].get("payload") or {}).get("recovered_fill"))
+            self.assertEqual((fill_events[0].get("payload") or {}).get("qty"), 2)
 
     def test_recover_on_startup_escalates_sent_order_without_local_truth(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4761,6 +4770,14 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(run["status"], "FILLED")
             self.assertEqual(run["plan"]["order_unknown_resolution"], "local_pathb_holding_recovered")
             self.assertEqual(run["plan"]["filled_qty"], 2)
+            fill_events = [
+                event
+                for event in store.events_for_decision(plan.decision_id)
+                if event["event_type"] == "FILLED"
+                and (event.get("payload") or {}).get("path_run_id") == plan.path_run_id
+            ]
+            self.assertEqual(len(fill_events), 1)
+            self.assertEqual((fill_events[0].get("payload") or {}).get("recovered_fill_source"), "local_pathb_holding")
             runtime._submit_sell.assert_not_called()
 
     def test_finalize_pathb_sell_close_records_closed_decision_event(self) -> None:

@@ -9989,6 +9989,7 @@ class PathBRuntime:
         plan: PricePlan,
         pos: dict[str, Any],
     ) -> dict[str, Any] | None:
+        status = str(run.get("status", "") or "").upper()
         if self._order_unknown_is_exit_side(run):
             return None
         try:
@@ -10022,6 +10023,19 @@ class PathBRuntime:
         else:
             payload["local_recovery_missing_execution_id"] = True
         self.store.update_path_run(plan.path_run_id, status="FILLED", plan=payload, merge_plan=True)
+        self._append_recovered_entry_fill_event(
+            run,
+            plan,
+            price=entry_price,
+            qty=qty,
+            execution_id=execution_id,
+            reason_code="local_pathb_holding_recovered",
+            previous_status=status,
+            extra={
+                "order_unknown_resolution": "local_pathb_holding_recovered",
+                "local_position_evidence": True,
+            },
+        )
         log.warning(
             f"[PathB ORDER_UNKNOWN local holding recovered] {plan.market} {plan.ticker} "
             f"qty={qty} entry={float(entry_price or 0):g} run={plan.path_run_id}"
@@ -10067,11 +10081,81 @@ class PathBRuntime:
         else:
             payload["local_recovery_missing_execution_id"] = True
         self.store.update_path_run(plan.path_run_id, status="FILLED", plan=payload, merge_plan=True)
+        self._append_recovered_entry_fill_event(
+            run,
+            plan,
+            price=entry_price,
+            qty=qty,
+            execution_id=execution_id,
+            reason_code="local_pathb_holding_recovered",
+            previous_status=status,
+            extra={
+                "entry_pending_resolution": "local_pathb_holding_recovered",
+                "local_position_evidence": True,
+            },
+        )
         log.warning(
             f"[PathB entry pending local holding recovered] {plan.market} {plan.ticker} "
             f"status={status} qty={qty} entry={float(entry_price or 0):g} run={plan.path_run_id}"
         )
         return self.store.find_path_run(plan.path_run_id)
+
+    def _append_recovered_entry_fill_event(
+        self,
+        run: dict[str, Any],
+        plan: PricePlan,
+        *,
+        price: float,
+        qty: int,
+        execution_id: str,
+        reason_code: str,
+        previous_status: str,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        path_run_id = str(plan.path_run_id or "")
+        if not path_run_id or self._pathb_entry_fill_event_exists(run, path_run_id):
+            return
+        payload = {
+            "price": float(price or 0),
+            "qty": int(qty or 0),
+            "side": "buy",
+            "recovered_fill": True,
+            "recovered_fill_source": "local_pathb_holding",
+            "recovered_fill_previous_status": str(previous_status or ""),
+            **dict(extra or {}),
+        }
+        try:
+            self.adapter._append_event(
+                LifecycleEventType.FILLED,
+                path_run_id,
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(plan.market),
+                execution_id=execution_id or None,
+                path_status="FILLED",
+                reason_code=reason_code,
+                extra=payload,
+            )
+        except Exception as exc:
+            log.debug(f"[PathB recovered fill audit failed] {plan.market} {plan.ticker}: {exc}")
+
+    def _pathb_entry_fill_event_exists(self, run: dict[str, Any], path_run_id: str) -> bool:
+        decision_id = str(run.get("decision_id") or "")
+        if not decision_id:
+            return False
+        try:
+            events = self.store.events_for_decision(decision_id)
+        except Exception:
+            return False
+        for event in events:
+            if str(event.get("event_type") or "") not in {"FILLED", "PARTIAL_FILLED"}:
+                continue
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            if str(payload.get("path_run_id") or "") != path_run_id:
+                continue
+            if str(payload.get("side") or "buy").lower() == "sell":
+                continue
+            return True
+        return False
 
     def _position_entry_native(self, pos: dict[str, Any], market: str) -> float:
         market_key = str(market or "").upper()

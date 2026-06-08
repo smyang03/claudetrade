@@ -716,6 +716,13 @@ def _entry_path_run_id_from_events(events: list[dict[str, Any]]) -> str:
         if path_run_id:
             return path_run_id
     for event in reversed(events):
+        if str(event.get("event_type") or "") != "CLOSED":
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        path_run_id = str(payload.get("path_run_id") or payload.get("pathb_path_run_id") or "").strip()
+        if path_run_id:
+            return path_run_id
+    for event in reversed(events):
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
         path_run_id = str(payload.get("path_run_id") or payload.get("pathb_path_run_id") or "").strip()
         if path_run_id:

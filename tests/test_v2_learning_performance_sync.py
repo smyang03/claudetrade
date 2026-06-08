@@ -625,6 +625,96 @@ class V2LearningPerformanceSyncTests(unittest.TestCase):
             self.assertEqual(row["path_run_id"], "path_filled")
             self.assertEqual(row["origin_action"], "PULLBACK_WAIT")
 
+    def test_sync_prefers_close_payload_path_run_over_later_cancelled_run_when_fill_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-29",
+                ticker="SMCI",
+                prompt_version="v2",
+                brain_snapshot_id="brain_us",
+            )
+            store.create_path_run(
+                path_run_id="path_closed",
+                decision_id=decision_id,
+                path_type="claude_price",
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-29",
+                ticker="SMCI",
+                status="CLOSED",
+                plan={"origin_action": "PULLBACK_WAIT"},
+            )
+            store.create_path_run(
+                path_run_id="path_later_cancelled",
+                decision_id=decision_id,
+                path_type="claude_price",
+                market="US",
+                runtime_mode="live",
+                session_date="2026-05-29",
+                ticker="SMCI",
+                status="CANCELLED",
+                plan={"origin_action": "REENTRY_WAIT"},
+            )
+            for event in (
+                LifecycleEvent(
+                    event_type="ORDER_SENT",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-29",
+                    ticker="SMCI",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={"price": 45.7, "qty": 3, "path_run_id": "path_closed", "path_type": "claude_price", "side": "buy"},
+                ),
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-29",
+                    ticker="SMCI",
+                    decision_id=decision_id,
+                    execution_id="sell1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={"price": 47.24, "pnl_pct": 3.36, "path_run_id": "path_closed", "path_type": "claude_price"},
+                ),
+                LifecycleEvent(
+                    event_type="CLAUDE_PRICE_CANCELLED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-29",
+                    ticker="SMCI",
+                    decision_id=decision_id,
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={"path_run_id": "path_later_cancelled", "path_type": "claude_price"},
+                ),
+            ):
+                store.append(event)
+
+            sync_v2_learning_performance(event_db=event_db, ml_db=ml_db, market="US", dry_run=False)
+
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT path_run_id, origin_action, filled, closed FROM v2_learning_performance WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+
+            self.assertEqual(row["path_run_id"], "path_closed")
+            self.assertEqual(row["origin_action"], "PULLBACK_WAIT")
+            self.assertEqual(row["filled"], 0)
+            self.assertEqual(row["closed"], 1)
+
     def test_sync_writes_canonical_performance_with_event_dedupe_counts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
