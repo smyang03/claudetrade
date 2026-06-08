@@ -273,6 +273,7 @@ def run_scheduler_once(
     timeout_sec: int = 120,
     interval_sec: int = 60,
     collector_interval_min: int | None = None,
+    outcome_interval_min: int = 5,
     outcome_catchup_min: int = 180,
     now_dt: datetime | None = None,
 ) -> dict[str, Any]:
@@ -292,6 +293,7 @@ def run_scheduler_once(
         markets=markets,
         mode=runtime_mode,
         collector_interval_override_min=collector_interval_min,
+        outcome_interval_min=outcome_interval_min,
         outcome_catchup_min=outcome_catchup_min,
         force=force,
         completed_job_ids=_completed_job_ids(state),
@@ -388,6 +390,7 @@ def main() -> int:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--interval-sec", type=int, default=60)
     parser.add_argument("--collector-interval-min", type=int, default=0)
+    parser.add_argument("--outcome-interval-min", type=int, default=5)
     parser.add_argument("--outcome-catchup-min", type=int, default=180)
     parser.add_argument("--timeout-sec", type=int, default=120)
     args = parser.parse_args()
@@ -410,6 +413,7 @@ def main() -> int:
                 timeout_sec=args.timeout_sec,
                 interval_sec=args.interval_sec,
                 collector_interval_min=collector_interval,
+                outcome_interval_min=args.outcome_interval_min,
                 outcome_catchup_min=args.outcome_catchup_min,
             )
             print(

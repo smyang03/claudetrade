@@ -15,6 +15,8 @@ from preopen.continuation_shadow import (
     backfill_outcomes,
     collect_candidates,
     init_schema,
+    is_dense_offset_request,
+    record_feature_snapshot_range,
     record_feature_snapshots,
     resolve_offset_min,
     run_eval,
@@ -32,6 +34,9 @@ def main() -> int:
         default="collect",
     )
     parser.add_argument("--offset", "--offset-min", dest="offset_min", default="30")
+    parser.add_argument("--eval-offset", dest="eval_offset_min")
+    parser.add_argument("--dense", action="store_true")
+    parser.add_argument("--interval-min", type=int, default=5)
     parser.add_argument("--db-path")
     parser.add_argument("--max-candidates", type=int, default=DEFAULT_MAX_CANDIDATES)
     parser.add_argument("--source-limit", type=int, default=DEFAULT_SOURCE_LIMIT)
@@ -44,6 +49,13 @@ def main() -> int:
 
     def resolved_offset() -> int:
         return resolve_offset_min(args.offset_min, market=args.market, session_date=args.session_date)
+
+    def dense_requested() -> bool:
+        return bool(args.dense or is_dense_offset_request(args.offset_min))
+
+    def resolved_eval_offset() -> int:
+        raw = args.eval_offset_min if args.eval_offset_min is not None else ("30" if dense_requested() else args.offset_min)
+        return resolve_offset_min(raw, market=args.market, session_date=args.session_date)
 
     if args.step == "init":
         if not args.dry_run:
@@ -59,21 +71,31 @@ def main() -> int:
             dry_run=args.dry_run,
         )
     elif args.step == "feature":
-        result = record_feature_snapshots(
-            args.market,
-            session_date=args.session_date,
-            mode=args.mode,
-            db_path=args.db_path,
-            offset_min=resolved_offset(),
-            dry_run=args.dry_run,
-        )
+        if dense_requested():
+            result = record_feature_snapshot_range(
+                args.market,
+                session_date=args.session_date,
+                mode=args.mode,
+                db_path=args.db_path,
+                interval_min=args.interval_min,
+                dry_run=args.dry_run,
+            )
+        else:
+            result = record_feature_snapshots(
+                args.market,
+                session_date=args.session_date,
+                mode=args.mode,
+                db_path=args.db_path,
+                offset_min=resolved_offset(),
+                dry_run=args.dry_run,
+            )
     elif args.step == "eval":
         result = run_eval(
             args.market,
             session_date=args.session_date,
             mode=args.mode,
             db_path=args.db_path,
-            offset_min=resolved_offset(),
+            offset_min=resolved_eval_offset(),
             max_candidates=args.max_candidates,
             dry_run=args.dry_run,
             no_claude=args.no_claude,
@@ -89,30 +111,43 @@ def main() -> int:
             ml_decisions_db_path=args.ml_decisions_db,
         )
     else:
-        offset_value = resolved_offset()
-        result = {
-            "collect": collect_candidates(
+        eval_offset_value = resolved_eval_offset()
+        collect_result = collect_candidates(
+            args.market,
+            session_date=args.session_date,
+            mode=args.mode,
+            db_path=args.db_path,
+            source_limit=args.source_limit,
+            dry_run=args.dry_run,
+        )
+        if dense_requested():
+            feature_result = record_feature_snapshot_range(
                 args.market,
                 session_date=args.session_date,
                 mode=args.mode,
                 db_path=args.db_path,
-                source_limit=args.source_limit,
+                interval_min=args.interval_min,
                 dry_run=args.dry_run,
-            ),
-            "feature": record_feature_snapshots(
+            )
+        else:
+            offset_value = resolved_offset()
+            feature_result = record_feature_snapshots(
                 args.market,
                 session_date=args.session_date,
                 mode=args.mode,
                 db_path=args.db_path,
                 offset_min=offset_value,
                 dry_run=args.dry_run,
-            ),
+            )
+        result = {
+            "collect": collect_result,
+            "feature": feature_result,
             "eval": run_eval(
                 args.market,
                 session_date=args.session_date,
                 mode=args.mode,
                 db_path=args.db_path,
-                offset_min=offset_value,
+                offset_min=eval_offset_value,
                 max_candidates=args.max_candidates,
                 dry_run=args.dry_run,
                 no_claude=True if args.dry_run else args.no_claude,

@@ -123,16 +123,25 @@ def regular_close_dt(market: str, session_date: str) -> datetime:
     return datetime.combine(_session_day(session_date), dt_time(15, 30), tzinfo=KST)
 
 
-def default_outcome_offsets_min(market: str, session_date: str) -> tuple[int, ...]:
+def outcome_offsets_min_by_interval(market: str, session_date: str, *, interval_min: int = 5) -> tuple[int, ...]:
     opened = regular_open_dt(market, session_date)
     closed = regular_close_dt(market, session_date)
     total_min = int(max(5, (closed - opened).total_seconds() // 60))
+    interval = int(interval_min or 5)
+    if interval <= 0:
+        interval = 5
     offsets = [5]
-    offset = 30
+    offset = interval
     while offset <= total_min:
         offsets.append(offset)
-        offset += 30
+        offset += interval
+    if total_min not in offsets:
+        offsets.append(total_min)
     return tuple(dict.fromkeys(offsets))
+
+
+def default_outcome_offsets_min(market: str, session_date: str, *, interval_min: int = 5) -> tuple[int, ...]:
+    return outcome_offsets_min_by_interval(market, session_date, interval_min=interval_min)
 
 
 def is_trading_day(market: str, session_date: str) -> bool:
@@ -214,6 +223,7 @@ def due_jobs(
     mode: str = "live",
     collector_interval_override_min: int | None = None,
     outcome_offsets_min: tuple[int, ...] | None = None,
+    outcome_interval_min: int = 5,
     outcome_catchup_min: int = 180,
     force: bool = False,
     completed_job_ids: set[str] | None = None,
@@ -268,7 +278,11 @@ def due_jobs(
                     args=("--market", mkt, "--session-date", session_date, "--mode", runtime_mode),
                 ))
 
-        offsets = outcome_offsets_min if outcome_offsets_min is not None else default_outcome_offsets_min(mkt, session_date)
+        offsets = (
+            outcome_offsets_min
+            if outcome_offsets_min is not None
+            else default_outcome_offsets_min(mkt, session_date, interval_min=outcome_interval_min)
+        )
         for offset in offsets:
             due_dt = open_dt + timedelta(minutes=int(offset))
             late_by = (now_dt - due_dt).total_seconds() / 60.0

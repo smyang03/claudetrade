@@ -25,6 +25,7 @@ SUPPORTED_MARKETS = {"KR", "US"}
 EVAL_LABEL = "preopen_continuation_eval"
 DEFAULT_MAX_CANDIDATES = 15
 DEFAULT_SOURCE_LIMIT = 60
+DENSE_OFFSET_ALIASES = {"all", "dense", "full", "range", "5m", "5min", "5-min", "every5", "every_5m"}
 PROTECTED_SOURCE_DB_NAMES = {
     "ticker_selection_log.db",
     "candidate_audit.db",
@@ -1333,6 +1334,86 @@ def record_feature_snapshots(
     }
 
 
+def is_dense_offset_request(offset: str | int | None) -> bool:
+    return str(offset if offset is not None else "").strip().lower() in DENSE_OFFSET_ALIASES
+
+
+def dense_feature_offsets_min(
+    market: str,
+    session_date: str | None = None,
+    *,
+    interval_min: int = 5,
+) -> tuple[int, ...]:
+    market_key = normalize_market(market)
+    resolved_date = session_date or resolve_session_date_str(market_key)
+    interval = _int(interval_min)
+    if interval is None or interval <= 0:
+        raise ContinuationShadowError(f"preopen_continuation_invalid_interval:{interval_min}")
+    close_offset = _close_offset_min(market_key, resolved_date)
+    if close_offset is None:
+        raise ContinuationShadowError("preopen_continuation_close_offset_unavailable")
+    offsets: list[int] = [5]
+    offset = int(interval)
+    while offset <= int(close_offset):
+        offsets.append(offset)
+        offset += int(interval)
+    if int(close_offset) not in offsets:
+        offsets.append(int(close_offset))
+    return tuple(dict.fromkeys(offset for offset in offsets if offset > 0))
+
+
+def record_feature_snapshot_range(
+    market: str,
+    *,
+    session_date: str | None = None,
+    mode: str = "live",
+    db_path: str | Path | None = None,
+    interval_min: int = 5,
+    offsets: Iterable[int | str] | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    market_key = normalize_market(market)
+    runtime_mode = normalize_mode(mode)
+    resolved_session_date = session_date or resolve_session_date_str(market_key)
+    if offsets is None:
+        offset_values = dense_feature_offsets_min(market_key, resolved_session_date, interval_min=interval_min)
+    else:
+        offset_values = tuple(
+            dict.fromkeys(
+                resolve_offset_min(value, market=market_key, session_date=resolved_session_date)
+                for value in offsets
+            )
+        )
+    if not offset_values:
+        raise ContinuationShadowError("preopen_continuation_no_offsets")
+
+    results: list[dict[str, Any]] = []
+    for offset in offset_values:
+        results.append(
+            record_feature_snapshots(
+                market_key,
+                session_date=resolved_session_date,
+                mode=runtime_mode,
+                db_path=db_path,
+                offset_min=int(offset),
+                dry_run=dry_run,
+            )
+        )
+    return {
+        "market": market_key,
+        "mode": runtime_mode,
+        "session_date": resolved_session_date,
+        "interval_min": int(_int(interval_min) or 0),
+        "offsets": [int(value) for value in offset_values],
+        "offset_count": len(offset_values),
+        "snapshots": sum(int(item.get("snapshots") or 0) for item in results),
+        "sampled": sum(int(item.get("sampled") or 0) for item in results),
+        "missing": sum(int(item.get("missing") or 0) for item in results),
+        "dry_run": bool(dry_run),
+        "results": results,
+    }
+
+
 def _eligible_count(conn: sqlite3.Connection, session_date: str, market: str, runtime_mode: str) -> int:
     row = conn.execute(
         "SELECT COUNT(*) AS c FROM preopen_candidates WHERE session_date=? AND market=? AND runtime_mode=? AND eligible=1",
@@ -2215,6 +2296,86 @@ def _claude_called_checks(checks: list[sqlite3.Row]) -> list[sqlite3.Row]:
     ]
 
 
+def _sample_rows_from_outcome(row: sqlite3.Row) -> list[dict[str, Any]]:
+    raw = _row_value(row, "outcome_samples_json")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(str(raw))
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [dict(item) for item in parsed if isinstance(item, dict)]
+
+
+def _dense_curve_stats(rows: list[sqlite3.Row]) -> dict[str, Any]:
+    all_offsets: set[int] = set()
+    sampled_offsets: set[int] = set()
+    sampled_snapshot_count = 0
+    missing_snapshot_count = 0
+    outcome_rows_with_samples = 0
+    peak_offsets: list[float] = []
+    trough_offsets: list[float] = []
+    early_pop_fade_count = 0
+    early_pop_count = 0
+
+    for row in rows:
+        samples = _sample_rows_from_outcome(row)
+        if samples:
+            outcome_rows_with_samples += 1
+        sampled_returns: list[tuple[int, float]] = []
+        for sample in samples:
+            offset = _int(sample.get("offset_min"))
+            if offset is None:
+                continue
+            all_offsets.add(int(offset))
+            ret = _num(sample.get("return_from_open_pct"))
+            status = str(sample.get("snapshot_status") or "")
+            if status == "sampled" and ret is not None:
+                sampled_offsets.add(int(offset))
+                sampled_snapshot_count += 1
+                sampled_returns.append((int(offset), float(ret)))
+            else:
+                missing_snapshot_count += 1
+        if sampled_returns:
+            peak_offsets.append(float(max(sampled_returns, key=lambda item: item[1])[0]))
+            trough_offsets.append(float(min(sampled_returns, key=lambda item: item[1])[0]))
+        ret_5m = _num(row["ret_5m"])
+        ret_close = _num(row["ret_close"])
+        if ret_5m is not None and ret_5m > 0:
+            early_pop_count += 1
+            if ret_close is not None and ret_close < 0:
+                early_pop_fade_count += 1
+
+    offset_count = len(all_offsets)
+    sampled_offset_count = len(sampled_offsets)
+    return {
+        "outcome_rows": len(rows),
+        "outcome_rows_with_samples": outcome_rows_with_samples,
+        "offset_count": offset_count,
+        "sampled_offset_count": sampled_offset_count,
+        "first_offset_min": min(all_offsets) if all_offsets else None,
+        "last_offset_min": max(all_offsets) if all_offsets else None,
+        "sampled_snapshot_count": sampled_snapshot_count,
+        "missing_snapshot_count": missing_snapshot_count,
+        "avg_sampled_snapshots_per_outcome": (
+            round(sampled_snapshot_count / len(rows), 2) if rows else None
+        ),
+        "avg_time_to_peak_min": _safe_avg(peak_offsets),
+        "avg_time_to_trough_min": _safe_avg(trough_offsets),
+        "p50_time_to_peak_min": _percentile(peak_offsets, 0.5),
+        "p50_time_to_trough_min": _percentile(trough_offsets, 0.5),
+        "early_pop_count": early_pop_count,
+        "early_pop_fade_count": early_pop_fade_count,
+        "early_pop_fade_rate": (
+            round(early_pop_fade_count / early_pop_count * 100.0, 2)
+            if early_pop_count
+            else None
+        ),
+    }
+
+
 def build_report_payload(
     db_path: str | Path | None = None,
     *,
@@ -2306,6 +2467,7 @@ def build_report_payload(
     five_up_mae_nums = [float(v) for v in five_up_mae if v is not None]
     complete_count = sum(1 for row in rows if _num(row["ret_close"]) is not None)
     complete_rate = round((complete_count / len(rows) * 100.0), 2) if rows else None
+    dense_curve = _dense_curve_stats(rows)
     recommendation = _recommendation(candidates=candidates, rows=rows, decision_stats=decision_stats, checks=checks)
     return {
         "market": market_key,
@@ -2333,6 +2495,7 @@ def build_report_payload(
             "p10": _percentile(five_up_mae_nums, 0.1),
             "p25": _percentile(five_up_mae_nums, 0.25),
         },
+        "dense_curve": dense_curve,
         "recommendation": recommendation,
     }
 
@@ -2366,6 +2529,7 @@ def _empty_report_payload(
             "skip_reasons": {},
         },
         "five_min_up_mae": {"count": 0, "avg": None, "median": None, "p10": None, "p25": None},
+        "dense_curve": _dense_curve_stats([]),
         "recommendation": "shadow_continue",
     }
     if missing_db:
@@ -2437,6 +2601,7 @@ def render_report_markdown(payload: dict[str, Any]) -> str:
             )
         )
     mae = payload.get("five_min_up_mae", {})
+    dense = payload.get("dense_curve", {})
     lines.extend(
         [
             "",
@@ -2447,6 +2612,17 @@ def render_report_markdown(payload: dict[str, Any]) -> str:
             f"- median: {mae.get('median')}",
             f"- p10: {mae.get('p10')}",
             f"- p25: {mae.get('p25')}",
+            "",
+            "## Dense Curve",
+            "",
+            f"- sampled snapshots: {dense.get('sampled_snapshot_count')}",
+            f"- missing snapshots: {dense.get('missing_snapshot_count')}",
+            f"- sampled offsets: {dense.get('sampled_offset_count')} / {dense.get('offset_count')}",
+            f"- offset range: {dense.get('first_offset_min')} ~ {dense.get('last_offset_min')} min",
+            f"- avg sampled snapshots per outcome: {dense.get('avg_sampled_snapshots_per_outcome')}",
+            f"- avg time to peak: {dense.get('avg_time_to_peak_min')} min",
+            f"- avg time to trough: {dense.get('avg_time_to_trough_min')} min",
+            f"- 5m up then close fade: {dense.get('early_pop_fade_count')} / {dense.get('early_pop_count')} ({dense.get('early_pop_fade_rate')})",
             "",
             "## Skip Reasons",
             "",

@@ -8,7 +8,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bot.session_date import KST
-from preopen.scheduler import PreopenJob, default_outcome_offsets_min, due_jobs, is_trading_day, regular_open_dt
+from preopen.scheduler import (
+    PreopenJob,
+    default_outcome_offsets_min,
+    due_jobs,
+    is_trading_day,
+    outcome_offsets_min_by_interval,
+    regular_open_dt,
+)
 from preopen.storage import load_preopen_dashboard, load_preopen_scheduler_state
 from tools.preopen_scheduler import _run_job, _scheduler_heartbeat_path, run_scheduler_once
 
@@ -70,10 +77,18 @@ class PreopenSchedulerTests(unittest.TestCase):
         us_offsets = default_outcome_offsets_min("US", "2026-05-04")
         kr_offsets = default_outcome_offsets_min("KR", "2026-05-04")
 
-        self.assertEqual(us_offsets[:5], (5, 30, 60, 90, 120))
-        self.assertEqual(kr_offsets[:5], (5, 30, 60, 90, 120))
+        self.assertEqual(us_offsets[:5], (5, 10, 15, 20, 25))
+        self.assertEqual(kr_offsets[:5], (5, 10, 15, 20, 25))
         self.assertEqual(us_offsets[-1], 390)
         self.assertEqual(kr_offsets[-1], 390)
+        self.assertEqual(len(us_offsets), 78)
+        self.assertEqual(len(kr_offsets), 78)
+
+    def test_outcome_offsets_can_still_be_requested_at_wider_interval(self) -> None:
+        offsets = outcome_offsets_min_by_interval("US", "2026-05-04", interval_min=30)
+
+        self.assertEqual(offsets[:5], (5, 30, 60, 90, 120))
+        self.assertEqual(offsets[-1], 390)
 
     def test_us_outcome_jobs_continue_after_two_hours(self) -> None:
         now = datetime(2026, 5, 5, 1, 0, tzinfo=KST)

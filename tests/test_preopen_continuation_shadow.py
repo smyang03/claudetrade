@@ -162,6 +162,63 @@ class PreopenContinuationShadowTests(unittest.TestCase):
             mode=mode,
         )
 
+    def _save_dense_outcome(self, *, mode: str = "live") -> None:
+        samples = [
+            {
+                "offset_min": 5,
+                "price": 10.5,
+                "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "return_pct": 16.6667,
+                "high": 10.7,
+                "low": 9.9,
+                "volume": 500_000,
+                "price_source": "test",
+            },
+            {
+                "offset_min": 10,
+                "price": 10.2,
+                "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "return_pct": 13.3333,
+                "high": 10.8,
+                "low": 9.8,
+                "volume": 700_000,
+                "price_source": "test",
+            },
+            {
+                "offset_min": 15,
+                "price": 10.8,
+                "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "return_pct": 20.0,
+                "high": 11.0,
+                "low": 9.7,
+                "volume": 900_000,
+                "price_source": "test",
+            },
+        ]
+        save_outcome_record(
+            "US",
+            "2026-06-04",
+            {
+                "ticker": "AAA",
+                "name": "Alpha",
+                "offset_min": 15,
+                "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "outcome_status": "WIN",
+                "token_status": "ok",
+                "anchor_price": 9.0,
+                "regular_open_price": 10.0,
+                "price": 10.8,
+                "high": 11.0,
+                "low": 9.7,
+                "volume": 900_000,
+                "post_open_return_pct": 20.0,
+                "post_open_15m_return_pct": 20.0,
+                "price_source": "test",
+                "outcome_samples": samples,
+            },
+            mode=mode,
+        )
+
     def _save_kr_outcome(self, *, mode: str = "live", price: float = 72420.0) -> None:
         save_outcome_record(
             "KR",
@@ -409,6 +466,69 @@ class PreopenContinuationShadowTests(unittest.TestCase):
         self.assertEqual(outcome["ret_close"], 25.0)
         self.assertEqual(outcome["close_price"], 12.5)
         self.assertEqual(outcome["outcome_status"], "complete")
+
+    def test_dense_feature_snapshot_range_writes_5m_offsets_to_close(self) -> None:
+        self._save_us_state()
+        self._save_dense_outcome()
+
+        with patch("preopen.continuation_shadow._close_offset_min", return_value=15):
+            result = cs.record_feature_snapshot_range(
+                "US",
+                session_date="2026-06-04",
+                interval_min=5,
+                db_path=self.db_path,
+            )
+
+        self.assertEqual(result["offsets"], [5, 10, 15])
+        self.assertEqual(result["offset_count"], 3)
+        self.assertEqual(result["snapshots"], 6)
+        self.assertEqual(result["sampled"], 3)
+        self.assertEqual(result["missing"], 3)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            features = conn.execute(
+                "SELECT ticker, offset_min, snapshot_status, return_from_open_pct FROM preopen_feature_snapshots ORDER BY ticker, offset_min"
+            ).fetchall()
+            outcome = conn.execute("SELECT * FROM preopen_outcomes WHERE ticker='AAA'").fetchone()
+
+        aaa = [row for row in features if row["ticker"] == "AAA"]
+        bbb = [row for row in features if row["ticker"] == "BBB"]
+        self.assertEqual([row["offset_min"] for row in aaa], [5, 10, 15])
+        self.assertEqual([row["snapshot_status"] for row in aaa], ["sampled", "sampled", "sampled"])
+        self.assertEqual([row["snapshot_status"] for row in bbb], ["missing", "missing", "missing"])
+        self.assertEqual(aaa[0]["return_from_open_pct"], 5.0)
+        self.assertEqual(outcome["ret_5m"], 5.0)
+        self.assertEqual(outcome["ret_close"], 8.0)
+        self.assertEqual(outcome["outcome_status"], "complete")
+
+    def test_dense_report_payload_summarizes_5m_curve(self) -> None:
+        self._save_us_state()
+        self._save_dense_outcome()
+        with patch("preopen.continuation_shadow._close_offset_min", return_value=15):
+            cs.record_feature_snapshot_range(
+                "US",
+                session_date="2026-06-04",
+                interval_min=5,
+                db_path=self.db_path,
+            )
+
+        payload = cs.build_report_payload(self.db_path, market="US", date_from="2026-06-04", date_to="2026-06-04")
+        dense = payload["dense_curve"]
+        markdown = cs.render_report_markdown(payload)
+
+        self.assertEqual(dense["offset_count"], 3)
+        self.assertEqual(dense["sampled_offset_count"], 3)
+        self.assertEqual(dense["sampled_snapshot_count"], 3)
+        self.assertEqual(dense["missing_snapshot_count"], 3)
+        self.assertEqual(dense["avg_time_to_peak_min"], 15.0)
+        self.assertEqual(dense["avg_time_to_trough_min"], 10.0)
+        self.assertIn("## Dense Curve", markdown)
+
+    def test_dense_feature_offsets_include_close_when_interval_does_not_divide_session(self) -> None:
+        with patch("preopen.continuation_shadow._close_offset_min", return_value=17):
+            offsets = cs.dense_feature_offsets_min("US", "2026-06-04", interval_min=5)
+
+        self.assertEqual(offsets, (5, 10, 15, 17))
 
     def test_strict_claude_parser_rejects_non_contract_responses(self) -> None:
         parsed = cs.parse_claude_response('{"cases":[["C01","PROMOTE",0.72,"OK"]]}', ["C01"])
