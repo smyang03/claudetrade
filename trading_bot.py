@@ -175,6 +175,12 @@ from runtime.gate_evaluation import (
     unconfirmed_soft_cap,
 )
 from runtime.candidate_actions import action_counts, candidate_actions_from_response
+from runtime.kr_wait_reentry_queue import (
+    REEVAL_SOURCE as KR_WAIT60_REEVAL_SOURCE,
+    build_wait_reentry_items,
+    pop_due_items as pop_kr_wait_reentry_due_items,
+    requeue_items as requeue_kr_wait_reentry_items,
+)
 from runtime.adaptive_live_condition import attach_adaptive_live_condition_shadow
 from runtime.action_routing import route_candidate_action
 from runtime.broker_side import broker_row_side_matches
@@ -1001,6 +1007,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         # 장전 포지션 리뷰 결과. 과거 버전에서 남은 큐가 있더라도 주문으로 바로 실행하지 않고
         # 장 시작 후 INTRADAY_REVIEW 재확인 대상으로만 전환한다.
         self._pre_session_sell_queue: dict[str, list] = {"KR": [], "US": []}
+        self._kr_wait60_reeval_queue: list[dict[str, Any]] = []
+        self._kr_wait60_reeval_seen: set[str] = set()
         # KR 장중 스크리닝 결과 (session_close 시 캐시 저장 → 다음날 장전 사용)
         self._last_kr_candidates: list = []
         self._last_screen_candidates: dict[str, list] = {"KR": [], "US": []}
@@ -4448,6 +4456,175 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if runtime_cfg is not None and hasattr(runtime_cfg, "get"):
             return runtime_cfg.get(key, default)
         return os.getenv(key, default)
+
+    def _runtime_int(self, key: str, default: int = 0) -> int:
+        runtime_cfg = getattr(self, "runtime_config", None)
+        if runtime_cfg is not None and hasattr(runtime_cfg, "get_int"):
+            return int(runtime_cfg.get_int(key, default))
+        value = os.getenv(key)
+        if value is None or str(value).strip() == "":
+            return int(default)
+        try:
+            return int(float(str(value).replace(",", "")))
+        except Exception:
+            return int(default)
+
+    def _kr_wait60_reeval_enabled(self) -> bool:
+        return self._runtime_bool("KR_WAIT60_REEVAL_ENABLED", False)
+
+    def _kr_wait60_reeval_sources(self) -> set[str]:
+        raw = str(
+            self._runtime_value(
+                "KR_WAIT60_REEVAL_SOURCES",
+                "session_open,session_reuse_rescreen,manual_rescreen,rescreen,tuning_rescreen,"
+                "analyst_reinvoke_rescreen,sub_screener_rescreen,opening_fresh_rescreen",
+            )
+            or ""
+        )
+        return {part.strip() for part in raw.split(",") if part.strip()}
+
+    def _kr_wait60_reeval_actions(self) -> set[str]:
+        raw = str(self._runtime_value("KR_WAIT60_REEVAL_ACTIONS", "WATCH,PROBE_READY,BUY_READY,PULLBACK_WAIT") or "")
+        return {part.strip().upper() for part in raw.split(",") if part.strip()}
+
+    def _enqueue_kr_wait60_reeval_candidates(
+        self,
+        market: str,
+        phase: str,
+        *,
+        selected: list[str],
+        selection_meta: dict,
+        candidates: list[dict],
+    ) -> list[dict]:
+        if not self._kr_wait60_reeval_enabled():
+            return []
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if market_key != "KR":
+            return []
+        if not hasattr(self, "_kr_wait60_reeval_queue"):
+            self._kr_wait60_reeval_queue = []
+        if not hasattr(self, "_kr_wait60_reeval_seen"):
+            self._kr_wait60_reeval_seen = set()
+        now = datetime.now(KST).replace(tzinfo=None)
+        session_date = self._current_session_date_str(market_key)
+        max_candidates = self._runtime_int("KR_WAIT60_REEVAL_MAX_CANDIDATES", 8)
+        delay_min = self._runtime_float("KR_WAIT60_REEVAL_DELAY_MIN", 60.0)
+        items = build_wait_reentry_items(
+            market=market_key,
+            phase=phase,
+            session_date=session_date,
+            selected=list(selected or []),
+            selection_meta=dict(selection_meta or {}),
+            candidates=list(candidates or []),
+            now=now,
+            delay_min=delay_min,
+            max_candidates=max_candidates,
+            allowed_sources=self._kr_wait60_reeval_sources(),
+            allowed_actions=self._kr_wait60_reeval_actions(),
+        )
+        if not items:
+            return []
+        max_queue = max(max_candidates, self._runtime_int("KR_WAIT60_REEVAL_MAX_QUEUE", 40))
+        queued: list[dict] = []
+        existing = {str(item.get("id") or "") for item in self._kr_wait60_reeval_queue}
+        for item in items:
+            item_id = str(item.get("id") or "")
+            if not item_id or item_id in existing or item_id in self._kr_wait60_reeval_seen:
+                continue
+            self._kr_wait60_reeval_queue.append(item)
+            self._kr_wait60_reeval_seen.add(item_id)
+            existing.add(item_id)
+            queued.append(item)
+        if len(self._kr_wait60_reeval_queue) > max_queue:
+            self._kr_wait60_reeval_queue = self._kr_wait60_reeval_queue[-max_queue:]
+        if queued:
+            log.info(
+                f"[KR wait60 reeval queue] phase={phase} queued={len(queued)} "
+                f"due={[item.get('ticker') for item in queued]}"
+            )
+            try:
+                analysis_log.info(
+                    f"[KR wait60 reeval queue] queued={len(queued)}",
+                    extra={"extra": {
+                        "event": "kr_wait60_reeval_queued",
+                        "market": market_key,
+                        "phase": phase,
+                        "count": len(queued),
+                        "tickers": [item.get("ticker") for item in queued],
+                        "delay_min": delay_min,
+                    }},
+                )
+            except Exception:
+                pass
+        return queued
+
+    def run_kr_wait60_recheck(self, market: str = "KR") -> list[str]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if market_key != "KR" or not self._kr_wait60_reeval_enabled():
+            return []
+        if not getattr(self, "session_active", False) or self.current_market != "KR":
+            return []
+        if not hasattr(self, "_kr_wait60_reeval_queue"):
+            self._kr_wait60_reeval_queue = []
+        if not self._kr_wait60_reeval_queue:
+            return []
+        now = datetime.now(KST).replace(tzinfo=None)
+        max_due = self._runtime_int("KR_WAIT60_REEVAL_MAX_DUE_PER_RUN", 5)
+        due, pending = pop_kr_wait_reentry_due_items(
+            self._kr_wait60_reeval_queue,
+            now=now,
+            max_items=max_due,
+        )
+        self._kr_wait60_reeval_queue = pending
+        if not due:
+            return []
+        candidates = [
+            item.get("candidate")
+            for item in due
+            if isinstance(item, dict) and isinstance(item.get("candidate"), dict)
+        ]
+        if not candidates:
+            return []
+        try:
+            selected = self.manual_rescreen(
+                "KR",
+                source_type=KR_WAIT60_REEVAL_SOURCE,
+                trigger="wait60_reeval",
+                candidate_override=candidates,
+            )
+            log.info(
+                f"[KR wait60 reeval] due={len(due)} candidates={len(candidates)} selected={selected}"
+            )
+            try:
+                analysis_log.info(
+                    f"[KR wait60 reeval] selected={selected}",
+                    extra={"extra": {
+                        "event": "kr_wait60_reeval_run",
+                        "market": "KR",
+                        "due_count": len(due),
+                        "candidate_count": len(candidates),
+                        "selected": list(selected or []),
+                        "source_type": KR_WAIT60_REEVAL_SOURCE,
+                    }},
+                )
+            except Exception:
+                pass
+            return list(selected or [])
+        except RuntimeError as exc:
+            retry_delay = self._runtime_float("KR_WAIT60_REEVAL_BUSY_RETRY_MIN", 3.0)
+            max_attempts = self._runtime_int("KR_WAIT60_REEVAL_MAX_RETRY_ATTEMPTS", 3)
+            self._kr_wait60_reeval_queue = requeue_kr_wait_reentry_items(
+                self._kr_wait60_reeval_queue,
+                due,
+                now=now,
+                retry_delay_min=retry_delay,
+                max_attempts=max_attempts,
+            )
+            log.info(f"[KR wait60 reeval] busy, requeued={len(due)} reason={exc}")
+            return []
+        except Exception as exc:
+            log.warning(f"[KR wait60 reeval] failed: {exc}", exc_info=True)
+            return []
 
     def _init_market_risk_shadow(
         self,
@@ -14812,6 +14989,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
         except Exception as exc:
             log.warning(f"[candidate quality] save failed {market} {phase}: {exc}")
+        try:
+            self._enqueue_kr_wait60_reeval_candidates(
+                market,
+                phase,
+                selected=list(selected or []),
+                selection_meta=dict(selection_meta or {}),
+                candidates=list(prompt_candidates or raw_candidates or []),
+            )
+        except Exception as exc:
+            log.warning(f"[KR wait60 reeval queue] enqueue failed {market} {phase}: {exc}")
+
     def _opening_fresh_quality_metrics(self, market: str, raw_candidates: list) -> dict:
         prompt_tickers = (
             (self.today_judgment or {}).get("universe_tickers")
@@ -35755,6 +35943,8 @@ def main(is_paper: bool = True):
         schedule.every(_RESCREEN_SCHEDULE_TICK_MIN).minutes.do(bot.run_rescreen, _mkt)
         schedule.every(30).minutes.do(bot.run_tuning, _mkt)
         schedule.every(60).minutes.do(bot._intraday_position_review, _mkt)
+    if "KR" in enabled_markets:
+        schedule.every(5).minutes.do(bot.run_kr_wait60_recheck, "KR")
     schedule.every(1).minutes.do(bot._write_runtime_handoff_snapshot, "autosave")
 
     # 1시간마다 상태 보고 (세션 중일 때만 실제 전송)
