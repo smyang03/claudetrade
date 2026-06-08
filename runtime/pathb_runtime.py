@@ -4484,20 +4484,15 @@ class PathBRuntime:
             protective_stop = self._round_policy_price(
                 advice.get("protective_stop"), market, direction="down"
             )
-            if protective_stop <= 0 or protective_stop >= current:
-                return {}, "protective_stop_missing_or_invalid"
+            if protective_stop <= 0:
+                return {}, "protective_stop_missing"
+            if protective_stop >= current:
+                # stop이 현재가 위에 있으면 stale price 가능성 → caller가 fresh current로 재검증
+                return {}, "protective_stop_above_current_recheck"
             reask_if_price_above = self._policy_price_reask_above(advice, market, current)
             revised_target = self._round_policy_price(advice.get("revised_sell_target"), market, direction="up")
-            # Claude가 revised_sell_target을 제시한 경우 → 목표가 상향 + 하방 floor 설정
             if revised_target > current:
-                floor_info = self._pathb_gain_lock_floor_info(plan, pos, current, plan_json=plan_data)
-                gain_floor = self._policy_float(floor_info.get("floor"))
-                if gain_floor > 0 and protective_stop < gain_floor:
-                    protective_stop = gain_floor
-                if bool(floor_info.get("too_close")) or protective_stop >= current * (
-                    1.0 - self._policy_float(floor_info.get("min_distance"))
-                ):
-                    return {}, "protective_stop_too_close_or_above_current"
+                # gain_floor/too_close 강제 조정 제거: Claude stop을 그대로 사용
                 return {
                     **base,
                     "mode": "target_extension",
@@ -5874,36 +5869,82 @@ class PathBRuntime:
                 elif reject_reason:
                     payload["auto_sell_policy_reject_reason"] = reject_reason
                     payload["auto_sell_policy_rejected_at"] = now_iso
-                    existing_ok_reasons = {
-                        "protective_stop_looser_than_plan_stop",
-                        "protective_stop_not_tighter_than_plan_stop",
-                        "trailing_already_tighter",
-                        "existing_policy_tighter",
-                    }
-                    existing_guard = (
-                        self._pathb_existing_stop_satisfies_gain_lock(
-                            plan,
-                            pos,
-                            current_native,
-                            plan_json=plan_json_for_policy if isinstance(plan_json_for_policy, dict) else {},
-                        )
-                        if reject_reason in existing_ok_reasons
-                        else {"allowed": False}
-                    )
-                    if bool(existing_guard.get("allowed")):
-                        payload["auto_sell_policy_existing_stop_hold"] = True
-                        payload["auto_sell_policy_existing_stop_source"] = existing_guard.get("stop_source", "")
-                        payload["auto_sell_policy_existing_stop"] = existing_guard.get("stop", 0.0)
-                        payload["auto_sell_policy_gain_lock_floor"] = existing_guard.get("floor", 0.0)
-                    else:
+                    # protective_stop이 signal price 위일 때 fresh current로 재검증
+                    if reject_reason == "protective_stop_above_current_recheck":
+                        fresh_current = self._current_native_price(plan.market, plan.ticker)
+                        if fresh_current > 0:
+                            advisor_stop = self._round_policy_price(
+                                (advice or {}).get("protective_stop"), plan.market, direction="down"
+                            )
+                            if advisor_stop > 0 and advisor_stop < fresh_current:
+                                # fresh current 기준으로 policy 재생성
+                                policy, reject_reason = self._pathb_auto_sell_policy_from_advice(
+                                    plan, pos, signal,
+                                    advice if isinstance(advice, dict) else {},
+                                    fresh_current,
+                                    now=now_dt,
+                                    plan_json=plan_json_for_policy if isinstance(plan_json_for_policy, dict) else {},
+                                )
+                                if policy:
+                                    payload["auto_sell_policy"] = policy
+                                    payload["auto_sell_policy_reject_reason"] = ""
+                                    payload["auto_sell_policy_fresh_current_used"] = fresh_current
+                                    if (
+                                        str(policy.get("mode", "") or "") == "target_extension"
+                                        and self._pathb_hold_policy_mode() == "enforce"
+                                    ):
+                                        payload["sell_target"] = float(policy.get("revised_sell_target", 0) or 0)
+                                    log.info(
+                                        f"[PathB HOLD recheck] {plan.market} {plan.ticker} "
+                                        f"signal_price={current_native} fresh_price={fresh_current} "
+                                        f"stop={advisor_stop} → HOLD 복구"
+                                    )
+                                    pos.update(payload)
+                                    try:
+                                        self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)
+                                    except Exception:
+                                        pass
+                                    return {"allowed": False, **payload}
+                        # fresh current에서도 stop >= current이면 SELL
                         action = "SELL"
                         payload["auto_sell_review_action"] = "SELL"
                         payload["auto_sell_hold_fallback_to_sell"] = True
-                        payload["auto_sell_hold_fallback_reason"] = reject_reason
+                        payload["auto_sell_hold_fallback_reason"] = "protective_stop_above_fresh_current"
                         payload["auto_sell_review_detail"] = (
                             str(payload.get("auto_sell_review_detail", "") or "")
-                            + f" | hold_policy_rejected_fallback_to_sell:{reject_reason}"
+                            + f" | hold_policy_stop_above_current_sell"
                         )[:500]
+                    else:
+                        existing_ok_reasons = {
+                            "protective_stop_looser_than_plan_stop",
+                            "protective_stop_not_tighter_than_plan_stop",
+                            "trailing_already_tighter",
+                            "existing_policy_tighter",
+                        }
+                        existing_guard = (
+                            self._pathb_existing_stop_satisfies_gain_lock(
+                                plan,
+                                pos,
+                                current_native,
+                                plan_json=plan_json_for_policy if isinstance(plan_json_for_policy, dict) else {},
+                            )
+                            if reject_reason in existing_ok_reasons
+                            else {"allowed": False}
+                        )
+                        if bool(existing_guard.get("allowed")):
+                            payload["auto_sell_policy_existing_stop_hold"] = True
+                            payload["auto_sell_policy_existing_stop_source"] = existing_guard.get("stop_source", "")
+                            payload["auto_sell_policy_existing_stop"] = existing_guard.get("stop", 0.0)
+                            payload["auto_sell_policy_gain_lock_floor"] = existing_guard.get("floor", 0.0)
+                        else:
+                            action = "SELL"
+                            payload["auto_sell_review_action"] = "SELL"
+                            payload["auto_sell_hold_fallback_to_sell"] = True
+                            payload["auto_sell_hold_fallback_reason"] = reject_reason
+                            payload["auto_sell_review_detail"] = (
+                                str(payload.get("auto_sell_review_detail", "") or "")
+                                + f" | hold_policy_rejected_fallback_to_sell:{reject_reason}"
+                            )[:500]
         pos.update(payload)
         try:
             self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)

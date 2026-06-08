@@ -1230,7 +1230,10 @@ class AutoSellClaudeGateTests(unittest.TestCase):
             self.assertTrue(run["plan"]["auto_sell_hold_fallback_to_sell"])
             self.assertEqual(run["plan"]["auto_sell_policy_reject_reason"], "protective_stop_too_close_or_above_current")
 
-    def test_pathb_profit_ladder_hold_rejects_when_gain_lock_floor_too_close(self) -> None:
+    def test_pathb_profit_ladder_hold_accepts_claude_stop_without_gain_lock_floor(self) -> None:
+        # gain_lock floor 강제 조정이 제거됐으므로 protective_stop < current이면 HOLD 허용
+        # 이전: target*0.98 floor가 stop을 올려 SELL로 뒤집었음
+        # 현재: Claude stop을 그대로 사용
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan, pos = _pathb_runtime(tmp)
             advice = {
@@ -1251,10 +1254,13 @@ class AutoSellClaudeGateTests(unittest.TestCase):
                 )
 
             run = runtime.store.find_path_run(plan.path_run_id)
-            self.assertTrue(result["allowed"])
-            self.assertEqual(run["plan"]["auto_sell_review_action"], "SELL")
-            self.assertTrue(run["plan"]["auto_sell_hold_fallback_to_sell"])
-            self.assertEqual(run["plan"]["auto_sell_policy_reject_reason"], "protective_stop_too_close_or_above_current")
+            # protective_stop=112 < current=118 → gain_lock floor 개입 없이 HOLD 허용
+            self.assertFalse(result["allowed"])
+            policy = run["plan"].get("auto_sell_policy") or {}
+            self.assertEqual(policy.get("mode"), "target_extension")
+            self.assertAlmostEqual(policy.get("protective_stop", 0), 112.0, places=1)
+            self.assertAlmostEqual(policy.get("revised_sell_target", 0), 130.0, places=1)
+            self.assertEqual(run["plan"].get("auto_sell_policy_reject_reason", ""), "")
 
     def test_pathb_target_hold_keeps_when_existing_policy_stop_satisfies_gain_lock_floor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
