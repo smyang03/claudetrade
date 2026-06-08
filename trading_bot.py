@@ -6626,6 +6626,40 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
         return normal + penalized
 
+    def _enrich_selection_candidates_with_news(
+        self,
+        market: str,
+        candidates: list[dict],
+        *,
+        source: str = "",
+    ) -> tuple[list[dict], dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        rows = [dict(row or {}) for row in list(candidates or []) if isinstance(row, dict)]
+        if not rows:
+            return rows, {"status": "no_candidates", "candidate_count": 0, "flagged_count": 0}
+        try:
+            from preopen.news_enrichment import enrich_candidates_with_news
+
+            enriched, summary = enrich_candidates_with_news(
+                market_key,
+                rows,
+                session_date=self._current_session_date_str(market_key),
+                allow_rank_reorder=False,
+            )
+            summary = dict(summary or {})
+            if summary.get("status") == "ok":
+                log.info(
+                    f"[selection news] {market_key} source={source or '-'} "
+                    f"flagged={int(summary.get('flagged_count') or 0)} "
+                    f"eligible={int(summary.get('news_prompt_eligible_count') or 0)} "
+                    f"stale={int(summary.get('stale_filtered_count') or 0)} "
+                    f"weak={int(summary.get('broad_weak_count') or 0)}"
+                )
+            return enriched, summary
+        except Exception as exc:
+            log.warning(f"[selection news] {market_key} enrichment skipped: {exc}")
+            return rows, {"status": "error", "error": str(exc)[:240], "candidate_count": len(rows)}
+
     def _prepare_selection_prompt_pool_with_evidence(
         self,
         market: str,
@@ -6635,6 +6669,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         # 당일 손절 종목을 후순위로 이동 (prompt cap 여유 없으면 자동 제외)
         candidates = self._push_same_day_stop_to_back(market_key, candidates)
+        candidates, news_enrichment_summary = self._enrich_selection_candidates_with_news(
+            market_key,
+            candidates,
+            source="selection_prompt_pool",
+        )
         alignment_enabled = self._runtime_bool("FINAL_PROMPT_EVIDENCE_ALIGNMENT_ENABLED", True)
         try:
             candidates_with_features = self._annotate_selection_execution_features(
@@ -6649,6 +6688,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             candidates_with_features = self._annotate_selection_execution_features(market_key, candidates, mode)
         prompt_rows, prompt_meta = prepare_selection_prompt_pool(market_key, candidates_with_features)
         prompt_meta = dict(prompt_meta or {})
+        if news_enrichment_summary:
+            prompt_meta["news_enrichment"] = dict(news_enrichment_summary)
         prompt_tickers = [
             self._selection_ticker_key(market_key, row.get("ticker"))
             for row in list(prompt_rows or [])
