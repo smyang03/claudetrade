@@ -20,6 +20,18 @@ def _write_price(root: Path, market: str, ticker: str, rows: list[tuple[str, flo
     )
 
 
+def _write_daily_price(root: Path, market: str, ticker: str, rows: list[tuple[str, float]]) -> None:
+    market_key = market.lower()
+    path = root / market_key / f"{market_key}_{ticker}.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "date,open,high,low,close,volume,source,collected_at\n"
+        + "\n".join(f"{ts},{price},{price},{price},{price},100,test,{ts}" for ts, price in rows)
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _event_db(path: Path) -> None:
     with sqlite3.connect(path) as conn:
         conn.execute(
@@ -268,6 +280,91 @@ def test_build_simulation_batch_cli_json(tmp_path: Path, capsys) -> None:
     batch = json.loads(Path(payload["batch_path"]).read_text(encoding="utf-8"))
     assert batch["sweep"] == {"profit_ladder_giveback_pct": [1.0, 1.5]}
     assert batch["coverage_summary"]["case_count"] == 2
+
+
+def test_price_tape_uses_daily_fallback_when_minute_window_is_empty(tmp_path: Path) -> None:
+    price_root = tmp_path / "price"
+    _write_price(
+        price_root,
+        "US",
+        "IBM",
+        [
+            ("2026-06-04T22:30:00+09:00", 110.0),
+        ],
+    )
+    _write_daily_price(
+        price_root,
+        "US",
+        "IBM",
+        [
+            ("2026-06-01", 100.0),
+            ("2026-06-02", 102.0),
+        ],
+    )
+
+    tape = ops_build_simulation_batch._read_price_tape(
+        price_root=price_root,
+        market="US",
+        ticker="IBM",
+        start_at=ops_build_simulation_batch._parse_dt("2026-06-01T00:00:00+09:00"),
+        end_at=ops_build_simulation_batch._parse_dt("2026-06-02T00:00:00+09:00"),
+        max_rows=100,
+    )
+
+    assert tape is not None
+    assert [row["ts"] for row in tape.rows] == ["2026-06-01", "2026-06-02"]
+    coverage = tape.coverage
+    assert coverage["coverage_status"] == "partial"
+    assert coverage["coverage_flags"] == ["daily_fallback_used"]
+    price_file = coverage["price_file"].replace("\\", "/")
+    price_files = [item.replace("\\", "/") for item in coverage["price_files"]]
+    assert price_file.endswith("price/us/us_IBM.csv")
+    assert price_files[0].endswith("price/minute/us/us_IBM.csv")
+    assert price_files[1].endswith("price/us/us_IBM.csv")
+
+
+def test_price_tape_merges_minute_and_daily_fallback_rows(tmp_path: Path) -> None:
+    price_root = tmp_path / "price"
+    _write_price(
+        price_root,
+        "US",
+        "MSFT",
+        [
+            ("2026-06-01T22:30:00+09:00", 420.0),
+            ("2026-06-01T23:00:00+09:00", 421.0),
+        ],
+    )
+    _write_daily_price(
+        price_root,
+        "US",
+        "MSFT",
+        [
+            ("2026-06-02", 424.0),
+            ("2026-06-03", 428.0),
+        ],
+    )
+
+    tape = ops_build_simulation_batch._read_price_tape(
+        price_root=price_root,
+        market="US",
+        ticker="MSFT",
+        start_at=ops_build_simulation_batch._parse_dt("2026-06-01T22:30:00+09:00"),
+        end_at=ops_build_simulation_batch._parse_dt("2026-06-03T00:00:00+09:00"),
+        max_rows=100,
+    )
+
+    assert tape is not None
+    assert [row["ts"] for row in tape.rows] == [
+        "2026-06-01T22:30:00+09:00",
+        "2026-06-01T23:00:00+09:00",
+        "2026-06-02",
+        "2026-06-03",
+    ]
+    coverage = tape.coverage
+    assert coverage["coverage_status"] == "partial"
+    assert coverage["coverage_flags"] == ["daily_fallback_used"]
+    assert coverage["price_file"].replace("\\", "/").endswith("price/minute/us/us_MSFT.csv")
+    assert coverage["matched_rows"] == 4
 
 
 def test_us_counterfactual_trigger_after_kst_midnight_uses_trigger_day_end(tmp_path: Path) -> None:

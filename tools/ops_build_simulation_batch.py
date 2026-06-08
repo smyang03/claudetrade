@@ -131,17 +131,19 @@ def _market_session_end(market: str, reference: datetime | None) -> datetime | N
     return datetime.combine(ref.date(), time.max, tzinfo=KST)
 
 
-def _price_file(price_root: Path, market: str, ticker: str) -> Path | None:
+def _price_files(price_root: Path, market: str, ticker: str) -> list[Path]:
     market_key = str(market or "").lower()
     ticker_key = str(ticker or "").upper() if market_key == "us" else str(ticker or "")
     candidates = [
         price_root / "minute" / market_key / f"{market_key}_{ticker_key}.csv",
         price_root / market_key / f"{market_key}_{ticker_key}.csv",
     ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
+    return [candidate for candidate in candidates if candidate.exists()]
+
+
+def _price_file(price_root: Path, market: str, ticker: str) -> Path | None:
+    sources = _price_files(price_root, market, ticker)
+    return sources[0] if sources else None
 
 
 def _price_file_text(source: Path | None) -> str:
@@ -153,9 +155,18 @@ def _price_file_text(source: Path | None) -> str:
         return str(source)
 
 
+def _price_files_text(sources: Iterable[Path] | None) -> list[str]:
+    return [_price_file_text(source) for source in sources or []]
+
+
+def _is_minute_price_file(source: Path) -> bool:
+    return any(str(part).lower() == "minute" for part in source.parts)
+
+
 def _price_coverage_payload(
     *,
     price_file: Path | None,
+    price_files: Iterable[Path] | None = None,
     requested_start_at: datetime | None,
     requested_end_at: datetime | None,
     actual_start_at: str = "",
@@ -163,6 +174,7 @@ def _price_coverage_payload(
     matched_rows: int = 0,
     max_rows_limit_hit: bool = False,
     missing_reason: str = "",
+    extra_flags: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     flags: list[str] = []
     actual_start_dt = _parse_dt(actual_start_at)
@@ -184,6 +196,10 @@ def _price_coverage_payload(
             flags.append("end_before_requested")
         if max_rows_limit_hit:
             flags.append("max_rows_limit_hit")
+    for flag in extra_flags or []:
+        flag_text = str(flag or "").strip()
+        if flag_text and flag_text not in flags:
+            flags.append(flag_text)
 
     if missing_reason:
         status = missing_reason
@@ -201,6 +217,7 @@ def _price_coverage_payload(
         "actual_end_at": str(actual_end_at or ""),
         "matched_rows": int(matched_rows or 0),
         "price_file": _price_file_text(price_file),
+        "price_files": _price_files_text(price_files or ([price_file] if price_file else [])),
     }
 
 
@@ -212,10 +229,12 @@ def _missing_price_coverage(
     start_at: datetime | None,
     end_at: datetime | None,
 ) -> dict[str, Any]:
-    source = _price_file(price_root, market, ticker)
-    reason = "price_file_missing" if source is None else "price_rows_empty_after_filter"
+    sources = _price_files(price_root, market, ticker)
+    source = sources[0] if sources else None
+    reason = "price_file_missing" if not sources else "price_rows_empty_after_filter"
     return _price_coverage_payload(
         price_file=source,
+        price_files=sources,
         requested_start_at=start_at,
         requested_end_at=end_at,
         missing_reason=reason,
@@ -231,44 +250,60 @@ def _read_price_tape(
     end_at: datetime | None,
     max_rows: int,
 ) -> TapeRows | None:
-    source = _price_file(price_root, market, ticker)
-    if source is None:
+    sources = _price_files(price_root, market, ticker)
+    if not sources:
         return None
-    rows: list[dict[str, Any]] = []
+    rows_by_ts: dict[str, dict[str, Any]] = {}
+    contributing_sources: list[Path] = []
+    daily_fallback_used = False
     max_rows_limit_hit = False
-    with source.open("r", encoding="utf-8-sig", newline="") as fp:
-        reader = csv.DictReader(fp)
-        for raw in reader:
-            ts_value = raw.get("ts") or raw.get("date")
-            price_value = raw.get("close") or raw.get("price")
-            if not ts_value or price_value in (None, ""):
-                continue
-            row_dt = _parse_dt(ts_value)
-            if start_at is not None and row_dt is not None and row_dt < start_at:
-                continue
-            if end_at is not None and row_dt is not None and row_dt > end_at:
-                continue
-            price = _coerce_float(price_value)
-            if price <= 0:
-                continue
-            rows.append({"ts": str(ts_value), "price": price})
-            if max_rows > 0 and len(rows) >= max_rows:
-                max_rows_limit_hit = True
-                break
-    if not rows:
+    for source in sources:
+        source_contributed = False
+        with source.open("r", encoding="utf-8-sig", newline="") as fp:
+            reader = csv.DictReader(fp)
+            for raw in reader:
+                ts_value = raw.get("ts") or raw.get("date")
+                price_value = raw.get("close") or raw.get("price")
+                if not ts_value or price_value in (None, ""):
+                    continue
+                row_dt = _parse_dt(ts_value)
+                if start_at is not None and row_dt is not None and row_dt < start_at:
+                    continue
+                if end_at is not None and row_dt is not None and row_dt > end_at:
+                    continue
+                price = _coerce_float(price_value)
+                if price <= 0:
+                    continue
+                rows_by_ts.setdefault(str(ts_value), {"ts": str(ts_value), "price": price})
+                source_contributed = True
+        if source_contributed:
+            contributing_sources.append(source)
+            if not _is_minute_price_file(source):
+                daily_fallback_used = True
+    if not rows_by_ts:
         return None
+    rows = sorted(
+        rows_by_ts.values(),
+        key=lambda row: (_parse_dt(row["ts"]) or datetime.max.replace(tzinfo=KST), str(row["ts"])),
+    )
+    if max_rows > 0 and len(rows) > max_rows:
+        rows = rows[:max_rows]
+        max_rows_limit_hit = True
+    primary_source = contributing_sources[0] if contributing_sources else sources[0]
     coverage = _price_coverage_payload(
-        price_file=source,
+        price_file=primary_source,
+        price_files=sources,
         requested_start_at=start_at,
         requested_end_at=end_at,
         actual_start_at=rows[0]["ts"],
         actual_end_at=rows[-1]["ts"],
         matched_rows=len(rows),
         max_rows_limit_hit=max_rows_limit_hit,
+        extra_flags=["daily_fallback_used"] if daily_fallback_used else [],
     )
     return TapeRows(
         rows=rows,
-        price_file=source,
+        price_file=primary_source,
         start_at=rows[0]["ts"],
         end_at=rows[-1]["ts"],
         coverage=coverage,

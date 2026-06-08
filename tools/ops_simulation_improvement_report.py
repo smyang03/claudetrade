@@ -92,6 +92,10 @@ def _coverage(result: dict[str, Any]) -> dict[str, Any]:
     return coverage if isinstance(coverage, dict) else {}
 
 
+def _hints(result: dict[str, Any]) -> list[dict[str, Any]]:
+    return [hint for hint in result.get("improvement_hints") or [] if isinstance(hint, dict)]
+
+
 def _native_to_krw(price: float, result: dict[str, Any]) -> float:
     params = _params(result)
     market = str(result.get("market") or params.get("market") or "").upper()
@@ -129,6 +133,116 @@ def _best_by_key(rows: list[dict[str, Any]], key_fields: list[str], *, score_fie
         if current is None or _as_float(row.get(score_field)) > _as_float(current.get(score_field)):
             best[key] = row
     return list(best.values())
+
+
+def _hint_row(result: dict[str, Any], hint: dict[str, Any], *, category: str) -> dict[str, Any]:
+    params = _params(result)
+    metrics = result.get("metrics") or {}
+    evidence = hint.get("evidence") if isinstance(hint.get("evidence"), dict) else {}
+    row: dict[str, Any] = {
+        "market": result.get("market", ""),
+        "category": category,
+        "scenario": result.get("scenario", ""),
+        "ticker": result.get("ticker", ""),
+        "source": params.get("source", ""),
+        "counterfactual_path": params.get("counterfactual_path", ""),
+        "score": round(_result_score(result), 4),
+        "entered": bool(metrics.get("entered")),
+        "closed": bool(metrics.get("closed")),
+        "signal": hint.get("signal", ""),
+        "priority": hint.get("priority", ""),
+        "suggestion": hint.get("suggestion", ""),
+        "source_report_path": result.get("_source_report_path", ""),
+    }
+    for key in (
+        "missed_gain_pct",
+        "buy_zone_high",
+        "final_from_entry_pct",
+        "stop_price",
+        "post_exit_runup_pct",
+        "target_price",
+    ):
+        if key in evidence:
+            row[key] = evidence.get(key)
+    return row
+
+
+def _us_buy_zone_misses(results: list[dict[str, Any]], *, top: int) -> dict[str, Any]:
+    raw_rows: list[dict[str, Any]] = []
+    for result in results:
+        market = str(result.get("market") or _params(result).get("market") or "").upper()
+        if market != "US":
+            continue
+        for hint in _hints(result):
+            if str(hint.get("signal") or "") == "price missed buy zone then rallied":
+                raw_rows.append(_hint_row(result, hint, category="profitability"))
+
+    rows = _best_by_key(raw_rows, ["scenario", "ticker", "source", "counterfactual_path", "signal"], score_field="missed_gain_pct")
+    grouped: defaultdict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    raw_grouped: defaultdict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[(str(row["ticker"]), str(row["source"]), str(row["counterfactual_path"]))].append(row)
+    for row in raw_rows:
+        raw_grouped[(str(row["ticker"]), str(row["source"]), str(row["counterfactual_path"]))].append(row)
+
+    groups: list[dict[str, Any]] = []
+    for (ticker, source, path_name), items in grouped.items():
+        raw_count = len(raw_grouped.get((ticker, source, path_name), []))
+        groups.append(
+            {
+                "ticker": ticker,
+                "source": source,
+                "counterfactual_path": path_name,
+                "count": len(items),
+                "raw_count": raw_count,
+                "avg_missed_gain_pct": round(sum(_as_float(item.get("missed_gain_pct")) for item in items) / len(items), 4),
+                "max_missed_gain_pct": round(max(_as_float(item.get("missed_gain_pct")) for item in items), 4),
+                "max_buy_zone_high": round(max(_as_float(item.get("buy_zone_high")) for item in items), 4),
+            }
+        )
+    groups.sort(key=lambda row: (int(row["count"]), _as_float(row["max_missed_gain_pct"])), reverse=True)
+    rows.sort(key=lambda row: _as_float(row.get("missed_gain_pct")), reverse=True)
+    return {
+        "raw_candidate_count": len(raw_rows),
+        "candidate_count": len(rows),
+        "groups": groups[:top],
+        "top_candidates": rows[:top],
+        "decision": "validate_timing_before_live_buy_zone_change" if rows else "no_buy_zone_miss_signal",
+        "improvement_direction": "Audit selection latency and buy-zone generation before considering narrow, gated live changes; do not widen US PathB buy zones globally.",
+    }
+
+
+def _us_exit_followups(results: list[dict[str, Any]], *, top: int) -> dict[str, Any]:
+    signals = {"hard stop was followed by rebound", "target exit left material run-up"}
+    raw_rows: list[dict[str, Any]] = []
+    for result in results:
+        market = str(result.get("market") or _params(result).get("market") or "").upper()
+        if market != "US":
+            continue
+        for hint in _hints(result):
+            if str(hint.get("signal") or "") in signals:
+                raw_rows.append(_hint_row(result, hint, category="profitability"))
+
+    rows = _best_by_key(raw_rows, ["scenario", "ticker", "signal"], score_field="score")
+    rows.sort(
+        key=lambda row: (
+            _as_float(row.get("final_from_entry_pct")),
+            _as_float(row.get("post_exit_runup_pct")),
+            _as_float(row.get("score")),
+        ),
+        reverse=True,
+    )
+    by_signal: defaultdict[str, list[float]] = defaultdict(list)
+    for row in rows:
+        by_signal[str(row.get("signal") or "")].append(_as_float(row.get("score")))
+    return {
+        "raw_candidate_count": len(raw_rows),
+        "candidate_count": len(rows),
+        "signal_stats": {signal: _stats(scores) for signal, scores in sorted(by_signal.items())},
+        "top_candidates": rows[:top],
+        "decision": "diagnostic_only_until_repeat_evidence" if rows else "no_exit_followup_signal",
+        "improvement_direction": "Treat exit follow-up rows as diagnostics; do not change US PathB profit ladder, target, stop, or pre-close without repeated complete-coverage evidence.",
+    }
 
 
 def _kr_wait_candidates(results: list[dict[str, Any]], *, top: int) -> dict[str, Any]:
@@ -325,6 +439,8 @@ def _md_table(rows: list[dict[str, Any]], columns: list[str]) -> list[str]:
 def _write_md(payload: dict[str, Any], path: Path) -> None:
     kr_wait = payload["categories"]["KR"]["profitability"]["wait_followup"]
     us_blocks = payload["categories"]["US"]["operability_profitability"]["high_price_blocks"]
+    us_buy_zone = payload["categories"]["US"]["profitability"]["buy_zone_misses"]
+    us_exit = payload["categories"]["US"]["profitability"]["exit_followup"]
     coverage = payload["categories"]["common"]["operability_bug"]["price_coverage"]
     lines: list[str] = [
         "# Ops Simulation Improvement Report",
@@ -369,6 +485,52 @@ def _write_md(payload: dict[str, Any], path: Path) -> None:
             ["ticker", "source", "counterfactual_path", "count", "raw_count", "avg_score", "max_budget_gap_krw"],
         )
     )
+    lines.extend(
+        [
+            "",
+            "## US / profitability / buy-zone misses",
+            "",
+            f"- decision: {us_buy_zone['decision']}",
+            f"- candidate_count: {us_buy_zone['candidate_count']}",
+            f"- raw_candidate_count: {us_buy_zone.get('raw_candidate_count', us_buy_zone['candidate_count'])}",
+            f"- direction: {us_buy_zone['improvement_direction']}",
+            "",
+        ]
+    )
+    lines.extend(
+        _md_table(
+            us_buy_zone["groups"],
+            ["ticker", "source", "counterfactual_path", "count", "raw_count", "avg_missed_gain_pct", "max_missed_gain_pct"],
+        )
+    )
+    lines.extend(["", "### Top US Buy-Zone Miss Candidates", ""])
+    lines.extend(
+        _md_table(
+            us_buy_zone["top_candidates"],
+            ["ticker", "score", "missed_gain_pct", "buy_zone_high", "scenario"],
+        )
+    )
+    lines.extend(
+        [
+            "",
+            "## US / profitability / exit follow-up",
+            "",
+            f"- decision: {us_exit['decision']}",
+            f"- candidate_count: {us_exit['candidate_count']}",
+            f"- raw_candidate_count: {us_exit.get('raw_candidate_count', us_exit['candidate_count'])}",
+            f"- direction: {us_exit['improvement_direction']}",
+            "",
+        ]
+    )
+    signal_rows = [{"signal": signal, **stats} for signal, stats in us_exit["signal_stats"].items()]
+    lines.extend(_md_table(signal_rows, ["signal", "count", "avg", "median", "best", "worst"]))
+    lines.extend(["", "### Top US Exit Follow-Up Candidates", ""])
+    lines.extend(
+        _md_table(
+            us_exit["top_candidates"],
+            ["ticker", "signal", "score", "final_from_entry_pct", "post_exit_runup_pct", "scenario"],
+        )
+    )
     lines.extend(["", "## Common / operability_bug / price coverage", ""])
     lines.extend(
         [
@@ -411,6 +573,8 @@ def build_improvement_report(
     out_dir = _output_dir(output_root, output_dir)
     kr_wait = _kr_wait_candidates(results, top=top)
     us_blocks = _us_high_price_blocks(results, top=top)
+    us_buy_zone = _us_buy_zone_misses(results, top=top)
+    us_exit = _us_exit_followups(results, top=top)
     coverage = _coverage_audit(results, top=top)
     payload: dict[str, Any] = {
         "ok": True,
@@ -421,7 +585,13 @@ def build_improvement_report(
         "categories": {
             "common": {"operability_bug": {"price_coverage": coverage}},
             "KR": {"profitability": {"wait_followup": kr_wait}},
-            "US": {"operability_profitability": {"high_price_blocks": us_blocks}},
+            "US": {
+                "operability_profitability": {"high_price_blocks": us_blocks},
+                "profitability": {
+                    "buy_zone_misses": us_buy_zone,
+                    "exit_followup": us_exit,
+                },
+            },
         },
         "apply_prohibitions": [
             "US PathB live buy zone widening",
@@ -434,16 +604,22 @@ def build_improvement_report(
     md_path = out_dir / "ops_simulation_improvement_report.md"
     kr_csv_path = out_dir / "kr_wait_followup_candidates.csv"
     us_csv_path = out_dir / "us_high_price_blocks.csv"
+    us_buy_zone_csv_path = out_dir / "us_buy_zone_misses.csv"
+    us_exit_csv_path = out_dir / "us_exit_followup_candidates.csv"
     payload["output_paths"] = {
         "json": str(json_path),
         "md": str(md_path),
         "kr_wait_csv": str(kr_csv_path),
         "us_high_price_csv": str(us_csv_path),
+        "us_buy_zone_csv": str(us_buy_zone_csv_path),
+        "us_exit_csv": str(us_exit_csv_path),
     }
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     _write_md(payload, md_path)
     _write_csv(kr_csv_path, kr_wait["top_candidates"])
     _write_csv(us_csv_path, us_blocks["top_blocks"])
+    _write_csv(us_buy_zone_csv_path, us_buy_zone["top_candidates"])
+    _write_csv(us_exit_csv_path, us_exit["top_candidates"])
     return payload
 
 

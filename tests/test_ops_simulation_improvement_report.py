@@ -9,7 +9,7 @@ from tools import ops_simulation_improvement_report
 def _sample_report(path: Path) -> Path:
     payload = {
         "ok": True,
-        "summary": {"case_count": 3},
+        "summary": {"case_count": 5},
         "results": [
             {
                 "scenario": "missed_kr_wait_60m",
@@ -77,6 +77,42 @@ def _sample_report(path: Path) -> Path:
                 "events": [{"event_type": "ENTRY_FILLED", "ts": "09:30", "price": 124.0, "qty": 2}],
                 "metrics": {"entered": True, "closed": True, "score": 4.0, "realized_pnl_pct": 4.0},
             },
+            {
+                "scenario": "us_buy_zone_miss",
+                "market": "US",
+                "ticker": "RXO",
+                "path_type": "claude_price",
+                "params": {"source": "pathb_historical", "buy_zone_high": 21.8},
+                "events": [{"event_type": "WAIT_ABOVE_BUY_ZONE", "ts": "09:31", "price": 22.1}],
+                "metrics": {"entered": False, "closed": False, "score": -6.4, "missed_gain_pct": 6.4},
+                "improvement_hints": [
+                    {
+                        "category": "profitability",
+                        "priority": "medium",
+                        "signal": "price missed buy zone then rallied",
+                        "suggestion": "compare buy_zone width, selection timing, and pullback confirmation latency",
+                        "evidence": {"missed_gain_pct": 6.4, "buy_zone_high": 21.8},
+                    }
+                ],
+            },
+            {
+                "scenario": "us_exit_rebound",
+                "market": "US",
+                "ticker": "ARM",
+                "path_type": "claude_price",
+                "params": {"source": "pathb_historical", "stop_price": 360.0},
+                "events": [{"event_type": "EXIT_HARD_STOP", "ts": "10:10", "price": 360.0}],
+                "metrics": {"entered": True, "closed": True, "score": -4.7, "final_from_entry_pct": 4.7},
+                "improvement_hints": [
+                    {
+                        "category": "profitability",
+                        "priority": "medium",
+                        "signal": "hard stop was followed by rebound",
+                        "suggestion": "review stop distance, protective hold boundary, and rebound-aware exit diagnostics",
+                        "evidence": {"stop_price": 360.0, "final_from_entry_pct": 4.7},
+                    }
+                ],
+            },
         ],
     }
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -102,6 +138,14 @@ def test_improvement_report_categorizes_kr_wait_us_high_price_and_coverage(tmp_p
     assert us_blocks["blocked_count"] == 1
     assert us_blocks["top_blocks"][0]["ticker"] == "AVGO"
     assert us_blocks["top_blocks"][0]["budget_gap_krw"] > 0
+    buy_zone = payload["categories"]["US"]["profitability"]["buy_zone_misses"]
+    assert buy_zone["candidate_count"] == 1
+    assert buy_zone["top_candidates"][0]["ticker"] == "RXO"
+    assert buy_zone["top_candidates"][0]["missed_gain_pct"] == 6.4
+    exit_followup = payload["categories"]["US"]["profitability"]["exit_followup"]
+    assert exit_followup["candidate_count"] == 1
+    assert exit_followup["top_candidates"][0]["ticker"] == "ARM"
+    assert exit_followup["signal_stats"]["hard stop was followed by rebound"]["count"] == 1
     coverage = payload["categories"]["common"]["operability_bug"]["price_coverage"]
     assert coverage["by_status"] == {"complete": 1, "partial": 1}
     assert coverage["incomplete_count"] == 1
