@@ -2632,7 +2632,7 @@ execution_phase: {execution_phase or 'unspecified'}
 - max_position_pct is a legacy alias for max_order_cap_pct. It caps the system order budget and is not final portfolio weight or final quantity.
 - price_targets is required for every trade_ready ticker in the primary response.
 - recommended_strategy, risk_tags, max_position_pct는 trade_ready 종목에 대해서만 채우세요.
-- price_targets는 trade_ready 종목에 대해서만 채우세요. watch_only 종목에는 price_targets를 쓰지 마세요.
+- price_targets는 trade_ready 종목 또는 candidate_actions에서 PULLBACK_WAIT를 선택한 종목에 대해서만 채우세요. 그 외 watch_only 종목에는 price_targets를 쓰지 마세요.
 - price_targets 가격 단위는 시장 native 가격입니다. KR은 KRW, US는 USD입니다.
 - 각 price target에는 buy_zone_low, buy_zone_high, sell_target, stop_loss, hold_days, confidence, cancel_if_open_above, entry_rationale, exit_rationale, rationale만 포함하세요.
 - Long 매수 기준 sell_target은 buy_zone_high보다 높고 stop_loss는 buy_zone_low보다 낮아야 합니다.

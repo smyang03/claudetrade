@@ -39,8 +39,9 @@ def candidate_action_prompt_contract(*, enabled: bool = True) -> str:
 - WATCH/PULLBACK_WAIT/AVOID must include reason_code and blocking_factors when evidence blocks immediate execution.
 - BUY_READY/PROBE_READY must include why_not_watch, freshness_verdict, setup_maturity, and action_ceiling_ack.
 - If local evidence says action_ceiling=WATCH, Claude may override only with soft_gate_overrides backed by actual input evidence.
+- If exec feas shows a soft/mutable blocker (macd_not_ready, gap_below_min, breakout_not_ready, orp_entry_window_expired, volume_low) AND price structure is bullish (positive returns, OR break, above VWAP), prefer PULLBACK_WAIT over WATCH. PULLBACK_WAIT creates a PathB waiting plan that enters when price pulls back to the buy zone.
 - valid_until is required for v2 BUY_READY/PROBE_READY unless runtime TTL should be shorter.
-- For PULLBACK_WAIT, price_targets must include buy_zone_low, buy_zone_high, sell_target, stop_loss, hold_days, confidence.
+- For PULLBACK_WAIT, price_targets must include buy_zone_low, buy_zone_high, sell_target, stop_loss, hold_days, confidence. buy_zone must be BELOW current price. stop_loss below buy_zone_low. sell_target above current price.
 - ADD_READY is valid only for an already-held position.
 - Include invalidation_condition for every non-WATCH action.
 - valid_until is optional; runtime will cap it with a shorter TTL.
