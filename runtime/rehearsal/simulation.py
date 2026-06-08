@@ -383,6 +383,45 @@ def _entry_block_reason(params: dict[str, Any]) -> str:
     return ""
 
 
+def _apply_relative_params(params: dict[str, Any]) -> dict[str, Any]:
+    active = dict(params)
+    applied: dict[str, Any] = {}
+
+    padding_pct = float(active.get("buy_zone_padding_pct") or 0.0)
+    if padding_pct:
+        low = float(active.get("buy_zone_low") or 0.0)
+        high = float(active.get("buy_zone_high") or 0.0)
+        if low > 0 and high > 0:
+            active["buy_zone_low"] = round(low * (1.0 - padding_pct / 100.0), 6)
+            active["buy_zone_high"] = round(high * (1.0 + padding_pct / 100.0), 6)
+            applied["buy_zone_padding_pct"] = padding_pct
+
+    target_mult = float(active.get("target_price_mult") or 0.0)
+    if target_mult:
+        target = float(active.get("target_price") or 0.0)
+        if target > 0:
+            active["target_price"] = round(target * target_mult, 6)
+            applied["target_price_mult"] = target_mult
+
+    stop_mult = float(active.get("stop_price_mult") or 0.0)
+    if stop_mult:
+        stop = float(active.get("stop_price") or 0.0)
+        if stop > 0:
+            active["stop_price"] = round(stop * stop_mult, 6)
+            applied["stop_price_mult"] = stop_mult
+
+    budget_mult = float(active.get("fixed_order_krw_mult") or 0.0)
+    if budget_mult:
+        fixed = float(active.get("fixed_order_krw") or 0.0)
+        if fixed > 0:
+            active["fixed_order_krw"] = round(fixed * budget_mult, 2)
+            applied["fixed_order_krw_mult"] = budget_mult
+
+    if applied:
+        active["relative_params_applied"] = applied
+    return active
+
+
 def _score(metrics: dict[str, Any]) -> float:
     if metrics.get("entered"):
         if metrics.get("closed"):
@@ -495,7 +534,7 @@ def _improvement_hints(events: list[dict[str, Any]], metrics: dict[str, Any], pa
 
 def run_simulation_case(case: SimulationCase, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     active = case.with_overrides(overrides)
-    params = dict(active.params)
+    params = _apply_relative_params(active.params)
     events: list[dict[str, Any]] = []
     position: dict[str, Any] | None = None
     exit_event: dict[str, Any] | None = None
@@ -674,11 +713,12 @@ def run_guarded_simulation(
             )
             path = _sandbox_output_path(context, report_path, f"{context.scenario}_simulation.json")
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
             report["report_path"] = str(path)
             if csv_path is not None:
                 csv_target = _sandbox_output_path(context, csv_path, f"{context.scenario}_simulation.csv")
-                write_simulation_csv(report, csv_target)
                 report["csv_path"] = str(csv_target)
+            path.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+            if csv_path is not None:
+                write_simulation_csv(report, csv_target)
     assert_repo_live_state_unchanged(before)
     return report

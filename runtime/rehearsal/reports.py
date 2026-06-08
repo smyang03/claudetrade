@@ -39,17 +39,62 @@ def _hint_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
 def _block_summary(results: list[dict[str, Any]]) -> dict[str, int]:
     counts: Counter[str] = Counter()
     for result in results:
+        result_reasons: set[str] = set()
         for event in result.get("events") or []:
             if str(event.get("event_type") or "") != "ENTRY_BLOCKED":
                 continue
             reason = str(event.get("reason") or "")
             if reason:
-                counts[reason] += 1
+                result_reasons.add(reason)
+        counts.update(result_reasons)
     return dict(counts.most_common())
+
+
+def _price_coverage(result: dict[str, Any]) -> dict[str, Any]:
+    params = result.get("params") or {}
+    coverage = params.get("price_coverage") or {}
+    return coverage if isinstance(coverage, dict) else {}
+
+
+def _price_coverage_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    by_status: Counter[str] = Counter()
+    by_flag: Counter[str] = Counter()
+    incomplete: list[dict[str, Any]] = []
+    for result in results:
+        coverage = _price_coverage(result)
+        if not coverage:
+            continue
+        status = str(coverage.get("coverage_status") or "unknown")
+        by_status[status] += 1
+        for flag in coverage.get("coverage_flags") or []:
+            by_flag[str(flag or "unknown")] += 1
+        if status != "complete":
+            incomplete.append(
+                {
+                    "scenario": result.get("scenario"),
+                    "market": result.get("market"),
+                    "ticker": result.get("ticker"),
+                    "source": (result.get("params") or {}).get("source"),
+                    "coverage_status": status,
+                    "coverage_flags": coverage.get("coverage_flags") or [],
+                    "requested_start_at": coverage.get("requested_start_at", ""),
+                    "requested_end_at": coverage.get("requested_end_at", ""),
+                    "actual_start_at": coverage.get("actual_start_at", ""),
+                    "actual_end_at": coverage.get("actual_end_at", ""),
+                    "matched_rows": coverage.get("matched_rows", 0),
+                }
+            )
+    return {
+        "by_status": dict(sorted(by_status.items())),
+        "by_flag": dict(sorted(by_flag.items())),
+        "incomplete_count": len(incomplete),
+        "incomplete_examples": incomplete[:50],
+    }
 
 
 def _compact_result(result: dict[str, Any]) -> dict[str, Any]:
     metrics = result.get("metrics") or {}
+    coverage = _price_coverage(result)
     return {
         "scenario": result.get("scenario"),
         "market": result.get("market"),
@@ -62,6 +107,7 @@ def _compact_result(result: dict[str, Any]) -> dict[str, Any]:
         "realized_pnl_krw": metrics.get("realized_pnl_krw"),
         "unrealized_pnl_pct": metrics.get("unrealized_pnl_pct"),
         "missed_gain_pct": metrics.get("missed_gain_pct"),
+        "price_coverage_status": coverage.get("coverage_status", ""),
         "hint_signals": [hint.get("signal") for hint in result.get("improvement_hints") or []],
     }
 
@@ -85,6 +131,7 @@ def build_simulation_report(results: list[dict[str, Any]]) -> dict[str, Any]:
         else 0.0,
         "block_reasons": _block_summary(results),
         "hint_summary": _hint_summary(results),
+        "price_coverage": _price_coverage_summary(results),
     }
     return {
         "ok": True,
@@ -100,6 +147,7 @@ def simulation_csv_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for result in report.get("results") or []:
         metrics = result.get("metrics") or {}
+        coverage = _price_coverage(result)
         entry_block_reasons = [
             str(event.get("reason") or "")
             for event in result.get("events") or []
@@ -125,6 +173,13 @@ def simulation_csv_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "missed_gain_pct": metrics.get("missed_gain_pct", 0.0),
                 "post_exit_runup_pct": metrics.get("post_exit_runup_pct", 0.0),
                 "block_reasons": ";".join(entry_block_reasons),
+                "price_coverage_status": coverage.get("coverage_status", ""),
+                "price_coverage_flags": ";".join(str(flag or "") for flag in coverage.get("coverage_flags") or []),
+                "price_requested_start_at": coverage.get("requested_start_at", ""),
+                "price_requested_end_at": coverage.get("requested_end_at", ""),
+                "price_actual_start_at": coverage.get("actual_start_at", ""),
+                "price_actual_end_at": coverage.get("actual_end_at", ""),
+                "price_matched_rows": coverage.get("matched_rows", ""),
                 "hint_signals": ";".join(str(hint.get("signal") or "") for hint in result.get("improvement_hints") or []),
             }
         )
@@ -152,6 +207,13 @@ def write_simulation_csv(report: dict[str, Any], path: Path) -> None:
         "missed_gain_pct",
         "post_exit_runup_pct",
         "block_reasons",
+        "price_coverage_status",
+        "price_coverage_flags",
+        "price_requested_start_at",
+        "price_requested_end_at",
+        "price_actual_start_at",
+        "price_actual_end_at",
+        "price_matched_rows",
         "hint_signals",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)

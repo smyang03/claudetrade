@@ -19,6 +19,9 @@ env/
 # Logs
 logs/
 
+# Local simulation/runtime sandboxes
+.runtime/
+
 # Local docs / notes
 docs/archive/
 

@@ -3332,7 +3332,7 @@ class PathBRuntimeTests(unittest.TestCase):
             precheck.assert_not_called()
             place.assert_not_called()
             self.assertEqual(run["status"], "WAITING")
-            self.assertEqual(run["plan"]["last_submit_block_reason"], "HIGH_PRICE_BUDGET_BLOCK")
+            self.assertEqual(run["plan"]["last_submit_block_reason"], "ORDER_SIZE_TOO_SMALL_GATE")
             self.assertTrue(run["plan"]["submit_block_keeps_waiting"])
 
     def test_consistency_health_reports_missing_pathb_lifecycle_context(self) -> None:
@@ -5358,13 +5358,25 @@ class EarlyGateFloorOneShareTests(unittest.TestCase):
             self.assertTrue(ctx["early_gate_applied"])
             self.assertTrue(ctx["can_buy_1_share"])
 
-    def test_early_gate_floor_not_applied_when_full_budget_also_insufficient(self) -> None:
-        """1주 가격이 full 예산(450,000)도 초과 → floor 적용 안 됨, qty=0 유지."""
+    def test_early_gate_floor_keeps_within_cap_high_price_waiting_for_retry(self) -> None:
+        """1-share cap 안이지만 early gate shortfall이 크면 즉시 floor하지 않고 waiting 재평가로 남긴다."""
         with tempfile.TemporaryDirectory() as tmp:
             runtime = self._make_runtime(tmp)
             runtime.control_store = _Control()
             # 1주 가격: $340 × 1,380 = 469,200 KRW > 450,000 (full 예산도 초과)
             price_krw = 469_200.0
+            qty, ctx = runtime._pathb_qty_with_context("US", price_krw, cash_krw=5_000_000.0)
+            self.assertEqual(qty, 0)
+            self.assertFalse(ctx.get("early_gate_floor_applied", False))
+            self.assertTrue(ctx["can_buy_1_share"])
+            self.assertEqual(ctx["original_budget_krw"], 700_000)
+
+    def test_early_gate_floor_not_applied_when_one_share_cap_is_exceeded(self) -> None:
+        """1주 가격이 one-share cap을 넘으면 high-price block으로 유지한다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = self._make_runtime(tmp)
+            runtime.control_store = _Control()
+            price_krw = 725_000.0
             qty, ctx = runtime._pathb_qty_with_context("US", price_krw, cash_krw=5_000_000.0)
             self.assertEqual(qty, 0)
             self.assertFalse(ctx.get("early_gate_floor_applied", False))

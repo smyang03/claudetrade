@@ -151,6 +151,91 @@ class LiveOrderSafetyTests(unittest.TestCase):
 
         self.assertEqual(qty, 1)
 
+    def test_pathb_qty_uses_one_share_cap_without_expanding_fixed_sizing(self) -> None:
+        runtime = PathBRuntime.__new__(PathBRuntime)
+        runtime.config = V2Config(
+            pathb_fixed_order_krw=450_000,
+            us_min_order_krw=50_000,
+            pathb_allow_one_share_over_budget=True,
+            pathb_one_share_over_budget_max_krw=700_000,
+            pathb_one_share_over_budget_max_account_pct=30.0,
+        )
+        runtime.bot = type(
+            "Bot",
+            (),
+            {
+                "risk": type("Risk", (), {"cash": 5_000_000, "positions": []})(),
+                "usd_krw_rate": 1350,
+                "_us_early_entry_soft_gate": lambda self, market: {"active": False},
+            },
+        )()
+
+        qty, sizing_context = runtime._pathb_qty_with_context("US", 600_000, cash_krw=5_000_000)
+        low_price_qty = runtime._pathb_qty("US", 300_000, cash_krw=5_000_000)
+
+        self.assertEqual(qty, 1)
+        self.assertEqual(low_price_qty, 1)
+        self.assertEqual(sizing_context["original_budget_krw"], 700_000)
+        self.assertEqual(sizing_context["fixed_order_budget_krw"], 450_000)
+        self.assertEqual(sizing_context["one_share_entry_cap_krw"], 700_000)
+        self.assertTrue(sizing_context["can_buy_1_share"])
+
+    def test_pathb_qty_classifies_within_cap_early_gate_as_temporary_size_gate(self) -> None:
+        runtime = PathBRuntime.__new__(PathBRuntime)
+        runtime.config = V2Config(
+            pathb_fixed_order_krw=450_000,
+            us_min_order_krw=50_000,
+            pathb_allow_one_share_over_budget=True,
+            pathb_one_share_over_budget_max_krw=700_000,
+            pathb_one_share_over_budget_max_account_pct=30.0,
+        )
+        runtime.bot = type(
+            "Bot",
+            (),
+            {
+                "risk": type("Risk", (), {"cash": 5_000_000, "positions": []})(),
+                "usd_krw_rate": 1350,
+                "_us_early_entry_soft_gate": lambda self, market: {
+                    "active": True,
+                    "size_mult": 0.5,
+                    "elapsed_min": 30.0,
+                },
+            },
+        )()
+
+        qty, sizing_context = runtime._pathb_qty_with_context("US", 600_000, cash_krw=5_000_000)
+
+        self.assertEqual(qty, 0)
+        self.assertEqual(sizing_context["original_budget_krw"], 700_000)
+        self.assertEqual(sizing_context["effective_budget_krw"], 225_000)
+        self.assertTrue(sizing_context["can_buy_1_share"])
+
+        decision = SafetyGate(V2Config()).evaluate(
+            SafetyContext(
+                market="US",
+                runtime_mode="live",
+                ticker="AVGO",
+                price_krw=600_000,
+                qty=qty,
+                order_cost_krw=0,
+                cash_krw=5_000_000,
+                market_open=True,
+                broker_trust_level="trusted",
+                original_budget_krw=sizing_context["original_budget_krw"],
+                effective_budget_krw=sizing_context["effective_budget_krw"],
+                early_gate_applied=sizing_context["early_gate_applied"],
+                early_gate_size_mult=sizing_context["early_gate_size_mult"],
+                can_buy_1_share=sizing_context["can_buy_1_share"],
+                fixed_sizing=sizing_context["fixed_sizing"],
+                sizing_reason=sizing_context["sizing_reason"],
+                sizing_details=sizing_context["sizing_details"],
+            )
+        )
+
+        self.assertFalse(decision.passed)
+        self.assertEqual(decision.reason_code, "ORDER_SIZE_TOO_SMALL_GATE")
+        self.assertEqual(decision.details["pathb_sizing"]["blocker"], "high_price_one_share_blocked")
+
     def test_pathb_qty_blocks_one_share_over_budget_above_exception_cap(self) -> None:
         runtime = PathBRuntime.__new__(PathBRuntime)
         runtime.config = V2Config(

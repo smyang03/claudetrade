@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from runtime.rehearsal.context import create_rehearsal_context
@@ -59,6 +60,14 @@ def test_operability_blocks_are_reported_separately() -> None:
     assert "order size too small" in _signals(order_size)
 
 
+def test_block_reason_summary_counts_results_not_repeated_events() -> None:
+    case = simulation_case_for_scenario("kr_patha_order_size_gate")
+    report = run_simulation_suite([case])
+
+    assert report["summary"]["blocked_count"] == 1
+    assert report["summary"]["block_reasons"] == {"ORDER_SIZE_TOO_SMALL_GATE": 1}
+
+
 def test_parameter_sweep_ranks_profitable_threshold_over_blocked_case() -> None:
     case = simulation_case_for_scenario("us_pathb_buy_zone_replay")
     report = run_simulation_suite([case], sweep={"confidence_threshold": [0.5, 0.9]})
@@ -67,6 +76,28 @@ def test_parameter_sweep_ranks_profitable_threshold_over_blocked_case() -> None:
     assert report["worst"]["sweep"] == {"confidence_threshold": 0.9}
     assert report["summary"]["block_reasons"]["BLOCKED_CONFIDENCE"] == 1
     assert "TARGET_HIT" not in report["summary"]["block_reasons"]
+
+
+def test_relative_buy_zone_padding_can_turn_missed_zone_into_entry() -> None:
+    case = simulation_case_for_scenario("us_pathb_missed_buy_zone")
+    baseline = run_simulation_case(case)
+    padded = run_simulation_case(case, {"buy_zone_padding_pct": 1.0})
+
+    assert baseline["metrics"]["entered"] is False
+    assert padded["metrics"]["entered"] is True
+    assert padded["params"]["relative_params_applied"] == {"buy_zone_padding_pct": 1.0}
+
+
+def test_relative_target_multiplier_is_applied_per_case() -> None:
+    case = simulation_case_for_scenario("us_pathb_buy_zone_replay")
+    baseline = run_simulation_case(case)
+    extended = run_simulation_case(case, {"target_price_mult": 1.03})
+
+    assert baseline["metrics"]["closed"] is True
+    assert extended["params"]["target_price"] == 133.9
+    assert extended["params"]["relative_params_applied"] == {"target_price_mult": 1.03}
+    assert extended["metrics"]["closed"] is False
+    assert extended["metrics"]["unrealized_pnl_pct"] > baseline["metrics"]["realized_pnl_pct"]
 
 
 def test_price_tape_csv_can_build_custom_case(tmp_path: Path) -> None:
@@ -138,3 +169,6 @@ def test_guarded_simulation_writes_report_only_in_sandbox(tmp_path: Path) -> Non
     assert Path(report["csv_path"]).resolve().is_relative_to(ctx.sandbox_root)
     assert Path(report["report_path"]).exists()
     assert Path(report["csv_path"]).exists()
+    saved = json.loads(Path(report["report_path"]).read_text(encoding="utf-8"))
+    assert saved["report_path"] == report["report_path"]
+    assert saved["csv_path"] == report["csv_path"]

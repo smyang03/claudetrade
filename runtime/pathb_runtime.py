@@ -10842,7 +10842,7 @@ class PathBRuntime:
         loss_ok = max_loss_pct <= 0 or pnl_pct <= max_loss_pct
         return bool(cost_ok and loss_ok)
 
-    def _pathb_registration_max_entry_krw(self, market: str) -> float:
+    def _pathb_registration_max_entry_krw(self, market: str, *, fallback_cash_krw: float | None = None) -> float:
         fixed_budget = max(0.0, float(self.config.pathb_fixed_order_krw or 0.0))
         max_entry = fixed_budget
         if not bool(self.config.pathb_allow_one_share_over_budget):
@@ -10855,10 +10855,13 @@ class PathBRuntime:
         account_pct = float(self.config.pathb_one_share_over_budget_max_account_pct or 0.0)
         if account_pct <= 0:
             return max_entry
-        try:
-            fallback_cash = float(getattr(getattr(self.bot, "risk", None), "cash", 0.0) or 0.0)
-        except Exception:
-            fallback_cash = 0.0
+        if fallback_cash_krw is None:
+            try:
+                fallback_cash = float(getattr(getattr(self.bot, "risk", None), "cash", 0.0) or 0.0)
+            except Exception:
+                fallback_cash = 0.0
+        else:
+            fallback_cash = max(0.0, float(fallback_cash_krw or 0.0))
         equity = self._pathb_total_equity_krw(market, fallback_cash_krw=fallback_cash)
         if equity <= 0:
             return max_entry
@@ -10918,7 +10921,8 @@ class PathBRuntime:
     def _pathb_qty_with_context(self, market: str, price_krw: float, *, cash_krw: float) -> tuple[int, dict[str, Any]]:
         price = float(price_krw or 0)
         cash = max(0.0, float(cash_krw or 0))
-        original_budget = float(self.config.pathb_fixed_order_krw)
+        fixed_budget = float(self.config.pathb_fixed_order_krw)
+        original_budget = self._pathb_registration_max_entry_krw(market, fallback_cash_krw=cash)
         early_gate = self._us_early_entry_soft_gate(market)
         early_gate_applied = bool(early_gate.get("active"))
         early_gate_size_mult = (
@@ -10926,11 +10930,14 @@ class PathBRuntime:
             if early_gate_applied
             else 1.0
         )
-        budget = original_budget * early_gate_size_mult if early_gate_applied else original_budget
+        budget = fixed_budget * early_gate_size_mult if early_gate_applied else fixed_budget
+        hard_budget_cap = budget
         if price <= 0:
             sizing_context = {
                 "original_budget_krw": original_budget,
                 "effective_budget_krw": budget,
+                "fixed_order_budget_krw": fixed_budget,
+                "one_share_entry_cap_krw": original_budget,
                 "early_gate_applied": early_gate_applied,
                 "early_gate_size_mult": early_gate_size_mult,
                 "can_buy_1_share": False,
@@ -10944,7 +10951,9 @@ class PathBRuntime:
                         "warnings": [],
                         "size_intent": "normal",
                         "effective_budget": 0.0,
-                        "hard_budget_cap": max(0.0, budget),
+                        "hard_budget_cap": max(0.0, hard_budget_cap),
+                        "fixed_order_budget_krw": fixed_budget,
+                        "one_share_entry_cap_krw": original_budget,
                     }
                 },
             }
@@ -10953,7 +10962,7 @@ class PathBRuntime:
         decision = calculate_order_quantity(
             price=price,
             base_budget=budget,
-            hard_budget_cap=budget,
+            hard_budget_cap=hard_budget_cap,
             cash_available=cash,
             min_order=min_order,
             size_intent="normal",
@@ -10962,7 +10971,11 @@ class PathBRuntime:
             total_equity=self._pathb_total_equity_krw(market, fallback_cash_krw=cash),
         )
         qty = max(0, int(decision.qty or 0))
-        decision_payload = decision.to_dict()
+        decision_payload = {
+            **decision.to_dict(),
+            "fixed_order_budget_krw": fixed_budget,
+            "one_share_entry_cap_krw": original_budget,
+        }
         sizing_reason = str(decision.blocker or "pathb_fixed_sizing")
         if "one_share_over_budget_allowed" in decision.warnings:
             max_notional = float(self.config.pathb_one_share_over_budget_max_krw or 0)
@@ -11000,6 +11013,8 @@ class PathBRuntime:
         sizing_context = {
             "original_budget_krw": original_budget,
             "effective_budget_krw": budget,
+            "fixed_order_budget_krw": fixed_budget,
+            "one_share_entry_cap_krw": original_budget,
             "early_gate_applied": early_gate_applied,
             "early_gate_size_mult": early_gate_size_mult,
             "early_gate_floor_applied": early_gate_floor_applied,
