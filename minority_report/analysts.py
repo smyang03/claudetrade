@@ -2382,12 +2382,12 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             f"category={category}" if category else "",
             f"sector={sector}" if sector else "",
             f"liq={liquidity_bucket}",
+            _candidate_news_hint(candidate),
             _candidate_discovery_hint(candidate),
             _candidate_trainer_hint(candidate),
             _candidate_quality_hint(candidate),
             _candidate_evidence_hint(candidate),
             _candidate_earnings_hint(candidate),
-            _candidate_news_hint(candidate),
             _candidate_preopen_pin_hint(candidate),
             _candidate_post_open_hint(candidate),
             (
