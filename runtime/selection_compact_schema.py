@@ -126,6 +126,7 @@ Allowed actions: BUY_READY, PROBE_READY, PULLBACK_WAIT, WATCH, AVOID.
 pt is required for every ca item.
 BUY_READY/PROBE_READY/PULLBACK_WAIT use populated pt.
 WATCH/AVOID use empty pt={{}}.
+When exec feas shows soft/mutable blocker (macd_not_ready,gap_below_min,breakout_not_ready,orp_entry_window_expired,volume_low) AND price structure is bullish (positive returns,OR break,above VWAP), use PULLBACK_WAIT with populated pt instead of WATCH. pt.lo/hi must be below current price. pt.stp below pt.lo. pt.tgt above current price.
 pt keys only: ref,lo,hi,tgt,stp,days,conf.
 pt.days must be numeric hold_days, not direction text.
 pt.conf must be numeric confidence 0.0-1.0, not a reason or confirmation phrase.
