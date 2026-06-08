@@ -38,10 +38,37 @@ def _is_same_day_stopped(row: dict[str, Any]) -> bool:
     return bool((row or {}).get("same_day_stopped"))
 
 
+def _is_hard_preopen_pin(row: dict[str, Any]) -> bool:
+    tier = str((row or {}).get("preopen_pin_tier") or "").strip().upper()
+    if tier == "HARD":
+        return True
+    return bool((row or {}).get("preopen_pinned"))
+
+
 def _same_day_stop_last(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     regular = [row for row in rows or [] if not _is_same_day_stopped(row)]
     stopped = [row for row in rows or [] if _is_same_day_stopped(row)]
     return regular + stopped
+
+
+def _hard_pins_first_same_day_stop_last(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    regular_pins = [
+        row for row in rows or []
+        if _is_hard_preopen_pin(row) and not _is_same_day_stopped(row)
+    ]
+    regular = [
+        row for row in rows or []
+        if not _is_hard_preopen_pin(row) and not _is_same_day_stopped(row)
+    ]
+    stopped_pins = [
+        row for row in rows or []
+        if _is_hard_preopen_pin(row) and _is_same_day_stopped(row)
+    ]
+    stopped = [
+        row for row in rows or []
+        if not _is_hard_preopen_pin(row) and _is_same_day_stopped(row)
+    ]
+    return regular_pins + regular + stopped_pins + stopped
 
 
 def _merge_duplicate(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
@@ -65,6 +92,25 @@ def _merge_duplicate(existing: dict[str, Any], incoming: dict[str, Any]) -> dict
     winner.setdefault("merged_duplicate_count", 1)
     winner["merged_duplicate_count"] = int(winner.get("merged_duplicate_count") or 1) + int(loser.get("merged_duplicate_count") or 1)
     winner["same_day_stopped"] = bool(existing.get("same_day_stopped")) or bool(incoming.get("same_day_stopped"))
+    if _is_hard_preopen_pin(existing) or _is_hard_preopen_pin(incoming):
+        winner["preopen_pinned"] = True
+        winner["preopen_pin_tier"] = "HARD"
+    for key in ("preopen_news_edge", "preopen_pin_require_confirmation"):
+        winner[key] = bool(existing.get(key)) or bool(incoming.get(key)) or bool(winner.get(key))
+    for key in (
+        "preopen_news_policy",
+        "preopen_news_edge_reason",
+        "preopen_pin_reason",
+        "preopen_pin_source",
+        "preopen_pin_turnover",
+    ):
+        if winner.get(key) not in (None, "", [], {}):
+            continue
+        for source_row in (existing, incoming):
+            value = source_row.get(key)
+            if value not in (None, "", [], {}):
+                winner[key] = value
+                break
     return winner
 
 
@@ -298,7 +344,7 @@ def build_trainer_prompt_pool(
 
     trainer_score_rank_by_id = {id(row): rank for rank, row in enumerate(ordered, start=1)}
     eligible = [row for row in ordered if str(row.get("trainer_candidate_state") or "").upper() != "QUARANTINE"]
-    prompt_order = _same_day_stop_last(eligible)
+    prompt_order = _hard_pins_first_same_day_stop_last(eligible)
     prompt_source = prompt_order[:cap]
     prompt_pool = [dict(row) for row in prompt_source]
     prompt_keys = {str(row.get("ticker") or "") for row in prompt_pool}
@@ -340,6 +386,16 @@ def build_trainer_prompt_pool(
     full_pool_mix = _pool_mix(scored_pool)
     prompt_pool_mix = _pool_mix(prompt_pool)
     excluded_pool_mix = _pool_mix(excluded_candidates)
+    hard_preopen_pin_tickers = [
+        str(row.get("ticker") or "")
+        for row in eligible
+        if _is_hard_preopen_pin(row)
+    ]
+    hard_preopen_pin_prompt_tickers = [
+        str(row.get("ticker") or "")
+        for row in prompt_pool
+        if _is_hard_preopen_pin(row)
+    ]
     return {
         "version": PROMPT_POOL_VERSION,
         "score_version": TRAINER_SCORE_VERSION,
@@ -363,5 +419,9 @@ def build_trainer_prompt_pool(
             "excluded_pool_mix": excluded_pool_mix,
             "prompt_pool_board_mix": prompt_pool_mix["board_counts"],
             "prompt_pool_excluded_board_mix": excluded_pool_mix["board_counts"],
+            "hard_preopen_pin_count": len(hard_preopen_pin_tickers),
+            "hard_preopen_pin_prompt_count": len(hard_preopen_pin_prompt_tickers),
+            "hard_preopen_pin_tickers": hard_preopen_pin_tickers[:20],
+            "hard_preopen_pin_prompt_tickers": hard_preopen_pin_prompt_tickers[:20],
         },
     }

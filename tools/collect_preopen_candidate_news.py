@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -12,9 +13,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from bot.session_date import KST
 from phase1_trainer.digest_builder import build_kr_digest, build_us_digest
 from phase1_trainer.preopen_news_targets import load_preopen_news_targets
+from preopen.scheduler import regular_open_dt
 from preopen.news_enrichment import enrich_preopen_state, save_preopen_news_snapshot
+from preopen.storage import load_preopen_state, save_candidate_records
 
 
 def _env_int(name: str, default: int) -> int:
@@ -69,6 +73,51 @@ def _fallback_targets(market: str) -> dict[str, str]:
 
 def _corp_news_total(payload: dict[str, Any]) -> int:
     return sum(int(v.get("count", len(v.get("items", []))) or 0) for v in (payload.get("corp_news") or {}).values())
+
+
+def _parse_dt(value: Any):
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=KST)
+    return parsed.astimezone(KST)
+
+
+def _append_enriched_candidate_log_snapshot(
+    market: str,
+    session_date: str,
+    *,
+    mode: str,
+    state_enrichment: dict[str, Any],
+) -> dict[str, Any]:
+    if str((state_enrichment or {}).get("status") or "") != "ok":
+        return {"candidate_log_appended": False, "candidate_log_append_reason": "enrichment_not_ok"}
+    if int((state_enrichment or {}).get("candidate_count") or 0) <= 0:
+        return {"candidate_log_appended": False, "candidate_log_append_reason": "no_enriched_candidates"}
+    applied_at = str((state_enrichment or {}).get("applied_at") or "").strip()
+    applied_dt = _parse_dt(applied_at)
+    if applied_dt is None:
+        return {"candidate_log_appended": False, "candidate_log_append_reason": "missing_applied_at"}
+    if applied_dt > regular_open_dt(market, session_date):
+        return {"candidate_log_appended": False, "candidate_log_append_reason": "after_regular_open"}
+
+    state = load_preopen_state(market, session_date=session_date, max_age_min=0, mode=mode)
+    candidates = list((state or {}).get("candidates") or [])
+    if not candidates:
+        return {"candidate_log_appended": False, "candidate_log_append_reason": "state_candidates_missing"}
+    log_state = dict(state)
+    log_state["captured_at"] = applied_at
+    save_candidate_records(market, session_date, candidates, log_state, mode=mode)
+    return {
+        "candidate_log_appended": True,
+        "candidate_log_captured_at": applied_at,
+        "candidate_log_candidate_count": len(candidates),
+    }
 
 
 def _news_item_key(item: Any) -> str:
@@ -230,6 +279,18 @@ def collect_preopen_candidate_news(
         )
     except Exception as exc:
         state_enrichment = {"status": "error", "error": str(exc)[:240], "flagged_count": 0}
+    try:
+        candidate_log_append = _append_enriched_candidate_log_snapshot(
+            market_key,
+            day,
+            mode=mode,
+            state_enrichment=state_enrichment,
+        )
+    except Exception as exc:
+        candidate_log_append = {
+            "candidate_log_appended": False,
+            "candidate_log_append_reason": f"error:{type(exc).__name__}:{str(exc)[:160]}",
+        }
 
     elapsed = round(time.monotonic() - started, 2)
     coverage = (news_payload or {}).get("news_coverage", {}) if isinstance(news_payload, dict) else {}
@@ -262,6 +323,7 @@ def collect_preopen_candidate_news(
         "digest_path": str(ROOT / "data" / "daily_digest" / f"{day}_{market_key}.json"),
         "preopen_news_snapshot_path": snapshot_path,
         "state_enrichment": state_enrichment,
+        **candidate_log_append,
         "investment_news_bridge": investment_news_bridge,
         "state_news_flagged_count": int((state_enrichment or {}).get("flagged_count", 0) or 0),
         "elapsed_sec": elapsed,

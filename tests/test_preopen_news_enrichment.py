@@ -73,6 +73,15 @@ class PreopenNewsEnrichmentTests(unittest.TestCase):
         self.assertTrue(enriched[0]["news_prompt_eligible"])
         self.assertEqual(enriched[0]["news_signal_type"], "direct_catalyst")
         self.assertIn("news_signal_direct_catalyst", enriched[0]["quality_tags"])
+        self.assertEqual(summary["news_edge_count"], 1)
+        self.assertEqual(summary["news_prompt_pin_count"], 1)
+        self.assertTrue(enriched[0]["preopen_news_edge"])
+        self.assertEqual(enriched[0]["preopen_news_policy"], "strict_loss_filter_v1")
+        self.assertEqual(enriched[0]["preopen_news_edge_reason"], "news_strict_catalyst")
+        self.assertTrue(enriched[0]["preopen_pinned"])
+        self.assertEqual(enriched[0]["preopen_pin_tier"], "HARD")
+        self.assertEqual(enriched[0]["preopen_pin_source"], "news_strict_catalyst")
+        self.assertTrue(enriched[0]["preopen_pin_require_confirmation"])
         self.assertGreaterEqual(enriched[0]["preopen_score"], 0.73)
 
     def test_generic_broad_news_is_flagged_but_not_scored_as_catalyst(self) -> None:
@@ -110,8 +119,88 @@ class PreopenNewsEnrichmentTests(unittest.TestCase):
         self.assertTrue(enriched[0]["news_or_earnings_flag"])
         self.assertFalse(enriched[0]["news_prompt_eligible"])
         self.assertEqual(enriched[0]["news_signal_type"], "theme_broad")
+        self.assertEqual(summary["news_edge_count"], 0)
+        self.assertEqual(summary["news_prompt_pin_count"], 0)
+        self.assertFalse(enriched[0]["preopen_news_edge"])
+        self.assertNotEqual(enriched[0].get("preopen_pin_tier"), "HARD")
         self.assertNotIn("catalyst", enriched[0]["preopen_reason"])
         self.assertIn("weak_news", enriched[0]["quality_tags"])
+
+    def test_news_edge_pin_is_cleared_when_candidate_has_no_matching_news(self) -> None:
+        candidates = [
+            {
+                "ticker": "AAPL",
+                "market": "US",
+                "extended_change_pct": 2.0,
+                "extended_dollar_volume": 5_000_000,
+                "quality_tags": ["preopen_news_edge", "news_strict_catalyst", "existing_tag"],
+                "preopen_news_edge": True,
+                "preopen_news_policy": "strict_loss_filter_v1",
+                "preopen_news_edge_reason": "news_strict_catalyst",
+                "preopen_pinned": True,
+                "preopen_pin_tier": "HARD",
+                "preopen_pin_source": "news_strict_catalyst",
+                "preopen_pin_reason": "news_strict_catalyst",
+                "preopen_pin_turnover": 5_000_000,
+            }
+        ]
+        payload = {
+            "date": "2026-06-05",
+            "corp_news": {
+                "MSFT": {
+                    "name": "Microsoft",
+                    "items": [
+                        {
+                            "source": "Finnhub",
+                            "date": "2026-06-05",
+                            "title": "Microsoft signs AI infrastructure contract",
+                        },
+                    ],
+                }
+            },
+        }
+
+        enriched, summary = enrich_candidates_with_news(
+            "US",
+            candidates,
+            session_date="2026-06-05",
+            news_payload=payload,
+        )
+
+        self.assertEqual(summary["news_edge_count"], 0)
+        self.assertFalse(enriched[0]["preopen_news_edge"])
+        self.assertFalse(enriched[0]["preopen_pinned"])
+        self.assertEqual(enriched[0]["preopen_pin_tier"], "SOFT")
+        self.assertEqual(enriched[0]["preopen_pin_source"], "")
+        self.assertNotIn("preopen_pin_turnover", enriched[0])
+        self.assertNotIn("preopen_news_edge", enriched[0]["quality_tags"])
+        self.assertNotIn("news_strict_catalyst", enriched[0]["quality_tags"])
+        self.assertIn("existing_tag", enriched[0]["quality_tags"])
+
+    def test_news_edge_pin_clear_removes_all_stale_quality_tags(self) -> None:
+        candidates = [
+            {
+                "ticker": "AAPL",
+                "market": "US",
+                "quality_tags": ["preopen_news_edge", "news_strict_catalyst"],
+                "preopen_news_edge": True,
+                "preopen_pinned": True,
+                "preopen_pin_tier": "HARD",
+                "preopen_pin_source": "news_strict_catalyst",
+            }
+        ]
+
+        enriched, _summary = enrich_candidates_with_news(
+            "US",
+            candidates,
+            session_date="2026-06-05",
+            news_payload={"date": "2026-06-05", "corp_news": {}},
+            allow_rank_reorder=False,
+        )
+
+        self.assertEqual(enriched[0]["quality_tags"], [])
+        self.assertFalse(enriched[0]["preopen_news_edge"])
+        self.assertFalse(enriched[0]["preopen_pinned"])
 
     def test_naver_summary_only_company_mention_is_not_prompt_catalyst(self) -> None:
         candidates = [

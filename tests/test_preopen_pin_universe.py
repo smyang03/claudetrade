@@ -154,6 +154,65 @@ class PreopenPinUniverseTests(unittest.TestCase):
         self.assertEqual(all_rows[0]["preopen_pin_tier"], "SOFT")
         self.assertIn("seed_only", all_rows[0]["preopen_pin_rejected_reason"])
 
+    def test_news_edge_candidate_bypasses_rank_score_pin_cutoff_with_safety_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            captured_at = datetime.now(KST).isoformat(timespec="seconds")
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)):
+                save_preopen_state(
+                    "US",
+                    {
+                        "market": "US",
+                        "session_date": "2026-05-05",
+                        "captured_at": captured_at,
+                        "provider": "us_screen_market",
+                        "data_quality": "us_screen_market",
+                        "candidates": [
+                            {
+                                "ticker": "NEWS",
+                                "preopen_score": 0.10,
+                                "shadow_preopen_rank": 40,
+                                "price": 10.0,
+                                "volume": 10_000_000,
+                                "preopen_news_edge": True,
+                                "preopen_news_policy": "strict_loss_filter_v1",
+                                "preopen_news_edge_reason": "news_strict_catalyst",
+                                "preopen_pinned": True,
+                                "preopen_pin_tier": "HARD",
+                                "preopen_pin_source": "news_strict_catalyst",
+                                "news_prompt_eligible": True,
+                                "news_signal_type": "direct_catalyst",
+                                "news_prompt_summary": "direct_catalyst:contract",
+                            },
+                            {
+                                "ticker": "RISK",
+                                "preopen_score": 0.10,
+                                "shadow_preopen_rank": 41,
+                                "price": 10.0,
+                                "volume": 10_000_000,
+                                "preopen_news_edge": True,
+                                "preopen_news_policy": "strict_loss_filter_v1",
+                                "preopen_news_edge_reason": "news_strict_catalyst",
+                                "preopen_pin_source": "news_strict_catalyst",
+                                "news_prompt_eligible": True,
+                                "news_signal_type": "direct_catalyst",
+                                "risk_news_summary": "regulatory uncertainty",
+                            },
+                        ],
+                    },
+                    session_date="2026-05-05",
+                )
+                pins = load_preopen_pin_candidates("US", session_date="2026-05-05", max_age_min=120)
+
+        self.assertEqual([row["ticker"] for row in pins], ["NEWS"])
+        self.assertTrue(pins[0]["preopen_pinned"])
+        self.assertEqual(pins[0]["preopen_pin_tier"], "HARD")
+        self.assertTrue(pins[0]["preopen_pin_require_confirmation"])
+        self.assertEqual(pins[0]["preopen_pin_source"], "news_strict_catalyst")
+        self.assertIn("news_strict_catalyst", pins[0]["preopen_pin_reason"])
+        self.assertTrue(pins[0]["preopen_news_edge"])
+        self.assertEqual(pins[0]["preopen_news_policy"], "strict_loss_filter_v1")
+
     def test_universe_places_pins_after_core_and_keeps_top_n(self) -> None:
         snapshot = build_universe_from_candidates(
             market="US",

@@ -189,6 +189,14 @@ _PREOPEN_PIN_SAFE_FIELDS = {
     "risk_news",
     "excluded_news_counts",
     "scored_news_count",
+    "preopen_news_edge",
+    "preopen_news_policy",
+    "preopen_news_edge_reason",
+    "preopen_pinned",
+    "preopen_pin_tier",
+    "preopen_pin_require_confirmation",
+    "preopen_pin_reason",
+    "preopen_pin_source",
     "open_volume_confirmation",
     "display_enrichment_source",
     "anchor_price",
@@ -201,6 +209,11 @@ _PREOPEN_PIN_SAFE_FIELDS = {
     "above_ma60",
     "liquidity_bucket",
     "from_high_bucket",
+}
+_NEWS_EDGE_PIN_SIGNAL_TYPES = {
+    "direct_catalyst",
+    "earnings_or_guidance",
+    "disclosure_material",
 }
 
 
@@ -284,6 +297,22 @@ def _preopen_pin_seed_only(row: dict[str, Any], state: dict[str, Any]) -> bool:
     return False
 
 
+def _preopen_news_edge_pin_candidate(row: dict[str, Any]) -> bool:
+    if not bool((row or {}).get("preopen_news_edge")):
+        return False
+    if not bool((row or {}).get("news_prompt_eligible")):
+        return False
+    if str((row or {}).get("risk_news_summary") or "").strip():
+        return False
+    policy = str((row or {}).get("preopen_news_policy") or "").strip()
+    source = str((row or {}).get("preopen_pin_source") or "").strip()
+    reason = str((row or {}).get("preopen_news_edge_reason") or "").strip()
+    if policy != "strict_loss_filter_v1" and source != "news_strict_catalyst" and reason != "news_strict_catalyst":
+        return False
+    signal_type = str((row or {}).get("news_signal_type") or "").strip()
+    return signal_type in _NEWS_EDGE_PIN_SIGNAL_TYPES
+
+
 def load_preopen_pin_candidates(
     market: str,
     *,
@@ -337,13 +366,16 @@ def load_preopen_pin_candidates(
         score_ok = score is not None and score >= float(score_threshold)
         rank_ok = rank is not None and rank <= int(rank_threshold)
         soft_rank_ok = rank is not None and rank <= int(soft_rank_threshold)
-        if not soft_rank_ok:
+        news_edge_ok = _preopen_news_edge_pin_candidate(raw)
+        if not soft_rank_ok and not news_edge_ok:
             continue
         turnover = _preopen_pin_turnover(raw)
         turnover_ok = min_turnover <= 0 or turnover >= float(min_turnover)
         seed_only = _preopen_pin_seed_only(raw, state or {})
         seed_ok = allow_seed_only or not seed_only
-        hard_ok = bool(rank_ok and score_ok and turnover_ok and seed_ok)
+        rank_score_hard_ok = bool(rank_ok and score_ok and turnover_ok and seed_ok)
+        news_edge_hard_ok = bool(news_edge_ok and turnover_ok and seed_ok)
+        hard_ok = bool(rank_score_hard_ok or news_edge_hard_ok)
         row = {
             key: value
             for key, value in raw.items()
@@ -356,6 +388,9 @@ def load_preopen_pin_candidates(
         row["preopen_pin_tier"] = "HARD" if hard_ok else "SOFT"
         row["preopen_pin_require_confirmation"] = bool(hard_ok)
         reasons: list[str] = []
+        if news_edge_ok:
+            reasons.append("news_strict_catalyst")
+            row["preopen_pin_source"] = "news_strict_catalyst"
         if rank_ok:
             reasons.append(f"rank<={int(rank_threshold)}")
         elif soft_rank_ok:
@@ -376,9 +411,9 @@ def load_preopen_pin_candidates(
         row["preopen_state_age_min"] = (state or {}).get("state_age_min")
         row["preopen_pin_turnover"] = round(float(turnover), 2)
         rejected: list[str] = []
-        if not rank_ok:
+        if not rank_ok and not news_edge_hard_ok:
             rejected.append(f"rank>{int(rank_threshold)}")
-        if not score_ok:
+        if not score_ok and not news_edge_hard_ok:
             rejected.append(f"score<{float(score_threshold):.2f}")
         if not turnover_ok:
             rejected.append(f"turnover<{float(min_turnover):.0f}")

@@ -10927,6 +10927,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "risk_news",
             "excluded_news_counts",
             "scored_news_count",
+            "preopen_news_edge",
+            "preopen_news_policy",
+            "preopen_news_edge_reason",
+            "preopen_pinned",
+            "preopen_pin_tier",
+            "preopen_pin_require_confirmation",
+            "preopen_pin_reason",
+            "preopen_pin_source",
         )
         out: dict = {}
 
@@ -17624,6 +17632,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "excluded_news_counts",
             "scored_news_count",
             "news_stale_filtered_count",
+            "preopen_news_edge",
+            "preopen_news_policy",
+            "preopen_news_edge_reason",
+            "preopen_pinned",
+            "preopen_pin_tier",
+            "preopen_pin_require_confirmation",
+            "preopen_pin_reason",
+            "preopen_pin_source",
         )
 
         def _scorer_input_snapshot(row: dict) -> dict:
@@ -22202,6 +22218,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "excluded_news_counts",
             "scored_news_count",
             "entry_news_context_source",
+            "preopen_news_edge",
+            "preopen_news_policy",
+            "preopen_news_edge_reason",
+            "preopen_pinned",
+            "preopen_pin_tier",
+            "preopen_pin_require_confirmation",
+            "preopen_pin_reason",
+            "preopen_pin_source",
         ):
             if key in order:
                 pos[key] = order.get(key)

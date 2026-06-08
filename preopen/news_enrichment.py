@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,11 @@ from preopen.news_quality import build_news_quality_snapshot, news_item_id
 
 ROOT = Path(__file__).resolve().parents[1]
 NEWS_ROOT = ROOT / "data" / "news"
+NEWS_EDGE_PIN_SIGNAL_TYPES = {
+    "direct_catalyst",
+    "earnings_or_guidance",
+    "disclosure_material",
+}
 
 
 def _market_key(market: str) -> str:
@@ -30,6 +36,102 @@ def _normalize_ticker(market: str, value: Any) -> str:
         return raw.upper()
     digits = "".join(ch for ch in raw if ch.isdigit())
     return digits.zfill(6) if digits else raw
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _market_env_bool(market: str, suffix: str, default: bool) -> bool:
+    market_key = _market_key(market)
+    raw = os.getenv(f"{market_key}_{suffix}")
+    if raw not in (None, ""):
+        return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+    return _env_bool(suffix, default)
+
+
+def _positive_float(value: Any) -> float | None:
+    try:
+        parsed = float(str(value).replace(",", ""))
+    except Exception:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _candidate_turnover(row: dict[str, Any]) -> float:
+    for key in ("extended_dollar_volume", "dollar_volume", "turnover", "prior_day_traded_value"):
+        value = _positive_float(row.get(key))
+        if value is not None:
+            return float(value)
+    price = (
+        _positive_float(row.get("price"))
+        or _positive_float(row.get("extended_price"))
+        or _positive_float(row.get("anchor_price"))
+        or 0.0
+    )
+    volume = _positive_float(row.get("volume")) or _positive_float(row.get("extended_volume")) or 0.0
+    return float(price) * float(volume)
+
+
+def _append_quality_tag(row: dict[str, Any], *tags: str) -> None:
+    current = list(row.get("quality_tags") or [])
+    current.extend(str(tag) for tag in tags if str(tag or "").strip())
+    row["quality_tags"] = sorted(set(str(tag) for tag in current if str(tag or "").strip()))
+
+
+def _clear_news_edge_pin(row: dict[str, Any]) -> None:
+    row["preopen_news_edge"] = False
+    row["preopen_news_policy"] = ""
+    row["preopen_news_edge_reason"] = ""
+    stale_tags = {"preopen_news_edge", "news_strict_catalyst"}
+    quality_tags = [
+        str(tag)
+        for tag in row.get("quality_tags") or []
+        if str(tag or "").strip() and str(tag) not in stale_tags
+    ]
+    row["quality_tags"] = sorted(set(quality_tags))
+    if str(row.get("preopen_pin_source") or "") == "news_strict_catalyst":
+        row["preopen_pinned"] = False
+        row["preopen_pin_tier"] = "SOFT"
+        row["preopen_pin_require_confirmation"] = False
+        row["preopen_pin_reason"] = ""
+        row["preopen_pin_source"] = ""
+        row.pop("preopen_pin_turnover", None)
+
+
+def _apply_news_edge_pin(market: str, row: dict[str, Any]) -> None:
+    _clear_news_edge_pin(row)
+    if not _market_env_bool(market, "PREOPEN_NEWS_PROMPT_PIN_ENABLED", True):
+        return
+    signal_type = str(row.get("news_signal_type") or "").strip()
+    if not bool(row.get("news_prompt_eligible")) or signal_type not in NEWS_EDGE_PIN_SIGNAL_TYPES:
+        return
+    if str(row.get("risk_news_summary") or "").strip():
+        return
+
+    policy = "strict_loss_filter_v1"
+    reason = "news_strict_catalyst"
+    row["preopen_news_edge"] = True
+    row["preopen_news_policy"] = policy
+    row["preopen_news_edge_reason"] = reason
+    _append_quality_tag(row, "preopen_news_edge", reason)
+
+    if not bool(row.get("preopen_pinned")) and str(row.get("preopen_pin_tier") or "").strip().upper() != "HARD":
+        row["preopen_pinned"] = True
+        row["preopen_pin_tier"] = "HARD"
+        row["preopen_pin_require_confirmation"] = _market_env_bool(
+            market,
+            "PREOPEN_NEWS_PROMPT_PIN_REQUIRE_CONFIRMATION",
+            True,
+        )
+        row["preopen_pin_reason"] = reason
+        row["preopen_pin_source"] = reason
+        turnover = _candidate_turnover(row)
+        if turnover > 0:
+            row["preopen_pin_turnover"] = round(turnover, 2)
 
 
 def preopen_news_snapshot_path(
@@ -546,6 +648,7 @@ def enrich_candidates_with_news(
                 prefix = "news_signal" if row["news_prompt_eligible"] else "news_signal_unscored"
                 quality_tags.append(f"{prefix}_{row['news_signal_type']}")
             row["quality_tags"] = sorted(set(str(tag) for tag in quality_tags if str(tag or "").strip()))
+            _apply_news_edge_pin(market_key, row)
         else:
             row["news_or_earnings_flag"] = False
             row["news_or_earnings_count"] = 0
@@ -564,6 +667,7 @@ def enrich_candidates_with_news(
             row["risk_news"] = []
             row["excluded_news_counts"] = {}
             row["scored_news_count"] = 0
+            _clear_news_edge_pin(row)
         after = (
             bool(row.get("news_or_earnings_flag")),
             int(row.get("news_or_earnings_count") or 0),
@@ -585,6 +689,16 @@ def enrich_candidates_with_news(
         "flagged_count": flagged,
         "changed_count": changed,
         "news_prompt_eligible_count": sum(1 for row in enriched if bool(row.get("news_prompt_eligible"))),
+        "news_edge_count": sum(1 for row in enriched if bool(row.get("preopen_news_edge"))),
+        "news_prompt_pin_count": sum(
+            1
+            for row in enriched
+            if bool(row.get("preopen_news_edge"))
+            and (
+                bool(row.get("preopen_pinned"))
+                or str(row.get("preopen_pin_tier") or "").strip().upper() == "HARD"
+            )
+        ),
         "risk_news_count": sum(1 for row in enriched if str(row.get("news_signal_type") or "") == "risk_negative"),
         "news_ticker_count": len(index),
         "news_filter_summary": filter_summary,

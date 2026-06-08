@@ -303,6 +303,78 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         self.assertEqual(excluded["BAD"], "trainer_quarantine")
         self.assertEqual(excluded["MID"], "prompt_cap")
 
+    def test_prompt_pool_prioritizes_news_hard_pin_within_cap(self) -> None:
+        result = build_trainer_prompt_pool(
+            [
+                {
+                    "ticker": "GOOD",
+                    "market": "US",
+                    "primary_bucket": "momentum_now",
+                    "liquidity_bucket": "high",
+                    "change_pct": 6,
+                },
+                {
+                    "ticker": "NEWS",
+                    "market": "US",
+                    "primary_bucket": "unclassified",
+                    "liquidity_bucket": "mid",
+                    "change_pct": 1,
+                    "preopen_news_edge": True,
+                    "preopen_news_policy": "strict_loss_filter_v1",
+                    "preopen_news_edge_reason": "news_strict_catalyst",
+                    "preopen_pinned": True,
+                    "preopen_pin_tier": "HARD",
+                    "preopen_pin_source": "news_strict_catalyst",
+                    "preopen_pin_require_confirmation": True,
+                },
+            ],
+            market="US",
+            target=1,
+            hard_cap=1,
+            reorder_enabled=True,
+        )
+
+        self.assertEqual([row["ticker"] for row in result["prompt_pool"]], ["NEWS"])
+        self.assertEqual(result["prompt_pool"][0]["preopen_pin_tier"], "HARD")
+        self.assertEqual(result["metrics"]["hard_preopen_pin_count"], 1)
+        self.assertEqual(result["metrics"]["hard_preopen_pin_prompt_count"], 1)
+        excluded = {row["ticker"]: row for row in result["excluded_from_prompt"]}
+        self.assertEqual(excluded["GOOD"]["prompt_excluded_reason"], "hard_cap_cutoff")
+
+    def test_prompt_pool_keeps_same_day_stopped_hard_pin_after_regular_candidates(self) -> None:
+        result = build_trainer_prompt_pool(
+            [
+                {
+                    "ticker": "STOP",
+                    "market": "US",
+                    "same_day_stopped": True,
+                    "primary_bucket": "momentum_now",
+                    "liquidity_bucket": "high",
+                    "change_pct": 5.0,
+                    "preopen_news_edge": True,
+                    "preopen_pinned": True,
+                    "preopen_pin_tier": "HARD",
+                    "preopen_pin_source": "news_strict_catalyst",
+                },
+                {
+                    "ticker": "OK",
+                    "market": "US",
+                    "primary_bucket": "unclassified",
+                    "liquidity_bucket": "mid",
+                    "change_pct": 1.0,
+                },
+            ],
+            market="US",
+            target=1,
+            hard_cap=1,
+            reorder_enabled=True,
+        )
+
+        self.assertEqual([row["ticker"] for row in result["prompt_pool"]], ["OK"])
+        excluded = {row["ticker"]: row for row in result["excluded_from_prompt"]}
+        self.assertEqual(excluded["STOP"]["prompt_excluded_reason"], "hard_cap_cutoff")
+        self.assertTrue(excluded["STOP"]["candidate"]["same_day_stopped"])
+
     def test_kr_prompt_pool_records_board_and_liquidity_mix_metrics(self) -> None:
         result = build_trainer_prompt_pool(
             [
@@ -454,6 +526,41 @@ class CandidateQualityTrainerTests(unittest.TestCase):
 
         self.assertEqual([row["ticker"] for row in result["prompt_pool"]], ["DUP"])
         self.assertTrue(result["prompt_pool"][0]["same_day_stopped"])
+
+    def test_merge_duplicate_preserves_news_hard_pin_marker(self) -> None:
+        result = build_trainer_prompt_pool(
+            [
+                {
+                    "ticker": "DUP",
+                    "market": "US",
+                    "primary_bucket": "unclassified",
+                    "liquidity_bucket": "mid",
+                    "change_pct": 1.0,
+                    "preopen_news_edge": True,
+                    "preopen_news_policy": "strict_loss_filter_v1",
+                    "preopen_news_edge_reason": "news_strict_catalyst",
+                    "preopen_pinned": True,
+                    "preopen_pin_tier": "HARD",
+                    "preopen_pin_source": "news_strict_catalyst",
+                },
+                {
+                    "ticker": "DUP",
+                    "market": "US",
+                    "primary_bucket": "momentum_now",
+                    "liquidity_bucket": "high",
+                    "change_pct": 5.0,
+                },
+            ],
+            market="US",
+            target=1,
+            hard_cap=1,
+            reorder_enabled=True,
+        )
+
+        self.assertEqual([row["ticker"] for row in result["prompt_pool"]], ["DUP"])
+        self.assertTrue(result["prompt_pool"][0]["preopen_news_edge"])
+        self.assertEqual(result["prompt_pool"][0]["preopen_pin_tier"], "HARD")
+        self.assertEqual(result["prompt_pool"][0]["preopen_pin_source"], "news_strict_catalyst")
 
     def test_kr_prompt_pool_default_and_config_cap_follow_policy_32(self) -> None:
         candidates = [

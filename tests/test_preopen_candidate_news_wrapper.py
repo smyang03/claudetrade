@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
 from tools.collect_preopen_candidate_news import collect_preopen_candidate_news
+
+
+def _runtime_path(root: Path):
+    def _inner(*parts, make_parents=True):
+        path = root.joinpath(*parts)
+        if make_parents:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    return _inner
 
 
 class PreopenCandidateNewsWrapperTests(unittest.TestCase):
@@ -79,6 +91,72 @@ class PreopenCandidateNewsWrapperTests(unittest.TestCase):
         self.assertEqual(summary["market"], "US")
         self.assertEqual(summary["target_count"], 2)
         self.assertEqual(summary["state_news_flagged_count"], 2)
+
+    def test_wrapper_appends_enriched_candidate_log_snapshot_before_open(self) -> None:
+        targets = {"CSCO": "Cisco"}
+        news_payload = {
+            "corp_news": {"CSCO": {"count": 1, "items": []}},
+            "news_coverage": {"covered_ticker_count": 1, "coverage_ratio": 1.0},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def fake_enrich_state(*_args, **_kwargs):
+                state_path = root / "state" / "preopen_US_20260515.json"
+                state_path.parent.mkdir(parents=True, exist_ok=True)
+                state_path.write_text(
+                    json.dumps(
+                        {
+                            "market": "US",
+                            "mode": "live",
+                            "session_date": "2026-05-15",
+                            "captured_at": "2026-05-15T22:00:00+09:00",
+                            "candidates": [
+                                {
+                                    "ticker": "CSCO",
+                                    "market": "US",
+                                    "session_date": "2026-05-15",
+                                    "news_or_earnings_flag": True,
+                                    "news_or_earnings_sample_title": "Cisco signs AI networking contract",
+                                }
+                            ],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+                return {
+                    "status": "ok",
+                    "candidate_count": 1,
+                    "flagged_count": 1,
+                    "applied_at": "2026-05-15T22:20:00+09:00",
+                }
+
+            with patch.dict(os.environ, {"PREOPEN_INVESTMENT_NEWS_BRIDGE_ENABLED": "false"}), \
+                 patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)), \
+                 patch("tools.collect_preopen_candidate_news.load_preopen_news_targets", return_value=targets), \
+                 patch("phase1_trainer.us_news_collector.collect_day", return_value=news_payload), \
+                 patch("tools.collect_preopen_candidate_news.build_us_digest", return_value={"top_news": []}), \
+                 patch("tools.collect_preopen_candidate_news.save_preopen_news_snapshot", return_value=Path("preopen.json")), \
+                 patch("tools.collect_preopen_candidate_news.enrich_preopen_state", side_effect=fake_enrich_state):
+                summary = collect_preopen_candidate_news(
+                    market="US",
+                    session_date="2026-05-15",
+                    mode="live",
+                )
+
+            rows = [
+                json.loads(line)
+                for line in (root / "logs" / "preopen" / "20260515_US_candidates.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+
+        self.assertTrue(summary["candidate_log_appended"])
+        self.assertEqual(summary["candidate_log_captured_at"], "2026-05-15T22:20:00+09:00")
+        self.assertEqual(rows[0]["captured_at"], "2026-05-15T22:20:00+09:00")
+        self.assertTrue(rows[0]["news_or_earnings_flag"])
+        self.assertEqual(rows[0]["news_or_earnings_sample_title"], "Cisco signs AI networking contract")
 
     def test_fail_on_empty_marks_summary_not_ok_and_sets_flags(self) -> None:
         targets = {"005930": "Samsung"}

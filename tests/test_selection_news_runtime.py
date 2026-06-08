@@ -76,10 +76,16 @@ class SelectionNewsRuntimeTests(unittest.TestCase):
         self.assertEqual(prompt_meta["news_enrichment"]["status"], "ok")
         self.assertEqual(prompt_meta["news_enrichment"]["flagged_count"], 1)
         self.assertEqual(prompt_meta["news_enrichment"]["news_prompt_eligible_count"], 1)
+        self.assertEqual(prompt_meta["news_enrichment"]["news_edge_count"], 1)
+        self.assertEqual(prompt_meta["news_enrichment"]["news_prompt_pin_count"], 1)
         self.assertTrue(enriched[0]["news_prompt_eligible"])
         self.assertEqual(enriched[0]["news_signal_type"], "direct_catalyst")
+        self.assertTrue(enriched[0]["preopen_news_edge"])
+        self.assertEqual(enriched[0]["preopen_pin_tier"], "HARD")
+        self.assertEqual(enriched[0]["preopen_pin_source"], "news_strict_catalyst")
         self.assertTrue(prompt_rows[0]["news_prompt_eligible"])
         self.assertEqual(prompt_rows[0]["news_signal_type"], "direct_catalyst")
+        self.assertEqual(prompt_rows[0]["preopen_pin_tier"], "HARD")
         self.assertIn("direct_catalyst", prompt_rows[0]["news_prompt_summary"])
 
     def test_compact_selection_prompt_keeps_news_hint_before_line_truncation(self) -> None:
