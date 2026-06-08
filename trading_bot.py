@@ -7048,6 +7048,114 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         min_ret_5m = self._runtime_float("KR_LATE_ENTRY_FRESH_MIN_RET_5M_PCT", 0.0)
         require_momentum = self._runtime_bool("KR_LATE_ENTRY_REQUIRE_FRESH_MOMENTUM", False)
 
+        def _num(value: Any) -> Optional[float]:
+            try:
+                if value in (None, ""):
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        def _truthy(value: Any) -> bool:
+            if isinstance(value, bool):
+                return value
+            text = str(value or "").strip().lower()
+            return text in {"1", "true", "yes", "y", "on", "ok", "pass", "passed"}
+
+        def _strategy_name() -> str:
+            return str(
+                (action or {}).get("strategy")
+                or (action or {}).get("recommended_strategy")
+                or (action or {}).get("route_strategy")
+                or ""
+            ).strip().lower()
+
+        def _early_entry_gate() -> dict:
+            enabled = self._runtime_bool("KR_EARLY_ENTRY_STRICT_GATE_ENABLED", False)
+            end_min = self._runtime_float("KR_EARLY_ENTRY_STRICT_END_MIN", 30.0)
+            gate = {
+                "enabled": bool(enabled),
+                "active": False,
+                "end_min": end_min,
+            }
+            if not enabled or elapsed_min is None or elapsed_min < 0 or elapsed_min >= end_min:
+                return gate
+            ret_3 = _num(execution_context.get("ret_3m_pct"))
+            ret_5 = _num(execution_context.get("ret_5m_pct"))
+            min_early_ret_3 = self._runtime_float("KR_EARLY_ENTRY_MIN_RET_3M_PCT", 0.0)
+            min_early_ret_5 = self._runtime_float("KR_EARLY_ENTRY_MIN_RET_5M_PCT", 0.0)
+            require_returns = self._runtime_bool("KR_EARLY_ENTRY_REQUIRE_RETURNS", True)
+            returns_ok = (
+                (ret_3 is None or ret_3 >= min_early_ret_3)
+                and (ret_5 is None or ret_5 >= min_early_ret_5)
+            )
+            if require_returns:
+                returns_ok = bool(ret_3 is not None and ret_5 is not None and returns_ok)
+            volume_ratio = _num(execution_context.get("volume_ratio_open"))
+            volume_min = self._runtime_float("KR_EARLY_ENTRY_MIN_VOLUME_RATIO", 1.0)
+            volume_ok = bool(volume_ratio is not None and volume_ratio >= volume_min)
+            opening_break = _truthy(execution_context.get("opening_range_break"))
+            vwap_reclaim = _truthy(execution_context.get("vwap_reclaim"))
+            confirmation_signal_ok = bool(opening_break or vwap_reclaim or volume_ok)
+            momentum_state = str(execution_context.get("momentum_state") or "").strip().lower()
+            momentum_bad = momentum_state in {
+                "fade",
+                "fading",
+                "weak",
+                "weakening",
+                "downtrend",
+                "selloff",
+                "overextended",
+                "direction_unconfirmed",
+            }
+            data_quality = str(execution_context.get("data_quality") or "").strip().lower()
+            data_ok = data_quality not in {"", "missing", "bad", "bad_data", "stale", "invalid"}
+            confirmed = bool(execution_context.get("kr_confirmation_confirmed")) or bool(
+                returns_ok and confirmation_signal_ok and data_ok and not momentum_bad
+            )
+            gate.update(
+                {
+                    "active": True,
+                    "elapsed_min": round(float(elapsed_min), 4),
+                    "requested_action": requested,
+                    "strategy": _strategy_name(),
+                    "ret_3m_pct": ret_3,
+                    "ret_5m_pct": ret_5,
+                    "min_ret_3m_pct": min_early_ret_3,
+                    "min_ret_5m_pct": min_early_ret_5,
+                    "require_returns": bool(require_returns),
+                    "opening_range_break": opening_break,
+                    "vwap_reclaim": vwap_reclaim,
+                    "volume_ratio_open": volume_ratio,
+                    "volume_min": volume_min,
+                    "confirmation_signal_ok": confirmation_signal_ok,
+                    "momentum_state": momentum_state or "unknown",
+                    "momentum_bad": momentum_bad,
+                    "data_quality": data_quality or "missing",
+                    "confirmed": confirmed,
+                }
+            )
+            if not confirmed:
+                gate.update(
+                    {
+                        "allowed": False,
+                        "final_action": "WATCH",
+                        "reason": "kr_early_entry_confirmation_required",
+                    }
+                )
+                return gate
+            if requested == "BUY_READY" and self._runtime_bool("KR_EARLY_ENTRY_DEMOTE_BUY_TO_PROBE", True):
+                gate.update(
+                    {
+                        "allowed": True,
+                        "final_action": "PROBE_READY",
+                        "reason": "kr_early_entry_buy_demoted_to_probe",
+                    }
+                )
+                return gate
+            gate.update({"allowed": True, "reason": "kr_early_entry_confirmed"})
+            return gate
+
         route_source = str(timing.get("route_source") or "").strip().lower()
         age_source = str(timing.get("candidate_age_source") or "").strip()
         age_min = timing.get("candidate_age_min")
@@ -7111,6 +7219,27 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if elapsed_min is None or elapsed_min < 0:
             state["reason"] = "outside_regular_session"
             return state
+        early_gate = _early_entry_gate()
+        if early_gate.get("enabled"):
+            state["kr_early_entry_gate"] = early_gate
+        if early_gate.get("active"):
+            if early_gate.get("allowed") is False:
+                state.update(
+                    {
+                        "allowed": False,
+                        "final_action": "WATCH",
+                        "reason": early_gate.get("reason") or "kr_early_entry_confirmation_required",
+                    }
+                )
+                return state
+            if str(early_gate.get("final_action") or "").upper() == "PROBE_READY":
+                state.update(
+                    {
+                        "final_action": "PROBE_READY",
+                        "reason": early_gate.get("reason") or "kr_early_entry_buy_demoted_to_probe",
+                    }
+                )
+                return state
         if elapsed_min <= full_buy_end:
             state["reason"] = "early_session_full_entry_window"
             return state

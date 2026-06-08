@@ -2846,6 +2846,149 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(route["kr_late_entry_gate"]["requested_action"], "PULLBACK_WAIT")
         self.assertEqual(route["kr_late_entry_gate"]["elapsed_min"], 150.0)
 
+    def test_kr_early_entry_gate_blocks_unconfirmed_pullback_wait(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_LATE_ENTRY_GATE_ENABLED": True,
+                "KR_EARLY_ENTRY_STRICT_GATE_ENABLED": True,
+                "KR_EARLY_ENTRY_STRICT_END_MIN": 30.0,
+            }
+        )
+        bot._market_open_elapsed_min = lambda market, now_dt=None: 12.0
+        raw_meta = {
+            "watchlist": ["005930"],
+            "_entry_route_source": "session_open",
+            "candidate_actions": [
+                {
+                    "ticker": "005930",
+                    "action": "PULLBACK_WAIT",
+                    "confidence": 0.72,
+                    "price_targets": {
+                        "buy_zone_low": 69500,
+                        "buy_zone_high": 70000,
+                        "sell_target": 73000,
+                        "stop_loss": 68000,
+                        "hold_days": 1,
+                        "confidence": 0.72,
+                    },
+                }
+            ],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "ret_3m_pct": -0.1,
+                    "ret_5m_pct": -0.2,
+                    "opening_range_break": False,
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta.get("_pathb_wait_tickers"), [])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "WATCH")
+        self.assertEqual(route["reason"], "kr_early_entry_confirmation_required")
+        early_gate = route["kr_late_entry_gate"]["kr_early_entry_gate"]
+        self.assertTrue(early_gate["active"])
+        self.assertFalse(early_gate["confirmed"])
+
+    def test_kr_early_entry_gate_allows_confirmed_pullback_wait(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_LATE_ENTRY_GATE_ENABLED": True,
+                "KR_EARLY_ENTRY_STRICT_GATE_ENABLED": True,
+                "KR_EARLY_ENTRY_STRICT_END_MIN": 30.0,
+            }
+        )
+        bot._market_open_elapsed_min = lambda market, now_dt=None: 12.0
+        raw_meta = {
+            "watchlist": ["005930"],
+            "_entry_route_source": "session_open",
+            "candidate_actions": [
+                {
+                    "ticker": "005930",
+                    "action": "PULLBACK_WAIT",
+                    "confidence": 0.72,
+                    "price_targets": {
+                        "buy_zone_low": 69500,
+                        "buy_zone_high": 70000,
+                        "sell_target": 73000,
+                        "stop_loss": 68000,
+                        "hold_days": 1,
+                        "confidence": 0.72,
+                    },
+                }
+            ],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "ret_3m_pct": 0.1,
+                    "ret_5m_pct": 0.2,
+                    "opening_range_break": True,
+                    "momentum_state": "early_strength",
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta.get("_pathb_wait_tickers"), ["005930"])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "PULLBACK_WAIT")
+        early_gate = route["kr_late_entry_gate"]["kr_early_entry_gate"]
+        self.assertTrue(early_gate["active"])
+        self.assertTrue(early_gate["confirmed"])
+
+    def test_kr_early_entry_gate_demotes_confirmed_buy_ready_to_probe(self) -> None:
+        bot = _make_bot()
+        bot.runtime_config.values.update(
+            {
+                "KR_LATE_ENTRY_GATE_ENABLED": True,
+                "KR_EARLY_ENTRY_STRICT_GATE_ENABLED": True,
+                "KR_EARLY_ENTRY_STRICT_END_MIN": 30.0,
+            }
+        )
+        bot._market_open_elapsed_min = lambda market, now_dt=None: 12.0
+        raw_meta = {
+            "watchlist": ["005930"],
+            "_entry_route_source": "session_open",
+            "candidate_actions": [
+                {
+                    "ticker": "005930",
+                    "action": "BUY_READY",
+                    "confidence": 0.9,
+                    "price_targets": {"max_entry_price": 71000},
+                }
+            ],
+            "_post_open_features_by_ticker": {
+                "005930": {
+                    "current_price": 70000,
+                    "ret_3m_pct": 0.1,
+                    "ret_5m_pct": 0.2,
+                    "opening_range_break": True,
+                    "momentum_state": "early_strength",
+                    "data_quality": "good",
+                }
+            },
+        }
+
+        with patch("trading_bot.get_last_selection_meta", return_value=raw_meta):
+            meta = TradingBot._apply_selection_meta(bot, "KR", ["005930"], mode="BALANCED")
+
+        self.assertEqual(meta["trade_ready"], ["005930"])
+        route = meta["_candidate_action_routes"][0]
+        self.assertEqual(route["final_action"], "PROBE_READY")
+        self.assertEqual(route["demoted_to"], "PROBE_READY")
+        self.assertEqual(route["kr_late_entry_gate"]["reason"], "kr_early_entry_buy_demoted_to_probe")
+        self.assertEqual(meta["allocation_intent"]["005930"], "probe")
+
     def test_kr_late_entry_gate_demotes_fresh_buy_to_probe(self) -> None:
         bot = _make_bot()
         bot.runtime_config.values.update({"KR_LATE_ENTRY_GATE_ENABLED": True})
