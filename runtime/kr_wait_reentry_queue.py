@@ -6,6 +6,7 @@ from typing import Any
 
 
 DEFAULT_ALLOWED_SOURCES = {
+    "analyst_reinvoke",
     "session_open",
     "session_reuse_rescreen",
     "manual_rescreen",

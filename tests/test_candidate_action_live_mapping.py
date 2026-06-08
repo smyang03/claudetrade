@@ -845,6 +845,79 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertEqual(route["final_action"], "BUY_READY")
         self.assertEqual(route["reason"], "carried_recent_trade_ready")
 
+    def test_analyst_reinvoke_refresh_records_candidate_quality_for_wait_queue(self) -> None:
+        bot = _make_bot()
+        raw_candidates = [{"ticker": "005930", "score": 91}]
+        selected = ["005930"]
+        reasons = {"005930": "confirmed analyst reinvoke watch"}
+        reinvoke_meta = {
+            "watchlist": selected,
+            "trade_ready": [],
+            "candidate_actions": [{"ticker": "005930", "action": "WATCH"}],
+        }
+        quality_calls: list[tuple] = []
+
+        bot.today_judgment = {
+            "market": "KR",
+            "consensus": {"mode": "BALANCED", "size": 50},
+            "digest_prompt": "digest",
+            "digest_raw": {},
+        }
+        bot.today_tickers = {"KR": [], "US": []}
+        bot.today_ticker_reasons = {"KR": {}, "US": {}}
+        bot.current_market = "KR"
+        bot._market_task_owner = {"KR": None, "US": None}
+        bot.claude_control = {}
+        bot._session_events = []
+        bot.tuning_count = 1
+        bot.is_claude_reinvoke_enabled = lambda: True
+        bot._is_market_session_now = lambda market: True
+        bot._save_claude_control = lambda: None
+        bot._build_market_judgment_override_context = lambda market, payload: ""
+        bot._override_context_has_live_index = lambda market, context: True
+        bot._build_intraday_context = lambda market: ""
+        bot._brain_context_for_judge = lambda market: ("brain", "")
+        bot._build_portfolio_info = lambda: {}
+        bot._load_lesson_candidate_summary = lambda market: {}
+        bot._apply_consensus_guards = lambda market, judgments, consensus, source: {"mode": "BULL", "size": 50}
+        bot._digest_payload_built_before_open = lambda market: True
+        bot._current_judgment_phase = lambda market: "intraday_live"
+        bot._judgment_execution_authority = lambda market, phase, basis: "live"
+        bot._should_refresh_selection_after_reinvoke = lambda *args: (True, "mode_changed")
+        bot._screen_market_candidates = lambda market, mode: list(raw_candidates)
+        bot._log_screen_candidates = lambda *args, **kwargs: None
+        bot._filter_candidates_by_history = lambda candidates, market, phase: list(candidates)
+        bot._get_cooldown_excluded = lambda market: set()
+        bot._prepare_selection_prompt_pool_with_evidence = (
+            lambda market, candidates, mode: (list(candidates), list(candidates), {}, {})
+        )
+        bot._get_market_change_pct = lambda market: 0.0
+        bot._get_secondary_change_pct = lambda market: 0.0
+        bot._current_session_date_str = lambda market: "2026-06-08"
+        bot._apply_selection_meta = lambda market, tickers, mode="", source="": dict(reinvoke_meta)
+        bot._record_candidate_quality = lambda *args: quality_calls.append(args)
+        bot._entry_timing_mark_candidates = lambda *args, **kwargs: None
+        bot._persist_live_judgment = lambda market: None
+        bot._maybe_push_dashboard = lambda force=False: None
+        bot.risk = type("Risk", (), {"positions": [], "calc_order_budget": lambda self, size: 450000})()
+
+        with patch("trading_bot.get_three_judgments", return_value={"analyst": {"mode": "BULL"}}), \
+            patch("trading_bot.build_consensus", return_value={"mode": "BULL", "size": 50}), \
+            patch("trading_bot.select_tickers", return_value=(selected, reasons)), \
+            patch("trading_bot.watchlist_alert"), \
+            patch("trading_bot.analyst_reinvoke_alert"):
+            TradingBot._reinvoke_analysts(bot, "KR", "unit_test")
+
+        self.assertEqual(bot.claude_control["last_result_status"], "success")
+        self.assertEqual(len(quality_calls), 1)
+        _, phase, raw_rows, prompt_rows, selected_rows, meta, recorded_reasons = quality_calls[0]
+        self.assertEqual(phase, "analyst_reinvoke")
+        self.assertEqual(raw_rows, raw_candidates)
+        self.assertEqual(prompt_rows, raw_candidates)
+        self.assertEqual(selected_rows, selected)
+        self.assertEqual(meta, reinvoke_meta)
+        self.assertEqual(recorded_reasons, reasons)
+
     def test_kr_sub_screener_rescreen_does_not_carry_hard_veto(self) -> None:
         bot = _make_bot()
         bot.today_judgment = {"market": "KR", "consensus": {"mode": "BALANCED"}}

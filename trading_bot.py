@@ -4476,7 +4476,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         raw = str(
             self._runtime_value(
                 "KR_WAIT60_REEVAL_SOURCES",
-                "session_open,session_reuse_rescreen,manual_rescreen,rescreen,tuning_rescreen,"
+                "session_open,session_reuse_rescreen,manual_rescreen,rescreen,tuning_rescreen,analyst_reinvoke,"
                 "analyst_reinvoke_rescreen,sub_screener_rescreen,opening_fresh_rescreen",
             )
             or ""
@@ -34738,6 +34738,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     else:
                         reinvoke_cands = self._screen_market_candidates("US", self.today_judgment.get("consensus", {}).get("mode", "NEUTRAL"))
                     if reinvoke_cands:
+                        raw_reinvoke_cands = list(reinvoke_cands or [])
                         self._log_screen_candidates(market, reinvoke_cands, "analyst_reinvoke_rescreen")
                         reinvoke_cands = self._filter_candidates_by_history(
                             reinvoke_cands,
@@ -34772,6 +34773,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             mode=new_consensus.get("mode", ""),
                             source="analyst_reinvoke",
                         )
+                        if market == "KR":
+                            self._record_candidate_quality(
+                                market,
+                                "analyst_reinvoke",
+                                raw_reinvoke_cands,
+                                reinvoke_cands,
+                                new_tickers,
+                                reinvoke_meta,
+                                new_ticker_reasons,
+                            )
                         self.today_tickers[market] = new_tickers
                         self._entry_timing_mark_candidates(market, new_tickers, "analyst_reinvoke")
                         self.today_ticker_reasons[market] = new_ticker_reasons or {}

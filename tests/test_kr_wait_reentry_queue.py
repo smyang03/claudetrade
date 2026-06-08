@@ -56,6 +56,25 @@ def test_build_wait_reentry_items_skips_us_and_reentry_source() -> None:
     ) == []
 
 
+def test_build_wait_reentry_items_allows_analyst_reinvoke_source() -> None:
+    now = datetime(2026, 6, 8, 9, 30)
+    items = build_wait_reentry_items(
+        market="KR",
+        phase="analyst_reinvoke",
+        session_date="2026-06-08",
+        selected=["005930"],
+        selection_meta={"candidate_actions": [{"ticker": "005930", "action": "WATCH"}]},
+        candidates=[{"ticker": "005930", "score": 91}],
+        now=now,
+        delay_min=30,
+        max_candidates=5,
+    )
+
+    assert [item["ticker"] for item in items] == ["005930"]
+    assert items[0]["source_phase"] == "analyst_reinvoke"
+    assert items[0]["candidate"]["_wait_reentry"]["source_phase"] == "analyst_reinvoke"
+
+
 def test_pop_due_and_requeue_items() -> None:
     now = datetime(2026, 6, 8, 10, 30)
     queue = [
