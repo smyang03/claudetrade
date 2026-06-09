@@ -638,6 +638,35 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
         self.assertIn('"source": "profit_floor_price"', prompt)
         self.assertIn('"stop": 105.5', prompt)
 
+    def test_triage_prompt_includes_profit_ladder_hold_stop_floor(self) -> None:
+        prompt = hold_advisor._build_triage_prompt(
+            {
+                "ticker": "TEST",
+                "entry": 100.0,
+                "current_price": 101.0,
+                "auto_sell_reason": "profit_ladder",
+                "auto_sell_close_reason": "CLOSED_PROFIT_LADDER",
+                "advisor_context_v2": {
+                    "exit_signal_reason": "profit_ladder",
+                    "exit_signal_close_reason": "CLOSED_PROFIT_LADDER",
+                    "profit_ladder_hold_min_protective_stop": 100.0,
+                    "profit_ladder_hold_max_stop_distance_pct": 2.5,
+                    "profit_ladder_hold_min_stop_feasible": True,
+                },
+            },
+            "US",
+            "digest",
+            "",
+            "AUTO_SELL_REVIEW",
+            "policy",
+            120.0,
+            False,
+        )
+
+        self.assertIn("profit_ladder_hold_min_protective_stop", prompt)
+        self.assertIn("protective_stop must be below current and at or above that minimum", prompt)
+        self.assertIn('"exit_reason": "profit_ladder"', prompt)
+
     def test_triage_shim_votes_do_not_create_three_analyst_strategy_majority(self) -> None:
         judgments = {
             role: {

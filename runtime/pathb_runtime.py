@@ -4140,6 +4140,25 @@ class PathBRuntime:
                 "pathb_reference_stop": ctx.get("pathb_reference_stop") or float(plan.stop_loss or 0.0),
             }
         )
+        if str(signal.close_reason or "").strip().upper() == "CLOSED_PROFIT_LADDER" or str(
+            signal.reason or ""
+        ).strip().lower() == "profit_ladder":
+            max_stop_distance = self._pathb_profit_ladder_hold_max_stop_distance(plan.market)
+            entry = self._position_entry_native(pos, plan.market)
+            if entry <= 0:
+                entry = self._policy_float(pos.get("display_avg_price") or pos.get("avg_price"))
+            distance_floor = float(current_native or 0.0) * (1.0 - max_stop_distance) if current_native > 0 else 0.0
+            min_stop = max(entry, distance_floor)
+            if min_stop > 0:
+                ctx["profit_ladder_hold_min_protective_stop"] = self._round_policy_price(
+                    min_stop, plan.market, direction="down"
+                )
+            ctx["profit_ladder_hold_max_stop_distance_pct"] = round(max_stop_distance * 100.0, 4)
+            ctx["profit_ladder_hold_min_stop_feasible"] = bool(min_stop > 0 and min_stop < float(current_native or 0.0))
+            ctx["profit_ladder_hold_rule"] = (
+                "HOLD requires protective_stop below current and at/above "
+                "profit_ladder_hold_min_protective_stop; otherwise stop update may be ignored."
+            )
         if stop_distance_pct is not None:
             ctx["hard_stop_distance_pct"] = round(float(stop_distance_pct), 4)
         return ctx
@@ -4353,6 +4372,66 @@ class PathBRuntime:
             "too_close": 1.0 if too_close else 0.0,
         }
 
+    @staticmethod
+    def _pathb_profit_ladder_hold_max_stop_distance(market: str) -> float:
+        market_key = str(market or "").upper()
+        return max(
+            0.0,
+            _env_float(
+                "PATHB_PROFIT_LADDER_HOLD_MAX_STOP_DISTANCE_US"
+                if market_key == "US"
+                else "PATHB_PROFIT_LADDER_HOLD_MAX_STOP_DISTANCE_KR",
+                0.025 if market_key == "US" else 0.03,
+            ),
+        )
+
+    def _pathb_profit_ladder_hold_quality(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        current: float,
+        protective_stop: float,
+        *,
+        plan_json: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        market = str(plan.market or "").upper()
+        current_price = float(current or 0)
+        stop = float(protective_stop or 0)
+        if current_price <= 0 or stop <= 0:
+            return {"allowed": False, "reason": "invalid_profit_ladder_hold_price"}
+        entry = self._position_entry_native(pos, market)
+        plan_data = self._pathb_plan_json_for_policy(plan, plan_json)
+        if entry <= 0:
+            entry = self._policy_float(plan_data.get("actual_entry_price") or plan_data.get("entry_price"))
+        if entry <= 0:
+            entry = self._policy_float(plan_data.get("display_avg_price") or plan_data.get("avg_price"))
+        entry_floor = self._round_policy_price(entry, market, direction="down") if entry > 0 else 0.0
+        stop_distance = max(0.0, (current_price - stop) / current_price)
+        max_stop_distance = self._pathb_profit_ladder_hold_max_stop_distance(market)
+        if entry_floor > 0 and stop < entry_floor:
+            return {
+                "allowed": False,
+                "reason": "profit_ladder_protective_stop_below_entry_floor",
+                "entry_floor": entry_floor,
+                "stop_distance": stop_distance,
+                "max_stop_distance": max_stop_distance,
+            }
+        if max_stop_distance > 0 and stop_distance > max_stop_distance:
+            return {
+                "allowed": False,
+                "reason": "profit_ladder_protective_stop_too_far_below_current",
+                "entry_floor": entry_floor,
+                "stop_distance": stop_distance,
+                "max_stop_distance": max_stop_distance,
+            }
+        return {
+            "allowed": True,
+            "reason": "profit_ladder_hold_quality_ok",
+            "entry_floor": entry_floor,
+            "stop_distance": stop_distance,
+            "max_stop_distance": max_stop_distance,
+        }
+
     def _pathb_existing_stop_satisfies_gain_lock(
         self,
         plan: PricePlan,
@@ -4491,6 +4570,15 @@ class PathBRuntime:
                 return {}, "protective_stop_above_current_recheck"
             reask_if_price_above = self._policy_price_reask_above(advice, market, current)
             revised_target = self._round_policy_price(advice.get("revised_sell_target"), market, direction="up")
+            quality = self._pathb_profit_ladder_hold_quality(
+                plan,
+                pos,
+                current,
+                protective_stop,
+                plan_json=plan_data,
+            )
+            if not bool(quality.get("allowed")):
+                return {}, str(quality.get("reason") or "profit_ladder_protective_stop_invalid")
             if revised_target > current:
                 # gain_floor/too_close 강제 조정 제거: Claude stop을 그대로 사용
                 return {
@@ -4502,6 +4590,13 @@ class PathBRuntime:
                     "revised_sell_target": revised_target,
                     "trail_release_threshold": protective_stop,
                     "reask_if_price_above": reask_if_price_above,
+                    "profit_ladder_hold_entry_floor": self._policy_float(quality.get("entry_floor")),
+                    "profit_ladder_hold_stop_distance_pct": round(
+                        self._policy_float(quality.get("stop_distance")) * 100.0, 4
+                    ),
+                    "profit_ladder_hold_max_stop_distance_pct": round(
+                        self._policy_float(quality.get("max_stop_distance")) * 100.0, 4
+                    ),
                 }, ""
             return {
                 **base,
@@ -4511,6 +4606,13 @@ class PathBRuntime:
                 "hard_stop": protective_stop,
                 "trail_release_threshold": protective_stop,
                 "reask_if_price_above": reask_if_price_above,
+                "profit_ladder_hold_entry_floor": self._policy_float(quality.get("entry_floor")),
+                "profit_ladder_hold_stop_distance_pct": round(
+                    self._policy_float(quality.get("stop_distance")) * 100.0, 4
+                ),
+                "profit_ladder_hold_max_stop_distance_pct": round(
+                    self._policy_float(quality.get("max_stop_distance")) * 100.0, 4
+                ),
             }, ""
         if close_reason == "CLOSED_CLAUDE_PRICE_TARGET":
             revised_target = self._round_policy_price(advice.get("revised_sell_target"), market, direction="up")
@@ -5915,36 +6017,51 @@ class PathBRuntime:
                             + f" | hold_policy_stop_above_current_sell"
                         )[:500]
                     else:
-                        existing_ok_reasons = {
-                            "protective_stop_looser_than_plan_stop",
-                            "protective_stop_not_tighter_than_plan_stop",
-                            "trailing_already_tighter",
-                            "existing_policy_tighter",
+                        preserve_hold_without_policy_reasons = {
+                            "profit_ladder_protective_stop_below_entry_floor",
+                            "profit_ladder_protective_stop_too_far_below_current",
                         }
-                        existing_guard = (
-                            self._pathb_existing_stop_satisfies_gain_lock(
-                                plan,
-                                pos,
-                                current_native,
-                                plan_json=plan_json_for_policy if isinstance(plan_json_for_policy, dict) else {},
-                            )
-                            if reject_reason in existing_ok_reasons
-                            else {"allowed": False}
-                        )
-                        if bool(existing_guard.get("allowed")):
-                            payload["auto_sell_policy_existing_stop_hold"] = True
-                            payload["auto_sell_policy_existing_stop_source"] = existing_guard.get("stop_source", "")
-                            payload["auto_sell_policy_existing_stop"] = existing_guard.get("stop", 0.0)
-                            payload["auto_sell_policy_gain_lock_floor"] = existing_guard.get("floor", 0.0)
-                        else:
-                            action = "SELL"
-                            payload["auto_sell_review_action"] = "SELL"
-                            payload["auto_sell_hold_fallback_to_sell"] = True
-                            payload["auto_sell_hold_fallback_reason"] = reject_reason
+                        if reject_reason in preserve_hold_without_policy_reasons:
+                            payload["auto_sell_policy_reject_preserved_hold"] = True
                             payload["auto_sell_review_detail"] = (
                                 str(payload.get("auto_sell_review_detail", "") or "")
-                                + f" | hold_policy_rejected_fallback_to_sell:{reject_reason}"
+                                + f" | hold_policy_rejected_preserve_hold:{reject_reason}"
                             )[:500]
+                            log.warning(
+                                f"[PathB HOLD preserved without policy] {plan.market} {plan.ticker} "
+                                f"reason={signal.reason} policy_reject={reject_reason}"
+                            )
+                        else:
+                            existing_ok_reasons = {
+                                "protective_stop_looser_than_plan_stop",
+                                "protective_stop_not_tighter_than_plan_stop",
+                                "trailing_already_tighter",
+                                "existing_policy_tighter",
+                            }
+                            existing_guard = (
+                                self._pathb_existing_stop_satisfies_gain_lock(
+                                    plan,
+                                    pos,
+                                    current_native,
+                                    plan_json=plan_json_for_policy if isinstance(plan_json_for_policy, dict) else {},
+                                )
+                                if reject_reason in existing_ok_reasons
+                                else {"allowed": False}
+                            )
+                            if bool(existing_guard.get("allowed")):
+                                payload["auto_sell_policy_existing_stop_hold"] = True
+                                payload["auto_sell_policy_existing_stop_source"] = existing_guard.get("stop_source", "")
+                                payload["auto_sell_policy_existing_stop"] = existing_guard.get("stop", 0.0)
+                                payload["auto_sell_policy_gain_lock_floor"] = existing_guard.get("floor", 0.0)
+                            else:
+                                action = "SELL"
+                                payload["auto_sell_review_action"] = "SELL"
+                                payload["auto_sell_hold_fallback_to_sell"] = True
+                                payload["auto_sell_hold_fallback_reason"] = reject_reason
+                                payload["auto_sell_review_detail"] = (
+                                    str(payload.get("auto_sell_review_detail", "") or "")
+                                    + f" | hold_policy_rejected_fallback_to_sell:{reject_reason}"
+                                )[:500]
         pos.update(payload)
         try:
             self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)

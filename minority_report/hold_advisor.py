@@ -705,6 +705,8 @@ Important:
 - Catastrophic broker truth, emergency, operator kill, force exit, and hard system exits are owned by the system.
 - A HOLD is advisory only and never overrides broker truth, emergency, force exit, or hard risk rules.
 - For HOLD, protective_stop, invalid_if, and next_review_min are mandatory.
+- For PathB profit_ladder/profit-protection HOLD, if advisor_context_v2.profit_ladder_hold_min_protective_stop is present, protective_stop must be below current and at or above that minimum; otherwise the system may preserve HOLD but ignore the stop update.
+- Do not repeat a distant plan stop as protective_stop for profit-protection HOLD.
 
 Case data:
 {payload_text}
@@ -779,6 +781,7 @@ Challenge focus:
 - If first pass is HOLD, check whether risk is actually bounded.
 - If first pass is STOP_LOSS, check whether invalid_if, failed recovery, loss_cap, or hard_stop is truly triggered.
 - If final_category is HOLD, return protective_stop, invalid_if, and next_review_min. Do not leave HOLD unbounded.
+- For PathB profit_ladder/profit-protection HOLD, respect advisor_context_v2.profit_ladder_hold_min_protective_stop when present; do not present a distant stop as bounded protection.
 
 Case data:
 {payload_text}

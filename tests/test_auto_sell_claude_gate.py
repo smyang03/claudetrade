@@ -1231,9 +1231,7 @@ class AutoSellClaudeGateTests(unittest.TestCase):
             self.assertEqual(run["plan"]["auto_sell_policy_reject_reason"], "protective_stop_too_close_or_above_current")
 
     def test_pathb_profit_ladder_hold_accepts_claude_stop_without_gain_lock_floor(self) -> None:
-        # gain_lock floor 강제 조정이 제거됐으므로 protective_stop < current이면 HOLD 허용
-        # 이전: target*0.98 floor가 stop을 올려 SELL로 뒤집었음
-        # 현재: Claude stop을 그대로 사용
+        # Accept a reasonable Claude stop without raising it to target*0.98 gain floor.
         with tempfile.TemporaryDirectory() as tmp:
             runtime, plan, pos = _pathb_runtime(tmp)
             advice = {
@@ -1241,7 +1239,7 @@ class AutoSellClaudeGateTests(unittest.TestCase):
                 "reason": "extend target with protected ladder profit",
                 "confidence": 0.78,
                 "revised_sell_target": 130.0,
-                "protective_stop": 112.0,
+                "protective_stop": 116.0,
             }
 
             with patch.dict(os.environ, {"CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "true"}, clear=False), patch(
@@ -1254,13 +1252,59 @@ class AutoSellClaudeGateTests(unittest.TestCase):
                 )
 
             run = runtime.store.find_path_run(plan.path_run_id)
-            # protective_stop=112 < current=118 → gain_lock floor 개입 없이 HOLD 허용
             self.assertFalse(result["allowed"])
             policy = run["plan"].get("auto_sell_policy") or {}
             self.assertEqual(policy.get("mode"), "target_extension")
-            self.assertAlmostEqual(policy.get("protective_stop", 0), 112.0, places=1)
+            self.assertAlmostEqual(policy.get("protective_stop", 0), 116.0, places=1)
             self.assertAlmostEqual(policy.get("revised_sell_target", 0), 130.0, places=1)
             self.assertEqual(run["plan"].get("auto_sell_policy_reject_reason", ""), "")
+            self.assertNotIn("gain_lock_floor", policy)
+
+    def test_pathb_profit_ladder_hold_preserves_hold_when_stop_is_loose(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan, pos = _pathb_runtime(tmp)
+            advice = {
+                "action": "HOLD",
+                "reason": "extend target but repeats loose plan stop",
+                "confidence": 0.78,
+                "revised_sell_target": 130.0,
+                "protective_stop": 99.0,
+            }
+
+            with patch.dict(os.environ, {"CLAUDE_REVIEW_ALL_AUTOMATED_SELLS": "true"}, clear=False), patch(
+                "minority_report.hold_advisor.ask", return_value=advice
+            ):
+                result = runtime._run_pathb_sell_review_gate(
+                    plan,
+                    pos,
+                    ExitSignal(True, "profit_ladder", "CLOSED_PROFIT_LADDER", 101.0, plan.path_run_id),
+                )
+
+            run = runtime.store.find_path_run(plan.path_run_id)
+            self.assertFalse(result["allowed"])
+            self.assertEqual(run["plan"]["auto_sell_review_action"], "HOLD")
+            self.assertNotIn("auto_sell_policy", run["plan"])
+            self.assertTrue(run["plan"]["auto_sell_policy_reject_preserved_hold"])
+            self.assertFalse(bool(run["plan"].get("auto_sell_hold_fallback_to_sell", False)))
+            self.assertEqual(
+                run["plan"]["auto_sell_policy_reject_reason"],
+                "profit_ladder_protective_stop_below_entry_floor",
+            )
+
+    def test_pathb_profit_ladder_exit_context_includes_hold_stop_floor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, plan, pos = _pathb_runtime(tmp)
+            ctx = runtime._pathb_exit_advisor_context(
+                plan,
+                pos,
+                ExitSignal(True, "profit_ladder", "CLOSED_PROFIT_LADDER", 101.0, plan.path_run_id),
+                101.0,
+            )
+
+        self.assertEqual(ctx["profit_ladder_hold_min_protective_stop"], 100.0)
+        self.assertEqual(ctx["profit_ladder_hold_max_stop_distance_pct"], 3.0)
+        self.assertTrue(ctx["profit_ladder_hold_min_stop_feasible"])
+        self.assertIn("profit_ladder_hold_min_protective_stop", ctx["profit_ladder_hold_rule"])
 
     def test_pathb_target_hold_keeps_when_existing_policy_stop_satisfies_gain_lock_floor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
