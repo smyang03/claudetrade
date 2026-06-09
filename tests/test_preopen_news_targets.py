@@ -42,6 +42,42 @@ class PreopenNewsTargetsTests(unittest.TestCase):
 
         self.assertEqual(list(targets), ["AAA", "BBB", "CCC"])
 
+    def test_candidate_log_supplements_state_targets_after_current_state(self) -> None:
+        state = {
+            "candidates": [
+                {"ticker": "005930", "name": "Samsung", "shadow_preopen_rank": 1},
+                {"ticker": "000660", "name": "SK hynix", "shadow_preopen_rank": 2},
+            ],
+        }
+        log_rows = [
+            {"ticker": "005930", "name": "Old Samsung", "shadow_preopen_rank": 1},
+            {"ticker": "035420", "name": "NAVER", "shadow_preopen_rank": 1},
+            {"ticker": "035720", "name": "Kakao", "provider_rank": 2},
+        ]
+
+        with patch.dict("os.environ", {"PREOPEN_NEWS_INCLUDE_CANDIDATE_LOG": "true"}), \
+             patch("phase1_trainer.preopen_news_targets.load_preopen_state", return_value=state), \
+             patch("phase1_trainer.preopen_news_targets.read_jsonl_tail", return_value=log_rows):
+            targets = load_preopen_news_targets("KR", "2026-05-15", limit=4, max_age_min=0)
+
+        self.assertEqual(list(targets), ["005930", "000660", "035420", "035720"])
+        self.assertEqual(targets["005930"], "Samsung")
+
+    def test_kr_default_target_limit_expands_for_preopen_candidate_churn(self) -> None:
+        state = {
+            "candidates": [
+                {"ticker": f"{idx:06d}", "name": f"Stock {idx}", "shadow_preopen_rank": idx}
+                for idx in range(1, 101)
+            ],
+        }
+
+        with patch.dict("os.environ", {}, clear=True), \
+             patch("phase1_trainer.preopen_news_targets.load_preopen_state", return_value=state), \
+             patch("phase1_trainer.preopen_news_targets.read_jsonl_tail", return_value=[]):
+            targets = load_preopen_news_targets("KR", "2026-05-15", max_age_min=0)
+
+        self.assertEqual(len(targets), 100)
+
 
 if __name__ == "__main__":
     unittest.main()

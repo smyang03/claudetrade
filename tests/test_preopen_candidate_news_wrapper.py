@@ -187,6 +187,57 @@ class PreopenCandidateNewsWrapperTests(unittest.TestCase):
         self.assertIn("kr_news_coverage_low", summary["data_quality_flags"])
         self.assertIn("kr_market_news_missing", summary["data_quality_flags"])
 
+    def test_bridge_merge_recomputes_coverage_and_provider_counts(self) -> None:
+        targets = {"NVDA": "Nvidia"}
+        news_payload = {
+            "market": "US",
+            "corp_news": {"NVDA": {"name": "Nvidia", "count": 0, "items": []}},
+            "target_tickers": ["NVDA"],
+            "news_coverage": {"covered_ticker_count": 0, "missing_tickers": ["NVDA"], "coverage_ratio": 0.0},
+            "provider_counts": {},
+        }
+        bridge_payload = {
+            "date": "2026-05-15",
+            "market": "US",
+            "target_source": "investment_news_db_readonly",
+            "corp_news": {
+                "NVDA": {
+                    "name": "Nvidia",
+                    "count": 1,
+                    "items": [
+                        {
+                            "source": "GoogleNews",
+                            "title": "Nvidia unveils new AI platform",
+                            "date": "2026-05-15",
+                        }
+                    ],
+                }
+            },
+            "investment_news_bridge": {"row_count": 1, "corp_ticker_count": 1, "market_item_count": 0},
+        }
+        saved_payload = {}
+
+        def fake_save(_market, _day, payload):
+            saved_payload.update(payload)
+            return Path("preopen.json")
+
+        with patch("tools.collect_preopen_candidate_news.load_preopen_news_targets", return_value=targets), \
+             patch("phase1_trainer.us_news_collector.collect_day", return_value=news_payload), \
+             patch("tools.collect_preopen_candidate_news.build_us_digest", return_value={"top_news": []}), \
+             patch("preopen.investment_news_bridge.build_preopen_payload_from_investment_news", return_value=bridge_payload), \
+             patch("tools.collect_preopen_candidate_news.save_preopen_news_snapshot", side_effect=fake_save), \
+             patch("tools.collect_preopen_candidate_news.enrich_preopen_state", return_value={"status": "ok", "flagged_count": 1}):
+            summary = collect_preopen_candidate_news(
+                market="US",
+                session_date="2026-05-15",
+                mode="live",
+            )
+
+        self.assertEqual(summary["covered_ticker_count"], 1)
+        self.assertEqual(summary["coverage_ratio"], 1.0)
+        self.assertEqual(saved_payload["news_coverage"]["missing_tickers"], [])
+        self.assertEqual(saved_payload["provider_counts"]["GoogleNews"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

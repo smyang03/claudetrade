@@ -4,7 +4,7 @@ import math
 import os
 from typing import Any
 
-from preopen.storage import load_preopen_state
+from preopen.storage import load_preopen_state, log_path, read_jsonl_tail
 
 
 def _env_int(name: str, default: int) -> int:
@@ -12,6 +12,24 @@ def _env_int(name: str, default: int) -> int:
         return int(os.getenv(name, str(default)))
     except Exception:
         return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _market_env_int(market: str, suffix: str, default: int) -> int:
+    market_key = str(market or "").upper()
+    raw = os.getenv(f"{market_key}_{suffix}")
+    if raw not in (None, ""):
+        try:
+            return int(raw)
+        except Exception:
+            return default
+    return _env_int(suffix, default)
 
 
 def _normalize_ticker(market: str, value: Any) -> str:
@@ -40,6 +58,23 @@ def _candidate_sort_key(item: tuple[int, dict[str, Any]]) -> tuple[float, float,
     return (shadow_rank, provider_rank, -preopen_score, idx)
 
 
+def _target_limit(market: str, limit: int | None) -> int:
+    if limit is not None:
+        return int(limit)
+    default = 120 if str(market or "").upper() == "KR" else 60
+    return _market_env_int(market, "PREOPEN_NEWS_TARGET_LIMIT", default)
+
+
+def _candidate_log_rows(market: str, session_date: str, *, mode: str) -> list[dict[str, Any]]:
+    if not _env_bool("PREOPEN_NEWS_INCLUDE_CANDIDATE_LOG", True):
+        return []
+    tail_limit = max(1, _env_int("PREOPEN_NEWS_CANDIDATE_LOG_TAIL_LIMIT", 1000))
+    try:
+        return read_jsonl_tail(log_path("candidates", market, session_date, mode=mode), tail_limit)
+    except Exception:
+        return []
+
+
 def load_preopen_news_targets(
     market: str,
     session_date: str,
@@ -50,7 +85,7 @@ def load_preopen_news_targets(
 ) -> dict[str, str]:
     """Load preopen candidates as an ordered ticker -> display-name map."""
     market_key = str(market or "").upper()
-    target_limit = limit if limit is not None else _env_int("PREOPEN_NEWS_TARGET_LIMIT", 60)
+    target_limit = _target_limit(market_key, limit)
     age_limit = max_age_min if max_age_min is not None else _env_int("PREOPEN_NEWS_STATE_MAX_AGE_MIN", 0)
     state = load_preopen_state(
         market_key,
@@ -58,9 +93,12 @@ def load_preopen_news_targets(
         max_age_min=age_limit,
         mode=mode,
     )
-    candidates = state.get("candidates") or []
+    candidates = list(state.get("candidates") or [])
+    log_candidates = _candidate_log_rows(market_key, session_date, mode=mode)
     targets: dict[str, str] = {}
-    for _idx, row in sorted(enumerate(candidates), key=_candidate_sort_key):
+    ordered_candidates = sorted(enumerate(candidates), key=_candidate_sort_key)
+    ordered_candidates.extend(sorted(enumerate(log_candidates, start=len(candidates)), key=_candidate_sort_key))
+    for _idx, row in ordered_candidates:
         ticker = _normalize_ticker(market_key, row.get("ticker"))
         if not ticker or ticker in targets:
             continue

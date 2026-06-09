@@ -75,6 +75,81 @@ def _corp_news_total(payload: dict[str, Any]) -> int:
     return sum(int(v.get("count", len(v.get("items", []))) or 0) for v in (payload.get("corp_news") or {}).values())
 
 
+def _news_entry_count(entry: Any) -> int:
+    if not isinstance(entry, dict):
+        return 0
+    items = entry.get("items") if isinstance(entry.get("items"), list) else []
+    try:
+        declared = int(entry.get("count", 0) or 0)
+    except Exception:
+        declared = 0
+    return max(declared, len(items))
+
+
+def _provider_key(source: Any) -> str:
+    text = str(source or "").strip()
+    lower = text.lower()
+    if lower.startswith("kis"):
+        return "KIS"
+    if "naver" in lower:
+        return "Naver"
+    if "google" in lower:
+        return "GoogleNews"
+    if lower.startswith("finnhub"):
+        return "Finnhub"
+    if lower.startswith("sec"):
+        return "SEC EDGAR"
+    if lower.startswith("alphavantage") or lower.startswith("alpha vantage"):
+        return "AlphaVantage"
+    if text.startswith("BigKinds"):
+        return "BigKinds"
+    return text or "unknown"
+
+
+def _refresh_payload_metadata(payload: dict[str, Any]) -> None:
+    corp_news = payload.get("corp_news") if isinstance(payload.get("corp_news"), dict) else {}
+    target_tickers = [
+        _normalize_ticker(str(payload.get("market") or ""), ticker)
+        for ticker in list(payload.get("target_tickers") or [])
+        if str(ticker or "").strip()
+    ]
+    if not target_tickers:
+        target_tickers = [_normalize_ticker(str(payload.get("market") or ""), ticker) for ticker in corp_news.keys()]
+    target_tickers = list(dict.fromkeys(ticker for ticker in target_tickers if ticker))
+
+    missing = [
+        ticker for ticker in target_tickers
+        if _news_entry_count(corp_news.get(ticker)) <= 0
+    ]
+    covered = len(target_tickers) - len(missing)
+
+    provider_counts: dict[str, int] = {}
+    for entry in corp_news.values():
+        if not isinstance(entry, dict):
+            continue
+        for item in entry.get("items") or []:
+            if isinstance(item, dict):
+                key = _provider_key(item.get("source") or item.get("provider"))
+                provider_counts[key] = provider_counts.get(key, 0) + 1
+    for item in payload.get("market_news") or []:
+        if isinstance(item, dict):
+            key = _provider_key(item.get("source") or item.get("provider"))
+            provider_counts[key] = provider_counts.get(key, 0) + 1
+    disclosures = payload.get("disclosures") if isinstance(payload.get("disclosures"), dict) else {}
+    dart_count = sum(len(items or []) for items in disclosures.values())
+    if dart_count:
+        provider_counts["DART"] = provider_counts.get("DART", 0) + dart_count
+
+    payload["target_count"] = len(target_tickers)
+    payload["target_tickers"] = target_tickers
+    payload["provider_counts"] = provider_counts
+    payload["news_coverage"] = {
+        "covered_ticker_count": covered,
+        "missing_tickers": missing,
+        "coverage_ratio": round(covered / len(target_tickers), 4) if target_tickers else 0.0,
+    }
+
+
 def _parse_dt(value: Any):
     raw = str(value or "").strip()
     if not raw:
@@ -179,6 +254,7 @@ def _merge_news_payloads(base: dict[str, Any], extra: dict[str, Any], *, market:
     target_source = str(merged.get("target_source") or "")
     if bridge_summary and "investment_news_db_readonly" not in target_source:
         merged["target_source"] = f"{target_source}+investment_news_db_readonly" if target_source else "investment_news_db_readonly"
+    _refresh_payload_metadata(merged)
     return merged
 
 

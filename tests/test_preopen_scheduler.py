@@ -110,7 +110,7 @@ class PreopenSchedulerTests(unittest.TestCase):
         self.assertFalse(any(job.kind == "outcome" for job in jobs))
 
     def test_news_job_runs_from_preopen_targets_before_regular_open(self) -> None:
-        now = datetime(2026, 5, 4, 8, 41, tzinfo=KST)
+        now = datetime(2026, 5, 4, 8, 51, tzinfo=KST)
 
         with patch("preopen.scheduler.is_trading_day", return_value=True):
             jobs = due_jobs(
@@ -124,9 +124,19 @@ class PreopenSchedulerTests(unittest.TestCase):
         self.assertEqual(len(news_jobs), 1)
         job = news_jobs[0]
         self.assertEqual(job.job_id, "live:2026-05-04:KR:news")
-        self.assertEqual(job.due_at, "2026-05-04T08:40:00+09:00")
+        self.assertEqual(job.due_at, "2026-05-04T08:50:00+09:00")
         self.assertEqual(job.script, "tools/collect_preopen_candidate_news.py")
         self.assertEqual(job.args, ("--market", "KR", "--session-date", "2026-05-04", "--mode", "live"))
+
+    def test_us_news_job_keeps_twenty_minute_lead(self) -> None:
+        now = datetime(2026, 5, 4, 22, 11, tzinfo=KST)
+
+        with patch("preopen.scheduler.is_trading_day", return_value=True):
+            jobs = due_jobs(now_dt=now, markets=["US"], mode="live")
+
+        news_jobs = [job for job in jobs if job.kind == "news"]
+        self.assertEqual(len(news_jobs), 1)
+        self.assertEqual(news_jobs[0].due_at, "2026-05-04T22:10:00+09:00")
 
     def test_us_outcome_catchup_after_kst_midnight_keeps_us_session_date(self) -> None:
         now = datetime(2026, 5, 5, 1, 0, tzinfo=KST)

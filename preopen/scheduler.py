@@ -32,6 +32,17 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _market_env_int(market: str, suffix: str, default: int) -> int:
+    mkt = market_key(market)
+    raw = os.getenv(f"{mkt}_{suffix}")
+    if raw not in (None, ""):
+        try:
+            return int(raw)
+        except Exception:
+            return default
+    return _env_int(suffix, default)
+
+
 def _combine(now_dt: datetime, value: dt_time) -> datetime:
     return datetime.combine(now_dt.date(), value, tzinfo=KST)
 
@@ -207,6 +218,11 @@ def collector_window_dt(market: str, session_date: str) -> tuple[datetime, datet
     return datetime.combine(day, dt_time(8, 0), tzinfo=KST), datetime.combine(day, dt_time(9, 0), tzinfo=KST)
 
 
+def news_lead_min(market: str) -> int:
+    default = 20 if market_key(market) == "US" else 10
+    return max(1, _market_env_int(market, "PREOPEN_NEWS_LEAD_MIN", default))
+
+
 def regular_open_time(market: str, session_date: str | None = None) -> dt_time:
     if market_key(market) == "US":
         session_date = session_date or resolve_session_date_str("US", datetime.now(KST))
@@ -262,8 +278,8 @@ def due_jobs(
                 ))
 
         open_dt = regular_open_dt(mkt, session_date)
-        news_lead_min = max(1, _env_int("PREOPEN_NEWS_LEAD_MIN", 20))
-        news_due_dt = open_dt - timedelta(minutes=news_lead_min)
+        lead_min = news_lead_min(mkt)
+        news_due_dt = open_dt - timedelta(minutes=lead_min)
         news_late_by = (now_dt - news_due_dt).total_seconds() / 60.0
         if 0 <= news_late_by <= max(0, int(outcome_catchup_min)):
             job_id = f"{runtime_mode}:{session_date}:{mkt}:news"
