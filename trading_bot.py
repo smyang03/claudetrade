@@ -28165,8 +28165,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         if isinstance(getattr(self, "_buy_time_confirm_call_counts", None), dict):
             self._buy_time_confirm_call_counts[market_key] = 0
-        if isinstance(getattr(self, "_early_judge_session_call_count", None), dict):
-            self._early_judge_session_call_count[market_key] = 0
+        self._early_judge_session_call_count = {"KR": 0, "US": 0}
         self._backfill_missed_postmortem(market)
         if market == "US":
             try:
