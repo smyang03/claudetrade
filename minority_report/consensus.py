@@ -207,6 +207,58 @@ def _analyst_new_buy_constraints(judgment_items: list[dict], roles=None) -> dict
     }
 
 
+MODE_NEW_BUY_POLICY = {
+    "MILD_BEAR": {"permission": "selective", "max_gross_exposure_pct": 30},
+    "CAUTIOUS_BEAR": {"permission": "selective", "max_gross_exposure_pct": 15},
+}
+
+
+def _apply_mode_new_buy_policy(consensus: dict) -> dict:
+    result = dict(consensus or {})
+    mode = str(result.get("mode") or "").strip().upper()
+    policy = MODE_NEW_BUY_POLICY.get(mode)
+    if not policy:
+        return result
+    try:
+        available_count = int(result.get("available_analyst_count", 0) or 0)
+    except Exception:
+        available_count = 0
+    quality = str(result.get("consensus_quality") or "").strip()
+    quorum_met = bool(result.get("quorum_met")) and available_count >= 2
+    if not quorum_met or quality in {"fail_closed", "partial_consensus_only"}:
+        return result
+
+    permission_before = str(result.get("new_buy_permission", "") or "").strip().lower()
+    mode_permission = str(policy.get("permission") or "selective").strip().lower()
+    if mode_permission not in {"allow", "selective", "block"}:
+        mode_permission = "selective"
+    result["mode_new_buy_policy_applied"] = True
+    result["mode_new_buy_policy_mode"] = mode
+    result["mode_new_buy_policy_reason"] = "risk_off_limited_new_buy"
+    result["mode_new_buy_policy_permission_before"] = permission_before
+    result["mode_new_buy_policy_permission"] = mode_permission
+    result["new_buy_permission_before_mode_policy"] = permission_before
+    result["new_buy_permission"] = mode_permission
+    result["new_buy_permission_relaxed_by_mode_policy"] = permission_before == "block" and mode_permission != "block"
+    result["new_buy_permission_tightened_by_mode_policy"] = permission_before == "allow" and mode_permission != "allow"
+
+    try:
+        analyst_cap = int(float(result.get("max_gross_exposure_pct", 0) or 0))
+    except Exception:
+        analyst_cap = 0
+    try:
+        mode_cap = int(float(policy.get("max_gross_exposure_pct", 0) or 0))
+    except Exception:
+        mode_cap = 0
+    if mode_cap > 0:
+        effective_cap = min(analyst_cap, mode_cap) if analyst_cap > 0 else mode_cap
+        result["max_gross_exposure_pct_before_mode_policy"] = analyst_cap
+        result["mode_max_gross_exposure_pct"] = mode_cap
+        result["mode_new_buy_policy_cap"] = mode_cap
+        result["max_gross_exposure_pct"] = max(0, min(100, effective_cap))
+    return result
+
+
 def apply_unanimous_override(judgments: dict, consensus: dict) -> dict:
     if not judgments or not consensus:
         return dict(consensus or {})
@@ -451,14 +503,15 @@ def build_consensus(judgments: dict, check_minority: bool = True,
         [role for role, _ in valid_items],
     )
     result.update(new_buy_constraints)
-    if new_buy_constraints.get("new_buy_permission") == "block":
+    result = _apply_mode_new_buy_policy(result)
+    if result.get("new_buy_permission") == "block":
         result["size_before_new_buy_block"] = result.get("size", 0)
         result["size"] = 0
-    elif int(new_buy_constraints.get("max_gross_exposure_pct", 0) or 0) > 0:
+    elif int(result.get("max_gross_exposure_pct", 0) or 0) > 0:
         result["size_before_max_gross_cap"] = result.get("size", 0)
         result["size"] = min(
             int(result.get("size", 0) or 0),
-            int(new_buy_constraints.get("max_gross_exposure_pct", 0) or 0),
+            int(result.get("max_gross_exposure_pct", 0) or 0),
         )
     if available_count == 2 and int(result.get("size", 0) or 0) > 0:
         partial_mult = max(0.0, min(1.0, _env_float("ANALYST_PARTIAL_CONSENSUS_SIZE_MULT", 0.75)))

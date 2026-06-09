@@ -208,7 +208,7 @@ class AnalystPromptContractTests(unittest.TestCase):
         self.assertIn("suggested_size_pct", captured["prompt"])
         self.assertEqual(result["stance"], "CAUTIOUS_BEAR")
         self.assertEqual(result["suggested_size_pct"], 10.0)
-        self.assertEqual(result["new_buy_permission"], "block")
+        self.assertEqual(result["new_buy_permission"], "selective")
         self.assertEqual(result["max_gross_exposure_pct"], 15.0)
 
 

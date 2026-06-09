@@ -1789,7 +1789,7 @@ def _debate_defaults_for_stance(stance: str) -> dict:
     if stance_key == "MILD_BEAR":
         return {"suggested_size_pct": 20.0, "new_buy_permission": "selective", "max_gross_exposure_pct": 30}
     if stance_key == "CAUTIOUS_BEAR":
-        return {"suggested_size_pct": 10.0, "new_buy_permission": "block", "max_gross_exposure_pct": 15}
+        return {"suggested_size_pct": 10.0, "new_buy_permission": "selective", "max_gross_exposure_pct": 15}
     return {"suggested_size_pct": 0.0, "new_buy_permission": "block", "max_gross_exposure_pct": 0}
 
 

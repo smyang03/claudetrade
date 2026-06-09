@@ -9282,6 +9282,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "unavailable_analyst_roles": list(consensus.get("unavailable_analyst_roles", []) or []),
             "source": "analyst_consensus",
         }
+        for key in (
+            "mode_new_buy_policy_applied",
+            "mode_new_buy_policy_mode",
+            "mode_new_buy_policy_reason",
+            "mode_new_buy_policy_permission_before",
+            "mode_new_buy_policy_permission",
+            "new_buy_permission_before_mode_policy",
+            "new_buy_permission_relaxed_by_mode_policy",
+            "new_buy_permission_tightened_by_mode_policy",
+            "max_gross_exposure_pct_before_mode_policy",
+            "mode_max_gross_exposure_pct",
+            "mode_new_buy_policy_cap",
+        ):
+            if key in consensus:
+                details[key] = consensus.get(key)
         details.update(override_policy)
         if permission == "block" and not bool(override_policy.get("new_buy_block_override_enabled")):
             return {

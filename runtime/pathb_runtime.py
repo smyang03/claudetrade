@@ -713,6 +713,116 @@ class PathBRuntime:
         state["count"] = 0
         state["last_emit"] = now
 
+    def _pathb_consensus_mode(self, market: str) -> str:
+        judgment = getattr(getattr(self, "bot", None), "today_judgment", {}) or {}
+        consensus = dict((judgment or {}).get("consensus") or {})
+        return str(consensus.get("mode") or (judgment or {}).get("mode") or "").strip().upper()
+
+    def _pathb_risk_off_cap_audit_state(
+        self,
+        market: str,
+        *,
+        stage: str,
+        incoming_tickers: list[str] | None = None,
+        zone_hit_tickers: list[str] | None = None,
+    ) -> dict[str, Any]:
+        market_key = str(market or "").upper()
+        mode = self._pathb_consensus_mode(market_key)
+        caps = {"MILD_BEAR": 2, "CAUTIOUS_BEAR": 1}
+        cap = int(caps.get(mode, 0) or 0)
+        incoming_keys = sorted({self._ticker_key(market_key, item) for item in (incoming_tickers or []) if item})
+        zone_hit_keys = sorted({self._ticker_key(market_key, item) for item in (zone_hit_tickers or []) if item})
+        if cap <= 0:
+            return {
+                "active": False,
+                "market": market_key,
+                "stage": str(stage or ""),
+                "market_mode": mode,
+                "risk_off_pathb_cap": 0,
+                "incoming_count": len(incoming_keys),
+                "zone_hit_count": len(zone_hit_keys),
+            }
+        try:
+            waiting_count = len(self.adapter.get_waiting_runs(market_key, self.mode, self._session_date(market_key)))
+        except Exception:
+            waiting_count = 0
+        try:
+            pending_buy_count = len(self._pending_buy_runs(market_key))
+        except Exception:
+            pending_buy_count = 0
+        try:
+            open_position_count = int(self._pathb_open_position_count(market_key) or 0)
+        except Exception:
+            open_position_count = 0
+        try:
+            order_unknown_count = len(
+                self.store.path_runs_for_session(
+                    market=market_key,
+                    runtime_mode=self.mode,
+                    session_date=self._session_date(market_key),
+                    status="ORDER_UNKNOWN",
+                    path_type="claude_price",
+                )
+            )
+        except Exception:
+            order_unknown_count = 0
+        current_count = waiting_count + pending_buy_count + open_position_count + order_unknown_count
+        projected_count = current_count + len(incoming_keys)
+        would_exceed = projected_count > cap
+        return {
+            "active": True,
+            "audit_only": True,
+            "enforced": False,
+            "market": market_key,
+            "stage": str(stage or ""),
+            "market_mode": mode,
+            "risk_off_pathb_cap": cap,
+            "waiting_count": waiting_count,
+            "pending_buy_count": pending_buy_count,
+            "open_position_count": open_position_count,
+            "order_unknown_count": order_unknown_count,
+            "current_count": current_count,
+            "incoming_count": len(incoming_keys),
+            "incoming_tickers": incoming_keys,
+            "zone_hit_count": len(zone_hit_keys),
+            "zone_hit_tickers": zone_hit_keys,
+            "projected_count": projected_count,
+            "would_exceed": would_exceed,
+            "would_block_count": max(0, projected_count - cap),
+            "reason": "pathb_risk_off_cap_audit_only",
+        }
+
+    def _audit_pathb_risk_off_cap(
+        self,
+        market: str,
+        *,
+        stage: str,
+        incoming_tickers: list[str] | None = None,
+        zone_hit_tickers: list[str] | None = None,
+    ) -> dict[str, Any]:
+        state = self._pathb_risk_off_cap_audit_state(
+            market,
+            stage=stage,
+            incoming_tickers=incoming_tickers,
+            zone_hit_tickers=zone_hit_tickers,
+        )
+        if not bool(state.get("active")):
+            return state
+        if not (bool(state.get("would_exceed")) or state.get("incoming_count") or state.get("zone_hit_count")):
+            return state
+        message = (
+            f"[PathB risk-off cap audit] {state.get('market')} mode={state.get('market_mode')} "
+            f"stage={state.get('stage')} current={state.get('current_count')} "
+            f"incoming={state.get('incoming_count')} projected={state.get('projected_count')} "
+            f"cap={state.get('risk_off_pathb_cap')} would_exceed={state.get('would_exceed')} "
+            f"audit_only=true"
+        )
+        if bool(state.get("would_exceed")):
+            log.warning(message, extra={"extra": {**self._execution_safety_payload(), **state}})
+        else:
+            log.info(message, extra={"extra": {**self._execution_safety_payload(), **state}})
+        return state
+
     def _entry_scan_broker_truth_gate(self, market: str) -> dict[str, Any]:
         market_key = str(market or "").upper()
         details: dict[str, Any] = {
@@ -1833,6 +1943,12 @@ class PathBRuntime:
         ) -> None:
             if not trade_ready:
                 return
+            if not shadow_registration:
+                self._audit_pathb_risk_off_cap(
+                    market,
+                    stage="pathb_plan_registration",
+                    incoming_tickers=list(trade_ready),
+                )
             if not bool(entry_gate.get("allowed", True)):
                 reason = str(entry_gate.get("reason") or "ORDER_UNKNOWN_UNRESOLVED")
                 for ticker in trade_ready:
@@ -2623,6 +2739,11 @@ class PathBRuntime:
             if plan is None:
                 continue
             waiting_items.append((idx, run, plan))
+        self._audit_pathb_risk_off_cap(
+            market,
+            stage="pathb_waiting_scan",
+            zone_hit_tickers=[],
+        )
         if bool(burst_cap.get("active")):
             def _confidence_sort_value(item: tuple[int, dict[str, Any], PricePlan]) -> float:
                 try:
@@ -2684,6 +2805,11 @@ class PathBRuntime:
             # See register_from_selection_meta policy note: a waiting Claude price
             # plan may originate from PULLBACK_WAIT rather than PathA trade_ready.
             self._audit_pathb_zone_hit(plan, signal)
+            self._audit_pathb_risk_off_cap(
+                market,
+                stage="pathb_waiting_scan_zone_hit",
+                zone_hit_tickers=[plan.ticker],
+            )
             self._audit_pathb_zone_hit_context_drift(run, plan, signal)
             confirmation_gate = self._kr_pathb_risky_origin_confirmation_gate(plan, signal)
             if confirmation_gate.get("allowed") is False:

@@ -676,15 +676,15 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
         self.assertIn("daily entries: 20/20", rendered)
         self.assertIn("rate key: live:US:buy", rendered)
 
-    def test_consensus_new_buy_permission_block_sets_hard_size_zero(self) -> None:
+    def test_consensus_risk_off_mode_policy_relaxes_block_vote_to_selective(self) -> None:
         from minority_report import consensus as consensus_module
 
         judgments = {
             "bull": {
-                "stance": "MILD_BULL",
+                "stance": "CAUTIOUS_BEAR",
                 "confidence": 0.7,
-                "new_buy_permission": "allow",
-                "max_gross_exposure_pct": 80,
+                "new_buy_permission": "selective",
+                "max_gross_exposure_pct": 25,
             },
             "bear": {
                 "stance": "CAUTIOUS_BEAR",
@@ -693,23 +693,62 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
                 "max_gross_exposure_pct": 25,
             },
             "neutral": {
-                "stance": "NEUTRAL",
+                "stance": "MILD_BEAR",
                 "confidence": 0.6,
                 "new_buy_permission": "selective",
-                "max_gross_exposure_pct": 50,
+                "max_gross_exposure_pct": 30,
             },
         }
 
         with patch.object(consensus_module, "_get_weights", return_value={"bull": 1.0, "bear": 1.0, "neutral": 1.0}):
             result = consensus_module.build_consensus(judgments, market="US")
 
-        self.assertEqual(result["new_buy_permission"], "block")
+        self.assertEqual(result["mode"], "CAUTIOUS_BEAR")
+        self.assertEqual(result["new_buy_permission"], "selective")
+        self.assertEqual(result["new_buy_permission_before_mode_policy"], "block")
+        self.assertTrue(result["new_buy_permission_relaxed_by_mode_policy"])
         self.assertEqual(
             result["new_buy_permission_votes_by_role"],
-            {"bull": "allow", "bear": "block", "neutral": "selective"},
+            {"bull": "selective", "bear": "block", "neutral": "selective"},
         )
-        self.assertEqual(result["max_gross_exposure_pct"], 25)
+        self.assertEqual(result["max_gross_exposure_pct"], 15)
+        self.assertEqual(result["max_gross_exposure_pct_before_mode_policy"], 25)
+        self.assertEqual(result["mode_max_gross_exposure_pct"], 15)
         self.assertEqual(result["max_gross_exposure_pct_by_role"]["bear"], 25)
+        self.assertGreater(result["size"], 0)
+        self.assertLessEqual(result["size"], 15)
+        self.assertNotIn("size_before_new_buy_block", result)
+
+    def test_consensus_defensive_block_still_sets_hard_size_zero(self) -> None:
+        from minority_report import consensus as consensus_module
+
+        judgments = {
+            "bull": {
+                "stance": "DEFENSIVE",
+                "confidence": 0.7,
+                "new_buy_permission": "block",
+                "max_gross_exposure_pct": 10,
+            },
+            "bear": {
+                "stance": "DEFENSIVE",
+                "confidence": 0.8,
+                "new_buy_permission": "block",
+                "max_gross_exposure_pct": 10,
+            },
+            "neutral": {
+                "stance": "DEFENSIVE",
+                "confidence": 0.6,
+                "new_buy_permission": "block",
+                "max_gross_exposure_pct": 10,
+            },
+        }
+
+        with patch.object(consensus_module, "_get_weights", return_value={"bull": 1.0, "bear": 1.0, "neutral": 1.0}):
+            result = consensus_module.build_consensus(judgments, market="US")
+
+        self.assertEqual(result["mode"], "DEFENSIVE")
+        self.assertEqual(result["new_buy_permission"], "block")
+        self.assertFalse(result.get("mode_new_buy_policy_applied", False))
         self.assertEqual(result["size"], 0)
         self.assertGreater(result["size_before_new_buy_block"], 0)
 

@@ -986,6 +986,55 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(run["status"], "WAITING")
             self.assertEqual(run["path_type"], "claude_price")
 
+    def test_risk_off_pathb_cap_audit_does_not_block_registration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            bot = _Bot()
+            bot.today_judgment = {"consensus": {"mode": "CAUTIOUS_BEAR"}}
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+
+            with patch("runtime.pathb_runtime.log.warning") as warning:
+                runs = runtime.register_from_selection_meta(
+                    "KR",
+                    {
+                        "trade_ready": ["005930", "000660"],
+                        "v2_decision_ids": {"005930": "dec1", "000660": "dec2"},
+                        "price_targets": {
+                            "005930": {
+                                "buy_zone_low": 52000,
+                                "buy_zone_high": 52500,
+                                "sell_target": 54500,
+                                "stop_loss": 51000,
+                                "hold_days": 1,
+                                "confidence": 0.7,
+                            },
+                            "000660": {
+                                "buy_zone_low": 120000,
+                                "buy_zone_high": 121000,
+                                "sell_target": 126000,
+                                "stop_loss": 117000,
+                                "hold_days": 1,
+                                "confidence": 0.7,
+                            },
+                        },
+                    },
+                )
+
+            self.assertEqual(len(runs), 2)
+            audit_messages = [
+                str(call.args[0])
+                for call in warning.call_args_list
+                if call.args and "[PathB risk-off cap audit]" in str(call.args[0])
+            ]
+            self.assertTrue(audit_messages)
+            self.assertIn("would_exceed=True", audit_messages[0])
+            self.assertIn("audit_only=true", audit_messages[0])
+            state = runtime._pathb_risk_off_cap_audit_state("KR", stage="test")
+            self.assertTrue(state["would_exceed"])
+            self.assertFalse(state["enforced"])
+            self.assertEqual(state["risk_off_pathb_cap"], 1)
+
     def test_register_from_selection_meta_stores_context_hash_for_zone_hit_audit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")
