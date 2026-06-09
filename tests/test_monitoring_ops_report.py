@@ -389,6 +389,84 @@ class MonitoringOpsReportTests(unittest.TestCase):
                 )
                 conn.execute(
                     """
+                    CREATE TABLE v2_path_runs (
+                        path_run_id TEXT,
+                        decision_id TEXT,
+                        path_type TEXT,
+                        market TEXT,
+                        runtime_mode TEXT,
+                        session_date TEXT,
+                        ticker TEXT,
+                        status TEXT,
+                        plan_json TEXT,
+                        created_at TEXT,
+                        updated_at TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO v2_path_runs
+                    VALUES ('path_ctx_1','dec_ctx_1','claude_price','US','live','2026-06-03','AAPL','WAITING',?,?,?)
+                    """,
+                    (
+                        json.dumps(
+                            {
+                                "context_hash_at_creation": "ctx-old",
+                                "zone_hit_context_drift_audit": {
+                                    "context_changed": True,
+                                    "current_context_adverse": True,
+                                    "creation_context_available": True,
+                                    "creation_context_hash": "ctx-old",
+                                    "current_context_hash": "ctx-new",
+                                    "selection_snapshot_age_min": 31.5,
+                                },
+                            }
+                        ),
+                        "2026-06-03T09:30:00+09:00",
+                        "2026-06-03T10:01:00+09:00",
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO v2_path_runs
+                    VALUES ('path_ctx_missing','dec_ctx_2','claude_price','US','live','2026-06-03','MSFT','WAITING',?,?,?)
+                    """,
+                    (
+                        json.dumps({}),
+                        "2026-06-03T09:30:00+09:00",
+                        "2026-06-03T10:01:00+09:00",
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO v2_path_runs
+                    VALUES ('path_exec_1','dec_exec_1','claude_price','US','live','2026-06-03','AMZN','CLOSED',?,?,?)
+                    """,
+                    (
+                        json.dumps(
+                            {
+                                "context_hash_at_creation": "ctx-exec",
+                                "actual_entry_price": 38.73,
+                                "actual_exit_price": 37.79,
+                                "buy_zone_low": 37.8,
+                                "buy_zone_high": 40.0,
+                                "pnl_pct": -1.4108,
+                                "close_reason": "CLOSED_LOSS_CAP",
+                                "origin_reason": "LATE_MOVER_WAIT_OR",
+                                "confidence": 0.52,
+                                "risk_pct": 2.1164,
+                                "entry_rationale": "",
+                                "entry_basis_tags": [],
+                                "invalidation_conditions": [],
+                            }
+                        ),
+                        "2026-06-03T09:30:00+09:00",
+                        "2026-06-03T10:01:00+09:00",
+                    ),
+                )
+                conn.execute(
+                    """
                     CREATE TABLE lifecycle_events (
                         event_type TEXT,
                         market TEXT,
@@ -500,6 +578,23 @@ class MonitoringOpsReportTests(unittest.TestCase):
         self.assertEqual(miss["source_overlay"]["candidate_audit"], "candidate_resolved_reason")
         self.assertEqual(miss["candidate_resolved_reason_counts"]["NO_SIGNAL"], 1)
         self.assertFalse(miss["trade_behavior_change_allowed"])
+        drift = payload["pathb_context_drift_audit"]
+        self.assertEqual(drift["pathb_run_count"], 3)
+        self.assertEqual(drift["pathb_context_drift_audit_count"], 1)
+        self.assertEqual(drift["pathb_context_changed_count"], 1)
+        self.assertEqual(drift["pathb_current_context_adverse_count"], 1)
+        self.assertEqual(drift["pathb_context_hash_missing_count"], 1)
+        self.assertFalse(drift["trade_behavior_change_allowed"])
+        execution_quality = payload["pathb_execution_quality"]
+        self.assertEqual(execution_quality["pathb_run_count"], 3)
+        self.assertEqual(execution_quality["filled_count"], 1)
+        self.assertEqual(execution_quality["closed_priced_count"], 1)
+        self.assertEqual(execution_quality["mean_pnl_pct"], -1.4108)
+        self.assertEqual(execution_quality["win_rate_pct"], 0.0)
+        self.assertEqual(execution_quality["entry_zone_known_count"], 1)
+        self.assertEqual(execution_quality["empty_entry_rationale_filled_count"], 1)
+        self.assertEqual(execution_quality["loss_origin_reason_counts"]["LATE_MOVER_WAIT_OR"], 1)
+        self.assertFalse(execution_quality["trade_behavior_change_allowed"])
         protection = payload["pathb_profit_protection"]
         self.assertEqual(protection["closed_count"], 2)
         self.assertEqual(protection["realized_count"], 2)

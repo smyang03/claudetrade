@@ -6,6 +6,10 @@ This file is the shared operating guide for agentic coding tools working in this
 
 이 저장소는 Python 기반 KR/US 자동매매 시스템입니다. `trading_bot.py`가 메인 실행 루프이며, `kis_api.py`, `risk_manager.py`, `ticker_selection_db.py`가 브로커 연동, 리스크 관리, 종목 선택을 지원합니다. 핵심 도메인 코드는 `runtime/`, `execution/`, `strategy/`, `bot/`, `minority_report/`, `audit/`, `lifecycle/`, `ml/`, `preopen/`, `learning/`에 나뉘어 있습니다. 운영 도구는 `tools/`, Flask 대시보드는 `dashboard/`, 문서와 보고서는 `docs/`에 둡니다. 테스트는 주로 `tests/`에 있으며, 일부 레거시 테스트는 루트의 `test_*.py`와 `test/audit_lab/`에 있습니다. `data/`, `state/`, `logs/`는 런타임 산출물 위치이므로 생성 DB, PID, 캐시, 로컬 보고서는 커밋하지 마세요.
 
+## Code Work Principles
+
+- 개선 시 예외처리를 추가하기 전에 근본 구조부터 확인한다. 구조적 문제인지, 진짜 예외 케이스인지, 별도 함수가 필요한 것인지 판단한 뒤 처리한다. 불필요한 예외처리는 코드 복잡성만 높이므로 지양한다.
+
 ## AI Operating Contract
 
 - AI는 시장 모드 판단, 종목 watchlist/trade_ready 후보 제안, conviction/strategy-fit 판단, 보유 종목 HOLD/SELL 의견 제시를 맡을 수 있습니다.

@@ -14,7 +14,7 @@ from typing import Any, Optional
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_trading_logger
-from minority_report.claude_utils import extract_json
+from minority_report.claude_utils import extract_json, claude_response_meta
 from credit_tracker import record as credit_record
 from runtime_paths import get_runtime_path
 from minority_report.raw_call_logger import save as save_raw_call
@@ -881,7 +881,12 @@ def _ask_challenge(
         duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
         raw = resp.content[0].text.strip()
         result = extract_json(raw)
-        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor_challenge", model=MODEL)
+        credit_record(
+            resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor_challenge", model=MODEL,
+            cache_creation_input_tokens=getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read_input_tokens=getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
+        )
+        _cm = claude_response_meta(resp)
         save_raw_call(
             label="hold_advisor_challenge",
             prompt=prompt,
@@ -893,6 +898,10 @@ def _ask_challenge(
             model=MODEL,
             prompt_version=CHALLENGE_PROMPT_VERSION,
             duration_ms=duration_ms,
+            cache_creation_input_tokens=_cm["cache_creation_input_tokens"],
+            cache_read_input_tokens=_cm["cache_read_input_tokens"],
+            request_id=_cm["request_id"],
+            service_tier=_cm["service_tier"],
             extra={
                 "decision_stage": decision_stage,
                 "default_policy": default_policy,
@@ -1091,7 +1100,12 @@ def _ask_triage(
         duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
         raw = resp.content[0].text.strip()
         result = extract_json(raw)
-        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor_triage", model=MODEL)
+        credit_record(
+            resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor_triage", model=MODEL,
+            cache_creation_input_tokens=getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read_input_tokens=getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
+        )
+        _cm = claude_response_meta(resp)
         save_raw_call(
             label="hold_advisor_triage",
             prompt=prompt,
@@ -1103,6 +1117,10 @@ def _ask_triage(
             model=MODEL,
             prompt_version=TRIAGE_PROMPT_VERSION,
             duration_ms=duration_ms,
+            cache_creation_input_tokens=_cm["cache_creation_input_tokens"],
+            cache_read_input_tokens=_cm["cache_read_input_tokens"],
+            request_id=_cm["request_id"],
+            service_tier=_cm["service_tier"],
             extra={
                 "decision_stage": decision_stage,
                 "default_policy": default_policy,
@@ -1667,7 +1685,12 @@ JSON으로만 응답:
         duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
         raw = resp.content[0].text.strip()
         result = extract_json(raw)
-        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor", model=MODEL)
+        credit_record(
+            resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor", model=MODEL,
+            cache_creation_input_tokens=getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read_input_tokens=getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
+        )
+        _cm = claude_response_meta(resp)
         save_raw_call(
             label=f"hold_advisor_{analyst_type}",
             prompt=prompt, raw_response=raw, parsed=result,
@@ -1676,6 +1699,10 @@ JSON으로만 응답:
             model=MODEL,
             prompt_version="hold_advisor_v3",
             duration_ms=duration_ms,
+            cache_creation_input_tokens=_cm["cache_creation_input_tokens"],
+            cache_read_input_tokens=_cm["cache_read_input_tokens"],
+            request_id=_cm["request_id"],
+            service_tier=_cm["service_tier"],
             extra={
                 "decision_stage": decision_stage,
                 "default_policy": default_policy_text,

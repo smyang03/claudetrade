@@ -5,7 +5,7 @@ import os
 import time
 from typing import Any
 
-from minority_report.claude_utils import extract_json
+from minority_report.claude_utils import extract_json, claude_response_meta
 
 
 ALLOWED_ACTIONS = {"BUY_READY", "PROBE_READY", "PULLBACK_WAIT", "WAIT_RECHECK", "REJECT"}
@@ -335,10 +335,15 @@ def call_single_symbol_judge(
             "reason": "single_symbol_judge_parse_failed",
         }
     try:
-        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "single_symbol_judge", model=model)
+        credit_record(
+            resp.usage.input_tokens, resp.usage.output_tokens, "single_symbol_judge", model=model,
+            cache_creation_input_tokens=getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read_input_tokens=getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
+        )
     except Exception:
         pass
     try:
+        _cm = claude_response_meta(resp)
         save_raw_call(
             label="single_symbol_judge",
             prompt=prompt,
@@ -352,6 +357,10 @@ def call_single_symbol_judge(
             parse_error=parse_error,
             parse_stage="single_symbol_judge_v1",
             prompt_version="single_symbol_judge_v1",
+            cache_creation_input_tokens=_cm["cache_creation_input_tokens"],
+            cache_read_input_tokens=_cm["cache_read_input_tokens"],
+            request_id=_cm["request_id"],
+            service_tier=_cm["service_tier"],
             extra={"ticker": _ticker_key(ticker, market)},
         )
     except Exception:

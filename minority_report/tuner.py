@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from claude_memory import brain as BrainDB
 from credit_tracker import record as credit_record
 from logger import get_minority_logger
-from minority_report.claude_utils import extract_json
+from minority_report.claude_utils import extract_json, is_claude_retryable_error, claude_response_meta
 from minority_report.raw_call_logger import save as save_raw_call
 from runtime.tuning_bounds import RUNTIME_ADJUSTMENT_BOUNDS, coerce_runtime_adjustments
 
@@ -37,8 +37,7 @@ _RUNTIME_ADJUSTMENT_BOUNDS = RUNTIME_ADJUSTMENT_BOUNDS
 
 
 def _is_overloaded_error(exc: Exception) -> bool:
-    text = str(exc).lower()
-    return "529" in text or "overloaded" in text or "overload" in text
+    return is_claude_retryable_error(exc)
 
 
 def _format_positions_summary(positions: list) -> str:
@@ -249,6 +248,8 @@ JSON으로만 응답:
                 resp.usage.output_tokens,
                 f"tune_{elapsed_min}min",
                 model=MODEL,
+                cache_creation_input_tokens=getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
+                cache_read_input_tokens=getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
             )
             save_raw_call(
                 label=f"tune_{elapsed_min}min",

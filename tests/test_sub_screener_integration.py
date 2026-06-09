@@ -15,6 +15,16 @@ from trading_bot import TradingBot
 def _trigger_result() -> sub_screener.SubScanResult:
     return sub_screener.SubScanResult(
         should_trigger=True,
+        new_plan_a=[{"ticker": "SPOT", "trainer_candidate_state": "PLAN_A", "trainer_prompt_score": 75.0}],
+        new_plan_b_high=[],
+        all_new_scored=[],
+        trigger_reason="new_plan_a:1",
+    )
+
+
+def _strong_trigger_result() -> sub_screener.SubScanResult:
+    return sub_screener.SubScanResult(
+        should_trigger=True,
         new_plan_a=[{"ticker": "SPOT", "trainer_candidate_state": "PLAN_A", "trainer_prompt_score": 90.0}],
         new_plan_b_high=[],
         all_new_scored=[],
@@ -103,14 +113,13 @@ class SubScreenerIntegrationTests(unittest.TestCase):
             },
             clear=False,
         ), \
-            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
             patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
             patch("runtime.sub_screener.record_scan", side_effect=lambda *args, **kwargs: recorded.append("scan")), \
-            patch("runtime.sub_screener.record_attempt", side_effect=lambda *args, **kwargs: recorded.append("attempt")), \
+            patch("runtime.sub_screener.record_attempt", side_effect=AssertionError("weak triage should not record full-rescreen attempt")), \
             patch("runtime.sub_screener.record_triage_success", side_effect=lambda *args, **kwargs: recorded.append("success")):
             TradingBot.maybe_run_sub_screener(bot, "KR")
 
-        self.assertEqual(recorded, ["scan", "attempt", "triage", "success"])
+        self.assertEqual(recorded, ["scan", "triage", "success"])
 
     def test_market_scoped_trigger_can_keep_us_shadow_when_global_live(self) -> None:
         bot = _base_bot()
@@ -128,7 +137,6 @@ class SubScreenerIntegrationTests(unittest.TestCase):
             },
             clear=False,
         ), \
-            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
             patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
             patch("runtime.sub_screener.record_scan", side_effect=lambda *args, **kwargs: recorded.append("scan")), \
             patch("runtime.sub_screener.record_attempt", side_effect=AssertionError("attempt should not run")):
@@ -154,7 +162,6 @@ class SubScreenerIntegrationTests(unittest.TestCase):
             },
             clear=False,
         ), \
-            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
             patch("runtime.sub_screener.scan_new_candidates", side_effect=scan), \
             patch("runtime.sub_screener.record_scan"), \
             patch("runtime.sub_screener.record_attempt"), \
@@ -176,8 +183,10 @@ class SubScreenerIntegrationTests(unittest.TestCase):
     def test_last_sub_screener_at_initialized(self) -> None:
         bot = _base_bot()
         delattr(bot, "_last_sub_screener_at")
+        bot._screen_market_candidates = lambda market, mode, *, force_refresh=False: [{"ticker": "SPOT"}]
 
-        with patch("runtime.sub_screener.is_rate_limited", return_value=True):
+        with patch("runtime.sub_screener.scan_new_candidates", return_value=sub_screener.SubScanResult(False, [], [], [], "no_trigger")), \
+            patch("runtime.sub_screener.record_scan"):
             TradingBot.maybe_run_sub_screener(bot, "US")
 
         self.assertIn("US", bot._last_sub_screener_at)
@@ -193,7 +202,6 @@ class SubScreenerIntegrationTests(unittest.TestCase):
         ) or ["SPOT"]
 
         with patch.dict(os.environ, {"SUB_SCREENER_TRIAGE_ENABLED": "false"}, clear=False), \
-            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
             patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
             patch("runtime.sub_screener.record_scan"), \
             patch("runtime.sub_screener.record_attempt"), \
@@ -210,7 +218,6 @@ class SubScreenerIntegrationTests(unittest.TestCase):
         bot.manual_rescreen = lambda market, *, source_type, trigger, candidate_override=None: calls.append("rescreen") or ["SPOT"]
 
         with patch.dict(os.environ, {"SUB_SCREENER_TRIAGE_ENABLED": "false"}, clear=False), \
-            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
             patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
             patch("runtime.sub_screener.record_scan"), \
             patch("runtime.sub_screener.record_attempt"), \
@@ -232,7 +239,6 @@ class SubScreenerIntegrationTests(unittest.TestCase):
         bot.manual_rescreen = lambda market, *, source_type, trigger, candidate_override=None: calls.append("rescreen") or ["SPOT"]
 
         with patch.dict(os.environ, {"SUB_SCREENER_TRIAGE_ENABLED": "false"}, clear=False), \
-            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
             patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
             patch("runtime.sub_screener.record_scan"), \
             patch("runtime.sub_screener.record_attempt"), \
@@ -274,8 +280,7 @@ class SubScreenerIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, \
             patch.dict(os.environ, {"SUB_SCREENER_STATE_DIR": tmp, "SUB_SCREENER_DEDUPE_TTL_MIN": "60"}, clear=False):
             sub_screener.record_attempt("US", "2026-05-22", _trigger_result())
-            with patch("runtime.sub_screener.is_rate_limited", return_value=False), \
-                patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
+            with patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
                 patch("runtime.sub_screener.record_attempt", side_effect=AssertionError("attempt should not run")):
                 TradingBot.maybe_run_sub_screener(bot, "US")
 
@@ -304,14 +309,13 @@ class SubScreenerIntegrationTests(unittest.TestCase):
             },
             clear=False,
         ), \
-            patch("runtime.sub_screener.is_rate_limited", return_value=False), \
             patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
             patch("runtime.sub_screener.record_scan", side_effect=lambda *args, **kwargs: calls.append("scan")), \
-            patch("runtime.sub_screener.record_attempt", side_effect=lambda *args, **kwargs: calls.append("attempt")), \
+            patch("runtime.sub_screener.record_attempt", side_effect=AssertionError("weak triage should not record full-rescreen attempt")), \
             patch("runtime.sub_screener.record_triage_success", side_effect=lambda *args, **kwargs: calls.append("success")):
             TradingBot.maybe_run_sub_screener(bot, "US")
 
-        self.assertEqual(calls, ["scan", "attempt", "early", "triage", "success"])
+        self.assertEqual(calls, ["scan", "early", "triage", "success"])
 
     def test_duplicate_trigger_can_still_run_early_judge_when_enabled(self) -> None:
         bot = _base_bot()
@@ -334,8 +338,7 @@ class SubScreenerIntegrationTests(unittest.TestCase):
                 clear=False,
             ):
             sub_screener.record_attempt("US", "2026-05-22", _trigger_result())
-            with patch("runtime.sub_screener.is_rate_limited", return_value=False), \
-                patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
+            with patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
                 patch("runtime.sub_screener.record_attempt", side_effect=AssertionError("attempt should not run")):
                 TradingBot.maybe_run_sub_screener(bot, "US")
 
@@ -349,8 +352,7 @@ class SubScreenerIntegrationTests(unittest.TestCase):
         bot.manual_rescreen = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("rescreen should not run"))
         bot._apply_sub_screener_triage = lambda *args, **kwargs: calls.append("triage") or {"added_tickers": ["SPOT"], "skipped_tickers": []}
 
-        with patch("runtime.sub_screener.is_rate_limited", return_value=False), \
-            patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
+        with patch("runtime.sub_screener.scan_new_candidates", return_value=_trigger_result()), \
             patch("runtime.sub_screener.record_scan"), \
             patch("runtime.sub_screener.record_attempt"), \
             patch("runtime.sub_screener.record_triage_success", side_effect=lambda *args, **kwargs: calls.append("success")):
@@ -358,15 +360,57 @@ class SubScreenerIntegrationTests(unittest.TestCase):
 
         self.assertEqual(calls, ["triage", "success"])
 
-    def test_loop_prevention_max_per_session(self) -> None:
+    def test_max_per_session_does_not_block_scan_or_strong_detection(self) -> None:
         bot = _base_bot()
         calls: list[str] = []
-        bot._screen_market_candidates = lambda market, mode, *, force_refresh=False: calls.append("screen")
+        bot._screen_market_candidates = lambda market, mode, *, force_refresh=False: calls.append("screen") or [{"ticker": "SPOT"}]
+        bot._reinvoke_analysts = lambda *args, **kwargs: calls.append("reinvoke")
+        bot.manual_rescreen = lambda *args, **kwargs: calls.append("rescreen") or ["SPOT"]
 
-        with patch("runtime.sub_screener.is_rate_limited", return_value=True):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {
+                "SUB_SCREENER_STATE_DIR": tmp,
+                "SUB_SCREENER_MIN_INTERVAL_MIN": "0",
+                "SUB_SCREENER_DEDUPE_TTL_MIN": "0",
+            },
+            clear=False,
+        ):
+            for _ in range(5):
+                sub_screener.record_attempt("US", "2026-05-22", _strong_trigger_result())
+            with patch("runtime.sub_screener.scan_new_candidates", return_value=_strong_trigger_result()), \
+                patch("runtime.sub_screener.record_scan", side_effect=lambda *args, **kwargs: calls.append("scan")):
+                TradingBot.maybe_run_sub_screener(bot, "US")
+
+        self.assertIn("screen", calls)
+        self.assertIn("scan", calls)
+        self.assertIn("reinvoke", calls)
+        self.assertIn("rescreen", calls)
+
+    def test_strong_trigger_runs_full_rescreen_after_triage_and_forces_smart_skip_call(self) -> None:
+        bot = _base_bot()
+        bot._screen_market_candidates = lambda market, mode, *, force_refresh=False: [{"ticker": "SPOT"}]
+        calls: list[str] = []
+        bot._apply_sub_screener_triage = lambda *args, **kwargs: calls.append("triage") or {"added_tickers": ["SPOT"], "skipped_tickers": []}
+        bot._reinvoke_analysts = lambda *args, **kwargs: calls.append("reinvoke")
+
+        def manual_rescreen(*args, **kwargs):
+            calls.append(f"force={os.environ.get('SELECTION_SMART_SKIP_FORCE_CALL', '')}")
+            return ["SPOT"]
+
+        bot.manual_rescreen = manual_rescreen
+        restored_force = None
+        with patch.dict(os.environ, {"SELECTION_SMART_SKIP_FORCE_CALL": "false", "SUB_SCREENER_MIN_INTERVAL_MIN": "0"}, clear=False), \
+            patch("runtime.sub_screener.scan_new_candidates", return_value=_strong_trigger_result()), \
+            patch("runtime.sub_screener.record_scan"), \
+            patch("runtime.sub_screener.record_attempt", side_effect=lambda *args, **kwargs: calls.append("attempt")), \
+            patch("runtime.sub_screener.record_triage_success", side_effect=lambda *args, **kwargs: calls.append("triage_success")), \
+            patch("runtime.sub_screener.record_success", side_effect=lambda *args, **kwargs: calls.append("success")):
             TradingBot.maybe_run_sub_screener(bot, "US")
+            restored_force = os.environ.get("SELECTION_SMART_SKIP_FORCE_CALL")
 
-        self.assertEqual(calls, [])
+        self.assertEqual(calls, ["triage", "triage_success", "attempt", "reinvoke", "force=true", "success"])
+        self.assertEqual(restored_force, "false")
 
     def test_blackout_prevents_trigger(self) -> None:
         bot = _base_bot()

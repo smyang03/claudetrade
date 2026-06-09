@@ -569,6 +569,7 @@ until more data is available or a human explicitly approves the change.
 3. 브로커 불신 상태에서는 신규 진입보다 보호를 우선한다.
 4. selection과 execution 문제를 섞지 않는다.
 5. 수정 후에는 단계별 검증 + 마지막 통합 QA를 반드시 한다.
+6. 개선 시 예외처리를 추가하기 전에 근본 구조부터 확인한다. 구조적 문제인지, 진짜 예외 케이스인지, 별도 함수가 필요한 것인지 판단한 뒤 처리한다. 불필요한 예외처리는 코드 복잡성만 높이므로 지양한다.
 
 ### 기능 변경 후 검증 절차
 

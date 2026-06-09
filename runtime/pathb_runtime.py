@@ -874,6 +874,141 @@ class PathBRuntime:
             return ""
 
     @staticmethod
+    def _pathb_context_hash(components: dict[str, Any]) -> str:
+        if not isinstance(components, dict) or not components:
+            return ""
+        try:
+            text = json.dumps(components, ensure_ascii=False, sort_keys=True, default=str)
+        except Exception:
+            text = str(components)
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:20]
+
+    @staticmethod
+    def _pathb_context_adverse(components: dict[str, Any]) -> bool:
+        raw = dict(components or {})
+        risk_mode = str(raw.get("risk_mode") or "").strip().upper()
+        severity = str(raw.get("market_change_severity_bucket") or "").strip().lower()
+        return risk_mode in {"RISK_OFF", "HALT"} or severity == "severe_down"
+
+    @staticmethod
+    def _pathb_selection_context_creation_payload(meta: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(meta, dict):
+            return {}
+        raw_context = (
+            meta.get("_smart_skip_context")
+            or meta.get("selection_context_components")
+            or meta.get("market_context")
+            or {}
+        )
+        context = dict(raw_context) if isinstance(raw_context, dict) else {}
+        context_hash = str(
+            meta.get("_smart_skip_context_hash")
+            or meta.get("selection_context_hash")
+            or meta.get("context_hash_at_creation")
+            or ""
+        ).strip()
+        if not context_hash and context:
+            context_hash = PathBRuntime._pathb_context_hash(context)
+        snapshot_ts = str(meta.get("selection_snapshot_ts") or meta.get("_selection_snapshot_ts") or "").strip()
+        payload: dict[str, Any] = {}
+        if context_hash:
+            payload["context_hash_at_creation"] = context_hash
+        if context:
+            payload["context_components_at_creation"] = context
+        if snapshot_ts:
+            payload["context_selection_snapshot_ts_at_creation"] = snapshot_ts
+            payload.setdefault("selection_snapshot_ts", snapshot_ts)
+        source = str(meta.get("_selection_source_type") or meta.get("_candidate_actions_source") or "").strip()
+        if source:
+            payload["context_selection_source_at_creation"] = source
+        call_id = str(meta.get("selection_call_id") or meta.get("_selection_call_id") or "").strip()
+        if call_id:
+            payload["context_selection_call_id_at_creation"] = call_id
+        return payload
+
+    @staticmethod
+    def _pathb_snapshot_age_min(snapshot_ts: str) -> float | None:
+        raw = str(snapshot_ts or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=KST)
+        return max(0.0, (datetime.now(KST) - parsed.astimezone(KST)).total_seconds() / 60.0)
+
+    def _pathb_current_selection_context(self, market: str) -> tuple[dict[str, Any], str]:
+        getter = getattr(getattr(self, "bot", None), "_current_selection_context_components", None)
+        if callable(getter):
+            try:
+                current_context, current_hash = getter(str(market or "").upper())
+                context = dict(current_context or {}) if isinstance(current_context, dict) else {}
+                context_hash = str(current_hash or "").strip() or self._pathb_context_hash(context)
+                return context, context_hash
+            except Exception:
+                return {}, ""
+        return {}, ""
+
+    def _audit_pathb_zone_hit_context_drift(self, run: dict[str, Any], plan: PricePlan, signal: EntrySignal) -> dict[str, Any]:
+        if not self._runtime_bool("PATHB_ZONE_HIT_CONTEXT_DRIFT_AUDIT_ENABLED", True):
+            return {}
+        plan_payload = dict((run or {}).get("plan") or {})
+        creation_hash = str(plan_payload.get("context_hash_at_creation") or "").strip()
+        creation_context = dict(plan_payload.get("context_components_at_creation") or {}) if isinstance(plan_payload.get("context_components_at_creation"), dict) else {}
+        current_context, current_hash = self._pathb_current_selection_context(plan.market)
+        changed = bool(creation_hash and current_hash and creation_hash != current_hash)
+        snapshot_ts = str(
+            plan_payload.get("context_selection_snapshot_ts_at_creation")
+            or plan_payload.get("selection_snapshot_ts")
+            or ""
+        ).strip()
+        age_min = self._pathb_snapshot_age_min(snapshot_ts)
+        audit = {
+            "event": "PATHB_ZONE_HIT_CONTEXT_DRIFT_AUDIT",
+            "audited_at": datetime.now(KST).isoformat(timespec="seconds"),
+            "market": plan.market,
+            "ticker": plan.ticker,
+            "path_run_id": plan.path_run_id,
+            "decision_id": plan.decision_id,
+            "creation_context_hash": creation_hash,
+            "current_context_hash": current_hash,
+            "context_changed": changed,
+            "current_context_adverse": self._pathb_context_adverse(current_context),
+            "creation_context_available": bool(creation_hash or creation_context),
+            "current_context_available": bool(current_hash or current_context),
+            "selection_snapshot_ts": snapshot_ts,
+            "selection_snapshot_age_min": None if age_min is None else round(float(age_min), 3),
+            "signal_reason": str(signal.reason or ""),
+            "signal_price": float(signal.price or signal.limit_price or 0.0),
+            "limit_price": float(signal.limit_price or 0.0),
+            "live_confirm_called": False,
+            "order_blocked_by_audit": False,
+            "current_context": current_context,
+        }
+        try:
+            self.store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "zone_hit_context_drift_audit": audit,
+                    "zone_hit_context_changed": changed,
+                    "zone_hit_current_context_hash": current_hash,
+                    "zone_hit_context_audit_at": audit["audited_at"],
+                },
+                merge_plan=True,
+            )
+        except Exception as exc:
+            log.debug(f"[PathB context drift audit failed] {plan.market} {plan.ticker}: {exc}")
+        if changed or audit["current_context_adverse"]:
+            log.info(
+                f"[PathB context drift audit] {plan.market} {plan.ticker} "
+                f"changed={changed} adverse={audit['current_context_adverse']} "
+                f"age_min={audit['selection_snapshot_age_min']} run={plan.path_run_id}"
+            )
+        return audit
+
+    @staticmethod
     def _pathb_origin_text(plan: PricePlan) -> str:
         parts: list[str] = [
             str(getattr(plan, "origin_reason", "") or ""),
@@ -1577,6 +1712,7 @@ class PathBRuntime:
             "pathb_zone_update_selection_snapshot_ts": str((meta or {}).get("selection_snapshot_ts") or ""),
             "pathb_zone_update_selection_meta_hash": self._selection_reconcile_meta_hash(meta or {}),
         }
+        update_payload.update(self._pathb_selection_context_creation_payload(meta or {}))
         self.store.update_path_run(path_run_id, plan=update_payload, merge_plan=True)
         event_payload = {
             "market": market,
@@ -1841,19 +1977,22 @@ class PathBRuntime:
                         or shadow_reason
                         or "candidate_action_shadow_validation"
                     )
+                context_overrides = self._pathb_selection_context_creation_payload(meta)
+                shadow_overrides = (
+                    _shadow_overrides_for(
+                        origin_dict,
+                        resolved_shadow_reason or "candidate_action_shadow_validation",
+                    )
+                    if shadow_registration
+                    else {}
+                )
+                plan_overrides = {**context_overrides, **shadow_overrides}
                 path_run_id = self.adapter.register_plan(
                     plan,
                     runtime_mode=self.mode,
                     brain_snapshot_id=self._brain_snapshot_id(market),
                     initial_status="SHADOW_WAITING" if shadow_registration else "WAITING",
-                    plan_overrides=(
-                        _shadow_overrides_for(
-                            origin_dict,
-                            resolved_shadow_reason or "candidate_action_shadow_validation",
-                        )
-                        if shadow_registration
-                        else None
-                    ),
+                    plan_overrides=plan_overrides or None,
                 )
                 registered.append(path_run_id)
                 log.info(
@@ -2545,6 +2684,7 @@ class PathBRuntime:
             # See register_from_selection_meta policy note: a waiting Claude price
             # plan may originate from PULLBACK_WAIT rather than PathA trade_ready.
             self._audit_pathb_zone_hit(plan, signal)
+            self._audit_pathb_zone_hit_context_drift(run, plan, signal)
             confirmation_gate = self._kr_pathb_risky_origin_confirmation_gate(plan, signal)
             if confirmation_gate.get("allowed") is False:
                 current_reason = str(confirmation_gate.get("reason") or "KR_PATHB_RISK_ORIGIN_CONFIRMATION_REQUIRED")

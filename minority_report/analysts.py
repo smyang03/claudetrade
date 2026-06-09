@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_analysis_logger, get_judgment_logger, get_minority_logger
 from credit_tracker import record as credit_record, throttle_state
 from minority_report.raw_call_logger import save as save_raw_call
+from minority_report.claude_utils import is_claude_retryable_error, claude_response_meta
 from minority_report.active_lessons import build_active_lesson_context
 from minority_report.consensus import is_available_judgment
 from bot.candidate_policy import normalize_selection_result, selection_limits
@@ -1218,13 +1219,10 @@ def _selection_reason_identity_warnings(selection_meta: dict, candidates: list[d
 
 def _selection_candidate_cap(market: str, watch_max: int, trade_max: int) -> int:
     if market == "US":
-        hard_cap = int(os.getenv("US_SELECTION_PROMPT_CAP", "35"))
-        watch_margin = 4
+        hard_cap = int(os.getenv("US_SELECTION_PROMPT_CAP", "40"))
     else:
-        hard_cap = int(os.getenv("KR_SELECTION_PROMPT_CAP", "32"))
-        watch_margin = 8
-    target = max(trade_max + 8, min(watch_max + watch_margin, hard_cap))
-    return max(trade_max, min(target, hard_cap))
+        hard_cap = int(os.getenv("KR_SELECTION_PROMPT_CAP", "40"))
+    return max(trade_max, hard_cap)
 
 
 def _selection_prompt_diversity_caps(market: str) -> dict[str, int]:
@@ -1353,7 +1351,7 @@ def _trainer_prompt_target(market: str, fallback: int) -> int:
 
 def _trainer_prompt_hard_cap(market: str, fallback: int) -> int:
     market_key = str(market or "").upper()
-    policy_default = 35 if market_key == "US" else 32
+    policy_default = 40
     return _env_int_bound(
         f"CANDIDATE_PROMPT_POOL_HARD_CAP_{market_key}",
         _env_int_bound(f"{market_key}_PROMPT_POOL_CAP", policy_default, 1, 100),
@@ -1664,6 +1662,12 @@ def _build_selection_retry_prompt(
     watch_floor = min(watch_max, 10 if len(retry_candidates) >= 15 else max(1, len(retry_candidates) // 2))
     active_text, _active_meta = _lesson_context_for_prompt(active_lessons_context, scope="selection")
     active_section = f"\n{active_text}\n" if active_text else ""
+    retry_price_plan_omit_marker = "DO NOT include price_targets in this response"
+    price_plan_rule = (
+        f"- {retry_price_plan_omit_marker}. Price plans will be requested separately."
+        if len(retry_candidates) < 15
+        else ""
+    )
     return f"""Previous ticker-selection response was truncated. 다시 묻습니다. Rebuild WATCH/reasons only.
 market: {market}
 mode: {consensus_mode}
@@ -1679,7 +1683,7 @@ Rules:
 - Keep a broad watchlist: if candidates >= 15 and mode is not DEFENSIVE/HALT, return at least {watch_floor} watchlist names.
 - watchlist max {watch_max}.
 - trade_ready must be [].
-- Price plans will be requested separately.
+{price_plan_rule}
 - Do not include execution plans, sizing, allocation, budgets, or strategy recommendations.
 - reasons must be short.
 - Return JSON only.
@@ -2013,8 +2017,12 @@ JSON으로만 응답 (다른 텍스트 없이):
         _duration_ms = int((time.perf_counter() - _t0) * 1000)
         raw = resp.content[0].text.strip()
         result = _sanitize_analyst_result(_extract_json(raw), analyst_type)
-        credit_record(resp.usage.input_tokens, resp.usage.output_tokens,
-                      f"analyst_{analyst_type}_r1", model=_r1_model)
+        credit_record(
+            resp.usage.input_tokens, resp.usage.output_tokens,
+            f"analyst_{analyst_type}_r1", model=_r1_model,
+            cache_creation_input_tokens=getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read_input_tokens=getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
+        )
         save_raw_call(
             label=f"analyst_{analyst_type}_r1",
             prompt=prompt, raw_response=raw, parsed=result,
@@ -2147,8 +2155,12 @@ JSON으로만 응답:
         raw = resp.content[0].text.strip()
         result = _extract_json(raw)
         merged = _merge_debate_result(my_r1, result)
-        credit_record(resp.usage.input_tokens, resp.usage.output_tokens,
-                      f"analyst_{analyst_type}_r2", model=MODEL)
+        credit_record(
+            resp.usage.input_tokens, resp.usage.output_tokens,
+            f"analyst_{analyst_type}_r2", model=MODEL,
+            cache_creation_input_tokens=getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read_input_tokens=getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
+        )
         save_raw_call(
             label=f"analyst_{analyst_type}_r2",
             prompt=prompt, raw_response=raw, parsed={**result, "_merged": merged},
@@ -3024,6 +3036,10 @@ Rules:
             "_prompt_pool_discovery_count",
             "selection_trace_id",
             "visibility_contract_version",
+            "_smart_skip_context",
+            "_smart_skip_context_hash",
+            "_smart_skip_core_hash",
+            "_smart_skip_tail_hash",
         ):
             if key in prompt_pool_meta:
                 enriched[key] = prompt_pool_meta.get(key)
@@ -3042,6 +3058,31 @@ Rules:
     fallback = fallback_meta["watchlist"]
 
     smart_skip_session_date = str(session_date or _selection_market_session_date(market))
+    smart_skip_context = selection_smart_skip.market_context_components(
+        market_change_pct=market_change_pct,
+        secondary_change_pct=secondary_change_pct,
+        intraday_context=intraday_context,
+        session_phase=execution_phase,
+        consensus_mode=consensus_mode,
+    )
+    smart_skip_core_hash = selection_smart_skip.prompt_pool_rank_hash(
+        prompt_candidates,
+        market=market,
+        start=1,
+        end=int(os.getenv("SELECTION_SMART_SKIP_CORE_SIZE", "25") or 25),
+    )
+    smart_skip_tail_hash = selection_smart_skip.prompt_pool_rank_hash(
+        prompt_candidates,
+        market=market,
+        start=int(os.getenv("SELECTION_SMART_SKIP_CORE_SIZE", "25") or 25) + 1,
+        end=40,
+    )
+    prompt_pool_meta["_smart_skip_context"] = dict(smart_skip_context)
+    prompt_pool_meta["_smart_skip_context_hash"] = selection_smart_skip.sha256_text(
+        json.dumps(smart_skip_context, ensure_ascii=False, sort_keys=True)
+    )[:20]
+    prompt_pool_meta["_smart_skip_core_hash"] = smart_skip_core_hash
+    prompt_pool_meta["_smart_skip_tail_hash"] = smart_skip_tail_hash
     smart_skip_prompt_hash = selection_smart_skip.semantic_signature(
         market=market,
         session_date=smart_skip_session_date,
@@ -3054,6 +3095,9 @@ Rules:
         session_phase=execution_phase,
         config_hash=str(prompt_pool_meta.get("config_hash") or prompt_pool_meta.get("_config_hash") or ""),
         lesson_hash=str(active_lesson_meta.get("hash") or active_lesson_meta.get("selected_hash") or ""),
+        market_context=smart_skip_context,
+        prompt_pool_core_hash=smart_skip_core_hash,
+        prompt_pool_tail_hash=smart_skip_tail_hash,
     )
     try:
         smart_skip = selection_smart_skip.maybe_reuse(
@@ -3140,9 +3184,9 @@ Rules:
         except Exception as _e:
             last_err = _e
             _emsg = str(_e)
-            if ("529" in _emsg or "overloaded" in _emsg.lower()) and _attempt < 2:
+            if is_claude_retryable_error(_e) and _attempt < 2:
                 _wait = 2 ** (_attempt + 1)
-                log.warning(f"[ticker-selection] Claude overloaded -> { _wait }s retry ({_attempt + 1}/3)")
+                log.warning(f"[ticker-selection] Claude 재시도 가능 에러 ({type(_e).__name__}) -> {_wait}s retry ({_attempt + 1}/3)")
                 _time.sleep(_wait)
             else:
                 break
@@ -3190,7 +3234,7 @@ Rules:
             market,
             stop_reason=stop_reason,
             reference_prices=selection_reference_prices,
-            source_prompt_id="selection_rank_v3+compact_v1" if compact_selection_enabled else smart_skip_prompt_contract,
+            source_prompt_id=smart_skip_prompt_contract,
             allow_legacy_auto_ready=_env_bool_flag("ALLOW_LEGACY_SELECTION_AUTO_READY", False),
         )
         selection_meta = _attach_prompt_pool_meta(selection_meta)
@@ -3212,7 +3256,11 @@ Rules:
         if tuning_feedback_meta:
             selection_meta["tuning_feedback"] = dict(tuning_feedback_meta)
             selection_meta["tuning_feedback_applied"] = True
-        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "select_tickers", model=MODEL)
+        credit_record(
+            resp.usage.input_tokens, resp.usage.output_tokens, "select_tickers", model=MODEL,
+            cache_creation_input_tokens=getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read_input_tokens=getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
+        )
         evidence_alignment_extra = {
             key: selection_meta.get(key)
             for key in (
@@ -3243,6 +3291,7 @@ Rules:
             )
             if key in selection_meta
         }
+        _resp_meta = claude_response_meta(resp)
         save_raw_call(
             label="select_tickers",
             prompt=prompt,
@@ -3256,6 +3305,10 @@ Rules:
             parse_error=parse_error,
             parse_stage=parse_stage,
             prompt_version="selection_rank_v3+compact_v1" if compact_selection_enabled else smart_skip_prompt_contract,
+            cache_creation_input_tokens=_resp_meta["cache_creation_input_tokens"],
+            cache_read_input_tokens=_resp_meta["cache_read_input_tokens"],
+            request_id=_resp_meta["request_id"],
+            service_tier=_resp_meta["service_tier"],
             extra={
                 "active_lessons": active_lesson_meta,
                 "evidence_version": str(selection_meta.get("evidence_version") or ("selection_evidence.v1" if evidence_items else "")),
@@ -3309,7 +3362,11 @@ Rules:
                         market,
                         allow_legacy_auto_ready=_env_bool_flag("ALLOW_LEGACY_SELECTION_AUTO_READY", False),
                     )
-                    credit_record(retry_resp.usage.input_tokens, retry_resp.usage.output_tokens, "select_tickers_retry", model=MODEL)
+                    credit_record(
+                        retry_resp.usage.input_tokens, retry_resp.usage.output_tokens, "select_tickers_retry", model=MODEL,
+                        cache_creation_input_tokens=getattr(retry_resp.usage, "cache_creation_input_tokens", 0) or 0,
+                        cache_read_input_tokens=getattr(retry_resp.usage, "cache_read_input_tokens", 0) or 0,
+                    )
                     retry_candidate_tickers = [
                         _prompt_ticker_key(market, row.get("ticker"))
                         for row in retry_candidates

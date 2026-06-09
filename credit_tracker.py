@@ -21,8 +21,8 @@ PRICE_INPUT_PER_M  = 3.00   # $ per million input tokens
 PRICE_OUTPUT_PER_M = 15.00  # $ per million output tokens
 PRICE_BY_MODEL_PER_M = {
     "haiku": (
-        float(os.getenv("CLAUDE_PRICE_HAIKU_INPUT_PER_M", "0.80")),
-        float(os.getenv("CLAUDE_PRICE_HAIKU_OUTPUT_PER_M", "4.00")),
+        float(os.getenv("CLAUDE_PRICE_HAIKU_INPUT_PER_M", "1.00")),   # Haiku 4.5: $1.00 (구: 0.80)
+        float(os.getenv("CLAUDE_PRICE_HAIKU_OUTPUT_PER_M", "5.00")),  # Haiku 4.5: $5.00 (구: 4.00)
     ),
     "sonnet": (
         float(os.getenv("CLAUDE_PRICE_SONNET_INPUT_PER_M", str(PRICE_INPUT_PER_M))),
@@ -73,12 +73,6 @@ def _model_price(model: str) -> tuple[float, float]:
     return PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M
 
 
-def _calc_cost_for_model(input_tokens: int, output_tokens: int, model: str = "") -> float:
-    input_per_m, output_per_m = _model_price(model)
-    return (input_tokens / 1_000_000 * input_per_m
-            + output_tokens / 1_000_000 * output_per_m)
-
-
 def _float_env(name: str, default: Optional[float] = None) -> Optional[float]:
     raw = os.getenv(name, "")
     if raw is None or str(raw).strip() == "":
@@ -89,20 +83,60 @@ def _float_env(name: str, default: Optional[float] = None) -> Optional[float]:
         return default
 
 
-def _add_usage(bucket: dict, input_tokens: int, output_tokens: int, cost: float) -> None:
+def _add_usage(
+    bucket: dict,
+    input_tokens: int,
+    output_tokens: int,
+    cost: float,
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
+) -> None:
     bucket["input_tokens"] = int(bucket.get("input_tokens", 0) or 0) + int(input_tokens)
     bucket["output_tokens"] = int(bucket.get("output_tokens", 0) or 0) + int(output_tokens)
     bucket["cost_usd"] = round(float(bucket.get("cost_usd", 0.0) or 0.0) + float(cost), 6)
+    if cache_creation_input_tokens:
+        bucket["cache_creation_tokens"] = int(bucket.get("cache_creation_tokens", 0) or 0) + int(cache_creation_input_tokens)
+    if cache_read_input_tokens:
+        bucket["cache_read_tokens"] = int(bucket.get("cache_read_tokens", 0) or 0) + int(cache_read_input_tokens)
     if "calls" in bucket:
         bucket["calls"] = int(bucket.get("calls", 0) or 0) + 1
 
 
+def _calc_cost_for_model(
+    input_tokens: int,
+    output_tokens: int,
+    model: str = "",
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
+) -> float:
+    input_per_m, output_per_m = _model_price(model)
+    # input_tokens = cache 미포함 일반 토큰만 (API 실측 확인)
+    # cache_creation: 캐시 쓰기 = 기본 요금의 125% (1.25x)
+    # cache_read:     캐시 읽기 = 기본 요금의  10% (0.10x)
+    cost = input_tokens / 1_000_000 * input_per_m + output_tokens / 1_000_000 * output_per_m
+    if cache_creation_input_tokens:
+        cost += cache_creation_input_tokens / 1_000_000 * input_per_m * 1.25
+    if cache_read_input_tokens:
+        cost += cache_read_input_tokens / 1_000_000 * input_per_m * 0.10
+    return max(0.0, cost)
+
+
 # ── 퍼블릭 API ─────────────────────────────────────────────────────────────────
 
-def record(input_tokens: int, output_tokens: int, label: str = "", model: str = ""):
+def record(
+    input_tokens: int,
+    output_tokens: int,
+    label: str = "",
+    model: str = "",
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
+):
     """API 호출 결과를 기록 (analysts.py 등에서 호출)"""
     model_name = str(model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6") or "unknown")
-    cost = _calc_cost_for_model(input_tokens, output_tokens, model_name)
+    cost = _calc_cost_for_model(
+        input_tokens, output_tokens, model_name,
+        cache_creation_input_tokens, cache_read_input_tokens,
+    )
     today = date.today().isoformat()
 
     data = _load()
@@ -111,21 +145,21 @@ def record(input_tokens: int, output_tokens: int, label: str = "", model: str = 
     data.setdefault("sessions", [])
 
     # 누적
-    _add_usage(data["total"], input_tokens, output_tokens, cost)
+    _add_usage(data["total"], input_tokens, output_tokens, cost, cache_creation_input_tokens, cache_read_input_tokens)
 
     # 일별
     if today not in data["daily"]:
         data["daily"][today] = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "calls": 0}
-    _add_usage(data["daily"][today], input_tokens, output_tokens, cost)
+    _add_usage(data["daily"][today], input_tokens, output_tokens, cost, cache_creation_input_tokens, cache_read_input_tokens)
     by_model = data.setdefault("by_model", {})
     model_bucket = by_model.setdefault(model_name, {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "calls": 0})
-    _add_usage(model_bucket, input_tokens, output_tokens, cost)
+    _add_usage(model_bucket, input_tokens, output_tokens, cost, cache_creation_input_tokens, cache_read_input_tokens)
     daily_by_model = data["daily"][today].setdefault("by_model", {})
     daily_model_bucket = daily_by_model.setdefault(model_name, {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "calls": 0})
-    _add_usage(daily_model_bucket, input_tokens, output_tokens, cost)
+    _add_usage(daily_model_bucket, input_tokens, output_tokens, cost, cache_creation_input_tokens, cache_read_input_tokens)
 
     # 세션 로그 (최근 100개 유지)
-    data["sessions"].append({
+    session_entry: dict = {
         "ts":            datetime.now().strftime("%H:%M:%S"),
         "date":          today,
         "label":         label,
@@ -133,7 +167,12 @@ def record(input_tokens: int, output_tokens: int, label: str = "", model: str = 
         "input_tokens":  input_tokens,
         "output_tokens": output_tokens,
         "cost_usd":      round(cost, 6),
-    })
+    }
+    if cache_creation_input_tokens:
+        session_entry["cache_creation_tokens"] = cache_creation_input_tokens
+    if cache_read_input_tokens:
+        session_entry["cache_read_tokens"] = cache_read_input_tokens
+    data["sessions"].append(session_entry)
     data["sessions"] = data["sessions"][-100:]
 
     _save(data)

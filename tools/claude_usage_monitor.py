@@ -21,8 +21,8 @@ KST = timezone(timedelta(hours=9))
 
 PRICE_BY_MODEL_PER_M = {
     "haiku": (
-        float(os.getenv("CLAUDE_PRICE_HAIKU_INPUT_PER_M", "0.80")),
-        float(os.getenv("CLAUDE_PRICE_HAIKU_OUTPUT_PER_M", "4.00")),
+        float(os.getenv("CLAUDE_PRICE_HAIKU_INPUT_PER_M", "1.00")),   # Haiku 4.5: $1.00 (구: 0.80)
+        float(os.getenv("CLAUDE_PRICE_HAIKU_OUTPUT_PER_M", "5.00")),  # Haiku 4.5: $5.00 (구: 4.00)
     ),
     "sonnet": (
         float(os.getenv("CLAUDE_PRICE_SONNET_INPUT_PER_M", "3.00")),

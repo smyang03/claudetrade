@@ -131,6 +131,10 @@ def save(
     prompt_mode: str = "",
     prompt_version: str = "",
     extra: Optional[dict[str, Any]] = None,
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
+    request_id: str = "",
+    service_tier: str = "",
 ) -> Optional[Path]:
     """Claude API raw 호출 1건을 JSON 파일로 저장한다."""
     today = call_date or date.today().isoformat()
@@ -155,6 +159,14 @@ def save(
         "parsed":       parsed,
         "tokens":       {"input": input_tokens, "output": output_tokens},
     }
+    if cache_creation_input_tokens:
+        record["tokens"]["cache_creation"] = int(cache_creation_input_tokens)
+    if cache_read_input_tokens:
+        record["tokens"]["cache_read"] = int(cache_read_input_tokens)
+    if request_id:
+        record["request_id"] = str(request_id)
+    if service_tier:
+        record["service_tier"] = str(service_tier)
     if parse_error is not None:
         record["parse_error"] = bool(parse_error)
     if parse_stage:

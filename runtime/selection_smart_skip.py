@@ -97,6 +97,91 @@ def _score_bucket(value: Any) -> str:
     return str(int(score // 5) * 5)
 
 
+def _change_bucket(value: Any) -> str:
+    try:
+        pct = float(value)
+    except Exception:
+        return "unknown"
+    if pct <= -1.0:
+        return "down"
+    if pct >= 1.0:
+        return "up"
+    return "flat"
+
+
+def _change_severity_bucket(value: Any) -> str:
+    try:
+        pct = float(value)
+    except Exception:
+        return "unknown"
+    return "severe_down" if pct <= -3.0 else "normal"
+
+
+def _text_bucket(text: str, *, positive: tuple[str, ...], negative: tuple[str, ...], default: str) -> str:
+    lowered = str(text or "").lower()
+    if any(token.lower() in lowered for token in negative):
+        return "weak"
+    if any(token.lower() in lowered for token in positive):
+        return "strong"
+    return default
+
+
+def market_context_components(
+    *,
+    market_change_pct: Any = None,
+    secondary_change_pct: Any = None,
+    intraday_context: str = "",
+    session_phase: str = "",
+    risk_mode: str = "",
+    consensus_mode: str = "",
+) -> dict[str, str]:
+    context_text = str(intraday_context or "")
+    risk = str(risk_mode or "").strip().upper()
+    consensus = str(consensus_mode or "").strip().upper()
+    if not risk:
+        if "HALT" in context_text.upper() or consensus == "HALT":
+            risk = "HALT"
+        elif "RISK_OFF" in context_text.upper() or consensus in {"DEFENSIVE", "CAUTIOUS_BEAR"}:
+            risk = "RISK_OFF"
+        else:
+            risk = "NORMAL"
+    breadth = _text_bucket(
+        context_text,
+        positive=("breadth=strong", "breadth strong", "breadth 양호", "breadth 개선", "상승 우세"),
+        negative=("breadth=weak", "breadth weak", "breadth 악화", "하락 우세"),
+        default="neutral",
+    )
+    slope = "unknown"
+    lowered = context_text.lower()
+    if any(token in lowered for token in ("30m_slope=falling", "30m slope falling", "30분 하락")):
+        slope = "falling"
+    elif any(token in lowered for token in ("30m_slope=rising", "30m slope rising", "30분 상승")):
+        slope = "rising"
+    elif any(token in lowered for token in ("30m_slope=flat", "30m slope flat")):
+        slope = "flat"
+    return {
+        "market_change_bucket": _change_bucket(market_change_pct),
+        "market_change_severity_bucket": _change_severity_bucket(market_change_pct),
+        "secondary_change_bucket": _change_bucket(secondary_change_pct),
+        "secondary_change_severity_bucket": _change_severity_bucket(secondary_change_pct),
+        "breadth_bucket": breadth,
+        "30m_slope_bucket": slope,
+        "session_phase": str(session_phase or "").strip().lower(),
+        "risk_mode": risk,
+        "consensus_mode": consensus,
+    }
+
+
+def prompt_pool_rank_hash(candidates: list[dict[str, Any]], *, market: str, start: int, end: int) -> str:
+    market_key = _market_key(market)
+    tickers = [
+        _candidate_ticker(row, market_key)
+        for row in list(candidates or [])[max(0, start - 1): max(0, end)]
+        if _candidate_ticker(row, market_key)
+    ]
+    return sha256_text(json.dumps(tickers, ensure_ascii=False, sort_keys=False))[:20]
+
+
 def _semantic_candidate(row: dict[str, Any], market: str) -> dict[str, str]:
     live = row.get("live_evidence") if isinstance(row.get("live_evidence"), dict) else {}
     risk = live.get("risk_control_view") if isinstance(live.get("risk_control_view"), dict) else {}
@@ -155,6 +240,9 @@ def semantic_signature(
     session_phase: str = "",
     config_hash: str = "",
     lesson_hash: str = "",
+    market_context: dict[str, Any] | None = None,
+    prompt_pool_core_hash: str = "",
+    prompt_pool_tail_hash: str = "",
 ) -> str:
     """Stable smart-skip key that ignores prompt wording and ticker order."""
     market_key = _market_key(market)
@@ -174,7 +262,7 @@ def semantic_signature(
         )
     )
     payload = {
-        "schema": "selection_smart_skip.semantic.v1",
+        "schema": "selection_smart_skip.semantic.v2",
         "market": market_key,
         "session_date": str(session_date or "").strip(),
         "consensus_mode": str(consensus_mode or "").strip().upper(),
@@ -185,8 +273,12 @@ def semantic_signature(
         "session_phase": str(session_phase or "").strip().lower(),
         "config_hash": str(config_hash or "").strip(),
         "lesson_hash": str(lesson_hash or "").strip(),
+        "market_context": dict(market_context or {}),
+        "prompt_pool_core_hash": str(prompt_pool_core_hash or "").strip(),
         "candidates": semantic_candidates,
     }
+    if str(os.getenv("SELECTION_SMART_SKIP_TAIL_STRONG_ONLY", "true") or "").strip().lower() not in {"1", "true", "yes", "on"}:
+        payload["prompt_pool_tail_hash"] = str(prompt_pool_tail_hash or "").strip()
     return sha256_text(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 

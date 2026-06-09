@@ -658,7 +658,11 @@ def run(market: str, date: str, today_judgment: dict,
         duration_ms = int((time.monotonic() - started) * 1000)
         raw = resp.content[0].text.strip()
         call_id = f"postmortem_{market}_{date}_{uuid.uuid4().hex[:10]}"
-        credit_record(resp.usage.input_tokens, resp.usage.output_tokens, "postmortem", model=MODEL)
+        credit_record(
+            resp.usage.input_tokens, resp.usage.output_tokens, "postmortem", model=MODEL,
+            cache_creation_input_tokens=getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read_input_tokens=getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
+        )
         save_raw_call(
             label="postmortem",
             prompt=prompt, raw_response=raw, parsed={},

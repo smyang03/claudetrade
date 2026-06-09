@@ -186,7 +186,7 @@ from runtime.adaptive_live_condition import attach_adaptive_live_condition_shado
 from runtime.action_routing import route_candidate_action
 from runtime.broker_side import broker_row_side_matches
 from runtime.candidate_pool_runtime import build_candidate_pool
-from runtime import sub_screener
+from runtime import selection_smart_skip, sub_screener
 from runtime.tuning_bounds import RUNTIME_ADJUSTMENT_BOUNDS, coerce_runtime_adjustments
 from runtime.exit_lifecycle import (
     DEFAULT_LIVE_BYPASS_REASONS,
@@ -266,6 +266,12 @@ except Exception:
 from execution.single_symbol_judge import (
     call_single_symbol_judge,
     normalize_single_symbol_judge_result,
+)
+from execution.buy_time_confirm_judge import (
+    INTERNAL_UNAVAILABLE as BUY_TIME_CONFIRM_UNAVAILABLE,
+    adverse_context as buy_time_adverse_context,
+    call_buy_time_confirm_judge,
+    unavailable_result as buy_time_unavailable_result,
 )
 from bot.market_utils import (
     MarketUtilsMixin,
@@ -4218,6 +4224,236 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=KST)
         return max(0.0, (datetime.now(KST) - parsed.astimezone(KST)).total_seconds() / 60.0)
+
+    def _current_selection_context_components(self, market: str) -> tuple[dict[str, str], str]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        intraday_context = ""
+        try:
+            intraday_context = self._build_intraday_context(market_key)
+        except Exception:
+            intraday_context = ""
+        phase = ""
+        try:
+            phase_payload = self._selection_session_phase(market_key)
+            if isinstance(phase_payload, dict):
+                phase = str(phase_payload.get("phase") or "")
+        except Exception:
+            phase = ""
+        mode = str((getattr(self, "today_judgment", {}) or {}).get("consensus", {}).get("mode", "") or "")
+        try:
+            market_change = self._get_market_change_pct(market_key)
+        except Exception:
+            market_change = None
+        try:
+            secondary_change = self._get_secondary_change_pct(market_key)
+        except Exception:
+            secondary_change = None
+        components = selection_smart_skip.market_context_components(
+            market_change_pct=market_change,
+            secondary_change_pct=secondary_change,
+            intraday_context=intraday_context,
+            session_phase=phase,
+            consensus_mode=mode,
+        )
+        context_hash = selection_smart_skip.sha256_text(
+            json.dumps(components, ensure_ascii=False, sort_keys=True)
+        )[:20]
+        return components, context_hash
+
+    def _buy_time_confirm_call_count(self, market: str) -> int:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        counts = getattr(self, "_buy_time_confirm_call_counts", None)
+        if not isinstance(counts, dict):
+            counts = {"KR": 0, "US": 0}
+            self._buy_time_confirm_call_counts = counts
+        return int(counts.get(market_key, 0) or 0)
+
+    def _increment_buy_time_confirm_call_count(self, market: str) -> None:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        counts = getattr(self, "_buy_time_confirm_call_counts", None)
+        if not isinstance(counts, dict):
+            counts = {"KR": 0, "US": 0}
+            self._buy_time_confirm_call_counts = counts
+        counts[market_key] = int(counts.get(market_key, 0) or 0) + 1
+
+    def _patha_buy_time_confirm_decision(self, market: str, signal: dict[str, Any]) -> dict[str, Any]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker = str((signal or {}).get("ticker") or "").strip()
+        if not self._runtime_bool("BUY_TIME_CONFIRM_ENABLED", True):
+            return {"allowed": True, "decision": "SKIPPED_DISABLED", "reason": "buy_time_confirm_disabled"}
+        snapshot_ts = self._selection_snapshot_ts_for_market(market_key)
+        age_min = self._selection_snapshot_age_min(market_key, snapshot_ts)
+        stale_min = self._runtime_float("BUY_TIME_CONFIRM_STALE_MIN", 30.0)
+        too_stale_min = self._runtime_float("BUY_TIME_CONFIRM_TOO_STALE_MIN", 60.0)
+        current_context, current_context_hash = self._current_selection_context_components(market_key)
+        meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+        selection_context_hash = str(meta.get("_smart_skip_context_hash") or "").strip()
+        context_changed = bool(selection_context_hash and current_context_hash and selection_context_hash != current_context_hash)
+        base = {
+            "market": market_key,
+            "ticker": ticker,
+            "selection_snapshot_ts": snapshot_ts,
+            "selection_snapshot_age_min": None if age_min is None else round(float(age_min), 3),
+            "stale_min": float(stale_min),
+            "too_stale_min": float(too_stale_min),
+            "selection_context_hash": selection_context_hash,
+            "current_context_hash": current_context_hash,
+            "context_changed": context_changed,
+            "current_context": current_context,
+        }
+        if age_min is not None and too_stale_min > 0 and age_min >= too_stale_min:
+            request = dict(base)
+            request.update({"requested_at": datetime.now(KST).isoformat(timespec="seconds"), "reason": "selection_snapshot_too_stale"})
+            meta["_buy_time_full_rescreen_requested"] = request
+            if isinstance(getattr(self, "selection_meta", None), dict):
+                self.selection_meta[market_key] = meta
+            return {**base, "allowed": False, "decision": "DEFER", "reason": "selection_snapshot_too_stale", "full_rescreen_requested": True}
+        if (age_min is None or age_min < stale_min) and not context_changed:
+            return {**base, "allowed": True, "decision": "SKIPPED_FRESH", "reason": "fresh_selection_context_unchanged"}
+
+        max_calls = max(0, int(self._runtime_float("BUY_TIME_CONFIRM_MAX_CALLS_PER_SESSION", 20.0)))
+        if max_calls > 0 and self._buy_time_confirm_call_count(market_key) >= max_calls:
+            result = buy_time_unavailable_result(market=market_key, ticker=ticker, reason="cap_exceeded")
+        else:
+            self._increment_buy_time_confirm_call_count(market_key)
+            candidate = {
+                "ticker": ticker,
+                "selected_reason": (getattr(self, "today_ticker_reasons", {}) or {}).get(market_key, {}).get(ticker, ""),
+                "selection_meta_reason": (meta.get("reasons") or {}).get(ticker, ""),
+                "price_targets": self._selection_price_target_for_ticker(market_key, meta.get("price_targets") or {}, ticker),
+                "candidate_action": self._selection_meta_value(market_key, ticker, "candidate_actions"),
+            }
+            fake_client = getattr(self, "_buy_time_confirm_judge_client", None)
+            if callable(fake_client) and not hasattr(fake_client, "messages"):
+                result = fake_client(market_key, ticker, candidate, signal, current_context, base)
+            else:
+                result = call_buy_time_confirm_judge(
+                    market=market_key,
+                    ticker=ticker,
+                    candidate=candidate,
+                    signal=signal,
+                    current_context=current_context,
+                    selection_context=base,
+                    client=fake_client,
+                )
+        decision = str((result or {}).get("decision") or "").strip().upper()
+        unavailable = decision == BUY_TIME_CONFIRM_UNAVAILABLE
+        adverse = buy_time_adverse_context(current_context)
+        adverse_block = self._runtime_bool("BUY_TIME_CONFIRM_ADVERSE_CONTEXT_BLOCK", True)
+        if unavailable and adverse and adverse_block:
+            request = dict(base)
+            request.update({"requested_at": datetime.now(KST).isoformat(timespec="seconds"), "reason": "confirm_unavailable_adverse_context"})
+            meta["_buy_time_full_rescreen_requested"] = request
+            if isinstance(getattr(self, "selection_meta", None), dict):
+                self.selection_meta[market_key] = meta
+            return {
+                **base,
+                "allowed": False,
+                "decision": "DEFER",
+                "reason": "buy_time_confirm_unavailable_adverse_context",
+                "confirm_result": dict(result or {}),
+                "full_rescreen_requested": True,
+            }
+        if decision in {"CONFIRM_BUY", BUY_TIME_CONFIRM_UNAVAILABLE}:
+            return {
+                **base,
+                "allowed": True,
+                "decision": decision,
+                "reason": str((result or {}).get("reason") or ("confirm_unavailable_proceed" if unavailable else "confirm_buy")),
+                "confirm_result": dict(result or {}),
+            }
+        if decision == "REJECT":
+            return {**base, "allowed": False, "decision": "REJECT", "reason": "buy_time_confirm_reject", "confirm_result": dict(result or {})}
+        return {**base, "allowed": False, "decision": "DEFER", "reason": "buy_time_confirm_defer", "confirm_result": dict(result or {})}
+
+    def _queue_buy_time_full_rescreen_request(self, market: str, decision: dict[str, Any]) -> bool:
+        if not self._runtime_bool("BUY_TIME_CONFIRM_AUTO_RESCREEN_ENABLED", True):
+            return False
+        payload = dict(decision or {})
+        if not bool(payload.get("full_rescreen_requested")):
+            return False
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        queues = getattr(self, "_buy_time_full_rescreen_requests", None)
+        if not isinstance(queues, dict):
+            queues = {}
+            self._buy_time_full_rescreen_requests = queues
+        request_key = "|".join(
+            [
+                market_key,
+                str(payload.get("reason") or ""),
+                str(payload.get("selection_snapshot_ts") or ""),
+                str(payload.get("selection_context_hash") or ""),
+                str(payload.get("current_context_hash") or ""),
+            ]
+        )
+        queued = {
+            **payload,
+            "market": market_key,
+            "request_key": request_key,
+            "queued_at": datetime.now(KST).isoformat(timespec="seconds"),
+        }
+        existing = queues.get(market_key)
+        if isinstance(existing, dict) and str(existing.get("request_key") or "") == request_key:
+            return False
+        queues[market_key] = queued
+        meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+        meta["_buy_time_full_rescreen_queued"] = queued
+        if isinstance(getattr(self, "selection_meta", None), dict):
+            self.selection_meta[market_key] = meta
+        log.info(f"[buy-time confirm] {market_key} queued fresh rescreen reason={queued.get('reason', '')}")
+        return True
+
+    def _drain_buy_time_full_rescreen_request(self, market: str) -> dict[str, Any]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        queues = getattr(self, "_buy_time_full_rescreen_requests", None)
+        if not isinstance(queues, dict):
+            return {"ran": False, "reason": "no_queue"}
+        request = dict(queues.pop(market_key, {}) or {})
+        if not request:
+            return {"ran": False, "reason": "no_request"}
+        if not self._runtime_bool("BUY_TIME_CONFIRM_AUTO_RESCREEN_ENABLED", True):
+            return {"ran": False, "reason": "auto_rescreen_disabled", "request": request}
+        prev_force_call = os.environ.get("SELECTION_SMART_SKIP_FORCE_CALL")
+        os.environ["SELECTION_SMART_SKIP_FORCE_CALL"] = "true"
+        result: dict[str, Any]
+        try:
+            selected = self.manual_rescreen(
+                market_key,
+                source_type="buy_time_confirm_rescreen",
+                trigger=str(request.get("reason") or "buy_time_confirm_full_rescreen"),
+            )
+            result = {
+                "ran": True,
+                "success": True,
+                "market": market_key,
+                "selected": list(selected or []),
+                "request": request,
+                "completed_at": datetime.now(KST).isoformat(timespec="seconds"),
+            }
+            log.info(
+                f"[buy-time confirm] {market_key} fresh rescreen completed "
+                f"selected={result['selected']}"
+            )
+        except Exception as exc:
+            result = {
+                "ran": True,
+                "success": False,
+                "market": market_key,
+                "error": str(exc),
+                "request": request,
+                "completed_at": datetime.now(KST).isoformat(timespec="seconds"),
+            }
+            log.warning(f"[buy-time confirm] {market_key} fresh rescreen failed: {exc}")
+        finally:
+            if prev_force_call is None:
+                os.environ.pop("SELECTION_SMART_SKIP_FORCE_CALL", None)
+            else:
+                os.environ["SELECTION_SMART_SKIP_FORCE_CALL"] = prev_force_call
+        meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+        meta["_buy_time_full_rescreen_last_result"] = result
+        if isinstance(getattr(self, "selection_meta", None), dict):
+            self.selection_meta[market_key] = meta
+        return result
 
     def _entry_route_payload(
         self,
@@ -30032,6 +30268,97 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             pass
         return {"added_tickers": added, "skipped_tickers": skipped, "reason": "triage_applied"}
 
+    def _sub_screener_prompt_score_by_key(self, market: str) -> dict[str, float]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+        rows: list[Any] = []
+        for key in ("_final_prompt_pool", "prompt_pool", "_prompt_pool", "_selection_prompt_pool"):
+            value = meta.get(key)
+            if isinstance(value, list):
+                rows.extend(value)
+        out: dict[str, float] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            ticker = str(row.get("ticker") or "").strip()
+            key = self._selection_ticker_key(market_key, ticker)
+            if not key:
+                continue
+            try:
+                score = float(row.get("trainer_prompt_score") or row.get("score") or 0.0)
+            except Exception:
+                continue
+            out[key] = max(float(out.get(key, 0.0) or 0.0), score)
+        return out
+
+    def _sub_screener_score_floor(self, market: str, tickers: list[Any]) -> float | None:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        scores_by_key = self._sub_screener_prompt_score_by_key(market_key)
+        scores: list[float] = []
+        for ticker in tickers or []:
+            key = self._selection_ticker_key(market_key, ticker)
+            if key and key in scores_by_key:
+                scores.append(float(scores_by_key[key]))
+        return min(scores) if scores else None
+
+    @staticmethod
+    def _sub_screener_row_score(row: Any) -> float:
+        try:
+            return float((row or {}).get("trainer_prompt_score") or (row or {}).get("score") or 0.0)
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _sub_screener_hard_preopen_pin(row: Any) -> bool:
+        if not isinstance(row, dict):
+            return False
+        tier = str(row.get("preopen_pin_tier") or "").strip().upper()
+        return tier == "HARD" or bool(row.get("preopen_pinned"))
+
+    def _sub_screener_requires_full_rescreen(
+        self,
+        market: str,
+        result: sub_screener.SubScanResult,
+        screener_rows: list[dict[str, Any]] | None = None,
+    ) -> tuple[bool, str]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not _env_bool("SUB_SCREENER_STRONG_FULL_RESCREEN_ENABLED", True):
+            return False, "strong_full_rescreen_disabled"
+        meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+        watchlist = list(dict.fromkeys(
+            list(meta.get("watchlist") or [])
+            + list((getattr(self, "today_tickers", {}) or {}).get(market_key, []) or [])
+        ))
+        trade_ready = list(dict.fromkeys(
+            list((getattr(self, "trade_ready_tickers", {}) or {}).get(market_key, []) or [])
+            + list(meta.get("trade_ready") or [])
+        ))
+        watch_floor = self._sub_screener_score_floor(market_key, watchlist)
+        trade_floor = self._sub_screener_score_floor(market_key, trade_ready)
+        plan_a_rows = list(getattr(result, "new_plan_a", []) or [])
+        plan_b_rows = list(getattr(result, "new_plan_b_high", []) or [])
+        max_plan_a = max([self._sub_screener_row_score(row) for row in plan_a_rows] or [0.0])
+        max_new = max([self._sub_screener_row_score(row) for row in plan_a_rows + plan_b_rows] or [0.0])
+        if watch_floor is not None and max_plan_a > float(watch_floor):
+            return True, f"new_plan_a_above_watch_floor:{max_plan_a:.2f}>{float(watch_floor):.2f}"
+        if trade_floor is not None and max_new > float(trade_floor):
+            return True, f"new_candidate_above_trade_ready_floor:{max_new:.2f}>{float(trade_floor):.2f}"
+        watch_keys = {
+            self._selection_ticker_key(market_key, ticker)
+            for ticker in watchlist
+            if self._selection_ticker_key(market_key, ticker)
+        }
+        for row in plan_a_rows + plan_b_rows + list(getattr(result, "all_new_scored", []) or []) + list(screener_rows or []):
+            if not self._sub_screener_hard_preopen_pin(row):
+                continue
+            key = self._selection_ticker_key(market_key, str((row or {}).get("ticker") or ""))
+            if key and key not in watch_keys:
+                return True, f"hard_preopen_pin_not_in_watch:{(row or {}).get('ticker')}"
+        strong_min = _market_env_float(market_key, "SUB_SCREENER_STRONG_PLAN_A_SCORE_MIN", 80.0)
+        if max_plan_a >= float(strong_min):
+            return True, f"new_plan_a_score_ge_strong_min:{max_plan_a:.2f}>={float(strong_min):.2f}"
+        return False, "weak_trigger"
+
     def maybe_run_sub_screener(self, market: str) -> None:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         if not _env_bool("SUB_SCREENER_ENABLED", False):
@@ -30063,20 +30390,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
 
         today = self._current_session_date_str(market_key)
-        max_per = max(0, int(os.getenv("SUB_SCREENER_MAX_PER_SESSION", "5")))
         min_interval_sec = max(0, int(os.getenv("SUB_SCREENER_MIN_INTERVAL_MIN", "15"))) * 60
-        try:
-            if sub_screener.is_rate_limited(
-                market_key,
-                today,
-                max_per_session=max_per,
-                min_interval_sec=min_interval_sec,
-            ):
-                log.info(f"[sub_screener] {market_key} rate_limited")
-                return
-        except Exception as exc:
-            log.warning(f"[sub_screener] {market_key} rate limit check failed: {exc}")
-            return
 
         mode = str((self.today_judgment or {}).get("consensus", {}).get("mode", "NEUTRAL") or "NEUTRAL")
         try:
@@ -30114,6 +30428,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
         if not _sub_screener_trigger_enabled(market_key):
             return
+        strong_trigger, strong_reason = self._sub_screener_requires_full_rescreen(
+            market_key,
+            result,
+            screener_rows=screener_rows,
+        )
+        log.info(
+            f"[sub_screener] {market_key} strong={strong_trigger} "
+            f"strong_reason={strong_reason}"
+        )
         dedupe_ttl_sec = max(0, int(os.getenv("SUB_SCREENER_DEDUPE_TTL_MIN", "60"))) * 60
         if dedupe_ttl_sec > 0:
             try:
@@ -30164,11 +30487,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     return
             except Exception as exc:
                 log.warning(f"[sub_screener] {market_key} dedupe check failed: {exc}")
-        try:
-            sub_screener.record_attempt(market_key, today, result)
-        except Exception as exc:
-            log.warning(f"[sub_screener] {market_key} record_attempt failed: {exc}")
-            return
 
         if self._early_judge_enabled(market_key):
             try:
@@ -30193,13 +30511,36 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 log.info(
                     f"[sub_screener] {market_key} triage_applied "
                     f"added={triage.get('added_tickers', [])} "
-                    f"skipped={triage.get('skipped_tickers', [])}"
+                    f"skipped={triage.get('skipped_tickers', [])} "
+                    f"strong={strong_trigger}"
                 )
-                return
+                if not strong_trigger:
+                    return
             except Exception as exc:
                 log.warning(f"[sub_screener] {market_key} triage failed: {exc}")
-                if not _env_bool("SUB_SCREENER_TRIAGE_FAIL_OPEN_FULL_RESCREEN", False):
+                if not strong_trigger and not _env_bool("SUB_SCREENER_TRIAGE_FAIL_OPEN_FULL_RESCREEN", False):
                     return
+
+        try:
+            if sub_screener.is_attempt_interval_limited(
+                market_key,
+                today,
+                min_interval_sec=min_interval_sec,
+            ):
+                log.info(
+                    f"[sub_screener] {market_key} full_rescreen_interval_limited "
+                    f"strong={strong_trigger} reason={strong_reason}"
+                )
+                return
+        except Exception as exc:
+            log.warning(f"[sub_screener] {market_key} interval guard failed: {exc}")
+            return
+
+        try:
+            sub_screener.record_attempt(market_key, today, result)
+        except Exception as exc:
+            log.warning(f"[sub_screener] {market_key} record_attempt failed: {exc}")
+            return
 
         old_mode = mode
         rejudged = False
@@ -30210,11 +30551,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.warning(f"[sub_screener] {market_key} reinvoke failed: {exc}")
 
         new_mode = str((self.today_judgment or {}).get("consensus", {}).get("mode", "NEUTRAL") or "NEUTRAL")
+        prev_force_call = os.environ.get("SELECTION_SMART_SKIP_FORCE_CALL")
+        if strong_trigger:
+            os.environ["SELECTION_SMART_SKIP_FORCE_CALL"] = "true"
         try:
             self.manual_rescreen(
                 market_key,
                 source_type="sub_screener_rescreen",
-                trigger="sub_screener",
+                trigger="sub_screener_strong" if strong_trigger else "sub_screener",
                 candidate_override=screener_rows,
             )
             sub_screener.record_success(market_key, today)
@@ -30223,6 +30567,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 f"[sub_screener] {market_key} rescreen failed: {exc} "
                 f"rejudged={rejudged} old_mode={old_mode} new_mode={new_mode}"
             )
+        finally:
+            if strong_trigger:
+                if prev_force_call is None:
+                    os.environ.pop("SELECTION_SMART_SKIP_FORCE_CALL", None)
+                else:
+                    os.environ["SELECTION_SMART_SKIP_FORCE_CALL"] = prev_force_call
     def run_entry_scan(self, market: str):
         if not self.session_active or self.current_market != market:
             return
@@ -32756,6 +33106,50 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 _tsdb_id = _sig.get("tsdb_id")
                 _sig_at  = datetime.now(KST).isoformat()
                 _audit_signal_id = str(_sig.get("audit_signal_id") or "")
+                _buy_time_confirm = self._patha_buy_time_confirm_decision(market, _sig)
+                _sig["buy_time_confirm"] = dict(_buy_time_confirm or {})
+                if not bool((_buy_time_confirm or {}).get("allowed", True)):
+                    _confirm_reason = str((_buy_time_confirm or {}).get("reason") or "buy_time_confirm_defer")
+                    self._record_decision_event(
+                        market,
+                        "buy_skipped",
+                        _s_tk,
+                        strategy=_s_strat,
+                        qty=0,
+                        price_native=float(_s_px),
+                        price_krw=float(_s_rpx),
+                        reason=_confirm_reason,
+                        reason_family="buy_time_confirm",
+                        detail=str(((_buy_time_confirm or {}).get("confirm_result") or {}).get("reason") or _confirm_reason),
+                        selected_reason=_s_sr,
+                    )
+                    self._audit_mark_signal_decision(
+                        market,
+                        _s_tk,
+                        signal_id=_audit_signal_id,
+                        decision="DEFERRED" if str((_buy_time_confirm or {}).get("decision") or "").upper() == "DEFER" else "REJECTED",
+                        block_reason=_confirm_reason,
+                        signal_price=float(_s_px),
+                        risk_price_krw=float(_s_rpx),
+                        strategy=_s_strat,
+                        score=float(_s_ep),
+                        payload={"stage": "buy_time_confirm", **dict(_buy_time_confirm or {})},
+                    )
+                    if _ML_DB_ENABLED:
+                        _ml_write_eval(
+                            _s_tk,
+                            _s_px,
+                            _s_row,
+                            "SKIPPED",
+                            block_reason_=_confirm_reason,
+                            strategy_used_=_s_strat,
+                            fired_strategy_=_s_strat,
+                            diag_json_={"stage": "buy_time_confirm", **dict(_buy_time_confirm or {})},
+                        )
+                    tsdb.update_signal(_tsdb_id, _s_strat, _s_ep, _sig_at, _confirm_reason)
+                    self._queue_buy_time_full_rescreen_request(market, _buy_time_confirm)
+                    log.info(f"[buy-time confirm] {market} {_s_tk} skip reason={_confirm_reason}")
+                    continue
                 try:
                     _us_early_gate_payload = dict(_sig.get("us_early_entry_gate") or {})
                     _v2_fixed_budget_multiplier = 1.0
@@ -34061,6 +34455,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     )
                 except Exception as e:
                     log.error(f"pending signal execute error [{_s_tk}]: {e}")
+            self._drain_buy_time_full_rescreen_request(market)
         # ── Tier 2 섹터 플레이 (US 전용) ───────────────────────────────────
         # Core 5 루프 완료 후, 섹터 ETF 강세 신호가 있으면 추가 진입 시도
         if market == "US" and mode not in ("HALT", "DEFENSIVE", "CAUTIOUS_BEAR"):

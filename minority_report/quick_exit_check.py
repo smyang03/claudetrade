@@ -120,7 +120,11 @@ JSON schema:
         input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
         output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
         if input_tokens or output_tokens:
-            credit_record(input_tokens, output_tokens, "quick_exit_check", model=MODEL)
+            credit_record(
+                input_tokens, output_tokens, "quick_exit_check", model=MODEL,
+                cache_creation_input_tokens=int(getattr(usage, "cache_creation_input_tokens", 0) or 0),
+                cache_read_input_tokens=int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+            )
         save_raw_call(
             label="quick_exit_check",
             prompt=prompt,

@@ -888,6 +888,278 @@ def _pathb_missed_opportunity_report(
         conn.close()
 
 
+def _pathb_context_drift_report(
+    *,
+    db_path: Path,
+    session_date: str,
+    market: str,
+    runtime_mode: str,
+    limit: int = 10,
+) -> dict[str, Any]:
+    if not db_path.exists():
+        return {"available": False, "reason": "db_missing", "db_path": str(db_path)}
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(conn, "v2_path_runs"):
+            return {"available": False, "reason": "table_missing", "db_path": str(db_path)}
+        columns = _columns(conn, "v2_path_runs")
+        required = {"path_run_id", "path_type", "market", "runtime_mode", "session_date", "ticker", "status", "plan_json"}
+        if not required.issubset(columns):
+            return {
+                "available": False,
+                "reason": "columns_missing",
+                "db_path": str(db_path),
+                "missing_columns": sorted(required - columns),
+            }
+        where = ["path_type='claude_price'", "runtime_mode=?"]
+        params: list[Any] = [runtime_mode]
+        if session_date:
+            where.append("session_date=?")
+            params.append(session_date)
+        if market:
+            where.append("market=?")
+            params.append(market.upper())
+        rows = list(
+            conn.execute(
+                f"""
+                SELECT path_run_id, market, session_date, ticker, status, plan_json
+                FROM v2_path_runs
+                WHERE {' AND '.join(where)}
+                """,
+                params,
+            )
+        )
+        status_counts: Counter[str] = Counter()
+        audit_count = 0
+        changed_count = 0
+        adverse_count = 0
+        hash_missing_count = 0
+        examples: list[dict[str, Any]] = []
+        for row in rows:
+            status_counts[str(row["status"] or "unknown")] += 1
+            plan = _decode_json_dict(row["plan_json"])
+            if not str(plan.get("context_hash_at_creation") or "").strip():
+                hash_missing_count += 1
+            audit = plan.get("zone_hit_context_drift_audit")
+            if not isinstance(audit, dict):
+                continue
+            audit_count += 1
+            changed = bool(audit.get("context_changed"))
+            adverse = bool(audit.get("current_context_adverse"))
+            if changed:
+                changed_count += 1
+            if adverse:
+                adverse_count += 1
+            if (changed or adverse or not bool(audit.get("creation_context_available"))) and len(examples) < max(int(limit or 1), 1):
+                examples.append(
+                    {
+                        "market": row["market"],
+                        "session_date": row["session_date"],
+                        "ticker": row["ticker"],
+                        "status": row["status"],
+                        "path_run_id": row["path_run_id"],
+                        "context_changed": changed,
+                        "current_context_adverse": adverse,
+                        "creation_context_hash": audit.get("creation_context_hash", ""),
+                        "current_context_hash": audit.get("current_context_hash", ""),
+                        "selection_snapshot_age_min": audit.get("selection_snapshot_age_min"),
+                    }
+                )
+        return {
+            "available": True,
+            "db_path": str(db_path),
+            "pathb_run_count": len(rows),
+            "pathb_context_drift_audit_count": audit_count,
+            "pathb_context_changed_count": changed_count,
+            "pathb_current_context_adverse_count": adverse_count,
+            "pathb_context_hash_missing_count": hash_missing_count,
+            "status_counts": dict(status_counts.most_common()),
+            "examples": examples,
+            "trade_behavior_change_allowed": False,
+        }
+    finally:
+        conn.close()
+
+
+def _pathb_execution_quality_report(
+    *,
+    db_path: Path,
+    session_date: str,
+    market: str,
+    runtime_mode: str,
+    limit: int = 10,
+) -> dict[str, Any]:
+    if not db_path.exists():
+        return {"available": False, "reason": "db_missing", "db_path": str(db_path)}
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(conn, "v2_path_runs"):
+            return {"available": False, "reason": "table_missing", "db_path": str(db_path)}
+        columns = _columns(conn, "v2_path_runs")
+        required = {"path_run_id", "path_type", "market", "runtime_mode", "session_date", "ticker", "status", "plan_json"}
+        if not required.issubset(columns):
+            return {
+                "available": False,
+                "reason": "columns_missing",
+                "db_path": str(db_path),
+                "missing_columns": sorted(required - columns),
+            }
+        where = ["path_type='claude_price'", "runtime_mode=?"]
+        params: list[Any] = [runtime_mode]
+        if session_date:
+            where.append("session_date=?")
+            params.append(session_date)
+        if market:
+            where.append("market=?")
+            params.append(market.upper())
+        selected = ["path_run_id", "market", "session_date", "ticker", "status", "plan_json"]
+        if "created_at" in columns:
+            selected.append("created_at")
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                f"""
+                SELECT {', '.join(selected)}
+                FROM v2_path_runs
+                WHERE {' AND '.join(where)}
+                """,
+                params,
+            )
+        ]
+
+        def _zone_bucket(value: float | None) -> str:
+            if value is None:
+                return "zone_unknown"
+            if value < 0:
+                return "below_zone"
+            if value < 0.3:
+                return "low<0.3"
+            if value < 0.7:
+                return "mid0.3-0.7"
+            if value <= 1.0:
+                return "upper0.7-1.0"
+            return "above_zone"
+
+        status_counts: Counter[str] = Counter()
+        origin_counts: Counter[str] = Counter()
+        loss_origin_counts: Counter[str] = Counter()
+        close_reason_rows: dict[str, dict[str, Any]] = {}
+        zone_bucket_rows: dict[str, dict[str, Any]] = {}
+        pnl_values: list[float] = []
+        zone_values: list[float] = []
+        filled_count = 0
+        closed_priced_count = 0
+        open_filled_count = 0
+        empty_rationale = 0
+        empty_tags = 0
+        empty_invalidations = 0
+        examples: list[dict[str, Any]] = []
+        for row in rows:
+            status_counts[str(row.get("status") or "unknown")] += 1
+            plan = _decode_json_dict(row.get("plan_json"))
+            entry_price = _float_or_none(plan.get("actual_entry_price"))
+            exit_price = _float_or_none(plan.get("actual_exit_price"))
+            pnl = _float_or_none(plan.get("pnl_pct"))
+            low = _float_or_none(plan.get("buy_zone_low"))
+            high = _float_or_none(plan.get("buy_zone_high"))
+            zone_value = None
+            if low is not None and high is not None and entry_price is not None and high != low:
+                zone_value = round((entry_price - low) / (high - low), 4)
+                zone_values.append(zone_value)
+            if entry_price is not None:
+                filled_count += 1
+                if not str(plan.get("entry_rationale") or "").strip():
+                    empty_rationale += 1
+                if not list(plan.get("entry_basis_tags") or []):
+                    empty_tags += 1
+                if not list(plan.get("invalidation_conditions") or []):
+                    empty_invalidations += 1
+                if exit_price is None:
+                    open_filled_count += 1
+            if entry_price is not None and exit_price is not None and pnl is not None:
+                closed_priced_count += 1
+                pnl_values.append(pnl)
+                close_reason = str(plan.get("close_reason") or "unknown")
+                close_bucket = close_reason_rows.setdefault(
+                    close_reason,
+                    {"close_reason": close_reason, "rows": 0, "_pnl": [], "positive_pnl_rows": 0},
+                )
+                close_bucket["rows"] += 1
+                close_bucket["_pnl"].append(pnl)
+                if pnl > 0:
+                    close_bucket["positive_pnl_rows"] += 1
+                zone_bucket = _zone_bucket(zone_value)
+                zone_row = zone_bucket_rows.setdefault(
+                    zone_bucket,
+                    {"zone_bucket": zone_bucket, "rows": 0, "_pnl": [], "positive_pnl_rows": 0},
+                )
+                zone_row["rows"] += 1
+                zone_row["_pnl"].append(pnl)
+                if pnl > 0:
+                    zone_row["positive_pnl_rows"] += 1
+                origin = str(plan.get("origin_reason") or "unknown")
+                origin_counts[origin] += 1
+                if pnl < 0:
+                    loss_origin_counts[origin] += 1
+                    if len(examples) < max(int(limit or 1), 1):
+                        examples.append(
+                            {
+                                "ticker": row.get("ticker"),
+                                "session_date": row.get("session_date"),
+                                "status": row.get("status"),
+                                "close_reason": close_reason,
+                                "pnl_pct": pnl,
+                                "entry_zone_position": zone_value,
+                                "origin_reason": origin,
+                                "confidence": _float_or_none(plan.get("confidence")),
+                                "risk_pct": _float_or_none(plan.get("risk_pct")),
+                                "path_run_id": row.get("path_run_id"),
+                            }
+                        )
+
+        def _bucket_output(bucket: dict[str, Any]) -> dict[str, Any]:
+            rows_count = int(bucket.get("rows") or 0)
+            positives = int(bucket.get("positive_pnl_rows") or 0)
+            return {
+                **{k: v for k, v in bucket.items() if not str(k).startswith("_")},
+                "avg_pnl_pct": _mean(bucket.get("_pnl") or []),
+                "win_rate_pct": round(positives * 100.0 / rows_count, 1) if rows_count else None,
+            }
+
+        by_close_reason = [_bucket_output(item) for item in close_reason_rows.values()]
+        by_close_reason.sort(key=lambda item: (-int(item.get("rows") or 0), str(item.get("close_reason") or "")))
+        by_zone_bucket = [_bucket_output(item) for item in zone_bucket_rows.values()]
+        by_zone_bucket.sort(key=lambda item: str(item.get("zone_bucket") or ""))
+        return {
+            "available": True,
+            "db_path": str(db_path),
+            "source": "v2_path_runs.plan_json",
+            "pathb_run_count": len(rows),
+            "filled_count": filled_count,
+            "closed_priced_count": closed_priced_count,
+            "open_filled_count": open_filled_count,
+            "status_counts": dict(status_counts.most_common()),
+            "mean_pnl_pct": _mean(pnl_values),
+            "win_rate_pct": round(sum(1 for value in pnl_values if value > 0) * 100.0 / len(pnl_values), 1) if pnl_values else None,
+            "entry_zone_known_count": len(zone_values),
+            "entry_zone_avg": _mean(zone_values),
+            "entry_zone_bucket_pnl": by_zone_bucket,
+            "empty_entry_rationale_filled_count": empty_rationale,
+            "empty_entry_basis_tags_filled_count": empty_tags,
+            "empty_invalidation_conditions_filled_count": empty_invalidations,
+            "origin_reason_counts": dict(origin_counts.most_common(limit)),
+            "loss_origin_reason_counts": dict(loss_origin_counts.most_common(limit)),
+            "by_close_reason": by_close_reason,
+            "top_loss_examples": examples,
+            "trade_behavior_change_allowed": False,
+            "plan_quality_policy_change_allowed": False,
+        }
+    finally:
+        conn.close()
+
+
 def _pathb_profit_protection_report(
     *,
     db_path: Path,
@@ -1274,6 +1546,44 @@ def _write_report(payload: dict[str, Any], report_dir: str | Path | None) -> dic
                 f"- smart_skip_state: mode={smart.get('mode')} reuse={smart.get('reuse_count')} fail_open={smart.get('fail_open_count')} reasons={smart.get('fail_open_reasons')}",
             ]
         )
+    context_drift = (
+        payload.get("pathb_context_drift_audit")
+        if isinstance(payload.get("pathb_context_drift_audit"), dict)
+        else {}
+    )
+    if context_drift:
+        lines.extend(
+            [
+                "",
+                "## PathB Context Drift Audit",
+                "",
+                f"- available: {context_drift.get('available')} runs={context_drift.get('pathb_run_count')} audits={context_drift.get('pathb_context_drift_audit_count')}",
+                f"- changed={context_drift.get('pathb_context_changed_count')} adverse={context_drift.get('pathb_current_context_adverse_count')} hash_missing={context_drift.get('pathb_context_hash_missing_count')}",
+                f"- status_counts: {context_drift.get('status_counts')}",
+                f"- trade_behavior_change_allowed: {context_drift.get('trade_behavior_change_allowed')}",
+            ]
+        )
+    execution_quality = (
+        payload.get("pathb_execution_quality")
+        if isinstance(payload.get("pathb_execution_quality"), dict)
+        else {}
+    )
+    if execution_quality:
+        lines.extend(
+            [
+                "",
+                "## PathB Execution Quality",
+                "",
+                f"- available: {execution_quality.get('available')} source={execution_quality.get('source')}",
+                f"- runs: {execution_quality.get('pathb_run_count')} filled={execution_quality.get('filled_count')} closed_priced={execution_quality.get('closed_priced_count')} open_filled={execution_quality.get('open_filled_count')}",
+                f"- mean_pnl_pct: {execution_quality.get('mean_pnl_pct')} win_rate_pct={execution_quality.get('win_rate_pct')}",
+                f"- entry_zone_known_count: {execution_quality.get('entry_zone_known_count')} entry_zone_avg={execution_quality.get('entry_zone_avg')}",
+                f"- empty_plan_fields: rationale={execution_quality.get('empty_entry_rationale_filled_count')} tags={execution_quality.get('empty_entry_basis_tags_filled_count')} invalidations={execution_quality.get('empty_invalidation_conditions_filled_count')}",
+                f"- by_close_reason: {execution_quality.get('by_close_reason')}",
+                f"- loss_origin_reason_counts: {execution_quality.get('loss_origin_reason_counts')}",
+                f"- trade_behavior_change_allowed: {execution_quality.get('trade_behavior_change_allowed')}",
+            ]
+        )
     hard_guard = payload.get("hard_guard_review_bypass") if isinstance(payload.get("hard_guard_review_bypass"), dict) else {}
     if hard_guard:
         lines.extend(
@@ -1390,6 +1700,18 @@ def build_monitoring_ops_report(
             horizon_min=int(horizon_min),
         ),
         "pathb_missed_opportunity": _pathb_missed_opportunity_report(
+            db_path=event_path,
+            session_date=session_date,
+            market=market_key,
+            runtime_mode=runtime_mode,
+        ),
+        "pathb_context_drift_audit": _pathb_context_drift_report(
+            db_path=event_path,
+            session_date=session_date,
+            market=market_key,
+            runtime_mode=runtime_mode,
+        ),
+        "pathb_execution_quality": _pathb_execution_quality_report(
             db_path=event_path,
             session_date=session_date,
             market=market_key,

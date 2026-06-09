@@ -140,6 +140,16 @@ def is_rate_limited(
         return True
     if int(state.get("attempt_count") or 0) >= max_per:
         return True
+    return is_attempt_interval_limited(market, date, min_interval_sec=min_interval_sec)
+
+
+def is_attempt_interval_limited(
+    market: str,
+    date: str,
+    *,
+    min_interval_sec: float,
+) -> bool:
+    state = load_session_counter(market, date)
     last_attempt = str(state.get("last_attempt_at") or "").strip()
     if last_attempt:
         try:

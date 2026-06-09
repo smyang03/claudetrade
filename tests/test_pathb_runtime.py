@@ -986,6 +986,102 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(run["status"], "WAITING")
             self.assertEqual(run["path_type"], "claude_price")
 
+    def test_register_from_selection_meta_stores_context_hash_for_zone_hit_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(_Bot(), is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runs = runtime.register_from_selection_meta(
+                "US",
+                {
+                    "trade_ready": ["AAPL"],
+                    "v2_decision_ids": {"AAPL": "dec_context_aapl"},
+                    "_smart_skip_context_hash": "ctx-old",
+                    "_smart_skip_context": {
+                        "risk_mode": "NORMAL",
+                        "market_change_severity_bucket": "normal",
+                    },
+                    "selection_snapshot_ts": "2026-06-09T09:30:00+09:00",
+                    "_selection_source_type": "rescreen",
+                    "selection_call_id": "selection-ctx-1",
+                    "price_targets": {
+                        "AAPL": {
+                            "buy_zone_low": 180.0,
+                            "buy_zone_high": 181.0,
+                            "sell_target": 190.0,
+                            "stop_loss": 175.0,
+                            "hold_days": 1,
+                            "confidence": 0.7,
+                        }
+                    },
+                },
+            )
+
+            self.assertEqual(len(runs), 1)
+            run = store.find_path_run(runs[0])
+            plan = run["plan"]
+            self.assertEqual(plan["context_hash_at_creation"], "ctx-old")
+            self.assertEqual(plan["context_components_at_creation"]["risk_mode"], "NORMAL")
+            self.assertEqual(plan["context_selection_snapshot_ts_at_creation"], "2026-06-09T09:30:00+09:00")
+            self.assertEqual(plan["context_selection_source_at_creation"], "rescreen")
+            self.assertEqual(plan["context_selection_call_id_at_creation"], "selection-ctx-1")
+
+    def test_scan_waiting_entries_audits_context_drift_without_blocking_submit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            bot.current_market = "US"
+            bot.token = "token"
+            bot._current_selection_context_components = Mock(
+                return_value=(
+                    {
+                        "risk_mode": "RISK_OFF",
+                        "market_change_severity_bucket": "severe_down",
+                    },
+                    "ctx-new",
+                )
+            )
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            _install_passing_entry_broker_truth(runtime, tmp)
+            runtime._submit_buy = Mock(return_value=True)
+            runs = runtime.register_from_selection_meta(
+                "US",
+                {
+                    "trade_ready": ["AAPL"],
+                    "v2_decision_ids": {"AAPL": "dec_context_scan"},
+                    "_smart_skip_context_hash": "ctx-old",
+                    "_smart_skip_context": {
+                        "risk_mode": "NORMAL",
+                        "market_change_severity_bucket": "normal",
+                    },
+                    "selection_snapshot_ts": "2026-06-09T09:30:00+09:00",
+                    "price_targets": {
+                        "AAPL": {
+                            "buy_zone_low": 180.0,
+                            "buy_zone_high": 181.0,
+                            "sell_target": 190.0,
+                            "stop_loss": 175.0,
+                            "hold_days": 1,
+                            "confidence": 0.7,
+                        }
+                    },
+                },
+            )
+            bot.price_cache_raw["AAPL"] = 180.5
+
+            runtime.scan_waiting_entries("US", force=True)
+
+            runtime._submit_buy.assert_called_once()
+            run = store.find_path_run(runs[0])
+            audit = run["plan"]["zone_hit_context_drift_audit"]
+            self.assertTrue(audit["context_changed"])
+            self.assertTrue(audit["current_context_adverse"])
+            self.assertFalse(audit["live_confirm_called"])
+            self.assertFalse(audit["order_blocked_by_audit"])
+            self.assertEqual(audit["creation_context_hash"], "ctx-old")
+            self.assertEqual(audit["current_context_hash"], "ctx-new")
+
     def test_register_from_selection_meta_updates_active_waiting_zone_from_fresh_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")
