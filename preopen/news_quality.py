@@ -153,6 +153,31 @@ SOURCE_TYPE_CORE = {
 }
 SOURCE_TYPE_WEAK = {"macro", "industry", "market_data", "news"}
 
+SOURCE_TIER_OFFICIAL = {"dart", "sec", "sec edgar"}
+SOURCE_TIER_BROKER = {"kis", "alphavantage", "alpha vantage", "finnhub"}
+SOURCE_TIER_WEB = {"naver", "googlenews", "google news", "investmentnews"}
+SOURCE_TIER_ABBR = {
+    "official_disclosure": "OD",
+    "broker_api": "API",
+    "major_wire": "MW",
+    "web_news": "WEB",
+    "blog_like": "BLG",
+}
+
+
+def classify_source_tier(item: Any) -> str:
+    src = source_name(item).lower()
+    stype = source_type(item).lower()
+    if src in SOURCE_TIER_OFFICIAL or stype == "disclosure":
+        return "official_disclosure"
+    if src in SOURCE_TIER_BROKER:
+        return "broker_api"
+    if src in SOURCE_TIER_WEB:
+        return "web_news"
+    if stype in SOURCE_TYPE_CORE or src not in {"news", "", "unknown"}:
+        return "major_wire"
+    return "blog_like"
+
 
 def compact_news_text(value: Any, limit: int = 180) -> str:
     text = " ".join(str(value or "").replace("|", " ").split())
@@ -416,14 +441,19 @@ def score_news_item(
         prompt_eligible = False
 
     summary = compact_news_text(str(item.get("summary") or item.get("content") or title) if isinstance(item, dict) else title, 180)
+    _pub_raw = str(item.get("published_at") or item.get("date") or "") if isinstance(item, dict) else ""
+    _pub_dt = parse_news_datetime(_pub_raw)
+    _age_min: int | None = int((datetime.now(timezone.utc) - _pub_dt).total_seconds() / 60) if _pub_dt else None
     return {
         "id": news_item_id(item),
         "source": source,
         "source_type": src_type,
+        "source_tier": classify_source_tier(item),
         "title": compact_news_text(title, 180),
         "summary": summary,
         "url": str(item.get("url") or "") if isinstance(item, dict) else "",
-        "published_at": str(item.get("published_at") or item.get("date") or "") if isinstance(item, dict) else "",
+        "published_at": _pub_raw,
+        "age_min": _age_min,
         "date_quality": date_quality,
         "signal_type": signal_type,
         "score": max(0, min(100, int(round(score)))),
@@ -480,20 +510,29 @@ def build_news_quality_snapshot(
     signal_type = str(best_row.get("signal_type") or "")
     score = int(best_row.get("score") or 0)
     prompt_eligible = bool(top_news or risk_news)
+    def _tier_age_prefix(row: dict) -> str:
+        abbr = SOURCE_TIER_ABBR.get(str(row.get("source_tier") or ""), "")
+        age = row.get("age_min")
+        parts = ([abbr] if abbr else []) + ([f"{age}m"] if age is not None else [])
+        return f"[{'/'.join(parts)}] " if parts else ""
+
     prompt_summary = "; ".join(
-        compact_news_text(f"{row.get('signal_type')}:{row.get('title')}", 170)
+        compact_news_text(f"{_tier_age_prefix(row)}{row.get('signal_type')}:{row.get('title')}", 170)
         for row in top_news
         if row.get("title")
     )
     risk_summary = "; ".join(
-        compact_news_text(f"{row.get('signal_type')}:{row.get('title')}", 170)
+        compact_news_text(f"{_tier_age_prefix(row)}{row.get('signal_type')}:{row.get('title')}", 170)
         for row in risk_news
         if row.get("title")
     )
+    top_row = top_news[0] if top_news else {}
     return {
         "news_prompt_eligible": prompt_eligible,
         "news_signal_type": signal_type,
         "news_score": score,
+        "news_top_age_min": top_row.get("age_min"),
+        "news_top_source_tier": str(top_row.get("source_tier") or ""),
         "news_prompt_summary": prompt_summary,
         "risk_news_summary": risk_summary,
         "prompt_news_ids": prompt_ids,

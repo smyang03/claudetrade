@@ -1492,9 +1492,11 @@ def build_kr_digest(target_date: str, universe_tickers: Optional[List[str]] = No
     # 중요도 필터링 → 상위 5건
     top_news = filter_top_news(all_news, top_n=5)
     layer_c = [{
-        "title":   n.get("title", ""),
-        "source":  n.get("source", ""),
-        "ticker":  n.get("ticker", ""),
+        "title":        n.get("title", ""),
+        "source":       n.get("source", ""),
+        "ticker":       n.get("ticker", ""),
+        "source_tier":  n.get("source_tier", ""),
+        "age_min":      n.get("age_min"),
     } for n in top_news]
 
     # 공시 별도 (중요도 최상)
@@ -1710,7 +1712,12 @@ def build_us_digest(target_date: str, universe_tickers: Optional[List[str]] = No
                 item = {**item, "ticker": t}
             all_news.append(item)
     top_news = filter_top_news(all_news, top_n=5)
-    layer_c  = [{"title": n.get("title",""), "ticker": n.get("ticker","")} for n in top_news]
+    layer_c = [{
+        "title":       n.get("title", ""),
+        "ticker":      n.get("ticker", ""),
+        "source_tier": n.get("source_tier", ""),
+        "age_min":     n.get("age_min"),
+    } for n in top_news]
 
     digest = {
         "date":        target_date,
