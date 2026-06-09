@@ -295,7 +295,13 @@ class PreopenShadowTests(unittest.TestCase):
                 bot,
                 "US",
                 ["AAPL", "TWLO"],
-                {"trade_ready": ["TWLO"]},
+                {
+                    "trade_ready": ["TWLO"],
+                    "_selection_consensus_mode": "PREOPEN_WATCH",
+                    "_selection_execution_phase": "preopen_watch",
+                    "_selection_prompt_contract": "selection_preopen_watch_v1",
+                    "_selection_prompt_hash": "abc123",
+                },
                 {"TWLO": "strong continuation"},
                 phase="test",
             )
@@ -306,6 +312,10 @@ class PreopenShadowTests(unittest.TestCase):
         self.assertEqual(record["actual_selection_rank"], 2)
         self.assertEqual(record["rank_delta"], 1)
         self.assertTrue(record["actual_trade_ready"])
+        self.assertEqual(record["selection_consensus_mode"], "PREOPEN_WATCH")
+        self.assertEqual(record["selection_execution_phase"], "preopen_watch")
+        self.assertEqual(record["selection_prompt_contract"], "selection_preopen_watch_v1")
+        self.assertEqual(record["selection_prompt_hash"], "abc123")
         self.assertEqual(save_mock.call_args.kwargs["mode"], "paper")
 
     def test_bot_loads_preopen_state_from_current_runtime_mode(self) -> None:

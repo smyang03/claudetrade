@@ -971,6 +971,61 @@ class SelectionPromptContractTests(unittest.TestCase):
         self.assertIn("max_order_cap_pct", prompt)
         self.assertIn("reward_risk", prompt)
 
+    def test_preopen_watch_uses_short_watch_only_contract(self) -> None:
+        from minority_report import analysts as analysts_module
+
+        captured: dict[str, object] = {}
+        raw_calls: list[dict] = []
+
+        def _fake_create(*, model, max_tokens, messages):
+            captured["prompt"] = messages[0]["content"]
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        text='{"watchlist":["454910"],"trade_ready":[],"reasons":{"454910":"watch"}}'
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+                stop_reason="end_turn",
+            )
+
+        env = {
+            "CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS_SHADOW": "false",
+        }
+        with patch.dict(os.environ, env, clear=False), \
+             patch.object(analysts_module.client.messages, "create", side_effect=_fake_create), \
+             patch.object(analysts_module, "build_active_lesson_context", return_value={"section": "", "metadata": {}}), \
+             patch.object(analysts_module, "_recent_selection_feedback_section", return_value=""), \
+             patch.object(analysts_module, "credit_record", lambda *args, **kwargs: None), \
+             patch.object(analysts_module, "save_raw_call", lambda **kwargs: raw_calls.append(kwargs)):
+            analysts_module.select_tickers(
+                market="KR",
+                digest_prompt="market digest",
+                consensus_mode="PREOPEN_WATCH",
+                candidates=[
+                    {
+                        "ticker": "454910",
+                        "name": "Doosan Robotics",
+                        "price": 127200.0,
+                        "volume": 1000,
+                        "change_rate": 0.0,
+                    }
+                ],
+                market_change_pct=0.0,
+                secondary_change_pct=0.0,
+                execution_phase="preopen_watch",
+            )
+
+        prompt = str(captured["prompt"])
+        self.assertIn("PREOPEN WATCH OUTPUT CONTRACT", prompt)
+        self.assertIn("454910 name=Doosan Robotics", prompt)
+        self.assertNotIn("price_targets", prompt)
+        self.assertNotIn("recommended_strategy", prompt)
+        self.assertEqual(raw_calls[0]["prompt_version"], "selection_preopen_watch_v1")
+        self.assertEqual(raw_calls[0]["extra"]["prompt_contract"], "selection_preopen_watch_v1")
+
     def test_select_tickers_compact_prompt_normalizes_to_canonical_meta(self) -> None:
         from minority_report import analysts as analysts_module
 
@@ -1095,6 +1150,8 @@ class SelectionPromptContractTests(unittest.TestCase):
     def test_selection_retry_trade_ready_is_ignored_and_kept_watch_only(self) -> None:
         from minority_report import analysts as analysts_module
 
+        raw_calls: list[dict] = []
+
         def _fake_create(*, model, max_tokens, messages):
             return SimpleNamespace(
                 content=[SimpleNamespace(text="{}")],
@@ -1121,7 +1178,7 @@ class SelectionPromptContractTests(unittest.TestCase):
              patch.object(analysts_module, "_extract_json", side_effect=parsed), \
              patch.object(analysts_module, "build_active_lesson_context", return_value={"section": "", "metadata": {}}), \
              patch.object(analysts_module, "credit_record", lambda *args, **kwargs: None), \
-             patch.object(analysts_module, "save_raw_call", lambda **kwargs: None):
+             patch.object(analysts_module, "save_raw_call", lambda **kwargs: raw_calls.append(kwargs)):
             tickers, reasons = analysts_module.select_tickers(
                 market="US",
                 digest_prompt="market digest",
@@ -1139,6 +1196,10 @@ class SelectionPromptContractTests(unittest.TestCase):
         self.assertEqual(reasons["AMD"], "retry tried to promote")
         self.assertEqual(meta["trade_ready"], [])
         self.assertEqual(meta["_selection_retry_trade_ready_ignored"], ["AMD"])
+        retry_call = next(call for call in raw_calls if call["label"] == "select_tickers_retry")
+        self.assertEqual(retry_call["extra"]["retry_candidate_count"], 2)
+        self.assertEqual(retry_call["extra"]["retry_candidate_tickers"], ["AMD", "MSFT"])
+        self.assertGreater(retry_call["extra"]["retry_prompt_chars"], 0)
 
 
 class PostmortemPromptContractTests(unittest.TestCase):

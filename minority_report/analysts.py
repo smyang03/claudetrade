@@ -1039,6 +1039,183 @@ def _candidate_evidence_hint(candidate: dict) -> str:
     return ",".join(parts)
 
 
+def _candidate_identity_prefix(candidate: dict) -> str:
+    ticker = str(candidate.get("ticker", "") or "").strip()
+    name = str(
+        candidate.get("name")
+        or candidate.get("company_name")
+        or candidate.get("ticker_name")
+        or candidate.get("display_name")
+        or ""
+    ).strip()
+    if not name:
+        return ticker
+    name = _compact_news_prompt_text(name.replace("=", " "), 80)
+    return f"{ticker} name={name}" if ticker else f"name={name}"
+
+
+def _candidate_compact_news_hint(candidate: dict) -> str:
+    parts = []
+    try:
+        count = int(float(candidate.get("news_or_earnings_count") or 0))
+    except Exception:
+        count = 0
+    if count > 0:
+        parts.append(f"n={count}")
+    quality = _compact_news_prompt_text(candidate.get("news_quality"), 24)
+    if quality:
+        parts.append("q=" + quality)
+    date_quality = _compact_news_prompt_text(candidate.get("news_date_quality"), 24)
+    if date_quality and date_quality != "dated":
+        parts.append("date=" + date_quality)
+    signal_type = _compact_news_prompt_text(candidate.get("news_signal_type"), 32)
+    if signal_type:
+        parts.append("sig=" + signal_type)
+    try:
+        news_score = int(float(candidate.get("news_score") or 0))
+    except Exception:
+        news_score = 0
+    if news_score > 0:
+        parts.append(f"score={news_score}")
+    risk_summary = _compact_news_prompt_text(candidate.get("risk_news_summary"), 64)
+    if risk_summary:
+        parts.append("risk=" + risk_summary)
+    return "newsq=" + ",".join(parts) if parts else ""
+
+
+def _candidate_relative_strength_text(
+    candidate: dict,
+    market: str,
+    rate: float,
+    market_change_pct: Optional[float] = None,
+    secondary_change_pct: Optional[float] = None,
+) -> str:
+    if market == "KR":
+        market_type = candidate.get("market_type", "KOSPI")
+        base_pct = (
+            secondary_change_pct
+            if market_type == "KOSDAQ" and secondary_change_pct is not None
+            else market_change_pct
+        )
+        rs = rate - base_pct if base_pct is not None else None
+        return f"rs={rs:+.1f}%({'KQ' if market_type == 'KOSDAQ' else 'KP'})" if rs is not None else ""
+
+    rs_parts = []
+    if market_change_pct is not None:
+        rs_parts.append(f"SP{rate - market_change_pct:+.1f}%")
+    if secondary_change_pct is not None:
+        rs_parts.append(f"NQ{rate - secondary_change_pct:+.1f}%")
+    return f"rs=({'/'.join(rs_parts)})" if rs_parts else ""
+
+
+def _candidate_turnover_text(market: str, turnover: float) -> str:
+    if turnover <= 0:
+        return ""
+    if market == "US":
+        return f"turn=${turnover/1e6:.1f}M"
+    return f"turn={turnover/1e8:.1f}e8KRW"
+
+
+def _format_selection_candidate_line(
+    candidate: dict,
+    market: str,
+    ranked_turnovers: list[float],
+    *,
+    market_change_pct: Optional[float] = None,
+    secondary_change_pct: Optional[float] = None,
+    kr_premarket: bool = False,
+    compact: bool = False,
+) -> str:
+    rate = _safe_float(candidate.get("change_rate", 0.0), 0.0)
+    vr = _safe_float(candidate.get("vol_ratio", 0.0), 0.0)
+    price = _safe_float(candidate.get("price", 0), 0.0)
+    volume = _safe_float(candidate.get("volume", 0), 0.0)
+    turnover = price * volume
+    market_type = str(candidate.get("market_type", "") or "").strip()
+    category = str(candidate.get("category", "") or "").strip()
+    sector = str(candidate.get("sector", "") or "").strip()
+    above_ma60 = candidate.get("above_ma60")
+    from_high_pct = candidate.get("from_high_pct")
+    liquidity_bucket = (
+        str(candidate.get("liquidity_bucket", "") or "").strip()
+        or _candidate_liquidity_bucket(turnover, ranked_turnovers)
+    )
+    from_high_bucket = (
+        str(candidate.get("from_high_bucket", "") or "").strip()
+        or _candidate_pullback_bucket(from_high_pct)
+    )
+    news_hint = _candidate_compact_news_hint(candidate) if compact else _candidate_news_hint(candidate)
+    parts = [
+        _candidate_identity_prefix(candidate),
+        f"chg={rate:+.2f}%",
+        _candidate_relative_strength_text(
+            candidate,
+            market,
+            rate,
+            market_change_pct=market_change_pct,
+            secondary_change_pct=secondary_change_pct,
+        ),
+        "" if compact else (f"p={price:,.2f}".rstrip("0").rstrip(".") if price > 0 else ""),
+        "" if compact or (market == "KR" and kr_premarket) else (f"vol={vr:.1f}x" if vr > 0 else ""),
+        "" if compact else _candidate_turnover_text(market, turnover),
+        "" if compact else (f"board={market_type}" if market_type else ""),
+        "" if compact else (f"category={category}" if category else ""),
+        "" if compact else (f"sector={sector}" if sector else ""),
+        f"liq={liquidity_bucket}",
+        news_hint,
+        _candidate_discovery_hint(candidate),
+        _candidate_trainer_hint(candidate),
+        _candidate_quality_hint(candidate),
+        _candidate_evidence_hint(candidate),
+        _candidate_earnings_hint(candidate),
+        "" if compact else _candidate_preopen_pin_hint(candidate),
+        _candidate_post_open_hint(candidate),
+        (
+            f"from_high={_safe_float(from_high_pct, 0.0):+.1f}%({from_high_bucket})"
+            if from_high_pct is not None else
+            "from_high=unknown"
+        ),
+        "ma60=above" if above_ma60 is True else ("ma60=below" if above_ma60 is False else ""),
+        _candidate_execution_hint(candidate),
+    ]
+    return " ".join([part for part in parts if part])
+
+
+def _selection_reason_identity_warnings(selection_meta: dict, candidates: list[dict], market: str) -> list[dict]:
+    if str(market or "").upper() != "KR":
+        return []
+    reasons = selection_meta.get("reasons") if isinstance(selection_meta, dict) else {}
+    if not isinstance(reasons, dict):
+        return []
+    names = {}
+    for candidate in candidates or []:
+        ticker = _prompt_ticker_key(market, (candidate or {}).get("ticker"))
+        name = str((candidate or {}).get("name") or "").strip()
+        if ticker and name:
+            names[ticker] = name
+    warnings: list[dict] = []
+    for ticker, reason in reasons.items():
+        key = _prompt_ticker_key(market, ticker)
+        own_name = names.get(key, "")
+        text = str(reason or "").strip()
+        if not key or not own_name or ":" not in text:
+            continue
+        prefix = text.split(":", 1)[0].strip()
+        if not prefix or len(prefix) > 40 or not any(ord(ch) > 127 for ch in prefix):
+            continue
+        if prefix == own_name or prefix in own_name or own_name in prefix:
+            continue
+        warnings.append(
+            {
+                "ticker": key,
+                "official_name": own_name,
+                "reason_prefix": prefix,
+                "type": "reason_name_mismatch",
+            }
+        )
+    return warnings[:20]
+
+
 def _selection_candidate_cap(market: str, watch_max: int, trade_max: int) -> int:
     if market == "US":
         hard_cap = int(os.getenv("US_SELECTION_PROMPT_CAP", "35"))
@@ -1419,7 +1596,10 @@ def _safe_watch_fallback(candidates: list[dict], market: str) -> list[str]:
 
 
 def _pick_selection_retry_candidates(candidates: list[dict], result: dict, market: str) -> list[dict]:
-    retry_cap = min(selection_limits(market)["watch_max"], len(candidates))
+    retry_cap = min(
+        _env_int_bound("SELECTION_RETRY_CANDIDATE_CAP", 40, 10, 80),
+        len(candidates),
+    )
     candidate_map: dict[str, dict] = {}
     for candidate in candidates or []:
         ticker = str(candidate.get("ticker", "") or "").strip()
@@ -1449,6 +1629,13 @@ def _pick_selection_retry_candidates(candidates: list[dict], result: dict, marke
 
     if not ordered:
         return list(candidates[:retry_cap])
+    for candidate in candidates or []:
+        key = str((candidate or {}).get("ticker", "") or "").strip()
+        key = key.upper() if market == "US" else key
+        if key and key in candidate_map and key not in ordered:
+            ordered.append(key)
+        if len(ordered) >= retry_cap:
+            break
     return [candidate_map[key] for key in ordered]
 
 
@@ -1460,78 +1647,48 @@ def _build_selection_retry_prompt(
     secondary_change_pct: Optional[float] = None,
     active_lessons_context: str = "",
 ) -> str:
-    lines = []
-    for candidate in retry_candidates:
-        rate = _safe_float(candidate.get("change_rate", 0.0), 0.0)
-        turnover = _safe_float(candidate.get("price", 0), 0.0) * _safe_float(candidate.get("volume", 0), 0.0)
-        liq = str(candidate.get("liquidity_bucket", "") or "").strip() or "unknown"
-        pullback = str(candidate.get("from_high_bucket", "") or "").strip() or _candidate_pullback_bucket(candidate.get("from_high_pct"))
-        ma60 = candidate.get("above_ma60")
-        if market == "KR":
-            market_type = candidate.get("market_type", "KOSPI")
-            base_pct = (
-                secondary_change_pct
-                if market_type == "KOSDAQ" and secondary_change_pct is not None
-                else market_change_pct
-            )
-            rs = rate - base_pct if base_pct is not None else None
-            rs_text = f"rs={rs:+.1f}%" if rs is not None else ""
-        else:
-            rs_parts = []
-            if market_change_pct is not None:
-                rs_parts.append(f"SP{rate - market_change_pct:+.1f}%")
-            if secondary_change_pct is not None:
-                rs_parts.append(f"NQ{rate - secondary_change_pct:+.1f}%")
-            rs_text = f"rs=({'/'.join(rs_parts)})" if rs_parts else ""
-        line = " ".join(
-            part for part in [
-                str(candidate.get("ticker", "") or "").strip(),
-                f"chg={rate:+.2f}%",
-                rs_text,
-                f"liq={liq}",
-                f"pullback={pullback}",
-                "ma60=above" if ma60 is True else ("ma60=below" if ma60 is False else ""),
-                (
-                    f"turn=${turnover/1e6:.1f}M"
-                    if market == "US" and turnover > 0 else
-                    (f"turn={turnover/1e8:.1f}억" if market == "KR" and turnover > 0 else "")
-                ),
-            ] if part
+    ranked_turnovers = _annotate_candidate_prompt_features(retry_candidates)
+    lines = [
+        _format_selection_candidate_line(
+            candidate,
+            market,
+            ranked_turnovers,
+            market_change_pct=market_change_pct,
+            secondary_change_pct=secondary_change_pct,
+            compact=True,
         )
-        lines.append(line)
-
+        for candidate in retry_candidates
+    ]
+    lines = [line for line in lines if line]
     watch_max = min(selection_limits(market)["watch_max"], len(retry_candidates))
-    trade_max = min(selection_limits(market)["trade_max"], len(retry_candidates))
     watch_floor = min(watch_max, 10 if len(retry_candidates) >= 15 else max(1, len(retry_candidates) // 2))
     active_text, _active_meta = _lesson_context_for_prompt(active_lessons_context, scope="selection")
     active_section = f"\n{active_text}\n" if active_text else ""
-    return f"""이전 종목선정 응답이 잘려서 다시 묻습니다. 이번에는 watchlist/reasons 복구만 수행하고 trade_ready는 빈 배열로 반환하세요.
-시장: {market}
-모드: {consensus_mode}
-후보:
+    return f"""Previous ticker-selection response was truncated. 다시 묻습니다. Rebuild WATCH/reasons only.
+market: {market}
+mode: {consensus_mode}
+candidates:
 {chr(10).join(lines)}
 {active_section}
 {COMMON_DECISION_CONTRACT}
 
-Required output rules:
-- keep a broad watchlist: if candidates >= 15 and mode is not DEFENSIVE/HALT, return at least {watch_floor} watchlist names.
-- required fields: watchlist, trade_ready, reasons
-- trade_ready must be [] in this retry response.
-- DO NOT include price_targets in this response. Price plans will be requested separately.
-- reasons는 종목당 15자 이내로 짧게.
-
-규칙:
-- 후보 중에서만 선택
-- watchlist 최대 {watch_max}개
-- trade_ready는 반드시 빈 배열 []
-- JSON만 반환
+Rules:
+- Choose only from supplied candidates.
+- Candidate identity is ticker + name=. Do not invent or substitute company names.
+- If you mention a company name in reasons, it must exactly match the supplied name= for that ticker.
+- Keep a broad watchlist: if candidates >= 15 and mode is not DEFENSIVE/HALT, return at least {watch_floor} watchlist names.
+- watchlist max {watch_max}.
+- trade_ready must be [].
+- Price plans will be requested separately.
+- Do not include execution plans, sizing, allocation, budgets, or strategy recommendations.
+- reasons must be short.
+- Return JSON only.
 
 {{
   "watchlist":["code1","code2"],
   "trade_ready":[],
-  "reasons":{{"code1":"짧은 이유"}}
+  "reasons":{{"code1":"short reason"}}
 }}"""
-
 
 def _sanitize_analyst_result(result: dict, analyst_type: str) -> dict:
     stance = str(result.get("stance", "NEUTRAL")).strip().upper()
@@ -2368,7 +2525,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         liquidity_bucket = str(candidate.get("liquidity_bucket", "") or "").strip() or _candidate_liquidity_bucket(turnover, ranked_turnovers)
         from_high_bucket = str(candidate.get("from_high_bucket", "") or "").strip() or _candidate_pullback_bucket(from_high_pct)
         parts = [
-            str(candidate.get("ticker", "") or "").strip(),
+            _candidate_identity_prefix(candidate),
             f"chg={rate:+.2f}%",
             rs_str,
             f"p={price:,.2f}".rstrip("0").rstrip(".") if price > 0 else "",
@@ -2673,6 +2830,42 @@ execution_phase: {execution_phase or 'unspecified'}
     }}{candidate_actions_example}
 }}"""
 
+    if preopen_watch:
+        preopen_phase_instruction = (
+            f"PREOPEN WATCH ONLY for {market}: prepare a broad watch candidate list before regular-market open. "
+            "This is not an executable buy decision. trade_ready must be []."
+        )
+        prompt = f"""{preopen_phase_instruction}
+execution_phase: {execution_phase or 'preopen_watch'}
+market: {market}
+mode: {consensus_mode}
+
+Candidates:
+{cand_text}
+{evidence_section}
+
+Market context:
+{digest_prompt[:220]}{digest_news_section}{intraday_section}{brain_section}{tuner_section}{lesson_section}{selection_feedback[:700]}{tuning_feedback_section}
+{COMMON_DECISION_CONTRACT}
+
+PREOPEN WATCH OUTPUT CONTRACT:
+- Choose only from supplied candidates.
+- Candidate identity is ticker + name=. Do not invent or substitute company names.
+- If you mention a company name in reasons, it must exactly match the supplied name= for that ticker.
+- Return WATCH candidates only. trade_ready must be [].
+- Do not include execution plans, sizing, allocation, budgets, or strategy recommendations.
+- Use reasons/veto to describe what must be confirmed after the regular open.
+- watchlist max {watch_max}; normally return 8 to 18 names.
+- reasons must be short.
+- JSON only.
+
+{{
+  "watchlist":["code1","code2"],
+  "trade_ready":[],
+  "reasons":{{"code1":"short reason"}},
+  "veto":{{"code2":"short veto"}}
+}}"""
+
     selection_prompt_budget_meta = {
         "compact_prompt_budget_enabled": False,
         "candidate_prompt_chars": len(cand_text),
@@ -2680,7 +2873,7 @@ execution_phase: {execution_phase or 'unspecified'}
     }
     smart_skip_watch_cap = watch_max
     smart_skip_trade_cap = trade_max
-    smart_skip_prompt_contract = "selection_rank_v3+execution_plan_v1"
+    smart_skip_prompt_contract = "selection_preopen_watch_v1" if preopen_watch else "selection_rank_v3+execution_plan_v1"
     if compact_selection_enabled:
         compact_watch_max = min(
             watch_max,
@@ -2997,7 +3190,7 @@ Rules:
             market,
             stop_reason=stop_reason,
             reference_prices=selection_reference_prices,
-            source_prompt_id="selection_rank_v3+compact_v1" if compact_selection_enabled else "selection_rank_v3+execution_plan_v1",
+            source_prompt_id="selection_rank_v3+compact_v1" if compact_selection_enabled else smart_skip_prompt_contract,
             allow_legacy_auto_ready=_env_bool_flag("ALLOW_LEGACY_SELECTION_AUTO_READY", False),
         )
         selection_meta = _attach_prompt_pool_meta(selection_meta)
@@ -3062,7 +3255,7 @@ Rules:
             model=MODEL,
             parse_error=parse_error,
             parse_stage=parse_stage,
-            prompt_version="selection_rank_v3+compact_v1" if compact_selection_enabled else "selection_rank_v3+execution_plan_v1",
+            prompt_version="selection_rank_v3+compact_v1" if compact_selection_enabled else smart_skip_prompt_contract,
             extra={
                 "active_lessons": active_lesson_meta,
                 "evidence_version": str(selection_meta.get("evidence_version") or ("selection_evidence.v1" if evidence_items else "")),
@@ -3076,7 +3269,7 @@ Rules:
                 "fallback_created_execution_authority": False,
                 "prompt_budget": dict(selection_prompt_budget_meta),
                 "selection_reference_prices": selection_reference_prices,
-                "prompt_contract": "selection_compact.v1" if compact_selection_enabled else "selection_rank_v3+execution_plan_v1",
+                "prompt_contract": smart_skip_prompt_contract,
                 **evidence_alignment_extra,
             },
         )
@@ -3117,6 +3310,11 @@ Rules:
                         allow_legacy_auto_ready=_env_bool_flag("ALLOW_LEGACY_SELECTION_AUTO_READY", False),
                     )
                     credit_record(retry_resp.usage.input_tokens, retry_resp.usage.output_tokens, "select_tickers_retry", model=MODEL)
+                    retry_candidate_tickers = [
+                        _prompt_ticker_key(market, row.get("ticker"))
+                        for row in retry_candidates
+                        if isinstance(row, dict) and _prompt_ticker_key(market, row.get("ticker"))
+                    ]
                     save_raw_call(
                         label="select_tickers_retry",
                         prompt=retry_prompt,
@@ -3127,12 +3325,21 @@ Rules:
                         market=market,
                         model=MODEL,
                         prompt_version="selection_retry_v2+execution_plan_v1",
-                        extra={"active_lessons": retry_active_lesson_meta},
+                        extra={
+                            "active_lessons": retry_active_lesson_meta,
+                            "retry_candidate_count": len(retry_candidates),
+                            "retry_candidate_tickers": retry_candidate_tickers,
+                            "retry_prompt_chars": len(retry_prompt),
+                            "retry_input_tokens": retry_resp.usage.input_tokens,
+                            "retry_output_tokens": retry_resp.usage.output_tokens,
+                        },
                     )
                     if not retry_result.get("_parse_recovered") and retry_meta.get("watchlist"):
                         result = retry_result
                         selection_meta = retry_meta
                         selection_meta["_selection_retry_trade_ready_ignored"] = retry_trade_ready
+                        selection_meta["_selection_retry_candidate_count"] = len(retry_candidates)
+                        selection_meta["_selection_retry_candidate_tickers"] = retry_candidate_tickers
                         selection_meta["_trade_ready_without_price_targets_source"] = "selection_retry_disabled"
                         selection_meta["active_lessons"] = {
                             "primary": active_lesson_meta,
@@ -3161,6 +3368,17 @@ Rules:
             selection_meta.setdefault("tuning_feedback_applied", True)
         if preopen_watch:
             selection_meta = _force_watch_only_selection_meta(selection_meta, phase="preopen_watch")
+        selection_meta.setdefault("_selection_consensus_mode", str(consensus_mode or ""))
+        selection_meta.setdefault("_selection_execution_phase", str(execution_phase or ""))
+        selection_meta.setdefault("_selection_prompt_contract", smart_skip_prompt_contract)
+        selection_meta.setdefault("_selection_prompt_hash", smart_skip_prompt_hash)
+        reason_identity_warnings = _selection_reason_identity_warnings(selection_meta, prompt_candidates, market)
+        if reason_identity_warnings:
+            selection_meta["_reason_identity_warnings"] = reason_identity_warnings
+            log.warning(
+                f"[ticker-selection] {market} reason identity mismatch "
+                f"count={len(reason_identity_warnings)} sample={reason_identity_warnings[:3]}"
+            )
         tickers = selection_meta["watchlist"]
         if not tickers:
             raise ValueError("no valid tickers")

@@ -711,6 +711,103 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         self.assertIn("ev=COMPACT_ONLY,ceil=WATCH", captured["prompt"])
         self.assertIn("ev=COMPACT_ONLY or ev=MISSING_OR_STALE", captured["prompt"])
 
+    def test_select_tickers_prompt_includes_candidate_official_name(self) -> None:
+        from minority_report import analysts
+
+        captured: dict[str, str] = {}
+
+        def fake_create(**kwargs):
+            captured["prompt"] = kwargs["messages"][0]["content"]
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"watchlist":["454910"],"trade_ready":[],"reasons":{}}')],
+                usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+                stop_reason="end_turn",
+            )
+
+        prompt_rows = [
+            {
+                "ticker": "454910",
+                "name": "Doosan Robotics",
+                "market": "KR",
+                "price": 127200,
+                "volume": 1000,
+                "change_rate": 0.0,
+            }
+        ]
+        env = {
+            "CLAUDE_SELECTION_COMPACT_SCHEMA_ENABLED": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS": "false",
+            "ENABLE_CLAUDE_CANDIDATE_ACTIONS_SHADOW": "false",
+        }
+
+        with patch.dict("os.environ", env, clear=False), \
+             patch.object(analysts.client.messages, "create", side_effect=fake_create), \
+             patch.object(analysts, "save_raw_call", lambda **_kwargs: None), \
+             patch.object(analysts, "build_active_lesson_context", return_value={"section": "", "metadata": {}}):
+            analysts.select_tickers(
+                "KR",
+                "digest",
+                "NEUTRAL",
+                prompt_rows,
+                prompt_pool_override=prompt_rows,
+                prompt_pool_meta_override={"prompt_pool": prompt_rows, "prompt_pool_count": 1},
+                market_change_pct=0.0,
+                secondary_change_pct=0.0,
+            )
+
+        self.assertIn("454910 name=Doosan Robotics", captured["prompt"])
+
+    def test_selection_retry_keeps_original_prompt_pool_and_risk_hints(self) -> None:
+        from minority_report import analysts
+
+        candidates = [
+            {"ticker": f"T{idx}", "name": f"Name {idx}", "market": "US", "price": 10 + idx, "volume": 1000}
+            for idx in range(35)
+        ]
+        candidates[34].update(
+            {
+                "ticker": "HPSP",
+                "name": "HPSP Co",
+                "evidence_class": "COMPACT_ONLY",
+                "selection_evidence_action_ceiling": "WATCH",
+                "news_quality": "weak",
+                "news_signal_type": "weak_generic",
+                "post_open_features": {"ret_3m_pct": -0.5, "ret_30m_pct": -1.5},
+            }
+        )
+
+        with patch.dict("os.environ", {"SELECTION_RETRY_CANDIDATE_CAP": "40"}, clear=False):
+            retry_candidates = analysts._pick_selection_retry_candidates(
+                candidates,
+                {"watchlist": ["T0"], "_fallback_mode": "selection_partial", "_parse_recovered": True},
+                "US",
+            )
+            prompt = analysts._build_selection_retry_prompt("US", "NEUTRAL", retry_candidates)
+
+        self.assertIn("HPSP", [row["ticker"] for row in retry_candidates])
+        self.assertIn("HPSP name=HPSP Co", prompt)
+        self.assertIn("ev=COMPACT_ONLY", prompt)
+        self.assertIn("newsq=", prompt)
+        self.assertIn("post_open=", prompt)
+        self.assertNotIn(" p=", prompt)
+        self.assertNotIn(" vol=", prompt)
+        self.assertNotIn(" board=", prompt)
+        self.assertNotIn(" category=", prompt)
+        self.assertNotIn("price_targets", prompt)
+        self.assertNotIn("recommended_strategy", prompt)
+
+    def test_kr_reason_identity_warning_flags_mismatched_prefix(self) -> None:
+        from minority_report import analysts
+
+        warnings = analysts._selection_reason_identity_warnings(
+            {"reasons": {"454910": "HD현대마린솔루션: robotics theme"}},
+            [{"ticker": "454910", "name": "두산로보틱스"}],
+            "KR",
+        )
+
+        self.assertEqual(warnings[0]["ticker"], "454910")
+        self.assertEqual(warnings[0]["type"], "reason_name_mismatch")
+
     def test_select_tickers_compact_evidence_pack_keeps_multiple_items_under_char_cap(self) -> None:
         from minority_report import analysts
 
