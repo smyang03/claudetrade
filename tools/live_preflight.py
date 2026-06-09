@@ -1497,7 +1497,7 @@ CONFIG_SOURCE_MEANING_KEYS: dict[str, dict[str, str]] = {
     },
     "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": {
         "used_by": "KR PathB preopen shallow-stop defer policy",
-        "meaning": "market-scoped KR mode; current live policy is off unless explicitly approved",
+        "meaning": "market-scoped KR mode; current live policy is operator-approved enforce",
     },
     "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": {
         "used_by": "preflight expectation for US PathB preopen exit policy",
@@ -1652,7 +1652,7 @@ def _pathb_preopen_exit_policy_check(config: dict[str, Any]) -> CheckResult:
             "violations": violations,
             "source_of_truth": "config/v2_start_config.json env_overrides for live mode",
             "env_live_note": "do not duplicate market-scoped values in .env.live unless changing the source-of-truth policy",
-            "operator_action": "keep KR off unless KR preopen defer is explicitly approved",
+            "operator_action": "KR preopen defer is explicitly approved; keep market-scoped expected policy aligned",
             "config_change_allowed": False,
         },
     )

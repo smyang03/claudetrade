@@ -28162,6 +28162,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._update_session_date_diagnostics(market, "session_open")
         self._reset_runtime_overrides(market)
         self._reset_runtime_reason_counters(market)
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if isinstance(getattr(self, "_buy_time_confirm_call_counts", None), dict):
+            self._buy_time_confirm_call_counts[market_key] = 0
+        if isinstance(getattr(self, "_early_judge_session_call_count", None), dict):
+            self._early_judge_session_call_count[market_key] = 0
         self._backfill_missed_postmortem(market)
         if market == "US":
             try:
@@ -30441,50 +30446,56 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if dedupe_ttl_sec > 0:
             try:
                 if sub_screener.is_duplicate_trigger(market_key, today, result, ttl_sec=dedupe_ttl_sec):
-                    early_judge_results: list[dict[str, Any]] = []
-                    if self._early_judge_enabled(market_key):
-                        try:
-                            early_judge_results = self.maybe_run_early_judge_triggers(
-                                market_key,
-                                source="sub_screener_duplicate",
-                                rows=self._early_judge_rows_from_sub_screener_result(result),
-                            )
-                        except Exception as exc:
-                            log.warning(f"[sub_screener] {market_key} duplicate early judge failed: {exc}")
-                    triage_result: dict[str, Any] = {"added_tickers": [], "skipped_tickers": [], "reason": "triage_disabled"}
-                    triage_allowed = False
-                    if _env_bool("SUB_SCREENER_TRIAGE_ENABLED", True):
-                        triage_allowed = True
-                        try:
-                            triage_result = self._apply_sub_screener_triage(market_key, result)
-                            if list(triage_result.get("added_tickers") or []):
-                                sub_screener.record_triage_success(
+                    if strong_trigger:
+                        log.info(
+                            f"[sub_screener] {market_key} dedupe suppressed but strong_trigger=True "
+                            f"({strong_reason}) — bypassing dedupe for full rescreen"
+                        )
+                    else:
+                        early_judge_results: list[dict[str, Any]] = []
+                        if self._early_judge_enabled(market_key):
+                            try:
+                                early_judge_results = self.maybe_run_early_judge_triggers(
                                     market_key,
-                                    today,
-                                    result,
-                                    added_tickers=list(triage_result.get("added_tickers") or []),
-                                    skipped_tickers=list(triage_result.get("skipped_tickers") or []),
+                                    source="sub_screener_duplicate",
+                                    rows=self._early_judge_rows_from_sub_screener_result(result),
                                 )
-                        except Exception as exc:
-                            triage_result = {"added_tickers": [], "skipped_tickers": [], "reason": f"triage_error:{type(exc).__name__}"}
-                            log.warning(f"[sub_screener] {market_key} duplicate triage failed: {exc}")
-                    sub_screener.record_dedupe_suppressed(
-                        market_key,
-                        today,
-                        result,
-                        ttl_sec=dedupe_ttl_sec,
-                        triage_allowed=triage_allowed,
-                        triage_reason=str(triage_result.get("reason") or ""),
-                        added_tickers=list(triage_result.get("added_tickers") or []),
-                        skipped_tickers=list(triage_result.get("skipped_tickers") or []),
-                    )
-                    log.info(
-                        f"[sub_screener] {market_key} dedupe_suppressed "
-                        f"reason={result.trigger_reason} "
-                        f"early_judge={len(early_judge_results)} "
-                        f"triage_added={triage_result.get('added_tickers', [])}"
-                    )
-                    return
+                            except Exception as exc:
+                                log.warning(f"[sub_screener] {market_key} duplicate early judge failed: {exc}")
+                        triage_result: dict[str, Any] = {"added_tickers": [], "skipped_tickers": [], "reason": "triage_disabled"}
+                        triage_allowed = False
+                        if _env_bool("SUB_SCREENER_TRIAGE_ENABLED", True):
+                            triage_allowed = True
+                            try:
+                                triage_result = self._apply_sub_screener_triage(market_key, result)
+                                if list(triage_result.get("added_tickers") or []):
+                                    sub_screener.record_triage_success(
+                                        market_key,
+                                        today,
+                                        result,
+                                        added_tickers=list(triage_result.get("added_tickers") or []),
+                                        skipped_tickers=list(triage_result.get("skipped_tickers") or []),
+                                    )
+                            except Exception as exc:
+                                triage_result = {"added_tickers": [], "skipped_tickers": [], "reason": f"triage_error:{type(exc).__name__}"}
+                                log.warning(f"[sub_screener] {market_key} duplicate triage failed: {exc}")
+                        sub_screener.record_dedupe_suppressed(
+                            market_key,
+                            today,
+                            result,
+                            ttl_sec=dedupe_ttl_sec,
+                            triage_allowed=triage_allowed,
+                            triage_reason=str(triage_result.get("reason") or ""),
+                            added_tickers=list(triage_result.get("added_tickers") or []),
+                            skipped_tickers=list(triage_result.get("skipped_tickers") or []),
+                        )
+                        log.info(
+                            f"[sub_screener] {market_key} dedupe_suppressed "
+                            f"reason={result.trigger_reason} "
+                            f"early_judge={len(early_judge_results)} "
+                            f"triage_added={triage_result.get('added_tickers', [])}"
+                        )
+                        return
             except Exception as exc:
                 log.warning(f"[sub_screener] {market_key} dedupe check failed: {exc}")
 

@@ -69,9 +69,9 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertEqual(effective.get("PATHB_US_LIVE_ENABLED"), "true")
         self.assertEqual(effective.get("PATHB_INTRADAY_ONLY"), "false")
         self.assertEqual(effective.get("US_PATHB_PREOPEN_EXIT_POLICY_MODE"), "enforce")
-        self.assertEqual(effective.get("KR_PATHB_PREOPEN_EXIT_POLICY_MODE"), "off")
+        self.assertEqual(effective.get("KR_PATHB_PREOPEN_EXIT_POLICY_MODE"), "enforce")
         self.assertEqual(effective.get("PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US"), "enforce")
-        self.assertEqual(effective.get("PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR"), "off")
+        self.assertEqual(effective.get("PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR"), "enforce")
         self.assertEqual(effective.get("KR_MAX_SINGLE_LOSS_PCT"), "-2.0")
         self.assertEqual(effective.get("KR_LOSS_CAP_SHADOW_PCT"), "1.5")
         self.assertEqual(effective.get("KR_REENTRY_COOLDOWN_MINUTES"), "60")
@@ -96,9 +96,9 @@ class LiveConfigSourceTests(unittest.TestCase):
                 "DAILY_LOSS_LIMIT_PCT": "-2.0",
                 "PATHB_MAX_POSITIONS": "15",
                 "US_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
-                "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "off",
+                "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
                 "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": "enforce",
-                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "off",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "enforce",
                 "US_PATHB_SELECTION_RECONCILE_MODE": "enforce",
                 "KR_PATHB_SELECTION_RECONCILE_MODE": "enforce",
             },
@@ -109,9 +109,9 @@ class LiveConfigSourceTests(unittest.TestCase):
                 "MAX_POSITIONS": "10",
                 "PATHB_MAX_POSITIONS": "15",
                 "US_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
-                "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "off",
+                "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
                 "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": "enforce",
-                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "off",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "enforce",
                 "US_PATHB_SELECTION_RECONCILE_MODE": "enforce",
                 "KR_PATHB_SELECTION_RECONCILE_MODE": "enforce",
             },
@@ -142,29 +142,29 @@ class LiveConfigSourceTests(unittest.TestCase):
             "overrides": {
                 "PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
                 "US_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
-                "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "off",
+                "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
                 "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": "enforce",
-                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "off",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "enforce",
             },
             "start_config": {},
             "effective": {
                 "PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
                 "US_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
-                "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "off",
+                "KR_PATHB_PREOPEN_EXIT_POLICY_MODE": "enforce",
                 "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_US": "enforce",
-                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "off",
+                "PATHB_PREOPEN_EXIT_POLICY_EXPECTED_KR": "enforce",
             },
         }
 
         check = _pathb_preopen_exit_policy_check(config)
 
         self.assertEqual(check.status, "PASS")
-        self.assertEqual(check.data["effective_modes"], {"US": "enforce", "KR": "off"})
+        self.assertEqual(check.data["effective_modes"], {"US": "enforce", "KR": "enforce"})
         self.assertEqual(check.data["source_by_market"]["US"]["source"], "v2_start_config.env_overrides")
         self.assertEqual(check.data["source_by_market"]["KR"]["source"], "v2_start_config.env_overrides")
         self.assertEqual(check.data["expected_source_by_market"]["US"]["source"], "v2_start_config.env_overrides")
         self.assertEqual(check.data["expected_source_by_market"]["KR"]["source"], "v2_start_config.env_overrides")
-        self.assertEqual(check.data["expected_policy"], {"US": "enforce", "KR": "off"})
+        self.assertEqual(check.data["expected_policy"], {"US": "enforce", "KR": "enforce"})
         self.assertEqual(check.data["source_of_truth"], "config/v2_start_config.json env_overrides for live mode")
 
     def test_pathb_preopen_exit_policy_check_uses_expected_config_values(self) -> None:

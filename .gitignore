@@ -59,6 +59,7 @@ state/live_status_*.json
 /kis_token.json
 state/kis_token.json
 state/api_usage.json
+state/claude_usage_monitor_*.json
 state/us_screen_cache.json
 state/kr_screen_cache.json
 state/restart/
