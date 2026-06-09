@@ -1025,6 +1025,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._early_judge_recheck_queue: dict[str, list[dict[str, Any]]] = {"KR": [], "US": []}
         self._early_judge_session_call_count: dict[str, int] = {"KR": 0, "US": 0}
         self._early_judge_call_times: list[datetime] = []
+        # preopen PlanB bridge: 장전 PULLBACK_WAIT seed → 장중 live evidence → PathB 등록
+        self._planb_bridge_seed_tickers: dict[str, list[str]] = {"KR": [], "US": []}
+        self._planb_bridge_seed_meta: dict[str, dict[str, Any]] = {"KR": {}, "US": {}}
+        self._planb_bridge_session_call_count: dict[str, int] = {"KR": 0, "US": 0}
+        self._planb_bridge_completed_tickers: dict[str, set] = {"KR": set(), "US": set()}
+        self._planb_bridge_last_run_at: dict[str, float] = {"KR": 0.0, "US": 0.0}
+        self._planb_bridge_recheck_queue: dict[str, list[dict[str, Any]]] = {"KR": [], "US": []}
         # KR 장중 스크리닝 결과 (session_close 시 캐시 저장 → 다음날 장전 사용)
         self._last_kr_candidates: list = []
         self._last_screen_candidates: dict[str, list] = {"KR": [], "US": []}
@@ -10708,6 +10715,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             or str(mode or "").upper() == "PREOPEN_WATCH"
         )
         if preopen_source:
+            self._update_planb_bridge_seeds(market, meta)
             meta = self._preopen_watch_only_meta_payload(meta)
         stages = {
             "raw": {
@@ -16731,6 +16739,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "_ticker_runtime_rejection_reasons": getattr(self, "_ticker_runtime_rejection_reasons", {}),
             "_last_rescreen_at": getattr(self, "_last_rescreen_at", {}),
             "_last_sub_screener_at": getattr(self, "_last_sub_screener_at", {}),
+            "_planb_bridge_seed_tickers": getattr(self, "_planb_bridge_seed_tickers", {}),
+            "_planb_bridge_seed_meta": getattr(self, "_planb_bridge_seed_meta", {}),
+            "_planb_bridge_session_call_count": getattr(self, "_planb_bridge_session_call_count", {}),
+            "_planb_bridge_completed_tickers": {
+                k: list(v) if isinstance(v, set) else list(v or [])
+                for k, v in (getattr(self, "_planb_bridge_completed_tickers", {}) or {}).items()
+            },
         }
         return {
             "schema_version": 1,
@@ -16838,6 +16853,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "_ticker_runtime_rejection_reasons",
             "_last_rescreen_at",
             "_last_sub_screener_at",
+            "_planb_bridge_seed_tickers",
+            "_planb_bridge_seed_meta",
+            "_planb_bridge_session_call_count",
+            "_planb_bridge_completed_tickers",
         )
         market_scoped_fields = {
             "today_tickers",
@@ -16852,6 +16871,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "_ticker_runtime_rejection_reasons",
             "_last_rescreen_at",
             "_last_sub_screener_at",
+            "_planb_bridge_seed_tickers",
+            "_planb_bridge_seed_meta",
+            "_planb_bridge_session_call_count",
+            "_planb_bridge_completed_tickers",
         }
         prefixed_market_fields = {
             "_post_open_price_history",
@@ -16936,6 +16959,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._last_post_open_features_by_ticker = {"KR": {}, "US": {}}
         for market_key in ("KR", "US"):
             self._last_post_open_features_by_ticker.setdefault(market_key, {})
+        # _planb_bridge_completed_tickers는 저장 시 list로 직렬화됐으므로 set으로 복원
+        raw_completed = getattr(self, "_planb_bridge_completed_tickers", {}) or {}
+        self._planb_bridge_completed_tickers = {
+            mk: set(v) if isinstance(v, (list, set)) else set()
+            for mk, v in raw_completed.items()
+        }
+        for mk in ("KR", "US"):
+            self._planb_bridge_completed_tickers.setdefault(mk, set())
         self._ensure_runtime_selection_memory()
         log.info(
             f"[runtime handoff restore] restored={len(restored)} age_sec={age_sec:.1f} "
@@ -29682,6 +29713,193 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             ),
         )
 
+    # ── preopen PlanB bridge ──────────────────────────────────────────────────
+
+    def _ensure_planb_bridge_state(self) -> None:
+        for attr, default in (
+            ("_planb_bridge_seed_tickers", {"KR": [], "US": []}),
+            ("_planb_bridge_seed_meta", {"KR": {}, "US": {}}),
+            ("_planb_bridge_session_call_count", {"KR": 0, "US": 0}),
+            ("_planb_bridge_completed_tickers", {"KR": set(), "US": set()}),
+            ("_planb_bridge_last_run_at", {"KR": 0.0, "US": 0.0}),
+            ("_planb_bridge_recheck_queue", {"KR": [], "US": []}),
+        ):
+            if not isinstance(getattr(self, attr, None), dict):
+                setattr(self, attr, {k: (set() if isinstance(v, set) else type(v)()) for k, v in default.items()})
+            d = getattr(self, attr)
+            for mk in ("KR", "US"):
+                if mk not in d:
+                    d[mk] = set() if isinstance(default[mk], set) else type(default[mk])()
+
+    def _update_planb_bridge_seeds(self, market: str, meta: dict) -> None:
+        """preopen watch-only 적용 직전에 PULLBACK_WAIT 후보를 bridge seed로 추출 (가격 플랜 제외)."""
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        pathb_wait = list(meta.get("_pathb_wait_tickers") or [])
+        if not pathb_wait:
+            return
+        self._ensure_planb_bridge_state()
+        origins = dict(meta.get("_pathb_wait_origins") or {})
+        completed = self._planb_bridge_completed_tickers.get(market_key) or set()
+        existing = set(self._planb_bridge_seed_tickers.get(market_key) or [])
+        added: list[str] = []
+        now_str = datetime.now(KST).isoformat(timespec="seconds")
+        for ticker in pathb_wait:
+            if ticker in completed or ticker in existing:
+                continue
+            self._planb_bridge_seed_tickers[market_key].append(ticker)
+            origin = origins.get(ticker) or {}
+            self._planb_bridge_seed_meta[market_key][ticker] = {
+                "strategy": str(origin.get("strategy") or ""),
+                "reason": str(origin.get("reason") or ""),
+                "added_at": now_str,
+                "source": "preopen_pullback_wait",
+            }
+            added.append(ticker)
+        if added:
+            log.info(
+                f"[planb_bridge] {market_key} seed 추출 {added} "
+                f"total={len(self._planb_bridge_seed_tickers[market_key])}"
+            )
+
+    def _planb_bridge_enabled(self, market: str) -> bool:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not self._runtime_bool("PREOPEN_PLANB_BRIDGE_ENABLED", True):
+            return False
+        return self._runtime_bool(f"{market_key}_PREOPEN_PLANB_BRIDGE_ENABLED", True)
+
+    def _planb_bridge_capacity_remaining(self, market: str) -> int:
+        self._ensure_planb_bridge_state()
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        market_cap = self._runtime_int(
+            f"{market_key}_PREOPEN_PLANB_BRIDGE_MAX_CALLS_PER_SESSION",
+            self._runtime_int("PREOPEN_PLANB_BRIDGE_MAX_CALLS_PER_SESSION", 8),
+        )
+        used = int((self._planb_bridge_session_call_count or {}).get(market_key, 0) or 0)
+        return max(0, market_cap - used)
+
+    def _run_preopen_planb_bridge(self, market: str) -> None:
+        """장전 PULLBACK_WAIT seed에 live evidence를 붙여 재판단, PathB 대기 플랜으로 승격."""
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not self._planb_bridge_enabled(market_key):
+            return
+        self._ensure_planb_bridge_state()
+        elapsed = self._market_open_elapsed_min(market_key)
+        min_elapsed = self._runtime_float("PREOPEN_PLANB_BRIDGE_MIN_ELAPSED_MIN", 5.0)
+        if elapsed is None or elapsed < min_elapsed:
+            return
+        now_ts = time.time()
+        run_interval_sec = self._runtime_float("PREOPEN_PLANB_BRIDGE_RUN_INTERVAL_MIN", 5.0) * 60
+        last_run = float((self._planb_bridge_last_run_at or {}).get(market_key, 0.0) or 0.0)
+        if last_run and (now_ts - last_run) < run_interval_sec:
+            return
+        capacity = self._planb_bridge_capacity_remaining(market_key)
+        if capacity <= 0:
+            return
+        seeds = list(self._planb_bridge_seed_tickers.get(market_key) or [])
+        if not seeds:
+            return
+        completed = self._planb_bridge_completed_tickers.get(market_key) or set()
+        # recheck queue에서 준비된 항목 수집
+        now_dt = datetime.now(KST)
+        recheck_ready: list[str] = []
+        recheck_remaining: list[dict] = []
+        for item in list(self._planb_bridge_recheck_queue.get(market_key) or []):
+            try:
+                ra = datetime.fromisoformat(str(item.get("recheck_after") or "").replace("Z", "+00:00"))
+                ra = ra.replace(tzinfo=KST) if ra.tzinfo is None else ra.astimezone(KST)
+                (recheck_ready if now_dt >= ra else recheck_remaining).append(
+                    str(item.get("ticker") or "") if now_dt >= ra else item
+                )
+            except Exception:
+                recheck_ready.append(str(item.get("ticker") or ""))
+        self._planb_bridge_recheck_queue[market_key] = recheck_remaining
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for t in recheck_ready + seeds:
+            if t and t not in completed and t not in seen:
+                seen.add(t)
+                ordered.append(t)
+        if not ordered:
+            return
+        max_per_run = self._runtime_int("PREOPEN_PLANB_BRIDGE_MAX_CALLS_PER_RUN", 3)
+        to_run = ordered[:min(max_per_run, capacity)]
+        self._planb_bridge_last_run_at[market_key] = now_ts
+        cooldown_min = self._runtime_float("PREOPEN_PLANB_BRIDGE_COOLDOWN_MIN", 5.0)
+        log.info(
+            f"[planb_bridge] {market_key} 실행 elapsed={elapsed:.1f}m "
+            f"seeds={ordered} 대상={to_run} capacity={capacity}"
+        )
+        for ticker in to_run:
+            features = dict(
+                (self._last_post_open_features_by_ticker.get(market_key) or {}).get(ticker) or {}
+            )
+            seed_info = dict((self._planb_bridge_seed_meta.get(market_key) or {}).get(ticker) or {})
+            price = (
+                features.get("current_price")
+                or (getattr(self, "price_cache_raw", {}) or {}).get(ticker)
+            )
+            if not price:
+                self._planb_bridge_recheck_queue[market_key].append({
+                    "ticker": ticker,
+                    "recheck_after": (now_dt + timedelta(minutes=cooldown_min)).isoformat(),
+                    "reason": "no_price",
+                })
+                log.info(f"[planb_bridge] {market_key} {ticker} 가격 없음 → recheck queue (quota 미차감)")
+                continue
+            candidate = {
+                "market": market_key,
+                "ticker": ticker,
+                "row": {
+                    "ticker": ticker,
+                    "market": market_key,
+                    "post_open_features": features,
+                    "strategy_feasibility": {},
+                    "strategy": str(seed_info.get("strategy") or ""),
+                    "_planb_bridge_seed": True,
+                    "_planb_bridge_reason": str(seed_info.get("reason") or ""),
+                },
+                "features": features,
+                "strategy_feasibility": {},
+            }
+            try:
+                raw_result = self._single_symbol_judge_call(market_key, candidate)
+            except Exception as exc:
+                log.warning(f"[planb_bridge] {market_key} {ticker} judge 실패: {exc}", exc_info=True)
+                continue
+            action = str((raw_result or {}).get("action") or "").upper()
+            if action == "WAIT_RECHECK":
+                self._planb_bridge_recheck_queue[market_key].append({
+                    "ticker": ticker,
+                    "recheck_after": (now_dt + timedelta(minutes=cooldown_min)).isoformat(),
+                    "reason": str((raw_result or {}).get("reason") or "wait_recheck"),
+                })
+                log.info(
+                    f"[planb_bridge] {market_key} {ticker} WAIT_RECHECK "
+                    f"→ {cooldown_min:.0f}m 후 재시도 (quota 미차감)"
+                )
+                continue
+            # PULLBACK_WAIT / REJECT: quota 차감 + completed 기록
+            self._planb_bridge_session_call_count[market_key] = (
+                int((self._planb_bridge_session_call_count or {}).get(market_key, 0) or 0) + 1
+            )
+            self._planb_bridge_completed_tickers[market_key].add(ticker)
+            if action == "PULLBACK_WAIT":
+                self._apply_single_symbol_judge_result(
+                    market_key,
+                    raw_result,
+                    source="preopen_planb_bridge",
+                    candidate=candidate,
+                )
+                log.info(
+                    f"[planb_bridge] {market_key} {ticker} PULLBACK_WAIT → PathB 등록 시도 "
+                    f"conf={raw_result.get('confidence')}"
+                )
+            else:
+                log.info(
+                    f"[planb_bridge] {market_key} {ticker} {action} "
+                    f"reason={str((raw_result or {}).get('reason') or '')[:80]}"
+                )
+
     def _early_judge_rows_from_sub_screener_result(self, result: sub_screener.SubScanResult) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -30626,6 +30844,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self.maybe_run_sub_screener(market)
         except Exception as _sub_e:
             log.warning(f"[sub_screener 오류] {market}: {_sub_e}", exc_info=True)
+        try:
+            self._run_preopen_planb_bridge(market)
+        except Exception as _bridge_e:
+            log.warning(f"[planb_bridge 오류] {market}: {_bridge_e}", exc_info=True)
         try:
             self.run_cycle(market)
         except Exception as _es_e:
