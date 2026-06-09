@@ -8999,11 +8999,33 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "gross_cap_source": source,
             "gross_cap_config_error": config_error,
         }
+
+    def _analyst_new_buy_block_override_policy(self, market: str) -> dict:
+        market_key = str(market or "").upper()
+        global_key = "ANALYST_NEW_BUY_BLOCK_OVERRIDE_ENABLED"
+        market_key_name = f"{market_key}_ANALYST_NEW_BUY_BLOCK_OVERRIDE_ENABLED" if market_key else ""
+        global_enabled = self._runtime_bool(global_key, False)
+        enabled = self._runtime_bool(market_key_name, global_enabled) if market_key_name else global_enabled
+
+        reason_key = "ANALYST_NEW_BUY_BLOCK_OVERRIDE_REASON"
+        market_reason_key = f"{market_key}_ANALYST_NEW_BUY_BLOCK_OVERRIDE_REASON" if market_key else ""
+        reason = str(self._runtime_value(reason_key, "") or "").strip()
+        if market_reason_key:
+            market_reason = str(self._runtime_value(market_reason_key, "") or "").strip()
+            if market_reason:
+                reason = market_reason
+        return {
+            "new_buy_block_override_enabled": bool(enabled),
+            "new_buy_block_override_applied": False,
+            "new_buy_block_override_reason": reason,
+        }
+
     def _analyst_new_buy_block_state(self, market: str) -> dict:
         market_key = str(market or "").upper()
         consensus = ((getattr(self, "today_judgment", {}) or {}).get("consensus") or {})
         permission = str(consensus.get("new_buy_permission", "") or "").strip().lower()
         cap_policy = self._analyst_gross_exposure_cap_policy(market_key, consensus)
+        override_policy = self._analyst_new_buy_block_override_policy(market_key)
         details = {
             "market": market_key,
             "permission": permission,
@@ -9024,7 +9046,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "unavailable_analyst_roles": list(consensus.get("unavailable_analyst_roles", []) or []),
             "source": "analyst_consensus",
         }
-        if permission == "block":
+        details.update(override_policy)
+        if permission == "block" and not bool(override_policy.get("new_buy_block_override_enabled")):
             return {
                 "allowed": False,
                 "blocked": True,
@@ -9032,6 +9055,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "scope": "market",
                 "details": details,
             }
+        if permission == "block":
+            details.update({
+                "new_buy_block_override_applied": True,
+                "permission_effective": "operator_override",
+            })
         max_gross = float(cap_policy.get("max_gross_exposure_pct", 0) or 0)
         if max_gross > 0:
             equity_context = self._market_equity_reference_context(market_key)
@@ -9684,6 +9712,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         analyst_details = dict((analyst_state or {}).get("details") or {})
         if analyst_details:
             details.update(analyst_details)
+        if bool(details.get("new_buy_block_override_applied")):
+            downstream_reason = str((analyst_state or {}).get("reason") or "allowed")
+            log.warning(
+                f"[operator override] {market_key} {ticker_key or '-'} analyst new-buy block override applied: "
+                f"strategy={str(strategy or '')} downstream_reason={downstream_reason} "
+                f"reason={details.get('new_buy_block_override_reason') or ''}"
+            )
         if bool((analyst_state or {}).get("blocked")):
             return {
                 "allowed": False,
@@ -13250,6 +13285,65 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         result["allowed"] = True
         result["reason"] = "risk_off_mr_exception"
         return result
+
+    def _market_mode_buy_block_override_policy(self, market: str) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        global_key = "MARKET_MODE_BUY_BLOCK_OVERRIDE_ENABLED"
+        market_key_name = f"{market_key}_MARKET_MODE_BUY_BLOCK_OVERRIDE_ENABLED"
+        global_enabled = self._runtime_bool(global_key, False)
+        enabled = self._runtime_bool(market_key_name, global_enabled)
+
+        reason_key = "MARKET_MODE_BUY_BLOCK_OVERRIDE_REASON"
+        market_reason_key = f"{market_key}_MARKET_MODE_BUY_BLOCK_OVERRIDE_REASON"
+        reason = str(self._runtime_value(reason_key, "") or "").strip()
+        market_reason = str(self._runtime_value(market_reason_key, "") or "").strip()
+        if market_reason:
+            reason = market_reason
+        return {
+            "market_mode_buy_block_override_enabled": bool(enabled),
+            "market_mode_buy_block_override_applied": False,
+            "market_mode_buy_block_override_reason": reason,
+        }
+
+    def _market_mode_buy_block_state(self, market: str, mode: str, strategy_name: str, sig_row: dict) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        normalized_mode = str(mode or "").strip().upper()
+        risk_off_mr = self._risk_off_mr_exception(market_key, normalized_mode, strategy_name, sig_row)
+        blocked = normalized_mode in {"HALT", "DEFENSIVE"}
+        block_modes: list[str] = ["HALT", "DEFENSIVE"]
+        if not blocked and market_key == "US":
+            raw_modes = os.getenv("US_BEAR_BLOCK_MODES", "HALT,DEFENSIVE,CAUTIOUS_BEAR")
+            block_modes = [part.strip().upper() for part in str(raw_modes or "").split(",") if part.strip()]
+            blocked = normalized_mode in block_modes
+        if blocked and bool((risk_off_mr or {}).get("allowed")):
+            return {
+                "blocked": False,
+                "reason": "risk_off_mr_exception",
+                "risk_off_mr": dict(risk_off_mr or {}),
+                "risk_off_mr_applied": True,
+                "block_modes": block_modes,
+                **self._market_mode_buy_block_override_policy(market_key),
+            }
+        override_policy = self._market_mode_buy_block_override_policy(market_key)
+        if blocked and bool(override_policy.get("market_mode_buy_block_override_enabled")):
+            override_policy["market_mode_buy_block_override_applied"] = True
+            return {
+                "blocked": False,
+                "reason": "operator_market_mode_override",
+                "risk_off_mr": dict(risk_off_mr or {}),
+                "risk_off_mr_applied": False,
+                "block_modes": block_modes,
+                **override_policy,
+            }
+        return {
+            "blocked": bool(blocked),
+            "reason": "mode_block" if blocked else "mode_allowed",
+            "risk_off_mr": dict(risk_off_mr or {}),
+            "risk_off_mr_applied": False,
+            "block_modes": block_modes,
+            **override_policy,
+        }
+
     def _apply_runtime_tuning_adjustments(self, market: str, result: dict) -> dict:
         market_key = "US" if str(market).upper() == "US" else "KR"
         current = self._runtime_overrides(market_key)
@@ -32231,24 +32325,25 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     continue
                 # HALT/DEFENSIVE: 전 마켓 진입 차단
                 # CAUTIOUS_BEAR 이하: US 신규 진입 차단 (VIX 급등 구간 실증 손실 방지)
-                _risk_off_mr = self._risk_off_mr_exception(
+                _mode_buy_block = self._market_mode_buy_block_state(
                     market,
                     mode,
                     strategy_name,
                     sig_df.iloc[i].to_dict(),
                 )
-                _bear_block = mode in ("HALT", "DEFENSIVE")
-                if not _bear_block and market == "US":
-                    _US_BEAR_BLOCK_MODES = os.getenv(
-                        "US_BEAR_BLOCK_MODES", "HALT,DEFENSIVE,CAUTIOUS_BEAR"
-                    ).split(",")
-                    _bear_block = mode in _US_BEAR_BLOCK_MODES
-                if _bear_block and _risk_off_mr.get("allowed"):
+                _risk_off_mr = dict((_mode_buy_block or {}).get("risk_off_mr") or {})
+                _bear_block = bool((_mode_buy_block or {}).get("blocked"))
+                if bool((_mode_buy_block or {}).get("risk_off_mr_applied")):
                     log.info(
                         f"  [{ticker}] Risk-Off MR 예외 허용: "
                         f"mode={mode} size_cap={int(_risk_off_mr.get('size_cap', 40))}%"
                     )
-                    _bear_block = False
+                if bool((_mode_buy_block or {}).get("market_mode_buy_block_override_applied")):
+                    log.warning(
+                        f"[operator override] {market} {ticker} market mode buy block override applied: "
+                        f"mode={mode} strategy={strategy_name} "
+                        f"reason={_mode_buy_block.get('market_mode_buy_block_override_reason') or ''}"
+                    )
                 if _bear_block:
                     self._bump_runtime_reason(market, ticker, "blocked_by_mode")
                     analysis_log.info(
@@ -32260,6 +32355,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 "strategy": strategy_name,
                                 "mode": mode,
                                 "detail": _risk_off_mr.get("reason"),
+                                "mode_buy_block": dict(_mode_buy_block or {}),
                             }},
                         )
                     self._notify_signal_state_change(

@@ -721,7 +721,15 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
         bot.v2 = None
 
         bot.today_judgment = {"consensus": {"new_buy_permission": "block", "max_gross_exposure_pct": 0}}
-        state = trading_bot.TradingBot._new_buy_block_state(bot, "KR", "005930", "momentum")
+        with patch.dict(
+            os.environ,
+            {
+                "ANALYST_NEW_BUY_BLOCK_OVERRIDE_ENABLED": "false",
+                "KR_ANALYST_NEW_BUY_BLOCK_OVERRIDE_ENABLED": "",
+            },
+            clear=False,
+        ):
+            state = trading_bot.TradingBot._new_buy_block_state(bot, "KR", "005930", "momentum")
         self.assertFalse(state["allowed"])
         self.assertEqual(state["reason"], "ANALYST_NEW_BUY_BLOCK")
 
@@ -735,6 +743,162 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
         self.assertFalse(state["allowed"])
         self.assertEqual(state["reason"], "ANALYST_MAX_GROSS_EXPOSURE_REACHED")
         self.assertEqual(state["details"]["gross_exposure_pct"], 25.0)
+
+    def test_new_buy_gate_operator_override_allows_analyst_permission_block(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot._is_order_allowed_now = lambda market: True
+        bot._in_entry_blackout = lambda market: False
+        bot.v2_order_unknown = None
+        bot.v2 = None
+        bot.today_judgment = {"consensus": {"new_buy_permission": "block", "max_gross_exposure_pct": 0}}
+
+        with patch.dict(
+            os.environ,
+            {
+                "ANALYST_NEW_BUY_BLOCK_OVERRIDE_ENABLED": "false",
+                "KR_ANALYST_NEW_BUY_BLOCK_OVERRIDE_ENABLED": "true",
+                "KR_ANALYST_NEW_BUY_BLOCK_OVERRIDE_REASON": "operator_test",
+            },
+            clear=False,
+        ):
+            with patch.object(trading_bot.log, "warning") as warning:
+                state = trading_bot.TradingBot._new_buy_block_state(bot, "KR", "005930", "momentum")
+
+        self.assertTrue(state["allowed"])
+        self.assertFalse(state["blocked"])
+        self.assertEqual(state["details"]["permission"], "block")
+        self.assertTrue(state["details"]["new_buy_block_override_enabled"])
+        self.assertTrue(state["details"]["new_buy_block_override_applied"])
+        self.assertEqual(state["details"]["new_buy_block_override_reason"], "operator_test")
+        self.assertEqual(state["details"]["permission_effective"], "operator_override")
+        warning.assert_called_once()
+        self.assertIn("analyst new-buy block override applied", warning.call_args.args[0])
+        self.assertIn("downstream_reason=allowed", warning.call_args.args[0])
+
+    def test_new_buy_gate_global_override_falls_back_when_market_config_is_blank(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot._is_order_allowed_now = lambda market: True
+        bot._in_entry_blackout = lambda market: False
+        bot.v2_order_unknown = None
+        bot.v2 = None
+        bot.runtime_config = trading_bot.EffectiveRuntimeConfig(
+            values={
+                "ANALYST_NEW_BUY_BLOCK_OVERRIDE_ENABLED": "true",
+                "KR_ANALYST_NEW_BUY_BLOCK_OVERRIDE_ENABLED": "",
+                "ANALYST_NEW_BUY_BLOCK_OVERRIDE_REASON": "global_operator",
+                "KR_ANALYST_NEW_BUY_BLOCK_OVERRIDE_REASON": "",
+            }
+        )
+        bot.today_judgment = {"consensus": {"new_buy_permission": "block", "max_gross_exposure_pct": 0}}
+
+        state = trading_bot.TradingBot._new_buy_block_state(bot, "KR", "005930", "momentum")
+
+        self.assertTrue(state["allowed"])
+        self.assertTrue(state["details"]["new_buy_block_override_applied"])
+        self.assertEqual(state["details"]["new_buy_block_override_reason"], "global_operator")
+
+    def test_new_buy_gate_operator_override_preserves_max_gross_cap(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot._is_order_allowed_now = lambda market: True
+        bot._in_entry_blackout = lambda market: False
+        bot.v2_order_unknown = None
+        bot.v2 = None
+        bot.today_judgment = {"consensus": {"new_buy_permission": "block", "max_gross_exposure_pct": 20}}
+        bot._market_equity_reference_context = lambda market: {
+            "total_krw": 100000.0,
+            "position_krw": 25000.0,
+            "source": "test",
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "ANALYST_NEW_BUY_BLOCK_OVERRIDE_ENABLED": "false",
+                "KR_ANALYST_NEW_BUY_BLOCK_OVERRIDE_ENABLED": "true",
+            },
+            clear=False,
+        ):
+            state = trading_bot.TradingBot._new_buy_block_state(bot, "KR", "005930", "momentum")
+
+        self.assertFalse(state["allowed"])
+        self.assertEqual(state["reason"], "ANALYST_MAX_GROSS_EXPOSURE_REACHED")
+        self.assertTrue(state["details"]["new_buy_block_override_applied"])
+        self.assertEqual(state["details"]["gross_exposure_pct"], 25.0)
+
+    def test_market_mode_buy_block_state_blocks_us_bear_modes_by_default(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot._risk_off_mr_exception = lambda market, mode, strategy, sig_row: {
+            "allowed": False,
+            "reason": "not_mean_reversion",
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "US_BEAR_BLOCK_MODES": "HALT,DEFENSIVE,CAUTIOUS_BEAR",
+                "MARKET_MODE_BUY_BLOCK_OVERRIDE_ENABLED": "false",
+                "US_MARKET_MODE_BUY_BLOCK_OVERRIDE_ENABLED": "",
+            },
+            clear=False,
+        ):
+            state = trading_bot.TradingBot._market_mode_buy_block_state(
+                bot, "US", "CAUTIOUS_BEAR", "momentum", {}
+            )
+
+        self.assertTrue(state["blocked"])
+        self.assertEqual(state["reason"], "mode_block")
+        self.assertFalse(state["market_mode_buy_block_override_applied"])
+
+    def test_market_mode_buy_block_operator_override_allows_plan_a_mode_block(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot._risk_off_mr_exception = lambda market, mode, strategy, sig_row: {
+            "allowed": False,
+            "reason": "not_mean_reversion",
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "US_BEAR_BLOCK_MODES": "HALT,DEFENSIVE,CAUTIOUS_BEAR",
+                "MARKET_MODE_BUY_BLOCK_OVERRIDE_ENABLED": "false",
+                "US_MARKET_MODE_BUY_BLOCK_OVERRIDE_ENABLED": "true",
+                "US_MARKET_MODE_BUY_BLOCK_OVERRIDE_REASON": "operator_mode_test",
+            },
+            clear=False,
+        ):
+            state = trading_bot.TradingBot._market_mode_buy_block_state(
+                bot, "US", "CAUTIOUS_BEAR", "momentum", {}
+            )
+
+        self.assertFalse(state["blocked"])
+        self.assertEqual(state["reason"], "operator_market_mode_override")
+        self.assertTrue(state["market_mode_buy_block_override_applied"])
+        self.assertEqual(state["market_mode_buy_block_override_reason"], "operator_mode_test")
+
+    def test_market_mode_buy_block_state_preserves_risk_off_mr_exception(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot._risk_off_mr_exception = lambda market, mode, strategy, sig_row: {
+            "allowed": True,
+            "size_cap": 40,
+            "reason": "risk_off_mr_exception",
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "US_BEAR_BLOCK_MODES": "HALT,DEFENSIVE,CAUTIOUS_BEAR",
+                "MARKET_MODE_BUY_BLOCK_OVERRIDE_ENABLED": "false",
+                "US_MARKET_MODE_BUY_BLOCK_OVERRIDE_ENABLED": "",
+            },
+            clear=False,
+        ):
+            state = trading_bot.TradingBot._market_mode_buy_block_state(
+                bot, "US", "CAUTIOUS_BEAR", "mean_reversion", {"vol_ratio": 1.0}
+            )
+
+        self.assertFalse(state["blocked"])
+        self.assertTrue(state["risk_off_mr_applied"])
+        self.assertFalse(state["market_mode_buy_block_override_applied"])
 
     def test_new_buy_gate_can_use_manual_gross_exposure_cap(self) -> None:
         bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
