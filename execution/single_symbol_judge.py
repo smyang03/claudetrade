@@ -94,6 +94,7 @@ def build_single_symbol_judge_prompt(
         "Allowed route: path_b, wait, reject.\n"
         "You may judge setup quality, route, invalidation, and price plan. You must not decide order quantity, order amount, or override broker/risk gates.\n"
         "Use PULLBACK_WAIT only when the buy zone is anchored to structural support/retest evidence such as VWAP, open anchor, opening range breakout retest, or a controlled pullback from high.\n"
+        "Pullback entry rule: buy_zone_high must sit at least 0.5% BELOW the current price. A zone that fills immediately at the current price is a chase entry; use WAIT_RECHECK instead.\n"
         "For route=path_b or action=PULLBACK_WAIT, include buy_zone_low, buy_zone_high, sell_target, stop_loss, hold_days, confidence, invalid_if, structural_basis, zone_basis.\n"
         "If post-open features are missing/stale, the support zone is unclear, reward/risk is weak, or the setup has faded, use WAIT_RECHECK or REJECT.\n"
         "Use market-native prices: KR in KRW, US in USD.\n"

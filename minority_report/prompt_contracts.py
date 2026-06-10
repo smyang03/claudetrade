@@ -33,7 +33,10 @@ PRICE_PLAN_CONTRACT = """Price-plan contract:
 - Use native market prices: KR=KRW, US=USD.
 - Do not fabricate support/resistance, VWAP, opening range, or ATR-derived levels when the input does not contain enough evidence.
 - Required long setup order: stop_loss < buy_zone_low <= buy_zone_high < sell_target.
-- Hard minimum reward/risk is 1.2; prefer 1.5 or higher.
+- Hard minimum reward/risk is 1.5; the system rejects plans below 1.5.
+- Pullback entry rule: buy_zone_high must sit at least 0.5% BELOW the current price.
+  A zone that fills immediately at the current price is a chase entry, not a pullback plan.
+  Anchor the zone to real support evidence (VWAP, open anchor, opening-range retest), not to the live price.
 - cancel_if_open_above is a chase-prevention price.
 - target_basis must identify the evidence used; invalid_if must state the setup failure condition."""
 
