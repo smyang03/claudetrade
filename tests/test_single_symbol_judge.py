@@ -54,6 +54,59 @@ class SingleSymbolJudgeTests(unittest.TestCase):
         self.assertEqual(normalized["action"], "PULLBACK_WAIT")
         self.assertEqual(normalized["route"], "path_b")
 
+    def test_pullback_wait_late_mover_feature_is_soft_blocked_to_reject(self) -> None:
+        normalized = normalize_single_symbol_judge_result(
+            {
+                "ticker": "avgo",
+                "market": "US",
+                "action": "PULLBACK_WAIT",
+                "route": "path_b",
+                "confidence": 0.72,
+                "reason": "revival",
+                "invalid_if": "breaks vwap",
+                "buy_zone_low": 100.0,
+                "buy_zone_high": 102.0,
+                "sell_target": 108.0,
+                "stop_loss": 97.0,
+                "hold_days": 2,
+                "structural_basis": "VWAP retest",
+            },
+            features={"momentum_state": "late_mover", "current_price": 101.0, "data_quality": "minute_complete"},
+        )
+
+        self.assertEqual(normalized["action"], "REJECT")
+        self.assertEqual(normalized["route"], "reject")
+        self.assertEqual(normalized["pullback_wait_soft_block_reason"], "late_mover")
+        self.assertTrue(normalized["pullback_wait_soft_block_enforced"])
+        self.assertEqual(normalized["audit_reason"], "pullback_wait_soft_block:late_mover")
+
+    def test_pullback_wait_late_mover_shadow_mode_keeps_pullback_wait(self) -> None:
+        from unittest.mock import patch
+
+        with patch.dict("os.environ", {"PULLBACK_WAIT_SOFT_BLOCK_GATE_MODE": "shadow"}, clear=False):
+            normalized = normalize_single_symbol_judge_result(
+                {
+                    "ticker": "avgo",
+                    "market": "US",
+                    "action": "BUY_READY",
+                    "route": "path_b",
+                    "confidence": 0.72,
+                    "reason": "revival",
+                    "invalid_if": "breaks vwap",
+                    "buy_zone_low": 100.0,
+                    "buy_zone_high": 102.0,
+                    "sell_target": 108.0,
+                    "stop_loss": 97.0,
+                    "hold_days": 2,
+                    "structural_basis": "VWAP retest",
+                    "momentum_state": "late_mover",
+                },
+            )
+
+        self.assertEqual(normalized["action"], "PULLBACK_WAIT")
+        self.assertEqual(normalized["pullback_wait_soft_block_reason"], "late_mover")
+        self.assertFalse(normalized["pullback_wait_soft_block_enforced"])
+
     def test_pathb_plan_with_features_requires_reward_risk_floor(self) -> None:
         normalized = normalize_single_symbol_judge_result(
             {

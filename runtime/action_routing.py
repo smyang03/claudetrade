@@ -74,6 +74,29 @@ def _num_or_none(value: Any) -> float | None:
         return None
 
 
+def _pullback_wait_soft_block_reason(context: dict, action: dict, freshness_verdict: str) -> str:
+    """#3 soft-block floor: repeated_failed_ready(>=N) 또는 late_mover 후보의 PULLBACK_WAIT
+    승격을 차단한다. 운영자 확정 신호 2종(2026-06-10), US/KR 공통, enforce 기본.
+    """
+    ctx = context if isinstance(context, dict) else {}
+    try:
+        repeated = int(float(ctx.get("repeated_failed_ready_count") or 0))
+    except Exception:
+        repeated = 0
+    try:
+        repeated_min = int(float(os.getenv("PULLBACK_WAIT_SOFT_BLOCK_REPEATED_FAILED_MIN", "2") or 2))
+    except Exception:
+        repeated_min = 2
+    if repeated_min > 0 and repeated >= repeated_min:
+        return "repeated_failed_ready"
+    momentum = str(ctx.get("momentum_state") or (action or {}).get("momentum_state") or "").strip().lower()
+    if momentum == "late_mover":
+        return "late_mover"
+    if str(freshness_verdict or "").strip().upper() in {"STALE", "LATE_CHASE"}:
+        return "late_mover"
+    return ""
+
+
 def _resolve_entry_price_cap(action: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     price_targets = dict((action or {}).get("price_targets") or {})
     candidates = [
@@ -962,6 +985,28 @@ def route_candidate_action(
     if requested == "PULLBACK_WAIT":
         if not has_pullback_target(price_targets):
             return _decision("WATCH", reason="missing_pullback_target")
+        soft_block_reason = _pullback_wait_soft_block_reason(context, action, freshness_verdict)
+        if soft_block_reason:
+            gate_mode = str(os.getenv("PULLBACK_WAIT_SOFT_BLOCK_GATE_MODE", "enforce") or "enforce").strip().lower()
+            live_gate = gate_mode in {"live", "enforce", "block"}
+            gate_context["pullback_wait_soft_block_gate"] = {
+                "reason": soft_block_reason,
+                "mode": "enforce" if live_gate else "shadow",
+                "demoted_to_watch": live_gate,
+                "shadow_only": not live_gate,
+                "repeated_failed_ready_count": int(_num_or_none(context.get("repeated_failed_ready_count")) or 0),
+                "freshness_verdict": freshness_verdict,
+                "momentum_state": str(context.get("momentum_state") or ""),
+            }
+            if live_gate:
+                return _decision(
+                    "WATCH",
+                    reason=f"pullback_wait_soft_block:{soft_block_reason}",
+                    warnings=["pullback_wait_soft_block"],
+                    demoted_to="WATCH",
+                    runtime_gate_reason=f"soft_block_floor:{soft_block_reason}",
+                )
+            default_warnings.append("pullback_wait_soft_block_shadow")
         if _negative_watch_context():
             kr_healthy_shadow = _kr_healthy_pullback_shadow_payload()
             if kr_healthy_shadow:

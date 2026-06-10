@@ -148,6 +148,23 @@ def _normalize_route(raw_route: Any, action: str) -> str:
     return route
 
 
+def _pullback_wait_late_mover_block(features: dict[str, Any] | None, result: dict[str, Any]) -> str:
+    """late_mover 후보의 PULLBACK_WAIT 승격 차단 (#3 soft-block floor, single_symbol_judge 측).
+
+    repeated_failed_ready는 route 레벨 gate_info 신호라 action_routing에서 처리하고,
+    여기서는 features에 존재하는 momentum_state/freshness 기반 late_mover만 막는다.
+    운영자 확정 신호(2026-06-10): repeated_failed_ready + late_mover 2종.
+    """
+    feature_pack = dict(features or {})
+    momentum = str(feature_pack.get("momentum_state") or (result or {}).get("momentum_state") or "").strip().lower()
+    if momentum == "late_mover":
+        return "late_mover"
+    freshness = str(feature_pack.get("freshness_verdict") or (result or {}).get("freshness_verdict") or "").strip().upper()
+    if freshness in {"STALE", "LATE_CHASE"}:
+        return "late_mover"
+    return ""
+
+
 def validate_pathb_price_plan(
     result: dict[str, Any],
     *,
@@ -254,6 +271,17 @@ def normalize_single_symbol_judge_result(
     if action == "REJECT":
         route = "reject"
 
+    pullback_soft_block_reason = ""
+    pullback_soft_block_enforced = False
+    if action == "PULLBACK_WAIT":
+        pullback_soft_block_reason = _pullback_wait_late_mover_block(features, raw)
+        if pullback_soft_block_reason:
+            gate_mode = str(os.getenv("PULLBACK_WAIT_SOFT_BLOCK_GATE_MODE", "enforce") or "enforce").strip().lower()
+            pullback_soft_block_enforced = gate_mode in {"live", "enforce", "block"}
+            if pullback_soft_block_enforced:
+                action = "REJECT"
+                route = "reject"
+
     raw_valid = raw.get("valid")
     errors = list(raw.get("errors") or []) if isinstance(raw.get("errors"), list) else []
     out = {
@@ -284,6 +312,13 @@ def normalize_single_symbol_judge_result(
             out["audit_reason"] = "early_judge_pathb_price_plan_missing" if any(
                 error.startswith("missing_") for error in errors
             ) else "early_judge_pathb_price_plan_invalid"
+    if pullback_soft_block_reason:
+        out["pullback_wait_soft_block_reason"] = pullback_soft_block_reason
+        out["pullback_wait_soft_block_enforced"] = pullback_soft_block_enforced
+        if pullback_soft_block_enforced:
+            out["audit_reason"] = f"pullback_wait_soft_block:{pullback_soft_block_reason}"
+            if not out["reason"]:
+                out["reason"] = f"pullback_wait_soft_block:{pullback_soft_block_reason}"
     return out
 
 

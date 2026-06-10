@@ -27,6 +27,61 @@ class ActionRoutingTests(unittest.TestCase):
         self.assertEqual(decision.final_action, "WATCH")
         self.assertEqual(decision.reason, "missing_pullback_target")
 
+    def _full_pullback_targets(self) -> dict:
+        return {
+            "buy_zone_low": 45.5,
+            "buy_zone_high": 46.8,
+            "sell_target": 49.5,
+            "stop_loss": 43.8,
+            "hold_days": 1,
+            "confidence": 0.72,
+        }
+
+    def test_pullback_wait_soft_block_repeated_failed_ready_demotes_to_watch(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "IONQ", "action": "PULLBACK_WAIT", "confidence": 0.72, "price_targets": self._full_pullback_targets()},
+            market="US",
+            execution_context={"data_quality": "good", "repeated_failed_ready_count": 2},
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertEqual(decision.reason, "pullback_wait_soft_block:repeated_failed_ready")
+        self.assertEqual(decision.runtime_gate_reason, "soft_block_floor:repeated_failed_ready")
+        self.assertEqual(decision.demoted_to, "WATCH")
+
+    def test_pullback_wait_soft_block_late_mover_demotes_to_watch(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "IONQ", "action": "PULLBACK_WAIT", "confidence": 0.72, "price_targets": self._full_pullback_targets()},
+            market="US",
+            execution_context={"data_quality": "good", "momentum_state": "late_mover"},
+        )
+
+        self.assertEqual(decision.final_action, "WATCH")
+        self.assertEqual(decision.reason, "pullback_wait_soft_block:late_mover")
+
+    def test_pullback_wait_soft_block_shadow_mode_keeps_route(self) -> None:
+        with patch.dict("os.environ", {"PULLBACK_WAIT_SOFT_BLOCK_GATE_MODE": "shadow"}, clear=False):
+            decision = route_candidate_action(
+                {"ticker": "IONQ", "action": "PULLBACK_WAIT", "confidence": 0.72, "price_targets": self._full_pullback_targets()},
+                market="US",
+                execution_context={"data_quality": "good", "repeated_failed_ready_count": 2},
+            )
+
+        self.assertEqual(decision.final_action, "PULLBACK_WAIT")
+        self.assertIn("pullback_wait_soft_block_shadow", decision.warnings)
+        gate = decision.runtime_gate.get("pullback_wait_soft_block_gate")
+        self.assertEqual(gate.get("reason"), "repeated_failed_ready")
+        self.assertTrue(gate.get("shadow_only"))
+
+    def test_pullback_wait_single_failed_ready_below_threshold_allows_route(self) -> None:
+        decision = route_candidate_action(
+            {"ticker": "IONQ", "action": "PULLBACK_WAIT", "confidence": 0.72, "price_targets": self._full_pullback_targets()},
+            market="US",
+            execution_context={"data_quality": "good", "repeated_failed_ready_count": 1},
+        )
+
+        self.assertEqual(decision.final_action, "PULLBACK_WAIT")
+
     def test_pullback_wait_hint_without_full_plan_stays_watch(self) -> None:
         decision = route_candidate_action(
             {
