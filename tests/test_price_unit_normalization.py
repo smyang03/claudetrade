@@ -149,6 +149,31 @@ class PriceUnitNormalizationTests(unittest.TestCase):
         self.assertEqual(row["pathb_revenue_path_context"]["exit_reason"], "profit_ladder")
         self.assertEqual(row["pathb_revenue_path_context"]["profit_ladder_tier"], "tier1")
 
+    def test_completeness_minutes_to_close_uses_passed_arg(self) -> None:
+        # PRE_CLOSE_CARRY 단계에서 pos에 minutes_to_close가 없어도
+        # 인자로 전달되면 minutes_to_close_ok 가 충족돼야 한다 (버그1 회귀).
+        pos = {"ticker": "NVDA", "entry": 100.0, "current_price": 105.0}
+        without_arg = hold_advisor._input_completeness(pos, "US", "PRE_CLOSE_CARRY", "ctx")
+        self.assertFalse(without_arg["minutes_to_close_ok"])
+        with_arg = hold_advisor._input_completeness(pos, "US", "PRE_CLOSE_CARRY", "ctx", 12.0)
+        self.assertTrue(with_arg["minutes_to_close_ok"])
+
+    def test_completeness_pathb_reference_falls_back_to_plan(self) -> None:
+        # pathb_reference_ok 가 _pathb_revenue_path_context 와 대칭으로
+        # pathb_plan.sell_target / stop_loss fallback 을 인정해야 한다 (버그2 회귀).
+        pos = {
+            "ticker": "NVDA",
+            "entry": 100.0,
+            "current_price": 105.0,
+            "path_type": "claude_price",
+            "pathb_plan": {"sell_target": 110.0, "stop_loss": 98.0},
+        }
+        completeness = hold_advisor._input_completeness(pos, "US", "PRE_CLOSE_CARRY", "ctx", 12.0)
+        revenue = hold_advisor._pathb_revenue_path_context(pos, "PRE_CLOSE_CARRY", "policy", 12.0)
+        self.assertTrue(completeness["pathb_reference_ok"])
+        self.assertEqual(revenue["reference_target"], 110.0)
+        self.assertEqual(revenue["reference_stop"], 98.0)
+
     def test_hold_advisor_outcome_preserves_fallback_and_cooldown_labels(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

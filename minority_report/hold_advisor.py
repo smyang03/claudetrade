@@ -390,8 +390,15 @@ def _derive_hold_mode(pos: dict, exit_driver: str) -> str:
     return "profit_pullback"
 
 
-def _input_completeness(pos: dict, market: str, decision_stage: str, rt_context: str) -> dict[str, Any]:
+def _input_completeness(
+    pos: dict,
+    market: str,
+    decision_stage: str,
+    rt_context: str,
+    minutes_to_close: Optional[float] = None,
+) -> dict[str, Any]:
     advisor_ctx = pos.get("advisor_context_v2") if isinstance(pos.get("advisor_context_v2"), dict) else {}
+    plan = pos.get("pathb_plan") if isinstance(pos.get("pathb_plan"), dict) else {}
     entry = _as_float(pos.get("entry") or pos.get("avg_price") or pos.get("display_avg_price"), 0.0)
     current = _as_float(pos.get("current_price") or pos.get("display_current_price") or pos.get("exit_price"), 0.0)
     target = _as_float(
@@ -425,11 +432,18 @@ def _input_completeness(pos: dict, market: str, decision_stage: str, rt_context:
         "stop_ok": stop > 0,
         "advisor_context_v2_ok": bool(advisor_ctx),
         "pathb_reference_ok": (not is_pathb) or (
-            _as_float(pos.get("pathb_reference_target") or advisor_ctx.get("pathb_reference_target"), 0.0) > 0
-            and _as_float(pos.get("pathb_reference_stop") or advisor_ctx.get("pathb_reference_stop"), 0.0) > 0
+            _as_float(
+                pos.get("pathb_reference_target") or advisor_ctx.get("pathb_reference_target") or plan.get("sell_target"),
+                0.0,
+            ) > 0
+            and _as_float(
+                pos.get("pathb_reference_stop") or advisor_ctx.get("pathb_reference_stop") or plan.get("stop_loss"),
+                0.0,
+            ) > 0
         ),
         "market_context_ok": bool(str(rt_context or "").strip()),
         "minutes_to_close_ok": str(decision_stage or "").upper() != "PRE_CLOSE_CARRY"
+        or minutes_to_close is not None
         or pos.get("minutes_to_close") not in (None, ""),
     }
     missing = [key for key, ok in checks.items() if not bool(ok)]
@@ -625,7 +639,7 @@ def _triage_case_payload(
         pnl_pct = (native_current / native_entry - 1.0) * 100.0
     advisor_ctx = pos.get("advisor_context_v2") if isinstance(pos.get("advisor_context_v2"), dict) else {}
     pathb_exit_signal = pos.get("pathb_exit_signal") if isinstance(pos.get("pathb_exit_signal"), dict) else {}
-    completeness = _input_completeness(pos, market, decision_stage, rt_context or digest_prompt)
+    completeness = _input_completeness(pos, market, decision_stage, rt_context or digest_prompt, minutes_to_close)
     revenue_context = _pathb_revenue_path_context(pos, decision_stage, default_policy, minutes_to_close)
     hard_guard = {
         "breached": bool(pos.get("hard_guard_breached") or pos.get("_hard_guard_breach_detail")),
@@ -869,7 +883,7 @@ def _ask_challenge(
         force_exit_window,
         triage,
     )
-    completeness = _input_completeness(pos, market, decision_stage, rt_context or digest_prompt)
+    completeness = _input_completeness(pos, market, decision_stage, rt_context or digest_prompt, minutes_to_close)
     revenue_context = _pathb_revenue_path_context(pos, decision_stage, default_policy, minutes_to_close)
     call_started = time.perf_counter()
     try:
@@ -1088,7 +1102,7 @@ def _ask_triage(
         minutes_to_close,
         force_exit_window,
     )
-    completeness = _input_completeness(pos, market, decision_stage, rt_context or digest_prompt)
+    completeness = _input_completeness(pos, market, decision_stage, rt_context or digest_prompt, minutes_to_close)
     revenue_context = _pathb_revenue_path_context(pos, decision_stage, default_policy, minutes_to_close)
     call_started = time.perf_counter()
     try:
@@ -1675,7 +1689,7 @@ JSON으로만 응답:
 }}"""
 
     call_started = time.perf_counter()
-    completeness = _input_completeness(pos, market, decision_stage, rt_context or digest_prompt)
+    completeness = _input_completeness(pos, market, decision_stage, rt_context or digest_prompt, minutes_to_close)
     revenue_context = _pathb_revenue_path_context(pos, decision_stage, default_policy_text, minutes_to_close)
     try:
         resp = client.messages.create(
@@ -2087,7 +2101,7 @@ def _log_decision(ticker: str, market: str, pos: dict,
             minutes_to_close = float(pos.get("minutes_to_close")) if pos.get("minutes_to_close") not in (None, "") else None
         except Exception:
             minutes_to_close = None
-        input_completeness = _input_completeness(pos, market, decision_stage, "")
+        input_completeness = _input_completeness(pos, market, decision_stage, "", minutes_to_close)
         revenue_context = _pathb_revenue_path_context(pos, decision_stage, default_policy, minutes_to_close)
 
         entry = {
