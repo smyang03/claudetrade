@@ -2770,11 +2770,23 @@ class PathBRuntime:
             if plan is None:
                 continue
             waiting_items.append((idx, run, plan))
-        self._audit_pathb_risk_off_cap(
+        risk_off_scan_state = self._audit_pathb_risk_off_cap(
             market,
             stage="pathb_waiting_scan",
             zone_hit_tickers=[],
         )
+        # 제출 단계 enforce: 장중 모드가 bear로 전환되면 전환 전 등록된 waiting 플랜은
+        # 등록 cap을 안 거쳤으므로 committed(open+pending+order_unknown) 기준으로 cap을 막는다.
+        # firing 플랜은 waiting이라 baseline에서 제외 → double-count 없음.
+        risk_off_enforced = bool(risk_off_scan_state.get("active")) and bool(risk_off_scan_state.get("enforced"))
+        risk_off_cap_limit = int(risk_off_scan_state.get("risk_off_pathb_cap") or 0)
+        risk_off_committed_baseline = (
+            int(risk_off_scan_state.get("open_position_count") or 0)
+            + int(risk_off_scan_state.get("pending_buy_count") or 0)
+            + int(risk_off_scan_state.get("order_unknown_count") or 0)
+        )
+        risk_off_submitted_in_scan = 0
+        risk_off_blocked_tickers: list[str] = []
         if bool(burst_cap.get("active")):
             def _confidence_sort_value(item: tuple[int, dict[str, Any], PricePlan]) -> float:
                 try:
@@ -2897,8 +2909,33 @@ class PathBRuntime:
                     submitted_count=burst_submitted,
                 )
                 continue
+            if (
+                risk_off_enforced
+                and risk_off_committed_baseline + risk_off_submitted_in_scan >= risk_off_cap_limit
+            ):
+                risk_off_blocked_tickers.append(plan.ticker)
+                self._record_blocked(
+                    market,
+                    plan.ticker,
+                    plan.decision_id,
+                    "PATHB_RISK_OFF_CAP",
+                    {
+                        **self._execution_safety_payload(),
+                        **risk_off_scan_state,
+                        "stage": "pathb_waiting_scan_zone_hit",
+                        "committed_baseline": risk_off_committed_baseline,
+                        "submitted_in_scan": risk_off_submitted_in_scan,
+                        "price": float(current or 0.0),
+                        "limit_price": float(signal.limit_price or 0.0),
+                        "signal_reason": str(signal.reason or ""),
+                    },
+                    plan.path_run_id,
+                )
+                continue
             if self._submit_buy(plan, signal):
                 burst_submitted += 1
+                if risk_off_enforced:
+                    risk_off_submitted_in_scan += 1
         if kr_blocked_tickers:
             sample = ",".join(kr_blocked_tickers[:8])
             log.warning(
@@ -2912,6 +2949,14 @@ class PathBRuntime:
                 f"cap={burst_cap.get('max_submits_per_scan')} count={len(burst_blocked_tickers)} "
                 f"tickers={sample} mode={burst_cap.get('market_mode')} "
                 f"size={burst_cap.get('analyst_size_pct')}"
+            )
+        if risk_off_blocked_tickers:
+            sample = ",".join(risk_off_blocked_tickers[:8])
+            log.warning(
+                f"[PathB risk-off cap block] {market} stage=waiting_scan_zone_hit "
+                f"mode={risk_off_scan_state.get('market_mode')} cap={risk_off_cap_limit} "
+                f"committed_baseline={risk_off_committed_baseline} submitted={risk_off_submitted_in_scan} "
+                f"count={len(risk_off_blocked_tickers)} tickers={sample}"
             )
 
     def reconcile_buy_pending_cancel_above(self, market: str, *, force: bool = False) -> dict[str, Any]:

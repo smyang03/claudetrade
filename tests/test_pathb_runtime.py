@@ -2385,6 +2385,57 @@ class PathBRuntimeTests(unittest.TestCase):
 
             self.assertEqual(runtime._submit_buy.call_count, 3)
 
+    def test_scan_waiting_entries_risk_off_cap_blocks_submission_over_cap(self) -> None:
+        # 장중 bear 전환 시나리오: 등록 cap을 안 거친 waiting 플랜이 cap을 초과해
+        # zone-hit 해도 제출 단계 enforce가 committed 기준으로 cap만큼만 매수한다.
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            bot.today_judgment = {"consensus": {"mode": "MILD_BEAR"}}
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.reconcile_order_unknowns = Mock()
+            runtime.reconcile_buy_pending_cancel_above = Mock()
+            runtime.process_miss_quality_followups = Mock()
+            runtime._entry_scan_broker_truth_gate = Mock(return_value={"allowed": True})
+            runtime._pathb_scan_burst_cap_state = Mock(return_value={"active": False})
+            runtime._current_native_price = Mock(return_value=105.0)
+            runtime._submit_buy = Mock(return_value=True)
+
+            for ticker in ("AMZN", "GOOGL", "MSFT"):
+                self._register_us_waiting_plan(runtime, ticker)
+
+            with patch.dict("os.environ", {"PATHB_US_LIVE_ENABLED": "true"}):
+                runtime.scan_waiting_entries("US", force=True)
+
+            # MILD_BEAR cap=2, committed baseline=0 → 2건만 제출, 3번째 cap 차단
+            self.assertEqual(runtime._submit_buy.call_count, 2)
+
+    def test_scan_waiting_entries_risk_off_cap_audit_only_allows_all(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ", {"PATHB_RISK_OFF_CAP_ENFORCE": "false", "PATHB_US_LIVE_ENABLED": "true"}
+        ):
+            bot = _Bot()
+            bot.today_judgment = {"consensus": {"mode": "MILD_BEAR"}}
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.reconcile_order_unknowns = Mock()
+            runtime.reconcile_buy_pending_cancel_above = Mock()
+            runtime.process_miss_quality_followups = Mock()
+            runtime._entry_scan_broker_truth_gate = Mock(return_value={"allowed": True})
+            runtime._pathb_scan_burst_cap_state = Mock(return_value={"active": False})
+            runtime._current_native_price = Mock(return_value=105.0)
+            runtime._submit_buy = Mock(return_value=True)
+
+            for ticker in ("AMZN", "GOOGL", "MSFT"):
+                self._register_us_waiting_plan(runtime, ticker)
+
+            runtime.scan_waiting_entries("US", force=True)
+
+            # audit-only: cap 차단 없이 전부 제출
+            self.assertEqual(runtime._submit_buy.call_count, 3)
+
     def test_scan_waiting_entries_caps_burst_when_market_mode_is_bearish(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bot = _Bot()
