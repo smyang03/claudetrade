@@ -901,7 +901,7 @@ class HoldAdvisorStageContractTests(unittest.TestCase):
     def test_pre_close_carry_prompt_uses_stage_lead_and_minutes(self) -> None:
         captured: dict[str, str] = {}
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, system=None):
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
                 content=[
@@ -940,7 +940,7 @@ class SelectionPromptContractTests(unittest.TestCase):
 
         captured = {}
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, system=None):
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
                 content=[
@@ -977,7 +977,7 @@ class SelectionPromptContractTests(unittest.TestCase):
         captured: dict[str, object] = {}
         raw_calls: list[dict] = []
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, system=None):
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
                 content=[
@@ -1051,7 +1051,7 @@ class SelectionPromptContractTests(unittest.TestCase):
             ],
         }
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, system=None):
             captured["prompt"] = messages[0]["content"]
             captured["max_tokens"] = max_tokens
             return SimpleNamespace(
@@ -1109,7 +1109,7 @@ class SelectionPromptContractTests(unittest.TestCase):
 
         raw_calls: list[dict] = []
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, system=None):
             return SimpleNamespace(
                 content=[SimpleNamespace(text='{"wl":["AAPL"],"tr":["AAPL"],"ca":[')],
                 usage=SimpleNamespace(input_tokens=1, output_tokens=4000),
@@ -1152,7 +1152,7 @@ class SelectionPromptContractTests(unittest.TestCase):
 
         raw_calls: list[dict] = []
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, system=None):
             return SimpleNamespace(
                 content=[SimpleNamespace(text="{}")],
                 usage=SimpleNamespace(input_tokens=1, output_tokens=1),
@@ -1244,7 +1244,7 @@ class PostmortemPromptContractTests(unittest.TestCase):
     def test_us_postmortem_prompt_is_market_scoped(self) -> None:
         captured: dict[str, str] = {}
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, system=None):
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
                 content=[
@@ -1310,7 +1310,7 @@ class PostmortemPromptContractTests(unittest.TestCase):
             "correction_guides": [],
         }
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, system=None):
             return SimpleNamespace(
                 content=[
                     SimpleNamespace(
@@ -1394,7 +1394,7 @@ class PostmortemPromptContractTests(unittest.TestCase):
             "correction_guides": [],
         }
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, system=None):
             return SimpleNamespace(
                 content=[
                     SimpleNamespace(
@@ -1469,7 +1469,7 @@ class PostmortemPromptContractTests(unittest.TestCase):
             "queue": [],
         }
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, system=None):
             return SimpleNamespace(
                 content=[
                     SimpleNamespace(
@@ -1562,7 +1562,7 @@ class PostmortemPromptContractTests(unittest.TestCase):
             "correction_guides": [],
         }
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, system=None):
             return SimpleNamespace(
                 content=[
                     SimpleNamespace(
@@ -1639,7 +1639,7 @@ class PostmortemPromptContractTests(unittest.TestCase):
     def test_parse_failed_postmortem_writes_daily_record_without_policy_learning(self) -> None:
         calls: dict[str, list] = {"daily_records": [], "beliefs": [], "issue_patterns": []}
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, system=None):
             return SimpleNamespace(
                 content=[SimpleNamespace(text="not-json")],
                 usage=SimpleNamespace(input_tokens=1, output_tokens=1),
@@ -1698,7 +1698,7 @@ class PostmortemPromptContractTests(unittest.TestCase):
             "strategy_performance": [],
         }
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, system=None):
             return SimpleNamespace(
                 content=[
                     SimpleNamespace(

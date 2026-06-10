@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from minority_report.claude_utils import extract_json
+from minority_report.prompt_contracts import COMMON_DECISION_CONTRACT
 
 
 CLAUDE_DECISIONS = {"CONFIRM_BUY", "DEFER", "REJECT"}
@@ -112,7 +113,6 @@ def build_buy_time_confirm_prompt(
         "Return JSON only. Do not include markdown.\n"
         "Allowed decision: CONFIRM_BUY, DEFER, REJECT.\n"
         "Do not choose other actions such as BUY_READY, PROBE_READY, PULLBACK_WAIT, HOLD, or SELL.\n"
-        "Do not decide order quantity, order amount, broker eligibility, stop-loss overrides, or risk gate overrides.\n"
         "CONFIRM_BUY means the existing candidate and current signal are still valid now.\n"
         "DEFER means this cycle should skip and wait for a fresh selection or a later signal.\n"
         "REJECT means the candidate is currently unsuitable for this order-time setup, but not permanently banned.\n"
@@ -164,6 +164,8 @@ def call_buy_time_confirm_judge(
         kwargs = {
             "model": model,
             "max_tokens": max_tokens,
+            # 공유 결정 계약(수량/브로커/게이트 불결정 경계)은 system으로 전달 — 인라인 재기술 제거
+            "system": [{"type": "text", "text": COMMON_DECISION_CONTRACT}],
             "messages": [{"role": "user", "content": prompt}],
         }
         if timeout_sec > 0:

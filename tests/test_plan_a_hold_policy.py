@@ -418,8 +418,9 @@ class PlanAHoldPolicyBotTests(unittest.TestCase):
     def test_hold_advisor_prompt_includes_position_scoped_news_context(self) -> None:
         captured = {}
 
-        def fake_create(*, model, max_tokens, messages):
+        def fake_create(*, model, max_tokens, messages, system=None):
             captured["prompt"] = messages[0]["content"]
+            captured["system"] = system
             return SimpleNamespace(
                 content=[
                     SimpleNamespace(

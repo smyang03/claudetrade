@@ -1635,9 +1635,6 @@ def _ask_one(analyst_type: str, pos: dict, market: str,
 
     prompt = f"""{PERSONAS[analyst_type]}
 
-{COMMON_DECISION_CONTRACT}
-{HARD_SOFT_RULE_CONTRACT}
-
 {lead_text}
 
 ━━━ 포지션 ━━━
@@ -1697,8 +1694,13 @@ JSON으로만 응답:
     completeness = _input_completeness(pos, market, decision_stage, rt_context or digest_prompt, minutes_to_close)
     revenue_context = _pathb_revenue_path_context(pos, decision_stage, default_policy_text, minutes_to_close)
     try:
+        # 공유 계약은 triage/challenge와 동일하게 system으로 전달 (인라인 중복 제거됨).
+        _system_block: dict = {"type": "text", "text": _HOLD_ADVISOR_SYSTEM}
+        if _HOLD_ADVISOR_CACHE_ENABLED:
+            _system_block["cache_control"] = {"type": "ephemeral"}
         resp = client.messages.create(
             model=MODEL, max_tokens=700,
+            system=[_system_block],
             messages=[{"role": "user", "content": prompt}],
         )
         duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
