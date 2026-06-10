@@ -18,17 +18,46 @@ attribution, mega_gap watch, cap 재설정 15/15/5, stop cluster 5, 1주 예외 
 - net 손익 첫 기록들 (pnl_krw_net_est — CPNG/IONQ 청산 시)
 - 일일 API 비용 (R1 Haiku 반영 후 ~$4± 예상, KR select 49콜/일 낭비 추이)
 
-**2026-06-17 — 1차 판정일 (작업 재개):**
-1. A1 존 규칙 4지표 판정 → 유지 / -0.3% 완화 / 강화
-2. A1 코드 게이트(등록 단계 zone vs 기준가 검사) 추가 여부 — 판정 결과 따라
-3. KR rescreen 임시 감속 여부 (진입 off 동안 30분→120분, 일 -$1~1.5) — 동결로 보류된 항목
-4. candidate outcome 라벨 버그 수정 (daily_pending 1,551건 `target_at` 빈 값)
-5. C1 selection prompt caching 착수 (paper 검증 포함 — P1 항목 참조)
+**2026-06-17 — 1차 판정일 (작업 재개, 그룹 우선순위):**
+
+지배 원칙(2026-06-11 확정): ① 데이터가 결정한다 — 변경은 판정일에만, 그날도 표본 역산 선행.
+② 경로 일관성 — 가드는 진입의 전 경로(selection·judge·bridge)에 동일하게. 신설 시 경로 체크 필수.
+③ 판단보다 구조 — Claude 판정 품질은 6/10 손실 리뷰로 입증됨(IONQ judge가 A1 규칙·무효조건 명시).
+투자처는 프롬프트가 아니라 게이트 일관성 → 국면 인지 → 자금 구조.
+
+A그룹 — 6/10 손실 직접 처방 (오전):
+1. 함정구간(+2~5%) 가드를 PULLBACK_WAIT까지 확장 — mega_gap 가드 패턴 재사용, judge 산출도
+   selection meta 합류라 한 곳 수정으로 양 경로 커버. 6/10 손실 3건 중 2건(IONQ +4.6%/CPNG +4.8%
+   진입)이 이 우회로 발생. **선행: 과거 PathB 체결 중 진입 시점 +2~5% 그룹 성과 역산 후 enforce.**
+2. 저장 결측 수선 (net 원장 완결성):
+   - judge 출력 스키마에 `reference_price` 필드 부재 → judge 출신 플랜 전부 ref=None
+     (IONQ 사례 — 판단문엔 현재가 59.72 명시, 받아 적을 칸이 없었음). 스키마 추가 또는 등록 시 백필.
+   - ORDER_ACKED 중 청산 시 entry 유실 — 매수 fill reconcile(주기)과 hard stop(즉시)의 레이스
+     (FUN 사례: 00:38 주문→00:56 손절, 18분 내 급락이면 구조적 재발). mark_closed에서 plan에
+     entry 없으면 브로커 체결가/포지션 단가로 백필.
+
+B그룹 — 예정된 데이터 판정:
+3. A1 존 규칙 4지표 판정 → 유지 / -0.3% 완화 / 강화 (NOK -0.74% 깊이 = 신규 플랜 첫 준수 사례)
+4. A1 코드 게이트(등록 단계 zone vs 기준가 검사) 추가 여부 — 판정 결과 따라
+5. candidate outcome 라벨 버그 수정 (daily_pending 1,551건 `target_at` 빈 값)
+
+C그룹 — 비용:
+6. KR rescreen 임시 감속 (진입 off 동안 30분→120분, 일 -$1~1.5) — KR 재개 시 원복 주석 필수
+7. C1 selection prompt caching 착수 (paper 검증 포함 — P1 항목 참조)
+
+D그룹 — 설계만 (라이브 연결은 6/24):
+8. 시장 급반전 보호 미니판 — Claude invalid_if의 "broad market reverses"를 시스템이 모니터링하지
+   않는 갭(IONQ 패인). 이미 수집 중인 market risk shadow(`ENABLE_MARKET_RISK_SHADOW=true`) 기록
+   검토 → 임계 설계 (장중 지수 급락 시 PathB 전 보유 INTRADAY_REVIEW 트리거 + 신규 제출 일시 보류.
+   강제 청산 아님 — 보호영역 비접촉). 7월 국면 스위치의 선행판.
+
+금지 항목 (6/10 리뷰 근거): judge·청산 엔진·loss_cap -2% 변경 금지 — 손실의 원인이 아님이 확인된 곳.
 
 **~2026-06-24 — 2차 데이터 판정:**
 - 채널 ROI (candidate_source 2주치) → most_actives/day_gainers 쿼터 재배분
 - rel_vol 분포·예측력 검증 → 전략 게이트 연결 여부 (US PathB 보호영역, `MD 위반 사항` 절차)
 - mega_gap watch forward → 진입 채널 승격 여부
+- D그룹 시장 급반전 보호 라이브 연결 여부 (shadow 검토 결과 따라)
 
 **2026-07 — 구조 단계 (6월 net 원장 마감 채점 후, 순서 고정):**
 1. 확신도 사이징 — rr/rvol/채널 팩터별 에지 확정 후 50만 고정 → 0.7×~1.5× 차등
