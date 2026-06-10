@@ -1,8 +1,44 @@
 # Active Work
 
-Updated: 2026-06-10
+Updated: 2026-06-11
 
 This is the single active work ledger. One-off plans and generated reports are removed after their unfinished work is absorbed here and in [core/TODO_ROADMAP.md](core/TODO_ROADMAP.md). Detailed improvement sequencing from the latest DB/code review lives in [IMPROVEMENT_WORKLIST_20260607.md](IMPROVEMENT_WORKLIST_20260607.md). Completed implementation notes belong in [core/DEVELOPED_WORK.md](core/DEVELOPED_WORK.md) or Git history, not in the active backlog.
+
+## 변경 동결 + 관찰 주간 (2026-06-11 ~ 06-16, 운영자 확정)
+
+2026-06-10~11 대규모 배포(12커밋: 게이트 3종, KR off, net 원장, A1 존 규칙, rel_vol 체인,
+attribution, mega_gap watch, cap 재설정 15/15/5, stop cluster 5, 1주 예외 100만) 직후라
+**효과 귀속을 위해 최소 5일간 신규 변경 동결.** 발견된 개선 후보도 아래 일정으로만 처리한다.
+예외: 차단급 장애(체결 고갈, 게이트 오작동, 비용 폭증)의 긴급 대응만 허용.
+
+**관찰 주간 일과 (매일 아침, 변경 없이 측정만):**
+- 신규 플랜 존 깊이 분포 (A1 준수율 — 기준가 대비 -0.5% 이하 비율)
+- rvol 표기 후보의 선택률 / judge 호출 대상 구성 (단골 비중 감소 확인)
+- 체결 수 (소급 시뮬 예측 "기존의 85%" 대조)
+- net 손익 첫 기록들 (pnl_krw_net_est — CPNG/IONQ 청산 시)
+- 일일 API 비용 (R1 Haiku 반영 후 ~$4± 예상, KR select 49콜/일 낭비 추이)
+
+**2026-06-17 — 1차 판정일 (작업 재개):**
+1. A1 존 규칙 4지표 판정 → 유지 / -0.3% 완화 / 강화
+2. A1 코드 게이트(등록 단계 zone vs 기준가 검사) 추가 여부 — 판정 결과 따라
+3. KR rescreen 임시 감속 여부 (진입 off 동안 30분→120분, 일 -$1~1.5) — 동결로 보류된 항목
+4. candidate outcome 라벨 버그 수정 (daily_pending 1,551건 `target_at` 빈 값)
+5. C1 selection prompt caching 착수 (paper 검증 포함 — P1 항목 참조)
+
+**~2026-06-24 — 2차 데이터 판정:**
+- 채널 ROI (candidate_source 2주치) → most_actives/day_gainers 쿼터 재배분
+- rel_vol 분포·예측력 검증 → 전략 게이트 연결 여부 (US PathB 보호영역, `MD 위반 사항` 절차)
+- mega_gap watch forward → 진입 채널 승격 여부
+
+**2026-07 — 구조 단계 (6월 net 원장 마감 채점 후, 순서 고정):**
+1. 확신도 사이징 — rr/rvol/채널 팩터별 에지 확정 후 50만 고정 → 0.7×~1.5× 차등
+2. 러너 부분 보유 (core+runner 분할, ladder 60~70% 청산 + 잔여 trailing multi-day) — 보호영역, shadow 선행
+3. 국면 스위치 (추세/횡보 × 변동성 → 게이트 세트 전환) — 나쁜 달 방어
+4. 실적 캘린더 연결 (보유 포지션 실적 경고 + mega_gap 이벤트 태그, PEAD 인프라 재사용)
+5. 1·2가 데이터로 확인된 뒤에만 증자(스케일) 논의 — 검증 전 증자 금지
+
+**운영자 대기 (날짜 무관):** 환전 우대율 확인(US_FEE_RATE_PER_SIDE 조정), KR 재개 기준 확정
+(제안: US net 2주 연속 플러스 + KR shadow 2주 플러스 — 재개 시 preflight KR-off 정책도 동시 복원).
 
 ## Scope Guard
 
