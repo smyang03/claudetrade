@@ -54,7 +54,7 @@ class SingleSymbolJudgeTests(unittest.TestCase):
         self.assertEqual(normalized["action"], "PULLBACK_WAIT")
         self.assertEqual(normalized["route"], "path_b")
 
-    def test_pullback_wait_late_mover_feature_is_soft_blocked_to_reject(self) -> None:
+    def test_pullback_wait_late_mover_feature_is_soft_blocked_to_wait_recheck(self) -> None:
         normalized = normalize_single_symbol_judge_result(
             {
                 "ticker": "avgo",
@@ -74,8 +74,9 @@ class SingleSymbolJudgeTests(unittest.TestCase):
             features={"momentum_state": "late_mover", "current_price": 101.0, "data_quality": "minute_complete"},
         )
 
-        self.assertEqual(normalized["action"], "REJECT")
-        self.assertEqual(normalized["route"], "reject")
+        # late_mover는 transient이므로 REJECT(장기 락아웃)가 아니라 WAIT_RECHECK로 보류한다.
+        self.assertEqual(normalized["action"], "WAIT_RECHECK")
+        self.assertEqual(normalized["route"], "wait")
         self.assertEqual(normalized["pullback_wait_soft_block_reason"], "late_mover")
         self.assertTrue(normalized["pullback_wait_soft_block_enforced"])
         self.assertEqual(normalized["audit_reason"], "pullback_wait_soft_block:late_mover")

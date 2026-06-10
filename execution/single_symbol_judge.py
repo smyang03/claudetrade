@@ -279,8 +279,11 @@ def normalize_single_symbol_judge_result(
             gate_mode = str(os.getenv("PULLBACK_WAIT_SOFT_BLOCK_GATE_MODE", "enforce") or "enforce").strip().lower()
             pullback_soft_block_enforced = gate_mode in {"live", "enforce", "block"}
             if pullback_soft_block_enforced:
-                action = "REJECT"
-                route = "reject"
+                # late_mover는 per-cycle transient 분류이므로 REJECT(장기 TTL 락아웃)가 아니라
+                # WAIT_RECHECK로 보류한다. action_routing의 WATCH 강등과 동일하게 다음 사이클
+                # 재평가를 허용하고, registration만 막는다.
+                action = "WAIT_RECHECK"
+                route = "wait"
 
     raw_valid = raw.get("valid")
     errors = list(raw.get("errors") or []) if isinstance(raw.get("errors"), list) else []
