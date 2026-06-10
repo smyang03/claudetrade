@@ -62,7 +62,8 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertEqual(effective.get("PATHB_MAX_POSITIONS"), "15")
         self.assertEqual(effective.get("PATHB_MAX_DAILY_ENTRIES"), "40")
         self.assertEqual(effective.get("PATHB_ONE_SHARE_OVER_BUDGET_MAX_KRW"), "700000")
-        self.assertEqual(effective.get("PATHB_KR_LIVE_ENABLED"), "true")
+        # 2026-06-10 운영자 승인: KR gross 음수 지속 → KR 신규 진입 중단
+        self.assertEqual(effective.get("PATHB_KR_LIVE_ENABLED"), "false")
         self.assertEqual(effective.get("KR_CLAUDE_PRICE_LIVE_ENABLED"), "false")
         self.assertEqual(effective.get("KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK"), "false")
         self.assertEqual(effective.get("KR_CONTINUATION_NEW_ENTRY_BLOCK"), "true")
@@ -274,10 +275,11 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertIn("ENABLE_ACTION_ROUTING", check.data["disabled"])
         self.assertIn("CANDIDATE_ACTIONS_V2_ENABLED", check.data["disabled"])
 
-    def test_pathb_market_live_gate_accepts_current_kr_on_us_on_policy(self) -> None:
+    def test_pathb_market_live_gate_accepts_current_kr_off_us_on_policy(self) -> None:
+        # 2026-06-10 운영자 승인 정책: KR 신규 진입 중단, US 유지
         check = _pathb_market_live_gate_check(
             {
-                "PATHB_KR_LIVE_ENABLED": "true",
+                "PATHB_KR_LIVE_ENABLED": "false",
                 "PATHB_US_LIVE_ENABLED": "true",
             }
         )
@@ -309,14 +311,16 @@ class LiveConfigSourceTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(check.status, "WARN")
+        # KR-off는 현행 승인 정책과 일치 → PASS, legacy 키가 source로 보고돼야 한다
+        self.assertEqual(check.status, "PASS")
         self.assertEqual(check.data["values"]["KR"], "false")
         self.assertEqual(check.data["market_live_gate_source"]["KR"]["source_key"], "KR_CLAUDE_PRICE_LIVE_ENABLED")
 
-    def test_pathb_market_live_gate_warns_when_kr_live_is_disabled(self) -> None:
+    def test_pathb_market_live_gate_warns_when_kr_live_is_enabled(self) -> None:
+        # KR 재활성은 운영자 결정 없이는 정책 위반 → WARN으로 드리프트 감지
         check = _pathb_market_live_gate_check(
             {
-                "PATHB_KR_LIVE_ENABLED": "false",
+                "PATHB_KR_LIVE_ENABLED": "true",
                 "PATHB_US_LIVE_ENABLED": "true",
             }
         )
