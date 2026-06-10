@@ -100,6 +100,30 @@ class CandidateCounterfactualLinkTests(unittest.TestCase):
         self.assertEqual(res["best_runup_pct"], 3.5)
         self.assertEqual(res["actual_path"], "or_break")
 
+    def test_actual_entered_uses_actual_path_outcome(self):
+        conn = _make_db()
+        # 실제 진입 경로는 immediate → 그 path의 outcome이 현실 결과
+        _insert(conn, path_name="immediate", actual_path="immediate",
+                max_runup_60m_pct=8.0, outcome_close_pct=5.5)
+        # 이론상 best는 wait_30m이 더 높지만 실제 경로는 아님
+        _insert(conn, path_name="wait_30m", actual_path="immediate",
+                max_runup_60m_pct=12.0, outcome_close_pct=2.0)
+        res = link_candidate_counterfactual(conn, "2026-06-10", "KR", "100090", "2026-06-10T09:00:00+09:00")
+        self.assertTrue(res["actual_entered"])
+        self.assertEqual(res["actual_outcome_close"], 5.5)   # 실제 진입(immediate) 결과
+        self.assertEqual(res["best_runup_pct"], 12.0)         # 이론 best는 wait_30m
+        self.assertEqual(res["outcome_coverage"], 1.0)
+
+    def test_no_entry_marks_not_entered(self):
+        conn = _make_db()
+        _insert(conn, path_name="immediate", actual_path="no_entry", max_runup_60m_pct=20.0)
+        _insert(conn, path_name="no_entry", actual_path="no_entry", max_runup_60m_pct=None)
+        res = link_candidate_counterfactual(conn, "2026-06-10", "KR", "100090", "2026-06-10T09:00:00+09:00")
+        self.assertFalse(res["actual_entered"])
+        self.assertIsNone(res["actual_outcome_close"])
+        self.assertEqual(res["best_runup_pct"], 20.0)         # 이론은 높지만 실제 미진입
+        self.assertEqual(res["outcome_coverage"], 0.5)        # 2개 중 1개만 outcome 수집
+
     def test_us_ticker_case_insensitive(self):
         conn = _make_db()
         _insert(conn, market="US", ticker="AAPL", known_at="2026-06-10T22:35:00+09:00")

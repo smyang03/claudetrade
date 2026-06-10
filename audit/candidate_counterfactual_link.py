@@ -68,8 +68,11 @@ def link_candidate_counterfactual(
     - match_basis: "known_at_exact" | "known_at_nearest" | "ticker_day" | "none"
     - nearest_known_at / delta_min: known_at 매칭 시 선택된 시점과 분 단위 차이
     - path_count: 선택된 path 수
-    - actual_path: counterfactual이 기록한 실제 경로(있으면)
-    - best_runup_path / best_runup_pct: max_runup_60m 최대 path
+    - actual_path: 실제 진입 분류("no_entry" 또는 진입 시나리오명)
+    - actual_entered: 실제 진입 경로가 no_entry가 아닌지(이론 runup과 현실의 구분 기준)
+    - actual_outcome_60m / actual_outcome_close: 실제 진입 경로의 outcome(미진입이면 None)
+    - best_runup_path / best_runup_pct: max_runup_60m 최대 path (이론값 — 가정 진입 기준)
+    - outcome_coverage: 선택 path 중 outcome 수집 비율(낮으면 forward 미수집 → 신뢰도 낮음)
     - paths: 선택된 path 행들의 요약 리스트
     """
     market_u = str(market or "").upper()
@@ -92,8 +95,12 @@ def link_candidate_counterfactual(
         "delta_min": None,
         "path_count": 0,
         "actual_path": None,
+        "actual_entered": False,
+        "actual_outcome_60m": None,
+        "actual_outcome_close": None,
         "best_runup_path": None,
         "best_runup_pct": None,
+        "outcome_coverage": 0.0,
         "paths": [],
     }
     if not rows:
@@ -146,6 +153,17 @@ def link_candidate_counterfactual(
         (rec.get("actual_path") for rec in selected if rec.get("actual_path")),
         None,
     )
+    actual_entered = bool(actual_path and str(actual_path).strip().lower() != "no_entry")
+    actual_outcome_60m = None
+    actual_outcome_close = None
+    if actual_entered:
+        # 실제 진입 경로(actual_path)와 같은 path_name 행의 outcome이 현실 결과
+        for rec in selected:
+            if str(rec.get("path_name") or "") == str(actual_path):
+                actual_outcome_60m = rec.get("outcome_60m_pct")
+                actual_outcome_close = rec.get("outcome_close_pct")
+                break
+
     runup_candidates = [
         (rec.get("path_name"), rec.get("max_runup_60m_pct"))
         for rec in selected
@@ -156,6 +174,9 @@ def link_candidate_counterfactual(
     if runup_candidates:
         best_runup_path, best_runup_pct = max(runup_candidates, key=lambda kv: kv[1])
 
+    out_present = sum(1 for rec in selected if rec.get("max_runup_60m_pct") is not None)
+    outcome_coverage = round(out_present / len(selected), 2) if selected else 0.0
+
     return {
         "matched": True,
         "match_basis": match_basis,
@@ -163,7 +184,11 @@ def link_candidate_counterfactual(
         "delta_min": delta_min,
         "path_count": len(selected),
         "actual_path": actual_path,
+        "actual_entered": actual_entered,
+        "actual_outcome_60m": actual_outcome_60m,
+        "actual_outcome_close": actual_outcome_close,
         "best_runup_path": best_runup_path,
         "best_runup_pct": best_runup_pct,
+        "outcome_coverage": outcome_coverage,
         "paths": selected,
     }

@@ -80,18 +80,25 @@ def build_report(db_path: Path, market: str | None, start: str | None, end: str 
                         "ticker": row["ticker"],
                         "action": row["route_final_action"] or "(blank)",
                         "why_not_watch": row["why_not_watch"],
-                        "best_runup_path": link["best_runup_path"],
-                        "best_runup_pct": round(link["best_runup_pct"], 2),
+                        "theoretical_runup_path": link["best_runup_path"],
+                        "theoretical_runup_pct": round(link["best_runup_pct"], 2),
+                        "actual_entered": link["actual_entered"],
+                        "actual_outcome_close": (
+                            round(link["actual_outcome_close"], 2)
+                            if link["actual_outcome_close"] is not None else None
+                        ),
+                        "outcome_coverage": link["outcome_coverage"],
                         "match_basis": link["match_basis"],
                     })
         # audit는 사이클마다 행이 중복되므로 (종목-일)당 best_runup 최대 1건만 남긴다
         dedup: dict[tuple, dict[str, Any]] = {}
         for m in missed_runup:
             key = (m["session_date"], m["market"], m["ticker"])
-            if key not in dedup or m["best_runup_pct"] > dedup[key]["best_runup_pct"]:
+            if key not in dedup or m["theoretical_runup_pct"] > dedup[key]["theoretical_runup_pct"]:
                 dedup[key] = m
         missed_runup = list(dedup.values())
-        missed_runup.sort(key=lambda d: d["best_runup_pct"], reverse=True)
+        missed_runup.sort(key=lambda d: d["theoretical_runup_pct"], reverse=True)
+        actual_entered_missed = sum(1 for m in missed_runup if m["actual_entered"])
         return {
             "scope": {"market": market or "ALL", "start": start, "end": end, "runup_threshold": runup_threshold},
             "decisions": total,
@@ -99,6 +106,7 @@ def build_report(db_path: Path, market: str | None, start: str | None, end: str 
             "match_rate": round(matched / total, 4) if total else 0.0,
             "match_basis": dict(basis_counter),
             "missed_runup_count": len(missed_runup),
+            "missed_runup_actual_entered": actual_entered_missed,
             "missed_runup_top": missed_runup[:20],
         }
     finally:
@@ -123,10 +131,14 @@ def main() -> None:
     print(f"[counterfactual link] market={s['scope']['market']} {s['scope']['start']}~{s['scope']['end']}")
     print(f"  decisions={s['decisions']} matched={s['matched']} match_rate={s['match_rate']:.1%}")
     print(f"  match_basis={s['match_basis']}")
-    print(f"  missed_runup(>={s['scope']['runup_threshold']}%)={s['missed_runup_count']}")
+    print(f"  missed_runup(이론>={s['scope']['runup_threshold']}%)={s['missed_runup_count']} "
+          f"(그 중 실제진입 actual_entered={s['missed_runup_actual_entered']})")
+    print("  ※ theoretical=가정 진입 기준 이론 runup, actual=실제 진입 경로 결과(미진입이면 -)")
     for m in s["missed_runup_top"]:
+        actual = f"{m['actual_outcome_close']}%" if m["actual_entered"] and m["actual_outcome_close"] is not None else "미진입"
         print(f"    {m['session_date']} {m['market']} {m['ticker']} act={m['action']} "
-              f"best={m['best_runup_path']}({m['best_runup_pct']}%) basis={m['match_basis']}")
+              f"theory={m['theoretical_runup_path']}({m['theoretical_runup_pct']}%) "
+              f"actual={actual} cov={m['outcome_coverage']} basis={m['match_basis']}")
 
 
 if __name__ == "__main__":
