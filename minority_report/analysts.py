@@ -1129,6 +1129,8 @@ def _format_selection_candidate_line(
 ) -> str:
     rate = _safe_float(candidate.get("change_rate", 0.0), 0.0)
     vr = _safe_float(candidate.get("vol_ratio", 0.0), 0.0)
+    # US: vol_ratio는 1.0 placeholder라 무의미 — 실측 rel_vol(자기 20일 평균 대비, 세션 보정)로 대체 표기
+    rel_vol = _safe_float(candidate.get("rel_vol_shadow", 0.0), 0.0)
     price = _safe_float(candidate.get("price", 0), 0.0)
     volume = _safe_float(candidate.get("volume", 0), 0.0)
     turnover = price * volume
@@ -1146,6 +1148,10 @@ def _format_selection_candidate_line(
         or _candidate_pullback_bucket(from_high_pct)
     )
     news_hint = _candidate_compact_news_hint(candidate) if compact else _candidate_news_hint(candidate)
+    if market == "US":
+        vol_token = f"rvol={rel_vol:.1f}x" if rel_vol > 0 else ""
+    else:
+        vol_token = f"vol={vr:.1f}x" if vr > 0 else ""
     parts = [
         _candidate_identity_prefix(candidate),
         f"chg={rate:+.2f}%",
@@ -1157,7 +1163,7 @@ def _format_selection_candidate_line(
             secondary_change_pct=secondary_change_pct,
         ),
         "" if compact else (f"p={price:,.2f}".rstrip("0").rstrip(".") if price > 0 else ""),
-        "" if compact or (market == "KR" and kr_premarket) else (f"vol={vr:.1f}x" if vr > 0 else ""),
+        "" if compact or (market == "KR" and kr_premarket) else vol_token,
         "" if compact else _candidate_turnover_text(market, turnover),
         "" if compact else (f"board={market_type}" if market_type else ""),
         "" if compact else (f"category={category}" if category else ""),
@@ -2508,6 +2514,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
     for candidate in prompt_candidates:
         rate = _safe_float(candidate.get("change_rate", 0.0), 0.0)
         vr = _safe_float(candidate.get("vol_ratio", 0.0), 0.0)
+        rel_vol = _safe_float(candidate.get("rel_vol_shadow", 0.0), 0.0)
         price = _safe_float(candidate.get("price", 0), 0.0)
         volume = _safe_float(candidate.get("volume", 0), 0.0)
         turnover = price * volume
@@ -2541,7 +2548,11 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             f"chg={rate:+.2f}%",
             rs_str,
             f"p={price:,.2f}".rstrip("0").rstrip(".") if price > 0 else "",
-            "" if _kr_premarket else (f"vol={vr:.1f}x" if vr > 0 else ""),
+            "" if _kr_premarket else (
+                (f"rvol={rel_vol:.1f}x" if rel_vol > 0 else "")
+                if market == "US"
+                else (f"vol={vr:.1f}x" if vr > 0 else "")
+            ),
             (
                 f"turn={turnover/1e8:.1f}억"
                 if market == "KR" and turnover > 0 else
@@ -2779,6 +2790,7 @@ execution_phase: {execution_phase or 'unspecified'}
 {phase_rule_block}
 {evidence_rule_block}
 - 후보 종목 중에서만 고르세요.
+- rvol은 자기 20일 평균 대비 세션 진행률 보정 거래량 배수입니다 (US 전용). rvol>=2는 비정상 수급 급증이니 신선한 변화로 우선 검토하되, 추격 매수가 아니라 눌림 계획(PULLBACK_WAIT/price_targets)으로 다루세요.
 - watchlist는 선별 목록입니다. 최대 {watch_max}개, 보통 8~18개 수준으로 제한하세요.
 - trade_ready는 실제 매수 권한 후보입니다. 최대 {trade_max}개이며 0개도 허용됩니다.
 - trade_ready는 전략 슬롯을 나눠서 고르세요. slot guide: {slot_text}

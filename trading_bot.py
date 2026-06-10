@@ -30661,6 +30661,31 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         normalized["applied"] = applied
         return normalized
 
+    def _early_judge_priority_sort(self, market_key: str, candidate_rows: list, meta: dict) -> list:
+        """rel_vol(거래량 서지) 우선 정렬 — judge 슬롯을 단골 재평가가 아닌 서지 종목에 먼저 배분.
+
+        실측(2026-06-10): judge 14콜 전원이 메가캡 재평가에 소진되는 동안 rel_vol 5~8배
+        서지 종목(TGTX/CASY/DKNG)은 0콜. 결측은 0으로 두어 기존 순서 유지(stable sort).
+        2026-06-11 운영자 승인으로 shadow 생략, 라이브 직행.
+        """
+        if market_key != "US" or not self._runtime_bool("EARLY_JUDGE_REL_VOL_PRIORITY_ENABLED", True):
+            return candidate_rows
+
+        def _rel_vol(row: dict) -> float:
+            value = row.get("rel_vol_shadow")
+            if value in (None, ""):
+                try:
+                    feats = self._selection_ticker_feature_row(market_key, str(row.get("ticker") or ""), meta)
+                    value = feats.get("rel_vol_shadow")
+                except Exception:
+                    value = None
+            try:
+                return float(value)
+            except Exception:
+                return 0.0
+
+        return sorted(candidate_rows, key=_rel_vol, reverse=True)
+
     def maybe_run_early_judge_triggers(
         self,
         market: str,
@@ -30698,6 +30723,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 row["post_open_features"] = self._early_judge_feature_for_ticker(market_key, ticker, meta)
             candidate_rows.append(row)
             seen.add(ticker)
+        candidate_rows = self._early_judge_priority_sort(market_key, candidate_rows, meta)
         now = datetime.now(KST).replace(tzinfo=None)
         max_calls = max(0, min(capacity, self._early_judge_max_calls_per_run(market_key)))
         selected_rows: list[dict[str, Any]] = []
