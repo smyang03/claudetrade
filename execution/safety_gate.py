@@ -185,13 +185,27 @@ class PathBSafetyGate:
         if mode in {"", "disabled", "off"}:
             return _blocked("PATHB_DISABLED", "Path B mode is disabled", details)
         if plan is None:
-            return _blocked("CLAUDE_PRICE_INVALID", "Claude price plan is missing", details)
+            return _blocked(
+                "CLAUDE_PRICE_INVALID",
+                "Claude price plan is missing",
+                {**details, "reason_detail": "plan_missing"},
+            )
         try:
             plan_errors = plan.validate(min_confidence=self.config.pathb_min_confidence)
         except Exception as exc:
             plan_errors = [f"plan_validate_error:{exc}"]
         if plan_errors:
-            return _blocked("CLAUDE_PRICE_INVALID", "Claude price plan is invalid", {**details, "errors": plan_errors})
+            # reason_detail: 일반 CLAUDE_PRICE_INVALID 뒤에 가려지던 구체 사유
+            # (confidence_below_minimum 등)를 운영자 가시 로그 축으로 노출.
+            return _blocked(
+                "CLAUDE_PRICE_INVALID",
+                "Claude price plan is invalid",
+                {
+                    **details,
+                    "errors": plan_errors,
+                    "reason_detail": ",".join(str(e) for e in plan_errors),
+                },
+            )
 
         base_decision = self.base_gate.evaluate(
             SafetyContext(

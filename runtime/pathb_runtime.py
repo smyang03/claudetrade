@@ -10095,11 +10095,17 @@ class PathBRuntime:
         except Exception as exc:
             log.debug(f"[PathB no-submit audit failed] {market} {ticker} {reason_code}: {exc}")
         try:
+            # 구체 사유(reason_detail: confidence_below_minimum 등)를 사람이 읽는
+            # reason 필드에 합쳐 risk 로그에 노출 — 일반 reason_code 뒤에 가려지지 않게.
+            _reason_detail = str((payload or {}).get("reason_detail") or "").strip()
+            _reason_text = str(reason_code or "PATHB_SAFETY_BLOCKED")
+            if _reason_detail and _reason_detail != _reason_text:
+                _reason_text = f"{_reason_text}:{_reason_detail}"
             self._emit_risk_event(
                 str(reason_code or "PATHB_SAFETY_BLOCKED"),
                 market,
                 ticker=ticker,
-                reason=str(reason_code or ""),
+                reason=_reason_text,
                 payload={
                     **(payload or {}),
                     "path_type": "claude_price",

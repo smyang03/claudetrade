@@ -65,6 +65,18 @@ class PathBSafetyTests(unittest.TestCase):
         bad_ctx = SafetyContext(**{**_ctx().__dict__, "cash_krw": 10})
         self.assertEqual(PathBSafetyGate().evaluate(bad_ctx, plan=_plan()).reason_code, "INSUFFICIENT_CASH")
 
+    def test_claude_price_invalid_exposes_reason_detail(self) -> None:
+        # confidence 미달은 일반 CLAUDE_PRICE_INVALID 뒤에 가려지지 않고
+        # reason_detail/errors 로 노출돼야 한다 (운영자 가시 로그 축).
+        low_conf = PathBSafetyGate().evaluate(_ctx(), plan=_plan(0.3))
+        self.assertEqual(low_conf.reason_code, "CLAUDE_PRICE_INVALID")
+        self.assertIn("confidence_below_minimum", low_conf.details.get("errors", []))
+        self.assertIn("confidence_below_minimum", low_conf.details.get("reason_detail", ""))
+        # plan 부재 케이스도 구체 사유를 남긴다.
+        missing = PathBSafetyGate().evaluate(_ctx(), plan=None)
+        self.assertEqual(missing.reason_code, "CLAUDE_PRICE_INVALID")
+        self.assertEqual(missing.details.get("reason_detail"), "plan_missing")
+
     def test_daily_loss_limit_uses_realized_pnl_basis(self) -> None:
         gate = SafetyGate(V2Config(daily_loss_limit_pct=-2.0))
         ctx = SafetyContext(
