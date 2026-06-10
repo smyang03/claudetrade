@@ -4679,6 +4679,80 @@ def _us_projected_dollar_volume_context() -> dict:
     }
 
 
+_US_AVG_VOL_CACHE: dict = {"date": "", "by_ticker": {}}
+
+
+def _us_avg_daily_volume(ticker: str, *, days: int = 20, min_samples: int = 10) -> Optional[float]:
+    """data/price/us 일봉 CSV에서 최근 N일 평균 거래량. CSV 없음/표본 부족이면 None (결측은 결측으로)."""
+    key = str(ticker or "").strip().upper()
+    if not key:
+        return None
+    today = datetime.now().strftime("%Y-%m-%d")
+    if _US_AVG_VOL_CACHE.get("date") != today:
+        _US_AVG_VOL_CACHE["date"] = today
+        _US_AVG_VOL_CACHE["by_ticker"] = {}
+    cache = _US_AVG_VOL_CACHE["by_ticker"]
+    if key in cache:
+        return cache[key]
+    value: Optional[float] = None
+    try:
+        path = _Path(__file__).resolve().parent / "data" / "price" / "us" / f"us_{key}.csv"
+        if path.exists():
+            import csv as _csv
+
+            vols: list[float] = []
+            with open(path, encoding="utf-8-sig") as f:
+                for row in _csv.DictReader(f):
+                    v = _safe_float_value(row.get("volume"), 0.0)
+                    if v > 0:
+                        vols.append(v)
+            if len(vols) >= min_samples:
+                tail = vols[-days:]
+                value = sum(tail) / len(tail)
+    except Exception:
+        value = None
+    cache[key] = value
+    return value
+
+
+def _annotate_us_rel_vol_shadow(rows: list) -> None:
+    """rel_vol_shadow 계측 (US vol_ratio 입력 품질 1단계, shadow 전용).
+
+    rel_vol = 장중 누적 거래량 / (20일 평균 거래량 × 세션 진행률).
+    - 기존 vol_ratio(=1.0 placeholder, 전략 게이트 4곳이 소비)는 절대 변경하지 않는다.
+    - 베이스라인 없음/거래량 결측이면 필드를 기록하지 않는다 (naive 추정 금지).
+    - Claude 프롬프트 노출·전략 연결은 분포 검증 후 별도 단계 (ACTIVE_WORK P1).
+    """
+    if not _env_bool("US_REL_VOL_SHADOW_ENABLED", True):
+        return
+    try:
+        ctx = _us_projected_dollar_volume_context()
+        elapsed_min = ctx.get("elapsed_min")
+        # 개장 전/직후 가드: Yahoo regularMarketVolume은 개장 전엔 전일 누적치를 보여줘
+        # 바닥 fraction으로 나누면 rel_vol이 수십 배로 부풀려진다 (2026-06-10 실데이터 확인).
+        min_elapsed = _safe_float_value(os.getenv("US_REL_VOL_SHADOW_MIN_ELAPSED_MIN"), 15.0)
+        if elapsed_min is None or float(elapsed_min) < min_elapsed:
+            return
+        fraction = max(0.001, float(ctx.get("elapsed_session_fraction") or 0.0))
+    except Exception:
+        return
+    for row in rows or []:
+        try:
+            if not isinstance(row, dict) or row.get("volume_missing"):
+                continue
+            vol = _safe_int(row.get("volume"), 0)
+            if vol <= 0:
+                continue
+            avg = _us_avg_daily_volume(str(row.get("ticker") or ""))
+            if not avg or avg <= 0:
+                continue
+            row["rel_vol_shadow"] = round(float(vol) / (avg * fraction), 3)
+            row["rel_vol_shadow_avg20"] = int(avg)
+            row["rel_vol_shadow_fraction"] = round(fraction, 4)
+        except Exception:
+            continue
+
+
 def _us_projected_dollar_volume_shadow_row(
     candidate: dict,
     *,
@@ -5317,6 +5391,7 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL", token: str | None =
                             }
                         )
                         out = _annotate_us_screen_quality(cands[:_target_n], cached_quality)
+                        _annotate_us_rel_vol_shadow(out)
                         _write_price_collection_priority("US", out, source=f"cache:{source or 'unknown'}", mode=mode)
                         return out
                     elif source == "fmp" and cands:
@@ -5329,6 +5404,7 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL", token: str | None =
                             }
                         )
                         out = _annotate_us_screen_quality(cands[:_target_n], cached_quality)
+                        _annotate_us_rel_vol_shadow(out)
                         _write_price_collection_priority("US", out, source=f"cache:{source or 'unknown'}", mode=mode)
                         return out
                 else:
@@ -5437,6 +5513,7 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL", token: str | None =
                     }
                 )
             out = _annotate_us_screen_quality(merged[:_target_n], quality)
+            _annotate_us_rel_vol_shadow(out)
             _write_price_collection_priority("US", out, source="yf", mode=mode)
             return out
     except Exception as e:
@@ -5494,6 +5571,7 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL", token: str | None =
                     f"source=fmp mode={_cache_mode} top_n={_target_n}"
                 )
             out = _annotate_us_screen_quality(fmp_cands[:_target_n], quality)
+            _annotate_us_rel_vol_shadow(out)
             _write_price_collection_priority("US", out, source="fmp", mode=mode)
             return out
     except Exception as e:
@@ -5517,6 +5595,7 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL", token: str | None =
     quality["screener_cache_skipped_reason"] = "fallback_not_cached"
     quality["min_dollar_vol"] = _min_dollar_vol
     out = _annotate_us_screen_quality(fallback, quality)
+    _annotate_us_rel_vol_shadow(out)
     _write_price_collection_priority("US", out, source="fallback", mode=mode)
     return out
 
