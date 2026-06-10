@@ -1011,7 +1011,9 @@ class PathBRuntimeTests(unittest.TestCase):
         }
 
     def test_risk_off_pathb_cap_enforce_blocks_registration_over_cap(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ", {"PATHB_RISK_OFF_CAP_CAUTIOUS_BEAR": "1"}
+        ):
             store = EventStore(Path(tmp) / "events.db")
             bot = _Bot()
             bot.today_judgment = {"consensus": {"mode": "CAUTIOUS_BEAR"}}
@@ -1036,7 +1038,8 @@ class PathBRuntimeTests(unittest.TestCase):
 
     def test_risk_off_pathb_cap_audit_only_does_not_block_registration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
-            "os.environ", {"PATHB_RISK_OFF_CAP_ENFORCE": "false"}
+            "os.environ",
+            {"PATHB_RISK_OFF_CAP_ENFORCE": "false", "PATHB_RISK_OFF_CAP_CAUTIOUS_BEAR": "1"},
         ):
             store = EventStore(Path(tmp) / "events.db")
             bot = _Bot()
@@ -2388,7 +2391,10 @@ class PathBRuntimeTests(unittest.TestCase):
     def test_scan_waiting_entries_risk_off_cap_blocks_submission_over_cap(self) -> None:
         # 장중 bear 전환 시나리오: 등록 cap을 안 거친 waiting 플랜이 cap을 초과해
         # zone-hit 해도 제출 단계 enforce가 committed 기준으로 cap만큼만 매수한다.
-        with tempfile.TemporaryDirectory() as tmp:
+        # (운영 cap은 15로 완화됨 — 메커니즘 검증용으로 MILD_BEAR=2 고정)
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ", {"PATHB_RISK_OFF_CAP_MILD_BEAR": "2"}
+        ):
             bot = _Bot()
             bot.today_judgment = {"consensus": {"mode": "MILD_BEAR"}}
             store = EventStore(Path(tmp) / "events.db")

@@ -728,7 +728,14 @@ class PathBRuntime:
     ) -> dict[str, Any]:
         market_key = str(market or "").upper()
         mode = self._pathb_consensus_mode(market_key)
-        caps = {"MILD_BEAR": 2, "CAUTIOUS_BEAR": 1}
+        # 2026-06-11 운영자 변경: MILD/CAUTIOUS_BEAR 2/1 → 15 (전역 한도와 동일 = 사실상 해제),
+        # DEFENSIVE 5 신설(기존엔 cap 없음 — 단조성 보정). 클러스터 방어는 cap이 아니라
+        # STOP_CLUSTER_HARD_BLOCK_COUNT=3(당일 신규 중단) + rr/존/함정 진입 게이트가 담당.
+        caps = {
+            "MILD_BEAR": self._runtime_int("PATHB_RISK_OFF_CAP_MILD_BEAR", 15),
+            "CAUTIOUS_BEAR": self._runtime_int("PATHB_RISK_OFF_CAP_CAUTIOUS_BEAR", 15),
+            "DEFENSIVE": self._runtime_int("PATHB_RISK_OFF_CAP_DEFENSIVE", 5),
+        }
         cap = int(caps.get(mode, 0) or 0)
         incoming_keys = sorted({self._ticker_key(market_key, item) for item in (incoming_tickers or []) if item})
         zone_hit_keys = sorted({self._ticker_key(market_key, item) for item in (zone_hit_tickers or []) if item})
