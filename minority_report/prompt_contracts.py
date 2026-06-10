@@ -29,13 +29,19 @@ SELECTION_EXECUTION_PHASE_CONTRACT = """Selection/execution-plan phases:
 2. execution_plan_v1: create price_targets only for TRADE_READY names.
 Do not add price_targets for watch-only names."""
 
-PRICE_PLAN_CONTRACT = """Price-plan contract:
+# buy zone 깊이 규칙 — selection price_targets와 single_symbol_judge 양대 PathB 플랜 경로가 공유.
+# 값(-0.5%) 변경 시 이 상수 한 곳만 수정한다 (2026-06-10 운영자 승인값).
+PULLBACK_ZONE_RULE = (
+    "Pullback entry rule: buy_zone_high must sit at least 0.5% BELOW the current price. "
+    "A zone that fills immediately at the current price is a chase entry, not a pullback plan."
+)
+
+PRICE_PLAN_CONTRACT = f"""Price-plan contract:
 - Use native market prices: KR=KRW, US=USD.
 - Do not fabricate support/resistance, VWAP, opening range, or ATR-derived levels when the input does not contain enough evidence.
 - Required long setup order: stop_loss < buy_zone_low <= buy_zone_high < sell_target.
 - Hard minimum reward/risk is 1.5; the system rejects plans below 1.5.
-- Pullback entry rule: buy_zone_high must sit at least 0.5% BELOW the current price.
-  A zone that fills immediately at the current price is a chase entry, not a pullback plan.
+- {PULLBACK_ZONE_RULE}
   Anchor the zone to real support evidence (VWAP, open anchor, opening-range retest), not to the live price.
 - cancel_if_open_above is a chase-prevention price.
 - target_basis must identify the evidence used; invalid_if must state the setup failure condition."""

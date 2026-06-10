@@ -30,6 +30,10 @@ log    = get_trading_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 MODEL  = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
+# 주의: 이 캐시 플래그는 현재 실효 없음(no-op) — _HOLD_ADVISOR_SYSTEM ~434토큰으로
+# Sonnet 4.6 캐시 최소 prefix(실측 1,024토큰, 2026-06-09 ACTIVE_WORK 기록) 미달이라
+# cache_control이 조용히 무시된다. 추가 과금은 없으나 절감도 없다.
+# prefix 확장은 절감 상한(월 ~$2) 대비 본말전도라 보류 (2026-06-10 검토, ACTIVE_WORK P1 참조).
 _HOLD_ADVISOR_CACHE_ENABLED = os.getenv("HOLD_ADVISOR_PROMPT_CACHE_ENABLED", "true").lower() == "true"
 _HOLD_ADVISOR_SYSTEM = COMMON_DECISION_CONTRACT + "\n\n" + HARD_SOFT_RULE_CONTRACT + "\n\n모든 응답은 한국어로 작성하세요."
 
@@ -705,19 +709,13 @@ def _build_triage_prompt(
         force_exit_window,
     )
     payload_text = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
-    return f"""You are a decision-support model for an automated trading system.
-You do not execute orders and you do not decide final order quantity.
-Use only the supplied position and market data. Do not invent missing facts.
-
-Classify the advisor category:
+    return f"""Classify the advisor category for this position:
 - STOP_LOSS: exit because loss, stop, loss_cap, hard_stop, invalid_if, failed recovery, or thesis invalidation is valid now.
 - HOLD: keep the position only if thesis is intact and risk is bounded by protective_stop, invalid_if, and next_review_min.
 - SELL: exit for non-stop reasons such as profit taking, target/profit protection, time decay, pre-close/carry risk, or poor remaining reward.
 
 Important:
 - category is the exit reason class, not just the final order action.
-- Catastrophic broker truth, emergency, operator kill, force exit, and hard system exits are owned by the system.
-- A HOLD is advisory only and never overrides broker truth, emergency, force exit, or hard risk rules.
 - For HOLD, protective_stop, invalid_if, and next_review_min are mandatory.
 - For PathB profit_ladder/profit-protection HOLD, if advisor_context_v2.profit_ladder_hold_min_protective_stop is present, protective_stop must be below current and at or above that minimum; otherwise the system may preserve HOLD but ignore the stop update.
 - Do not repeat a distant plan stop as protective_stop for profit-protection HOLD.
@@ -788,7 +786,6 @@ def _build_challenge_prompt(
         default=str,
     )
     return f"""You are challenging a first-pass hold-advisor decision.
-This is advisory only. Do not execute orders or decide final order quantity.
 
 Challenge focus:
 - If first pass is SELL, check whether this is premature profit-taking or time/carry overreaction.
@@ -889,8 +886,12 @@ def _ask_challenge(
     try:
         max_tokens = _challenge_max_tokens()
         _create_kwargs: dict = {"model": MODEL, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
+        # 공유 계약은 항상 system으로 전달 (user 프롬프트의 인라인 중복은 제거됨).
+        # cache_control은 플래그로만 제어 — 현재 prefix가 최소 토큰 미달이라 no-op (상단 주석 참고).
+        _system_block: dict = {"type": "text", "text": _HOLD_ADVISOR_SYSTEM}
         if _HOLD_ADVISOR_CACHE_ENABLED:
-            _create_kwargs["system"] = [{"type": "text", "text": _HOLD_ADVISOR_SYSTEM, "cache_control": {"type": "ephemeral"}}]
+            _system_block["cache_control"] = {"type": "ephemeral"}
+        _create_kwargs["system"] = [_system_block]
         resp = client.messages.create(**_create_kwargs)
         duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
         raw = resp.content[0].text.strip()
@@ -1108,8 +1109,12 @@ def _ask_triage(
     try:
         max_tokens = _triage_max_tokens()
         _create_kwargs: dict = {"model": MODEL, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
+        # 공유 계약은 항상 system으로 전달 (user 프롬프트의 인라인 중복은 제거됨).
+        # cache_control은 플래그로만 제어 — 현재 prefix가 최소 토큰 미달이라 no-op (상단 주석 참고).
+        _system_block: dict = {"type": "text", "text": _HOLD_ADVISOR_SYSTEM}
         if _HOLD_ADVISOR_CACHE_ENABLED:
-            _create_kwargs["system"] = [{"type": "text", "text": _HOLD_ADVISOR_SYSTEM, "cache_control": {"type": "ephemeral"}}]
+            _system_block["cache_control"] = {"type": "ephemeral"}
+        _create_kwargs["system"] = [_system_block]
         resp = client.messages.create(**_create_kwargs)
         duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
         raw = resp.content[0].text.strip()
