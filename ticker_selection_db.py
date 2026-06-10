@@ -60,6 +60,7 @@ def init() -> None:
                 selected_at          TEXT,
                 change_pct           REAL,
                 vol_ratio            REAL,
+                atr_pct              REAL,
                 gap_pct              REAL,
                 from_high_pct        REAL,
                 above_ma60           INTEGER,
@@ -141,6 +142,8 @@ def init() -> None:
             conn.execute("ALTER TABLE ticker_selection_log ADD COLUMN execution_strategy TEXT")
         if "execution_reason" not in existing:
             conn.execute("ALTER TABLE ticker_selection_log ADD COLUMN execution_reason TEXT")
+        if "atr_pct" not in existing:
+            conn.execute("ALTER TABLE ticker_selection_log ADD COLUMN atr_pct REAL")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_tslog_date_market "
             "ON ticker_selection_log(date, market)"
@@ -318,6 +321,57 @@ def update_signal(
         )
 
 
+def update_atr_pct(row_id: int, atr_pct: Optional[float]) -> None:
+    """신호 빌드 시 계산된 ATR%(atr/risk_price)를 selection 행에 기록.
+
+    계측 전용: 기존 atr_pct가 있으면 덮어쓰지 않고(COALESCE), None이면 무시.
+    """
+    if not row_id or atr_pct is None:
+        return
+    try:
+        value = float(atr_pct)
+    except (TypeError, ValueError):
+        return
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE ticker_selection_log SET atr_pct=COALESCE(atr_pct, ?) WHERE id=?",
+            (value, row_id),
+        )
+
+
+def update_blocked_reason(
+    row_id: int,
+    blocked_reason: str,
+    *,
+    signal_at: Optional[str] = None,
+    atr_pct: Optional[float] = None,
+) -> None:
+    """첫 신호 루프에서 차단(continue)된 행에 사유/ATR%를 기록한다.
+
+    `signal_fired`는 건드리지 않는다 — 두 번째 루프 도달을 trade_ready→signal
+    전환 기준으로 보는 기존 관례(다른 first-loop 차단과 동일)를 유지해
+    ops 전환 메트릭/KR 튜닝 트리거를 교란하지 않기 위함. blocked_reason 자체는
+    최신 차단으로 갱신하고, signal_at/atr_pct는 기존 값이 있으면 보존(COALESCE).
+    """
+    if not row_id or not str(blocked_reason or "").strip():
+        return
+    try:
+        atr_value = None if atr_pct is None else float(atr_pct)
+    except (TypeError, ValueError):
+        atr_value = None
+    with _conn() as conn:
+        conn.execute(
+            """
+            UPDATE ticker_selection_log
+            SET blocked_reason=?,
+                signal_at=COALESCE(signal_at, ?),
+                atr_pct=COALESCE(atr_pct, ?)
+            WHERE id=?
+            """,
+            (str(blocked_reason), signal_at, atr_value, row_id),
+        )
+
+
 def update_traded(
     row_id: int,
     traded_at: str,
@@ -395,6 +449,7 @@ def insert_execution_row_from_selection(
         "selected_at",
         "change_pct",
         "vol_ratio",
+        "atr_pct",
         "gap_pct",
         "from_high_pct",
         "above_ma60",

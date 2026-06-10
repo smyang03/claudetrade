@@ -33406,6 +33406,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                     "atr_high_cap": float(_momentum_atr_stage["high_cap"]),
                                 },
                             )
+                        # selection 로그에 ATR 차단 사유/값 기록 — 이 첫 루프는 continue로
+                        # 빠져 두 번째 루프의 update_signal에 도달하지 않으므로 여기서 직접 쓴다.
+                        # (없으면 ops review atr_blocked_rows 메트릭이 항상 0)
+                        # signal_fired는 켜지 않는다: 다른 first-loop 차단과 동일하게 두 번째 루프
+                        # 도달을 전환 기준으로 유지 → ops 전환 메트릭/KR 튜닝 트리거 비교란.
+                        _atr_tsdb_id = (self._tsdb_selection_ids.get(market) or {}).get(ticker)
+                        if _atr_tsdb_id:
+                            try:
+                                tsdb.update_blocked_reason(
+                                    _atr_tsdb_id, "momentum_atr_too_high",
+                                    signal_at=datetime.now(KST).isoformat(),
+                                    atr_pct=float(atr_pct),
+                                )
+                            except Exception as _atr_log_exc:
+                                log.debug(f"[tsdb] momentum_atr_too_high 기록 실패 {ticker}: {_atr_log_exc}")
                 if _momentum_atr_block:
                     continue
                 # 전략별 size_mult 적용 (예: momentum 0.4~1.0 → 합의 size_pct 스케일링)
@@ -33617,6 +33632,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 _isdb_id = int(_sig.get("intraday_log_row_id", 0) or 0)
                 _tsdb_id = _sig.get("tsdb_id")
                 _sig_at  = datetime.now(KST).isoformat()
+                # ATR% 계측: 신호가 두 번째 루프에 도달한 시점에 한 번 기록(COALESCE).
+                # 이후 outcome별 update_signal과 무관하게 ATR 분포 분석 축을 확보한다.
+                if _tsdb_id and _s_atr is not None:
+                    try:
+                        tsdb.update_atr_pct(_tsdb_id, float(_s_atr))
+                    except Exception:
+                        pass
                 _audit_signal_id = str(_sig.get("audit_signal_id") or "")
                 _buy_time_confirm = self._patha_buy_time_confirm_decision(market, _sig)
                 _sig["buy_time_confirm"] = dict(_buy_time_confirm or {})
