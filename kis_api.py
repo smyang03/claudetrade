@@ -4859,6 +4859,10 @@ def _yf_screen_candidates() -> dict:
                         "price":       float(q.get("regularMarketPrice", 0)),
                         "change_rate": float(q.get("regularMarketChangePercent", 0)),
                         "volume":      int(q.get("regularMarketVolume", 0)),
+                        # vol_ratio=1.0은 placeholder(실값 아님). US 실값 연결은 후속 과제 —
+                        # 장중 regularMarketVolume은 부분 거래량이라 일평균과 단순 비교 시 왜곡되고,
+                        # vol_ratio는 live 전략(bucket/continuation/mean_reversion/VB)이 소비하므로
+                        # 세션 진행률 보정 producer를 갖춘 별도 작업에서 처리한다.
                         "vol_ratio":   1.0,
                         "category":    screen_id,
                         "exchange":    q.get("exchange", ""),
@@ -4920,6 +4924,8 @@ def _fmp_screen_candidates() -> list:
                         "price":          float(item.get("price", 0)),
                         "change_rate":    float(item.get("changesPercentage", 0)),
                         "volume":         0,
+                        # vol_ratio=1.0은 placeholder. FMP stable은 volume 자체 미포함이라
+                        # 실값 산출 불가. US vol_ratio 실값 연결은 후속 과제(별도 producer 필요).
                         "vol_ratio":      1.0,
                         "volume_missing": True,
                         "category":       ep,
