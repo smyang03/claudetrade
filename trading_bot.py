@@ -3716,9 +3716,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return "us_midrange_momentum_trap", strategy, evidence
         return "", strategy, evidence
 
-    def _demote_selection_quality_action(self, market: str, meta: dict, ticker_key: str, reason: str, evidence: dict | None = None) -> None:
+    def _demote_selection_quality_action(
+        self,
+        market: str,
+        meta: dict,
+        ticker_key: str,
+        reason: str,
+        evidence: dict | None = None,
+        demote_actions: set | None = None,
+    ) -> None:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
-        plan_a_actions = {"BUY_READY", "PROBE_READY"}
+        # 기본은 Plan A 액션만 강등. mega_gap watch 가드는 PULLBACK_WAIT(PathB 등록 입구)까지 차단한다.
+        plan_a_actions = set(demote_actions) if demote_actions else {"BUY_READY", "PROBE_READY"}
         evidence_payload = dict(evidence or {})
         for action in meta.get("candidate_actions") or []:
             if not isinstance(action, dict):
@@ -3793,6 +3802,54 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self._append_selection_factor(route, "blocking_factors", f"selection_quality:{reason}")
                 self._append_selection_factor(route, "warnings", "selection_quality_applied")
 
+    def _selection_mega_gap_watch_reason(self, market: str, ticker: str, meta: dict) -> tuple[str, dict]:
+        """mega_gap_watch 태그 후보는 watch 전용 — trade_ready/PathB 등록 차단.
+
+        +25% 초과 갭 러너의 격리 수용 (스크리너 _select_us_mega_gap_watch 참조).
+        다음날 연속성이 시장 국면 의존적(4월 -3.18%/5월 +5.26%)이라 시스템 진입은
+        막고 Claude watch 관찰 + forward 축적만 허용한다.
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if market_key != "US":
+            return "", {}
+        if not self._runtime_bool("US_MEGA_GAP_WATCH_GUARD_ENABLED", True):
+            return "", {}
+        features = self._selection_ticker_feature_row(market_key, ticker, meta)
+        if not self._selection_optional_bool(features.get("mega_gap_watch")):
+            return "", {}
+        return "mega_gap_watch_only", {
+            "mega_gap_watch": True,
+            "change_pct": self._selection_optional_float(features.get("change_pct") or features.get("change_rate")),
+        }
+
+    _MEGA_GAP_DEMOTE_ACTIONS = {"BUY_READY", "PROBE_READY", "PULLBACK_WAIT"}
+
+    def _apply_mega_gap_watch_guard(self, market: str, meta: dict) -> list[str]:
+        """candidate_actions 전체에서 mega_gap 후보의 진입성 액션을 WATCH로 강등 (PULLBACK_WAIT 포함)."""
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        demoted: list[str] = []
+        for action in list(meta.get("candidate_actions") or []):
+            if not isinstance(action, dict):
+                continue
+            action_name = str(action.get("action") or "").strip().upper()
+            if action_name not in self._MEGA_GAP_DEMOTE_ACTIONS:
+                continue
+            ticker = str(action.get("ticker") or "").strip()
+            if not ticker:
+                continue
+            reason, evidence = self._selection_mega_gap_watch_reason(market_key, ticker, meta)
+            if not reason:
+                continue
+            key = self._selection_ticker_key(market_key, ticker)
+            self._demote_selection_quality_action(
+                market_key, meta, key, reason, evidence,
+                demote_actions=self._MEGA_GAP_DEMOTE_ACTIONS,
+            )
+            demoted.append(key)
+        if demoted:
+            log.info(f"[mega_gap watch 가드] {market_key} 진입성 액션 강등: {demoted}")
+        return demoted
+
     def _apply_selection_quality_runtime_filter(
         self,
         market: str,
@@ -3806,11 +3863,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         demoted: dict[str, str] = {}
         demoted_from: dict[str, str] = {}
         demoted_evidence: dict[str, dict] = {}
+        self._apply_mega_gap_watch_guard(market_key, meta)
         for ticker in ready_candidates:
             key = self._selection_ticker_key(market_key, ticker)
             reason, strategy, evidence = self._selection_mean_reversion_quality_reason(market_key, ticker, meta, mode)
             if not reason:
                 reason, strategy, evidence = self._selection_us_midrange_trap_reason(market_key, ticker, meta, mode)
+            if not reason:
+                mg_reason, mg_evidence = self._selection_mega_gap_watch_reason(market_key, ticker, meta)
+                if mg_reason:
+                    reason, strategy, evidence = mg_reason, "", mg_evidence
             if not reason:
                 filtered.append(ticker)
                 continue

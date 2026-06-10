@@ -4830,6 +4830,50 @@ def _us_post_filter(
     )[0]
 
 
+def _select_us_mega_gap_watch(
+    raw_gainers: list,
+    seen: set,
+    *,
+    min_price: float,
+    max_chg: float,
+    min_dollar_vol: float,
+    slots: int,
+) -> list:
+    """+max_chg 초과 러너의 watch 전용 격리 수용 (2026-06-10 운영자 승인).
+
+    max_chg 필터는 당일 추격 방지가 목적이지만 +25% 초과 갭(실적 이벤트 등)을
+    아예 안 보이게 만들어 다음날 추적 기회까지 잃는다 (4~6월 실측: 다음날 평균
+    +1.89%, 단 시장 국면 의존 — 4월 -3.18%/5월 +5.26%). 그래서 풀에는 넣되
+    mega_gap_watch=True 태그로 trade_ready/PathB 등록을 가드가 차단하고
+    Claude의 watch 관찰 + forward 데이터 축적만 허용한다.
+    """
+    if slots <= 0:
+        return []
+    picked: list = []
+    pool = []
+    for c in raw_gainers or []:
+        try:
+            ticker = str((c or {}).get("ticker") or "").strip().upper()
+            price = _safe_float_value(c.get("price"), 0.0)
+            chg = _safe_float_value(c.get("change_rate"), 0.0)
+            vol = _safe_int(c.get("volume"), 0)
+        except Exception:
+            continue
+        if not ticker or ticker in seen:
+            continue
+        if chg <= max_chg or price < min_price:
+            continue
+        if c.get("volume_missing") or price * float(vol) < min_dollar_vol:
+            continue
+        pool.append((price * float(vol), c))
+    for _, c in sorted(pool, key=lambda x: -x[0])[: int(slots)]:
+        row = dict(c)
+        row["mega_gap_watch"] = True
+        row["category"] = "mega_gap"
+        picked.append(row)
+    return picked
+
+
 def _us_post_filter_with_stats(
     candidates: list,
     category: str,
@@ -5450,6 +5494,22 @@ def screen_market_us(top_n: int = 30, mode: str = "NEUTRAL", token: str | None =
                 merged.append(c)
                 added += 1
             cat_stats[cat] = added
+
+        # +25% 초과 갭 러너 watch 전용 격리 수용 (mega_gap_watch 태그, 가드가 진입 차단)
+        mega_rows = _select_us_mega_gap_watch(
+            raw_by_cat.get("day_gainers", []),
+            seen,
+            min_price=_min_price,
+            max_chg=_max_chg,
+            min_dollar_vol=_min_dollar_vol,
+            slots=_safe_int(os.getenv("US_MEGA_GAP_WATCH_SLOTS"), 3),
+        )
+        for _mg in mega_rows:
+            seen.add(_mg["ticker"])
+            merged.append(_mg)
+        if mega_rows:
+            cat_stats["mega_gap"] = len(mega_rows)
+            _logger.info(f"[YF 스크리너] mega_gap watch 수용 {len(mega_rows)}종목: {[r['ticker'] for r in mega_rows]}")
 
         if merged:
             projected_shadow_path = _write_us_projected_dollar_volume_shadow(
