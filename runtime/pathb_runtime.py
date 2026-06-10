@@ -824,6 +824,31 @@ class PathBRuntime:
             log.info(message, extra={"extra": {**self._execution_safety_payload(), **state}})
         return state
 
+    def _pathb_min_reward_risk(self) -> float:
+        # rr<1.5 플랜 등록 차단 — live 실측: rr<1.5 평균 +0.02%(수수료 차감 시 음수), rr>=2 평균 +0.74%
+        return self._runtime_float("PATHB_MIN_REWARD_RISK", 1.5)
+
+    def _pathb_us_midday_entry_block_state(self, market: str) -> dict[str, Any]:
+        """미 동부 정오(기본 16시 UTC) US 신규 진입 제출 차단 상태.
+
+        live 실측(5/1~6/9): 16시 UTC 진입 평균 -0.43%, 승률 31%. 기존 포지션 관리와
+        waiting 플랜 유지에는 영향 없고, 해당 시간대의 zone-hit 제출만 보류한다.
+        """
+        market_key = str(market or "").upper()
+        if market_key != "US":
+            return {"active": False, "blocked_now": False}
+        if not self._runtime_bool("US_MIDDAY_ENTRY_BLOCK_ENABLED", True):
+            return {"active": False, "blocked_now": False}
+        block_hour = self._runtime_int("US_MIDDAY_ENTRY_BLOCK_UTC_HOUR", 16)
+        utc_hour = datetime.now(timezone.utc).hour
+        return {
+            "active": True,
+            "blocked_now": utc_hour == block_hour,
+            "utc_hour": utc_hour,
+            "block_hour_utc": block_hour,
+            "reason": "US_MIDDAY_ENTRY_BLOCK",
+        }
+
     def _entry_scan_broker_truth_gate(self, market: str) -> dict[str, Any]:
         market_key = str(market or "").upper()
         details: dict[str, Any] = {
@@ -2060,6 +2085,7 @@ class PathBRuntime:
                     prompt_stage="PRE_SESSION",
                     prompt_version="pathb_price_v1.0",
                     min_confidence=float(self.config.pathb_min_confidence),
+                    min_reward_risk=self._pathb_min_reward_risk(),
                 )
                 if plan is None:
                     self._record_blocked(
@@ -2787,6 +2813,8 @@ class PathBRuntime:
         )
         risk_off_submitted_in_scan = 0
         risk_off_blocked_tickers: list[str] = []
+        midday_block_state = self._pathb_us_midday_entry_block_state(market)
+        midday_blocked_tickers: list[str] = []
         if bool(burst_cap.get("active")):
             def _confidence_sort_value(item: tuple[int, dict[str, Any], PricePlan]) -> float:
                 try:
@@ -2932,6 +2960,37 @@ class PathBRuntime:
                     plan.path_run_id,
                 )
                 continue
+            if bool(midday_block_state.get("blocked_now")):
+                midday_blocked_tickers.append(plan.ticker)
+                plan_data = dict(run.get("plan") or {})
+                blocked_at = datetime.now(KST)
+                if self._pathb_risk_origin_block_log_allowed(plan_data, "US_MIDDAY_ENTRY_BLOCK", now=blocked_at):
+                    self.store.update_path_run(
+                        plan.path_run_id,
+                        plan={
+                            "last_submit_block_reason": "US_MIDDAY_ENTRY_BLOCK",
+                            "last_submit_block_at": blocked_at.isoformat(timespec="seconds"),
+                            "last_submit_block_log_reason": "US_MIDDAY_ENTRY_BLOCK",
+                            "last_submit_block_log_at": blocked_at.isoformat(timespec="seconds"),
+                        },
+                        merge_plan=True,
+                    )
+                    self._record_blocked(
+                        market,
+                        plan.ticker,
+                        plan.decision_id,
+                        "US_MIDDAY_ENTRY_BLOCK",
+                        {
+                            **self._execution_safety_payload(),
+                            **midday_block_state,
+                            "stage": "pathb_waiting_scan_zone_hit",
+                            "price": float(current or 0.0),
+                            "limit_price": float(signal.limit_price or 0.0),
+                            "signal_reason": str(signal.reason or ""),
+                        },
+                        plan.path_run_id,
+                    )
+                continue
             if self._submit_buy(plan, signal):
                 burst_submitted += 1
                 if risk_off_enforced:
@@ -2957,6 +3016,13 @@ class PathBRuntime:
                 f"mode={risk_off_scan_state.get('market_mode')} cap={risk_off_cap_limit} "
                 f"committed_baseline={risk_off_committed_baseline} submitted={risk_off_submitted_in_scan} "
                 f"count={len(risk_off_blocked_tickers)} tickers={sample}"
+            )
+        if midday_blocked_tickers:
+            sample = ",".join(midday_blocked_tickers[:8])
+            log.warning(
+                f"[PathB 미 정오 진입 보류] {market} utc_hour={midday_block_state.get('utc_hour')} "
+                f"block_hour={midday_block_state.get('block_hour_utc')} "
+                f"count={len(midday_blocked_tickers)} tickers={sample}"
             )
 
     def reconcile_buy_pending_cancel_above(self, market: str, *, force: bool = False) -> dict[str, Any]:

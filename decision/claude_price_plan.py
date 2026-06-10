@@ -275,6 +275,7 @@ def parse_plan_from_claude(
     prompt_stage: str = "PRE_SESSION",
     prompt_version: str = "pathb_price_v1",
     min_confidence: float | None = None,
+    min_reward_risk: float | None = None,
 ) -> tuple[PricePlan | None, list[str]]:
     if not isinstance(raw, dict):
         return None, ["raw_plan_not_object"]
@@ -321,7 +322,10 @@ def parse_plan_from_claude(
         )
     except Exception as exc:
         return None, [f"parse_error:{exc}"]
-    errors = plan.validate(min_confidence=min_confidence)
+    if min_reward_risk is not None:
+        errors = plan.validate(min_confidence=min_confidence, min_reward_risk=min_reward_risk)
+    else:
+        errors = plan.validate(min_confidence=min_confidence)
     if errors:
         return None, errors
     return plan, []
