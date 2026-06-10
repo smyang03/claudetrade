@@ -18417,7 +18417,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "scorer_config_hash": _scorer_config_hash(row, components),
                 "candidate_pool_version": row.get("candidate_pool_version") or (meta or {}).get("_candidate_quality_trainer_version", ""),
                 "prompt_pool_version": row.get("prompt_pool_version") or (meta or {}).get("_prompt_pool_version", ""),
-                "candidate_source": row.get("candidate_source") or row.get("source") or "",
+                # 스크리너 채널 attribution: US=most_actives/day_gainers/day_losers,
+                # KR=volume_rank/prev_cache/fallback_universe. 채널별 forward 성과 측정의 전제.
+                "candidate_source": row.get("candidate_source") or row.get("source") or row.get("category") or "",
                 "candidate_age_min": row.get("candidate_age_min"),
                 "price_change_since_first_seen_pct": row.get("price_change_since_first_seen_pct"),
                 "freshness_verdict": row.get("freshness_verdict"),

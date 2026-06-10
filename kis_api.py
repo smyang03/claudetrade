@@ -3709,7 +3709,12 @@ def _load_kr_screen_cache() -> list:
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
         if cached.get("date") not in (today, yesterday):
             return []
-        return cached.get("candidates", [])
+        rows = cached.get("candidates", [])
+        # 채널 attribution: 캐시 경유 후보는 prev_cache로 구분 (원본 category가 있으면 유지)
+        for row in rows:
+            if isinstance(row, dict) and not row.get("category"):
+                row["category"] = "prev_cache"
+        return rows
     except Exception:
         return []
 
@@ -3970,6 +3975,7 @@ def _kis_volume_rank(
                 "volume":      int(it.get("acml_vol", 0)),
                 "vol_ratio":   float(it.get("vol_tnrt", 1.0)),
                 "market_type": _mkt_type,
+                "category":    "volume_rank",
             })
         except (ValueError, TypeError):
             continue
@@ -4070,6 +4076,7 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
                             "price": 0, "change_rate": 0.0,
                             "volume": 0, "vol_ratio": 1.0,
                             "market_type": "KOSPI",
+                            "category": "fallback_universe",
                         })
                         seen.add(ticker)
                     if len(merged) >= reserve_n:
@@ -4142,6 +4149,7 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
                             "price": 0, "change_rate": 0.0,
                             "volume": 0, "vol_ratio": 1.0,
                             "market_type": "KOSPI",
+                            "category": "fallback_universe",
                         })
                         existing.add(ticker)
                     if len(result) >= reserve_n:
@@ -4180,7 +4188,8 @@ def screen_market_kr(token: str, top_n: int = 30, mode: str = "NEUTRAL") -> list
             _write_price_collection_priority("KR", out, source="cache", mode=mode)
             return out
         out = _apply_product_filter([
-            {"ticker": t, "name": t, "price": 0, "change_rate": 0.0, "volume": 0, "vol_ratio": 1.0}
+            {"ticker": t, "name": t, "price": 0, "change_rate": 0.0, "volume": 0, "vol_ratio": 1.0,
+             "category": "fallback_universe"}
             for t in _KR_FALLBACK_UNIVERSE
         ], "fallback")[:top_n]
         _write_price_collection_priority("KR", out, source="fallback", mode=mode)
