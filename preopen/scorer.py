@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 
@@ -20,6 +21,17 @@ def grade_from_score(score: float, *, excluded: bool = False) -> str:
     if score >= 0.50:
         return "B"
     return "C"
+
+
+def _weak_news_penalty() -> float:
+    """broad_weak/weak 뉴스 conviction 감점 폭 (#6, enforce-conservative).
+
+    0이면 비활성(감점 없음). 기본 0.05는 analyst_news(+0.05)와 대칭되는 보수적 값.
+    """
+    try:
+        return max(0.0, float(os.getenv("PREOPEN_WEAK_NEWS_PENALTY", "0.05") or 0.05))
+    except Exception:
+        return 0.05
 
 
 def _apply_news_quality_score(
@@ -54,6 +66,12 @@ def _apply_news_quality_score(
             or "broad_weak" in existing_news_tags
         ):
             quality_tags.append("weak_news")
+            # #6: broad_weak/weak 뉴스 conviction 감점(enforce-conservative).
+            # 강한 catalyst(+0.12)/analyst(+0.05)와 대칭되는 보수적 감점, env로 롤백 가능.
+            penalty = _weak_news_penalty()
+            if penalty > 0:
+                score -= penalty
+                reasons.append("weak_news_penalty")
     return score
 
 

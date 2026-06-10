@@ -431,5 +431,52 @@ class PreopenNewsEnrichmentTests(unittest.TestCase):
         self.assertEqual(loaded["candidates"][0]["news_signal_type"], "direct_catalyst")
 
 
+class WeakNewsConvictionPenaltyTests(unittest.TestCase):
+    def _weak_news_candidate(self) -> dict:
+        return {
+            "ticker": "AAPL",
+            "market": "US",
+            "extended_change_pct": 4.0,
+            "extended_dollar_volume": 5_000_000,
+            "spread_pct": 0.2,
+            "news_or_earnings_flag": True,
+            "news_prompt_eligible": False,
+            "news_signal_type": "theme_broad",
+        }
+
+    def test_weak_news_applies_conservative_penalty_by_default(self) -> None:
+        from preopen.scorer import score_us_candidate
+
+        with patch.dict("os.environ", {"PREOPEN_WEAK_NEWS_PENALTY": "0"}, clear=False):
+            baseline = score_us_candidate(self._weak_news_candidate())
+        with patch.dict("os.environ", {"PREOPEN_WEAK_NEWS_PENALTY": "0.05"}, clear=False):
+            penalized = score_us_candidate(self._weak_news_candidate())
+
+        self.assertIn("weak_news", baseline["quality_tags"])
+        self.assertNotIn("weak_news_penalty", baseline["preopen_reason"])
+        self.assertIn("weak_news_penalty", penalized["preopen_reason"])
+        self.assertAlmostEqual(
+            baseline["preopen_score"] - penalized["preopen_score"], 0.05, places=4
+        )
+
+    def test_weak_news_penalty_zero_disables_for_kr(self) -> None:
+        from preopen.scorer import score_kr_candidate
+
+        candidate = {
+            "ticker": "005930",
+            "market": "KR",
+            "extended_change_pct": 3.0,
+            "prior_day_traded_value": 10_000_000_000,
+            "news_or_earnings_flag": True,
+            "news_prompt_eligible": False,
+            "news_quality": "weak",
+        }
+        with patch.dict("os.environ", {"PREOPEN_WEAK_NEWS_PENALTY": "0"}, clear=False):
+            result = score_kr_candidate(dict(candidate))
+
+        self.assertIn("weak_news", result["quality_tags"])
+        self.assertNotIn("weak_news_penalty", result["preopen_reason"])
+
+
 if __name__ == "__main__":
     unittest.main()
