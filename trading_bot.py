@@ -3678,6 +3678,44 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return "mean_reversion_ma60_unconfirmed", strategy, evidence
         return "", strategy, evidence
 
+    def _selection_us_midrange_trap_reason(
+        self,
+        market: str,
+        ticker: str,
+        meta: dict,
+        mode: str,
+    ) -> tuple[str, str, dict]:
+        """US 당일 +2~5% 중간 모멘텀 함정 구간 trade_ready 강등.
+
+        live 실측(5/10~6/9, trade_ready n=247): 해당 구간 forward_3d -4.92%(n=41).
+        +10% 이상 강러너(+1.17%)와 달리 상승분 소진 후 지속력이 없는 구간.
+        KR 미적용 — US forward 데이터 기반이라 시장 분리 유지.
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        strategy = self._selection_recommended_strategy_runtime(market_key, ticker, meta, None)
+        if market_key != "US":
+            return "", strategy, {}
+        if not self._runtime_bool("SELECTION_US_MIDRANGE_TRAP_GUARD_ENABLED", True):
+            return "", strategy, {}
+        features = self._selection_ticker_feature_row(market_key, ticker, meta)
+        change_pct = self._selection_optional_float(features.get("change_pct"))
+        if change_pct is None:
+            change_pct = self._selection_optional_float(features.get("change_rate"))
+        min_pct = self._runtime_float("SELECTION_US_MIDRANGE_TRAP_MIN_PCT", 2.0)
+        max_pct = self._runtime_float("SELECTION_US_MIDRANGE_TRAP_MAX_PCT", 5.0)
+        evidence = {
+            "strategy": strategy,
+            "change_pct": change_pct,
+            "trap_min_pct": min_pct,
+            "trap_max_pct": max_pct,
+        }
+        if change_pct is None:
+            # 결측은 거르지 않는다 — 이 guard는 확인된 함정 구간만 차단
+            return "", strategy, evidence
+        if min_pct <= change_pct < max_pct:
+            return "us_midrange_momentum_trap", strategy, evidence
+        return "", strategy, evidence
+
     def _demote_selection_quality_action(self, market: str, meta: dict, ticker_key: str, reason: str, evidence: dict | None = None) -> None:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         plan_a_actions = {"BUY_READY", "PROBE_READY"}
@@ -3771,6 +3809,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         for ticker in ready_candidates:
             key = self._selection_ticker_key(market_key, ticker)
             reason, strategy, evidence = self._selection_mean_reversion_quality_reason(market_key, ticker, meta, mode)
+            if not reason:
+                reason, strategy, evidence = self._selection_us_midrange_trap_reason(market_key, ticker, meta, mode)
             if not reason:
                 filtered.append(ticker)
                 continue

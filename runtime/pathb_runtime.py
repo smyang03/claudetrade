@@ -2099,6 +2099,12 @@ class PathBRuntime:
                         "CLAUDE_PRICE_INVALID",
                         {"errors": errors, "raw_plan": raw_plan, "shadow_registration": bool(shadow_registration)},
                     )
+                    # 운영자 가시 로그 — 취소된 플랜 29건이 사후 +1.22% 도주(5/1~6/9).
+                    # 가격 피드/플랜 품질 어느 쪽 문제인지 사유로 즉시 식별 가능해야 한다.
+                    log.warning(
+                        f"[PathB 플랜 무효] {market} {key} CLAUDE_PRICE_INVALID "
+                        f"사유={','.join(str(e) for e in (errors or []))[:200]}"
+                    )
                     continue
                 registration_gate = self._pathb_registration_price_gate(
                     plan,

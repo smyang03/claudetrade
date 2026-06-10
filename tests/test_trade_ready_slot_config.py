@@ -434,6 +434,89 @@ class TradeReadySlotConfigTests(unittest.TestCase):
         self.assertEqual(normalized["trade_ready"], ["BB"])
         self.assertNotIn("BB", normalized["_runtime_filtered_trade_ready"])
 
+    def test_us_midrange_trap_guard_demotes_2_to_5_pct_movers(self) -> None:
+        bot = self._bot()
+        meta = {
+            "watchlist": ["AAA", "BBB", "CCC", "DDD"],
+            "trade_ready": ["AAA", "BBB", "CCC", "DDD"],
+            "recommended_strategy": {
+                "AAA": "momentum",
+                "BBB": "momentum",
+                "CCC": "momentum",
+                "DDD": "momentum",
+            },
+            # AAA +3.5%(함정 구간) / BBB +1.0%(통과) / CCC +7.0%(통과) / DDD 결측(통과)
+            "change_pct": {"AAA": 3.5, "BBB": 1.0, "CCC": 7.0},
+            "candidate_actions": [
+                {"ticker": "AAA", "action": "BUY_READY", "strategy": "momentum"},
+                {"ticker": "BBB", "action": "BUY_READY", "strategy": "momentum"},
+                {"ticker": "CCC", "action": "BUY_READY", "strategy": "momentum"},
+                {"ticker": "DDD", "action": "BUY_READY", "strategy": "momentum"},
+            ],
+            "_candidate_action_routes": [
+                {"ticker": "AAA", "final_action": "BUY_READY", "strategy": "momentum"},
+                {"ticker": "BBB", "final_action": "BUY_READY", "strategy": "momentum"},
+                {"ticker": "CCC", "final_action": "BUY_READY", "strategy": "momentum"},
+                {"ticker": "DDD", "final_action": "BUY_READY", "strategy": "momentum"},
+            ],
+        }
+
+        env = {
+            "SELECTION_US_MIDRANGE_TRAP_GUARD_ENABLED": "true",
+            "SELECTION_US_MIDRANGE_TRAP_MIN_PCT": "2",
+            "SELECTION_US_MIDRANGE_TRAP_MAX_PCT": "5",
+            # momentum slot cap에 잘리지 않게 확보 — 이 테스트는 trap guard만 검증
+            "US_BALANCED_TRADE_READY_SLOT_MOMENTUM": "4",
+            "US_BALANCED_TRADE_READY_SLOT_TOTAL": "8",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            normalized = bot._normalize_selection_meta_runtime("US", meta, meta["watchlist"], mode="NEUTRAL")
+
+        self.assertNotIn("AAA", normalized["trade_ready"])
+        self.assertIn("BBB", normalized["trade_ready"])
+        self.assertIn("CCC", normalized["trade_ready"])
+        self.assertIn("DDD", normalized["trade_ready"])
+        self.assertEqual(
+            normalized["_runtime_filtered_trade_ready"]["AAA"],
+            "selection_quality:us_midrange_momentum_trap",
+        )
+        aaa_action = next(item for item in normalized["candidate_actions"] if item["ticker"] == "AAA")
+        self.assertEqual(aaa_action["action"], "WATCH")
+
+    def test_us_midrange_trap_guard_does_not_apply_to_kr(self) -> None:
+        bot = self._bot()
+        meta = {
+            "watchlist": ["005930"],
+            "trade_ready": ["005930"],
+            "recommended_strategy": {"005930": "gap_pullback"},
+            "change_pct": {"005930": 3.5},
+            "candidate_actions": [{"ticker": "005930", "action": "BUY_READY", "strategy": "gap_pullback"}],
+            "_candidate_action_routes": [{"ticker": "005930", "final_action": "BUY_READY", "strategy": "gap_pullback"}],
+        }
+
+        with patch.dict(os.environ, {"SELECTION_US_MIDRANGE_TRAP_GUARD_ENABLED": "true"}, clear=False):
+            normalized = bot._normalize_selection_meta_runtime("KR", meta, meta["watchlist"], mode="NEUTRAL")
+
+        self.assertIn("005930", normalized["trade_ready"])
+        self.assertNotIn("005930", normalized["_runtime_filtered_trade_ready"])
+
+    def test_us_midrange_trap_guard_disabled_keeps_candidates(self) -> None:
+        bot = self._bot()
+        meta = {
+            "watchlist": ["AAA"],
+            "trade_ready": ["AAA"],
+            "recommended_strategy": {"AAA": "momentum"},
+            "change_pct": {"AAA": 3.5},
+            "candidate_actions": [{"ticker": "AAA", "action": "BUY_READY", "strategy": "momentum"}],
+            "_candidate_action_routes": [{"ticker": "AAA", "final_action": "BUY_READY", "strategy": "momentum"}],
+        }
+
+        with patch.dict(os.environ, {"SELECTION_US_MIDRANGE_TRAP_GUARD_ENABLED": "false"}, clear=False):
+            normalized = bot._normalize_selection_meta_runtime("US", meta, meta["watchlist"], mode="NEUTRAL")
+
+        self.assertIn("AAA", normalized["trade_ready"])
+        self.assertNotIn("AAA", normalized["_runtime_filtered_trade_ready"])
+
 
 if __name__ == "__main__":
     unittest.main()
