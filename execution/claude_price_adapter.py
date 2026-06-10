@@ -295,16 +295,21 @@ class ClaudePriceAdapter:
         execution_id: str,
         runtime_mode: str,
         brain_snapshot_id: str,
+        usd_krw: float = 0.0,
     ) -> None:
+        fill_plan: dict = {
+            "actual_entry_price": float(price or 0),
+            "filled_qty": int(qty or 0),
+            "entry_execution_id": execution_id,
+            "filled_at": utc_now_iso(),
+        }
+        if float(usd_krw or 0) > 0:
+            # 진입 시점 환율 — 청산 시 net 손익(환차 포함) 계산에 사용
+            fill_plan["usd_krw_at_fill"] = round(float(usd_krw), 2)
         self.store.update_path_run(
             path_run_id,
             status="FILLED",
-            plan={
-                "actual_entry_price": float(price or 0),
-                "filled_qty": int(qty or 0),
-                "entry_execution_id": execution_id,
-                "filled_at": utc_now_iso(),
-            },
+            plan=fill_plan,
             merge_plan=True,
         )
         self._append_event(

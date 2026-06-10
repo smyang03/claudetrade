@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -11,6 +12,22 @@ from lifecycle.models import LifecycleEventType
 
 
 KST = ZoneInfo("Asia/Seoul")
+
+
+def _env_rate(name: str, default: float) -> float:
+    try:
+        raw = str(os.getenv(name, "") or "").strip()
+        return float(raw) if raw else float(default)
+    except Exception:
+        return float(default)
+
+
+def _fee_rates_for_market(market: str) -> tuple[float, float]:
+    """(매수율, 매도율). KR 매도는 거래세 포함. US는 편도 동일율 (운영자 확인값)."""
+    if str(market or "").upper() == "US":
+        per_side = _env_rate("US_FEE_RATE_PER_SIDE", 0.0025)
+        return per_side, per_side
+    return _env_rate("KR_FEE_RATE_BUY", 0.00015), _env_rate("KR_FEE_RATE_SELL", 0.00195)
 
 
 @dataclass(frozen=True)
@@ -200,6 +217,41 @@ class ClaudePriceSellManager:
             },
         )
 
+    def _close_cost_meta(self, path_run_id: str, *, exit_native: float, usd_krw: float = 0.0) -> dict[str, Any]:
+        """수수료/환율 반영 net 손익 추정. 입력 부족 시 빈 dict (gross 기록은 불변)."""
+        run = self.store.find_path_run(path_run_id) or {}
+        plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+        market = str(run.get("market") or "").upper()
+        entry = float(plan.get("actual_entry_price") or 0)
+        qty = float(plan.get("filled_qty") or 0)
+        exit_px = float(exit_native or 0)
+        if entry <= 0 or exit_px <= 0 or qty <= 0:
+            return {}
+        buy_rate, sell_rate = _fee_rates_for_market(market)
+        fee_pct_round_trip = (buy_rate + sell_rate) * 100.0
+        pnl_pct_gross = (exit_px / entry - 1.0) * 100.0
+        meta: dict[str, Any] = {
+            "fee_pct_round_trip": round(fee_pct_round_trip, 4),
+            "pnl_pct_net_est": round(pnl_pct_gross - fee_pct_round_trip, 4),
+        }
+        if market == "US":
+            entry_fx = float(plan.get("usd_krw_at_fill") or 0) or float(usd_krw or 0)
+            exit_fx = float(usd_krw or 0) or entry_fx
+            if entry_fx <= 0 or exit_fx <= 0:
+                return meta
+            entry_cost_krw = entry * qty * entry_fx
+            exit_value_krw = exit_px * qty * exit_fx
+            meta["entry_fx"] = round(entry_fx, 2)
+            meta["exit_fx"] = round(exit_fx, 2)
+            meta["fx_change_pct"] = round((exit_fx / entry_fx - 1.0) * 100.0, 4)
+        else:
+            entry_cost_krw = entry * qty
+            exit_value_krw = exit_px * qty
+        fee_krw_est = entry_cost_krw * buy_rate + exit_value_krw * sell_rate
+        meta["fee_krw_est"] = round(fee_krw_est, 0)
+        meta["pnl_krw_net_est"] = round(exit_value_krw - entry_cost_krw - fee_krw_est, 0)
+        return meta
+
     def mark_closed(
         self,
         path_run_id: str,
@@ -211,7 +263,12 @@ class ClaudePriceSellManager:
         brain_snapshot_id: str,
         execution_id: str = "",
         position_id: str = "",
+        usd_krw: float = 0.0,
     ) -> None:
+        try:
+            cost_meta = self._close_cost_meta(path_run_id, exit_native=price, usd_krw=usd_krw)
+        except Exception:
+            cost_meta = {}
         self.store.update_path_run(
             path_run_id,
             status="CLOSED",
@@ -221,6 +278,7 @@ class ClaudePriceSellManager:
                 "close_reason": close_reason,
                 "exit_execution_id": execution_id,
                 "exit_fill_confirmed": bool(execution_id),
+                **cost_meta,
             },
             merge_plan=True,
         )
@@ -233,7 +291,12 @@ class ClaudePriceSellManager:
             position_id=position_id or None,
             reason_code=close_reason,
             path_status="CLOSED",
-            extra={"close_reason": close_reason, "price": float(price or 0), "pnl_pct": float(pnl_pct or 0)},
+            extra={
+                "close_reason": close_reason,
+                "price": float(price or 0),
+                "pnl_pct": float(pnl_pct or 0),
+                **cost_meta,
+            },
         )
         if close_reason == "CLOSED_CLAUDE_PRICE_TARGET":
             event_type = LifecycleEventType.CLAUDE_PRICE_TARGET_HIT

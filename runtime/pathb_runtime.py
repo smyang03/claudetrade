@@ -824,6 +824,10 @@ class PathBRuntime:
             log.info(message, extra={"extra": {**self._execution_safety_payload(), **state}})
         return state
 
+    def _pathb_fill_fx(self, market: str) -> float:
+        """US 체결/청산 시점 환율 — net 손익(수수료+환차) 기록용. KR은 0."""
+        return float(self._usd_krw() or 0) if str(market or "").upper() == "US" else 0.0
+
     def _pathb_min_reward_risk(self) -> float:
         # rr<1.5 플랜 등록 차단 — live 실측: rr<1.5 평균 +0.02%(수수료 차감 시 음수), rr>=2 평균 +0.74%
         return self._runtime_float("PATHB_MIN_REWARD_RISK", 1.5)
@@ -3325,6 +3329,7 @@ class PathBRuntime:
             execution_id=str(order.get("v2_execution_id", "") or order.get("order_no", "") or ""),
             runtime_mode=self.mode,
             brain_snapshot_id=self._brain_snapshot_id(str(order.get("market", run.get("market", "KR")) or "KR")),
+            usd_krw=self._pathb_fill_fx(str(order.get("market", run.get("market", "KR")) or "KR")),
         )
         self._audit_pathb_buy_fill(run, order, price=price, qty=qty, partial=False)
         self._record_pathb_buy_decision_event(run, order, price=price, qty=qty, partial=False)
@@ -3418,6 +3423,7 @@ class PathBRuntime:
                 brain_snapshot_id=self._brain_snapshot_id(market_key),
                 execution_id=execution_id,
                 position_id=position_id,
+                usd_krw=self._pathb_fill_fx(market_key),
             )
         self.store.update_path_run(
             path_run_id,
@@ -7672,6 +7678,7 @@ class PathBRuntime:
                 execution_id=fill_execution_id,
                 runtime_mode=self.mode,
                 brain_snapshot_id=self._brain_snapshot_id(market),
+                usd_krw=self._pathb_fill_fx(market),
             )
             positions = self._broker_rows_for_ticker(market_data.get("positions", []), market, ticker)
             self._attach_recovered_broker_position(plan, positions, row, filled_qty, fill_price, fill_execution_id)
@@ -7913,6 +7920,7 @@ class PathBRuntime:
                 execution_id=fill_execution_id,
                 runtime_mode=self.mode,
                 brain_snapshot_id=self._brain_snapshot_id(market),
+                usd_krw=self._pathb_fill_fx(market),
             )
             positions = self._broker_rows_for_ticker(market_data.get("positions", []), market, ticker)
             self._attach_recovered_broker_position(plan, positions, row, filled_qty, fill_price, fill_execution_id)
@@ -8830,6 +8838,7 @@ class PathBRuntime:
             price=price_native,
             pnl_pct=pnl_pct,
             runtime_mode=self.mode,
+            usd_krw=self._pathb_fill_fx(market),
             brain_snapshot_id=self._brain_snapshot_id(market),
             execution_id=execution_id,
         )
@@ -10001,6 +10010,7 @@ class PathBRuntime:
                 execution_id=execution_id,
                 runtime_mode=self.mode,
                 brain_snapshot_id=self._brain_snapshot_id(plan.market),
+                usd_krw=self._pathb_fill_fx(plan.market),
             )
         self._attach_recovered_broker_position(plan, positions, row, qty, price, execution_id)
         self._set_order_unknown_resolution(

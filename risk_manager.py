@@ -56,12 +56,19 @@ def _env_int(name: str, default: int = 0) -> int:
     except Exception:
         return int(default)
 
-# 수수료율 (근사값)
-# KR 매수: 0.015%, KR 매도: 0.015% + 증권거래세 0.18% = 0.195%
-# US 매수/매도: 0.015%
+# 수수료율
+# KR 매수: 0.015%, KR 매도: 0.015% + 증권거래세 = 0.195%
+# US: 편도 0.25% (KIS 기본 요율, 2026-06-10 운영자 확인 — 우대 약정 시 env로 조정)
+def _fee_env(name: str, default: float) -> float:
+    try:
+        raw = str(os.getenv(name, "") or "").strip()
+        return float(raw) if raw else float(default)
+    except Exception:
+        return float(default)
+
 FEE_RATES = {
-    "KR": {"buy": 0.00015, "sell": 0.00195},
-    "US": {"buy": 0.00015, "sell": 0.00015},
+    "KR": {"buy": _fee_env("KR_FEE_RATE_BUY", 0.00015), "sell": _fee_env("KR_FEE_RATE_SELL", 0.00195)},
+    "US": {"buy": _fee_env("US_FEE_RATE_PER_SIDE", 0.0025), "sell": _fee_env("US_FEE_RATE_PER_SIDE", 0.0025)},
 }
 
 AUTO_PROFIT_TRAILING_ENABLED = os.getenv("AUTO_PROFIT_TRAILING_ENABLED", "true").lower() in (
