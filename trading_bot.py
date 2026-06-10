@@ -31117,12 +31117,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self.run_cycle(market)
         except Exception as _es_e:
             log.error(f"[entry_scan 오류] {market}: {_es_e}", exc_info=True)
+    @staticmethod
+    def _rescreen_interval_min(market: str) -> int:
+        """시장별 정시 재스크리닝 주기(분). {KR|US}_RESCREEN_INTERVAL_MIN 우선, 없으면 전역값."""
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        raw = str(os.getenv(f"{market_key}_RESCREEN_INTERVAL_MIN", "") or "").strip()
+        if raw:
+            try:
+                return max(1, int(float(raw)))
+            except Exception:
+                pass
+        return _RESCREEN_INTERVAL_MIN
+
     def run_rescreen(self, market: str):
         if not self.session_active or self.current_market != market:
             return
         now_ts = time.time()
         last_ts = float(self._last_rescreen_at.get(market, 0.0) or 0.0)
-        interval_sec = _RESCREEN_INTERVAL_MIN * 60
+        interval_sec = self._rescreen_interval_min(market) * 60
         if last_ts and (now_ts - last_ts) < interval_sec:
             return
         self._last_rescreen_at[market] = now_ts
