@@ -1,6 +1,6 @@
 # TODO Roadmap
 
-Updated: 2026-06-07
+Updated: 2026-06-10
 
 Compact active backlog only. Details and verification notes live in [../ACTIVE_WORK.md](../ACTIVE_WORK.md) and [../IMPROVEMENT_WORKLIST_20260607.md](../IMPROVEMENT_WORKLIST_20260607.md). Do not keep separate active plan files under `docs/reports/`.
 
@@ -26,6 +26,7 @@ Compact active backlog only. Details and verification notes live in [../ACTIVE_W
 | Lessons | Add basis metadata and `truth_status` to lesson candidates after refreshed ledger sync; do not auto-promote to `state/brain.json`. |
 | Hold advisor cost/risk | Review `PRE_CLOSE_CARRY` challenge cost, pending intraday retry state, missed-runup bucket reporting, and read-only PathB block reporting. |
 | Existing audit backlog | Keep actual-prompt outcomes, entry/exit shadow, bucket/source/score quality, zero-holding fixtures, PathB TTL/order matching, sizing reason QA, canonical fallback exclusion, guard tests, tuning cleanup, and fill-truth monitoring open until direct evidence closes them. |
+| US vol_ratio 입력 품질 (#7-2 후속) | US `vol_ratio` 1.0 placeholder를 실값으로. 별도 producer(일평균 거래량) + 세션 진행률 보정. 실행 영향(bucket/continuation/mean_reversion/VB 소비)이므로 live 연결 전 US PathB 성과 확인 + shadow 선행. naive 실값 금지. |
 
 ## P2 / Observe Only
 

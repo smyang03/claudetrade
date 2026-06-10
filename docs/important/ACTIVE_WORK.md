@@ -1,6 +1,6 @@
 # Active Work
 
-Updated: 2026-06-07
+Updated: 2026-06-10
 
 This is the single active work ledger. One-off plans and generated reports are removed after their unfinished work is absorbed here and in [core/TODO_ROADMAP.md](core/TODO_ROADMAP.md). Detailed improvement sequencing from the latest DB/code review lives in [IMPROVEMENT_WORKLIST_20260607.md](IMPROVEMENT_WORKLIST_20260607.md). Completed implementation notes belong in [core/DEVELOPED_WORK.md](core/DEVELOPED_WORK.md) or Git history, not in the active backlog.
 
@@ -55,6 +55,7 @@ This is the single active work ledger. One-off plans and generated reports are r
 | Lesson candidates | Add `basis_source`, `basis_max_session`, `basis_synced_at`, and `truth_status` to manual/pinned lessons after refreshed ledger sync. | Only refreshed ledger-backed lessons become `truth_status=fresh`; no automatic `state/brain.json` promotion. |
 | Hold advisor follow-ups | Review `PRE_CLOSE_CARRY` challenge cost, add pending intraday recheck retry state machine if repeat-call risk is confirmed, connect missed-runup bucket report, and add read-only US PathB block reporting. | Hard stop/loss cap/broker safety bypass retry throttles; no PathB profit ladder, pre-close, or AUTO_SELL_REVIEW cooldown behavior changes without protected review. |
 | Existing strategy-flow backlog | Keep actual-prompt outcomes, entry/exit shadow, bucket/source/score quality, zero-holding fixtures, PathB TTL/order matching QA, sizing reason split QA, canonical fallback exclusion, brain/sub-screener guards, runtime tuning cleanup, and PathB fill-truth monitoring visible until commit/QA or live DB evidence closes them. | Each item closes only with direct code/test or DB/log evidence, not by dated plan text. |
+| US vol_ratio 입력 품질 (선택품질 #7-2 후속) | US 후보 `vol_ratio`가 Yahoo/FMP 스크리너에서 `1.0` placeholder로 고정(`kis_api.py`). 실값은 계측이 아니라 실행 영향 항목(`bot/bucket_classifier.py` US `>=1.1`, `strategy/continuation.py` `>=1.5`, `strategy/mean_reversion.py`, `strategy/volatility_breakout.py`가 소비). 별도 producer로 US 일평균 거래량 수집 + 세션 진행률(elapsed/total) 보정 vol_ratio 산출 → producer→writer→전략 소비처 흐름 일괄 검증. naive 실값(장중 부분거래량/일평균)은 placeholder보다 왜곡되므로 금지. | 실값을 live 전략에 연결하기 전 US PathB 성과 데이터 확인 + shadow 관찰 선행. 장중 부분거래량 보정이 검증된 producer만 소비처에 연결. selection/execution 분리 유지, US PathB 보존 영역 변경 시 `MD 위반 사항` 보고. |
 
 ## P2 / Observe Only
 
