@@ -986,7 +986,31 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(run["status"], "WAITING")
             self.assertEqual(run["path_type"], "claude_price")
 
-    def test_risk_off_pathb_cap_audit_does_not_block_registration(self) -> None:
+    def _risk_off_cap_meta(self) -> dict:
+        return {
+            "trade_ready": ["005930", "000660"],
+            "v2_decision_ids": {"005930": "dec1", "000660": "dec2"},
+            "price_targets": {
+                "005930": {
+                    "buy_zone_low": 52000,
+                    "buy_zone_high": 52500,
+                    "sell_target": 54500,
+                    "stop_loss": 51000,
+                    "hold_days": 1,
+                    "confidence": 0.7,
+                },
+                "000660": {
+                    "buy_zone_low": 120000,
+                    "buy_zone_high": 121000,
+                    "sell_target": 126000,
+                    "stop_loss": 117000,
+                    "hold_days": 1,
+                    "confidence": 0.7,
+                },
+            },
+        }
+
+    def test_risk_off_pathb_cap_enforce_blocks_registration_over_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "events.db")
             bot = _Bot()
@@ -995,31 +1019,33 @@ class PathBRuntimeTests(unittest.TestCase):
             runtime.control_store = _Control()
 
             with patch("runtime.pathb_runtime.log.warning") as warning:
-                runs = runtime.register_from_selection_meta(
-                    "KR",
-                    {
-                        "trade_ready": ["005930", "000660"],
-                        "v2_decision_ids": {"005930": "dec1", "000660": "dec2"},
-                        "price_targets": {
-                            "005930": {
-                                "buy_zone_low": 52000,
-                                "buy_zone_high": 52500,
-                                "sell_target": 54500,
-                                "stop_loss": 51000,
-                                "hold_days": 1,
-                                "confidence": 0.7,
-                            },
-                            "000660": {
-                                "buy_zone_low": 120000,
-                                "buy_zone_high": 121000,
-                                "sell_target": 126000,
-                                "stop_loss": 117000,
-                                "hold_days": 1,
-                                "confidence": 0.7,
-                            },
-                        },
-                    },
-                )
+                runs = runtime.register_from_selection_meta("KR", self._risk_off_cap_meta())
+
+            # CAUTIOUS_BEAR cap=1: 첫 플랜만 등록, 두 번째는 cap 차단
+            self.assertEqual(len(runs), 1)
+            block_messages = [
+                str(call.args[0])
+                for call in warning.call_args_list
+                if call.args and "[PathB risk-off cap block]" in str(call.args[0])
+            ]
+            self.assertTrue(block_messages)
+            state = runtime._pathb_risk_off_cap_audit_state("KR", stage="test")
+            self.assertTrue(state["enforced"])
+            self.assertFalse(state["audit_only"])
+            self.assertEqual(state["risk_off_pathb_cap"], 1)
+
+    def test_risk_off_pathb_cap_audit_only_does_not_block_registration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ", {"PATHB_RISK_OFF_CAP_ENFORCE": "false"}
+        ):
+            store = EventStore(Path(tmp) / "events.db")
+            bot = _Bot()
+            bot.today_judgment = {"consensus": {"mode": "CAUTIOUS_BEAR"}}
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+
+            with patch("runtime.pathb_runtime.log.warning") as warning:
+                runs = runtime.register_from_selection_meta("KR", self._risk_off_cap_meta())
 
             self.assertEqual(len(runs), 2)
             audit_messages = [

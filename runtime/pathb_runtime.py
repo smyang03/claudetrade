@@ -769,10 +769,11 @@ class PathBRuntime:
         current_count = waiting_count + pending_buy_count + open_position_count + order_unknown_count
         projected_count = current_count + len(incoming_keys)
         would_exceed = projected_count > cap
+        enforce = self._runtime_bool("PATHB_RISK_OFF_CAP_ENFORCE", True)
         return {
             "active": True,
-            "audit_only": True,
-            "enforced": False,
+            "audit_only": not enforce,
+            "enforced": enforce,
             "market": market_key,
             "stage": str(stage or ""),
             "market_mode": mode,
@@ -789,7 +790,7 @@ class PathBRuntime:
             "projected_count": projected_count,
             "would_exceed": would_exceed,
             "would_block_count": max(0, projected_count - cap),
-            "reason": "pathb_risk_off_cap_audit_only",
+            "reason": "pathb_risk_off_cap_enforced" if enforce else "pathb_risk_off_cap_audit_only",
         }
 
     def _audit_pathb_risk_off_cap(
@@ -815,7 +816,7 @@ class PathBRuntime:
             f"stage={state.get('stage')} current={state.get('current_count')} "
             f"incoming={state.get('incoming_count')} projected={state.get('projected_count')} "
             f"cap={state.get('risk_off_pathb_cap')} would_exceed={state.get('would_exceed')} "
-            f"audit_only=true"
+            f"audit_only={str(bool(state.get('audit_only'))).lower()} enforced={str(bool(state.get('enforced'))).lower()}"
         )
         if bool(state.get("would_exceed")):
             log.warning(message, extra={"extra": {**self._execution_safety_payload(), **state}})
@@ -1943,12 +1944,17 @@ class PathBRuntime:
         ) -> None:
             if not trade_ready:
                 return
+            risk_off_cap_state: dict[str, Any] = {}
             if not shadow_registration:
-                self._audit_pathb_risk_off_cap(
+                risk_off_cap_state = self._audit_pathb_risk_off_cap(
                     market,
                     stage="pathb_plan_registration",
                     incoming_tickers=list(trade_ready),
                 )
+            risk_off_cap_enforced = bool(risk_off_cap_state.get("active")) and bool(risk_off_cap_state.get("enforced"))
+            risk_off_cap_limit = int(risk_off_cap_state.get("risk_off_pathb_cap") or 0)
+            risk_off_current_count = int(risk_off_cap_state.get("current_count") or 0)
+            risk_off_registered_in_batch = 0
             if not bool(entry_gate.get("allowed", True)):
                 reason = str(entry_gate.get("reason") or "ORDER_UNKNOWN_UNRESOLVED")
                 for ticker in trade_ready:
@@ -2103,6 +2109,29 @@ class PathBRuntime:
                     else {}
                 )
                 plan_overrides = {**context_overrides, **shadow_overrides}
+                if (
+                    risk_off_cap_enforced
+                    and not shadow_registration
+                    and risk_off_current_count + risk_off_registered_in_batch >= risk_off_cap_limit
+                ):
+                    self._record_blocked(
+                        market,
+                        key,
+                        decision_id,
+                        "PATHB_RISK_OFF_CAP",
+                        {
+                            **self._execution_safety_payload(),
+                            **risk_off_cap_state,
+                            "stage": "pathb_plan_registration",
+                            "registered_in_batch": risk_off_registered_in_batch,
+                        },
+                    )
+                    log.warning(
+                        f"[PathB risk-off cap block] {market} {key} mode={risk_off_cap_state.get('market_mode')} "
+                        f"cap={risk_off_cap_limit} current={risk_off_current_count} "
+                        f"registered_in_batch={risk_off_registered_in_batch}"
+                    )
+                    continue
                 path_run_id = self.adapter.register_plan(
                     plan,
                     runtime_mode=self.mode,
@@ -2111,6 +2140,8 @@ class PathBRuntime:
                     plan_overrides=plan_overrides or None,
                 )
                 registered.append(path_run_id)
+                if risk_off_cap_enforced and not shadow_registration:
+                    risk_off_registered_in_batch += 1
                 log.info(
                     f"[PathB {'shadow ' if shadow_registration else ''}plan] {market} {key} "
                     f"zone={plan.buy_zone_low:g}-{plan.buy_zone_high:g} "
