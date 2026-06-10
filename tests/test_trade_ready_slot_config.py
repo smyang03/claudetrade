@@ -252,6 +252,188 @@ class TradeReadySlotConfigTests(unittest.TestCase):
             "strategy_feasibility:session_cooldown:orp_entry_window_expired",
         )
 
+    def test_mean_reversion_quality_guard_demotes_bad_range_without_consuming_slot(self) -> None:
+        bot = self._bot()
+        meta = {
+            "watchlist": ["BB", "SNDK", "MDT"],
+            "trade_ready": ["BB", "SNDK", "MDT"],
+            "recommended_strategy": {
+                "BB": "mean_reversion",
+                "SNDK": "mean_reversion",
+                "MDT": "mean_reversion",
+            },
+            "from_high_pct": {"BB": -5.0, "SNDK": 3.0, "MDT": -1.0},
+            "above_ma60": {"BB": False, "SNDK": True, "MDT": True},
+            "candidate_actions": [
+                {"ticker": "BB", "action": "BUY_READY", "strategy": "mean_reversion"},
+                {"ticker": "SNDK", "action": "BUY_READY", "strategy": "mean_reversion"},
+                {"ticker": "MDT", "action": "BUY_READY", "strategy": "mean_reversion"},
+            ],
+            "_candidate_action_routes": [
+                {"ticker": "BB", "final_action": "BUY_READY", "strategy": "mean_reversion"},
+                {"ticker": "SNDK", "final_action": "BUY_READY", "strategy": "mean_reversion"},
+                {"ticker": "MDT", "final_action": "BUY_READY", "strategy": "mean_reversion"},
+            ],
+        }
+
+        env = {
+            "SELECTION_MEAN_REVERSION_QUALITY_GUARD_ENABLED": "true",
+            "SELECTION_MEAN_REVERSION_QUALITY_GUARD_RISK_ON_ENABLED": "false",
+            "SELECTION_MEAN_REVERSION_FROM_HIGH_MIN_PCT": "-2",
+            "SELECTION_MEAN_REVERSION_FROM_HIGH_MAX_PCT": "1",
+            "SELECTION_MEAN_REVERSION_REQUIRE_FROM_HIGH": "true",
+            "SELECTION_MEAN_REVERSION_REQUIRE_ABOVE_MA60": "false",
+            "SELECTION_MEAN_REVERSION_DEEP_PULLBACK_REQUIRES_ABOVE_MA60": "true",
+            "US_BALANCED_TRADE_READY_SLOT_MEAN_REVERSION": "1",
+            "US_BALANCED_TRADE_READY_SLOT_TOTAL": "5",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            normalized = bot._normalize_selection_meta_runtime("US", meta, meta["watchlist"], mode="NEUTRAL")
+
+        self.assertEqual(normalized["trade_ready"], ["MDT"])
+        self.assertEqual(
+            normalized["_runtime_filtered_trade_ready"]["BB"],
+            "selection_quality:mean_reversion_from_high_below_min",
+        )
+        self.assertEqual(
+            normalized["_runtime_filtered_trade_ready"]["SNDK"],
+            "selection_quality:mean_reversion_from_high_above_max",
+        )
+        self.assertEqual(normalized["_selection_quality_demoted_tickers"], ["BB", "SNDK"])
+        bb_action = next(item for item in normalized["candidate_actions"] if item["ticker"] == "BB")
+        self.assertEqual(bb_action["action"], "WATCH")
+        self.assertEqual(bb_action["selection_quality_demoted_from"], "BUY_READY")
+        sndk_route = next(item for item in normalized["_candidate_action_routes"] if item["ticker"] == "SNDK")
+        self.assertEqual(sndk_route["final_action"], "WATCH")
+        self.assertEqual(sndk_route["selection_quality_reason"], "mean_reversion_from_high_above_max")
+
+    def test_mean_reversion_quality_guard_requires_ma60_confirmation(self) -> None:
+        bot = self._bot()
+        meta = {
+            "watchlist": ["BB", "MDT"],
+            "trade_ready": ["BB", "MDT"],
+            "recommended_strategy": {
+                "BB": "mean_reversion",
+                "MDT": "mean_reversion",
+            },
+            "_final_prompt_pool": [
+                {"ticker": "BB", "from_high_pct": -0.5, "above_ma60": False},
+                {"ticker": "MDT", "from_high_pct": -1.0, "above_ma60": True},
+            ],
+            "candidate_actions": [
+                {"ticker": "BB", "action": "BUY_READY", "strategy": "mean_reversion"},
+                {"ticker": "MDT", "action": "BUY_READY", "strategy": "mean_reversion"},
+            ],
+            "_candidate_action_routes": [
+                {"ticker": "BB", "final_action": "BUY_READY", "strategy": "mean_reversion"},
+                {"ticker": "MDT", "final_action": "BUY_READY", "strategy": "mean_reversion"},
+            ],
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "SELECTION_MEAN_REVERSION_QUALITY_GUARD_ENABLED": "true",
+                "SELECTION_MEAN_REVERSION_FROM_HIGH_MIN_PCT": "-2",
+                "SELECTION_MEAN_REVERSION_FROM_HIGH_MAX_PCT": "1",
+                "SELECTION_MEAN_REVERSION_REQUIRE_FROM_HIGH": "true",
+                "SELECTION_MEAN_REVERSION_REQUIRE_ABOVE_MA60": "true",
+                "US_BALANCED_TRADE_READY_SLOT_MEAN_REVERSION": "1",
+            },
+            clear=False,
+        ):
+            normalized = bot._normalize_selection_meta_runtime("US", meta, meta["watchlist"], mode="BALANCED")
+
+        self.assertEqual(normalized["trade_ready"], ["MDT"])
+        self.assertEqual(
+            normalized["_runtime_filtered_trade_ready"]["BB"],
+            "selection_quality:mean_reversion_ma60_unconfirmed",
+        )
+        bb_action = next(item for item in normalized["candidate_actions"] if item["ticker"] == "BB")
+        self.assertEqual(bb_action["reason"], "selection_quality:mean_reversion_ma60_unconfirmed")
+        self.assertTrue(bb_action["selection_quality_evidence"]["require_above_ma60"])
+
+    def test_mean_reversion_quality_guard_allows_deep_pullback_with_ma60_support(self) -> None:
+        bot = self._bot()
+        meta = {
+            "watchlist": ["BB"],
+            "trade_ready": ["BB"],
+            "recommended_strategy": {"BB": "mean_reversion"},
+            "_final_prompt_pool": [{"ticker": "BB", "from_high_pct": -5.0, "above_ma60": True}],
+            "candidate_actions": [{"ticker": "BB", "action": "BUY_READY", "strategy": "mean_reversion"}],
+            "_candidate_action_routes": [{"ticker": "BB", "final_action": "BUY_READY", "strategy": "mean_reversion"}],
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "SELECTION_MEAN_REVERSION_QUALITY_GUARD_ENABLED": "true",
+                "SELECTION_MEAN_REVERSION_FROM_HIGH_MIN_PCT": "-2",
+                "SELECTION_MEAN_REVERSION_FROM_HIGH_MAX_PCT": "",
+                "SELECTION_MEAN_REVERSION_REQUIRE_FROM_HIGH": "true",
+                "SELECTION_MEAN_REVERSION_REQUIRE_ABOVE_MA60": "false",
+                "SELECTION_MEAN_REVERSION_DEEP_PULLBACK_REQUIRES_ABOVE_MA60": "true",
+            },
+            clear=False,
+        ):
+            normalized = bot._normalize_selection_meta_runtime("US", meta, meta["watchlist"], mode="BALANCED")
+
+        self.assertEqual(normalized["trade_ready"], ["BB"])
+        self.assertNotIn("BB", normalized["_runtime_filtered_trade_ready"])
+
+    def test_mean_reversion_quality_guard_does_not_require_ma60_for_shallow_default(self) -> None:
+        bot = self._bot()
+        meta = {
+            "watchlist": ["PG"],
+            "trade_ready": ["PG"],
+            "recommended_strategy": {"PG": "mean_reversion"},
+            "_final_prompt_pool": [{"ticker": "PG", "from_high_pct": -0.5}],
+            "candidate_actions": [{"ticker": "PG", "action": "BUY_READY", "strategy": "mean_reversion"}],
+            "_candidate_action_routes": [{"ticker": "PG", "final_action": "BUY_READY", "strategy": "mean_reversion"}],
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "SELECTION_MEAN_REVERSION_QUALITY_GUARD_ENABLED": "true",
+                "SELECTION_MEAN_REVERSION_FROM_HIGH_MIN_PCT": "-2",
+                "SELECTION_MEAN_REVERSION_FROM_HIGH_MAX_PCT": "",
+                "SELECTION_MEAN_REVERSION_REQUIRE_FROM_HIGH": "true",
+                "SELECTION_MEAN_REVERSION_REQUIRE_ABOVE_MA60": "false",
+            },
+            clear=False,
+        ):
+            normalized = bot._normalize_selection_meta_runtime("US", meta, meta["watchlist"], mode="BALANCED")
+
+        self.assertEqual(normalized["trade_ready"], ["PG"])
+        self.assertNotIn("PG", normalized["_runtime_filtered_trade_ready"])
+
+    def test_mean_reversion_quality_guard_skips_risk_on_by_default(self) -> None:
+        bot = self._bot()
+        meta = {
+            "watchlist": ["BB"],
+            "trade_ready": ["BB"],
+            "recommended_strategy": {"BB": "mean_reversion"},
+            "from_high_pct": {"BB": -5.0},
+            "above_ma60": {"BB": False},
+            "candidate_actions": [{"ticker": "BB", "action": "BUY_READY", "strategy": "mean_reversion"}],
+            "_candidate_action_routes": [{"ticker": "BB", "final_action": "BUY_READY", "strategy": "mean_reversion"}],
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "SELECTION_MEAN_REVERSION_QUALITY_GUARD_ENABLED": "true",
+                "SELECTION_MEAN_REVERSION_QUALITY_GUARD_RISK_ON_ENABLED": "false",
+                "SELECTION_MEAN_REVERSION_FROM_HIGH_MAX_PCT": "",
+            },
+            clear=False,
+        ):
+            normalized = bot._normalize_selection_meta_runtime("US", meta, meta["watchlist"], mode="MILD_BULL")
+
+        self.assertEqual(normalized["trade_ready"], ["BB"])
+        self.assertNotIn("BB", normalized["_runtime_filtered_trade_ready"])
+
 
 if __name__ == "__main__":
     unittest.main()

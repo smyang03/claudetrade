@@ -3546,6 +3546,257 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self._append_selection_factor(route, "blocking_factors", f"strategy_feasibility:{reason}")
                 self._append_selection_factor(route, "warnings", "strategy_feasibility_applied")
 
+    def _selection_ticker_feature_row(self, market: str, ticker: str, meta: dict) -> dict:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        lookup = self._selection_ticker_key(market_key, ticker)
+        out: dict = {}
+
+        def _present(value: Any) -> bool:
+            return value not in (None, "", [], {})
+
+        def _merge(source: dict) -> None:
+            if not isinstance(source, dict):
+                return
+            for key, value in source.items():
+                if key not in out and _present(value):
+                    out[key] = value
+
+        for field in (
+            "from_high_pct",
+            "from_high_bucket",
+            "above_ma60",
+            "change_pct",
+            "change_rate",
+            "volume_ratio",
+            "vol_ratio",
+            "primary_bucket",
+            "risk_tags",
+        ):
+            values = (meta or {}).get(field)
+            if not isinstance(values, dict):
+                continue
+            value = values.get(lookup)
+            if value is None and market_key == "US":
+                for raw_key, raw_value in values.items():
+                    if self._selection_ticker_key(market_key, raw_key) == lookup:
+                        value = raw_value
+                        break
+            if _present(value):
+                out[field] = value
+
+        for pool_key in ("candidate_actions", "_final_prompt_pool", "final_prompt_pool", "watchlist_candidates", "candidates"):
+            raw_pool = (meta or {}).get(pool_key) or []
+            rows = raw_pool.values() if isinstance(raw_pool, dict) else raw_pool
+            for row in list(rows or []):
+                if not isinstance(row, dict):
+                    continue
+                if self._selection_ticker_key(market_key, row.get("ticker")) != lookup:
+                    continue
+                _merge(row)
+
+        for row in list((getattr(self, "_last_screen_candidates", {}) or {}).get(market_key, []) or []):
+            if not isinstance(row, dict):
+                continue
+            if self._selection_ticker_key(market_key, row.get("ticker")) != lookup:
+                continue
+            _merge(row)
+        return out
+
+    def _selection_optional_float(self, value: Any) -> float | None:
+        if value in (None, ""):
+            return None
+        try:
+            return float(str(value).replace(",", ""))
+        except Exception:
+            return None
+
+    def _selection_optional_bool(self, value: Any) -> bool | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value) != 0.0
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "y", "on"}:
+            return True
+        if text in {"0", "false", "no", "n", "off"}:
+            return False
+        return None
+
+    def _selection_mean_reversion_quality_reason(
+        self,
+        market: str,
+        ticker: str,
+        meta: dict,
+        mode: str,
+    ) -> tuple[str, str, dict]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        strategy = self._selection_recommended_strategy_runtime(market_key, ticker, meta, None)
+        if strategy != "mean_reversion":
+            return "", strategy, {}
+        if not self._runtime_bool("SELECTION_MEAN_REVERSION_QUALITY_GUARD_ENABLED", True):
+            return "", strategy, {}
+        family = _mode_family(mode or (meta or {}).get("consensus_mode") or (meta or {}).get("market_mode") or "")
+        if family == "RISK_ON" and not self._runtime_bool("SELECTION_MEAN_REVERSION_QUALITY_GUARD_RISK_ON_ENABLED", False):
+            return "", strategy, {}
+
+        features = self._selection_ticker_feature_row(market_key, ticker, meta)
+        from_high_pct = self._selection_optional_float(features.get("from_high_pct"))
+        from_high_bucket = str(features.get("from_high_bucket") or "").strip().lower()
+        above_ma60 = self._selection_optional_bool(features.get("above_ma60"))
+        min_from_high = self._runtime_float("SELECTION_MEAN_REVERSION_FROM_HIGH_MIN_PCT", -2.0)
+        max_from_high = self._selection_optional_float(
+            self._runtime_value("SELECTION_MEAN_REVERSION_FROM_HIGH_MAX_PCT", "")
+        )
+        require_from_high = self._runtime_bool("SELECTION_MEAN_REVERSION_REQUIRE_FROM_HIGH", True)
+        require_above_ma60 = self._runtime_bool("SELECTION_MEAN_REVERSION_REQUIRE_ABOVE_MA60", False)
+        deep_pullback_requires_above_ma60 = self._runtime_bool(
+            "SELECTION_MEAN_REVERSION_DEEP_PULLBACK_REQUIRES_ABOVE_MA60",
+            True,
+        )
+        evidence = {
+            "strategy": strategy,
+            "mode_family": family,
+            "from_high_pct": from_high_pct,
+            "from_high_bucket": from_high_bucket,
+            "above_ma60": above_ma60,
+            "min_from_high_pct": min_from_high,
+            "max_from_high_pct": max_from_high,
+            "require_from_high": require_from_high,
+            "require_above_ma60": require_above_ma60,
+            "deep_pullback_requires_above_ma60": deep_pullback_requires_above_ma60,
+        }
+        if require_from_high and from_high_pct is None:
+            return "mean_reversion_from_high_missing", strategy, evidence
+        if from_high_pct is not None and from_high_pct < min_from_high:
+            if not (deep_pullback_requires_above_ma60 and above_ma60 is True):
+                return "mean_reversion_from_high_below_min", strategy, evidence
+        if from_high_pct is not None and max_from_high is not None and max_from_high > min_from_high and from_high_pct > max_from_high:
+            return "mean_reversion_from_high_above_max", strategy, evidence
+        if require_above_ma60 and above_ma60 is not True:
+            return "mean_reversion_ma60_unconfirmed", strategy, evidence
+        return "", strategy, evidence
+
+    def _demote_selection_quality_action(self, market: str, meta: dict, ticker_key: str, reason: str, evidence: dict | None = None) -> None:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        plan_a_actions = {"BUY_READY", "PROBE_READY"}
+        evidence_payload = dict(evidence or {})
+        for action in meta.get("candidate_actions") or []:
+            if not isinstance(action, dict):
+                continue
+            if self._selection_ticker_key(market_key, action.get("ticker")) != ticker_key:
+                continue
+            action_name = str(action.get("action") or "").strip().upper()
+            if action_name not in plan_a_actions:
+                continue
+            action["selection_quality_demoted_from"] = action_name
+            action["selection_quality_applied"] = True
+            action["selection_quality_reason"] = reason
+            action["selection_quality_evidence"] = evidence_payload
+            action["action"] = "WATCH"
+            action["final_action"] = "WATCH"
+            action["route"] = "WATCH"
+            action["size_intent"] = "none"
+            action["action_ceiling_ack"] = "WATCH"
+            action["reason_code"] = "SELECTION_QUALITY"
+            action["reason"] = f"selection_quality:{reason}"
+            action["price_targets"] = {}
+            self._append_selection_factor(action, "blocking_factors", f"selection_quality:{reason}")
+            self._append_selection_factor(action, "warnings", "selection_quality_applied")
+        routes = meta.get("_candidate_action_routes")
+        if isinstance(routes, dict):
+            route = routes.get(ticker_key)
+            raw_route_key = ticker_key
+            if not isinstance(route, dict) and market_key == "US":
+                for raw_key, raw_route in routes.items():
+                    if self._selection_ticker_key(market_key, raw_key) == ticker_key and isinstance(raw_route, dict):
+                        route = raw_route
+                        raw_route_key = raw_key
+                        break
+            if isinstance(route, dict):
+                final_action = str(route.get("final_action") or route.get("action") or "").strip().upper()
+                if final_action in plan_a_actions:
+                    route["selection_quality_demoted_from"] = final_action
+                    route["selection_quality_applied"] = True
+                    route["selection_quality_reason"] = reason
+                    route["selection_quality_evidence"] = evidence_payload
+                    route["final_action"] = "WATCH"
+                    route["action"] = "WATCH"
+                    route["route"] = "WATCH"
+                    route["size_intent"] = "none"
+                    route["reason_code"] = "SELECTION_QUALITY"
+                    route["reason"] = f"selection_quality:{reason}"
+                    route["price_targets"] = {}
+                    self._append_selection_factor(route, "blocking_factors", f"selection_quality:{reason}")
+                    self._append_selection_factor(route, "warnings", "selection_quality_applied")
+                    if raw_route_key != ticker_key:
+                        routes[raw_route_key] = route
+        elif isinstance(routes, list):
+            for route in routes:
+                if not isinstance(route, dict):
+                    continue
+                if self._selection_ticker_key(market_key, route.get("ticker")) != ticker_key:
+                    continue
+                final_action = str(route.get("final_action") or route.get("action") or "").strip().upper()
+                if final_action not in plan_a_actions:
+                    continue
+                route["selection_quality_demoted_from"] = final_action
+                route["selection_quality_applied"] = True
+                route["selection_quality_reason"] = reason
+                route["selection_quality_evidence"] = evidence_payload
+                route["final_action"] = "WATCH"
+                route["action"] = "WATCH"
+                route["route"] = "WATCH"
+                route["size_intent"] = "none"
+                route["reason_code"] = "SELECTION_QUALITY"
+                route["reason"] = f"selection_quality:{reason}"
+                route["price_targets"] = {}
+                self._append_selection_factor(route, "blocking_factors", f"selection_quality:{reason}")
+                self._append_selection_factor(route, "warnings", "selection_quality_applied")
+
+    def _apply_selection_quality_runtime_filter(
+        self,
+        market: str,
+        meta: dict,
+        ready_candidates: list[str],
+        runtime_filtered: dict[str, str],
+        mode: str,
+    ) -> list[str]:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        filtered: list[str] = []
+        demoted: dict[str, str] = {}
+        demoted_from: dict[str, str] = {}
+        demoted_evidence: dict[str, dict] = {}
+        for ticker in ready_candidates:
+            key = self._selection_ticker_key(market_key, ticker)
+            reason, strategy, evidence = self._selection_mean_reversion_quality_reason(market_key, ticker, meta, mode)
+            if not reason:
+                filtered.append(ticker)
+                continue
+            reason_code = f"selection_quality:{reason}"
+            runtime_filtered[ticker] = reason_code
+            demoted[key] = reason_code
+            demoted_from[key] = strategy or ""
+            demoted_evidence[key] = dict(evidence or {})
+            self._demote_selection_quality_action(market_key, meta, key, reason, evidence)
+
+        if demoted:
+            meta["_selection_quality_guard_applied"] = True
+            meta["_selection_quality_demoted_tickers"] = list(demoted.keys())
+            meta["_selection_quality_demoted_reasons"] = demoted
+            meta["_selection_quality_demoted_strategy"] = demoted_from
+            meta["_selection_quality_demoted_evidence"] = demoted_evidence
+            targets = meta.get("price_targets")
+            if isinstance(targets, dict):
+                for key in demoted:
+                    targets.pop(key, None)
+                    if market_key == "US":
+                        for raw_key in list(targets.keys()):
+                            if self._selection_ticker_key(market_key, raw_key) == key:
+                                targets.pop(raw_key, None)
+        return filtered
+
     def _apply_strategy_feasibility_runtime_filter(
         self,
         market: str,
@@ -3699,6 +3950,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 pass
             filtered_ready.append(ticker)
         ready_candidates = filtered_ready
+        ready_candidates = self._apply_selection_quality_runtime_filter(
+            market_key,
+            normalized_meta,
+            ready_candidates,
+            runtime_filtered,
+            mode,
+        )
         slot_config = self._trade_ready_slot_config(mode, market)
         total_cap = min(selection_limits(market)["trade_max"], int(slot_config.get("__total__", len(ready_candidates))))
         slot_counts: dict[str, int] = {}
@@ -17570,6 +17828,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "SUB_SCREENER_PLAN_B_MIN_SCORE",
             "KR_SUB_SCREENER_PLAN_B_MIN_SCORE",
             "US_SUB_SCREENER_PLAN_B_MIN_SCORE",
+            "SELECTION_MEAN_REVERSION_QUALITY_GUARD_ENABLED",
+            "SELECTION_MEAN_REVERSION_QUALITY_GUARD_RISK_ON_ENABLED",
+            "SELECTION_MEAN_REVERSION_FROM_HIGH_MIN_PCT",
+            "SELECTION_MEAN_REVERSION_FROM_HIGH_MAX_PCT",
+            "SELECTION_MEAN_REVERSION_REQUIRE_FROM_HIGH",
+            "SELECTION_MEAN_REVERSION_REQUIRE_ABOVE_MA60",
+            "SELECTION_MEAN_REVERSION_DEEP_PULLBACK_REQUIRES_ABOVE_MA60",
         )
         runtime_cfg = getattr(self, "runtime_config", None)
         values: dict[str, str] = {}
