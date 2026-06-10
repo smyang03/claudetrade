@@ -37575,8 +37575,41 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception as _e:
                 log.warning(f"[KR 스크리너 캐시] session_close 저장 실패: {_e}")
         self._audit_flush_outcomes(market, force_close=True)
+        # v2 성과 원장 자동 동기화 — 수동 실행 의존으로 sync 정지(2026-06-02~06-09 누락) 재발 방지
+        try:
+            self._run_v2_learning_sync_at_session_close(market, today)
+        except Exception as _v2_sync_e:
+            log.warning(f"[v2 learning sync] {market} session_close 동기화 실패: {_v2_sync_e}")
         if hasattr(self, "_active_session_date") and isinstance(self._active_session_date, dict):
             self._active_session_date[market] = None
+
+    def _run_v2_learning_sync_at_session_close(self, market: str, session_date: str) -> None:
+        """장 마감 시 v2_event_store → decisions.db 성과 sync를 자동 실행한다.
+
+        sync 도구가 수동 실행에만 의존하면 freshness가 끊긴다(6월 8일치 청산 누락 사례).
+        별도 프로세스로 실행해 봇 본체와 DB 커넥션/락을 분리한다.
+        """
+        enabled = os.getenv("V2_LEARNING_SYNC_AT_SESSION_CLOSE", "true").lower() in ("1", "true", "yes", "on")
+        if not enabled:
+            return
+        try:
+            start_date = (datetime.strptime(session_date, "%Y-%m-%d") - timedelta(days=10)).strftime("%Y-%m-%d")
+        except Exception:
+            start_date = session_date
+        cmd = [
+            sys.executable,
+            str(Path(__file__).resolve().parent / "tools" / "sync_v2_learning_performance.py"),
+            "--market", str(market or "ALL").upper(),
+            "--runtime-mode", str(getattr(self, "_mode", "live") or "live"),
+            "--start-date", start_date,
+            "--end-date", session_date,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode == 0:
+            log.info(f"[v2 learning sync] {market} {start_date}~{session_date} 동기화 완료")
+        else:
+            tail = (result.stderr or result.stdout or "").strip()[-300:]
+            log.warning(f"[v2 learning sync] {market} 동기화 실패 rc={result.returncode}: {tail}")
 def _in_session_now(market: str) -> bool:
     """현재 KST 시각이 해당 시장 세션 중인지 확인"""
     now = datetime.now(ZoneInfo("Asia/Seoul")).time()
