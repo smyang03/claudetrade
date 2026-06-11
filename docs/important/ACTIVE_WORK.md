@@ -42,8 +42,9 @@ B그룹 — 예정된 데이터 판정:
 5. candidate outcome 라벨 버그 수정 (daily_pending 1,551건 `target_at` 빈 값)
 
 C그룹 — 비용:
-6. KR rescreen 임시 감속 (진입 off 동안 30분→120분, 일 -$1~1.5) — KR 재개 시 원복 주석 필수
+6. ~~KR rescreen 임시 감속~~ — 해소 (2026-06-11 운영자 결정으로 KR PathB 재개, 30분 rescreen이 유효해짐)
 7. C1 selection prompt caching 착수 (paper 검증 포함 — P1 항목 참조)
+8. KR 개장 판단 중복 검토 — 09:05 세션판단 + 09:07 market_open_refresh가 2분 간격 풀세트(12콜) 중복 (일 ~$0.3)
 
 D그룹 — 설계만 (라이브 연결은 6/24):
 8. 시장 급반전 보호 미니판 — Claude invalid_if의 "broad market reverses"를 시스템이 모니터링하지
@@ -66,8 +67,12 @@ D그룹 — 설계만 (라이브 연결은 6/24):
 4. 실적 캘린더 연결 (보유 포지션 실적 경고 + mega_gap 이벤트 태그, PEAD 인프라 재사용)
 5. 1·2가 데이터로 확인된 뒤에만 증자(스케일) 논의 — 검증 전 증자 금지
 
-**운영자 대기 (날짜 무관):** 환전 우대율 확인(US_FEE_RATE_PER_SIDE 조정), KR 재개 기준 확정
-(제안: US net 2주 연속 플러스 + KR shadow 2주 플러스 — 재개 시 preflight KR-off 정책도 동시 복원).
+**운영자 대기 (날짜 무관):** 환전 우대율 확인(US_FEE_RATE_PER_SIDE 조정).
+
+**KR PathB 재개 (2026-06-11 운영자 결정, 동결 예외 — 운영 설정 변경):** 신규 게이트 체계
+(존 -0.5%·rr>=1.5·stop cluster 5) 하에서 KR 재검증. 6/10 중단 사유였던 KR gross 음수는
+구 게이트 시절 데이터라는 판단. 주의: A3 함정구간·rel_vol·mega_gap은 US 전용이라 KR엔 미적용 —
+KR 성과는 존 규칙+rr 게이트만의 효과로 읽어야 함. preflight 정책 KR-on/US-on 복원 완료.
 
 ## Scope Guard
 

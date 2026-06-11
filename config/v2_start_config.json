@@ -382,7 +382,7 @@
     "KR_CONTINUATION_NEW_ENTRY_BLOCK": "true",
     "PATHB_MODE": "min_size_live",
     "PATHB_ENABLED": "true",
-    "PATHB_KR_LIVE_ENABLED": "false",
+    "PATHB_KR_LIVE_ENABLED": "true",
     "KR_CLAUDE_PRICE_LIVE_ENABLED": "false",
     "PATHB_KR_SHADOW_PLAN_ENABLED": "false",
     "KR_CLAUDE_PRICE_SHADOW_PLAN_ENABLED": "false",
