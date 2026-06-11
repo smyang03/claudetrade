@@ -16329,6 +16329,39 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
         return digest_prompt, basis
 
+    def _earnings_exposure_warning(self, market: str) -> str:
+        """보유/활성 플랜 종목의 실적 임박(±2일) 경고 한 줄 — 지뢰 지도의 보유 노출 축."""
+        if str(market or "").upper() != "US":
+            return ""
+        try:
+            from runtime.earnings_calendar import earnings_tag
+
+            exposed: list[str] = []
+            for pos in list(getattr(self.risk, "positions", []) or []):
+                if str(pos.get("market") or "").upper() != "US":
+                    continue
+                ticker = str(pos.get("ticker") or "").strip().upper()
+                tag = earnings_tag(ticker, "US", max_abs_days=2) if ticker else ""
+                if tag:
+                    exposed.append(f"{ticker}({tag.replace('earn=', '')})")
+            pathb = getattr(self, "pathb", None)
+            if pathb is not None:
+                try:
+                    for run in pathb.store.path_runs_for_session("US", self._current_session_date_str("US")):
+                        if str(run.get("status") or "") not in {"CLAUDE_PRICE_WAITING", "WAITING", "ORDER_SENT", "ORDER_ACKED"}:
+                            continue
+                        ticker = str(run.get("ticker") or "").strip().upper()
+                        tag = earnings_tag(ticker, "US", max_abs_days=2) if ticker else ""
+                        if tag and not any(item.startswith(ticker) for item in exposed):
+                            exposed.append(f"{ticker}({tag.replace('earn=', '')})")
+                except Exception:
+                    pass
+            if not exposed:
+                return ""
+            return "실적 임박 노출 주의: " + ", ".join(exposed[:8]) + " — 보유/플랜 유지 여부 판단에 반영"
+        except Exception:
+            return ""
+
     def _build_intraday_context(self, market: str) -> str:
         """장중 재스크리닝용 실시간 시장 컨텍스트 문자열 생성."""
         try:
@@ -16340,6 +16373,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             ops_context = self._format_ops_review_context(market)
             if ops_context:
                 lines.append(ops_context)
+            earnings_warning = self._earnings_exposure_warning(market)
+            if earnings_warning:
+                lines.append(earnings_warning)
             if market == "KR":
                 live_index_ok = False
                 kospi_chg = None

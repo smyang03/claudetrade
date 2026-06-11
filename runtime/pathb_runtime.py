@@ -2132,6 +2132,28 @@ class PathBRuntime:
                         f"max_entry_krw={float(registration_gate.get('max_entry_krw') or 0):.0f}"
                     )
                     continue
+                # 실적 윈도우(D-1~D+1) 신규 등록 보류 — ORCL 2026-06-11 실적 직후
+                # 거래정지 충돌 사건 처방. 캘린더 결측 시 무동작(fail-open).
+                if not shadow_registration:
+                    try:
+                        from runtime.earnings_calendar import earnings_window_block
+
+                        earnings_gate = earnings_window_block(key, market)
+                    except Exception:
+                        earnings_gate = {"blocked": False}
+                    if bool(earnings_gate.get("blocked")):
+                        self._record_blocked(
+                            market,
+                            key,
+                            decision_id,
+                            "EARNINGS_WINDOW_BLOCK",
+                            earnings_gate,
+                        )
+                        log.info(
+                            f"[PathB plan skipped] {market} {key} EARNINGS_WINDOW_BLOCK "
+                            f"실적일={earnings_gate.get('earnings_date')} offset={earnings_gate.get('offset_days')}일"
+                        )
+                        continue
                 origin_dict = origin if isinstance(origin, dict) else {}
                 resolved_shadow_reason = shadow_reason
                 if shadow_registration and shadow_reason != "market_live_disabled":
