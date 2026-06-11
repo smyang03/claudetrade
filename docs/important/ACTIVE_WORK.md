@@ -85,6 +85,16 @@ D그룹 — 설계만 (라이브 연결은 6/24):
   (stop cluster의 다일 버전). 임계는 "연패 중 거래 기대값" 역산 후
 - ④ 타임 스톱 shadow → 6/17: N세션째 손익 정체 포지션의 최종 결말 측정만 (행동 변경 없음)
 
+**웹 리서치 차용 후보 (2026-06-12 등록, 구현은 판정일에):**
+- [6/24] lesson_candidates 계층화 + 중요도 감쇠 — FinMem(arxiv 2311.13743) 차용.
+  오래되고 재확인 안 된 교훈 자동 강등 → brain 자동 승격의 안전한 전 단계
+- [6/24] 존 터치 시점 거래량 방향 확인 — "감소 거래량 눌림 → rvol 급증 반등" 패턴.
+  rel_vol 3단계에서 judge 입력에 추가 → 칼날(IONQ형) vs 건강한 눌림 구분
+- [7월 국면 스위치 설계 입력] Statistical Jump Model 국면 신호(arxiv 2402.05272) —
+  지수+VIX 2변수 경량 통계 국면을 Claude consensus의 독립 제2 의견으로
+- (참고) fractional Kelly 문헌이 7월 사이징 설계(고정 기반+0.7~1.5x 보정) 지지 확인.
+  full Kelly 금지. TradingAgents류 다중 에이전트 구조는 기보유 — 신규 액션 없음
+
 **~2026-06-24 — 2차 데이터 판정:**
 - 채널 ROI (candidate_source 2주치) → most_actives/day_gainers 쿼터 재배분
 - rel_vol 분포·예측력 검증 → 전략 게이트 연결 여부 (US PathB 보호영역, `MD 위반 사항` 절차)
