@@ -4313,9 +4313,8 @@ def _candidate_audit_outcome_checks(mode: str) -> list[CheckResult]:
         # 일 단위 라벨은 목표 거래일 도래 전까지 daily_pending이 정상 상태다.
         # 세션 기준 7일을 넘긴 pending만 "오래된 적체"로 본다 (session_close 자동 갱신 도입 후).
         stale_cutoff = (datetime.now() - timedelta(days=7)).date().isoformat()
-        stale_daily_pending = 0
-        try:
-            if "audit_candidate_rows" in tables:
+        if "audit_candidate_rows" in tables:
+            try:
                 stale_daily_pending = int(
                     conn.execute(
                         """
@@ -4327,8 +4326,16 @@ def _candidate_audit_outcome_checks(mode: str) -> list[CheckResult]:
                     ).fetchone()[0]
                     or 0
                 )
-        except Exception:
-            stale_daily_pending = -1
+            except Exception:
+                stale_daily_pending = -1
+        else:
+            # 세션 날짜를 알 수 없으면 적체 여부 검증 불가 — pending 존재 시 보수적으로 WARN
+            has_any_pending = bool(
+                conn.execute(
+                    "SELECT 1 FROM audit_candidate_outcomes WHERE status='daily_pending' LIMIT 1"
+                ).fetchone()
+            )
+            stale_daily_pending = -1 if has_any_pending else 0
     except Exception as exc:
         return [CheckResult("candidate_audit.outcome_update", "WARN", f"candidate outcome check failed: {exc}")]
     finally:
