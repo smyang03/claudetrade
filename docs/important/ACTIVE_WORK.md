@@ -4,7 +4,22 @@ Updated: 2026-06-11
 
 This is the single active work ledger. One-off plans and generated reports are removed after their unfinished work is absorbed here and in [core/TODO_ROADMAP.md](core/TODO_ROADMAP.md). Detailed improvement sequencing from the latest DB/code review lives in [IMPROVEMENT_WORKLIST_20260607.md](IMPROVEMENT_WORKLIST_20260607.md). Completed implementation notes belong in [core/DEVELOPED_WORK.md](core/DEVELOPED_WORK.md) or Git history, not in the active backlog.
 
-## 변경 동결 + 관찰 주간 (2026-06-11 ~ 06-16, 운영자 확정)
+## 동결 해제 + 6/17 안건 조기 처리 (2026-06-11 운영자 지시 "전부 진행해")
+
+당초 동결이었으나 운영자 지시로 즉시 착수 가능 항목 7건을 6/11에 전부 처리 완료:
+1. ✅ 함정구간 가드 PULLBACK_WAIT 확장 (7f70a8a) — 역산 n=26 중앙값 -1.18% 근거
+2. ✅ net 원장 KIS 체결가 통일 + 저장결측 3종 (cc5f7f4)
+3. ✅ 일 단위 forward 라벨 백로그 자동화 (e7c3b0f) — daily_forward 0 → 51,229건
+4. ✅ C1 selection 프롬프트 캐시 활성 (0745379) — 실 A/B 검증, 정적부 1,342토큰
+5. ✅ 시장 급반전 감지 shadow (1ce5b9b) — enforce 전환은 6/24 판정 유지
+6. ✅ session_evidence_degraded 분리 (4241e32)
+7. ✅ 개장 판단 refresh 중복 방지 + guardian 테스트 env 누수 수정 (e5643c3)
+→ 전체 회귀 2,424 passed, preflight FAIL 0. **봇 재시작 필요** (현 프로세스는 09:32 기동).
+→ 6/17에 남는 것: A1 존 4지표 판정(데이터 필요), A1 코드 게이트 여부.
+→ 6/24 판정 유지: 채널 ROI 쿼터, rel_vol 게이트 연결, mega_gap 승격, 급반전 enforce,
+   PathB 진입 하한(+2% 미만 진입 평균 +0.01% — 역산에서 신규 발견) 검토.
+
+## (이력) 변경 동결 + 관찰 주간 (2026-06-11 ~ 06-16, 운영자 확정 → 6/11 운영자 지시로 해제)
 
 2026-06-10~11 대규모 배포(12커밋: 게이트 3종, KR off, net 원장, A1 존 규칙, rel_vol 체인,
 attribution, mega_gap watch, cap 재설정 15/15/5, stop cluster 5, 1주 예외 100만) 직후라
