@@ -15841,6 +15841,68 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _is_entry_priority_blocked(self, score: float, market: str = "") -> bool:
         cutoff = self._effective_entry_priority_cutoff(market) if market else self._effective_entry_priority_cutoff()
         return bool(self.entry_priority_cutoff_enabled and float(score or 0.0) < cutoff)
+    def _update_market_sharp_reversal_shadow(self, market: str) -> dict:
+        """장중 시장 급반전 감지 — shadow 기본 (6/17 D그룹, enforce 전환은 6/24 판정).
+
+        Claude가 플랜 invalid_if에 적는 "broad market reverses sharply"를 시스템이
+        모니터링하지 않던 갭(6/10 IONQ 패인). 트리거: 주지수가 세션 고점 대비
+        FROM_PEAK_PCT 이상 되밀리거나 절대 ABS_DROP_PCT 이하로 하락.
+        shadow 모드에서는 감지/로그/funnel 기록만 하고 행동을 바꾸지 않는다.
+        """
+        mode = str(os.getenv("MARKET_SHARP_REVERSAL_GUARD_MODE", "shadow") or "shadow").strip().lower()
+        if mode in {"off", "disabled", "false", ""}:
+            return {"mode": mode, "triggered": False}
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            change = self._get_market_change_pct(market_key)
+        except Exception:
+            change = None
+        if change is None:
+            return {"mode": mode, "triggered": False, "reason": "no_index_data"}
+        session_date = ""
+        try:
+            session_date = self._current_session_date_str(market_key)
+        except Exception:
+            pass
+        peaks = getattr(self, "_market_change_session_peak", None)
+        if not isinstance(peaks, dict):
+            peaks = {}
+            self._market_change_session_peak = peaks
+        stored = peaks.get(market_key)
+        if not isinstance(stored, tuple) or stored[0] != session_date:
+            stored = (session_date, float(change))
+        peak = max(float(stored[1]), float(change))
+        peaks[market_key] = (session_date, peak)
+        drop_from_peak = float(change) - peak
+        abs_floor = float(os.getenv("MARKET_SHARP_REVERSAL_ABS_DROP_PCT", "-1.5") or -1.5)
+        peak_drop = float(os.getenv("MARKET_SHARP_REVERSAL_FROM_PEAK_PCT", "-1.0") or -1.0)
+        triggered = float(change) <= abs_floor or drop_from_peak <= peak_drop
+        state = getattr(self, "_market_sharp_reversal_active", None)
+        if not isinstance(state, dict):
+            state = {}
+            self._market_sharp_reversal_active = state
+        was_active = bool(state.get(market_key))
+        state[market_key] = triggered
+        result = {
+            "mode": mode,
+            "triggered": triggered,
+            "index_change_pct": round(float(change), 3),
+            "session_peak_pct": round(peak, 3),
+            "drop_from_peak_pct": round(drop_from_peak, 3),
+        }
+        if triggered and not was_active:
+            log.warning(
+                f"[시장 급반전 감지] {market_key} 지수 {change:+.2f}% "
+                f"(세션 고점 {peak:+.2f}% 대비 {drop_from_peak:+.2f}%p) mode={mode}"
+            )
+            try:
+                self._write_funnel_event("market_sharp_reversal", market_key, result)
+            except Exception:
+                pass
+        elif was_active and not triggered:
+            log.info(f"[시장 급반전 해제] {market_key} 지수 {change:+.2f}%")
+        return result
+
     def _get_market_change_pct(self, market: str, digest: dict = None) -> Optional[float]:
         """digest_raw에서 주 지수 등락률 추출 — KR=KOSPI, US=S&P500. 데이터 없으면 None."""
         if market in {"KR", "US"}:
@@ -31630,6 +31692,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._record_cycle_latency(market, _cycle_started_at, stage="run_cycle", reason="market_mismatch")
             self._leave_market_task(market, "run_cycle")
             return
+        try:
+            self._update_market_sharp_reversal_shadow(market)
+        except Exception:
+            pass
         self._refresh_operational_halt(market)
         _allow_halt_auto_release = self._has_broker_sync_risk(market)
         if self._check_market_halt(
