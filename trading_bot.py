@@ -29328,6 +29328,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     lesson_context=lesson_context,
                     portfolio_info=self._build_portfolio_info(),
                 )
+                self._note_full_judgment_completed(market)
                 consensus = self._apply_consensus_guards(
                     market,
                     judgments,
@@ -31699,6 +31700,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return False
         return not bool(basis.get("live_index_context_ok"))
 
+    def _note_full_judgment_completed(self, market: str) -> None:
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        store = getattr(self, "_last_full_judgment_at", None)
+        if not isinstance(store, dict):
+            store = {}
+            self._last_full_judgment_at = store
+        store[market_key] = datetime.now(KST).replace(tzinfo=None)
+
     def _maybe_refresh_opening_judgment(self, market: str) -> None:
         market = str(market or "").upper()
         if market not in {"KR", "US"} or not self.today_judgment:
@@ -31717,6 +31726,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
         if not self._market_after_open_refresh_time(market):
             return
+        # 직전 풀세트 판단이 방금(기본 10분 내) 끝났으면 refresh 생략 — 개장 직후
+        # 09:05 세션판단 + 09:07 refresh가 2분 간격으로 12콜을 중복 소모하던 문제 (6/17-C8)
+        try:
+            skip_fresh_min = float(self._runtime_float("OPENING_JUDGMENT_REFRESH_SKIP_IF_FRESH_MIN", 10.0))
+            last_at = (getattr(self, "_last_full_judgment_at", {}) or {}).get(market)
+            if last_at is not None and skip_fresh_min > 0:
+                age_min = (datetime.now(KST).replace(tzinfo=None) - last_at).total_seconds() / 60.0
+                if 0 <= age_min < skip_fresh_min:
+                    log.info(
+                        f"[opening judgment refresh 생략] {market} 직전 판단 {age_min:.1f}분 전 완료 "
+                        f"(기준 {skip_fresh_min:.0f}분) — 중복 호출 방지"
+                    )
+                    return
+        except Exception:
+            pass
         attempted = getattr(self, "_opening_judgment_refresh_attempted", None)
         if attempted is None:
             attempted = set()
@@ -36620,6 +36644,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 digest_prompt, brain_summary, correction,
                 market=market, lesson_context=lesson_context, portfolio_info=portfolio_info,
             )
+            self._note_full_judgment_completed(market)
             new_consensus = self._apply_consensus_guards(
                 market,
                 new_judgments,

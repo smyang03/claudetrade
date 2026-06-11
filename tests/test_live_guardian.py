@@ -22,6 +22,16 @@ from tools.live_guardian import (
 
 
 class LiveGuardianTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # run_guardian_once(mode="live")가 실제 .env.live를 override 로드하므로
+        # 테스트 프로세스 env에 운영 설정이 누수돼 이후 테스트(프롬프트 내용 검증 등)를
+        # 오염시킨다. 테스트마다 os.environ을 스냅샷/복원한다.
+        self._environ_backup = dict(os.environ)
+
+    def tearDown(self) -> None:
+        os.environ.clear()
+        os.environ.update(self._environ_backup)
+
     def test_guardian_runtime_outputs_use_runtime_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch("runtime_paths.get_runtime_root", return_value=Path(tmp)):
             heartbeat = _guardian_heartbeat_path("live")
