@@ -2770,6 +2770,9 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
         if candidate_action_section else ""
     )
 
+    # C1 캐시 system 블록 — compact 분기에서만 설정, 그 외 None (단일 프롬프트 유지)
+    selection_system_blocks = None
+
     prompt = f"""{phase_instruction}
 execution_phase: {execution_phase or 'unspecified'}
 오늘 {market} 세션에서 후보를 WATCH와 TRADE_READY로 분리하세요.
@@ -2926,7 +2929,53 @@ PREOPEN WATCH OUTPUT CONTRACT:
                 **compact_candidate_meta,
             }
         )
-        prompt = f"""{phase_instruction}
+        _static_universal_rules = """- Choose only from supplied candidates.
+- Use live execution context and exec= hints as constraints.
+- Treat exec= feas=<strategy>:<ceiling>:<reason> as an execution ceiling for trade_ready decisions.
+- Strong names with poor execution hints should remain WATCH.
+- Use recent selection feedback to calibrate trade_ready aggressiveness.
+- Recent feedback and tuning feedback are calibration only, not permission to chase.
+- ca[].s must be a concrete setup strategy such as momentum, gap_pullback, mean_reversion, opening_range_pullback, volatility_breakout, or continuation.
+- ca[].rc, ca[].blk, and ca[].inv must be short machine codes.
+- Do not output human explanations.
+- KR market: momentum strategy is prohibited in tr (trade_ready). WATCH only.
+- KR market: tickers 078150/264850/024840 are prohibited in tr. WATCH only."""
+        _static_contract_block = (
+            f"{COMMON_DECISION_CONTRACT}\n"
+            f"{HARD_SOFT_RULE_CONTRACT}\n"
+            f"{compact_output_contract(watch_max=compact_watch_max, trade_max=compact_trade_max)}\n\n"
+            f"Universal rules:\n{_static_universal_rules}"
+        )
+        _dynamic_prompt = f"""{phase_instruction}
+execution_phase: {execution_phase or 'unspecified'}
+market: {market}
+mode: {consensus_mode}
+
+Candidates:
+{compact_cand_text}
+{evidence_section}
+
+Market context:
+{digest_prompt[:compact_digest_limit]}{digest_news_section}{intraday_section}{brain_section}{tuner_section}{lesson_section}{selection_feedback[:compact_feedback_limit]}{tuning_feedback_section}
+
+Market-phase rules:
+{phase_rule_block}
+{evidence_rule_block}
+"""
+        # C1 selection 프롬프트 캐시 (2026-06-11): 정적 계약/스키마/공통규칙을 system 블록으로
+        # 분리해 1h TTL 캐시. off면 기존 단일 프롬프트와 동일 텍스트 구성 유지.
+        if _env_bool_flag("SELECTION_PROMPT_CACHE_ENABLED", False):
+            selection_system_blocks = [
+                {
+                    "type": "text",
+                    "text": _static_contract_block,
+                    "cache_control": {"type": "ephemeral", "ttl": "1h"},
+                }
+            ]
+            prompt = _dynamic_prompt
+        else:
+            selection_system_blocks = None
+            prompt = f"""{phase_instruction}
 execution_phase: {execution_phase or 'unspecified'}
 market: {market}
 mode: {consensus_mode}
@@ -2944,17 +2993,7 @@ Market context:
 Rules:
 {phase_rule_block}
 {evidence_rule_block}
-- Choose only from supplied candidates.
-- Use live execution context and exec= hints as constraints.
-- Treat exec= feas=<strategy>:<ceiling>:<reason> as an execution ceiling for trade_ready decisions.
-- Strong names with poor execution hints should remain WATCH.
-- Use recent selection feedback to calibrate trade_ready aggressiveness.
-- Recent feedback and tuning feedback are calibration only, not permission to chase.
-- ca[].s must be a concrete setup strategy such as momentum, gap_pullback, mean_reversion, opening_range_pullback, volatility_breakout, or continuation.
-- ca[].rc, ca[].blk, and ca[].inv must be short machine codes.
-- Do not output human explanations.
-- KR market: momentum strategy is prohibited in tr (trade_ready). WATCH only.
-- KR market: tickers 078150/264850/024840 are prohibited in tr. WATCH only.
+{_static_universal_rules}
 """
     selection_prompt_budget_meta["prompt_chars"] = len(prompt)
     selection_prompt_budget_meta["market_context_chars"] = len(str(digest_prompt[:220] or ""))
@@ -3185,11 +3224,14 @@ Rules:
                 else _env_int_bound("CLAUDE_SELECTION_MAX_TOKENS", 3200, 1024, 6000)
             )
             _t0 = time.perf_counter()
-            resp = client.messages.create(
-                model=MODEL,
-                max_tokens=selection_max_tokens,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            _select_kwargs: dict = {
+                "model": MODEL,
+                "max_tokens": selection_max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            if selection_system_blocks:
+                _select_kwargs["system"] = selection_system_blocks
+            resp = client.messages.create(**_select_kwargs)
             _select_duration_ms = int((time.perf_counter() - _t0) * 1000)
             last_err = None
             break
