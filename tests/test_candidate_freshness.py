@@ -142,5 +142,22 @@ class AnnotateTests(unittest.TestCase):
         self.assertEqual(rows[0]["trainer_prompt_score"], 70.0)
 
 
+class SmartSkipIntegrationTests(unittest.TestCase):
+    def test_penalty_changes_semantic_signature(self):
+        """패널티가 score_bucket을 바꿔 스마트 스킵 시그니처가 자동 갱신되는지."""
+        from runtime import selection_smart_skip as sk
+
+        def sig(score):
+            return sk.semantic_signature(
+                market="US", session_date="2026-06-11", consensus_mode="NEUTRAL",
+                execution_phase="regular",
+                candidates=[{"ticker": "ONDS", "trainer_prompt_score": score}],
+                prompt_contract="c", watch_cap=15, trade_cap=5,
+            )
+
+        self.assertNotEqual(sig(70.0), sig(40.0))  # OLD+플랜전무 강등(-30) → 시그니처 변경
+        self.assertEqual(sig(70.0), sig(71.0))     # 같은 5점 버킷 → 불변 (노이즈 무시 유지)
+
+
 if __name__ == "__main__":
     unittest.main()
