@@ -95,6 +95,20 @@ D그룹 — 설계만 (라이브 연결은 6/24):
 - (참고) fractional Kelly 문헌이 7월 사이징 설계(고정 기반+0.7~1.5x 보정) 지지 확인.
   full Kelly 금지. TradingAgents류 다중 에이전트 구조는 기보유 — 신규 액션 없음
 
+**모델/데이터/ML 차용 (2026-06-12 운영자 방향 확정):**
+- [6/17+, 측정 선행] judge·hold advisor 상위 모델(Opus 4.8) 시험 — 운영자: "성능 측정부터".
+  측정 설계: 같은 입력 N=20~30건 Sonnet vs Opus 병행 호출(paper) → 판정 일치율,
+  존 깊이/rr 분포, invalid_if 구체성, 지연, 비용 비교 후 전환 판단. 예상 비용 +$0.1~0.2/일
+- [6/17+] Finnhub 실적 캘린더 연결 — 인벤토리 완료(2026-06-12):
+  · 무엇: /calendar/earnings (date·symbol·epsEstimate·BMO/AMC), 무료 접근 실측 확인(주 61건)
+  · 얼마나: 일 1회 갱신 + 주 1회 풀 스캔 — 무료 티어(60콜/분) 내 미미
+  · Claude 주입 3곳: ①보유/플랜 종목 실적 D-1/D0 경고(hold advisor·digest 한 줄)
+    ②후보 라인 earn=D-1 토큰(PEAD 정책상 earnings_date 즉시 노출 허용)
+    ③실적 D-1 신규 PathB 등록 보류 게이트(ORCL 거래정지 사건 처방)
+  · 기존 사용: quote/candle/profile/company-news — 캘린더만 신규
+- [등록만, 판단 보류] 자체 ML 후보 스코어러 — decisions.db+daily_forward 라벨(51k건)로
+  XGBoost trainer 점수 학습 버전. 라벨 2~3개월 축적 후 판단 (운영자: "등록만 해놓고 판단부터")
+
 **~2026-06-24 — 2차 데이터 판정:**
 - 채널 ROI (candidate_source 2주치) → most_actives/day_gainers 쿼터 재배분
 - rel_vol 분포·예측력 검증 → 전략 게이트 연결 여부 (US PathB 보호영역, `MD 위반 사항` 절차)
