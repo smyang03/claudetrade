@@ -341,7 +341,9 @@ def call_single_symbol_judge(
     from credit_tracker import record as credit_record
     from minority_report.raw_call_logger import save as save_raw_call
 
-    model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+    # judge 전용 모델 오버라이드 (2026-06-12 운영자 승인 — A/B: Opus 플랜 산출 8/10 vs Sonnet 2/10,
+    # 존 깊이 -0.88% vs -0.49%, 기하rr 2.4 vs 1.8, 지연 5.5s vs 9.1s). 언제든 env로 전환 가능.
+    model = os.getenv("SINGLE_SYMBOL_JUDGE_MODEL", "") or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
     max_tokens = int(float(os.getenv("SINGLE_SYMBOL_JUDGE_MAX_TOKENS", "900") or 900))
     prompt = build_single_symbol_judge_prompt(
         market=market,

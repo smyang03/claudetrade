@@ -87,6 +87,7 @@
     "PATHA_TIMING_LIFECYCLE_ENABLED": "false",
     "CLAUDE_SELECTION_MAX_TOKENS": "6000",
     "CLAUDE_SELECTION_RETRY_MAX_TOKENS": "3500",
+    "SINGLE_SYMBOL_JUDGE_MODEL": "claude-opus-4-8",
     "R1_MODEL": "claude-haiku-4-5-20251001",
     "BULL_R1_MODEL": "claude-sonnet-4-6",
     "BEAR_R1_MODEL": "claude-haiku-4-5-20251001",
