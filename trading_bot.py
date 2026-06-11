@@ -7230,11 +7230,64 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 continue
             success_tickers.append(ticker)
         denominator = max(1, len(requested))
+        try:
+            self._note_session_evidence_quality(market_key, session_date, len(requested), len(success_tickers))
+        except Exception:
+            pass
         return {
             "evidence_fetch_success_tickers": success_tickers,
             "evidence_fetch_success_count": len(success_tickers),
             "evidence_fetch_success_ratio": round(float(len(success_tickers)) / denominator, 4),
         }
+
+    def _note_session_evidence_quality(self, market: str, session_date: str, requested: int, success: int) -> dict:
+        """세션 단위 evidence 품질 집계 — ticker 단위 fail_closed와 분리된 관찰 상태.
+
+        provider/KIS 장애로 세션 전반의 evidence가 무너질 때 개별 종목 품질 문제로
+        오인하지 않도록 세션 누적 성공률을 추적한다 (P0: session_evidence_degraded split).
+        관찰 전용 — 행동을 바꾸지 않는다.
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        store = getattr(self, "_session_evidence_quality", None)
+        if not isinstance(store, dict):
+            store = {}
+            self._session_evidence_quality = store
+        state = store.get(market_key)
+        if not isinstance(state, dict) or state.get("session_date") != session_date:
+            state = {"session_date": session_date, "requested": 0, "success": 0, "degraded": False}
+            store[market_key] = state
+        state["requested"] += max(0, int(requested or 0))
+        state["success"] += max(0, int(success or 0))
+        min_requested = int(self._runtime_float("SESSION_EVIDENCE_DEGRADED_MIN_REQUESTED", 10))
+        ratio_floor = float(self._runtime_float("SESSION_EVIDENCE_DEGRADED_RATIO_FLOOR", 0.5))
+        ratio = float(state["success"]) / max(1, int(state["requested"]))
+        degraded = state["requested"] >= min_requested and ratio < ratio_floor
+        was_degraded = bool(state.get("degraded"))
+        state["degraded"] = degraded
+        state["ratio"] = round(ratio, 4)
+        if degraded and not was_degraded:
+            log.warning(
+                f"[세션 evidence 품질 저하] {market_key} {session_date} "
+                f"누적 성공률 {ratio:.0%} ({state['success']}/{state['requested']}) — provider/KIS 장애 의심"
+            )
+            try:
+                self._write_funnel_event(
+                    "session_evidence_degraded",
+                    market_key,
+                    {"session_date": session_date, "ratio": state["ratio"], "requested": state["requested"]},
+                )
+            except Exception:
+                pass
+        elif was_degraded and not degraded:
+            log.info(f"[세션 evidence 품질 회복] {market_key} 누적 성공률 {ratio:.0%}")
+        return state
+
+    def _session_evidence_degraded(self, market: str) -> bool:
+        store = getattr(self, "_session_evidence_quality", None)
+        if not isinstance(store, dict):
+            return False
+        state = store.get("US" if str(market or "").upper() == "US" else "KR")
+        return bool(isinstance(state, dict) and state.get("degraded"))
 
     def _selection_evidence_payload(
         self,
