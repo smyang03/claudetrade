@@ -3824,6 +3824,40 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     _MEGA_GAP_DEMOTE_ACTIONS = {"BUY_READY", "PROBE_READY", "PULLBACK_WAIT"}
 
+    def _apply_trap_zone_pullback_guard(self, market: str, meta: dict, mode: str) -> list[str]:
+        """함정구간(+2~5%) 후보의 PULLBACK_WAIT까지 WATCH 강등 (2026-06-11 운영자 승인).
+
+        기존 A3 가드는 trade_ready(BUY_READY/PROBE_READY)만 막아 judge→PULLBACK_WAIT→PathB
+        경로가 우회됐다 (6/10 손실 3건 중 2건: IONQ +4.6%/CPNG +4.8% 진입).
+        역산(5/1~6/10, PathB 체결 n=26): 함정구간 진입 중앙값 -1.18%, 승률 38%.
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if market_key != "US":
+            return []
+        if not self._runtime_bool("SELECTION_US_MIDRANGE_TRAP_BLOCK_PULLBACK_WAIT", True):
+            return []
+        demoted: list[str] = []
+        for action in list(meta.get("candidate_actions") or []):
+            if not isinstance(action, dict):
+                continue
+            if str(action.get("action") or "").strip().upper() != "PULLBACK_WAIT":
+                continue
+            ticker = str(action.get("ticker") or "").strip()
+            if not ticker:
+                continue
+            reason, _strategy, evidence = self._selection_us_midrange_trap_reason(market_key, ticker, meta, mode)
+            if not reason:
+                continue
+            key = self._selection_ticker_key(market_key, ticker)
+            self._demote_selection_quality_action(
+                market_key, meta, key, reason, evidence,
+                demote_actions=self._MEGA_GAP_DEMOTE_ACTIONS,
+            )
+            demoted.append(key)
+        if demoted:
+            log.info(f"[함정구간 PULLBACK_WAIT 가드] {market_key} 강등: {demoted}")
+        return demoted
+
     def _apply_mega_gap_watch_guard(self, market: str, meta: dict) -> list[str]:
         """candidate_actions 전체에서 mega_gap 후보의 진입성 액션을 WATCH로 강등 (PULLBACK_WAIT 포함)."""
         market_key = "US" if str(market or "").upper() == "US" else "KR"
@@ -3864,6 +3898,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         demoted_from: dict[str, str] = {}
         demoted_evidence: dict[str, dict] = {}
         self._apply_mega_gap_watch_guard(market_key, meta)
+        self._apply_trap_zone_pullback_guard(market_key, meta, mode)
         for ticker in ready_candidates:
             key = self._selection_ticker_key(market_key, ticker)
             reason, strategy, evidence = self._selection_mean_reversion_quality_reason(market_key, ticker, meta, mode)

@@ -500,6 +500,54 @@ class TradeReadySlotConfigTests(unittest.TestCase):
         self.assertIn("005930", normalized["trade_ready"])
         self.assertNotIn("005930", normalized["_runtime_filtered_trade_ready"])
 
+    def test_us_midrange_trap_guard_demotes_pullback_wait(self) -> None:
+        bot = self._bot()
+        meta = {
+            "watchlist": ["AAA", "BBB"],
+            "trade_ready": [],
+            "recommended_strategy": {"AAA": "momentum", "BBB": "momentum"},
+            "change_pct": {"AAA": 3.5, "BBB": 7.0},
+            "candidate_actions": [
+                {"ticker": "AAA", "action": "PULLBACK_WAIT", "strategy": "momentum",
+                 "price_targets": {"buy_zone_low": 1, "buy_zone_high": 2}},
+                {"ticker": "BBB", "action": "PULLBACK_WAIT", "strategy": "momentum"},
+            ],
+            "_candidate_action_routes": [
+                {"ticker": "AAA", "final_action": "PULLBACK_WAIT", "strategy": "momentum"},
+                {"ticker": "BBB", "final_action": "PULLBACK_WAIT", "strategy": "momentum"},
+            ],
+        }
+        env = {
+            "SELECTION_US_MIDRANGE_TRAP_GUARD_ENABLED": "true",
+            "SELECTION_US_MIDRANGE_TRAP_BLOCK_PULLBACK_WAIT": "true",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            normalized = bot._normalize_selection_meta_runtime("US", meta, meta["watchlist"], mode="NEUTRAL")
+        aaa = next(a for a in normalized["candidate_actions"] if a["ticker"] == "AAA")
+        self.assertEqual(aaa["action"], "WATCH")  # +3.5% 함정구간 → 강등
+        self.assertEqual(aaa["price_targets"], {})
+        bbb = next(a for a in normalized["candidate_actions"] if a["ticker"] == "BBB")
+        self.assertEqual(bbb["action"], "PULLBACK_WAIT")  # +7% 러너 → 유지
+
+    def test_trap_pullback_extension_disabled_keeps_pullback_wait(self) -> None:
+        bot = self._bot()
+        meta = {
+            "watchlist": ["AAA"],
+            "trade_ready": [],
+            "recommended_strategy": {"AAA": "momentum"},
+            "change_pct": {"AAA": 3.5},
+            "candidate_actions": [{"ticker": "AAA", "action": "PULLBACK_WAIT", "strategy": "momentum"}],
+            "_candidate_action_routes": [{"ticker": "AAA", "final_action": "PULLBACK_WAIT", "strategy": "momentum"}],
+        }
+        env = {
+            "SELECTION_US_MIDRANGE_TRAP_GUARD_ENABLED": "true",
+            "SELECTION_US_MIDRANGE_TRAP_BLOCK_PULLBACK_WAIT": "false",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            bot._apply_trap_zone_pullback_guard("US", meta, "NEUTRAL")
+        aaa = next(a for a in meta["candidate_actions"] if a["ticker"] == "AAA")
+        self.assertEqual(aaa["action"], "PULLBACK_WAIT")
+
     def test_us_midrange_trap_guard_disabled_keeps_candidates(self) -> None:
         bot = self._bot()
         meta = {
