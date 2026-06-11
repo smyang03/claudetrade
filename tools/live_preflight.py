@@ -4310,6 +4310,25 @@ def _candidate_audit_outcome_checks(mode: str) -> list[CheckResult]:
             ORDER BY horizon_min, status, source
             """
         ).fetchall()
+        # 일 단위 라벨은 목표 거래일 도래 전까지 daily_pending이 정상 상태다.
+        # 세션 기준 7일을 넘긴 pending만 "오래된 적체"로 본다 (session_close 자동 갱신 도입 후).
+        stale_cutoff = (datetime.now() - timedelta(days=7)).date().isoformat()
+        stale_daily_pending = 0
+        try:
+            if "audit_candidate_rows" in tables:
+                stale_daily_pending = int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*) FROM audit_candidate_outcomes o
+                        JOIN audit_candidate_rows c ON c.candidate_key = o.candidate_key
+                        WHERE o.status = 'daily_pending' AND c.session_date < ?
+                        """,
+                        (stale_cutoff,),
+                    ).fetchone()[0]
+                    or 0
+                )
+        except Exception:
+            stale_daily_pending = -1
     except Exception as exc:
         return [CheckResult("candidate_audit.outcome_update", "WARN", f"candidate outcome check failed: {exc}")]
     finally:
@@ -4334,14 +4353,16 @@ def _candidate_audit_outcome_checks(mode: str) -> list[CheckResult]:
             insufficient_rows += item["rows"]
 
     has_rows = int(total or 0) > 0 and bool(latest)
-    status = "PASS" if has_rows and daily_pending_rows == 0 else "WARN"
+    # 최근 세션 pending은 정상 대기 — 7일 초과 적체(stale)만 WARN 사유로 본다.
+    status = "PASS" if has_rows and stale_daily_pending == 0 else "WARN"
     status_parts = [
         f"{item['horizon_min']}m:{item['status']}={item['rows']}"
         for item in horizon_status[:8]
     ]
     detail = (
         f"outcome_rows={int(total or 0)} latest_label_generated_at={latest or ''} "
-        f"daily_pending_rows={daily_pending_rows} insufficient_rows={insufficient_rows}"
+        f"daily_pending_rows={daily_pending_rows} (stale>{7}d={stale_daily_pending}) "
+        f"insufficient_rows={insufficient_rows}"
     )
     if status_parts:
         detail = f"{detail}; status_counts={', '.join(status_parts)}"
@@ -4351,6 +4372,7 @@ def _candidate_audit_outcome_checks(mode: str) -> list[CheckResult]:
         "latest": latest or "",
         "horizon_status": horizon_status,
         "daily_pending_rows": daily_pending_rows,
+        "stale_daily_pending_rows": stale_daily_pending,
         "insufficient_sample_rows": insufficient_rows,
     }
     if status == "WARN":
