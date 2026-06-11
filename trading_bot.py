@@ -37776,6 +37776,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._run_v2_learning_sync_at_session_close(market, today)
         except Exception as _v2_sync_e:
             log.warning(f"[v2 learning sync] {market} session_close 동기화 실패: {_v2_sync_e}")
+        # 후보 일 단위 forward 라벨 자동 갱신 — intraday는 30/60분 지평만 돌아
+        # 일 지평(1440/2880/4320)이 daily_pending으로 영구 방치됐던 문제(5/19 적체) 재발 방지
+        try:
+            self._run_candidate_audit_daily_backlog_at_session_close(market)
+        except Exception as _audit_daily_e:
+            log.warning(f"[candidate audit daily] {market} session_close 라벨 갱신 실패: {_audit_daily_e}")
         if hasattr(self, "_active_session_date") and isinstance(self._active_session_date, dict):
             self._active_session_date[market] = None
 
@@ -37806,6 +37812,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         else:
             tail = (result.stderr or result.stdout or "").strip()[-300:]
             log.warning(f"[v2 learning sync] {market} 동기화 실패 rc={result.returncode}: {tail}")
+
+    def _run_candidate_audit_daily_backlog_at_session_close(self, market: str) -> None:
+        """장 마감 시 후보 일 단위 forward 라벨(1440/2880/4320분)을 일괄 갱신한다."""
+        if not self._runtime_bool("CANDIDATE_AUDIT_DAILY_OUTCOME_UPDATE_ENABLED", True):
+            return
+        from tools.update_candidate_audit_outcomes import update_candidate_audit_daily_backlog
+
+        result = update_candidate_audit_daily_backlog(
+            market=str(market or "").upper(),
+            runtime_mode=str(getattr(self, "_mode", "live") or "live"),
+        )
+        if result.get("reason"):
+            log.warning(f"[candidate audit daily] {market} 라벨 갱신 이상: {result['reason']}")
+        else:
+            log.info(f"[candidate audit daily] {market} 일 지평 라벨 갱신 완료: 세션 {len(result.get('dates') or [])}개")
 def _in_session_now(market: str) -> bool:
     """현재 KST 시각이 해당 시장 세션 중인지 확인"""
     now = datetime.now(ZoneInfo("Asia/Seoul")).time()

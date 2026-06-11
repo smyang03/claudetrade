@@ -524,6 +524,69 @@ def _build_daily_forward_outcome_row(
     }
 
 
+def update_candidate_audit_daily_backlog(
+    *,
+    db_path: str | Path | None = None,
+    market: str = "",
+    runtime_mode: str = "live",
+    lookback_days: int = 10,
+    max_dates: int = 12,
+) -> dict[str, Any]:
+    """일 단위 지평(1440/2880/4320) 라벨 백로그 일괄 갱신.
+
+    봇 intraday 갱신은 30/60분 지평만 처리해 일 단위 라벨이 daily_pending으로
+    영구 방치됐다 (2026-06-11 발견: 5/19 세션 517후보×3지평). 최근 세션 +
+    pending 잔존 세션을 모아 일 지평으로 재계산한다.
+    """
+    target = Path(db_path) if db_path else get_runtime_path("data", "audit", "candidate_audit.db")
+    if not target.exists():
+        return {"dates": [], "summaries": [], "reason": "missing_db"}
+    dates: set[str] = set()
+    try:
+        con = sqlite3.connect(str(target))
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=int(lookback_days))).date().isoformat()
+            params: list[Any] = [cutoff]
+            market_clause = ""
+            if market:
+                market_clause = " AND market=?"
+                params.append(str(market).upper())
+            for (d,) in con.execute(
+                "SELECT DISTINCT session_date FROM audit_candidate_rows "
+                f"WHERE session_date >= ?{market_clause}",
+                params,
+            ):
+                if d:
+                    dates.add(str(d)[:10])
+            for (d,) in con.execute(
+                "SELECT DISTINCT c.session_date FROM audit_candidate_outcomes o "
+                "JOIN audit_candidate_rows c ON c.candidate_key = o.candidate_key "
+                "WHERE o.status = 'daily_pending'"
+            ):
+                if d:
+                    dates.add(str(d)[:10])
+        finally:
+            con.close()
+    except Exception as exc:
+        return {"dates": [], "summaries": [], "reason": f"scan_failed:{exc}"}
+    picked = sorted(dates)[-max(1, int(max_dates)):]
+    daily_horizons = tuple(sorted(DAILY_FORWARD_HORIZONS.keys()))
+    summaries: list[dict[str, Any]] = []
+    for session_date in picked:
+        try:
+            summary = update_candidate_audit_outcomes(
+                db_path=target,
+                session_date=session_date,
+                market=market,
+                runtime_mode=runtime_mode,
+                horizons=daily_horizons,
+            )
+            summaries.append({"session_date": session_date, "updated": summary.get("updated_rows", summary.get("updated", 0))})
+        except Exception as exc:
+            summaries.append({"session_date": session_date, "error": str(exc)})
+    return {"dates": picked, "summaries": summaries, "reason": ""}
+
+
 def update_candidate_audit_outcomes(
     *,
     db_path: str | Path | None = None,
