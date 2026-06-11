@@ -1152,6 +1152,10 @@ def _format_selection_candidate_line(
         vol_token = f"rvol={rel_vol:.1f}x" if rel_vol > 0 else ""
     else:
         vol_token = f"vol={vr:.1f}x" if vr > 0 else ""
+    # 좀비 후보 표기 — 6세션+ 무성과 체류 (역산: 해당 그룹 플랜 -0.71%, 승률 36%)
+    freshness_token = ""
+    if str(candidate.get("freshness_grade") or "") == "OLD":
+        freshness_token = f"stale={candidate.get('freshness_age_sessions')}s"
     parts = [
         _candidate_identity_prefix(candidate),
         f"chg={rate:+.2f}%",
@@ -1169,6 +1173,7 @@ def _format_selection_candidate_line(
         "" if compact else (f"category={category}" if category else ""),
         "" if compact else (f"sector={sector}" if sector else ""),
         f"liq={liquidity_bucket}",
+        freshness_token,
         news_hint,
         _candidate_discovery_hint(candidate),
         _candidate_trainer_hint(candidate),
@@ -1511,6 +1516,18 @@ def _build_selection_prompt_pool(candidates: list[dict], market: str, prompt_cap
         }
     try:
         from runtime.candidate_prompt_pool import build_trainer_prompt_pool
+        from runtime.candidate_freshness import annotate_candidate_freshness
+
+        # 신선도 패널티 — 좀비(6세션+ 체류)·체결후재탕 후보를 풀 정렬에서 강등 (2026-06-11)
+        try:
+            freshness_summary = annotate_candidate_freshness(list(candidates or []), market)
+            if freshness_summary.get("penalized"):
+                log.info(
+                    f"[candidate freshness] {market} 강등 {freshness_summary['penalized']}건 "
+                    f"(OLD={freshness_summary['old']} 재탕={freshness_summary['retrade']} 면제={freshness_summary['exempt']})"
+                )
+        except Exception as _fresh_exc:
+            log.warning(f"[candidate freshness] {market} 주석 실패 — 무적용: {_fresh_exc}")
 
         target = _trainer_prompt_target(market, prompt_cap)
         hard_cap = _trainer_prompt_hard_cap(market, max(prompt_cap, target))
@@ -2562,6 +2579,10 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             f"category={category}" if category else "",
             f"sector={sector}" if sector else "",
             f"liq={liquidity_bucket}",
+            (
+                f"stale={candidate.get('freshness_age_sessions')}s"
+                if str(candidate.get("freshness_grade") or "") == "OLD" else ""
+            ),
             _candidate_news_hint(candidate),
             _candidate_discovery_hint(candidate),
             _candidate_trainer_hint(candidate),
