@@ -3437,6 +3437,13 @@ class PathBRuntime:
                 execution_id=execution_id,
                 position_id=position_id,
                 usd_krw=self._pathb_fill_fx(market_key),
+                entry_native_override=float(
+                    closed_trade.get("display_avg_price", 0)
+                    or closed_trade.get("entry_native", 0)
+                    or closed_trade.get("display_entry_price", 0)
+                    or 0
+                ),
+                qty_override=float(closed_trade.get("qty", 0) or 0),
             )
         self.store.update_path_run(
             path_run_id,
@@ -8845,6 +8852,11 @@ class PathBRuntime:
         else:
             entry = float((self.store.find_path_run(plan.path_run_id) or {}).get("plan", {}).get("actual_entry_price", 0) or 0)
             pnl_pct = ((price_native / entry) - 1.0) * 100.0 if entry > 0 and price_native > 0 else 0.0
+        broker_entry_native = 0.0
+        broker_entry_qty = 0.0
+        if ex is not None:
+            broker_entry_native = float(ex.get("display_avg_price", 0) or ex.get("entry_native", 0) or ex.get("display_entry_price", 0) or 0)
+            broker_entry_qty = float(ex.get("qty", 0) or 0)
         self.sell_manager.mark_closed(
             plan.path_run_id,
             close_reason=close_reason,
@@ -8854,6 +8866,8 @@ class PathBRuntime:
             usd_krw=self._pathb_fill_fx(market),
             brain_snapshot_id=self._brain_snapshot_id(market),
             execution_id=execution_id,
+            entry_native_override=broker_entry_native,
+            qty_override=broker_entry_qty,
         )
         self.store.update_path_run(
             plan.path_run_id,

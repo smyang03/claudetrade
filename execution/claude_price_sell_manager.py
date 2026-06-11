@@ -217,13 +217,27 @@ class ClaudePriceSellManager:
             },
         )
 
-    def _close_cost_meta(self, path_run_id: str, *, exit_native: float, usd_krw: float = 0.0) -> dict[str, Any]:
-        """수수료/환율 반영 net 손익 추정. 입력 부족 시 빈 dict (gross 기록은 불변)."""
+    def _close_cost_meta(
+        self,
+        path_run_id: str,
+        *,
+        exit_native: float,
+        usd_krw: float = 0.0,
+        entry_native_override: float = 0.0,
+        qty_override: float = 0.0,
+    ) -> dict[str, Any]:
+        """수수료/환율 반영 net 손익 추정. 입력 부족 시 빈 dict (gross 기록은 불변).
+
+        진입가 기준은 KIS 체결가(브로커 truth) 우선 — 2026-06-11 운영자 확정.
+        호출부가 브로커 포지션 단가를 override로 주면 plan 기록가(주문가일 수 있음)보다 우선한다.
+        """
         run = self.store.find_path_run(path_run_id) or {}
         plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
         market = str(run.get("market") or "").upper()
-        entry = float(plan.get("actual_entry_price") or 0)
-        qty = float(plan.get("filled_qty") or 0)
+        plan_entry = float(plan.get("actual_entry_price") or 0)
+        entry = float(entry_native_override or 0) or plan_entry
+        entry_price_source = "broker_position" if float(entry_native_override or 0) > 0 else "plan_recorded"
+        qty = float(qty_override or 0) or float(plan.get("filled_qty") or 0)
         exit_px = float(exit_native or 0)
         if entry <= 0 or exit_px <= 0 or qty <= 0:
             return {}
@@ -233,6 +247,8 @@ class ClaudePriceSellManager:
         meta: dict[str, Any] = {
             "fee_pct_round_trip": round(fee_pct_round_trip, 4),
             "pnl_pct_net_est": round(pnl_pct_gross - fee_pct_round_trip, 4),
+            "entry_price_source": entry_price_source,
+            "entry_native_used": round(entry, 6),
         }
         if market == "US":
             entry_fx = float(plan.get("usd_krw_at_fill") or 0) or float(usd_krw or 0)
@@ -264,11 +280,31 @@ class ClaudePriceSellManager:
         execution_id: str = "",
         position_id: str = "",
         usd_krw: float = 0.0,
+        entry_native_override: float = 0.0,
+        qty_override: float = 0.0,
     ) -> None:
         try:
-            cost_meta = self._close_cost_meta(path_run_id, exit_native=price, usd_krw=usd_krw)
+            cost_meta = self._close_cost_meta(
+                path_run_id,
+                exit_native=price,
+                usd_krw=usd_krw,
+                entry_native_override=entry_native_override,
+                qty_override=qty_override,
+            )
         except Exception:
             cost_meta = {}
+        # ORDER_ACKED 중 청산(매수 fill 반영 전 손절 레이스) 시 plan entry를 브로커 단가로 백필
+        entry_backfill: dict[str, Any] = {}
+        try:
+            run = self.store.find_path_run(path_run_id) or {}
+            plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+            if float(plan.get("actual_entry_price") or 0) <= 0 and float(entry_native_override or 0) > 0:
+                entry_backfill["actual_entry_price"] = float(entry_native_override)
+                entry_backfill["entry_price_source"] = "broker_close_backfill"
+                if float(plan.get("filled_qty") or 0) <= 0 and float(qty_override or 0) > 0:
+                    entry_backfill["filled_qty"] = int(qty_override)
+        except Exception:
+            entry_backfill = {}
         self.store.update_path_run(
             path_run_id,
             status="CLOSED",
@@ -279,6 +315,7 @@ class ClaudePriceSellManager:
                 "exit_execution_id": execution_id,
                 "exit_fill_confirmed": bool(execution_id),
                 **cost_meta,
+                **entry_backfill,
             },
             merge_plan=True,
         )

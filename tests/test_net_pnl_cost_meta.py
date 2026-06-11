@@ -142,6 +142,65 @@ class NetPnlCostMetaTests(unittest.TestCase):
         self.assertEqual(run["status"], "CLOSED")
         self.assertNotIn("pnl_krw_net_est", run["plan"])
 
+    def test_broker_entry_override_takes_priority_over_plan_entry(self):
+        # 진입가 기준 = KIS 체결가 (2026-06-11 운영자 확정): plan 기록가(주문가)보다 브로커 단가 우선
+        run_id = _register_filled_run(self.store, self.adapter, entry=15.645, qty=10, usd_krw_at_fill=1520.0)
+        with mock.patch.dict(os.environ, {"US_FEE_RATE_PER_SIDE": "0.0025"}):
+            self.manager.mark_closed(
+                run_id,
+                close_reason="CLOSED_PROFIT_LADDER",
+                price=15.55,
+                pnl_pct=-1.29,
+                runtime_mode="live",
+                brain_snapshot_id="bs_test",
+                usd_krw=1520.0,
+                entry_native_override=15.75,  # 브로커 체결 평균가
+                qty_override=10,
+            )
+        plan = self.store.find_path_run(run_id)["plan"]
+        self.assertEqual(plan["entry_price_source"], "broker_position")
+        self.assertEqual(plan["entry_native_used"], 15.75)
+        # gross = 15.55/15.75-1 = -1.2698% → net = -1.7698% (수수료 0.5%)
+        self.assertAlmostEqual(plan["pnl_pct_net_est"], -1.7698, places=3)
+
+    def test_order_acked_close_backfills_entry_from_broker(self):
+        # FUN 레이스 재현: fill 미기록(ORDER_ACKED) 상태 청산 → 브로커 단가로 entry 백필 + net 기록
+        plan = make_price_plan(
+            decision_id="dec_race", ticker="FUN", market="US", session_date="2026-06-10",
+            buy_zone_low=23.5, buy_zone_high=24.2, sell_target=26.5, stop_loss=23.0,
+            hold_days=1, confidence=0.5, cancel_if_open_above=25.0,
+        )
+        run_id = self.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="bs_test")
+        # mark_filled 없이 바로 청산 (레이스)
+        with mock.patch.dict(os.environ, {"US_FEE_RATE_PER_SIDE": "0.0025"}):
+            self.manager.mark_closed(
+                run_id,
+                close_reason="CLOSED_HARD_STOP",
+                price=23.81,
+                pnl_pct=-1.78,
+                runtime_mode="live",
+                brain_snapshot_id="bs_test",
+                usd_krw=1520.0,
+                entry_native_override=24.24,
+                qty_override=13,
+            )
+        stored = self.store.find_path_run(run_id)["plan"]
+        self.assertEqual(stored["actual_entry_price"], 24.24)
+        self.assertEqual(stored["filled_qty"], 13)
+        self.assertEqual(stored["entry_price_source"], "broker_close_backfill")
+        self.assertIn("pnl_krw_net_est", stored)
+
+    def test_no_override_keeps_plan_entry_with_source_tag(self):
+        run_id = _register_filled_run(self.store, self.adapter, entry=100.0, qty=5, usd_krw_at_fill=1350.0)
+        self.manager.mark_closed(
+            run_id,
+            close_reason="CLOSED_CLAUDE_PRICE_TARGET",
+            price=105.0, pnl_pct=5.0,
+            runtime_mode="live", brain_snapshot_id="bs_test", usd_krw=1350.0,
+        )
+        plan = self.store.find_path_run(run_id)["plan"]
+        self.assertEqual(plan["entry_price_source"], "plan_recorded")
+
     def test_fee_rates_env_override(self):
         with mock.patch.dict(os.environ, {"US_FEE_RATE_PER_SIDE": "0.0007"}):
             buy, sell = _fee_rates_for_market("US")

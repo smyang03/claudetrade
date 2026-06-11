@@ -30669,6 +30669,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._early_judge_recheck_queue[market_key] = queue[-100:]
         applied = False
         if action_name in {"BUY_READY", "PROBE_READY", "PULLBACK_WAIT"} and bool(normalized.get("valid", True)):
+            # judge가 reference_price를 생략하면 judge 입력의 현재가로 백필 — ref 결측 플랜은
+            # 존 깊이(A1) 검증이 불가능해진다 (6/10 IONQ 사례).
+            if normalized.get("reference_price") in (None, "", 0):
+                feats = dict((candidate or {}).get("features") or {})
+                row = dict((candidate or {}).get("row") or {})
+                ref_backfill = 0.0
+                for source_value in (feats.get("current_price"), feats.get("price"), row.get("price")):
+                    try:
+                        ref_backfill = float(source_value or 0)
+                    except Exception:
+                        ref_backfill = 0.0
+                    if ref_backfill > 0:
+                        break
+                if ref_backfill > 0:
+                    normalized["reference_price"] = ref_backfill
+                    normalized["reference_price_source"] = "judge_input_backfill"
             base_meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
             merged = self._merge_single_symbol_judge_meta(market_key, base_meta, normalized, source=source)
             selected = list(merged.get("watchlist") or [])

@@ -106,6 +106,7 @@ def build_single_symbol_judge_prompt(
         "JSON schema:\n"
         '{"ticker":"AAPL","market":"US","action":"PULLBACK_WAIT","route":"path_b","confidence":0.72,'
         '"reason":"short reason","invalid_if":"condition","recheck_after_min":5,'
+        '"reference_price":202.4,'
         '"buy_zone_low":198.2,"buy_zone_high":201.0,"sell_target":208.0,"stop_loss":195.0,"hold_days":2,'
         '"structural_basis":"VWAP retest","zone_basis":"near VWAP/open-anchor support",'
         '"chase_above":203.5,"do_not_buy_if":["condition"]}'
