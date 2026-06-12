@@ -12,6 +12,7 @@ Claude 입력 토큰: ~1,300 토큰/일 목표
 
 from typing import Optional, List
 import json
+import os
 import sys
 import pandas as pd
 import numpy as np
@@ -378,7 +379,12 @@ def _yf_earnings_date(symbol: str) -> str:
     return ""
 
 
-_PEAD_PROMPT_INCLUDE_SURPRISE = False
+# 2026-06-12 운영자 결정: 하드코딩 False → config 상시 스위치.
+# 단독으로는 불충분 — state/pead_shadow_state.json의 관찰일수·prompt_surprise_enabled·
+# 수동 리뷰 체크리스트 게이트는 그대로 유지된다 (PEAD 계약).
+_PEAD_PROMPT_INCLUDE_SURPRISE = str(
+    os.getenv("PEAD_PROMPT_INCLUDE_SURPRISE", "false") or "false"
+).strip().lower() in {"1", "true", "yes", "on"}
 _PEAD_SHADOW_REQUIRED_TRADING_DAYS = 5
 _PEAD_MANUAL_REVIEW_CHECKS = (
     "tier_null_rate_checked",
