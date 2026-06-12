@@ -8650,6 +8650,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "EVIDENCE_PACK_CEILING_ENABLED",
                 False,
             )
+            # Claude의 자기 고백 코드(rc/blk/inv) — "NO_EV_PACK/stale_data"를 스스로 밝힌
+            # PULLBACK_WAIT가 게이트를 우회하던 갭(2026-06-12 MRVL/066570 손절 사례) 봉합용
+            execution_context["claude_self_report_codes"] = " ".join(
+                str(action_for_route.get(k) or "")
+                for k in ("rc", "reason_code", "blk", "block_reason", "inv", "invalidation_condition", "reason")
+            ).upper()
             partial_grace_min = self._runtime_float("EVIDENCE_PACK_PARTIAL_GRACE_MIN", 15.0)
             elapsed_for_evidence = execution_context.get("market_open_elapsed_min")
             try:
@@ -24911,6 +24917,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return {"allowed": False, "reason": "skipped_daily_max_regular", "count": count, "max": max_per_session}
 
         cooldown_min = max(0.0, self._runtime_float("INTRADAY_REVIEW_COOLDOWN_MINUTES", 120.0))
+        if bool(pos.get("intraday_review_low_conf_hold")):
+            # 직전 리뷰가 저확신 HOLD(<임계)였던 포지션은 짧은 주기로 재확인.
+            # 일일 최대 횟수(daily max)는 그대로 적용 — Claude 호출 폭주 방지.
+            low_conf_cooldown = max(1.0, self._runtime_float("INTRADAY_REVIEW_LOW_CONF_COOLDOWN_MINUTES", 15.0))
+            cooldown_min = min(cooldown_min, low_conf_cooldown)
         last_at = self._parse_kst_datetime(pos.get("intraday_review_last_at"))
         if cooldown_min > 0 and last_at is not None:
             elapsed_min = (datetime.now(KST) - last_at).total_seconds() / 60.0
@@ -25088,9 +25099,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         reason = v["reason"][:80]
                         break
                 # hold_advice 업데이트
+                low_conf_threshold = self._runtime_float("INTRADAY_REVIEW_LOW_CONF_THRESHOLD", 0.68)
+                try:
+                    advice_conf = float(advice.get("confidence") or 0.0)
+                except Exception:
+                    advice_conf = 0.0
+                low_conf_hold = bool(action == "HOLD" and 0.0 < advice_conf < low_conf_threshold)
                 for p2 in self.risk.positions:
                     if p2.get("ticker") == ticker:
                         p2["hold_advice"] = advice
+                        # 저확신 HOLD는 재검토 주기를 단축한다 (행동 강제 아님 — 정보 수집 가속).
+                        # 근거: 6/11~12 리뷰 — conf 0.62~0.65 HOLD에서 IREN -2.16%/CPNG 수익반납
+                        if low_conf_hold:
+                            p2["intraday_review_low_conf_hold"] = True
+                            log.info(f"[장중 리뷰] {ticker} 저확신 HOLD(conf={advice_conf:.2f}) — 재검토 단축 적용")
+                        else:
+                            p2.pop("intraday_review_low_conf_hold", None)
             except Exception as e:
                 log.warning(f"[장중 리뷰] {ticker} 오류: {e}")
             _exit_lifecycle = self._record_exit_lifecycle_decision(

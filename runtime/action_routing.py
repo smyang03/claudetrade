@@ -821,6 +821,11 @@ def route_candidate_action(
             gate_reasons.append("evidence_missing")
         if evidence_ceiling in {"WATCH", "WAIT_CONFIRMATION", "PROBE_READY"}:
             gate_reasons.append(f"evidence_ceiling_{evidence_ceiling.lower()}")
+        # Claude가 응답 머신코드(rc/blk/inv)로 증거 부족을 자기 고백한 경우 — 시스템
+        # evidence 필드와 별개 채널이라 어긋나면 게이트가 침묵했다 (MRVL/066570 사례).
+        self_report = str(context.get("claude_self_report_codes") or "").upper()
+        if self_report and any(tok in self_report for tok in ("NO_EV_PACK", "STALE_DATA", "NO_EVIDENCE")):
+            gate_reasons.append("claude_self_report_no_evidence")
         if gate_reasons:
             gate_mode = str(os.getenv("PULLBACK_WAIT_EVIDENCE_GATE_MODE", "shadow") or "shadow").strip().lower()
             live_gate = gate_mode in {"live", "enforce", "block"}
