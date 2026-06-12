@@ -127,6 +127,18 @@ D그룹 — 설계만 (라이브 연결은 6/24):
   스냅샷 전수 배선은 KIS 호가 콜 부하 검토 후 (US는 신뢰할 bid/ask 소스 확보 필요)
 - [6/24] sector= KR 후보 라인 보강 — 동반 손절(반도체형) 인지용
 
+**미사용 시스템 전수 감사 결과 (2026-06-12, 운영자 "A~B까지" 지시 처리 완료):**
+- ✅ ml/forward_updater 실행자 부재 → session_close 자동 연결 + 백로그 즉시 해소(5,198행)
+- ✅ PEAD 수동 리뷰 3종 데이터 수행 완료: 티어 규율 완벽(high만 sign 22건), surprise 22건
+  전수 정확, prompt 누출 0 — **운영자 최종 스위치(prompt_surprise_enabled) 결정 대기**
+- ✅ buy_time_confirm 재분류: 죽음 아님 — Path A 전용+신선 선정 스킵 구조라 발화 기회가
+  없던 것 (Path A 매수 재개 시 자동 가동). 현행 유지
+- ✅ KR confirmation gate 재분류: watch_trigger 시스템으로 가동 중 (일 375건)
+- 휴면 확정: preopen_planb_bridge — seed 공급 8일간 0 (장전 selection이 PULLBACK_WAIT를
+  안 냄, 상류 의존성 마름). [6/17] 장전 프롬프트에 PULLBACK_WAIT 유도 여부 결정
+- 휴면 의심 잔존: discovery 슬롯(풀 충분 시 미발동 추정), KR post_rank, US quality shadow
+  — [6/17] 확인
+
 **~2026-06-24 — 2차 데이터 판정:**
 - 채널 ROI (candidate_source 2주치) → most_actives/day_gainers 쿼터 재배분
 - rel_vol 분포·예측력 검증 → 전략 게이트 연결 여부 (US PathB 보호영역, `MD 위반 사항` 절차)

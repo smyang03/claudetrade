@@ -38201,6 +38201,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._run_candidate_audit_daily_backlog_at_session_close(market)
         except Exception as _audit_daily_e:
             log.warning(f"[candidate audit daily] {market} session_close 라벨 갱신 실패: {_audit_daily_e}")
+        # ml decisions forward 라벨 자동 갱신 — forward_updater 호출자 부재로
+        # 라벨 정체(6/8) 발견 (2026-06-12, "도구는 있는데 실행자 없음" 3호 수선)
+        try:
+            self._run_ml_forward_updater_at_session_close(market)
+        except Exception as _ml_fwd_e:
+            log.warning(f"[ml forward] {market} session_close 갱신 실패: {_ml_fwd_e}")
         if hasattr(self, "_active_session_date") and isinstance(self._active_session_date, dict):
             self._active_session_date[market] = None
 
@@ -38231,6 +38237,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         else:
             tail = (result.stderr or result.stdout or "").strip()[-300:]
             log.warning(f"[v2 learning sync] {market} 동기화 실패 rc={result.returncode}: {tail}")
+
+    def _run_ml_forward_updater_at_session_close(self, market: str) -> None:
+        """장 마감 시 decisions.db forward 라벨(1d/3d/5d)을 자동 갱신한다."""
+        if not self._runtime_bool("ML_FORWARD_UPDATE_AT_SESSION_CLOSE", True):
+            return
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        cmd = [
+            sys.executable,
+            str(Path(__file__).resolve().parent / "ml" / "forward_updater.py"),
+            "--market", market_key,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        if result.returncode == 0:
+            tail = (result.stdout or "").strip().splitlines()
+            log.info(f"[ml forward] {market_key} 갱신 완료: {tail[-1][:120] if tail else 'ok'}")
+        else:
+            tail = (result.stderr or result.stdout or "").strip()[-200:]
+            log.warning(f"[ml forward] {market_key} 갱신 실패 rc={result.returncode}: {tail}")
 
     def _run_candidate_audit_daily_backlog_at_session_close(self, market: str) -> None:
         """장 마감 시 후보 일 단위 forward 라벨(1440/2880/4320분)을 일괄 갱신한다."""
