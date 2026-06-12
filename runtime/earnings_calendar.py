@@ -92,8 +92,13 @@ def refresh_earnings_calendar(*, days_back: int = 3, days_ahead: int = 14, timeo
 _KR_EARNINGS_PATTERNS = ("영업(잠정)실적", "잠정실적", "매출액또는손익구조", "영업실적등에대한전망")
 
 
-def refresh_kr_earnings_disclosures(*, days_back: int = 2, timeout_sec: float = 15.0, max_pages: int = 3) -> dict[str, Any]:
-    """DART 최근 공시에서 실적성 공시 종목을 감지해 캐시의 kr_by_code에 저장."""
+def refresh_kr_earnings_disclosures(*, days_back: int = 2, timeout_sec: float = 15.0, max_pages: int = 8) -> dict[str, Any]:
+    """DART 최근 공시에서 실적성 공시 종목을 감지해 캐시의 kr_by_code에 저장.
+
+    pblntf_ty=I(거래소공시) 필수 — 전체 공시는 펀드 서류가 일 1,000건+를 차지해
+    실적 공시에 페이지가 도달하지 못한다 (4/27~29 소급 검증: 전체 3,093건 중
+    I 필터 693건, 실적성 매칭 65건).
+    """
     key = str(os.getenv("DART_API_KEY", "") or "").strip()
     if not key:
         return {"ok": False, "reason": "no_api_key"}
@@ -104,7 +109,7 @@ def refresh_kr_earnings_disclosures(*, days_back: int = 2, timeout_sec: float = 
         for page in range(1, max_pages + 1):
             url = (
                 "https://opendart.fss.or.kr/api/list.json"
-                f"?crtfc_key={key}&bgn_de={bgn}&end_de={end}&page_count=100&page_no={page}"
+                f"?crtfc_key={key}&bgn_de={bgn}&end_de={end}&pblntf_ty=I&page_count=100&page_no={page}"
             )
             with urllib.request.urlopen(url, timeout=timeout_sec) as r:
                 d = json.loads(r.read())
