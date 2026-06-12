@@ -2845,31 +2845,45 @@ def inquire_ccnl_us(token: str,
     sort_value = "DS" if IS_PAPER_US else sort_sqn
 
     def _fetch():
-        resp = _kis_get(
-            f"{profile.base_url}/uapi/overseas-stock/v1/trading/inquire-ccnl",
-            headers=headers,
-            params={
-                "CANO": acnt_no,
-                "ACNT_PRDT_CD": acnt_prdt,
-                "PDNO": pdno,
-                "ORD_STRT_DT": start_date,
-                "ORD_END_DT": end_date,
-                "SLL_BUY_DVSN": sll_buy_dvsn,
-                "CCLD_NCCS_DVSN": ccld_nccs_dvsn,
-                "OVRS_EXCG_CD": ovrs_excg_cd,
-                "SORT_SQN": sort_value,
-                "ORD_DT": "",
-                "ORD_GNO_BRNO": "",
-                "ODNO": "",
-                "CTX_AREA_NK200": "",
-                "CTX_AREA_FK200": "",
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        _require_kis_success(data, "해외 주문체결조회")
-        return [_normalize_us_inquire_ccnl_row(row) for row in data.get("output", [])]
+        # 연속조회(페이지네이션) — 단일 페이지(20행)만 읽던 갭으로 거래가 많은 구간에서
+        # 체결 증거 누락 발생 (2026-06-13 NOK 매도 broker_no_sell_evidence 사건:
+        # 3일치 32행 중 2페이지의 매도 체결을 못 봄). 최대 8페이지 안전 한도.
+        rows_all: list[dict] = []
+        fk = nk = ""
+        for page in range(8):
+            page_headers = dict(headers)
+            if page:
+                page_headers["tr_cont"] = "N"
+            resp = _kis_get(
+                f"{profile.base_url}/uapi/overseas-stock/v1/trading/inquire-ccnl",
+                headers=page_headers,
+                params={
+                    "CANO": acnt_no,
+                    "ACNT_PRDT_CD": acnt_prdt,
+                    "PDNO": pdno,
+                    "ORD_STRT_DT": start_date,
+                    "ORD_END_DT": end_date,
+                    "SLL_BUY_DVSN": sll_buy_dvsn,
+                    "CCLD_NCCS_DVSN": ccld_nccs_dvsn,
+                    "OVRS_EXCG_CD": ovrs_excg_cd,
+                    "SORT_SQN": sort_value,
+                    "ORD_DT": "",
+                    "ORD_GNO_BRNO": "",
+                    "ODNO": "",
+                    "CTX_AREA_NK200": nk,
+                    "CTX_AREA_FK200": fk,
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            _require_kis_success(data, "해외 주문체결조회")
+            rows_all.extend(data.get("output", []) or [])
+            nk = str(data.get("ctx_area_nk200") or "").strip()
+            fk = str(data.get("ctx_area_fk200") or "").strip()
+            if not nk:
+                break
+        return [_normalize_us_inquire_ccnl_row(row) for row in rows_all]
 
     return _retry_kis("US inquire ccnl", _fetch)
 
