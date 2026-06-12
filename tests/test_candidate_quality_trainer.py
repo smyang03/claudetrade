@@ -604,11 +604,12 @@ class CandidateQualityTrainerTests(unittest.TestCase):
             self.assertEqual(analysts._trainer_prompt_hard_cap("KR", fallback=30), 40)
             self.assertEqual(analysts._trainer_prompt_hard_cap("US", fallback=30), 40)
 
-    def test_live_config_caps_selection_full_evidence_at_five(self) -> None:
+    def test_live_config_caps_selection_full_evidence_at_sixteen(self) -> None:
+        # 2026-06-12 B3: 중복 키 제거 후 16으로 단일화 (운영자 승인) — 5는 중복 키 시절 잔재
         config_path = Path(__file__).resolve().parents[1] / "config" / "v2_start_config.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(config["env_overrides"]["SELECTION_FULL_EVIDENCE_MAX"], "5")
+        self.assertEqual(config["env_overrides"]["SELECTION_FULL_EVIDENCE_MAX"], "16")
         self.assertEqual(config["env_overrides"]["SELECTION_EVIDENCE_MAX_CHARS"], "3500")
         self.assertEqual(config["env_overrides"]["FINAL_PROMPT_EVIDENCE_ALIGNMENT_ENABLED"], "true")
         self.assertEqual(config["env_overrides"]["FINAL_PROMPT_EVIDENCE_ALIGNMENT_WARN_OVERLAP_MIN"], "0.80")
