@@ -215,7 +215,16 @@ class _RuntimeConfig:
 
 class PathBRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._pathb_env = patch.dict("os.environ", {"PATHB_KR_LIVE_ENABLED": "true"})
+        # US_MIDDAY_ENTRY_BLOCK은 실제 벽시계(UTC 16시대)에 발동해 KST 01시대 테스트
+        # 실행 시 진입 스캔 테스트 8건을 오염시킨다. 게이트 자체 검증은
+        # tests/test_pathb_entry_quality_gates.py가 시간 제어로 전담한다.
+        self._pathb_env = patch.dict(
+            "os.environ",
+            {
+                "PATHB_KR_LIVE_ENABLED": "true",
+                "US_MIDDAY_ENTRY_BLOCK_ENABLED": "false",
+            },
+        )
         self._pathb_env.start()
 
     def tearDown(self) -> None:
