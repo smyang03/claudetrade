@@ -109,6 +109,16 @@ D그룹 — 설계만 (라이브 연결은 6/24):
 - [등록만, 판단 보류] 자체 ML 후보 스코어러 — decisions.db+daily_forward 라벨(51k건)로
   XGBoost trainer 점수 학습 버전. 라벨 2~3개월 축적 후 판단 (운영자: "등록만 해놓고 판단부터")
 
+**입력 품질·교훈 컨베이어 일괄 구현 (2026-06-12 운영자 "전체 개선 진행" — 완료):**
+- ✅ B1/B2 분봉 표적 백필 (judge·evidence 시점, TTL 10분+빌드당 6건) — KR NO_EV_PACK 뿌리 처방
+- ✅ B3 US evidence 식탁: compact 모드 + 한도 8→16 (드리프트 관찰 — C1 절차 동일)
+- ✅ A1 교훈 승인 손잡이: 텔레그램 /lessons 목록·승인·기각, state/lesson_approvals.json 영속
+- ✅ A1' 승인 게이팅 통일: LESSONS_REQUIRE_APPROVAL=true — select 주입·분석가 주입 모두
+  승인 후에만 (무승인 권고문 14일 무효과 실증 근거)
+- 조사 종결: B4 US 호가 = KIS 무료 시세 범위 밖(유료 구독 필요) → 보류, KR만 운영.
+  B5 KR sector = 랭크 응답 정규화에 업종 필드 부재 → 6/24 추출 조사
+- 남은 A2(승인 시 env 게이트 자동 제안) — 6/24 (FinMem 감쇠·국면 태그와 함께)
+
 **Claude 입력 품질 감사 후속 (2026-06-12 점검에서 발견, 미해결분):**
 - [6/17] KR post-open features 수집 빈곤 — evidence pack 빈 값(NO_EV_PACK)·judge ret_*m
   결측·exec= 0건의 공통 뿌리는 플래그/배관이 아니라 KR 분봉 피처 수집층.

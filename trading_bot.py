@@ -2684,7 +2684,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         severity_rank = {"high": 0, "medium": 1, "info": 2, "low": 3}
         today_iso = self._current_session_date_str(market)
         manual_review_sources = {"data_analysis", "manual", "postmortem"}
+        try:
+            from minority_report.lesson_approvals import approval_status as _lesson_approval_status
+        except Exception:
+            _lesson_approval_status = lambda _id: ""  # noqa: E731
+
         def _truth_status(item: dict) -> str:
+            # 운영자 승인(텔레그램 /lessons)은 manual_review 게이트를 통과시킨다 (2026-06-12)
+            approval = _lesson_approval_status(str(item.get("id") or ""))
+            if approval == "approved":
+                return "fresh"
+            if approval == "rejected":
+                return "rejected"
             status = str(item.get("truth_status") or "").strip().lower()
             if status:
                 return status
@@ -7062,6 +7073,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         cap = max(0, int(self._runtime_float("SELECTION_FULL_EVIDENCE_MAX", 8)))
         evidence: dict[str, dict] = {}
         post_open = dict((getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key) or {})
+        # evidence 대상인데 피처가 빈 후보는 분봉 표적 백필 (빌드당 상한 — KIS 부하 제한)
+        backfill_budget = max(0, int(self._runtime_float("POST_OPEN_MINUTE_BACKFILL_PER_BUILD", 6)))
+        if backfill_budget:
+            for candidate in list(candidates or [])[: cap or 8]:
+                if backfill_budget <= 0:
+                    break
+                ticker = str((candidate or {}).get("ticker") or "").strip()
+                key = self._selection_ticker_key(market_key, ticker) if ticker else ""
+                if not key:
+                    continue
+                if self._post_open_features_sparse(post_open.get(key) or post_open.get(ticker) or {}):
+                    if self._backfill_post_open_minutes(market_key, ticker, reason="evidence_pack_sparse"):
+                        backfill_budget -= 1
+            post_open = dict((getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key) or {})
         for candidate in list(candidates or []):
             if cap and len(evidence) >= cap:
                 break
@@ -14393,6 +14418,109 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._or_low[key] = float(low)
         self._or_formed[key] = True
         return True
+    def _backfill_post_open_minutes(self, market: str, ticker: str, *, reason: str = "") -> bool:
+        """분봉 표적 백필 — 피처 결측 후보의 가격 이력을 분봉으로 시딩하고 스냅샷 재계산.
+
+        KR NO_EV_PACK/judge 데이터부족 거부의 뿌리(폴링 이력 빈곤) 처방 (2026-06-12).
+        judge·evidence 시점에만 호출(저빈도) + 종목·세션당 TTL 가드로 KIS 부하 제한.
+        실패는 무조건 무해(fail-open).
+        """
+        if not self._runtime_bool("POST_OPEN_MINUTE_BACKFILL_ENABLED", True):
+            return False
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        key = self._post_open_key(market_key, ticker)
+        guard = getattr(self, "_minute_backfill_attempt_at", None)
+        if not isinstance(guard, dict):
+            guard = {}
+            self._minute_backfill_attempt_at = guard
+        now = datetime.now(KST).replace(tzinfo=None)
+        ttl_min = max(1.0, self._runtime_float("POST_OPEN_MINUTE_BACKFILL_TTL_MIN", 10.0))
+        last = guard.get(key)
+        if last is not None and (now - last).total_seconds() < ttl_min * 60:
+            return False
+        guard[key] = now
+        try:
+            import time as _time
+            from kis_api import get_intraday_ohlcv
+
+            session_date = self._current_session_date_str(market_key)
+            df = get_intraday_ohlcv(
+                market_key,
+                ticker,
+                session_date=session_date,
+                deadline=_time.monotonic() + max(2.0, self._runtime_float("POST_OPEN_MINUTE_BACKFILL_DEADLINE_SEC", 5.0)),
+            )
+            if df is None or getattr(df, "empty", True):
+                return False
+            seeded = 0
+            history = list(self._post_open_price_history.get(key) or [])
+            first_open = None
+            first_ts = None
+            for _, row in df.iterrows():
+                close = self._positive_float_or_none(row.get("close"))
+                ts = row.get("datetime") or row.get("date") or row.get("time")
+                ts_text = str(ts)[:19]
+                if close is None or not ts_text:
+                    continue
+                if first_open is None:
+                    first_open = self._positive_float_or_none(row.get("open")) or close
+                    first_ts = ts_text
+                history.append({"ts": ts_text, "price": float(close), "source": "minute_backfill"})
+                seeded += 1
+            if seeded == 0:
+                return False
+            dedup: dict[str, dict] = {}
+            for item in history:
+                ts = str((item or {}).get("ts") or "").strip()
+                price = self._positive_float_or_none((item or {}).get("price"))
+                if ts and price is not None:
+                    dedup[ts] = {"ts": ts, "price": float(price), "source": str((item or {}).get("source") or "")}
+            ordered = [dedup[ts] for ts in sorted(dedup)][-240:]
+            self._post_open_price_history[key] = ordered
+            anchor = self._post_open_anchor.get(key) or {}
+            if not self._positive_float_or_none(anchor.get("anchor_price")) and first_open:
+                anchor = {"anchor_at": first_ts, "anchor_price": float(first_open), "anchor_source": "minute_backfill"}
+                self._post_open_anchor[key] = anchor
+            anchor_price = float((self._post_open_anchor.get(key) or {}).get("anchor_price") or 0.0)
+            if anchor_price <= 0:
+                return False
+            known = now.isoformat(timespec="seconds")
+            po_returns = returns_from_price_history(
+                ordered,
+                anchor_at=(self._post_open_anchor.get(key) or {}).get("anchor_at"),
+                anchor_price=anchor_price,
+                known_at=known,
+            )
+            current = float(ordered[-1]["price"])
+            high = max(float(item.get("price") or 0.0) for item in ordered)
+            snapshot = build_post_open_snapshot(
+                market=market_key,
+                ticker=ticker,
+                known_at=known,
+                anchor_at=(self._post_open_anchor.get(key) or {}).get("anchor_at"),
+                anchor_price=anchor_price,
+                current_price=current,
+                returns=po_returns,
+                open_high=high,
+                opening_range_high=self._positive_float_or_none((getattr(self, "_or_high", {}) or {}).get(str(ticker))),
+                data_quality="minute_backfill",
+                market_session_date=session_date,
+            ).to_dict()
+            self._merge_last_post_open_features(market_key, {ticker: snapshot})
+            log.info(f"[분봉 백필] {market_key} {ticker} {seeded}봉 시딩 (사유: {reason or 'feature_sparse'})")
+            return True
+        except Exception as exc:
+            log.debug(f"[분봉 백필 실패] {market} {ticker}: {exc}")
+            return False
+
+    def _post_open_features_sparse(self, features: dict) -> bool:
+        """judge/evidence 입장에서 '판단 불가' 수준의 피처 결측 여부."""
+        if not isinstance(features, dict) or not features:
+            return True
+        keys = ("ret_3m_pct", "ret_5m_pct", "ret_10m_pct")
+        missing = sum(1 for k in keys if features.get(k) is None)
+        return missing >= 2
+
     def _merge_last_post_open_features(self, market: str, incoming: dict[str, dict]) -> dict[str, dict]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         store = getattr(self, "_last_post_open_features_by_ticker", None)
@@ -30731,6 +30859,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             strategy_feasibility = dict(getattr(candidate, "strategy_feasibility", {}) or {})
             candidate_market = str(getattr(candidate, "market", market))
             candidate_ticker = str(getattr(candidate, "ticker", row.get("ticker", "")))
+        # 피처 결측 시 분봉 표적 백필 — "8 bars only/features null" 거부의 처방
+        if self._post_open_features_sparse(features):
+            if self._backfill_post_open_minutes(candidate_market, candidate_ticker, reason="judge_input_sparse"):
+                refreshed = ((getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(
+                    "US" if str(candidate_market or "").upper() == "US" else "KR"
+                ) or {}).get(self._selection_ticker_key(candidate_market, candidate_ticker))
+                if isinstance(refreshed, dict) and refreshed:
+                    features = dict(refreshed)
         # judge 호출 시점에만 스프레드 보강 (저빈도 — 전수 배선은 KIS 콜 부하).
         # 2026-06-12 실측: spread_bps 12/12 결측 — 유동성 비용을 judge가 본 적 없음
         if str(candidate_market or "").upper() == "KR" and not features.get("spread_bps"):

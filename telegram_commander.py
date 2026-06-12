@@ -1028,6 +1028,10 @@ def _handle(text: str, bot) -> str:
     if cmd == "/brain":
         return _cmd_brain(bot)
 
+    # ── 교훈 승인 컨베이어 ────────────────────────────────────────────────────
+    if cmd == "/lessons":
+        return _cmd_lessons(bot, args)
+
     # ── 크레딧 ────────────────────────────────────────────────────────────────
     if cmd == "/credit":
         return _cmd_credit()
@@ -1723,6 +1727,50 @@ def _cmd_brain(bot) -> str:
         return f"🧠 <b>누적 학습 요약 [{market}]</b>\n{summary[:600]}"
     except Exception as e:
         return f"❌ 학습 요약 오류: {e}"
+
+
+def _cmd_lessons(bot, args: str = "") -> str:
+    """교훈 승인 컨베이어: /lessons 목록, /lessons ok <id>, /lessons no <id>."""
+    try:
+        import json as _json
+        from runtime_paths import get_runtime_path
+        from minority_report.lesson_approvals import approval_status, set_approval
+
+        parts = list(args) if isinstance(args, (list, tuple)) else str(args or "").split()
+        parts = [str(p) for p in parts]
+        if len(parts) >= 2 and parts[0].lower() in {"ok", "no"}:
+            lesson_id = parts[1].strip()
+            status = "approved" if parts[0] == "ok" else "rejected"
+            if set_approval(lesson_id, status, by="telegram"):
+                emoji = "✅ 승인" if status == "approved" else "🚫 기각"
+                return f"{emoji}: <code>{lesson_id}</code>\n승인된 교훈은 다음 판단부터 프롬프트에 주입됩니다."
+            return f"❌ 처리 실패: {lesson_id}"
+
+        path = get_runtime_path("state", "lesson_candidates.json")
+        if not path.exists():
+            return "교훈 후보 파일 없음"
+        data = _json.loads(path.read_text(encoding="utf-8-sig"))
+        lines = ["📚 <b>교훈 승인 대기열</b>"]
+        pending = 0
+        for mk, items in (data.get("markets") or {}).items():
+            for it in items or []:
+                lid = str(it.get("id") or "")
+                if not lid:
+                    continue
+                status = approval_status(lid)
+                if status == "rejected":
+                    continue
+                mark = "✅" if status == "approved" else "⏳"
+                if status != "approved":
+                    pending += 1
+                lines.append(
+                    f"{mark} [{mk}/{it.get('severity','?')}] <code>{lid}</code>\n"
+                    f"   {str(it.get('summary') or '')[:80]}"
+                )
+        lines.append(f"\n대기 {pending}건 | 승인: <code>/lessons ok [id]</code> · 기각: <code>/lessons no [id]</code>")
+        return "\n".join(lines[:40])
+    except Exception as e:
+        return f"❌ lessons 오류: {e}"
 
 
 def _legacy_cmd_credit_runtime() -> str:

@@ -85,6 +85,12 @@ def _brain_payload() -> dict:
 
 
 class ActiveLessonBuilderTests(unittest.TestCase):
+    def setUp(self):
+        # 빌더 메커니즘 검증용 — 승인 컨베이어(기본 on)는 별도 테스트에서 검증
+        self._approval_env = patch.dict(os.environ, {"LESSONS_REQUIRE_APPROVAL": "false"})
+        self._approval_env.start()
+        self.addCleanup(self._approval_env.stop)
+
     def test_disabled_lessons_do_not_query_or_inject(self) -> None:
         with patch.object(active_lessons, "_load_lesson_candidates", return_value=_lesson_payload()), \
              patch.object(active_lessons, "_load_brain", return_value=_brain_payload()), \
@@ -385,6 +391,11 @@ class ActiveLessonBuilderTests(unittest.TestCase):
 
 
 class ActiveLessonSelectionPromptTests(unittest.TestCase):
+    def setUp(self):
+        self._approval_env = patch.dict(os.environ, {"LESSONS_REQUIRE_APPROVAL": "false"})
+        self._approval_env.start()
+        self.addCleanup(self._approval_env.stop)
+
     def test_lesson_context_helper_no_longer_hard_clamps_at_500_chars(self) -> None:
         from minority_report import analysts as analysts_module
 

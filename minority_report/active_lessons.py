@@ -421,8 +421,24 @@ def _select_items(market: str, max_items: int, *, prompt_scope: str) -> tuple[li
     source_caps = {"recent_day": 2}
     source_counts: dict[str, int] = {}
     selected: list[dict[str, Any]] = []
+    # 승인형 컨베이어 (2026-06-12): 운영자 승인 전 교훈은 프롬프트 주입 금지.
+    # 근거: 무승인 권고문 주입 14일간 지표 무변화 실증 (watch_only 49.8% breach 지속)
+    try:
+        from minority_report.lesson_approvals import approval_required, approval_status
+        require_approval = approval_required()
+    except Exception:
+        require_approval = False
+        approval_status = lambda _id: ""  # noqa: E731
     for item in deduped:
         source = str(item.get("source") or "")
+        if require_approval:
+            status = approval_status(str(item.get("id") or ""))
+            if status == "rejected":
+                ignored.append({"source": source, "reason": "approval_rejected"})
+                continue
+            if status != "approved":
+                ignored.append({"source": source, "reason": "approval_pending"})
+                continue
         cap = source_caps.get(source)
         if cap is not None and source_counts.get(source, 0) >= cap:
             ignored.append({"source": source, "reason": "source_cap"})
