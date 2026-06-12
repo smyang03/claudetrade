@@ -97,5 +97,60 @@ class LowConfHoldRecheckTests(unittest.TestCase):
         return {"allowed": True}
 
 
+class JudgeInputHygieneTests(unittest.TestCase):
+    def test_strip_empty_and_debug_fields(self):
+        from execution.single_symbol_judge import _strip_empty_fields
+
+        payload = {
+            "ticker": "AAA",
+            "candidate": {
+                "us_kis_ranking_shadow_error": None,
+                "screener_cache_skipped_reason": "",
+                "future_fields_ignored": [],
+                "price": 10.0,
+                "post_open_features": {"spread_bps": None, "ret_3m_pct": 0.5, "missing_fields": []},
+            },
+            "risk_context": {},
+        }
+        out = _strip_empty_fields(payload)
+        self.assertEqual(out["candidate"]["price"], 10.0)
+        self.assertEqual(out["candidate"]["post_open_features"], {"ret_3m_pct": 0.5})
+        self.assertNotIn("us_kis_ranking_shadow_error", out["candidate"])
+        self.assertNotIn("risk_context", out)
+
+
+class LastTradeTokenTests(unittest.TestCase):
+    def test_token_renders_recent_loss(self):
+        from minority_report.analysts import _last_trade_line_token
+        self.assertEqual(
+            _last_trade_line_token({"last_trade_pnl_pct": -2.23, "last_trade_sessions_ago": 1}),
+            "last=-2.2%(1s)",
+        )
+        self.assertEqual(_last_trade_line_token({}), "")
+
+
+class AdvisorThesisTests(unittest.TestCase):
+    def test_entry_thesis_from_pathb_run(self):
+        bot = TradingBot.__new__(TradingBot)
+
+        class _Store:
+            def find_path_run(self, run_id):
+                return {"origin_action": "PULLBACK_WAIT", "plan": {
+                    "invalidation_condition": "broad market reverses sharply",
+                    "reward_risk": 2.25, "confidence": 0.62,
+                }}
+
+        class _PathB:
+            store = _Store()
+
+        bot.pathb = _PathB()
+        pos = {"ticker": "IONQ", "pathb_path_run_id": "run1"}
+        thesis = bot._advisor_entry_thesis("US", pos)
+        self.assertEqual(thesis["entry_invalid_if"], "broad market reverses sharply")
+        self.assertEqual(thesis["plan_reward_risk"], 2.25)
+        # 캐시 확인
+        self.assertIs(pos["_entry_thesis_ctx"], thesis)
+
+
 if __name__ == "__main__":
     unittest.main()

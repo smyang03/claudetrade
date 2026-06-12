@@ -15,6 +15,28 @@ PATHB_REQUIRED_FIELDS = ("buy_zone_low", "buy_zone_high", "sell_target", "stop_l
 PATHB_BAD_DATA_QUALITY = {"minute_missing", "missing", "bad", "stale", "invalid", "fail_closed"}
 
 
+# judge 입력에서 제거할 디버그성 키 — Claude에 정보 0, 토큰/혼란 비용만 (2026-06-12 실측:
+# us_kis_ranking_shadow_* 등 null 키가 매 호출 전송, spread_bps 12/12 결측 상태로 전송)
+_DEBUG_KEY_PATTERNS = ("shadow_error", "shadow_path", "future_fields_ignored", "cache_skipped_reason", "degraded_reason")
+
+
+def _strip_empty_fields(obj):
+    """None/빈문자열/빈컬렉션 및 디버그 키 제거 (재귀). 정보 있는 필드는 보존."""
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if any(p in str(k) for p in _DEBUG_KEY_PATTERNS):
+                continue
+            cleaned = _strip_empty_fields(v)
+            if cleaned in (None, "", [], {}):
+                continue
+            out[k] = cleaned
+        return out
+    if isinstance(obj, list):
+        return [c for c in (_strip_empty_fields(v) for v in obj) if c not in (None, "", [], {})]
+    return obj
+
+
 def _market_key(market: str) -> str:
     return "US" if str(market or "").upper() == "US" else "KR"
 
@@ -80,14 +102,14 @@ def build_single_symbol_judge_prompt(
 ) -> str:
     market_key = _market_key(market)
     ticker_key = _ticker_key(ticker, market_key)
-    payload = {
+    payload = _strip_empty_fields({
         "market": market_key,
         "ticker": ticker_key,
         "candidate": candidate or {},
         "post_open_features": features or {},
         "strategy_feasibility": strategy_feasibility or {},
         "risk_context": risk_context or {},
-    }
+    })
     return (
         "You are deciding whether ONE already-screened live trading candidate can receive a PathB waiting price plan now.\n"
         "Return JSON only. Do not include markdown.\n"

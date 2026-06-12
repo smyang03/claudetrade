@@ -109,6 +109,14 @@ D그룹 — 설계만 (라이브 연결은 6/24):
 - [등록만, 판단 보류] 자체 ML 후보 스코어러 — decisions.db+daily_forward 라벨(51k건)로
   XGBoost trainer 점수 학습 버전. 라벨 2~3개월 축적 후 판단 (운영자: "등록만 해놓고 판단부터")
 
+**Claude 입력 품질 감사 후속 (2026-06-12 점검에서 발견, 미해결분):**
+- [6/17] KR post-open features 수집 빈곤 — evidence pack 빈 값(NO_EV_PACK)·judge ret_*m
+  결측·exec= 0건의 공통 뿌리는 플래그/배관이 아니라 KR 분봉 피처 수집층.
+  session_evidence_degraded 집계가 이미 측정 중 — 수집 보강 설계 필요
+- [6/24] spread_bps 전수 배선 — judge 시점 KR 보강은 적용됨(2026-06-12),
+  스냅샷 전수 배선은 KIS 호가 콜 부하 검토 후 (US는 신뢰할 bid/ask 소스 확보 필요)
+- [6/24] sector= KR 후보 라인 보강 — 동반 손절(반도체형) 인지용
+
 **~2026-06-24 — 2차 데이터 판정:**
 - 채널 ROI (candidate_source 2주치) → most_actives/day_gainers 쿼터 재배분
 - rel_vol 분포·예측력 검증 → 전략 게이트 연결 여부 (US PathB 보호영역, `MD 위반 사항` 절차)

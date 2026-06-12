@@ -16762,6 +16762,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "pending_intraday_recheck_at": str(pos.get("pending_intraday_recheck_at") or ""),
                 **or_ctx,
             }
+            # 진입 thesis — "왜 샀는지"를 보유 판단에 제공 (2026-06-12: IONQ의
+            # entry invalid_if "broad market reverses"를 advisor가 몰랐던 갭)
+            ctx.update(self._advisor_entry_thesis(market_key, pos))
+            # 맥락 3종: 실적 임박 / 시장 급반전 / 상대 거래량
+            try:
+                from runtime.earnings_calendar import earnings_tag
+                ctx["earnings_proximity"] = earnings_tag(ticker, market_key, max_abs_days=2) or ""
+            except Exception:
+                pass
+            ctx["market_sharp_reversal_active"] = bool(
+                (getattr(self, "_market_sharp_reversal_active", {}) or {}).get(market_key)
+            )
+            rel_vol = self._pool_rel_vol_for_ticker(market_key, ticker)
+            if rel_vol:
+                ctx["rel_vol"] = rel_vol
             enriched["advisor_context_v2"] = ctx
             for key, value in ctx.items():
                 if key != "schema" and enriched.get(key) in (None, ""):
@@ -16769,6 +16784,45 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as exc:
             log.debug(f"[advisor context v2] failed {market} {pos.get('ticker')}: {exc}")
         return enriched
+
+    def _advisor_entry_thesis(self, market_key: str, pos: dict) -> dict:
+        """원 플랜의 진입 논거/무효조건을 보유 판단 컨텍스트로 — 포지션에 1회 캐시."""
+        cached = pos.get("_entry_thesis_ctx")
+        if isinstance(cached, dict):
+            return cached
+        thesis: dict = {}
+        try:
+            run_id = str(pos.get("pathb_path_run_id") or "").strip()
+            pathb = getattr(self, "pathb", None)
+            if run_id and pathb is not None:
+                run = pathb.store.find_path_run(run_id) or {}
+                plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
+                thesis = {
+                    "entry_invalid_if": str(plan.get("invalidation_condition") or plan.get("invalid_if") or "")[:160],
+                    "entry_do_not_buy_if": str(plan.get("do_not_buy_if") or "")[:120],
+                    "plan_origin_action": str(plan.get("origin_action") or run.get("origin_action") or ""),
+                    "plan_reward_risk": plan.get("reward_risk"),
+                    "plan_confidence": plan.get("confidence"),
+                }
+                thesis = {k: v for k, v in thesis.items() if v not in (None, "", 0)}
+        except Exception:
+            thesis = {}
+        pos["_entry_thesis_ctx"] = thesis
+        return thesis
+
+    def _pool_rel_vol_for_ticker(self, market_key: str, ticker: str) -> float | None:
+        """최근 선정 풀 row에서 rel_vol 조회 (보유 종목 맥락용, best-effort)."""
+        try:
+            meta = (getattr(self, "selection_meta", {}) or {}).get(market_key) or {}
+            for row in list(meta.get("_final_prompt_pool") or []):
+                if not isinstance(row, dict):
+                    continue
+                if self._selection_ticker_key(market_key, row.get("ticker")) == self._selection_ticker_key(market_key, ticker):
+                    value = float(row.get("rel_vol_shadow") or 0)
+                    return round(value, 2) if value > 0 else None
+        except Exception:
+            pass
+        return None
 
     def _execution_leak_log_path(self, market: str, kind: str) -> Path:
         session_date = self._current_session_date_str(market).replace("-", "")
@@ -30677,6 +30731,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             strategy_feasibility = dict(getattr(candidate, "strategy_feasibility", {}) or {})
             candidate_market = str(getattr(candidate, "market", market))
             candidate_ticker = str(getattr(candidate, "ticker", row.get("ticker", "")))
+        # judge 호출 시점에만 스프레드 보강 (저빈도 — 전수 배선은 KIS 콜 부하).
+        # 2026-06-12 실측: spread_bps 12/12 결측 — 유동성 비용을 judge가 본 적 없음
+        if str(candidate_market or "").upper() == "KR" and not features.get("spread_bps"):
+            try:
+                micro = self._kr_microstructure_context(candidate_ticker)
+                if micro.get("spread_bps") is not None:
+                    features["spread_bps"] = round(float(micro["spread_bps"]), 1)
+                    if micro.get("orderbook_imbalance") is not None:
+                        features["orderbook_imbalance"] = micro["orderbook_imbalance"]
+            except Exception:
+                pass
         risk_context = {
             "feature": "early_judge_pathb_price_plan",
             "order_quantity": "runtime_owned",

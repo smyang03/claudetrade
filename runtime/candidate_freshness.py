@@ -106,16 +106,29 @@ def _compute_freshness_map(market_key: str) -> dict[str, dict[str, Any]]:
         con.close()
 
     plans: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    last_trade: dict[str, dict[str, Any]] = {}
     con = sqlite3.connect(f"file:{event_path}?mode=ro", uri=True, timeout=5)
     try:
-        for t, sd, st in con.execute(
-            "SELECT ticker, session_date, status FROM v2_path_runs "
+        for t, sd, st, pj in con.execute(
+            "SELECT ticker, session_date, status, plan_json FROM v2_path_runs "
             "WHERE market=? AND runtime_mode='live' AND session_date >= ?",
             (market_key, sessions[0]),
         ):
             key = _ticker_key(market_key, t)
-            if key:
-                plans[key].append((str(sd)[:10], str(st or "")))
+            if not key:
+                continue
+            sd_iso = str(sd)[:10]
+            plans[key].append((sd_iso, str(st or "")))
+            # 직전 체결 거래 결과 — "어제 이 종목 -2% 손절" 맥락 (재탕 인지용)
+            if str(st or "") in _TRADED_PLAN_STATUSES:
+                try:
+                    pnl = json.loads(pj or "{}").get("pnl_pct")
+                except Exception:
+                    pnl = None
+                if pnl is not None:
+                    prev = last_trade.get(key)
+                    if prev is None or sd_iso > str(prev.get("date") or ""):
+                        last_trade[key] = {"date": sd_iso, "pnl_pct": round(float(pnl), 2)}
     finally:
         con.close()
 
@@ -139,12 +152,18 @@ def _compute_freshness_map(market_key: str) -> dict[str, dict[str, Any]]:
             grade = "MATURE"
         else:
             grade = "NEW"
+        lt = last_trade.get(ticker)
+        lt_sessions_ago = None
+        if lt and lt.get("date") in sessions:
+            lt_sessions_ago = len(sessions) - 1 - sessions.index(lt["date"])
         result[ticker] = {
             "age_sessions": age,
             "grade": grade,
             "never_planned": never_planned,
             "retrade": retrade,
             "exempt_active": exempt_active,
+            "last_trade_pnl_pct": lt.get("pnl_pct") if lt else None,
+            "last_trade_sessions_ago": lt_sessions_ago,
         }
     return result
 
@@ -178,6 +197,10 @@ def annotate_candidate_freshness(rows: list[dict], market: str) -> dict[str, Any
         row["freshness_grade"] = info["grade"]
         row["freshness_age_sessions"] = info["age_sessions"]
         row["freshness_retrade"] = bool(info["retrade"])
+        if info.get("last_trade_pnl_pct") is not None and info.get("last_trade_sessions_ago") is not None:
+            if int(info["last_trade_sessions_ago"]) <= 3:
+                row["last_trade_pnl_pct"] = info["last_trade_pnl_pct"]
+                row["last_trade_sessions_ago"] = info["last_trade_sessions_ago"]
         penalty = 0.0
         if info["grade"] == "OLD":
             summary["old"] += 1

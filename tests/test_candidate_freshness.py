@@ -28,9 +28,12 @@ def _make_dbs(tmp: Path, *, sessions, hist, plans):
             audit.execute("INSERT INTO audit_candidate_rows VALUES ('US', ?, ?, 1)", (d, t))
     audit.commit(); audit.close()
     ev = sqlite3.connect(tmp / "data" / "v2_event_store.db")
-    ev.execute("CREATE TABLE v2_path_runs (market TEXT, runtime_mode TEXT, ticker TEXT, session_date TEXT, status TEXT)")
+    ev.execute("CREATE TABLE v2_path_runs (market TEXT, runtime_mode TEXT, ticker TEXT, session_date TEXT, status TEXT, plan_json TEXT)")
     for t, d, st in plans:
-        ev.execute("INSERT INTO v2_path_runs VALUES ('US', 'live', ?, ?, ?)", (t, d, st))
+        ev.execute(
+            "INSERT INTO v2_path_runs VALUES ('US', 'live', ?, ?, ?, ?)",
+            (t, d, st, '{"pnl_pct": -2.2}' if st == "CLOSED" else "{}"),
+        )
     ev.commit(); ev.close()
 
 

@@ -1117,6 +1117,18 @@ def _candidate_turnover_text(market: str, turnover: float) -> str:
     return f"turn={turnover/1e8:.1f}e8KRW"
 
 
+def _last_trade_line_token(candidate: dict) -> str:
+    """직전 거래 결과 토큰: last=-2.2%(1s) — 재탕/직후 재진입 맥락 (3세션 내만)."""
+    pnl = candidate.get("last_trade_pnl_pct")
+    ago = candidate.get("last_trade_sessions_ago")
+    if pnl is None or ago is None:
+        return ""
+    try:
+        return f"last={float(pnl):+.1f}%({int(ago)}s)"
+    except Exception:
+        return ""
+
+
 def _earnings_line_token(candidate: dict, market: str) -> str:
     try:
         from runtime.earnings_calendar import earnings_tag
@@ -1166,6 +1178,7 @@ def _format_selection_candidate_line(
         freshness_token = f"stale={candidate.get('freshness_age_sessions')}s"
     # 실적 임박 표기 (PEAD 정책: earnings_date는 즉시 노출 허용. US=사전, KR=공시 당일 감지)
     earnings_token = _earnings_line_token(candidate, market)
+    last_trade_token = _last_trade_line_token(candidate)
     parts = [
         _candidate_identity_prefix(candidate),
         f"chg={rate:+.2f}%",
@@ -1185,6 +1198,7 @@ def _format_selection_candidate_line(
         f"liq={liquidity_bucket}",
         freshness_token,
         earnings_token,
+        last_trade_token,
         news_hint,
         _candidate_discovery_hint(candidate),
         _candidate_trainer_hint(candidate),
@@ -2595,6 +2609,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
                 if str(candidate.get("freshness_grade") or "") == "OLD" else ""
             ),
             _earnings_line_token(candidate, market),
+            _last_trade_line_token(candidate),
             _candidate_news_hint(candidate),
             _candidate_discovery_hint(candidate),
             _candidate_trainer_hint(candidate),
