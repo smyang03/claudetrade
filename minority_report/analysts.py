@@ -1118,11 +1118,9 @@ def _candidate_turnover_text(market: str, turnover: float) -> str:
 
 
 def _earnings_line_token(candidate: dict, market: str) -> str:
-    if str(market or "").upper() != "US":
-        return ""
     try:
         from runtime.earnings_calendar import earnings_tag
-        return earnings_tag(str(candidate.get("ticker") or ""), "US")
+        return earnings_tag(str(candidate.get("ticker") or ""), str(market or "US").upper())
     except Exception:
         return ""
 
@@ -1166,14 +1164,8 @@ def _format_selection_candidate_line(
     freshness_token = ""
     if str(candidate.get("freshness_grade") or "") == "OLD":
         freshness_token = f"stale={candidate.get('freshness_age_sessions')}s"
-    # 실적 임박 표기 (PEAD 정책: earnings_date는 즉시 노출 허용)
-    earnings_token = ""
-    if market == "US":
-        try:
-            from runtime.earnings_calendar import earnings_tag
-            earnings_token = earnings_tag(str(candidate.get("ticker") or ""), market)
-        except Exception:
-            earnings_token = ""
+    # 실적 임박 표기 (PEAD 정책: earnings_date는 즉시 노출 허용. US=사전, KR=공시 당일 감지)
+    earnings_token = _earnings_line_token(candidate, market)
     parts = [
         _candidate_identity_prefix(candidate),
         f"chg={rate:+.2f}%",

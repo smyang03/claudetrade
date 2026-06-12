@@ -16330,28 +16330,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         return digest_prompt, basis
 
     def _earnings_exposure_warning(self, market: str) -> str:
-        """보유/활성 플랜 종목의 실적 임박(±2일) 경고 한 줄 — 지뢰 지도의 보유 노출 축."""
-        if str(market or "").upper() != "US":
-            return ""
+        """보유/활성 플랜 종목의 실적 임박(±2일) 경고 한 줄 — 지뢰 지도의 보유 노출 축.
+
+        US = Finnhub 사전 캘린더(D-2~D+2), KR = DART 실적성 공시 당일 감지(D0~D+2).
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
         try:
             from runtime.earnings_calendar import earnings_tag
 
             exposed: list[str] = []
             for pos in list(getattr(self.risk, "positions", []) or []):
-                if str(pos.get("market") or "").upper() != "US":
+                if str(pos.get("market") or "").upper() != market_key:
                     continue
-                ticker = str(pos.get("ticker") or "").strip().upper()
-                tag = earnings_tag(ticker, "US", max_abs_days=2) if ticker else ""
+                ticker = str(pos.get("ticker") or "").strip()
+                tag = earnings_tag(ticker, market_key, max_abs_days=2) if ticker else ""
                 if tag:
                     exposed.append(f"{ticker}({tag.replace('earn=', '')})")
             pathb = getattr(self, "pathb", None)
             if pathb is not None:
                 try:
-                    for run in pathb.store.path_runs_for_session("US", self._current_session_date_str("US")):
+                    for run in pathb.store.path_runs_for_session(market_key, self._current_session_date_str(market_key)):
                         if str(run.get("status") or "") not in {"CLAUDE_PRICE_WAITING", "WAITING", "ORDER_SENT", "ORDER_ACKED"}:
                             continue
-                        ticker = str(run.get("ticker") or "").strip().upper()
-                        tag = earnings_tag(ticker, "US", max_abs_days=2) if ticker else ""
+                        ticker = str(run.get("ticker") or "").strip()
+                        tag = earnings_tag(ticker, market_key, max_abs_days=2) if ticker else ""
                         if tag and not any(item.startswith(ticker) for item in exposed):
                             exposed.append(f"{ticker}({tag.replace('earn=', '')})")
                 except Exception:

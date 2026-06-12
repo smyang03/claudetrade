@@ -1,12 +1,16 @@
-"""US 실적 캘린더 — Finnhub 일 1회 수집, 지뢰 지도 용도 (2026-06-12 운영자 승인).
+"""실적 캘린더 — US(Finnhub 사전 캘린더) + KR(DART 실적성 공시 당일 감지).
 
 용도 (방어 우선):
-1. PathB 신규 등록 보류: 실적 D-1~D+1 (ORCL 2026-06-11 거래정지 충돌 사건 처방)
+1. PathB 신규 등록 보류: US 실적 D-1~D+1, KR 실적 공시 D0~D+1
+   (US ORCL 2026-06-11 거래정지 충돌 사건 처방)
 2. 후보 라인 earn=D±n 토큰 (PEAD 정책상 earnings_date는 즉시 prompt 노출 허용)
 3. 컨텍스트 경고: 보유/플랜 종목 실적 임박 표시
 
-원칙: 캘린더 결측 시 무동작(fail-open — 소형주 커버리지 ~37% 현실 반영),
-KR 미적용(Finnhub US 전용), 수집 실패가 거래를 멈추지 않는다.
+KR 한계: 발표 예정일 공시 제도가 없어 사전(D-1) 감지는 불가 — DART 잠정실적/
+손익구조변동 공시를 당일 감지해 직후 변동성(D0~D+1)만 방어한다. 사전 추정
+(작년 동분기 공시일 기반 윈도우)은 2단계 후보.
+
+원칙: 캘린더 결측 시 무동작(fail-open), 수집 실패가 거래를 멈추지 않는다.
 """
 
 from __future__ import annotations
@@ -84,6 +88,63 @@ def refresh_earnings_calendar(*, days_back: int = 3, days_ahead: int = 14, timeo
     return {"ok": True, "count": len(by_symbol)}
 
 
+# KR 실적성 공시 report_nm 패턴 — '실적' 단순 매칭은 증권발행실적보고서 등 오탐
+_KR_EARNINGS_PATTERNS = ("영업(잠정)실적", "잠정실적", "매출액또는손익구조", "영업실적등에대한전망")
+
+
+def refresh_kr_earnings_disclosures(*, days_back: int = 2, timeout_sec: float = 15.0, max_pages: int = 3) -> dict[str, Any]:
+    """DART 최근 공시에서 실적성 공시 종목을 감지해 캐시의 kr_by_code에 저장."""
+    key = str(os.getenv("DART_API_KEY", "") or "").strip()
+    if not key:
+        return {"ok": False, "reason": "no_api_key"}
+    bgn = (date.today() - timedelta(days=days_back)).strftime("%Y%m%d")
+    end = date.today().strftime("%Y%m%d")
+    kr_by_code: dict[str, dict[str, Any]] = {}
+    try:
+        for page in range(1, max_pages + 1):
+            url = (
+                "https://opendart.fss.or.kr/api/list.json"
+                f"?crtfc_key={key}&bgn_de={bgn}&end_de={end}&page_count=100&page_no={page}"
+            )
+            with urllib.request.urlopen(url, timeout=timeout_sec) as r:
+                d = json.loads(r.read())
+            items = d.get("list") or []
+            for it in items:
+                name = str(it.get("report_nm") or "")
+                if not any(p in name for p in _KR_EARNINGS_PATTERNS):
+                    continue
+                code = str(it.get("stock_code") or "").strip()
+                if not code:
+                    continue
+                rcept = str(it.get("rcept_dt") or "")
+                iso = f"{rcept[:4]}-{rcept[4:6]}-{rcept[6:8]}" if len(rcept) == 8 else ""
+                existing = kr_by_code.get(code)
+                if existing is None or iso > str(existing.get("date") or ""):
+                    kr_by_code[code] = {"date": iso, "hour": "공시", "report": name[:40]}
+            if len(items) < 100:
+                break
+    except Exception as exc:
+        log.warning(f"[KR 실적 공시] 수집 실패 (기존 캐시 유지): {exc}")
+        return {"ok": False, "reason": str(exc)[:100]}
+    path = _cache_path()
+    data: dict[str, Any] = {}
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    data["kr_fetched_at"] = datetime.now().isoformat(timespec="seconds")
+    data["kr_by_code"] = kr_by_code
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+    with _LOCK:
+        _MEM_CACHE["loaded_at"] = 0.0
+    log.info(f"[KR 실적 공시] 갱신 완료: {bgn}~{end} {len(kr_by_code)}종목")
+    return {"ok": True, "count": len(kr_by_code)}
+
+
 def _load_calendar() -> dict[str, Any]:
     now = time.time()
     with _LOCK:
@@ -97,10 +158,17 @@ def _load_calendar() -> dict[str, Any]:
     except Exception:
         data = {}
     # 하루 지난 캐시는 백그라운드성 갱신 시도 (실패해도 기존 데이터 사용)
-    fetched = str(data.get("fetched_at") or "")[:10]
-    if _enabled() and fetched != date.today().isoformat():
+    today_iso = date.today().isoformat()
+    if _enabled() and str(data.get("fetched_at") or "")[:10] != today_iso:
         try:
             refresh_earnings_calendar()
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    if _enabled() and str(data.get("kr_fetched_at") or "")[:10] != today_iso:
+        try:
+            refresh_kr_earnings_disclosures()
             if path.exists():
                 data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
@@ -112,14 +180,21 @@ def _load_calendar() -> dict[str, Any]:
 
 
 def earnings_info(ticker: str, market: str = "US") -> dict[str, Any] | None:
-    """해당 종목의 가장 가까운 실적 정보. 없거나 KR이면 None (fail-open)."""
-    if not _enabled() or str(market or "").upper() != "US":
+    """해당 종목의 가장 가까운 실적 정보. 없으면 None (fail-open).
+
+    US = Finnhub 사전 캘린더, KR = DART 실적성 공시(당일 감지 — 과거만 존재).
+    """
+    if not _enabled():
         return None
-    sym = str(ticker or "").strip().upper()
+    market_key = str(market or "").upper()
+    sym = str(ticker or "").strip()
     if not sym:
         return None
     data = _load_calendar()
-    info = (data.get("by_symbol") or {}).get(sym)
+    if market_key == "US":
+        info = (data.get("by_symbol") or {}).get(sym.upper())
+    else:
+        info = (data.get("kr_by_code") or {}).get(sym)
     return dict(info) if isinstance(info, dict) else None
 
 

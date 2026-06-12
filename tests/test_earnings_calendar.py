@@ -59,10 +59,33 @@ class EarningsCalendarTests(unittest.TestCase):
         self.assertFalse(ec.earnings_window_block("UNKNOWN", "US")["blocked"])
         self.assertEqual(ec.earnings_tag("UNKNOWN", "US"), "")
 
-    def test_kr_market_ignored(self):
+    def test_kr_uses_dart_disclosure_section(self):
         today = date.today()
-        _write_cache(self.root, {"005930": {"date": today.isoformat(), "hour": "amc"}})
-        self.assertIsNone(ec.earnings_info("005930", "KR"))
+        # US 섹션에 있는 코드는 KR 조회에 안 잡힘 / kr_by_code에 있으면 잡힘
+        path = self.root / "data" / "earnings_calendar.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "fetched_at": today.isoformat() + "T08:00:00",
+            "kr_fetched_at": today.isoformat() + "T08:00:00",
+            "by_symbol": {"AAPL": {"date": today.isoformat(), "hour": "amc"}},
+            "kr_by_code": {"066570": {"date": today.isoformat(), "hour": "공시", "report": "연결재무제표기준영업(잠정)실적"}},
+        }), encoding="utf-8")
+        self.assertIsNone(ec.earnings_info("AAPL", "KR"))
+        # KR 공시 당일(D0) → 차단, 토큰 생성
+        self.assertTrue(ec.earnings_window_block("066570", "KR")["blocked"])
+        self.assertEqual(ec.earnings_tag("066570", "KR"), "earn=D0(공시)")
+
+    def test_kr_disclosure_two_days_ago_not_blocked(self):
+        today = date.today()
+        path = self.root / "data" / "earnings_calendar.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "fetched_at": today.isoformat() + "T08:00:00",
+            "kr_fetched_at": today.isoformat() + "T08:00:00",
+            "by_symbol": {},
+            "kr_by_code": {"005930": {"date": (today - timedelta(days=2)).isoformat(), "hour": "공시"}},
+        }), encoding="utf-8")
+        # D+2 → 차단 해제 (D0~D+1만 보류)
         self.assertFalse(ec.earnings_window_block("005930", "KR")["blocked"])
 
     def test_tag_format_and_range(self):
