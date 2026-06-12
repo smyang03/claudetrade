@@ -38046,6 +38046,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.today_judgment["runtime_safety_summary"] = runtime_safety_summary
         self._emit_session_runtime_safety_alerts(market, runtime_safety_summary)
         lesson_candidates = self._persist_lesson_candidates(market, ops_review_snapshot)
+        # 반복 기반 자동 신뢰 원장 갱신 — 독립 패턴 교훈이 3세션 반복되면 자동 승인
+        try:
+            from minority_report.lesson_approvals import note_lesson_observations
+            note_lesson_observations(list(lesson_candidates or []), today)
+        except Exception as _lesson_rec_e:
+            log.debug(f"[lesson recurrence] 기록 실패: {_lesson_rec_e}")
         self._persist_live_judgment(market)
         _ops_metrics = ops_review_snapshot.get("metrics", {})
         log.info(

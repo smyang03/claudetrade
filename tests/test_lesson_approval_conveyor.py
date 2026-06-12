@@ -93,5 +93,47 @@ class TruthStatusOverrideTests(unittest.TestCase):
             self.assertEqual(summary, "")
 
 
+class RecurrenceAutoTrustTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self._p1 = patch.object(la, "_path", return_value=self.root / "state" / "lesson_approvals.json")
+        self._p2 = patch.object(la, "_recurrence_path", return_value=self.root / "state" / "lesson_recurrence.json")
+        self._p1.start(); self._p2.start()
+
+    def tearDown(self):
+        self._p1.stop(); self._p2.stop()
+        self.tmp.cleanup()
+
+    def test_independent_pattern_lesson_auto_trusts_at_3_sessions(self):
+        item = {"id": "pat1", "summary": "코스피 폭락장에서 DEFENSIVE 합의가 최적", "source": "postmortem"}
+        la.note_lesson_observations([item], "2026-06-10")
+        la.note_lesson_observations([item], "2026-06-11")
+        self.assertEqual(la.approval_status("pat1"), "")          # 2세션 — 아직
+        la.note_lesson_observations([item], "2026-06-12")
+        self.assertEqual(la.approval_status("pat1"), "approved")  # 3세션 — 자동 신뢰
+
+    def test_metric_review_lesson_never_auto_trusts(self):
+        item = {"id": "watch_only_missed_runup_review", "summary": "watch_only 놓침 비율 높음 재검토", "source": "ops_review"}
+        for d in ("2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05"):
+            la.note_lesson_observations([item], d)
+        self.assertEqual(la.approval_status("watch_only_missed_runup_review"), "")  # 매일 재생성 != 독립 관찰
+
+    def test_same_text_different_ids_accumulate(self):
+        # 같은 문장이 세션마다 다른 id로 나와도 (여러 책에 같은 문장) 누적
+        for i, d in enumerate(("2026-06-10", "2026-06-11", "2026-06-12")):
+            la.note_lesson_observations([{
+                "id": f"pm_{i}", "summary": "급락장 직전 거래량 급증 26건은 함정 신호다", "source": "postmortem",
+            }], d)
+        self.assertEqual(la.approval_status("pm_2"), "approved")
+
+    def test_explicit_rejection_beats_auto_trust(self):
+        item = {"id": "bad1", "summary": "나쁜 패턴 교훈", "source": "postmortem"}
+        for d in ("2026-06-10", "2026-06-11", "2026-06-12"):
+            la.note_lesson_observations([item], d)
+        la.set_approval("bad1", "rejected")
+        self.assertEqual(la.approval_status("bad1"), "rejected")
+
+
 if __name__ == "__main__":
     unittest.main()

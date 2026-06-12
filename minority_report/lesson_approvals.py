@@ -38,9 +38,17 @@ def load_approvals() -> dict[str, dict[str, Any]]:
 
 
 def approval_status(lesson_id: str) -> str:
-    """'approved' / 'rejected' / '' (대기)."""
+    """'approved' / 'rejected' / '' (대기). 명시 승인·기각이 우선, 그 다음 반복 자동 신뢰."""
     item = load_approvals().get(str(lesson_id or "").strip())
-    return str((item or {}).get("status") or "")
+    explicit = str((item or {}).get("status") or "")
+    if explicit:
+        return explicit
+    try:
+        if _auto_trusted(lesson_id):
+            return "approved"
+    except Exception:
+        pass
+    return ""
 
 
 def set_approval(lesson_id: str, status: str, *, by: str = "telegram") -> bool:
@@ -65,3 +73,93 @@ def set_approval(lesson_id: str, status: str, *, by: str = "telegram") -> bool:
 
 def approval_required() -> bool:
     return str(os.getenv("LESSONS_REQUIRE_APPROVAL", "true") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+# ── 반복 기반 자동 신뢰 (운영자 철학 2026-06-12: "같은 문장이 여러 책에 나오면 진리") ──
+# 독립 관찰(postmortem 등 세션별 패턴 교훈)이 서로 다른 세션에서 N회 반복되면 자동 승인.
+# 메트릭 리뷰 교훈(ops_review)은 같은 계산이 매일 재생성되는 것이라 반복으로 치지 않는다
+# (실증: 권고문 14일 반복 주입에도 지표 무변화).
+_INDEPENDENT_SOURCES = {"postmortem", "recent_day", "data_analysis", "manual"}
+
+
+def _recurrence_path():
+    return get_runtime_path("state", "lesson_recurrence.json")
+
+
+def _text_key(text: str) -> str:
+    norm = "".join(ch for ch in str(text or "").lower() if ch.isalnum())
+    return norm[:80]
+
+
+def _load_recurrence() -> dict[str, Any]:
+    try:
+        path = _recurrence_path()
+        if not path.exists():
+            return {"entries": {}, "id_to_key": {}}
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            data.setdefault("entries", {})
+            data.setdefault("id_to_key", {})
+            return data
+    except Exception:
+        pass
+    return {"entries": {}, "id_to_key": {}}
+
+
+def auto_trust_threshold() -> int:
+    try:
+        return max(2, int(float(os.getenv("LESSONS_AUTO_TRUST_RECURRENCE", "3") or 3)))
+    except Exception:
+        return 3
+
+
+def note_lesson_observations(items: list[dict], session_date: str) -> dict[str, Any]:
+    """세션별 교훈 관찰을 반복 원장에 기록. 임계 도달 시 auto_trusted 마킹."""
+    session = str(session_date or "")[:10]
+    if not session:
+        return {"noted": 0}
+    with _LOCK:
+        data = _load_recurrence()
+        entries = data["entries"]
+        id_to_key = data["id_to_key"]
+        noted = 0
+        newly_trusted: list[str] = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            lesson_id = str(item.get("id") or "").strip()
+            text = str(item.get("summary") or item.get("text") or "").strip()
+            key = _text_key(text) or lesson_id
+            if not key:
+                continue
+            source = str(item.get("source") or "").strip().lower()
+            entry = entries.get(key) or {"sessions": [], "source": source, "sample_id": lesson_id}
+            if session not in entry["sessions"]:
+                entry["sessions"] = sorted(set(entry["sessions"] + [session]))[-30:]
+                noted += 1
+            entry["source"] = source or entry.get("source", "")
+            independent = entry.get("source", "") in _INDEPENDENT_SOURCES
+            was_trusted = bool(entry.get("auto_trusted"))
+            entry["auto_trusted"] = bool(independent and len(entry["sessions"]) >= auto_trust_threshold())
+            if entry["auto_trusted"] and not was_trusted:
+                newly_trusted.append(key)
+            entries[key] = entry
+            if lesson_id:
+                id_to_key[lesson_id] = key
+        path = _recurrence_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+    if newly_trusted:
+        log.info(f"[lesson recurrence] 반복 {auto_trust_threshold()}세션 도달 — 자동 신뢰 승격: {newly_trusted[:5]}")
+    return {"noted": noted, "newly_trusted": newly_trusted}
+
+
+def _auto_trusted(lesson_id: str) -> bool:
+    data = _load_recurrence()
+    key = (data.get("id_to_key") or {}).get(str(lesson_id or "").strip())
+    if not key:
+        return False
+    entry = (data.get("entries") or {}).get(key) or {}
+    return bool(entry.get("auto_trusted"))
