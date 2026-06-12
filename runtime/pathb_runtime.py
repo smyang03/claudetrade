@@ -4551,6 +4551,32 @@ class PathBRuntime:
         log.info(f"[PathB auto sell review skipped stale/closed] {plan.market} {plan.ticker} reason={reason}")
         return payload
 
+    def _pathb_portfolio_context(self, market: str) -> dict[str, Any]:
+        """동시 보유 스냅샷 — advisor가 동질 베타 집중(메가캡/테마 동시 carry)을 인지하도록 제공."""
+        market_key = str(market or "").upper()
+        tickers: list[str] = []
+        try:
+            for pos in list(getattr(getattr(self.bot, "risk", None), "positions", []) or []):
+                ticker = str(pos.get("ticker", "") or "").strip()
+                if not ticker or self._ticker_market(ticker) != market_key:
+                    continue
+                try:
+                    qty = int(float(pos.get("qty", 0) or 0))
+                except Exception:
+                    qty = 0
+                if qty <= 0:
+                    continue
+                tickers.append(ticker.upper() if market_key == "US" else ticker)
+        except Exception:
+            return {}
+        if not tickers:
+            return {}
+        unique = sorted(set(tickers))
+        return {
+            "open_positions_count": len(unique),
+            "open_tickers": unique[:20],
+        }
+
     def _pathb_exit_advisor_context(
         self,
         plan: PricePlan,
@@ -4596,6 +4622,9 @@ class PathBRuntime:
                 "pathb_reference_stop": ctx.get("pathb_reference_stop") or float(plan.stop_loss or 0.0),
             }
         )
+        portfolio_ctx = self._pathb_portfolio_context(plan.market)
+        if portfolio_ctx:
+            ctx["portfolio_context"] = portfolio_ctx
         if str(signal.close_reason or "").strip().upper() == "CLOSED_PROFIT_LADDER" or str(
             signal.reason or ""
         ).strip().lower() == "profit_ladder":

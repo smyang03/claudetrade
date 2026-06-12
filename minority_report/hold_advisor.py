@@ -30,12 +30,36 @@ log    = get_trading_logger()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 MODEL  = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
-# 주의: 이 캐시 플래그는 현재 실효 없음(no-op) — _HOLD_ADVISOR_SYSTEM ~434토큰으로
-# Sonnet 4.6 캐시 최소 prefix(실측 1,024토큰, 2026-06-09 ACTIVE_WORK 기록) 미달이라
-# cache_control이 조용히 무시된다. 추가 과금은 없으나 절감도 없다.
-# prefix 확장은 절감 상한(월 ~$2) 대비 본말전도라 보류 (2026-06-10 검토, ACTIVE_WORK P1 참조).
+# 캐시 주의: 실측 prior 추가로 _HOLD_ADVISOR_SYSTEM이 ~1,000토큰 부근까지 늘었다.
+# Sonnet 4.6 캐시 최소 prefix(실측 1,024토큰, 2026-06-09 ACTIVE_WORK 기록)에
+# 도달하면 cache_control이 활성화되어 절감, 미달이면 기존처럼 무시(no-op).
+# 어느 쪽이든 추가 과금은 없다 (2026-06-13 prior 주입 시 재검토).
 _HOLD_ADVISOR_CACHE_ENABLED = os.getenv("HOLD_ADVISOR_PROMPT_CACHE_ENABLED", "true").lower() == "true"
-_HOLD_ADVISOR_SYSTEM = COMMON_DECISION_CONTRACT + "\n\n" + HARD_SOFT_RULE_CONTRACT + "\n\n모든 응답은 한국어로 작성하세요."
+
+# 실측 prior — 이 계좌 2026-05~06 청산 원장 전수 재채점(2026-06-13)에서 도출.
+# 판단을 하드 차단하지 않는다. 측정된 기저율을 근거로 제시할 뿐, 종목 고유의
+# 강한 근거가 있으면 advisor는 여전히 반대 판단을 낼 수 있다.
+_MEASURED_PRIORS = """━━━ 실측 prior (이 계좌 2개월 청산 원장 전수 측정) ━━━
+- 이월(HOLD)은 사실상 시장 베팅이다: 익일 시장 상승일 평균 +0.3%, 하락일 -0.8%, 종목별 상관 +0.02.
+  시장 급반전 신호(market_sharp_reversal_active)나 bear/weak 국면에서는 SELL이 기본이며,
+  HOLD에는 종목 고유의 강한 반대 근거가 필요하다.
+- 손실 상태(pnl_pct<0)에서의 HOLD(loss_deferral)는 실측 기대값 0, 최악 -4.3%.
+  구체적 촉매(이벤트/레벨/뉴스)가 없으면 STOP_LOSS/SELL을 선택한다.
+- HOLD 연장의 우위는 1~2세션에서 소멸한다: 5거래일 보유 시 평균 -4.1% 반납.
+  next_review_min은 항상 다음 세션 이내로 잡는다.
+- protective_stop은 갭을 막지 못한다(실측: 갭다운이 스톱을 관통해 -6.7% 체결).
+  실적 임박·고변동 종목의 overnight HOLD에서 스톱을 유일한 보호 근거로 쓰지 않는다.
+- advisor_context_v2.portfolio_context가 있으면 같은 베타(메가캡/동일 테마) 동시 보유 수를 확인한다.
+  동질 포지션이 이미 다수 보유 중이면 이 포지션의 HOLD는 집중 리스크를 가중해 평가한다."""
+
+_HOLD_ADVISOR_SYSTEM = (
+    COMMON_DECISION_CONTRACT
+    + "\n\n"
+    + HARD_SOFT_RULE_CONTRACT
+    + "\n\n"
+    + _MEASURED_PRIORS
+    + "\n\n모든 응답은 한국어로 작성하세요."
+)
 
 PERSONAS = {
     "bull": "당신은 15년 경력의 성장주 모멘텀 트레이더입니다. 추세가 살아있으면 보유를 선호합니다.",

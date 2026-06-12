@@ -1,6 +1,29 @@
 # Active Work
 
-Updated: 2026-06-11
+Updated: 2026-06-13
+
+## Hold advisor 실측 prior 주입 + 신뢰 단계 승격 트랙 (2026-06-13 운영자 승인)
+
+배경: 2026-05~06 청산 원장 전수 재채점 — HOLD 실패 26건 중 8건(-19.4%p, 크기 기준 ~40%)은
+판단 시점에 인지 가능한 신호(시장 급반전 4건, 손실 상태 HOLD 4건)가 있었고, 성공 HOLD는
+전부 시장 상승일이라 보수화 prior로 죽는 케이스 없음. HOLD 성패는 장세 베타(상승일 +0.33%
+vs 하락일 -0.77%, 종목 상관 +0.02).
+
+1. ✅ 실측 prior 4종 system 주입 (`minority_report/hold_advisor.py` `_MEASURED_PRIORS`):
+   급반전/약세 SELL 기본, 손실상태 HOLD 금지(촉매 없으면), 연장 1~2세션 한도, 갭 한계.
+2. ✅ portfolio_context (`runtime/pathb_runtime.py::_pathb_portfolio_context`): 동시 보유
+   수/티커를 advisor_context_v2에 제공 — 6/3형 메가캡 7종 동시 carry 집중 인지용.
+   테스트: `tests/test_hold_advisor_priors.py` 7건.
+3. ⏳ **6/27 재채점**: 오늘과 동일 잣대(HOLD 시점가 vs 최종 청산가, 장세 분리)로 신/구
+   advisor 비교. 통과 기준: HOLD 원장 기대값 +0.08% → +0.4%/건, 성공 케이스 보존.
+4. ⏳ 승격 조건: 3 통과 시에만 advisor 권한 확대(gain-lock 창 완화 등) 검토. 그 전에는
+   강제 전환 가드·loss_cap·hard_stop 현행 유지 (시뮬 근거: 연장 보유 13건 중 10건 악화).
+5. 매도 엔진 전수 판정 (2026-06-13 확정): loss_cap/ladder/pre_close/hard_stop/target 전량
+   청산 모두 현행 유지. 1주 지평에서 전부 정당, target 연장 시뮬 탈락. 재론 시 이 데이터 먼저.
+6. ⏳ 7월 말 (n≥30): target 청산 가상 연장 재측정 (시장 모드 필드 포함). 손실상태 HOLD
+   보수화는 6/24 관찰 항목.
+
+## 동결 해제 + 6/17 안건 조기 처리 (2026-06-11 운영자 지시 "전부 진행해")
 
 This is the single active work ledger. One-off plans and generated reports are removed after their unfinished work is absorbed here and in [core/TODO_ROADMAP.md](core/TODO_ROADMAP.md). Detailed improvement sequencing from the latest DB/code review lives in [IMPROVEMENT_WORKLIST_20260607.md](IMPROVEMENT_WORKLIST_20260607.md). Completed implementation notes belong in [core/DEVELOPED_WORK.md](core/DEVELOPED_WORK.md) or Git history, not in the active backlog.
 
