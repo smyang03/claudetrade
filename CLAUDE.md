@@ -159,6 +159,28 @@ Work item: hold-advisor triage implementation re-review / PathB early gate one-s
 - Tests run: `python -m pytest tests/test_pathb_runtime.py::EarlyGateFloorOneShareTests::test_early_gate_floor_gives_qty_one_when_reduced_budget_is_too_small -q`; `python -m pytest tests/test_pathb_runtime.py::EarlyGateFloorOneShareTests -q`; `python -m py_compile runtime/pathb_runtime.py minority_report/hold_advisor.py`; `python -m pytest tests/test_trading_decision_contract_improvements.py tests/test_auto_sell_claude_gate.py::AutoSellClaudeGateTests::test_pathb_loss_cap_hold_respects_reask_cooldown -q`; `python -m pytest tests/test_auto_sell_claude_gate.py tests/test_pathb_profit_protection.py tests/test_claude_quality_contracts.py tests/test_plan_a_hold_policy.py tests/test_price_unit_normalization.py -q`.
 - Remaining risk: `tests/test_pathb_runtime.py` full-file run still has separate failures in `test_previous_session_local_pathb_holding_is_included_in_exit_scan` and `test_cached_carry_does_not_block_hard_target_exit`. Those failures are tied to PathB exit-scan price truth behavior and were not changed in this hold-advisor/sizing exception.
 
+### MD 위반 사항
+
+Recorded date: 2026-06-14
+Work item: capture 중심 수익성 개선 (Phase 1c MFE 상시기록 / Phase 2 profit_ladder net floor / Phase 4 국면 급반전 enforce). 운영자 승인: "전체 개선 진행, 운영자확인 파라미터 전부 포함 변경, 검증 후 한 번에 재시작".
+
+- Protected area touched:
+  - `runtime/pathb_runtime.py` exit scan 루프 (`_update_position_excursion` 신규 호출) — Phase 1c.
+  - `runtime/pathb_runtime.py::_pathb_profit_ladder_floor` tier1/tier2 floor 계수 — Phase 2 (운영자확인 파라미터 `PATHB_LADDER_TIER*_FLOOR_BUFFER_PCT`).
+  - `runtime/pathb_runtime.py` PathB 진입 게이트 (`_market_sharp_reversal_block` 신규 게이트) — Phase 4.
+  - `execution/path_arbiter.py::SameDayReentryGuard.evaluate` 진입 차단 게이트 (반복손실 쿨다운 추가) — Phase 3.
+- Why unavoidable: 전 기간 DB + yfinance 실측 MFE(192건) 분석에서 capture(US 8%/KR 0%)가 최대 비효율로 확정됐고, 청산(profit_ladder net 본전), 진입품질(loss_cap MFE 중앙 +0.39%, 88% MFE<1%), 국면(5월 상승장 집중)이 보호영역 자체에 있어 보호영역 밖 변경으로는 처방이 불가능했다.
+- Before/after behavior:
+  - Phase 1c: 청산 트리거·floor 계산 입력(`peak_pnl_pct`)은 무수정. 관측 전용 `observed_*` 키만 추가해 exit_meta→CLOSED payload로 MFE/MAE를 일관 기록(기존 ~10% → 상시).
+  - Phase 2: profit_ladder tier1 floor `entry`(net −0.5%)→`entry×1.006`(net +0.1%), tier2 `entry×1.005`(net 0)→`entry×1.010`(net +0.5%). 트리거·tier 임계·giveback은 무수정.
+  - Phase 3: 같은 종목 최근 10일 손실 3회+ & 마지막 손실 48h 이내면 `REPEAT_LOSS_COOLDOWN`으로 신규 진입 차단. 청산/sizing 무관, 진입 게이트만.
+  - Phase 4: `MARKET_SHARP_REVERSAL_GUARD_MODE=enforce` 시 급반전 active 동안 PathB 신규 진입만 보류(`MARKET_SHARP_REVERSAL_BLOCK`, plan 유지). 강제 청산·보유 청산 무관(보유는 hold advisor가 reversal context로 판단).
+- Order/risk/broker truth/Claude/config/env impact: 신규 진입 차단 게이트 2종 추가(반복손실·급반전)와 profit_ladder floor 상향만. 주문 수량/하드스톱/loss_cap/broker truth/Claude 호출량 무변경. config(`config/v2_start_config.json`)에 `PATHB_LADDER_TIER1/2_FLOOR_BUFFER_PCT`, `PATHB_REPEAT_LOSS_*`, `MARKET_SHARP_REVERSAL_GUARD_MODE=enforce` 명시. `.env*`/`state/brain.json` 무변경. **봇 재시작 시 반영.**
+- Replacement guard: Phase 1c는 ladder 입력과 분리된 `observed_*` 전용 키. 진입 게이트 2종은 신규 진입만 막고 청산/보유는 비접촉. profit_ladder는 floor 계수만 상향(트리거/임계/giveback 불변). 모두 env 토글 가능.
+- Tests run: `tests/test_pathb_position_excursion.py`(5), `test_pathb_ladder_net_floor.py`(2), `test_pathb_repeat_loss_gate.py`(5), `test_pathb_sharp_reversal_gate.py`(3) 신규; `test_pathb_runtime/profit_protection/loss_cap_profit_floor/auto_sell_claude_gate/path_execution_arbiter` 회귀 통과; 전체 `python -m pytest tests/ -q` 2477 passed(Phase 4 반영 재실행 결과는 최종 보고에 기재).
+- Remaining risk: ① profit_ladder/청산 파라미터의 capture 정밀 튜닝(giveback 등)은 과거 장중 경로 부재로 미검증 — Phase 1c 재시작 후 1~2주 수집 후 사후검증. ② MFE_BREAKEVEN/PROFIT_FLOOR net 음수(각 2건)는 표본 작아 미변경. ③ KR 진입분할/stop 재설계는 KR 장중데이터 품질·표본(21건)·물타기 위험으로 라이브 enforce 보류(Phase 3 반복손실 게이트가 KR 반복적자 1차 커버).
+- 2026-06-14 검증 후속 (봇 종료 후 yfinance 경로 시뮬·기존 DB 시뮬로 전수 검증): **Phase 2 profit_ladder floor 상향(tier1/tier2)은 롤백** — yfinance 5분봉 경로 시뮬에서 신규-현행 net +0.02%p(무차익) + 큰 러너 6건 희생(FIG +2.31→+0.10 등, floor↑가 조기청산 유발). 코드/config 현행값(tier1=entry, tier2=0.005) 복귀. **Phase 3 반복손실 게이트는 enabled=false 비활성** — 기존 DB 시뮬에서 차단 2건(INTC, net +3.4% 이익)뿐 의도한 IREN/IONQ 미포착. 코드는 보존, 파라미터 재설계 후 재활성. **실제 라이브 적용 잔존: Phase 1(net 백필·MFE 상시기록·capture 리포트) + Phase 4 급반전 enforce(신규진입만 보류, 보수적·손실방어).** preflight ok=True FAIL 0, decisions.db integrity ok, mfe_backfill_yf는 별도 테이블로 오염 격리.
+
 ### Commit, PR, and Security Standards
 
 - Commit units should be one behavior change at a time. Recent history uses Conventional Commit prefixes such as `feat:` and `fix:` with short Korean or English summaries.
