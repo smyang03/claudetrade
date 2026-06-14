@@ -168,6 +168,7 @@ INSERT INTO v2_learning_performance (
     discovery_overlay_rank, timing_style,
     filled, closed, portfolio_realized, fill_event_id, close_event_id, filled_at, closed_at,
     entry_price, exit_price, qty, pnl_krw, pnl_pct, mfe_pct, mae_pct,
+    pnl_pct_net, pnl_krw_net, fee_pct_round_trip, fee_krw_est, fx_change_pct, net_basis,
     close_reason, forward_complete, quality_grade, quality_reasons_json,
     learning_allowed, source_event_count, synced_at
 )
@@ -179,6 +180,7 @@ VALUES (
     :discovery_overlay_rank, :timing_style,
     :filled, :closed, :portfolio_realized, :fill_event_id, :close_event_id, :filled_at, :closed_at,
     :entry_price, :exit_price, :qty, :pnl_krw, :pnl_pct, :mfe_pct, :mae_pct,
+    :pnl_pct_net, :pnl_krw_net, :fee_pct_round_trip, :fee_krw_est, :fx_change_pct, :net_basis,
     :close_reason, :forward_complete, :quality_grade, :quality_reasons_json,
     :learning_allowed, :source_event_count, :synced_at
 )
@@ -216,6 +218,12 @@ ON CONFLICT(v2_decision_id) DO UPDATE SET
     pnl_pct=excluded.pnl_pct,
     mfe_pct=excluded.mfe_pct,
     mae_pct=excluded.mae_pct,
+    pnl_pct_net=excluded.pnl_pct_net,
+    pnl_krw_net=excluded.pnl_krw_net,
+    fee_pct_round_trip=excluded.fee_pct_round_trip,
+    fee_krw_est=excluded.fee_krw_est,
+    fx_change_pct=excluded.fx_change_pct,
+    net_basis=excluded.net_basis,
     close_reason=excluded.close_reason,
     forward_complete=excluded.forward_complete,
     quality_grade=excluded.quality_grade,
@@ -235,7 +243,8 @@ INSERT INTO v2_canonical_performance (
     filled, closed, portfolio_realized, first_fill_event_id, first_close_event_id, last_close_event_id,
     earliest_fill_at, first_closed_at, last_closed_at,
     entry_price, first_exit_price, last_exit_price, qty, pnl_krw, pnl_pct,
-    mfe_pct, mae_pct, quality_grade, learning_allowed, raw_fill_event_count,
+    mfe_pct, mae_pct, pnl_pct_net, pnl_krw_net, fee_pct_round_trip, fee_krw_est, fx_change_pct, net_basis,
+    quality_grade, learning_allowed, raw_fill_event_count,
     raw_close_event_count, source_event_count, metric_contract_json, synced_at
 )
 VALUES (
@@ -247,7 +256,8 @@ VALUES (
     :filled, :closed, :portfolio_realized, :first_fill_event_id, :first_close_event_id, :last_close_event_id,
     :earliest_fill_at, :first_closed_at, :last_closed_at,
     :entry_price, :first_exit_price, :last_exit_price, :qty, :pnl_krw, :pnl_pct,
-    :mfe_pct, :mae_pct, :quality_grade, :learning_allowed, :raw_fill_event_count,
+    :mfe_pct, :mae_pct, :pnl_pct_net, :pnl_krw_net, :fee_pct_round_trip, :fee_krw_est, :fx_change_pct, :net_basis,
+    :quality_grade, :learning_allowed, :raw_fill_event_count,
     :raw_close_event_count, :source_event_count, :metric_contract_json, :synced_at
 )
 ON CONFLICT(v2_decision_id) DO UPDATE SET
@@ -287,6 +297,12 @@ ON CONFLICT(v2_decision_id) DO UPDATE SET
     pnl_pct=excluded.pnl_pct,
     mfe_pct=excluded.mfe_pct,
     mae_pct=excluded.mae_pct,
+    pnl_pct_net=excluded.pnl_pct_net,
+    pnl_krw_net=excluded.pnl_krw_net,
+    fee_pct_round_trip=excluded.fee_pct_round_trip,
+    fee_krw_est=excluded.fee_krw_est,
+    fx_change_pct=excluded.fx_change_pct,
+    net_basis=excluded.net_basis,
     quality_grade=excluded.quality_grade,
     learning_allowed=excluded.learning_allowed,
     raw_fill_event_count=excluded.raw_fill_event_count,
@@ -407,6 +423,12 @@ LEARNING_COMPARISON_FIELDS = (
     "pnl_pct",
     "mfe_pct",
     "mae_pct",
+    "pnl_pct_net",
+    "pnl_krw_net",
+    "fee_pct_round_trip",
+    "fee_krw_est",
+    "fx_change_pct",
+    "net_basis",
     "close_reason",
     "forward_complete",
     "quality_grade",
@@ -427,6 +449,18 @@ PERFORMANCE_EXPERIMENT_COLUMNS = {
     "discovery_overlay_rank": "INTEGER",
 }
 
+# net 실현손익(수수료/환율 반영) 컬럼. CLOSED 이벤트 payload의 net 추정치가 있을 때만 채워진다
+# (net_basis='measured'). payload에 없으면 NULL로 두고 근사값으로 오염시키지 않는다 — 수수료
+# 근사 net은 리포트 도구(tools/capture_net_review.py)에서 on-the-fly로만 계산한다.
+NET_PERFORMANCE_COLUMNS = {
+    "pnl_pct_net": "REAL",
+    "pnl_krw_net": "REAL",
+    "fee_pct_round_trip": "REAL",
+    "fee_krw_est": "REAL",
+    "fx_change_pct": "REAL",
+    "net_basis": "TEXT",
+}
+
 
 def _connect(path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path), timeout=30, factory=ClosingConnection)
@@ -445,6 +479,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(V2_LEARNING_SCHEMA)
     _ensure_columns(conn, "v2_learning_performance", PERFORMANCE_EXPERIMENT_COLUMNS)
     _ensure_columns(conn, "v2_canonical_performance", PERFORMANCE_EXPERIMENT_COLUMNS)
+    _ensure_columns(conn, "v2_learning_performance", NET_PERFORMANCE_COLUMNS)
+    _ensure_columns(conn, "v2_canonical_performance", NET_PERFORMANCE_COLUMNS)
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_v2_learning_perf_experiment
@@ -876,6 +912,13 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
     qty = _close_qty(close_payload, fill_payload)
     pnl_krw = _num(close_payload, "pnl_krw", "pnl")
     pnl_pct = _num(close_payload, "pnl_pct", "position_pnl_pct")
+    # net 실현손익(수수료/환율 반영). CLOSED payload에 net 추정치가 있을 때만 measured로 기록.
+    pnl_pct_net = _num(close_payload, "pnl_pct_net_est", "pnl_pct_net")
+    pnl_krw_net = _num(close_payload, "pnl_krw_net_est", "pnl_krw_net")
+    fee_pct_round_trip = _num(close_payload, "fee_pct_round_trip")
+    fee_krw_est = _num(close_payload, "fee_krw_est")
+    fx_change_pct = _num(close_payload, "fx_change_pct")
+    net_basis = "measured" if pnl_pct_net is not None else ""
     sync_degraded_reason = _sync_degraded_reason(close, close_reason, close_payload, exit_price)
     strategy_attribution = _strategy_attribution(close, close_payload)
     quality_reasons = list(quality.reasons)
@@ -916,6 +959,12 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
         "pnl_pct": pnl_pct,
         "mfe_pct": _num(close_payload, "mfe_pct", "position_mfe_pct"),
         "mae_pct": _num(close_payload, "mae_pct", "position_mae_pct"),
+        "pnl_pct_net": pnl_pct_net,
+        "pnl_krw_net": pnl_krw_net,
+        "fee_pct_round_trip": fee_pct_round_trip,
+        "fee_krw_est": fee_krw_est,
+        "fx_change_pct": fx_change_pct,
+        "net_basis": net_basis,
         "close_reason": close_reason,
         "forward_complete": 1 if forward_complete else 0,
         "quality_grade": quality.grade.value,
@@ -987,6 +1036,12 @@ def build_canonical_row(
         "pnl_pct": learning_row.get("pnl_pct"),
         "mfe_pct": learning_row.get("mfe_pct"),
         "mae_pct": learning_row.get("mae_pct"),
+        "pnl_pct_net": learning_row.get("pnl_pct_net"),
+        "pnl_krw_net": learning_row.get("pnl_krw_net"),
+        "fee_pct_round_trip": learning_row.get("fee_pct_round_trip"),
+        "fee_krw_est": learning_row.get("fee_krw_est"),
+        "fx_change_pct": learning_row.get("fx_change_pct"),
+        "net_basis": learning_row.get("net_basis"),
         "quality_grade": learning_row.get("quality_grade"),
         "learning_allowed": learning_row.get("learning_allowed"),
         "raw_fill_event_count": len(fill_events),
