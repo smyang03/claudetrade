@@ -3272,6 +3272,7 @@ class PathBRuntime:
             if current <= 0:
                 continue
             self._audit_pathb_price_seen(plan, current, source="pathb:exit_scan")
+            self._update_position_excursion(pos, current, market)
             hard_stop_price = self._native_hard_stop(pos, market)
             loss_cap_price = self._native_loss_cap_stop(pos, market)
             policy_stop_eval = self._evaluate_pathb_auto_sell_policy_stop_breach_only(plan, pos, current)
@@ -3812,6 +3813,17 @@ class PathBRuntime:
         if not bool(entry_gate.get("allowed", True)):
             reason = str(entry_gate.get("reason") or "MARKET_CLOSED")
             self._record_blocked(market, plan.ticker, plan.decision_id, reason, entry_gate, plan.path_run_id)
+            return False
+        if self._market_sharp_reversal_block(market):
+            # 국면 급반전 enforce: 신규 진입만 보류(plan 유지 → 해제 후 재진입). 청산/보유 무관.
+            self._record_blocked(
+                market,
+                plan.ticker,
+                plan.decision_id,
+                "MARKET_SHARP_REVERSAL_BLOCK",
+                {"market_sharp_reversal_active": True, "guard_mode": "enforce"},
+                plan.path_run_id,
+            )
             return False
         reentry = self.reentry_guard.evaluate(
             market=market,
@@ -5894,10 +5906,13 @@ class PathBRuntime:
             floor = peak_price * (1.0 - max(0.0, _env_float("PATHB_LADDER_TIER3_PEAK_GIVEBACK_PCT", 0.010)))
         elif mfe_pct >= tier2 > 0:
             tier = "tier2"
+            # floor 상향(0.010) 검토했으나 2026-06-14 yfinance 경로 시뮬에서 평균 +0.02%p(무차익)
+            # + 큰 러너 6건 희생(FIG +2.31→+0.10 등, floor↑가 조기청산 유발)으로 롤백. 현행 0.005 유지.
+            # 본전청산=수수료손실 문제는 Phase 1c 실측 MFE 1~2주 수집 후 tier 임계/giveback으로 재설계.
             floor = entry * (1.0 + max(0.0, _env_float("PATHB_LADDER_TIER2_FLOOR_BUFFER_PCT", 0.005)))
         elif mfe_pct >= tier1 > 0:
             tier = "tier1"
-            floor = entry
+            floor = entry * (1.0 + max(0.0, _env_float("PATHB_LADDER_TIER1_FLOOR_BUFFER_PCT", 0.0)))
         if floor <= 0:
             return {}
         market_key = str(market or plan.market or "").upper()
@@ -11058,13 +11073,49 @@ class PathBRuntime:
             return None
         return price if price > 0 else None
 
+    def _update_position_excursion(self, pos: dict[str, Any], current_native: float, market: str) -> None:
+        """관측 전용: 진입 후 최고/최저가와 MFE/MAE를 position에 기록한다.
+
+        성과 측정(capture / 러너 조기 절단 분석)용 데이터만 남긴다. 청산 트리거, profit_ladder
+        floor 계산, broker truth 등 보호 계약 입력(peak_pnl_pct 등)에는 영향을 주지 않도록
+        observed_* 별도 키에만 기록한다 — ladder가 읽는 peak_pnl_pct는 건드리지 않는다.
+        """
+        if current_native <= 0:
+            return
+        try:
+            entry = self._position_entry_native(pos, market)
+        except Exception:
+            entry = 0.0
+        prev_peak = float(pos.get("observed_peak_price", 0) or 0)
+        prev_low = float(pos.get("observed_low_price", 0) or 0)
+        peak = current_native if prev_peak <= 0 else max(prev_peak, current_native)
+        low = current_native if prev_low <= 0 else min(prev_low, current_native)
+        pos["observed_peak_price"] = peak
+        pos["observed_low_price"] = low
+        if entry > 0:
+            pos["observed_mfe_pct"] = (peak / entry - 1.0) * 100.0
+            pos["observed_mae_pct"] = (low / entry - 1.0) * 100.0
+
+    def _market_sharp_reversal_block(self, market: str) -> bool:
+        """국면 급반전 enforce: 장중 지수 급반전이 active면 PathB 신규 진입을 보류한다.
+
+        강제 청산은 하지 않는다(보유 포지션은 hold advisor가 market_sharp_reversal_active
+        context로 판단). 신규 제출만 막으며 plan은 유지되어 급반전 해제 후 같은 세션에서
+        재진입할 수 있다. mode=shadow(기본)면 차단하지 않는다 — trading_bot이 감지/기록만 한다.
+        """
+        if str(os.getenv("MARKET_SHARP_REVERSAL_GUARD_MODE", "shadow") or "shadow").strip().lower() != "enforce":
+            return False
+        active = getattr(self.bot, "_market_sharp_reversal_active", {}) or {}
+        key = "US" if str(market or "").upper() == "US" else "KR"
+        return bool(active.get(key))
+
     def _pathb_exit_meta(self, pos: dict[str, Any], market: str, close_reason: str) -> dict[str, Any]:
         risk = getattr(self.bot, "risk", None)
         meta: dict[str, Any] = {
             "strategy_stop_price": float(pos.get("sl", 0) or 0),
             "peak_pnl_pct": float(pos.get("peak_pnl_pct", 0) or 0),
-            "position_mfe_pct": float(pos.get("peak_pnl_pct", 0) or 0),
-            "position_mae_pct": float(pos.get("trough_pnl_pct", 0) or 0),
+            "position_mfe_pct": float(pos.get("observed_mfe_pct", pos.get("peak_pnl_pct", 0)) or 0),
+            "position_mae_pct": float(pos.get("observed_mae_pct", pos.get("trough_pnl_pct", 0)) or 0),
         }
         try:
             if callable(getattr(risk, "position_loss_budget_krw", None)):
