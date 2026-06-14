@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from config.v2 import DEFAULT_V2_CONFIG, V2Config
@@ -192,6 +193,11 @@ class SameDayReentryGuard:
     ) -> ArbiterDecision:
         market_key = _normalize_market(market)
         ticker_key = _normalize_ticker(market_key, ticker)
+        current = _ensure_aware(now or datetime.now(timezone.utc))
+        # 멀티데이 반복 손실 종목 쿨다운(IREN/IONQ형 반복 적자 차단). same-day 게이트보다 선행.
+        repeat_block = self._repeat_loss_gate(market_key, runtime_mode, ticker_key, current)
+        if repeat_block is not None:
+            return repeat_block
         last_closed = self._last_closed_event(
             market=market_key,
             runtime_mode=runtime_mode,
@@ -206,7 +212,6 @@ class SameDayReentryGuard:
         close_reason = str(payload.get("close_reason") or reason)
         pnl_pct = self._payload_pnl_pct(payload)
 
-        current = _ensure_aware(now or datetime.now(timezone.utc))
         closed_at = _parse_dt(str(last_closed.get("occurred_at") or last_closed.get("created_at") or ""))
         age_min = None
         if closed_at is not None:
@@ -294,6 +299,79 @@ class SameDayReentryGuard:
             if _is_broker_sync_close(event):
                 continue
             return event
+        return None
+
+    def _repeat_loss_gate(
+        self,
+        market: str,
+        runtime_mode: str,
+        ticker: str,
+        now: datetime,
+    ) -> "ArbiterDecision | None":
+        """최근 lookback일 내 같은 종목이 반복 손실 청산되면 cooldown 동안 재진입을 차단한다.
+
+        IREN(10회 진입 누적 -2.5%)/IONQ(5회 -9.1%)형 반복 적자 종목이 진입 후 즉시 역행
+        (loss_cap MFE 중앙 +0.39%, 88%가 MFE<1%)하는 것을 막는다. broker-sync close는 제외.
+        """
+        if str(os.getenv("PATHB_REPEAT_LOSS_GATE_ENABLED", "true")).strip().lower() not in ("1", "true", "yes", "on"):
+            return None
+        try:
+            lookback_days = int(float(os.getenv("PATHB_REPEAT_LOSS_LOOKBACK_DAYS", "10") or 10))
+            max_losses = int(float(os.getenv("PATHB_REPEAT_LOSS_MAX", "3") or 3))
+            cooldown_hours = float(os.getenv("PATHB_REPEAT_LOSS_COOLDOWN_HOURS", "48") or 48)
+        except Exception:
+            lookback_days, max_losses, cooldown_hours = 10, 3, 48.0
+        if max_losses <= 0:
+            return None
+        cutoff = now - timedelta(days=lookback_days)
+        with self.store.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM lifecycle_events
+                WHERE market=? AND runtime_mode=? AND ticker=? AND event_type='CLOSED'
+                ORDER BY occurred_at DESC, event_id DESC
+                LIMIT 40
+                """,
+                (market, runtime_mode, ticker),
+            ).fetchall()
+        losses = 0
+        last_loss_at: datetime | None = None
+        for row in rows:
+            event = self.store._event_row_to_dict(row)
+            if _is_broker_sync_close(event):
+                continue
+            occ = _parse_dt(str(event.get("occurred_at") or event.get("created_at") or ""))
+            if occ is None:
+                continue
+            occ = occ.astimezone(now.tzinfo)
+            if occ < cutoff:
+                break
+            payload = event.get("payload") or {}
+            pnl = self._payload_pnl_pct(payload)
+            close_reason = str(payload.get("close_reason") or event.get("reason_code") or "")
+            is_loss = (pnl is not None and pnl < 0) or close_reason.upper() in self.STRICT_CLOSE_REASONS
+            if is_loss:
+                losses += 1
+                if last_loss_at is None:
+                    last_loss_at = occ
+        if losses >= max_losses and last_loss_at is not None:
+            age_hours = (now - last_loss_at).total_seconds() / 3600.0
+            if age_hours < cooldown_hours:
+                shadow = {
+                    "repeat_loss_count": losses,
+                    "repeat_loss_lookback_days": lookback_days,
+                    "repeat_loss_last_at": str(last_loss_at),
+                    "repeat_loss_cooldown_hours": cooldown_hours,
+                    "repeat_loss_age_hours": round(age_hours, 2),
+                }
+                return ArbiterDecision(
+                    False,
+                    "REPEAT_LOSS_COOLDOWN",
+                    f"repeated losses ({losses}) within {lookback_days}d; cooldown active",
+                    {"market": market, "ticker": ticker, **shadow},
+                    shadow,
+                )
         return None
 
 
