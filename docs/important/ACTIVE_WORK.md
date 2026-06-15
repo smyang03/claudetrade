@@ -1,6 +1,20 @@
 # Active Work
 
-Updated: 2026-06-13
+Updated: 2026-06-16
+
+## 진입 후보 순위/타이밍 개선 (2026-06-16) — selection/entry-timing
+
+운영자 통점: "매수 후보 순위가 너무 달라 타이밍 안 맞다. watch 15인데 trade_ready 5가 너무 놓치고, 5가 우선순위 정렬도 아니다." 분석으로 구조 원인 확정(`trading_bot.py` `_normalize_selection_meta_runtime` 슬롯배분 + `selection_compact_schema` 캡).
+
+**완료(이번 세션, 봇 재시작 반영):**
+- ✅ #1 trade_ready conviction 정렬: `_sort_trade_ready_by_priority` — Claude confidence 내림차순, stable, 캡/쿼터 불변. 토글 `TRADE_READY_PRIORITY_SORT_ENABLED`(기본 true). 테스트 `tests/test_trade_ready_priority_sort.py`.
+- ✅ #2(부분) US 모멘텀 쿼터 상향: `US_RISK_ON_TRADE_READY_SLOT_MOMENTUM=3`(2→3, config). 스키마 계약 미변경.
+
+**TODO (다음 집중 패스):**
+- ⏳ **개장 진입 대기 단축** — KR/US 개장 후 momentum 진입이 `wait_base=45`분(`_effective_momentum_wait_window`, 5~60 clamp) 대기. 운영자 요청: "최초 장 판단(개장+5분, `*_OPENING_JUDGMENT_REFRESH_MIN=5`) 후 매수 가능하게." continuation/ATR/pullback과 얽혀 라이브 진입 직결 → 별도 집중 패스 + shadow/회귀 필수. 후보: momentum_wait를 개장판단 완료 후 단축, 또는 첫 판단 후 즉시진입 허용 게이트.
+- ⏳ **#2 나머지: US compact trade_ready 캡 5→6** — `selection_compact_schema.py:50,283` `min(5,…)` 하드캡을 market-aware로(US 6, KR 5). 선택 계약/다수 테스트 변경 동반 → 신중.
+- ⏳ **#3 모드별 캡 안정화** — RISK_ON/BALANCED/RISK_OFF 총슬롯(6/5/1) 세션 간 출렁임 shrinkage 완화. 점진(전략 갈아엎기 금지 원칙).
+- ⏳ **#4 KR sector_play data_quality 결측 해소** — kr_sector_play가 강세장 KR 진입 채널인데 data_quality=missing으로 차단(sector_play_gate). MODERATE_BULL이 수익으로 연결되는 경로 복구. KR momentum 축소는 의도된 손실보호라 별건.
 
 ## 거래비용 분석 — 2달 net 본전의 진짜 원인 (2026-06-13)
 

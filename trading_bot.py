@@ -4119,6 +4119,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         slot_counts: dict[str, int] = {}
         final_ready: list[str] = []
         recommended_map = normalized_meta.get("recommended_strategy") or {}
+        # trade_ready를 Claude conviction(confidence)로 우선순위 정렬한다. 기존엔 Claude 응답
+        # 순서 + 전략쿼터라 높은 확신 후보가 쿼터에 밀려 탈락할 수 있었다. 캡/쿼터는 불변.
+        if self._runtime_bool("TRADE_READY_PRIORITY_SORT_ENABLED", True):
+            ready_candidates = self._sort_trade_ready_by_priority(market_key, ready_candidates, normalized_meta)
         for ticker in ready_candidates:
             raw_strategy = ""
             if isinstance(recommended_map, dict):
@@ -4159,6 +4163,32 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if not str(key).startswith("__")
             }
         return normalized_meta
+    def _sort_trade_ready_by_priority(self, market_key: str, ready_candidates: list, normalized_meta: dict) -> list:
+        """trade_ready 후보를 Claude conviction(candidate_actions.confidence)로 내림차순 정렬.
+
+        stable sort라 동률은 기존(Claude 응답) 순서를 유지한다. 점수 결측은 0.0으로 둬 뒤로
+        밀리되 순서는 보존. 캡/전략쿼터는 호출측에서 그대로 적용되며, 여기선 슬롯 배분 전
+        우선순위만 보장한다.
+        """
+        conf_by_ticker: dict[str, float] = {}
+        for item in (normalized_meta or {}).get("candidate_actions") or []:
+            if not isinstance(item, dict):
+                continue
+            tk = self._selection_ticker_key(market_key, item.get("ticker") or item.get("t") or "")
+            if not tk:
+                continue
+            try:
+                conf_by_ticker[tk] = max(conf_by_ticker.get(tk, 0.0), float(item.get("confidence") or 0.0))
+            except Exception:
+                continue
+        if not conf_by_ticker:
+            return list(ready_candidates)
+        return sorted(
+            ready_candidates,
+            key=lambda tk: conf_by_ticker.get(self._selection_ticker_key(market_key, tk), 0.0),
+            reverse=True,
+        )
+
     def _selection_ticker_key(self, market: str, ticker: str) -> str:
         market_key = str(market or "").upper()
         text = str(ticker or "").strip()

@@ -4235,6 +4235,24 @@ class PathBRuntime:
             raw = "off"
         return raw if raw in {"off", "shadow", "enforce"} else "off"
 
+    @staticmethod
+    def _pathb_preopen_profit_target_defer_mode(market: str = "") -> str:
+        """프리오픈 목표익절 지연 모드 (stop 정책과 독립 토글). 기본 off.
+
+        US=enforce / KR=off 운영(KR PathB 손실, 성과 분리 원칙). off면 현행 즉시실행과 동일.
+        """
+        market_key = str(market or "").strip().upper()
+        market_raw = (
+            os.getenv(f"{market_key}_PATHB_PREOPEN_PROFIT_TARGET_DEFER_MODE")
+            if market_key in {"KR", "US"}
+            else None
+        )
+        if market_raw is not None:
+            raw = str(market_raw or "off").strip().lower()
+        else:
+            raw = str(os.getenv("PATHB_PREOPEN_PROFIT_TARGET_DEFER_MODE", "off") or "off").strip().lower()
+        return raw if raw in {"off", "shadow", "enforce"} else "off"
+
     def _pathb_open_confirm_delay_min(self, market: str) -> int:
         market_key = str(market or "").upper()
         return max(
@@ -4299,6 +4317,18 @@ class PathBRuntime:
             "CLOSED_LOSS_CAP",
             "CLOSED_CLAUDE_PRICE_STOP",
         }
+
+    @staticmethod
+    def _pathb_preopen_profit_target_reason(signal: ExitSignal) -> bool:
+        """프리오픈에 지연 가능한 '재량형 목표익절' 사유인지.
+
+        목표도달 익절(claude_sell_target / profit_protection)만 대상. 손절/하드가드/loss_cap은
+        _pathb_preopen_stop_reason이 처리하고, profit_ladder floor(giveback 보호·시간민감)와
+        claude_sell(advisor 능동청산)은 제외해 현행 즉시실행을 유지한다.
+        """
+        reason_key = str(signal.reason or "").strip().lower()
+        close_reason = str(signal.close_reason or "").strip().upper()
+        return reason_key in {"claude_sell_target", "profit_protection"} or close_reason == "CLOSED_CLAUDE_PRICE_TARGET"
 
     def _pathb_signal_stop_distance_pct(
         self,
@@ -4444,11 +4474,19 @@ class PathBRuntime:
         *,
         run: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        mode = self._pathb_preopen_exit_policy_mode(plan.market)
-        if mode == "off":
-            return {"action": "PROCEED", "mode": mode}
         market = str(plan.market or "").upper()
-        if market not in {"KR", "US"} or not self._pathb_preopen_stop_reason(signal):
+        stop_reason = self._pathb_preopen_stop_reason(signal)
+        profit_target_reason = self._pathb_preopen_profit_target_reason(signal)
+        if market not in {"KR", "US"} or not (stop_reason or profit_target_reason):
+            return {"action": "PROCEED", "mode": "off"}
+        # 손절은 기존 stop 정책, 목표익절은 독립 토글. 손절이 우선.
+        if stop_reason:
+            mode = self._pathb_preopen_exit_policy_mode(plan.market)
+            is_profit_target = False
+        else:
+            mode = self._pathb_preopen_profit_target_defer_mode(plan.market)
+            is_profit_target = True
+        if mode == "off":
             return {"action": "PROCEED", "mode": mode}
         now = self._now_kst()
         run_plan = dict((run or self.store.find_path_run(plan.path_run_id) or {}).get("plan") or {})
@@ -4458,6 +4496,9 @@ class PathBRuntime:
         pnl_pct = self._pathb_review_position_pnl_pct(pos, market, current_native=current_native)
         stop_distance_pct, stop_price = self._pathb_signal_stop_distance_pct(plan, pos, signal, current_native)
         severity = self._pathb_preopen_exit_severity(pnl_pct, stop_distance_pct)
+        if is_profit_target:
+            # 목표익절은 SELL_NOW severity 집합을 우회해 DEFER로 흐르게 한다(프리오픈 즉시실행 방지).
+            severity = "profit_target_runner"
         active_defer = mode != "shadow" and self._pathb_deferred_exit_active(run_plan, signal)
 
         if active_defer and session_phase in {"opening_wait", "opening_confirm", "regular"}:
