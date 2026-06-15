@@ -1209,6 +1209,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return ""
         if not hasattr(self, "tokens"):
             self.tokens = {}
+        # KR/US가 같은 KIS 자격증명을 공유하면(US 키 미설정 → KR fallback) US는 KR 토큰을 재사용한다.
+        # KIS 토큰 발급은 같은 app_key에 1분 1회로 제한(EGW00133)되므로 KR/US를 따로 발급하면
+        # 자정 무효화·장 초반에 rate limit 충돌이 발생한다. 발급은 KR 경로로 일원화한다.
+        if market_key == "US" and bool(getattr(get_kis_market_profile("US"), "shared_with_kr", False)):
+            token = self._token_for_market("KR", force_refresh=force_refresh)
+            self.tokens["US"] = token
+            if not self.token:
+                self.token = token
+            return token
         if force_refresh or not self.tokens.get(market_key):
             token = self._get_startup_token_with_backoff(market_key) if not force_refresh else get_access_token(force_refresh=True, market=market_key)
             self.tokens[market_key] = token
@@ -38412,8 +38421,12 @@ def main(is_paper: bool = True):
     def _midnight_token_refresh():
         """KIS 토큰 자정 무효화 대응 — 00:01에 강제 갱신 후 브로커 상태 복구"""
         try:
+            # 공유 자격증명이면 US는 KR 토큰을 재사용하므로 US를 따로 force 발급하지 않는다.
+            # KIS 발급 1분 1회 제한(EGW00133)으로 KR/US 동시 force 발급은 충돌한다.
+            shared_us = bool(getattr(get_kis_market_profile("US"), "shared_with_kr", False))
             for _mkt in sorted(getattr(bot, "enabled_markets", {"KR", "US"})):
-                bot._token_for_market(_mkt, force_refresh=True)
+                force = not (shared_us and _mkt == "US")
+                bot._token_for_market(_mkt, force_refresh=force)
             bot._sync_runtime_with_broker()
             log.info("[자정 토큰 갱신] 완료")
         except Exception as e:

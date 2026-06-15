@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import types
 import unittest
 from unittest.mock import patch
 
@@ -60,7 +61,11 @@ class TradingBotWebSocketLifecycleTests(unittest.TestCase):
     def test_start_us_after_kr_preserves_kr_socket(self) -> None:
         bot = _bot_for_ws_tests()
 
-        with patch.object(trading_bot, "KISWebSocket", FakeSocket):
+        # 별도 US 자격증명(US 전용 키)이면 US WS는 자기 토큰을 사용한다.
+        with patch.object(trading_bot, "KISWebSocket", FakeSocket), patch.object(
+            trading_bot, "get_kis_market_profile",
+            return_value=types.SimpleNamespace(shared_with_kr=False),
+        ):
             kr_ws = bot._start_ws_for_market("KR", ["005930"])
             us_ws = bot._start_ws_for_market("US", ["AAPL"])
 
@@ -68,6 +73,21 @@ class TradingBotWebSocketLifecycleTests(unittest.TestCase):
         self.assertIs(bot.ws_by_market["US"], us_ws)
         self.assertFalse(kr_ws.stopped)
         self.assertEqual(us_ws.token, "us-token")
+
+    def test_start_us_uses_shared_kr_token_when_credentials_shared(self) -> None:
+        bot = _bot_for_ws_tests()
+
+        # 공유 자격증명(US 키 미설정 → KR fallback)이면 US WS는 KR 공유 토큰으로 일원화된다.
+        # KIS 토큰 발급 1분 1회 제한(EGW00133) 충돌 방지.
+        with patch.object(trading_bot, "KISWebSocket", FakeSocket), patch.object(
+            trading_bot, "get_kis_market_profile",
+            return_value=types.SimpleNamespace(shared_with_kr=True),
+        ):
+            bot._start_ws_for_market("KR", ["005930"])
+            us_ws = bot._start_ws_for_market("US", ["AAPL"])
+
+        self.assertEqual(us_ws.token, "kr-token")
+        self.assertEqual(bot.tokens["US"], "kr-token")
 
     def test_same_market_restart_stops_and_replaces_old_socket(self) -> None:
         bot = _bot_for_ws_tests()
