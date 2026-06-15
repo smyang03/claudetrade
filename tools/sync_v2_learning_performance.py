@@ -169,6 +169,7 @@ INSERT INTO v2_learning_performance (
     filled, closed, portfolio_realized, fill_event_id, close_event_id, filled_at, closed_at,
     entry_price, exit_price, qty, pnl_krw, pnl_pct, mfe_pct, mae_pct,
     pnl_pct_net, pnl_krw_net, fee_pct_round_trip, fee_krw_est, fx_change_pct, net_basis,
+    market_regime,
     close_reason, forward_complete, quality_grade, quality_reasons_json,
     learning_allowed, source_event_count, synced_at
 )
@@ -181,6 +182,7 @@ VALUES (
     :filled, :closed, :portfolio_realized, :fill_event_id, :close_event_id, :filled_at, :closed_at,
     :entry_price, :exit_price, :qty, :pnl_krw, :pnl_pct, :mfe_pct, :mae_pct,
     :pnl_pct_net, :pnl_krw_net, :fee_pct_round_trip, :fee_krw_est, :fx_change_pct, :net_basis,
+    :market_regime,
     :close_reason, :forward_complete, :quality_grade, :quality_reasons_json,
     :learning_allowed, :source_event_count, :synced_at
 )
@@ -224,6 +226,7 @@ ON CONFLICT(v2_decision_id) DO UPDATE SET
     fee_krw_est=excluded.fee_krw_est,
     fx_change_pct=excluded.fx_change_pct,
     net_basis=excluded.net_basis,
+    market_regime=excluded.market_regime,
     close_reason=excluded.close_reason,
     forward_complete=excluded.forward_complete,
     quality_grade=excluded.quality_grade,
@@ -429,6 +432,7 @@ LEARNING_COMPARISON_FIELDS = (
     "fee_krw_est",
     "fx_change_pct",
     "net_basis",
+    "market_regime",
     "close_reason",
     "forward_complete",
     "quality_grade",
@@ -461,6 +465,12 @@ NET_PERFORMANCE_COLUMNS = {
     "net_basis": "TEXT",
 }
 
+# 진입 시점 시장국면(모드). 모드별 적중확률 측정용. CLOSED payload의 entry_market_regime에서
+# 채워지며, 없으면 빈 문자열로 둔다. v2_learning_performance에만 둔다(canonical 미러링 불필요).
+MODE_PERFORMANCE_COLUMNS = {
+    "market_regime": "TEXT",
+}
+
 
 def _connect(path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path), timeout=30, factory=ClosingConnection)
@@ -481,6 +491,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     _ensure_columns(conn, "v2_canonical_performance", PERFORMANCE_EXPERIMENT_COLUMNS)
     _ensure_columns(conn, "v2_learning_performance", NET_PERFORMANCE_COLUMNS)
     _ensure_columns(conn, "v2_canonical_performance", NET_PERFORMANCE_COLUMNS)
+    _ensure_columns(conn, "v2_learning_performance", MODE_PERFORMANCE_COLUMNS)
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_v2_learning_perf_experiment
@@ -965,6 +976,7 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
         "fee_krw_est": fee_krw_est,
         "fx_change_pct": fx_change_pct,
         "net_basis": net_basis,
+        "market_regime": _text(close_payload, "entry_market_regime", "market_regime"),
         "close_reason": close_reason,
         "forward_complete": 1 if forward_complete else 0,
         "quality_grade": quality.grade.value,

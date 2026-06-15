@@ -11031,8 +11031,7 @@ class PathBRuntime:
         order.setdefault("strategy", "claude_price")
         order.setdefault("source_strategy", "claude_price")
 
-    @staticmethod
-    def _attach_pathb_position_metadata(pos: dict[str, Any], plan: PricePlan) -> None:
+    def _attach_pathb_position_metadata(self, pos: dict[str, Any], plan: PricePlan) -> None:
         pos["path_type"] = "claude_price"
         pos["pathb_path_run_id"] = plan.path_run_id
         pos["path_run_id"] = plan.path_run_id
@@ -11049,6 +11048,12 @@ class PathBRuntime:
         pos["pathb_origin_reason"] = plan.origin_reason
         pos.setdefault("strategy", "claude_price")
         pos.setdefault("source_strategy", "claude_price")
+        # 진입 시점 시장국면(모드)을 포지션에 캡처한다. 청산 시 exit_meta→CLOSED payload→
+        # v2_learning_performance.market_regime으로 흘러가 모드별 적중확률 측정의 근거가 된다.
+        try:
+            pos["entry_market_regime"] = self._pathb_consensus_mode(plan.market)
+        except Exception:
+            pos["entry_market_regime"] = ""
         # hold_advisor가 B-플랜 목표가/손절을 알 수 있도록 포지션에 저장
         # 이 값이 없으면 profit_ladder 트리거 시 Claude가 remaining upside를 0으로 보고 SELL을 냄
         if float(plan.sell_target or 0) > 0:
@@ -11116,6 +11121,7 @@ class PathBRuntime:
             "peak_pnl_pct": float(pos.get("peak_pnl_pct", 0) or 0),
             "position_mfe_pct": float(pos.get("observed_mfe_pct", pos.get("peak_pnl_pct", 0)) or 0),
             "position_mae_pct": float(pos.get("observed_mae_pct", pos.get("trough_pnl_pct", 0)) or 0),
+            "entry_market_regime": str(pos.get("entry_market_regime") or ""),
         }
         try:
             if callable(getattr(risk, "position_loss_budget_krw", None)):

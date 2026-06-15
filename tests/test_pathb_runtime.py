@@ -1430,7 +1430,9 @@ class PathBRuntimeTests(unittest.TestCase):
         pos: dict = {}
 
         PathBRuntime._attach_pathb_order_metadata(order, plan)
-        PathBRuntime._attach_pathb_position_metadata(pos, plan)
+        # _attach_pathb_position_metadata는 진입 시점 시장국면(모드) 캡처를 위해 instance method.
+        rt = PathBRuntime.__new__(PathBRuntime)
+        rt._attach_pathb_position_metadata(pos, plan)
 
         self.assertEqual(order["pathb_origin_action"], "PULLBACK_WAIT")
         self.assertEqual(order["pathb_origin_route"], "pathb_wait_only")
