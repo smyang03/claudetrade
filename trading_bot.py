@@ -13971,6 +13971,28 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         wait_window = float(base_window or 0)
         wait_window += float(self._runtime_overrides(market).get("momentum_wait_adjust_min", 0))
         return max(5.0, min(60.0, wait_window))
+
+    def _momentum_entry_min_elapsed(self, market: str, mode: str, base_wait_min: float) -> float:
+        """momentum 진입 허용 최소 경과(분).
+
+        기존엔 개장 후 base_wait(≈45분)를 기다려야 momentum이 fire했다(개장 급등 추격 방지).
+        강세(RISK_ON) 판단 + 토글 on이면 최초 장 판단(개장+5분)으로 단축한다. 비강세/토글 off면
+        base_wait 그대로 유지 — 약세 개장 추격은 모드게이트로 막는다. 단축값은 base 이하로만
+        적용(절대 연장 안 함)하고 최소 5분 floor.
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        base = max(0.0, float(base_wait_min or 0.0))
+        enabled = self._runtime_bool(
+            f"{market_key}_MOMENTUM_EARLY_ENTRY_ENABLED",
+            self._runtime_bool("MOMENTUM_EARLY_ENTRY_ENABLED", False),
+        )
+        if not enabled or _mode_family(mode) != "RISK_ON":
+            return base
+        early = self._runtime_float(
+            f"{market_key}_MOMENTUM_EARLY_ENTRY_MIN_ELAPSED",
+            self._runtime_float("MOMENTUM_EARLY_ENTRY_MIN_ELAPSED", 5.0),
+        )
+        return max(5.0, min(base, early)) if base > 0 else max(5.0, early)
     def _effective_kr_momentum_atr_caps(self) -> tuple[float, float]:
         base_cap = float(os.getenv("KR_MOMENTUM_ATR_PCT_MAX", "0.06") or 0.06)
         base_high_cap = float(os.getenv("KR_MOMENTUM_ATR_PCT_HIGH", "0.10") or 0.10)
@@ -33382,10 +33404,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         market,
                         float(_ap("continuation").get("cont_entry_max_min", 45) or 45),
                     )
+                    _mom_entry_min = self._momentum_entry_min_elapsed(market, mode, _cont_window_max)
                     for _strat_name in _ticker_kr_strat_list:
                         _sig_fn, _p = _kr_dispatch[_strat_name]
                         if _strat_name == "momentum":
-                            _momentum_ready = self._market_elapsed_min(market) >= _cont_window_max
+                            _momentum_ready = self._market_elapsed_min(market) >= _mom_entry_min
                             if _momentum_ready:
                                 kr_momentum_diag = mom_diag(sig_df, i, mom_p)
                             if not _momentum_ready:
@@ -33473,11 +33496,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             market,
                             float(_cont_p.get("cont_entry_max_min", 45) or 45),
                         )
+                        _mom_entry_min = self._momentum_entry_min_elapsed(market, mode, _cont_window_max)
                         _elapsed_min = self._market_elapsed_min(market)
                         _kr_mom_str = "momentum disabled" if mom_p.get("disabled") else "momentum diagnostic"
                         _cont_d = cont_diag(sig_df, i, _cont_p)
-                        if not mom_p.get("disabled") and _elapsed_min < _cont_window_max:
-                            _kr_mom_str = f"momentum_wait_window({_elapsed_min:.0f}m<{_cont_window_max:.0f}m)"
+                        if not mom_p.get("disabled") and _elapsed_min < _mom_entry_min:
+                            _kr_mom_str = f"momentum_wait_window({_elapsed_min:.0f}m<{_mom_entry_min:.0f}m)"
                         _cont_str = "continuation disabled" if _cont_p.get("disabled") else "continuation diagnostic"
                         none_detail = " | ".join([
                             str(_orp_detail(sig_df, i, orp_p)),
@@ -33509,9 +33533,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         if (
                             _strat_name == "momentum"
                             and self._market_elapsed_min(market)
-                            < self._effective_momentum_wait_window(
+                            < self._momentum_entry_min_elapsed(
                                 market,
-                                float(_ap("continuation").get("cont_entry_max_min", 45) or 45),
+                                mode,
+                                self._effective_momentum_wait_window(
+                                    market,
+                                    float(_ap("continuation").get("cont_entry_max_min", 45) or 45),
+                                ),
                             )
                         ):
                             continue
