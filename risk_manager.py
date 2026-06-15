@@ -1160,8 +1160,8 @@ class RiskManager:
                     reason = "soft_exit_floor_price"
                 elif floor_hit:
                     reason = "profit_floor"
-                elif cp >= pos["tp"] and not pos.get("tp_triggered"):
-                    reason = "tp_check"      # TP 도달 → trading_bot에서 처리
+                elif pos.get("tp") and cp >= pos["tp"] and not pos.get("tp_triggered"):
+                    reason = "tp_check"      # TP 도달 → trading_bot에서 처리 (tp 미설정 포지션은 KeyError 방지 위해 가드)
             if reason:
                 candidates.append({**pos, "exit_price": cp, "reason": reason, **exit_meta})
         return candidates

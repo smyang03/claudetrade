@@ -153,6 +153,20 @@ class LossCapProfitFloorTests(unittest.TestCase):
         self.assertAlmostEqual(candidates[0]["position_mfe_pct"], 2.5)
         self.assertAlmostEqual(candidates[0]["position_mae_pct"], -2.2)
 
+    def test_kr_position_without_tp_does_not_crash_exit_scan(self) -> None:
+        # tp 키 없는 KR 포지션(legacy/외부주입)이 tp_check 분기에 도달해도
+        # KeyError 없이 처리돼야 한다(get_exit_candidates 전체 중단 방지).
+        risk = RiskManager(init_cash=1_000_000)
+        risk.reset_daily_state(override_base=1_000_000)
+        pos = _kr_position(current_price=10_500.0)
+        pos.pop("tp", None)
+        risk.positions = [pos]
+
+        candidates = risk.get_exit_candidates()
+
+        # tp 미설정 → tp_check 미발동, 손절/플로어도 미해당 → 후보 없음(예외 없이)
+        self.assertEqual([c.get("reason") for c in candidates], [])
+
     def test_us_loss_cap_uses_native_usd_stop(self) -> None:
         risk = RiskManager(init_cash=1_000_000, market="US")
         risk.reset_daily_state(override_base=1_000_000)
