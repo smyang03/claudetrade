@@ -228,6 +228,22 @@ Work item: momentum 개장 진입 대기 단축 — 강세장 진입 타이밍. 
 - Tests run: `tests/test_momentum_early_entry.py`(7: US/KR RISK_ON 단축·off 유지·비강세 유지·floor·연장금지·per-market); 회귀(최종 보고에 기재); `py_compile`; `live_preflight --mode live`.
 - Remaining risk: 강세 개장 5~45분 진입의 추격 위험 미검증(45분 대기의 원래 목적). **KR momentum은 손실 누적 가능** → 재시작 후 1~2주 KR momentum 조기진입 net 집중 모니터, 악화 시 `KR_MOMENTUM_EARLY_ENTRY_ENABLED=false`로 즉시 롤백.
 
+### MD 위반 사항
+
+Recorded date: 2026-06-16
+Work item: PathB 약한 포지션 조기정리(weak-MFE early cut). 운영자 결정: "바로 enforce, US+KR 둘 다".
+
+- Protected area touched:
+  - PathB loss_cap 인접 exit scan (`runtime/pathb_runtime.py` 3328 자리에 신규 청산 신호 `_pathb_weak_mfe_cut_signal` 추가).
+  - hold advisor protective hold 정책 화이트리스트(`stop_recovery_close_reasons`에 `CLOSED_WEAK_MFE` 추가)와 AUTO_SELL_REVIEW default policy 문구.
+  - PathB `AUTO_SELL_REVIEW` HOLD cooldown guard와 `_pathb_sell_review_required`는 **무변경**(reason/close_reason 동적 매칭이라 새 신호를 자동 커버).
+- Why unavoidable: 전 기간 live(227건, 동기간 QQQ +11.76% 강세장) 분석에서 최대 단일 누수가 `CLOSED_LOSS_CAP` net -88.7%p로 확정됐고, 그 37/41건이 PathB claude_price 보호경로 자체다. yfinance 백필 MFE(171건)에서 loss_cap MFE 중앙 +0.39% vs 수익 +3.73%로 갈리고 MFE<0.5% 수익건 오절단이 0이라, 보호경로 밖 변경으로는 처방이 불가능했다.
+- Before/after behavior: before — 진입 후 한 번도 못 오른 약한 포지션도 loss_cap(-2%)까지 끌려 손절. after — `(US_/KR_)PATHB_WEAK_MFE_CUT_ENABLED=true` & 관찰창(`*_MIN_AGE_MIN`=30분) 경과 & `observed_mfe_pct < *_MFE_MAX_PCT`(0.5) & 현재 손실(`<= *_MIN_LOSS_PCT`=0)이면 `CLOSED_WEAK_MFE`로 조기 청산. 하드스톱/loss_cap/profit_ladder는 무수정. 토글 off면 현행 동일.
+- Order/risk/broker truth/Claude/config/env impact: 신규 손절성 청산 1종 추가. 주문 수량/하드스톱/loss_cap/profit_ladder floor/broker truth 무변경. Claude 호출은 기존 AUTO_SELL_REVIEW 게이트 재사용(`CLAUDE_REVIEW_ALL_AUTOMATED_SELLS=true`라 weak_mfe도 hold advisor 리뷰 거침, cooldown guard 자동 포함 → 호출 폭증 없음). 신규 env 6키(`config/v2_start_config.json` + `.env.live`). `state/brain.json` 무변경.
+- Replacement guard: 하드스톱/loss_cap 무수정(하방 bounded, weak-cut은 그 사이를 더 일찍 끊어 손실 축소), MFE<0.5% 안전임계(백필상 수익건 오절단 0), 현재 손실 게이트(이익 중이면 보류), 관찰창(초기 변동성 제외), 시장별 토글 reversible, `observed_*` 관측 전용 키만 사용(ladder의 `peak_pnl_pct` 무오염), 자동 매도 리뷰+cooldown guard 자동 커버.
+- Tests run: `tests/test_pathb_weak_mfe_cut.py`(9: 발동/관찰창미경과/MFE초과/이익중보류/하드스톱·loss_cap우회/토글off/시장별분리/추적전); 보호영역 회귀 `tests/test_pathb_runtime.py test_pathb_profit_protection.py test_loss_cap_profit_floor.py test_auto_sell_claude_gate.py test_pathb_sell_reconcile.py`(243 passed); 전체 `pytest tests/`(2522 passed); `py_compile`; `check_mojibake --staged`; `live_preflight --mode live`(ok=True FAIL 0); `capture_net_review` by_close_reason 동적 집계로 `CLOSED_WEAK_MFE` 자동 반영 확인.
+- Remaining risk: ① 실시간 `observed_mfe_pct` 추적이 5분봉 백필과 다를 수 있음 → 재시작 후 1~2주 weak_mfe_cut 건 net·수익건 오절단 모니터, 악화 시 임계 상향 또는 시장별 토글 off. ② 약세장 미검증(하드스톱으로 bounded). ③ KR 백필 표본 작음(loss_cap 2~14건) → KR 임계는 US와 동일 출발 후 KR 전용 데이터로 재튜닝.
+
 ### Commit, PR, and Security Standards
 
 - Commit units should be one behavior change at a time. Recent history uses Conventional Commit prefixes such as `feat:` and `fix:` with short Korean or English summaries.
@@ -606,6 +622,11 @@ until more data is available or a human explicitly approves the change.
 | `US_MOMENTUM_EARLY_ENTRY_ENABLED` | `true` | **강세(RISK_ON) 시 momentum 45분 대기 대신 최초 판단(개장+5분) 후 진입.** 비강세/off면 45분 유지 |
 | `KR_MOMENTUM_EARLY_ENTRY_ENABLED` | `true` | **KR momentum은 손실경로 — 운영자 명시 enforce(MD 위반 기록). net 악화 시 false로 즉시 롤백** |
 | `MOMENTUM_EARLY_ENTRY_MIN_ELAPSED` | `5` | 조기진입 허용 최소 경과(분, 최초 판단=개장+5분). floor 5, base(45) 초과 불가 |
+| `US_PATHB_WEAK_MFE_CUT_ENABLED` | `true` | **약한 포지션 조기정리: 진입 후 관찰창 동안 MFE가 임계 미만이고 손실이면 loss_cap(-2%)까지 끌지 않고 청산(CLOSED_WEAK_MFE).** 하드스톱/loss_cap 무수정. 백필상 수익건 오절단 0. 악화 시 false로 롤백 |
+| `KR_PATHB_WEAK_MFE_CUT_ENABLED` | `true` | KR도 적용(운영자 enforce 결정). KR 백필 표본 작음 → net 모니터 후 KR 전용 임계 재튜닝, 악화 시 false |
+| `PATHB_WEAK_MFE_CUT_MIN_AGE_MIN` | `30` | 관찰창(분). 진입 후 이 시간 경과해야 weak-cut 평가(초기 정상 변동성 제외) |
+| `PATHB_WEAK_MFE_CUT_MFE_MAX_PCT` | `0.5` | observed_mfe_pct 임계(미만이면 약한 포지션). 수익건 0건 절단되는 안전 임계 |
+| `PATHB_WEAK_MFE_CUT_MIN_LOSS_PCT` | `0.0` | 현재 손실 게이트(현재 pnl ≤ 이 값일 때만 발동). 이익 중이면 보류 |
 
 이 설정들은 `.env.live`와 `config/v2_start_config.json` 두 곳에 존재한다. 한 곳만 바꾸면 반영이 안 될 수 있으므로 두 파일을 동시에 확인한다.
 

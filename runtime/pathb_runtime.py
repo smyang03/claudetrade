@@ -3332,8 +3332,22 @@ class PathBRuntime:
                     hard_stop_price=hard_stop_price,
                     loss_cap_price=loss_cap_price,
                 )
+                weak_mfe_signal = (
+                    None
+                    if mfe_signal is not None
+                    else self._pathb_weak_mfe_cut_signal(
+                        plan,
+                        pos,
+                        current,
+                        market,
+                        hard_stop_price=hard_stop_price,
+                        loss_cap_price=loss_cap_price,
+                    )
+                )
                 if mfe_signal is not None:
                     exit_signal = mfe_signal
+                elif weak_mfe_signal is not None:
+                    exit_signal = weak_mfe_signal
                 elif (
                     loss_cap_price is not None
                     and loss_cap_price > 0
@@ -4163,6 +4177,13 @@ class PathBRuntime:
                 "This profit-protection sell is reviewable. SELL if giveback risk now outweighs "
                 "remaining upside. HOLD only when upside remains attractive and the retained "
                 "profit/loss floor is explicit."
+            )
+        if reason_key == "weak_mfe_cut" or close_reason == "CLOSED_WEAK_MFE":
+            return (
+                "This weak-position alert fires when the position never moved up after entry "
+                "(max favorable excursion stayed below threshold) and is now at a loss. SELL unless "
+                "fresh evidence shows the thesis is intact with a concrete protective_stop, "
+                "recover_above, invalid_if, and near next_review_min."
             )
         return (
             "SELL only if this PathB automatic sell signal remains valid after fresh review. "
@@ -5133,6 +5154,7 @@ class PathBRuntime:
             "CLOSED_CLAUDE_PRICE_STOP",
             "CLOSED_LOSS_CAP",
             "CLOSED_HARD_STOP",
+            "CLOSED_WEAK_MFE",
         }
         if close_reason not in {
             "CLOSED_CLAUDE_PRICE_TARGET",
@@ -5908,6 +5930,71 @@ class PathBRuntime:
             plan.path_run_id,
         )
 
+    def _pathb_weak_mfe_cut_signal(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        current: float,
+        market: str,
+        *,
+        hard_stop_price: float | None = None,
+        loss_cap_price: float | None = None,
+    ) -> ExitSignal | None:
+        """진입 후 관찰창 동안 MFE가 임계 미만이고 손실 중인 약한 포지션을 조기 정리한다.
+
+        근거: live 백필 MFE 분석에서 loss_cap 종목은 진입 후 거의 위로 못 가고(MFE 중앙 +0.39%),
+        수익 종목은 +3.73%로 명확히 갈린다. MFE<0.5% & 손실이면 수익건 오절단 0으로 약한 진입만
+        잡힌다. 하드스톱/loss_cap은 무수정 — 그 사이 구간을 더 일찍 끊어 loss_cap 누수를 줄인다.
+        observed_mfe_pct(Phase 1c 관측 전용 키)만 읽으므로 ladder의 peak_pnl_pct는 건드리지 않는다.
+        """
+        mk = "US" if str(market or "").upper() == "US" else "KR"
+        if not self._runtime_bool(
+            f"{mk}_PATHB_WEAK_MFE_CUT_ENABLED",
+            self._runtime_bool("PATHB_WEAK_MFE_CUT_ENABLED", False),
+        ):
+            return None
+        current_price = float(current or 0)
+        if current_price <= 0:
+            return None
+        # 정상 손절 구간이면 기존 loss_cap/hard_stop 경로가 처리 (mfe_breakeven와 동일 우회 가드)
+        if hard_stop_price is not None and float(hard_stop_price or 0) > 0 and current_price <= float(hard_stop_price):
+            return None
+        if loss_cap_price is not None and float(loss_cap_price or 0) > 0 and current_price <= float(loss_cap_price):
+            return None
+        entry = self._position_entry_native(pos, market)
+        if entry <= 0:
+            return None
+        # 관찰창: 진입 후 충분히 경과해야 평가 (초기 정상 변동성 제외)
+        min_age_min = self._runtime_float(
+            f"{mk}_PATHB_WEAK_MFE_CUT_MIN_AGE_MIN",
+            self._runtime_float("PATHB_WEAK_MFE_CUT_MIN_AGE_MIN", 30.0),
+        )
+        age_sec = self._pathb_position_age_sec(plan, pos)
+        if age_sec is None or age_sec < max(0.0, min_age_min) * 60.0:
+            return None
+        # MFE 미달: observed_mfe_pct가 아직 없으면(추적 전) 평가 보류
+        if "observed_mfe_pct" not in pos:
+            return None
+        try:
+            mfe_pct = float(pos.get("observed_mfe_pct"))
+        except Exception:
+            return None
+        mfe_max = self._runtime_float(
+            f"{mk}_PATHB_WEAK_MFE_CUT_MFE_MAX_PCT",
+            self._runtime_float("PATHB_WEAK_MFE_CUT_MFE_MAX_PCT", 0.5),
+        )
+        if mfe_pct >= mfe_max:
+            return None
+        # 현재 손실 중일 때만 (MFE 안 붙어도 현재가가 진입가 위면 보류)
+        cur_pnl_pct = (current_price / entry - 1.0) * 100.0
+        min_loss = self._runtime_float(
+            f"{mk}_PATHB_WEAK_MFE_CUT_MIN_LOSS_PCT",
+            self._runtime_float("PATHB_WEAK_MFE_CUT_MIN_LOSS_PCT", 0.0),
+        )
+        if cur_pnl_pct > min_loss:
+            return None
+        return ExitSignal(True, "weak_mfe_cut", "CLOSED_WEAK_MFE", current_price, plan.path_run_id)
+
     def _pathb_position_age_sec(self, plan: PricePlan, pos: dict[str, Any]) -> float | None:
         raw_values = [
             pos.get("pathb_filled_at"),
@@ -6498,7 +6585,7 @@ class PathBRuntime:
             confidence = 0.0
             fallback = True
             # fail-safe: reviewer 불가 시 수익/손실 보호 신호 원래대로 집행
-            if raw_close_reason in {"CLOSED_PROFIT_LADDER", "CLOSED_HARD_STOP", "CLOSED_LOSS_CAP"}:
+            if raw_close_reason in {"CLOSED_PROFIT_LADDER", "CLOSED_HARD_STOP", "CLOSED_LOSS_CAP", "CLOSED_WEAK_MFE"}:
                 action = "SELL"
                 advice["action"] = "SELL"
                 detail = detail + f" | review_unavailable_failsafe:{raw_close_reason.lower()}"
@@ -8960,7 +9047,7 @@ class PathBRuntime:
             pos=pos,
             exit_meta=exit_meta,
         )
-        if close_reason in {"CLOSED_LOSS_CAP", "CLOSED_HARD_STOP", "CLOSED_CLAUDE_PRICE_STOP"}:
+        if close_reason in {"CLOSED_LOSS_CAP", "CLOSED_HARD_STOP", "CLOSED_CLAUDE_PRICE_STOP", "CLOSED_WEAK_MFE"}:
             try:
                 key = plan.ticker.upper() if market == "US" else plan.ticker
                 note_stop = getattr(self.bot, "_note_stop_loss_event", None)
