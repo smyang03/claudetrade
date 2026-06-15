@@ -13993,6 +13993,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._runtime_float("MOMENTUM_EARLY_ENTRY_MIN_ELAPSED", 5.0),
         )
         return max(5.0, min(base, early)) if base > 0 else max(5.0, early)
+
     def _effective_kr_momentum_atr_caps(self) -> tuple[float, float]:
         base_cap = float(os.getenv("KR_MOMENTUM_ATR_PCT_MAX", "0.06") or 0.06)
         base_high_cap = float(os.getenv("KR_MOMENTUM_ATR_PCT_HIGH", "0.10") or 0.10)
@@ -33737,11 +33738,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 f"vol={bool(_mom_diag.get('vol_ok'))}, "
                                 f"high={bool(_mom_diag.get('high_ok'))}"
                             )
-                        # KR momentum 시간 게이트 — 첫 번째 블록과 동일하게 덮어씌움
+                        # KR momentum 시간 게이트 — 실제 게이트(_momentum_entry_min_elapsed)와 동일 임계로 진단
                         _kr_elapsed_nd = self._market_elapsed_min(market)
-                        _kr_cont_win_nd = self._effective_momentum_wait_window(
+                        _kr_cont_win_nd = self._momentum_entry_min_elapsed(
                             market,
-                            float(_cont_p2.get("cont_entry_max_min", 45) or 45),
+                            mode,
+                            self._effective_momentum_wait_window(
+                                market,
+                                float(_cont_p2.get("cont_entry_max_min", 45) or 45),
+                            ),
                         )
                         if not mom_p.get("disabled") and _kr_elapsed_nd < _kr_cont_win_nd:
                             _mom_detail = f"momentum_wait_window({_kr_elapsed_nd:.0f}m<{_kr_cont_win_nd:.0f}m)"
@@ -33766,9 +33771,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         _us_gap_p = _ap("gap_pullback")
                         _us_vb_p = _ap("volatility_breakout")
                         _us_cont_p2 = locals().get("_us_cont_p") or _ap("continuation")
-                        _us_cont_window_max2 = self._effective_momentum_wait_window(
+                        _us_cont_window_max2 = self._momentum_entry_min_elapsed(
                             market,
-                            float(_us_cont_p2.get("cont_entry_max_min", 45) or 45),
+                            mode,
+                            self._effective_momentum_wait_window(
+                                market,
+                                float(_us_cont_p2.get("cont_entry_max_min", 45) or 45),
+                            ),
                         )
                         _us_elapsed_min2 = self._market_elapsed_min(market)
                         if _us_mom_p.get("disabled"):
