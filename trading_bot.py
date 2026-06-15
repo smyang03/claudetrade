@@ -30659,6 +30659,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     f"[planb_bridge] {market_key} {ticker} WAIT_RECHECK "
                     f"→ {cooldown_min:.0f}m 후 재시도 (quota 미차감)"
                 )
+                try:
+                    self._record_intraday_entry_shadow(
+                        market_key, ticker, raw_result or {}, candidate, source="preopen_planb_bridge", applied=False
+                    )
+                except Exception:
+                    pass
                 continue
             # PULLBACK_WAIT / REJECT: quota 차감 + completed 기록
             self._planb_bridge_session_call_count[market_key] = (
@@ -30681,6 +30687,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     f"[planb_bridge] {market_key} {ticker} {action} "
                     f"reason={str((raw_result or {}).get('reason') or '')[:80]}"
                 )
+                try:
+                    self._record_intraday_entry_shadow(
+                        market_key, ticker, raw_result or {}, candidate, source="preopen_planb_bridge", applied=False
+                    )
+                except Exception:
+                    pass
 
     def _early_judge_rows_from_sub_screener_result(self, result: sub_screener.SubScanResult) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -31104,7 +31116,89 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             pass
         normalized["applied"] = applied
+        try:
+            self._record_intraday_entry_shadow(
+                market_key, ticker, normalized, candidate, source=source, applied=applied
+            )
+        except Exception:
+            pass
         return normalized
+
+    def _record_intraday_entry_shadow(
+        self,
+        market: str,
+        ticker: str,
+        normalized: dict[str, Any],
+        candidate: Any,
+        *,
+        source: str,
+        applied: bool,
+    ) -> None:
+        """장중 미진입(WAIT_RECHECK/PULLBACK_WAIT/REJECT) 시 '샀다면' 스냅샷을 관측 기록한다.
+
+        상승장인데 진입을 못 잡는 답답함의 처방 검증용. 실제 주문/플랜/sizing에는 일절
+        영향을 주지 않으며(순수 shadow), 격리된 funnel JSONL(intraday_entry_shadow)에만
+        남긴다. 전방 성과는 사후 yfinance 재구성 도구(tools/intraday_entry_shadow_review.py)
+        로 산출해 실제 진입 대비 net 비교 → 전환조건(US 우선, 표본·net+) 충족 시 enforce 검토.
+        BUY_READY/PROBE_READY(실제 라이브 진입)는 이미 측정되므로 제외한다.
+        """
+        mode = str(os.getenv("INTRADAY_ENTRY_SHADOW_MODE", "shadow") or "shadow").strip().lower()
+        if mode in {"off", "disabled", "false", ""}:
+            return
+        action = str((normalized or {}).get("action") or "").upper()
+        if action not in {"WAIT_RECHECK", "PULLBACK_WAIT", "REJECT"}:
+            return
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = self._selection_ticker_key(market_key, ticker)
+        if not ticker_key:
+            return
+        cand = candidate if isinstance(candidate, dict) else {}
+        feats = dict(cand.get("features") or cand.get("post_open_features") or {})
+        row = dict(cand.get("row") or {})
+        entry_price = 0.0
+        for value in (
+            (normalized or {}).get("reference_price"),
+            feats.get("current_price"),
+            feats.get("price"),
+            row.get("price"),
+        ):
+            try:
+                entry_price = float(value or 0)
+            except Exception:
+                entry_price = 0.0
+            if entry_price > 0:
+                break
+        regime = str((getattr(self, "today_judgment", {}) or {}).get("consensus", {}).get("mode", "") or "")
+        # 지수 등락률은 이미 보유한 digest context에서 읽는다(shadow 관측에 브로커 API 신규
+        # 호출을 추가하지 않기 위함 — early-judge는 종목 수만큼 이 경로를 탄다).
+        index_change = None
+        try:
+            ctx = ((getattr(self, "today_judgment", {}) or {}).get("digest_raw") or {}).get("context") or {}
+            raw_change = (ctx.get("kospi" if market_key == "KR" else "sp500") or {}).get("change_pct")
+            index_change = float(raw_change) if raw_change is not None else None
+        except Exception:
+            index_change = None
+        try:
+            confidence = float((normalized or {}).get("confidence") or 0.0)
+        except Exception:
+            confidence = 0.0
+        payload = {
+            "ticker": ticker_key,
+            "action": action,
+            "applied_live": bool(applied),
+            "would_entry_price": round(entry_price, 6) if entry_price else 0.0,
+            "entry_market_regime": regime,
+            "index_change_pct": round(float(index_change), 3) if index_change is not None else None,
+            "confidence": confidence,
+            "strategy": str((normalized or {}).get("strategy") or row.get("strategy") or ""),
+            "source": str(source or ""),
+            "reason": str((normalized or {}).get("reason") or "")[:200],
+            "audit_reason": str((normalized or {}).get("audit_reason") or "")[:200],
+            "soft_block_reason": str(row.get("previous_blocker") or row.get("reason") or "")[:160],
+            "decided_at": datetime.now(KST).isoformat(timespec="seconds"),
+            "shadow_mode": mode,
+        }
+        self._write_funnel_event("intraday_entry_shadow", market_key, payload)
 
     def _early_judge_priority_sort(self, market_key: str, candidate_rows: list, meta: dict) -> list:
         """rel_vol(거래량 서지) 우선 정렬 — judge 슬롯을 단골 재평가가 아닌 서지 종목에 먼저 배분.

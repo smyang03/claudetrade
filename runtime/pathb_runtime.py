@@ -944,6 +944,51 @@ class PathBRuntime:
             details["broker_truth_refresh_success"] = bool(refresh_success)
             details["broker_truth_refresh_metrics"] = dict(metrics)
 
+            # Phase A(BLOCKED 조회 성공률 개선): 첫 force refresh가 transient하게 실패하면
+            # 짧은 백오프 후 1회 재시도해 BLOCKED_BROKER_TRUTH 오발생을 줄인다. fail-closed는
+            # 약화하지 않는다 — 재시도 후에도 missing/stale/error면 그대로 BLOCKED 처리한다.
+            # 기본 OFF(RETRY_MAX=0). 운영자 검증 후 1로 켠다.
+            retry_max = max(0, self._runtime_int("PATHB_ENTRY_SCAN_BROKER_TRUTH_RETRY_MAX", 0))
+            retry_backoff = max(0.0, self._runtime_float("PATHB_ENTRY_SCAN_BROKER_TRUTH_RETRY_BACKOFF_SEC", 0.5))
+            retry_used = 0
+            while (not refresh_success) and retry_used < retry_max:
+                retry_used += 1
+                if retry_backoff > 0:
+                    time.sleep(min(2.0, retry_backoff))
+                retry_started = time.time()
+                retry_error = ""
+                try:
+                    self.refresh_broker_truth(market_key, force=True, ttl_sec=ttl)
+                except Exception as exc:
+                    retry_error = str(exc)[:300]
+                    details["broker_truth_refresh_exception"] = retry_error
+                self._entry_broker_truth_refresh_at[market_key] = time.time()
+                try:
+                    current = dict(self.broker_truth.market_snapshot(market_key, ttl_sec=ttl))
+                except Exception as exc:
+                    current = {"missing": True, "stale": True, "error": str(exc)}
+                refresh_success = not (
+                    bool(current.get("missing"))
+                    or bool(current.get("stale"))
+                    or bool(str(current.get("error", "") or ""))
+                    or bool(retry_error)
+                )
+                metrics["call_count"] = int(metrics.get("call_count", 0) or 0) + 1
+                if refresh_success:
+                    metrics["success_count"] = int(metrics.get("success_count", 0) or 0) + 1
+                else:
+                    metrics["fail_count"] = int(metrics.get("fail_count", 0) or 0) + 1
+                metrics["retry_count"] = int(metrics.get("retry_count", 0) or 0) + 1
+                metrics["last_latency_sec"] = round(max(0.0, time.time() - retry_started), 4)
+                metrics["last_success"] = bool(refresh_success)
+                metrics["last_error"] = retry_error or str(current.get("error", "") or "")
+            if retry_used:
+                metrics["last_retry_used"] = retry_used
+                self._broker_truth_refresh_metrics[market_key] = metrics
+                details["broker_truth_refresh_success"] = bool(refresh_success)
+                details["broker_truth_refresh_retry_used"] = retry_used
+                details["broker_truth_refresh_metrics"] = dict(metrics)
+
         details.update(
             {
                 "broker_truth_refresh_attempted": refresh_attempted,

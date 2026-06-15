@@ -5662,5 +5662,79 @@ class EarlyGateFloorOneShareTests(unittest.TestCase):
             self.assertFalse(ctx["early_gate_applied"])
 
 
+class EntryScanBrokerTruthRetryTests(unittest.TestCase):
+    """Phase A: BLOCKED 조회 성공률 개선 — transient 조회 실패 1회 재시도(기본 OFF).
+
+    핵심 계약: 재시도는 fail-closed를 약화하지 않는다. 재시도 후에도 unavailable이면
+    그대로 BLOCKED_BROKER_TRUTH 여야 한다.
+    """
+
+    def _runtime_with_flaky_provider(self, tmp: str, *, fail_times: int):
+        bot = _MarketTokenBot()
+        store = EventStore(Path(tmp) / "events.db")
+        runtime = PathBRuntime(bot, is_paper=False, store=store)
+        runtime.control_store = _Control()
+        state = {"n": 0}
+
+        def flaky(market, force):
+            state["n"] += 1
+            if state["n"] <= fail_times:
+                raise RuntimeError("transient broker error")
+            return {"cash": 1_000_000, "stocks": []}
+
+        runtime.broker_truth = BrokerTruthSnapshot(
+            runtime_mode="live",
+            path=Path(tmp) / "broker_truth.json",
+            token_provider=lambda market="KR": "token",
+            balance_provider=flaky,
+            ccld_provider=lambda market, day: [],
+            date_provider=lambda market: "2026-04-27",
+        )
+        return runtime, state
+
+    def test_retry_disabled_by_default_blocks_on_transient_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, state = self._runtime_with_flaky_provider(tmp, fail_times=1)
+            env = {
+                "PATHB_ENTRY_SCAN_BROKER_TRUTH_RETRY_BACKOFF_SEC": "0",
+            }
+            with patch.dict(os.environ, env):
+                os.environ.pop("PATHB_ENTRY_SCAN_BROKER_TRUTH_RETRY_MAX", None)
+                gate = runtime._entry_scan_broker_truth_gate("KR")
+            self.assertFalse(gate["allowed"])
+            self.assertTrue(gate["blocked"])
+            self.assertEqual(gate["reason"], "BLOCKED_BROKER_TRUTH")
+            self.assertEqual(state["n"], 1)  # 재시도 없음(기본 OFF)
+            self.assertNotIn("broker_truth_refresh_retry_used", gate["details"])
+
+    def test_retry_recovers_transient_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, state = self._runtime_with_flaky_provider(tmp, fail_times=1)
+            env = {
+                "PATHB_ENTRY_SCAN_BROKER_TRUTH_RETRY_MAX": "1",
+                "PATHB_ENTRY_SCAN_BROKER_TRUTH_RETRY_BACKOFF_SEC": "0",
+            }
+            with patch.dict(os.environ, env):
+                gate = runtime._entry_scan_broker_truth_gate("KR")
+            self.assertTrue(gate["allowed"])
+            self.assertFalse(gate["blocked"])
+            self.assertGreaterEqual(state["n"], 2)  # 첫 실패 후 재시도 성공
+            self.assertEqual(gate["details"].get("broker_truth_refresh_retry_used"), 1)
+
+    def test_retry_preserves_fail_closed_when_persistent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, state = self._runtime_with_flaky_provider(tmp, fail_times=99)
+            env = {
+                "PATHB_ENTRY_SCAN_BROKER_TRUTH_RETRY_MAX": "2",
+                "PATHB_ENTRY_SCAN_BROKER_TRUTH_RETRY_BACKOFF_SEC": "0",
+            }
+            with patch.dict(os.environ, env):
+                gate = runtime._entry_scan_broker_truth_gate("KR")
+            self.assertFalse(gate["allowed"])
+            self.assertTrue(gate["blocked"])
+            self.assertEqual(gate["reason"], "BLOCKED_BROKER_TRUTH")
+            self.assertEqual(gate["details"].get("broker_truth_refresh_retry_used"), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

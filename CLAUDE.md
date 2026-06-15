@@ -181,6 +181,27 @@ Work item: capture 중심 수익성 개선 (Phase 1c MFE 상시기록 / Phase 2 
 - Remaining risk: ① profit_ladder/청산 파라미터의 capture 정밀 튜닝(giveback 등)은 과거 장중 경로 부재로 미검증 — Phase 1c 재시작 후 1~2주 수집 후 사후검증. ② MFE_BREAKEVEN/PROFIT_FLOOR net 음수(각 2건)는 표본 작아 미변경. ③ KR 진입분할/stop 재설계는 KR 장중데이터 품질·표본(21건)·물타기 위험으로 라이브 enforce 보류(Phase 3 반복손실 게이트가 KR 반복적자 1차 커버).
 - 2026-06-14 검증 후속 (봇 종료 후 yfinance 경로 시뮬·기존 DB 시뮬로 전수 검증): **Phase 2 profit_ladder floor 상향(tier1/tier2)은 롤백** — yfinance 5분봉 경로 시뮬에서 신규-현행 net +0.02%p(무차익) + 큰 러너 6건 희생(FIG +2.31→+0.10 등, floor↑가 조기청산 유발). 코드/config 현행값(tier1=entry, tier2=0.005) 복귀. **Phase 3 반복손실 게이트는 enabled=false 비활성** — 기존 DB 시뮬에서 차단 2건(INTC, net +3.4% 이익)뿐 의도한 IREN/IONQ 미포착. 코드는 보존, 파라미터 재설계 후 재활성. **실제 라이브 적용 잔존: Phase 1(net 백필·MFE 상시기록·capture 리포트) + Phase 4 급반전 enforce(신규진입만 보류, 보수적·손실방어).** preflight ok=True FAIL 0, decisions.db integrity ok, mfe_backfill_yf는 별도 테이블로 오염 격리.
 
+### MD 위반 사항
+
+Recorded date: 2026-06-15
+Work item: 장중 진입 개선 Phase A — BLOCKED 조회 성공률 개선(보호영역 entry-scan 게이트 transient 재시도). 운영자 승인: "Phase B shadow만 라이브, Phase A는 코드+테스트 완성 후 env OFF로 두고 검증 후 다음 재시작 때 ON".
+
+- Protected area touched: `runtime/pathb_runtime.py::PathBRuntime._entry_scan_broker_truth_gate()` (PathB broker-truth entry fail-closed 보호계약).
+- Why unavoidable: 6/15 KR 진단에서 진입 차단의 1차 원인이 토큰 외 **조회 freshness 실패(BLOCKED_BROKER_TRUTH 26회)**로 확정됐고, 해당 차단은 이 보호 게이트 내부에서 발생한다. 게이트 밖 변경으로는 transient 조회 실패를 줄일 수 없다.
+- Before/after behavior: before — 첫 force refresh가 transient하게 실패(missing/stale/error)하면 즉시 `BLOCKED_BROKER_TRUTH`. after — `PATHB_ENTRY_SCAN_BROKER_TRUTH_RETRY_MAX>0`일 때 짧은 백오프 후 N회 재시도. **재시도 후에도 unavailable이면 그대로 `BLOCKED_BROKER_TRUTH`**(fail-closed 불변). 기본 `RETRY_MAX=0`(OFF)이라 현행 동작과 동일.
+- Order/risk/broker truth/Claude/config/env impact: 주문 수량/하드스톱/loss_cap/Claude 호출량 무변경. broker holdings/open orders/fills 1차 truth 불변. 신규 env `PATHB_ENTRY_SCAN_BROKER_TRUTH_RETRY_MAX`(기본 0=OFF), `..._RETRY_BACKOFF_SEC`(기본 0.5, 상한 2.0s). `.env*`/`config`/`state/brain.json` 무변경(운영자가 ON 시 설정).
+- Replacement guard: fail-closed 분기(missing/stale/error → BLOCKED)는 재시도 후에도 동일하게 유지. 백오프 상한 2.0s로 사이클 정체 제한. 기본 OFF.
+- Tests run: `tests/test_pathb_runtime.py::EntryScanBrokerTruthRetryTests`(3: 기본 OFF 차단, transient 복구, 영구실패 fail-closed 유지) 신규; `tests/test_pathb_runtime.py` 136 passed; 전체 `pytest tests/` 2492 passed; `live_preflight --mode live` ok=True FAIL 0.
+- Remaining risk: ON 적용 시 실제 BLOCKED 감소 효과·사이클 지연은 라이브 표본으로 미검증(기본 OFF 유지, 검증 후 운영자 ON). 백오프 sleep은 게이트가 시장당 1회 호출이라 per-ticker 정체는 아님.
+
+### Phase B shadow 예외 (장중 진입 미실행 관측)
+
+- 적용 모드: `INTRADAY_ENTRY_SHADOW_MODE=shadow`(기본 ON, 관측 전용). `off`로 끌 수 있음.
+- 예외 사유: 상승장 미진입(WAIT/REJECT/PULLBACK) 처방의 행동 효과가 불확실하고 라이브 표본이 없어, 주문 변경 전 선행 관측이 필요(CLAUDE.md "행동 불확실/데이터 부족 시 shadow 예외" 원칙).
+- 동작: `_apply_single_symbol_judge_result`에서 미진입 결정 시 'would-enter' 스냅샷(would_entry_price/regime/지수등락/reason)을 격리 funnel JSONL `logs/funnel/intraday_entry_shadow_*`에만 기록. **실제 주문/플랜/sizing 무영향.**
+- 관찰 지표/기간: `tools/intraday_entry_shadow_review.py`로 yfinance 전방 재구성(MFE/MAE/+30·60m·마감 net, 눌림도달율, action·regime별). 최소 1~2주, 표본 ≥ 15(US 우선).
+- enforce 전환 조건: shadow 진입이 실제 대비 net + & 표본 충족 & 손실streak 한도 내일 때만 WAIT 탈출/추격 분기를 라이브 적용. **KR은 BULL 손실 경향 확인돼 보류.**
+
 ### Commit, PR, and Security Standards
 
 - Commit units should be one behavior change at a time. Recent history uses Conventional Commit prefixes such as `feat:` and `fix:` with short Korean or English summaries.
@@ -551,6 +572,9 @@ until more data is available or a human explicitly approves the change.
 | `CLAUDE_SELECTION_COMPRESSED_MAX_TOKENS` | `2200` | compact selection 응답 최대 토큰. 초과 시 trade_ready=[] fallback. 25/7 cap 실험 시 2600으로 올릴 것 |
 | `INTRADAY_REVIEW_COOLDOWN_MINUTES` | `120` | 포지션별 intraday review 최소 간격(분). 손익 급변·stop 근처는 우회 |
 | `INTRADAY_REVIEW_DAILY_MAX_PER_POSITION` | `3` | 포지션별 일중 review 최대 횟수. pending_due·손익 급변·stop 근처는 초과 허용 |
+| `INTRADAY_ENTRY_SHADOW_MODE` | `shadow`(기본 ON) | 장중 미진입(WAIT/REJECT/PULLBACK) 'would-enter' 관측 기록. **순수 shadow — 주문/플랜 무영향.** `off`로 끄면 수집 중단. 전환은 `tools/intraday_entry_shadow_review.py` 검증 후 |
+| `PATHB_ENTRY_SCAN_BROKER_TRUTH_RETRY_MAX` | `0`(=OFF) | Phase A: BLOCKED 유발 조회 transient 실패 재시도 횟수. **0이면 현행 동작.** fail-closed 불변(재시도 후 실패면 그대로 BLOCKED). 검증 후 운영자가 `1`로 ON |
+| `PATHB_ENTRY_SCAN_BROKER_TRUTH_RETRY_BACKOFF_SEC` | `0.5` | 위 재시도 백오프(초, 상한 2.0). RETRY_MAX=0이면 무의미 |
 
 이 설정들은 `.env.live`와 `config/v2_start_config.json` 두 곳에 존재한다. 한 곳만 바꾸면 반영이 안 될 수 있으므로 두 파일을 동시에 확인한다.
 
