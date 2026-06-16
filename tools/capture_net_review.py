@@ -135,18 +135,66 @@ def _hold_minutes(row: dict[str, Any]) -> float | None:
         return None
 
 
+def load_mfe(ml_db: Path) -> dict[str, float]:
+    """mfe_backfill_yf(yfinance 실측 MFE)를 v2_decision_id로 로드. 실제 '기회' 측정용."""
+    out: dict[str, float] = {}
+    try:
+        con = _connect_ro(ml_db)
+        for r in con.execute(
+            "SELECT v2_decision_id,mfe_pct FROM mfe_backfill_yf WHERE mfe_pct IS NOT NULL AND source!='no_bars'"):
+            out[str(r[0])] = float(r[1])
+        con.close()
+    except Exception:
+        pass
+    return out
+
+
 def build_report(
     closed: list[dict[str, Any]],
     runup: dict[tuple[str, str, str], dict[str, float]],
     fee_pct: dict[str, float],
+    mfe_map: dict[str, float] | None = None,
 ) -> dict[str, Any]:
+    mfe_map = mfe_map or {}
+
     def net_of(row: dict[str, Any]) -> float:
         # measured net(수수료/환율 실반영)이 있으면 우선, 없으면 수수료 근사.
         if str(row.get("net_basis") or "") == "measured" and row.get("pnl_pct_net") is not None:
             return float(row["pnl_pct_net"])
         return float(row["pnl_pct"]) - fee_pct.get(str(row["market"]).upper(), 0.5)
 
-    report: dict[str, Any] = {"by_market": {}, "by_close_reason": {}, "by_hold_bucket": {}, "by_ticker": {}, "capture": {}}
+    def mfe_of(row: dict[str, Any]) -> float | None:
+        # 실측 백필 우선, 없으면 v2 필드(희소).
+        v = mfe_map.get(str(row.get("v2_decision_id") or ""))
+        if v is None and row.get("mfe_pct") not in (None, 0):
+            v = float(row["mfe_pct"])
+        return v
+
+    report: dict[str, Any] = {"by_market": {}, "by_close_reason": {}, "by_hold_bucket": {}, "by_ticker": {}, "capture": {}, "mfe_capture": {}, "by_month": {}}
+
+    # 측정 재정의: 실제 MFE 기반 net capture + 월별 국면 분해
+    for market in ("US", "KR"):
+        rows = [r for r in closed if str(r["market"]).upper() == market]
+        if not rows:
+            continue
+        pairs = [(net_of(r), mfe_of(r)) for r in rows]
+        pairs = [(n, m) for n, m in pairs if m and m > 0]
+        if pairs:
+            net_sum = sum(n for n, _ in pairs)
+            mfe_sum = sum(m for _, m in pairs)
+            report["mfe_capture"][market] = {
+                "n": len(pairs),
+                "avg_mfe_pct": round(mfe_sum / len(pairs), 2),
+                "net_capture_ratio": round(net_sum / mfe_sum, 3) if mfe_sum else None,
+            }
+        months: dict[str, list[float]] = defaultdict(list)
+        for r in rows:
+            months[str(r.get("session_date") or "")[:7]].append(net_of(r))
+        report["by_month"][market] = {
+            mo: {"n": len(v), "net_avg": round(mean(v), 2),
+                 "win_pct": round(sum(1 for x in v if x > 0) / len(v) * 100, 0)}
+            for mo, v in sorted(months.items()) if mo
+        }
 
     # 시장별
     for market in ("US", "KR"):
@@ -242,7 +290,22 @@ def to_markdown(payload: dict[str, Any]) -> str:
     for m, s in rep["by_market"].items():
         lines.append(f"| {m} | {s['n']} | {s['win_rate_pct']}% | {s['gross_avg']:+}% | {s['gross_sum']:+}% | {s['net_avg']:+}% | {s['net_sum']:+}% | {s['net_win_rate_pct']}% | {s['net_breakeven_pass_pct']}% | {s['profit_factor_net']} |")
     lines.append("")
-    lines.append("## Capture (진입종목 runup 대비 실현)")
+    lines.append("## [측정 재정의] 실제 MFE 기반 net capture (실측 yfinance MFE 조인)")
+    lines.append("> 분모를 forward(runup_3d, 선정일 종가·미체결 착시) 대신 **실제 보유 중 MFE**로 측정.")
+    lines.append("| 시장 | n | 평균 MFE | **net capture(net합/mfe합)** |")
+    lines.append("|---|--|--|--|")
+    for m, s in rep.get("mfe_capture", {}).items():
+        lines.append(f"| {m} | {s['n']} | {s['avg_mfe_pct']:+}% | {s['net_capture_ratio']} |")
+    lines.append("")
+    lines.append("## [측정 재정의] 월별 국면 분해 (net)")
+    lines.append("| 시장 | 월 | n | net평균 | net승률 |")
+    lines.append("|---|--|--|--|--|")
+    for m, months in rep.get("by_month", {}).items():
+        for mo, s in months.items():
+            lines.append(f"| {m} | {mo} | {s['n']} | {s['net_avg']:+}% | {s['win_pct']:.0f}% |")
+    lines.append("")
+    lines.append("## Capture (참고용 — forward runup_3d 기반, 착시 주의)")
+    lines.append("> ⚠️ runup_3d는 선정일 종가·N일버티기·미체결 포함(forward 착시). 위 MFE capture를 우선 신뢰.")
     lines.append("| 시장 | n | 실현평균(gross) | runup_3d평균 | capture |")
     lines.append("|---|--|--|--|--|")
     for m, s in rep["capture"].items():
@@ -284,7 +347,8 @@ def main() -> int:
     runtime_mode = args.runtime_mode or None
     closed = load_closed(Path(args.ml_db), runtime_mode)
     runup = load_runup(Path(args.sel_db))
-    report = build_report(closed, runup, fee_pct)
+    mfe_map = load_mfe(Path(args.ml_db))
+    report = build_report(closed, runup, fee_pct, mfe_map)
 
     payload = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
