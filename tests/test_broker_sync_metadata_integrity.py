@@ -301,3 +301,48 @@ def test_broker_injection_heals_order_acked_run_to_filled() -> None:
         assert pos["management_protected"] is False
         # run이 FILLED로 전환돼 scan_exits 관리 대상
         assert store.find_path_run(plan.path_run_id)["status"] == "FILLED"
+
+
+def test_existing_broker_sync_position_recovers_pathb_attribution() -> None:
+    # AVGO 실제 상태 재현: 이미 broker_sync로 로컬에 굳은 포지션도 단일-호환 ack'd run이 있으면
+    # verify 경로에서 PathB 귀속 복구 + run FILLED 전환(신규 주입 경로는 seen_keys로 못 닿던 갭).
+    with tempfile.TemporaryDirectory() as tmp:
+        store = EventStore(Path(tmp) / "events.db")
+        adapter = ClaudePriceAdapter(store=store)
+        plan = make_price_plan(
+            decision_id="dec_avgo2", ticker="AVGO", market="US", session_date="2026-06-17",
+            buy_zone_low=385.0, buy_zone_high=392.0, sell_target=404.0, stop_loss=379.0,
+            hold_days=2, confidence=0.56,
+        )
+        adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain")
+        adapter.mark_order_sent(
+            plan.path_run_id, execution_id="0031088273", price=392.0, qty=1,
+            runtime_mode="live", brain_snapshot_id="brain",
+        )
+        adapter.mark_order_acked(
+            plan.path_run_id, execution_id="0031088273",
+            runtime_mode="live", brain_snapshot_id="brain",
+        )
+        # 이미 broker_sync로 굳은 로컬 포지션 (PathB 귀속 없음)
+        existing = {
+            "ticker": "AVGO", "qty": 1, "strategy": "broker_sync",
+            "entry": 392.0 * 1500, "display_avg_price": 392.0, "display_currency": "USD",
+            "management_protected": True,
+        }
+        bot = _bot([existing], pathb=SimpleNamespace(
+            store=store, adapter=adapter, broker_truth=None,
+            _brain_snapshot_id=lambda market: "brain",
+        ))
+        with patch("trading_bot.get_runtime_path", return_value=Path(tmp) / "live_open_positions.json"), patch(
+            "trading_bot.get_balance",
+            return_value=_balance(_stock("AVGO", 1, 392.0, 392.0)),
+        ):
+            TradingBot._sync_runtime_with_broker(bot)
+
+        pos = next(p for p in bot.risk.positions if p["ticker"] == "AVGO")
+        assert pos["strategy"] == "claude_price"
+        assert pos["pathb_path_run_id"] == plan.path_run_id
+        assert pos["management_protected"] is False
+        assert pos["sl"] > 0 and pos["tp"] > 0
+        # ack'd run이 FILLED로 치유돼 scan_exits 관리 대상
+        assert store.find_path_run(plan.path_run_id)["status"] == "FILLED"

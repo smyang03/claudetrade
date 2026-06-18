@@ -23255,6 +23255,41 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 pos.pop(_broker_missing_key, None)
             if pos.get("broker_reconcile_status") == "broker_missing_unconfirmed":
                 pos.pop("broker_reconcile_status", None)
+            # 이미 broker_sync로 굳은 포지션(PathB 귀속 없음)도 단일-호환 PathB run이 있으면 귀속 복구한다.
+            # 신규 주입(_make_runtime_position_from_broker)은 seen_keys 때문에 기존 포지션엔 안 닿으므로,
+            # ack'd 고아(AVGO 등)가 broker_sync로 한 번 굳으면 자가치유가 안 되던 갭을 메운다.
+            if (
+                not str(pos.get("pathb_path_run_id", "") or "")
+                and str(pos.get("strategy", "") or "") in ("broker_sync", "")
+                and not bool(pos.get("micro_probe"))
+                and not bool(pos.get("recovery_micro"))
+            ):
+                try:
+                    recovery = self._pathb_broker_recovery_template(ticker, market, broker_pos)
+                except Exception as _rec_exc:
+                    recovery = {}
+                    log.warning(f"[broker sync] 기존 포지션 PathB 복구 조회 실패: {market} {ticker} {_rec_exc}")
+                if recovery and not recovery.get("_untrusted_broker_template"):
+                    for _rk in (
+                        "strategy", "source_strategy", "decision_id", "v2_decision_id",
+                        "v2_execution_id", "path_run_id", "parent_decision_id", "path_type",
+                        "pathb_path_run_id", "pathb_plan", "broker_reconcile_status", "order_no",
+                    ):
+                        if _rk in recovery:
+                            pos[_rk] = recovery[_rk]
+                    entry_krw = float(pos.get("entry", 0) or 0)
+                    if entry_krw > 0:
+                        _tp_pct = float(recovery.get("tp_pct", 0) or 0)
+                        _sl_pct = float(recovery.get("sl_pct", 0) or 0)
+                        if _tp_pct > 0:
+                            pos["tp"] = entry_krw * (1.0 + _tp_pct)
+                        if _sl_pct > 0:
+                            pos["sl"] = entry_krw * (1.0 - _sl_pct)
+                    pos["management_protected"] = False
+                    log.warning(
+                        f"[broker sync] 기존 broker_sync 포지션 PathB 귀속 복구: {market} {ticker} "
+                        f"run={recovery.get('pathb_path_run_id', '')}"
+                    )
             existing = synced_positions.get(key)
             if existing is not None:
                 log.warning(f"[브로커 런타임 동기화] 중복 포지션 병합: {ticker}")

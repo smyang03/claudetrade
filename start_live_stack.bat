@@ -107,6 +107,7 @@ call :kill_matching "tools\live_guardian.py" "live_guardian"
 call :kill_matching "tools\broker_truth_scheduler.py" "broker_truth_scheduler"
 call :kill_matching "tools\preopen_scheduler.py" "preopen_scheduler"
 call :kill_matching "tools\run_counterfactual_pipeline.py" "counterfactual_pipeline"
+call :kill_matching "tools\integrity_check.py" "integrity_check"
 
 if "%DRY_RUN%"=="1" (
   echo [DRY-RUN] startup skipped.
@@ -140,6 +141,7 @@ wt ^
   ; new-tab --title "live_guardian" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting live_guardian && call conda activate %CONDA_ENV% && python tools\live_guardian.py --mode live --watch --interval-sec 300 --telegram-alert" ^
   ; new-tab --title "broker_truth_scheduler" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting broker_truth_scheduler && call conda activate %CONDA_ENV% && python tools\broker_truth_scheduler.py --mode live --markets KR,US --loop --interval-sec 30 --refresh-interval-min 2 --failure-retry-min 2 --preopen-min 20 --postclose-min 15 --ttl-sec 180 --no-refresh-on-start" ^
   ; new-tab --title "preopen_scheduler" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting preopen_scheduler && call conda activate %CONDA_ENV% && python tools\preopen_scheduler.py --mode live --markets KR,US --loop --interval-sec 60" ^
-  ; new-tab --title "counterfactual_pipeline" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting counterfactual_pipeline && call conda activate %CONDA_ENV% && python tools\run_counterfactual_pipeline.py --phase due --market KR,US --loop --interval-sec 300 --json"
+  ; new-tab --title "counterfactual_pipeline" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting counterfactual_pipeline && call conda activate %CONDA_ENV% && python tools\run_counterfactual_pipeline.py --phase due --market KR,US --loop --interval-sec 300 --json" ^
+  ; new-tab --title "integrity_check" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting integrity_check && call conda activate %CONDA_ENV% && python tools\integrity_check.py --watch --interval-sec 600 --telegram-alert"
 
 exit /b %ERRORLEVEL%
