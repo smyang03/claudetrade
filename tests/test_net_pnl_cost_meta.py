@@ -207,6 +207,42 @@ class NetPnlCostMetaTests(unittest.TestCase):
         self.assertEqual(buy, 0.0007)
         self.assertEqual(sell, 0.0007)
 
+    def _closed_event_payload(self, run_id):
+        run = self.store.find_path_run(run_id)
+        events = self.store.events_for_decision(str(run["decision_id"]))
+        closed = [e for e in events if str(e.get("event_type")) == "CLOSED"]
+        self.assertTrue(closed, "CLOSED 이벤트가 있어야 한다")
+        return closed[-1].get("payload") or {}
+
+    def test_closed_event_carries_mfe_mae_for_learning_sync(self):
+        # 배선 버그 회귀: Phase 1c MFE가 CLOSED payload까지 전달돼 학습 sync가 읽을 수 있어야 한다.
+        run_id = _register_filled_run(self.store, self.adapter, entry=100.0, qty=5, usd_krw_at_fill=1350.0)
+        self.manager.mark_closed(
+            run_id,
+            close_reason="CLOSED_PROFIT_LADDER",
+            price=105.0, pnl_pct=5.0,
+            runtime_mode="live", brain_snapshot_id="bs_test", usd_krw=1350.0,
+            mfe_pct=8.3, mae_pct=-1.2, entry_market_regime="RISK_ON",
+        )
+        payload = self._closed_event_payload(run_id)
+        self.assertAlmostEqual(payload.get("position_mfe_pct"), 8.3, places=4)
+        self.assertAlmostEqual(payload.get("position_mae_pct"), -1.2, places=4)
+        self.assertEqual(payload.get("entry_market_regime"), "RISK_ON")
+
+    def test_closed_event_omits_mfe_when_unknown(self):
+        # mfe 미제공(reconcile 등 pos 없음)이면 0을 위조하지 않고 키를 생략한다.
+        run_id = _register_filled_run(self.store, self.adapter, entry=100.0, qty=5, usd_krw_at_fill=1350.0)
+        self.manager.mark_closed(
+            run_id,
+            close_reason="CLOSED_LOSS_CAP",
+            price=98.0, pnl_pct=-2.0,
+            runtime_mode="live", brain_snapshot_id="bs_test", usd_krw=1350.0,
+        )
+        payload = self._closed_event_payload(run_id)
+        self.assertNotIn("position_mfe_pct", payload)
+        self.assertNotIn("position_mae_pct", payload)
+        self.assertNotIn("entry_market_regime", payload)
+
 
 if __name__ == "__main__":
     unittest.main()

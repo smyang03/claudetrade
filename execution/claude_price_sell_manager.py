@@ -282,6 +282,9 @@ class ClaudePriceSellManager:
         usd_krw: float = 0.0,
         entry_native_override: float = 0.0,
         qty_override: float = 0.0,
+        mfe_pct: float | None = None,
+        mae_pct: float | None = None,
+        entry_market_regime: str = "",
     ) -> None:
         try:
             cost_meta = self._close_cost_meta(
@@ -319,6 +322,23 @@ class ClaudePriceSellManager:
             },
             merge_plan=True,
         )
+        # observe-only MFE/MAE를 CLOSED payload에 실어 학습 sync(v2_learning_performance.mfe_pct)까지
+        # 전달한다. Phase 1c가 계산한 값이 여기서 끊겨 학습 원장이 95% NULL이던 배선 버그 수정.
+        # ladder 입력(peak_pnl_pct)은 무접촉 — observed_* 별도 키만 흐른다.
+        closed_extra = {
+            "close_reason": close_reason,
+            "price": float(price or 0),
+            "pnl_pct": float(pnl_pct or 0),
+            **cost_meta,
+        }
+        if mfe_pct is not None:
+            closed_extra["position_mfe_pct"] = float(mfe_pct)
+        if mae_pct is not None:
+            closed_extra["position_mae_pct"] = float(mae_pct)
+        # 진입 시점 국면(모드)을 CLOSED payload에 실어 sync(market_regime)까지 전달. 국면별 적중·
+        # 국면조건부 capture 분석의 귀속 기준. 빈값이면 위조하지 않고 생략(mfe/mae와 동일 규율).
+        if entry_market_regime:
+            closed_extra["entry_market_regime"] = str(entry_market_regime)
         self.adapter._append_event(
             LifecycleEventType.CLOSED,
             path_run_id,
@@ -328,12 +348,7 @@ class ClaudePriceSellManager:
             position_id=position_id or None,
             reason_code=close_reason,
             path_status="CLOSED",
-            extra={
-                "close_reason": close_reason,
-                "price": float(price or 0),
-                "pnl_pct": float(pnl_pct or 0),
-                **cost_meta,
-            },
+            extra=closed_extra,
         )
         if close_reason == "CLOSED_CLAUDE_PRICE_TARGET":
             event_type = LifecycleEventType.CLAUDE_PRICE_TARGET_HIT

@@ -3710,6 +3710,9 @@ class PathBRuntime:
                 execution_id=execution_id,
                 position_id=position_id,
                 usd_krw=self._pathb_fill_fx(market_key),
+                mfe_pct=closed_trade.get("position_mfe_pct"),
+                mae_pct=closed_trade.get("position_mae_pct"),
+                entry_market_regime=str(closed_trade.get("entry_market_regime") or ""),
                 entry_native_override=float(
                     closed_trade.get("display_avg_price", 0)
                     or closed_trade.get("entry_native", 0)
@@ -9320,6 +9323,9 @@ class PathBRuntime:
             execution_id=execution_id,
             entry_native_override=broker_entry_native,
             qty_override=broker_entry_qty,
+            mfe_pct=exit_meta.get("position_mfe_pct"),
+            mae_pct=exit_meta.get("position_mae_pct"),
+            entry_market_regime=str(exit_meta.get("entry_market_regime") or ""),
         )
         self.store.update_path_run(
             plan.path_run_id,
