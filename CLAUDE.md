@@ -675,6 +675,12 @@ until more data is available or a human explicitly approves the change.
 | `PATHB_WEAK_MFE_CUT_MIN_AGE_MIN` | `30` | 관찰창(분). 진입 후 이 시간 경과해야 weak-cut 평가(초기 정상 변동성 제외) |
 | `PATHB_WEAK_MFE_CUT_MFE_MAX_PCT` | `0.5` | observed_mfe_pct 임계(미만이면 약한 포지션). 수익건 0건 절단되는 안전 임계 |
 | `PATHB_WEAK_MFE_CUT_MIN_LOSS_PCT` | `0.0` | 현재 손실 게이트(현재 pnl ≤ 이 값일 때만 발동). 이익 중이면 보류 |
+| `LESSON_VALIDATION_ENABLED` | `true` | **교훈 forward-validation 레이어 마스터 스위치(2026-06-17 enforce 적용).** 축적은 항상(config 무관), 반영만 게이트. false=완전 OFF |
+| `LESSON_VALIDATION_APPLY_MODE` | `enforce` | **off/shadow(관측만)/enforce(bounded 반영).** 현재 valid_apply 0이라 enforce여도 안전 no-op. 이상 시 shadow/off 즉시 롤백 |
+| `LESSON_VALIDATION_COST_FLOOR_PCT` | `0.5` | would_be가 이 비용(%) 넘어야 valid_apply(forward≠net 보정). 미달=marginal(미반영) |
+| `LESSON_VALIDATION_MIN_SESSIONS` | `2` | 부호일관 독립확인 최소. 미달=pending(미반영) |
+| `LESSON_VALIDATION_MAX_AGE_DAYS` | `45` | 검증셀 신선도(일). 초과=적용무시(기존값 fallback). invalid_block 함정방어는 유지 |
+| `LESSON_VALIDATION_MIN_CONFIDENCE` | `0.3` | 적용 최소 confidence. 미만=미반영(기존값) |
 
 이 설정들은 `.env.live`와 `config/v2_start_config.json` 두 곳에 존재한다. 한 곳만 바꾸면 반영이 안 될 수 있으므로 두 파일을 동시에 확인한다.
 

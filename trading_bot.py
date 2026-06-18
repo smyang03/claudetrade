@@ -38222,6 +38222,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             note_lesson_observations(list(lesson_candidates or []), today)
         except Exception as _lesson_rec_e:
             log.debug(f"[lesson recurrence] 기록 실패: {_lesson_rec_e}")
+        # 교훈 forward-validation 축적 — config 토글 무관하게 항상(반영만 게이트). 봇 루프 보호 가드.
+        try:
+            from minority_report.lesson_scoring import rescore_safe
+            _lv_cells = rescore_safe()
+            log.info(f"[lesson validation {market}] session-close 재채점 {_lv_cells}셀 → store 갱신")
+        except Exception as _lv_e:
+            log.debug(f"[lesson validation] 재채점 실패: {_lv_e}")
         self._persist_live_judgment(market)
         _ops_metrics = ops_review_snapshot.get("metrics", {})
         log.info(

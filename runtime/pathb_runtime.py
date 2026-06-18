@@ -6,7 +6,7 @@ import math
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, time as dt_time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -24,6 +24,8 @@ from execution.claude_price_adapter import (
 )
 from execution.claude_price_sell_manager import ClaudePriceSellManager, ExitSignal
 from execution.order_failure import is_permanent_order_failure
+from runtime import tail_capture
+from runtime import fast_fill
 from execution.path_arbiter import SameDayReentryGuard
 from execution.safety_gate import PathBSafetyGate, SafetyContext
 from kis_api import cancel_order, get_balance, get_price, place_order, precheck_order
@@ -717,6 +719,164 @@ class PathBRuntime:
         judgment = getattr(getattr(self, "bot", None), "today_judgment", {}) or {}
         consensus = dict((judgment or {}).get("consensus") or {})
         return str(consensus.get("mode") or (judgment or {}).get("mode") or "").strip().upper()
+
+    def _tail_capture_regime(self, market: str) -> str | None:
+        """런타임 정합 regime(risk_on/risk_off/mixed) — consensus mode 기반. 미가용 None."""
+        try:
+            from minority_report.lesson_validation import regime_from_consensus_mode
+            return regime_from_consensus_mode(self._pathb_consensus_mode(market))
+        except Exception:
+            return None
+
+    def _log_tail_capture(self, plan, pos, current: float, decision: dict) -> None:
+        """꼬리-capture 엔진 결정 + 실제 포지션 상태 페어 로깅(shadow/enforce 관측). 라이브 무영향."""
+        try:
+            entry = float(pos.get("entry") or pos.get("entry_price") or 0)
+            rec = {
+                "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "market": str(getattr(plan, "market", "") or ""),
+                "ticker": str(getattr(plan, "ticker", "") or pos.get("ticker") or ""),
+                "path_run_id": str(getattr(plan, "path_run_id", "") or ""),
+                "entry": entry,
+                "current": current,
+                "actual_net_pct": round((current / entry - 1) * 100, 3) if entry else None,
+                "observed_mfe_pct": pos.get("observed_mfe_pct"),
+                "engine": decision,  # action/reason/net/mfe/active
+            }
+            path = get_runtime_path("logs", "funnel", f"tail_capture_{self._session_date(str(getattr(plan,'market','') or ''))}.jsonl", make_parents=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def _fast_fill_eval_and_log(self, plan, market: str, current: float, limit_price: float,
+                                cancel_threshold: float) -> dict | None:
+        """데드존(미체결 + 가격이 limit 위, cancel 임계 아래)에서 fast-fill 결정 산출 + shadow 로깅.
+
+        shadow/enforce 공통으로 결정만 반환(실주문은 호출측 책임). 비활성/부적합이면 None.
+        """
+        try:
+            target = float(getattr(plan, "sell_target", 0) or 0)
+            decision = fast_fill.requote_decision(
+                market=market,
+                limit_price=float(limit_price or 0),
+                current=float(current or 0),
+                target=target,
+                cancel_threshold=float(cancel_threshold or 0) or None,
+            )
+            if decision is None:
+                return None
+            rec = {
+                "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "market": str(market or ""),
+                "ticker": str(getattr(plan, "ticker", "") or ""),
+                "path_run_id": str(getattr(plan, "path_run_id", "") or ""),
+                "stop_loss": float(getattr(plan, "stop_loss", 0) or 0),
+                "decision": decision,
+            }
+            path = get_runtime_path("logs", "funnel",
+                                    f"fast_fill_{self._session_date(str(market or ''))}.jsonl",
+                                    make_parents=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            return decision
+        except Exception:
+            return None
+
+    def _fast_fill_requote_run(self, run, plan, market: str, current: float, requote_price: float) -> str:
+        """enforce 라이브 재호가: 옛 주문 취소 → broker truth로 취소확정 → 미체결 확인 시 재진입 등록.
+
+        이중매수 가드: broker가 (a) 옛 주문 체결 또는 (b) 미체결+여전히 open이면 재제출 안 함.
+        오직 '취소확정 + 미체결'일 때만 새 path_run으로 재진입. 최악도 미체결(오늘과 동일, 손해無).
+        """
+        path_run_id = str(run.get("path_run_id", "") or "")
+        plan_json = run.get("plan") or {}
+        execution_id = str(plan_json.get("entry_execution_id", "") or "")
+        qty = int(plan_json.get("entry_qty", 0) or 0)
+        order_price = float(plan_json.get("entry_order_price", 0) or 0)
+        if not path_run_id or not execution_id or qty <= 0 or requote_price <= 0:
+            return "skipped"
+        cancel_requested_at = str(plan_json.get("fast_fill_cancel_requested_at", "") or "").strip()
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        if not cancel_requested_at:
+            try:
+                cancel_order(plan.ticker, execution_id, qty, _bot_token(self.bot, market),
+                             market=market, price=order_price)
+            except Exception as exc:
+                self.adapter.mark_order_unknown(
+                    path_run_id, detail=f"fast_fill_requote_cancel_failed:{exc}",
+                    runtime_mode=self.mode, brain_snapshot_id=self._brain_snapshot_id(market),
+                    execution_id=execution_id)
+                return "order_unknown"
+            self.store.update_path_run(
+                path_run_id,
+                plan={"fast_fill_cancel_requested_at": now_iso,
+                      "fast_fill_requote_to": float(requote_price),
+                      "cancel_requested_at": now_iso},
+                merge_plan=True)
+            cancel_requested_at = now_iso
+        try:
+            self.refresh_broker_truth(market, force=True)
+        except Exception:
+            pass
+        market_data = self.broker_truth.market_snapshot(market)
+        if bool(market_data.get("missing")) or bool(market_data.get("stale")) or str(market_data.get("error", "") or ""):
+            if self._cancel_confirm_ttl_expired(cancel_requested_at):
+                self.adapter.mark_order_unknown(
+                    path_run_id, detail="fast_fill_requote_broker_truth_unavailable_ttl",
+                    runtime_mode=self.mode, brain_snapshot_id=self._brain_snapshot_id(market),
+                    execution_id=execution_id)
+                return "order_unknown"
+            return "still_open"
+        ticker = self._ticker_key(market, plan.ticker)
+        fills = self._broker_rows_for_ticker(market_data.get("today_fills", []), market, ticker)
+        fill_match = self._match_pathb_fill(plan, fills)
+        if fill_match.get("row"):
+            # 옛 주문이 취소 전 체결됨 → 실체결가 기록(#1), 재제출 안 함(이중매수 차단)
+            row = dict(fill_match["row"])
+            filled_qty = int(row.get("filled_qty", 0) or row.get("qty", 0) or qty)
+            fill_price = float(row.get("avg_price", 0) or row.get("fill_price", 0) or row.get("price", 0) or order_price)
+            fill_execution_id = str(row.get("order_no", "") or execution_id)
+            self.adapter.mark_filled(
+                path_run_id, price=fill_price, qty=filled_qty, execution_id=fill_execution_id,
+                runtime_mode=self.mode, brain_snapshot_id=self._brain_snapshot_id(market),
+                usd_krw=self._pathb_fill_fx(market))
+            positions = self._broker_rows_for_ticker(market_data.get("positions", []), market, ticker)
+            try:
+                self._attach_recovered_broker_position(plan, positions, row, filled_qty, fill_price, fill_execution_id)
+            except Exception:
+                pass
+            return "filled"
+        # 미체결 — 옛 주문이 아직 open이면 취소 미확정 → 재제출 보류(이중매수 차단)
+        open_orders = self._broker_rows_for_ticker(market_data.get("open_orders", []), market, ticker)
+        if any(str(o.get("order_no", "") or "") == execution_id for o in open_orders):
+            return "still_open"
+        # 취소확정 + 미체결 → bounded 가격으로 새 path_run 재진입
+        return self._fast_fill_resubmit(plan, market, requote_price)
+
+    def _fast_fill_resubmit(self, plan, market: str, requote_price: float) -> str:
+        """취소확정된 재호가를 새 path_run(WAITING)으로 등록. scan_waiting_entries가 재제출."""
+        try:
+            new_high = float(requote_price)
+            new_low = min(float(plan.buy_zone_low or new_high), new_high)
+            new_cancel = self._pathb_cancel_above_from_zone_high(market, new_high)
+            new_run_id = f"{plan.path_run_id}_ffq{int(time.time())}"
+            new_plan = replace(
+                plan, path_run_id=new_run_id, buy_zone_low=new_low, buy_zone_high=new_high,
+                cancel_if_open_above=(new_cancel if new_cancel and new_cancel > 0 else None))
+            self.adapter.cancel_plan(
+                plan.path_run_id, reason="FAST_FILL_REQUOTE_CANCELLED",
+                runtime_mode=self.mode, brain_snapshot_id=self._brain_snapshot_id(market))
+            self.adapter.register_plan(
+                new_plan, runtime_mode=self.mode, brain_snapshot_id=self._brain_snapshot_id(market),
+                initial_status="WAITING",
+                plan_overrides={"fast_fill_requote_origin": plan.path_run_id})
+            log.warning(f"[PathB fast_fill REQUOTE] {market} {plan.ticker} "
+                        f"zone_high {float(plan.buy_zone_high):g}->{new_high:g} new_run={new_run_id}")
+            return "filled"
+        except Exception as exc:
+            log.debug(f"[fast_fill resubmit] {market} {plan.ticker} 실패: {exc}")
+            return "skipped"
 
     def _pathb_risk_off_cap_audit_state(
         self,
@@ -3318,6 +3478,27 @@ class PathBRuntime:
                 continue
             self._audit_pathb_price_seen(plan, current, source="pathb:exit_scan")
             self._update_position_excursion(pos, current, market)
+            # 꼬리-capture 엔진 (shadow 로깅 / enforce trail). 하방은 loss_cap/hard_stop에 위임(아래 우선).
+            tail_capture_signal = None
+            tail_capture_owns_profit = False  # enforce+active: 엔진이 profit-side 소유(ladder/target 억제)
+            try:
+                if tail_capture.is_active():
+                    _tc_dec = tail_capture.shadow_decision(
+                        pos, current, market, regime=self._tail_capture_regime(market)
+                    )
+                    if _tc_dec:
+                        self._log_tail_capture(plan, pos, current, _tc_dec)
+                        if tail_capture.mode() == "enforce":
+                            _tc_action = _tc_dec.get("action")
+                            if _tc_action == "EXIT" and _tc_dec.get("reason") == "tail_trail":
+                                tail_capture_signal = ExitSignal(
+                                    True, "tail_trail", "CLOSED_TAIL_TRAIL", current, plan.path_run_id
+                                )
+                            elif _tc_action == "HOLD" and _tc_dec.get("active"):
+                                # 증명된 러너(MFE≥4%) — 엔진 trail이 관리, ladder/target이 캡 못 하게.
+                                tail_capture_owns_profit = True
+            except Exception:
+                pass
             hard_stop_price = self._native_hard_stop(pos, market)
             loss_cap_price = self._native_loss_cap_stop(pos, market)
             policy_stop_eval = self._evaluate_pathb_auto_sell_policy_stop_breach_only(plan, pos, current)
@@ -3357,6 +3538,12 @@ class PathBRuntime:
                     exit_signal = ExitSignal(True, "loss_cap", "CLOSED_LOSS_CAP", current, plan.path_run_id)
                 elif hard_stop_price is not None and hard_stop_price > 0 and current <= hard_stop_price:
                     exit_signal = ExitSignal(True, "hard_stop", "CLOSED_HARD_STOP", current, plan.path_run_id)
+                elif tail_capture_signal is not None:
+                    # 꼬리-capture enforce: 하방(loss_cap/hard_stop) 통과 후 trailing이 profit-side 청산.
+                    exit_signal = tail_capture_signal
+                elif tail_capture_owns_profit:
+                    # 증명된 러너: 엔진 trail이 profit-side 소유 → ladder/claude_price target 억제(HOLD).
+                    exit_signal = ExitSignal(False, "tail_capture_hold", "", current, plan.path_run_id)
                 else:
                     ladder_signal = self._pathb_profit_ladder_signal(
                         plan,
@@ -3734,6 +3921,13 @@ class PathBRuntime:
             if not pos:
                 continue
             current = self._current_native_price(market, plan.ticker) or float(pos.get("display_current_price", 0) or 0)
+            # 꼬리-capture: 증명된 강한 러너는 오버나잇 캐리(enforce+서브게이트일 때만). 하방은 다음세션 loss_cap.
+            try:
+                if tail_capture.should_carry_overnight(pos, current, market, self._tail_capture_regime(market)):
+                    log.info(f"[tail_capture carry] {market} {plan.ticker} 오버나잇 캐리(pre_close skip)")
+                    continue
+            except Exception:
+                pass
             signal = ExitSignal(True, reason, "CLOSED_CLAUDE_PRICE_PRE_CLOSE", current, plan.path_run_id)
             if self._submit_sell(plan, pos, signal):
                 count += 1
@@ -8072,6 +8266,20 @@ class PathBRuntime:
             return "skipped"
         current = self._current_native_price(market, plan.ticker)
         if current <= 0 or current <= threshold:
+            # 데드존: 미체결 + 가격이 limit 위 + cancel 임계 아래 → fast-fill 측정(shadow).
+            # enforce 라이브 재호가(주문 취소·재제출)는 별도 검증 단계에서 배선. 지금은 측정만.
+            if current > 0 and fast_fill.is_active(market):
+                limit_native = float(getattr(plan, "buy_zone_high", 0) or 0)
+                if limit_native > 0 and current > limit_native:
+                    decision = self._fast_fill_eval_and_log(plan, market, current, limit_native, threshold)
+                    plan_json = run.get("plan") or {}
+                    in_requote = bool(str(plan_json.get("fast_fill_cancel_requested_at", "") or "").strip())
+                    if fast_fill.mode(market) == "enforce" and (
+                            in_requote or (decision and decision.get("action") == "REQUOTE")):
+                        rq = float((plan_json.get("fast_fill_requote_to")
+                                    or (decision or {}).get("requote_price")) or 0)
+                        if rq > 0:
+                            return self._fast_fill_requote_run(run, plan, market, current, rq)
             return "skipped"
 
         plan_json = run.get("plan") or {}

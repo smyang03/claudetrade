@@ -1064,6 +1064,40 @@ def _triage_hold_boundary_valid(triage: dict) -> bool:
     )
 
 
+def _carry_align_mode() -> str:
+    """Track 3-R: tail capture carry-intent ↔ hold advisor 정합. off/shadow/enforce. 기본 off.
+
+    enforce면 carry-intent HOLD(이익+MFE≥4%+RISK_ON)이 conf<0.72여도 bounded HOLD 존중(러너 보존).
+    손실중·약세장·MFE미달은 영향 없음(0.72 현행=손실방어 불변)."""
+    m = str(os.getenv("HOLD_ADVISOR_CARRY_ALIGN_MODE", "off")).strip().lower()
+    return m if m in ("off", "shadow", "enforce") else "off"
+
+
+def _carry_intent_hold(triage, pos, rt_ctx):
+    """carry-intent HOLD 판정 — 이익중 + MFE(peak)≥activation + RISK_ON + HOLD. 불확실하면 False(보수)."""
+    if str((triage or {}).get("exit_category") or "") != "HOLD":
+        return False
+    try:
+        from runtime import tail_capture
+        peak = _as_float((pos or {}).get("peak_pnl_pct"), 0.0)
+        entry = _as_float((pos or {}).get("entry") or (pos or {}).get("entry_price"), 0.0)
+        cur = _as_float((pos or {}).get("current_price") or (pos or {}).get("display_current_price"), 0.0)
+        pnl = (cur / entry - 1) * 100 if entry > 0 and cur > 0 else _as_float((pos or {}).get("pnl_pct"), 0.0)
+        if pnl <= 0:  # 이익중만(손실방어 불변)
+            return False
+        if peak < tail_capture._activation_pct():  # MFE 증명(꼬리후보)
+            return False
+        raw = str((rt_ctx or {}).get("regime") or (rt_ctx or {}).get("market_regime")
+                  or (rt_ctx or {}).get("consensus_mode") or "")
+        from minority_report.lesson_validation import regime_from_consensus_mode
+        reg = regime_from_consensus_mode(raw) or (raw.strip().lower() if raw else None)
+        if reg not in tail_capture._carry_regimes():  # RISK_ON만(약세장 베타증폭 차단)
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def _triage_second_opinion_reason(triage: dict, decision_stage: str) -> str:
     category = str((triage or {}).get("exit_category") or "")
     driver = str((triage or {}).get("exit_driver") or "other")
@@ -1843,7 +1877,16 @@ def ask(
             force_exit_window,
             prompt_mode="production",
         )
-        if _triage_direct_allowed(triage_vote, decision_stage):
+        # Track 3-R: carry-intent HOLD 정합 (tail capture와 같은 shadow에서 검증). 기본 off=무영향.
+        _carry_mode = _carry_align_mode()
+        _carry_intent = _carry_intent_hold(triage_vote, pos, rt_ctx) if _carry_mode != "off" else False
+        if _carry_intent and not _triage_direct_allowed(triage_vote, decision_stage):
+            log.info(
+                f"[hold_advisor carry-align {_carry_mode}] {ticker} carry-intent HOLD "
+                f"(conf={float(triage_vote.get('confidence', 0.0) or 0.0):.2f}<0.72 "
+                f"{'존중' if _carry_mode == 'enforce' else 'shadow관측'})"
+            )
+        if _triage_direct_allowed(triage_vote, decision_stage) or (_carry_intent and _carry_mode == "enforce"):
             advisor_duration_ms = int(max(0.0, (time.perf_counter() - advisor_started) * 1000.0))
             _skip_reason = "non_stop_sell_high_conf" if (
                 str(triage_vote.get("exit_category") or "") == "SELL"

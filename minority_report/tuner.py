@@ -276,6 +276,14 @@ JSON으로만 응답:
                 correct=adjusted,
                 new_insight=result.get("reason", ""),
             )
+            # 교훈 forward-validation 레이어 (기본 OFF, regime/값 미공급 시 no-op=기존값 유지). 가드.
+            try:
+                from minority_report import lesson_validation as _lv
+
+                _regime = _lv.regime_from_consensus_mode(prev_mode)
+                result = _lv.apply_to_tuner_overrides(result, market, _regime, logger=log)
+            except Exception:
+                pass
             return result
         except Exception as exc:
             if _is_overloaded_error(exc):
