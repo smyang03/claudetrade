@@ -21681,7 +21681,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.warning(f"[broker sync] PathB metadata recovery lookup failed: {market_key} {ticker_key} {exc}")
             return {}
 
-        eligible_statuses = {"FILLED", "PARTIAL_FILLED", "SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED", "ORDER_UNKNOWN"}
+        # ORDER_ACKED/ORDER_SENT 포함: 매수 ack 후 fill 확정이 끊긴 채(세션경계 재시작 등) 브로커에는
+        # 실제 보유로 남은 PathB run을 broker 보유 truth로 귀속·치유한다. fill 확정이 누락돼도
+        # 브로커 보유가 곧 체결 증거이므로, 단일-호환 매칭이면 메타 복구 + run을 FILLED로 전환한다.
+        eligible_statuses = {
+            "FILLED", "PARTIAL_FILLED", "SELL_SENT", "SELL_ACKED", "SELL_PARTIAL_FILLED",
+            "ORDER_UNKNOWN", "ORDER_ACKED", "ORDER_SENT",
+        }
         broker_qty = int(float(broker_pos.get("qty", 0) or 0))
         broker_avg = float(broker_pos.get("avg_price", 0) or 0)
         matches: list[dict] = []
@@ -21737,6 +21743,32 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
         decision_id = str(run.get("decision_id", "") or plan.get("decision_id", "") or "")
         path_run_id = str(run.get("path_run_id", "") or "")
+        # 매수 ack 후 fill 확정이 끊긴 run을 브로커 보유 truth로 FILLED 전환한다.
+        # broker_pos는 fresh 브로커 보유(체결 증거)이고 단일-호환 매칭이므로 안전. 전환해야
+        # PathB scan_exits가 이 포지션의 target/stop을 관리한다(안 하면 메타만 있고 무관리 고아).
+        run_status = str(run.get("status", "") or "").upper()
+        if run_status in {"ORDER_ACKED", "ORDER_SENT"} and broker_qty > 0:
+            heal_price = float(broker_pos.get("avg_price", 0) or entry_price or 0)
+            adapter = getattr(pathb, "adapter", None)
+            if adapter is not None and heal_price > 0:
+                try:
+                    adapter.mark_filled(
+                        path_run_id,
+                        price=heal_price,
+                        qty=broker_qty,
+                        execution_id=str(plan.get("entry_execution_id", "") or ""),
+                        runtime_mode=str(getattr(self, "_mode", "live") or "live"),
+                        brain_snapshot_id=pathb._brain_snapshot_id(market_key),
+                        usd_krw=float(self.usd_krw_rate or 0) if market_key == "US" else 0.0,
+                    )
+                    entry_price = heal_price
+                    plan = (run.get("plan") if isinstance(run.get("plan"), dict) else plan) or plan
+                    log.warning(
+                        f"[broker sync] PathB ack'd run healed to FILLED via broker truth: "
+                        f"{market_key} {ticker_key} run={path_run_id} qty={broker_qty} price={heal_price:g}"
+                    )
+                except Exception as exc:
+                    log.warning(f"[broker sync] PathB ack'd run heal failed: {market_key} {ticker_key} {exc}")
         template = {
             "order_no": str(plan.get("entry_execution_id", "") or ""),
             "filled_price_native": entry_price,
@@ -38367,6 +38399,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception as _e:
                 log.warning(f"[KR 스크리너 캐시] session_close 저장 실패: {_e}")
         self._audit_flush_outcomes(market, force_close=True)
+        # forward 측정기(v2_daily_loop) 자동 실행 — 외부 잡 의존으로 5/27 정지(forward_complete 영구
+        # NULL, lesson forward-validation 굶김) 재발 방지. 측정(FORWARD_MEASURED)이 아래 sync보다 먼저
+        # 돌아야 같은 마감에 forward_complete가 갱신된다.
+        try:
+            self._run_v2_forward_measure_at_session_close(market, today)
+        except Exception as _v2_fwd_e:
+            log.warning(f"[v2 forward measure] {market} session_close 측정 실패: {_v2_fwd_e}")
         # v2 성과 원장 자동 동기화 — 수동 실행 의존으로 sync 정지(2026-06-02~06-09 누락) 재발 방지
         try:
             self._run_v2_learning_sync_at_session_close(market, today)
@@ -38414,6 +38453,33 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         else:
             tail = (result.stderr or result.stdout or "").strip()[-300:]
             log.warning(f"[v2 learning sync] {market} 동기화 실패 rc={result.returncode}: {tail}")
+
+    def _run_v2_forward_measure_at_session_close(self, market: str, session_date: str) -> None:
+        """장 마감 시 v2 forward 측정(FORWARD_MEASURED)을 자동 실행한다.
+
+        측정 잡(v2_daily_loop)이 외부 수동/cron 의존이라 2026-05-27 정지 → forward_complete 영구 NULL,
+        하류 lesson forward-validation 굶김(정합성 스윕 D칸). 봇 세션마감에 묶어 재발 방지한다.
+        별도 프로세스로 실행해 봇 본체와 DB 락을 분리하고, 1/3/5일 전 백로그를 lookback 루프로 측정한다.
+        시뮬/옵티마이저는 제외(측정+sync만). 본 호출이 _run_v2_learning_sync보다 먼저 돌아야
+        같은 마감에서 forward_complete가 반영된다.
+        """
+        if not self._runtime_bool("V2_FORWARD_MEASURE_AT_SESSION_CLOSE", True):
+            return
+        cmd = [
+            sys.executable,
+            str(Path(__file__).resolve().parent / "tools" / "v2_daily_loop.py"),
+            "--market", str(market or "ALL").upper(),
+            "--runtime-mode", str(getattr(self, "_mode", "live") or "live"),
+            "--forward-lookback-days", "10",
+            "--skip-simulation",
+            "--skip-optimizer",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        if result.returncode == 0:
+            log.info(f"[v2 forward measure] {market} forward 측정 완료 (lookback 10d)")
+        else:
+            tail = (result.stderr or result.stdout or "").strip()[-300:]
+            log.warning(f"[v2 forward measure] {market} 측정 실패 rc={result.returncode}: {tail}")
 
     def _run_ml_forward_updater_at_session_close(self, market: str) -> None:
         """장 마감 시 decisions.db forward 라벨(1d/3d/5d)을 자동 갱신한다."""

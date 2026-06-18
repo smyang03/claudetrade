@@ -249,3 +249,55 @@ def test_broker_injection_recovers_unique_pathb_metadata_from_event_store() -> N
     assert pos["broker_reconcile_status"] == "pathb_metadata_recovered_from_event_store"
     assert pos["position_integrity"] == "trusted"
     assert pos["management_protected"] is False
+
+
+def test_broker_injection_heals_order_acked_run_to_filled() -> None:
+    # AVGO 시나리오 재현: 매수 ack 후 fill 확정이 끊긴(세션경계 재시작) ORDER_ACKED run을
+    # 브로커 보유 truth로 귀속·치유한다. 메타 복구 + run을 FILLED로 전환해 scan_exits가 관리하도록.
+    with tempfile.TemporaryDirectory() as tmp:
+        store = EventStore(Path(tmp) / "events.db")
+        adapter = ClaudePriceAdapter(store=store)
+        plan = make_price_plan(
+            decision_id="dec_avgo",
+            ticker="AVGO",
+            market="US",
+            session_date="2026-06-17",
+            buy_zone_low=385.0,
+            buy_zone_high=392.0,
+            sell_target=404.0,
+            stop_loss=379.0,
+            hold_days=2,
+            confidence=0.56,
+        )
+        adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain")
+        adapter.mark_order_sent(
+            plan.path_run_id, execution_id="0031088273", price=392.0, qty=1,
+            runtime_mode="live", brain_snapshot_id="brain",
+        )
+        adapter.mark_order_acked(
+            plan.path_run_id, execution_id="0031088273",
+            runtime_mode="live", brain_snapshot_id="brain",
+        )
+        # fill 확정 끊김: mark_filled 미호출 → run은 ORDER_ACKED
+        assert store.find_path_run(plan.path_run_id)["status"] == "ORDER_ACKED"
+
+        bot = _bot([], pathb=SimpleNamespace(
+            store=store, adapter=adapter, broker_truth=None,
+            _brain_snapshot_id=lambda market: "brain",
+        ))
+
+        with patch("trading_bot.get_runtime_path", return_value=Path(tmp) / "live_open_positions.json"), patch(
+            "trading_bot.get_balance",
+            return_value=_balance(_stock("AVGO", 1, 392.0, 392.0)),
+        ):
+            TradingBot._sync_runtime_with_broker(bot)
+
+        # 포지션이 PathB로 귀속되고 target/stop 관리 가능
+        assert len(bot.risk.positions) == 1
+        pos = bot.risk.positions[0]
+        assert pos["ticker"] == "AVGO"
+        assert pos["strategy"] == "claude_price"
+        assert pos["pathb_path_run_id"] == plan.path_run_id
+        assert pos["management_protected"] is False
+        # run이 FILLED로 전환돼 scan_exits 관리 대상
+        assert store.find_path_run(plan.path_run_id)["status"] == "FILLED"
