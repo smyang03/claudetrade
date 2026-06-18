@@ -108,6 +108,25 @@ def test_shadow_decision_active_logs_hold():
     assert d is not None and d["action"] == "HOLD"
 
 
+def test_shadow_decision_us_krw_entry_without_native_breaks():
+    # 회귀: US pos["entry"]는 원화 저장. native entry 미주입이면 달러 current와 단위가 엇갈려
+    # net이 -99%로 깨지고 가짜 hard_stop이 뜬다(6/18 524건 버그 재현).
+    os.environ["TAIL_CAPTURE_MODE"] = "shadow"
+    pos = {"entry": 812321.82, "observed_mfe_pct": 1.43, "ticker": "AMD"}
+    d = tc.shadow_decision(pos, 529.0, "US")
+    assert d is not None and d["action"] == "EXIT" and d["reason"] == "hard_stop"
+
+
+def test_shadow_decision_us_native_entry_fixes_units():
+    # 수정: 호출측이 _position_entry_native로 변환한 달러 entry를 entry_native로 넘기면
+    # net이 정상(~0%)이라 가짜 hard_stop이 사라지고 HOLD(pre_activation).
+    os.environ["TAIL_CAPTURE_MODE"] = "shadow"
+    pos = {"entry": 812321.82, "observed_mfe_pct": 1.43, "ticker": "AMD"}
+    d = tc.shadow_decision(pos, 529.0, "US", entry_native=529.0)
+    assert d is not None and d["action"] == "HOLD" and d["reason"] == "pre_activation"
+    assert abs(d["net_pct"]) < 1.0
+
+
 # ---- Track 3-R: hold advisor carry-intent 정합 ----
 from minority_report import hold_advisor as _ha
 

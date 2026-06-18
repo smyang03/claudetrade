@@ -153,11 +153,14 @@ def evaluate_exit(
 
 
 def should_carry_overnight(pos: dict[str, Any], current: float, market: str,
-                           regime: str | None = None) -> bool:
+                           regime: str | None = None, entry_native: float | None = None) -> bool:
     """마감(pre_close)에서 이 포지션을 오버나잇 캐리할지. enforce+서브게이트(CARRY_ENFORCE)일 때만 True.
 
     기준: 이익중 + MFE(peak)≥activation(증명) + net≥carry_strength(강함) + RISK_ON(베타증폭 차단)
     + 시장 carry 토글. 하나라도 불충족/불확실하면 False(보수 — 기본 청산).
+
+    entry/current는 같은 통화여야 한다. US 포지션 pos["entry"]는 원화 저장이므로 호출측이
+    네이티브(달러) entry를 entry_native로 넘긴다. 미제공이면 pos에서 추출(KR 등 동일통화 한정).
     """
     if mode() != "enforce" or not carry_enforce_enabled():
         return False
@@ -166,7 +169,8 @@ def should_carry_overnight(pos: dict[str, Any], current: float, market: str,
     if (regime or "").strip().lower() not in _carry_regimes():
         return False
     try:
-        entry = float(pos.get("entry") or pos.get("entry_price") or 0)
+        entry = float(entry_native) if entry_native and float(entry_native) > 0 \
+            else float(pos.get("entry") or pos.get("entry_price") or 0)
         if entry <= 0 or current <= 0:
             return False
         net_pct = (current / entry - 1) * 100
@@ -178,15 +182,21 @@ def should_carry_overnight(pos: dict[str, Any], current: float, market: str,
 
 
 def shadow_decision(pos: dict[str, Any], current: float, market: str,
-                    regime: str | None = None, mins_to_close: float | None = None) -> dict[str, Any] | None:
+                    regime: str | None = None, mins_to_close: float | None = None,
+                    entry_native: float | None = None) -> dict[str, Any] | None:
     """exit scan 훅용 — pos에서 entry/peak 추출해 결정 산출(로깅용). 비활성/불가면 None.
 
     enforce여도 *호출측이 실행 책임* — 이 함수는 결정만 반환(실주문 안 함).
+
+    entry/current는 같은 통화여야 한다. US 포지션 pos["entry"]는 원화 저장이라 그대로 쓰면
+    달러 current와 단위가 엇갈려 net이 -99%로 깨진다. 호출측이 _position_entry_native로 변환한
+    네이티브 entry를 entry_native로 넘긴다. 미제공이면 pos에서 추출(KR 등 동일통화 한정).
     """
     if not is_active():
         return None
     try:
-        entry = float(pos.get("entry") or pos.get("entry_price") or 0)
+        entry = float(entry_native) if entry_native and float(entry_native) > 0 \
+            else float(pos.get("entry") or pos.get("entry_price") or 0)
         if entry <= 0 or current <= 0:
             return None
         # observed_mfe_pct(Phase 1c)로 peak 복원. 없으면 현재가로 보수적.

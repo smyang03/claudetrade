@@ -731,7 +731,10 @@ class PathBRuntime:
     def _log_tail_capture(self, plan, pos, current: float, decision: dict) -> None:
         """꼬리-capture 엔진 결정 + 실제 포지션 상태 페어 로깅(shadow/enforce 관측). 라이브 무영향."""
         try:
-            entry = float(pos.get("entry") or pos.get("entry_price") or 0)
+            # US pos["entry"]는 원화 저장 — current(달러)와 단위 맞추려면 네이티브 entry로 변환.
+            entry = float(self._position_entry_native(pos, str(getattr(plan, "market", "") or "")) or 0)
+            if entry <= 0:
+                entry = float(pos.get("entry") or pos.get("entry_price") or 0)
             rec = {
                 "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "market": str(getattr(plan, "market", "") or ""),
@@ -3484,7 +3487,8 @@ class PathBRuntime:
             try:
                 if tail_capture.is_active():
                     _tc_dec = tail_capture.shadow_decision(
-                        pos, current, market, regime=self._tail_capture_regime(market)
+                        pos, current, market, regime=self._tail_capture_regime(market),
+                        entry_native=self._position_entry_native(pos, market)
                     )
                     if _tc_dec:
                         self._log_tail_capture(plan, pos, current, _tc_dec)
@@ -3923,7 +3927,8 @@ class PathBRuntime:
             current = self._current_native_price(market, plan.ticker) or float(pos.get("display_current_price", 0) or 0)
             # 꼬리-capture: 증명된 강한 러너는 오버나잇 캐리(enforce+서브게이트일 때만). 하방은 다음세션 loss_cap.
             try:
-                if tail_capture.should_carry_overnight(pos, current, market, self._tail_capture_regime(market)):
+                if tail_capture.should_carry_overnight(pos, current, market, self._tail_capture_regime(market),
+                                                        entry_native=self._position_entry_native(pos, market)):
                     log.info(f"[tail_capture carry] {market} {plan.ticker} 오버나잇 캐리(pre_close skip)")
                     continue
             except Exception:
