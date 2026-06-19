@@ -164,11 +164,19 @@ def build_report(
         return float(row["pnl_pct"]) - fee_pct.get(str(row["market"]).upper(), 0.5)
 
     def mfe_of(row: dict[str, Any]) -> float | None:
-        # 실측 백필 우선, 없으면 v2 필드(희소).
-        v = mfe_map.get(str(row.get("v2_decision_id") or ""))
-        if v is None and row.get("mfe_pct") not in (None, 0):
-            v = float(row["mfe_pct"])
-        return v
+        # 라이브 ledger mfe_pct(Phase 1c tick기반, mark_closed 배선분) 우선 — 정확·held-window.
+        # 과거분(배선 전, ledger NULL)은 yfinance 백필 fallback.
+        v = row.get("mfe_pct")
+        if v not in (None, 0):
+            return float(v)
+        return mfe_map.get(str(row.get("v2_decision_id") or ""))
+
+    def mfe_source(row: dict[str, Any]) -> str | None:
+        if row.get("mfe_pct") not in (None, 0):
+            return "ledger"
+        if mfe_map.get(str(row.get("v2_decision_id") or "")) is not None:
+            return "backfill"
+        return None
 
     report: dict[str, Any] = {"by_market": {}, "by_close_reason": {}, "by_hold_bucket": {}, "by_ticker": {}, "capture": {}, "mfe_capture": {}, "by_month": {}}
 
@@ -179,6 +187,10 @@ def build_report(
             continue
         pairs = [(net_of(r), mfe_of(r)) for r in rows]
         pairs = [(n, m) for n, m in pairs if m and m > 0]
+        # mfe 출처 커버리지(ledger=라이브배선 / backfill=yfinance) — Phase0→1 전환 가시화.
+        src = {"ledger": 0, "backfill": 0, "none": 0}
+        for r in rows:
+            src[mfe_source(r) or "none"] += 1
         if pairs:
             net_sum = sum(n for n, _ in pairs)
             mfe_sum = sum(m for _, m in pairs)
@@ -186,6 +198,7 @@ def build_report(
                 "n": len(pairs),
                 "avg_mfe_pct": round(mfe_sum / len(pairs), 2),
                 "net_capture_ratio": round(net_sum / mfe_sum, 3) if mfe_sum else None,
+                "mfe_source": src,
             }
         months: dict[str, list[float]] = defaultdict(list)
         for r in rows:
