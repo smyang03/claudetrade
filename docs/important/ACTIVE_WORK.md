@@ -1,6 +1,28 @@
 # Active Work
 
-Updated: 2026-06-16
+Updated: 2026-06-21
+
+## 멀티에이전트 토론 — 시스템 생존·수익 극대화 (2026-06-21)
+
+배경: /ultraplan 발 + 로컬 3자 토론(Opus 4.8 빌더 + codex gpt-5.5 xhigh + 사회/심판). 5단계 아젠다. 전체 로그: `plans/the-cloud-ultraplan-session-glimmering-tide.md`.
+
+**핵심 결론(두 AI가 decisions.db 직접 쿼리로 독립 수렴):** 수익=Claude 재량청산에서만(US +173%p vs 자동청산 -82%p), 손실=자동청산(loss_cap). KR/US 동일. selection·새 엣지 없음(5+경로 확정). 살리는 길=새 엣지 아니라 **출혈정지+측정정직화+청산재량 보존**. 흑자 전환(net>0)은 어느 레버도 못 만듦 — 출혈 약간 줄일 뿐(거래당 gross +0.33% < 비용 0.5% 구조 불변).
+
+**완료(이번 세션, 라이브 코드/config/봇 무변경):**
+- ✅ `tools/cluster_halt_counterfactual.py` (read-only 측정) + `tests/test_cluster_halt_counterfactual.py`(7건). 운영성: threshold=4 cluster halt 순효과 net -2.75%p(약한 손실방어, 표본 US 8건), **threshold↓(3)면 right-tail +12.76%p 자르고 순효과 중립화 → 현 라이브 `STOP_CLUSTER_HARD_BLOCK_COUNT=4` 유지·인하 금지 확인**.
+- ✅ 진단: 측정 배선(regime/mfe/net producer→sync) 정상(`tests/test_market_regime_capture.py` 등 13통과). regime 0/mfe 3.3%/net 25% 낮음은 코드버그 아니라 과거데이터+진입시 consensus mode 부재+빠른청산+net 입력부족. regime은 "수정보류·위조금지" 영역 미접촉.
+
+**TODO (우선순위순, 전부 측정/검증 선행 — enforce는 표본·운영자 확정 후):**
+- ⏳ **cluster halt enforce 결정** — counterfactual 표본 US 8→30건 누적 후 판정. threshold 인하 금지(도구 경고). 이미 라이브 4로 동작 중이라 "현행 유지"가 기본값.
+- ⏳ **거래-바깥 축(두 AI 공통 맹점, net 영향 최대)**: ① **FX 스프레드 net 정직 반영**(우대0.2%/무우대2%×환전2회, KIS API 미노출→운영자 우대율 확인 선결) ② **거래 빈도 줄이기**(과매매=리테일 킬러, 비용 직접 정지). 4레버에 없던 축이라 가장 큰 미탐 레버.
+- ⏳ **loss_cap전 Claude 재량 노출 shadow** — 자동절단 아님(+53%p는 사후지 천장 기각), 보호계약(hard stop/loss cap) 불변, KR 우선(KR Claude청산 +2.10%). 생존편향·약세장 검증.
+- ⏳ **fragility sizing** — 측정복구 후 식별자(`zone_hit_context_changed`) tier 분리 shadow 재검증. codex 살림 vs 빌더 kill 미결(서로 다른 대조군). 켜면 전 PathB 0.5x 위험.
+- ⏳ **USER_MANUAL 누수 분류** — KR -24.7%(2번째 누수). 운영자 패닉컷 vs 시스템 미흡 떠안기 라벨링(read-only).
+- ⏳ **exit attribution 측정**(빌더 아이디어 A) — `exit_seen_by_claude`(청산 전 hold advisor 리뷰 통과 여부) 태깅 → 청산 주체별 net 정밀화.
+- ⏳ **early-path shape**(빌더 아이디어 B) — 진입 후 첫 5~10분 fast-fail(MFE≈0 & MAE 벌어짐) 분류. selection 아닌 사후 경로, fragility 입력.
+- ⏳ **KR 전용**: Plan A 3전략(momentum -21.5/gap_pullback -13.9/orp -7.9 전부 적자) shadow/축소, `claude_price`(+18.78%, 유일 흑자) 보존. US 로직 비접촉.
+- ⏳ **[운영자 확정 필요] regime 런타임 보강** — consensus mode 비면 실측추세(`_tail_capture_regime`) fallback. "수정보류·위조금지" 영역 + 봇 재시작 필요라 운영자 승인 전 미착수.
+- ⏳ **메모리 정정**: selection "무엣지" → "지수/비용은 못 이기나 미선정 대비 약한 위생 우위 존재(US 선정 forward_3d 중앙 +0.286% vs 미선정 +0.088%, KR 함정회피)". 알파 아닌 위생.
 
 ## 진입 후보 순위/타이밍 개선 (2026-06-16) — selection/entry-timing
 
