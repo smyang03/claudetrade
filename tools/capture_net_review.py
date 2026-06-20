@@ -30,9 +30,12 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ML_DB = ROOT / "data" / "ml" / "decisions.db"
 DEFAULT_SEL_DB = ROOT / "data" / "ticker_selection_log.db"
 
-# 왕복 수수료 근사(%). 한투 미국 온라인 0.25%/편도 = 0.5% 왕복, 우대 없음(운영자 확인 2026-06-13).
+# 왕복 수수료 근사(%). 한투 미국 온라인 0.25%/편도 = 0.5% 왕복, 수수료 우대 없음(운영자 확인 2026-06-13).
 # KR 왕복 수수료/세금은 미확인이라 보수적으로 동일 가정 — CLI로 조정 가능.
 DEFAULT_FEE_PCT = {"US": 0.5, "KR": 0.5}
+# 환전 스프레드 왕복(%). US 해외주식은 매수(원→달러)·매도(달러→원) 환전 2회 → net에 별도 차감해야
+# 정직(usd_krw 참조환율엔 미반영). 우대(0.1%/회)=0.2% / 무우대=~2%. 미확인이라 우대 기본, CLI 조정.
+DEFAULT_FX_SPREAD_PCT = {"US": 0.2, "KR": 0.0}
 
 HOLD_BUCKETS = [
     (0, 30, "0-30분"),
@@ -154,14 +157,19 @@ def build_report(
     runup: dict[tuple[str, str, str], dict[str, float]],
     fee_pct: dict[str, float],
     mfe_map: dict[str, float] | None = None,
+    fx_spread_pct: dict[str, float] | None = None,
 ) -> dict[str, Any]:
+    fx_spread_pct = fx_spread_pct if fx_spread_pct is not None else DEFAULT_FX_SPREAD_PCT
     mfe_map = mfe_map or {}
 
     def net_of(row: dict[str, Any]) -> float:
-        # measured net(수수료/환율 실반영)이 있으면 우선, 없으면 수수료 근사.
+        mkt = str(row.get("market") or "").upper()
+        # 환전 스프레드는 native-% net(수수료만)에 안 잡힘 → 별도 차감해야 정직(US 환전 2회).
+        fx = fx_spread_pct.get(mkt, 0.0)
+        # measured net(수수료 반영, FX 스프레드 미반영)이 있으면 우선, 없으면 수수료 근사.
         if str(row.get("net_basis") or "") == "measured" and row.get("pnl_pct_net") is not None:
-            return float(row["pnl_pct_net"])
-        return float(row["pnl_pct"]) - fee_pct.get(str(row["market"]).upper(), 0.5)
+            return float(row["pnl_pct_net"]) - fx
+        return float(row["pnl_pct"]) - fee_pct.get(mkt, 0.5) - fx
 
     def mfe_of(row: dict[str, Any]) -> float | None:
         # 라이브 ledger mfe_pct(Phase 1c tick기반, mark_closed 배선분) 우선 — 정확·held-window.
@@ -214,7 +222,7 @@ def build_report(
         rows = [r for r in closed if str(r["market"]).upper() == market]
         st = _stat([float(r["pnl_pct"]) for r in rows], [net_of(r) for r in rows])
         if st:
-            over = sum(1 for r in rows if float(r["pnl_pct"]) > fee_pct.get(market, 0.5))
+            over = sum(1 for r in rows if float(r["pnl_pct"]) > fee_pct.get(market, 0.5) + fx_spread_pct.get(market, 0.0))
             report["by_market"][market] = {
                 **asdict(st),
                 "net_breakeven_pass_pct": round(over / len(rows) * 100, 1),
@@ -295,6 +303,7 @@ def to_markdown(payload: dict[str, Any]) -> str:
     lines.append("")
     lines.append(f"- 대상: closed={payload['basis']['closed_trades']}건, runtime_mode={payload['basis']['runtime_mode']}")
     lines.append(f"- 수수료 가정(왕복%): {payload['basis']['fee_pct']}")
+    lines.append(f"- 환전 스프레드 가정(왕복%): {payload['basis'].get('fx_spread_pct', {})} (US 환전 2회, 우대0.2/무우대~2)")
     lines.append(f"- selection runup 매칭: {payload['basis']['runup_keys']}건")
     lines.append("")
     lines.append("## 시장별 (gross vs net)")
@@ -351,17 +360,20 @@ def main() -> int:
     parser.add_argument("--runtime-mode", default="live", help="live/paper, 빈값이면 전체")
     parser.add_argument("--fee-us", type=float, default=DEFAULT_FEE_PCT["US"])
     parser.add_argument("--fee-kr", type=float, default=DEFAULT_FEE_PCT["KR"])
+    parser.add_argument("--fx-us", type=float, default=DEFAULT_FX_SPREAD_PCT["US"], help="US 환전 스프레드 왕복%(우대0.2/무우대~2)")
+    parser.add_argument("--fx-kr", type=float, default=DEFAULT_FX_SPREAD_PCT["KR"])
     parser.add_argument("--output-dir", default=str(ROOT / "docs" / "reports"))
     parser.add_argument("--stamp", default=datetime.now().strftime("%Y%m%d_%H%M%S"))
     parser.add_argument("--print", action="store_true", help="markdown을 stdout에도 출력")
     args = parser.parse_args()
 
     fee_pct = {"US": args.fee_us, "KR": args.fee_kr}
+    fx_spread_pct = {"US": args.fx_us, "KR": args.fx_kr}
     runtime_mode = args.runtime_mode or None
     closed = load_closed(Path(args.ml_db), runtime_mode)
     runup = load_runup(Path(args.sel_db))
     mfe_map = load_mfe(Path(args.ml_db))
-    report = build_report(closed, runup, fee_pct, mfe_map)
+    report = build_report(closed, runup, fee_pct, mfe_map, fx_spread_pct)
 
     payload = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -370,10 +382,11 @@ def main() -> int:
             "net_measured": sum(1 for r in closed if str(r.get("net_basis") or "") == "measured"),
             "runtime_mode": runtime_mode or "all",
             "fee_pct": fee_pct,
+            "fx_spread_pct": fx_spread_pct,
             "runup_keys": len(runup),
             "notes": [
                 "로컬 sqlite 전용 — broker/API/Claude 호출 없음.",
-                "net = gross pnl_pct - 왕복 수수료 가정(%). 정밀 net은 Phase 1b 백필 후 별도.",
+                "net = gross pnl_pct - 왕복 수수료 - US 환전 스프레드(왕복, 환전2회). 정밀 net은 Phase 1b 백필 후 별도.",
                 "runup_3d/capture는 사후 감사 라벨이므로 라이브 게이팅에 직접 사용 금지.",
             ],
         },

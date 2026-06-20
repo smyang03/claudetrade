@@ -30,6 +30,15 @@ def _fee_rates_for_market(market: str) -> tuple[float, float]:
     return _env_rate("KR_FEE_RATE_BUY", 0.00015), _env_rate("KR_FEE_RATE_SELL", 0.00195)
 
 
+def _fx_spread_rate_per_side(market: str) -> float:
+    """환전 스프레드(편도). US 해외주식은 매수(원→달러)·매도(달러→원) 환전 2회가 발생하고,
+    usd_krw는 참조환율이라 이 스프레드가 net에 안 잡힌다. 수수료와 별도로 차감해야 정직한 net.
+    한투는 해외거래 시 환전 우대(스프레드 ~0.1%/회) 자동적용 → 기본 0.001. KR은 환전 없음 → 0."""
+    if str(market or "").upper() != "US":
+        return 0.0
+    return _env_rate("US_FX_SPREAD_RATE_PER_SIDE", 0.001)
+
+
 @dataclass(frozen=True)
 class ExitSignal:
     signal: bool
@@ -243,10 +252,16 @@ class ClaudePriceSellManager:
             return {}
         buy_rate, sell_rate = _fee_rates_for_market(market)
         fee_pct_round_trip = (buy_rate + sell_rate) * 100.0
+        fx_spread_rate = _fx_spread_rate_per_side(market)
+        fx_spread_pct_round_trip = fx_spread_rate * 2.0 * 100.0  # 매수+매도 환전 2회
         pnl_pct_gross = (exit_px / entry - 1.0) * 100.0
+        pnl_pct_net_est = pnl_pct_gross - fee_pct_round_trip
         meta: dict[str, Any] = {
             "fee_pct_round_trip": round(fee_pct_round_trip, 4),
-            "pnl_pct_net_est": round(pnl_pct_gross - fee_pct_round_trip, 4),
+            "pnl_pct_net_est": round(pnl_pct_net_est, 4),
+            # FX 스프레드 차감 net (정직한 자) — 기존 pnl_pct_net_est는 수수료만이라 보존
+            "fx_spread_pct_round_trip": round(fx_spread_pct_round_trip, 4),
+            "pnl_pct_net_after_fx_est": round(pnl_pct_net_est - fx_spread_pct_round_trip, 4),
             "entry_price_source": entry_price_source,
             "entry_native_used": round(entry, 6),
         }
@@ -266,6 +281,11 @@ class ClaudePriceSellManager:
         fee_krw_est = entry_cost_krw * buy_rate + exit_value_krw * sell_rate
         meta["fee_krw_est"] = round(fee_krw_est, 0)
         meta["pnl_krw_net_est"] = round(exit_value_krw - entry_cost_krw - fee_krw_est, 0)
+        fx_spread_krw_est = (entry_cost_krw + exit_value_krw) * fx_spread_rate
+        meta["fx_spread_krw_est"] = round(fx_spread_krw_est, 0)
+        meta["pnl_krw_net_after_fx_est"] = round(
+            exit_value_krw - entry_cost_krw - fee_krw_est - fx_spread_krw_est, 0
+        )
         return meta
 
     def mark_closed(

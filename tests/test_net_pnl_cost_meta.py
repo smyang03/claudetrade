@@ -81,6 +81,28 @@ class NetPnlCostMetaTests(unittest.TestCase):
         self.assertAlmostEqual(plan["pnl_krw_net_est"], 714000 - 675000 - 3472.5, delta=1.0)
         self.assertGreater(plan["fx_change_pct"], 0)
 
+    def test_us_close_records_fx_spread_net(self):
+        run_id = _register_filled_run(self.store, self.adapter, entry=100.0, qty=5, usd_krw_at_fill=1350.0)
+        with mock.patch.dict(os.environ, {"US_FEE_RATE_PER_SIDE": "0.0025", "US_FX_SPREAD_RATE_PER_SIDE": "0.001"}):
+            self.manager.mark_closed(
+                run_id,
+                close_reason="CLOSED_CLAUDE_PRICE_TARGET",
+                price=105.0,
+                pnl_pct=5.0,
+                runtime_mode="live",
+                brain_snapshot_id="bs_test",
+                usd_krw=1360.0,
+            )
+        plan = self.store.find_path_run(run_id)["plan"]
+        # 기존 net(수수료만)은 불변
+        self.assertAlmostEqual(plan["pnl_pct_net_est"], 4.5, places=4)
+        # 환전 2회 × 0.1% = 0.2%p 추가 차감 → FX 인지 net
+        self.assertAlmostEqual(plan["fx_spread_pct_round_trip"], 0.2, places=4)
+        self.assertAlmostEqual(plan["pnl_pct_net_after_fx_est"], 4.3, places=4)
+        # KRW: (675,000 + 714,000) × 0.001 = 1,389
+        self.assertAlmostEqual(plan["fx_spread_krw_est"], 1389.0, delta=1.0)
+        self.assertAlmostEqual(plan["pnl_krw_net_after_fx_est"], 714000 - 675000 - 3472.5 - 1389.0, delta=1.0)
+
     def test_us_fill_fx_fallback_to_close_fx(self):
         run_id = _register_filled_run(self.store, self.adapter, entry=100.0, qty=5, usd_krw_at_fill=0.0)
         self.manager.mark_closed(
