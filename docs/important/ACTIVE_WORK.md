@@ -15,6 +15,7 @@ Updated: 2026-06-16
 - ⏳ **#2 나머지: US compact trade_ready 캡 5→6** — `selection_compact_schema.py:50,283` `min(5,…)` 하드캡을 market-aware로(US 6, KR 5). 선택 계약/다수 테스트 변경 동반 → 신중.
 - ⏳ **#3 모드별 캡 안정화** — RISK_ON/BALANCED/RISK_OFF 총슬롯(6/5/1) 세션 간 출렁임 shrinkage 완화. 점진(전략 갈아엎기 금지 원칙).
 - ⏳ **#4 KR sector_play data_quality 결측 해소** — kr_sector_play가 강세장 KR 진입 채널인데 data_quality=missing으로 차단(sector_play_gate). MODERATE_BULL이 수익으로 연결되는 경로 복구. KR momentum 축소는 의도된 손실보호라 별건.
+- ⏳ **B: C2/C3 후보 과열 페널티 크기 사후검증** (2026-06-20 enforce 적용분) — `runtime/candidate_pool_runtime.py` 과열 페널티(KR vol_ratio ≥1.5→-12/≥2.0→-20, change_pct ≥15%→-12)의 **크기가 net 최적인지 미검증**. 현재 값은 forward 상관 기반 추정치. **재시작 후 며칠** KR 후보 구성 변화(과열 후보 trade_ready 탈락률) + 그 후보들 실제 forward를 측정해 페널티 과/소 판정. 과하면 좋은 후보까지 깎임(단 base bonus 25~30 위에서 깎여 완전배제 아님), 약하면 효과 미미. 임계(1.5/2.0/15%)도 재검토. shadow 시뮬 또는 라이브 후보로그 비교. **C2 KR전용**(US vol_ratio 실값 부재 — US producer 연결이 선결, 별도 후속). 테스트 `tests/test_candidate_overheat_penalty.py`.
 
 ## 거래비용 분석 — 2달 net 본전의 진짜 원인 (2026-06-13)
 

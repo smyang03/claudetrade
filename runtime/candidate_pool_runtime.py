@@ -24,7 +24,20 @@ SOURCE_PENALTIES = {
     "bad_data": 30.0,
     "day_losers": 25.0,
     "overextended": 15.0,
+    # C2(2026-06-20): KR vol_ratio 과열 페널티. 실측(ticker_selection_log) KR forward_3d:
+    #   vol 1.5-2.0 -3.07% / 2.0-3.0 -6.31% / 5.0+ -4.61% (단조 악화). US는 vol_ratio
+    #   실값 부재(placeholder 1.0~1.5)라 KR 전용. 거래량 분출=꼭지 신호.
+    "vol_overheat_mid": 12.0,   # vol_ratio >= VOL_OVERHEAT_MID_RATIO
+    "vol_overheat_high": 20.0,  # vol_ratio >= VOL_OVERHEAT_HIGH_RATIO
+    # C3(2026-06-20): 당일등락 과열 페널티. 실측 change_pct 15%+ forward -2.15%(양수 37%).
+    "change_overheat": 12.0,    # change_pct >= CHANGE_OVERHEAT_PCT
 }
+
+# C2 임계: KR forward가 -3% 이하로 꺾이는 1.5, -4~6%대 2.0 두 단계.
+VOL_OVERHEAT_MID_RATIO = 1.5
+VOL_OVERHEAT_HIGH_RATIO = 2.0
+# C3 임계: 급등 과열(당일등락). 실측상 15%+가 양극단 중 하락. 보수적으로 15%.
+CHANGE_OVERHEAT_PCT = 15.0
 
 DEFERRED_SOURCE_TAGS = {"intraday_momentum", "late_mover"}
 GRADE_RANK = {"A": 4, "B": 3, "C": 2, "D": 1}
@@ -304,6 +317,24 @@ def score_candidate(record: CandidateRecord, *, deferred_sources: set[str] | Non
         components["day_losers"] = -SOURCE_PENALTIES["day_losers"]
     if "overextended" in tags or str((record.latest_features or {}).get("momentum_state") or "").lower() == "overextended":
         components["overextended"] = -SOURCE_PENALTIES["overextended"]
+    # C2(2026-06-20): KR vol_ratio 과열 페널티. US는 vol_ratio 실값 부재라 KR만 적용.
+    feats = record.latest_features or {}
+    if str(record.market or "").upper() == "KR":
+        try:
+            vol_ratio = float(feats.get("vol_ratio") or 0.0)
+        except (TypeError, ValueError):
+            vol_ratio = 0.0
+        if vol_ratio >= VOL_OVERHEAT_HIGH_RATIO:
+            components["vol_overheat_high"] = -SOURCE_PENALTIES["vol_overheat_high"]
+        elif vol_ratio >= VOL_OVERHEAT_MID_RATIO:
+            components["vol_overheat_mid"] = -SOURCE_PENALTIES["vol_overheat_mid"]
+    # C3(2026-06-20): 당일등락 과열 페널티(KR/US 공통, 급등 분출 신호).
+    try:
+        change_pct = abs(float(feats.get("change_pct") or feats.get("change_rate") or 0.0))
+    except (TypeError, ValueError):
+        change_pct = 0.0
+    if change_pct >= CHANGE_OVERHEAT_PCT:
+        components["change_overheat"] = -SOURCE_PENALTIES["change_overheat"]
     score = max(PROMPT_SCORE_MIN, min(PROMPT_SCORE_MAX, sum(components.values())))
     record.prompt_score_components = components
     record.prompt_score = score

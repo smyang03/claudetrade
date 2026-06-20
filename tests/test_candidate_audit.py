@@ -35,7 +35,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
         self.assertEqual(normalize_candidate_action("PULLBACK_WAIT"), "watch_family")
 
     def test_analyze_candidate_audit_uses_latest_rows_and_reports_consistency(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             base = {
@@ -78,7 +78,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
         self.assertEqual(result["consistency"]["invalid_price_reason_counts"]["non_positive_price"], 1)
 
     def test_analyze_candidate_audit_reports_actual_prompt_bucket_and_shadow_readiness(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             base = {
@@ -171,7 +171,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
         self.assertIn("sample_gate_not_met", shadow["blockers"])
 
     def test_analyze_candidate_audit_splits_invalid_price_reasons(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             base = {
@@ -270,7 +270,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
         self.assertEqual(reasons_by_ticker["FAILRDY"], "legacy_price_unmeasured")
 
     def test_analyze_candidate_audit_ignores_non_executable_selection_meta_price_null(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             base = {
@@ -322,7 +322,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
         self.assertEqual(result["consistency"]["invalid_price_reason_counts"]["legacy_price_unmeasured"], 1)
 
     def test_candidate_audit_additive_trainer_columns_round_trip(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             store.upsert_candidate(
@@ -433,7 +433,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(json.loads(row["strength_capture_rules"]), ["strength_v1_near_high_pct"])
 
     def test_candidate_audit_preserves_prompt_stage_source_json_and_payload(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             base = {
@@ -517,7 +517,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(payload["runtime_gate"]["volume_ratio_open"], 2.4)
 
     def test_candidate_audit_extra_evidence_columns_round_trip(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             store.upsert_candidate(
@@ -571,7 +571,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             )
 
     def test_candidate_audit_blank_integer_bool_extra_value_records_zero(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             store.upsert_candidate(
@@ -599,7 +599,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(row["data_quality_missing"], 0)
 
     def test_runtime_evidence_backfill_dry_run_and_apply_fill_blank_columns(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             store.upsert_candidate(
@@ -676,7 +676,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             )
 
     def test_runtime_evidence_backfill_corrects_false_missing_quality_flags(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             base = {
@@ -744,7 +744,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(rows["000660"], 0)
 
     def test_runtime_evidence_backfill_does_not_overwrite_non_empty_columns_by_default(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             store.upsert_candidate(
@@ -791,7 +791,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(row["evidence_data_state"], "confirmed")
 
     def test_candidate_audit_payload_json_fallback_when_payload_is_none(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
 
@@ -826,7 +826,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(payload["selection_stage"], "trainer_prompt_pool")
 
     def test_candidate_audit_reverse_runtime_then_prompt_preserves_runtime_payload(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             base = {
@@ -889,7 +889,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(payload["screener_quality"]["screener_quality_state"], "ok")
 
     def test_upsert_candidate_rolls_back_base_row_when_extra_update_fails(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             row = {
@@ -917,7 +917,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
         self.assertEqual(count, 0)
 
     def test_watch_trigger_funnel_summary_counts_shadow_events(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             funnel_dir = root / "logs" / "funnel"
             funnel_dir.mkdir(parents=True)
@@ -1017,7 +1017,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
         self.assertEqual(coverage["missing_examples"][0]["ticker"], "000660")
 
     def test_backfill_builds_separate_candidate_audit_db(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             (root / "logs" / "raw_calls").mkdir(parents=True)
             (root / "logs" / "screener_quality").mkdir(parents=True)
@@ -1227,7 +1227,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(classes["333333"], "not_in_prompt")
 
     def test_backfill_candidate_audit_default_does_not_clear_session(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             audit_db = root / "data" / "audit" / "candidate_audit.db"
             store = CandidateAuditStore(audit_db)
@@ -1256,7 +1256,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual([row["ticker"] for row in rows], ["111111"])
 
     def test_backfill_reads_compact_raw_call_normalized_meta(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             (root / "logs" / "raw_calls").mkdir(parents=True)
             (root / "logs" / "screener_quality").mkdir(parents=True)
@@ -1415,7 +1415,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(by_ticker["WEAK"]["trainer_candidate_state"], "QUARANTINE")
 
     def test_store_persists_discovery_role_fields(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             store.upsert_candidate(
@@ -1465,7 +1465,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(row["discovery_demoted_from"], "PULLBACK_WAIT")
 
     def test_blank_extra_update_does_not_erase_discovery_role_fields(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             base = {
@@ -1524,7 +1524,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(row["trainer_tier"], "WATCH")
 
     def test_outcome_labeler_uses_existing_horizon_schema(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             session_date = "2026-05-08"
@@ -1601,7 +1601,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(late_30["status"], "insufficient_samples")
 
     def test_outcome_labeler_adds_daily_forward_horizons(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             db_path = root / "candidate_audit.db"
             price_dir = root / "price"
@@ -1686,7 +1686,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
         )
 
     def test_candidate_audit_outcome_catchup_dry_run_does_not_write(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             store.upsert_candidate(
@@ -1721,7 +1721,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(count, 0)
 
     def test_update_candidate_audit_outcomes_dry_run_missing_db_does_not_create(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "missing" / "candidate_audit.db"
 
             summary = update_candidate_audit_outcomes(db_path=db_path, dry_run=True)
@@ -1735,7 +1735,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertFalse(db_path.parent.exists())
 
     def test_update_candidate_audit_outcomes_dry_run_existing_db_does_not_migrate_schema(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             conn = sqlite3.connect(db_path)
             try:
@@ -1795,7 +1795,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertIsNone(outcome_table)
 
     def test_update_candidate_audit_outcomes_dry_run_idle_wal_db_does_not_create_sidecars(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             store.upsert_candidate(
@@ -1820,7 +1820,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertFalse(any(path.exists() for path in sidecars))
 
     def test_outcome_update_preserves_existing_non_null_unless_forced(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             session_date = "2026-05-08"
@@ -1919,7 +1919,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(overwritten["status"], "audit_sparse")
 
     def test_candidate_audit_outcome_catchup_cli_writes_requested_report_dir(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             report_dir = Path(tmp) / "reports"
             CandidateAuditStore(db_path)
@@ -1946,7 +1946,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertTrue(payload["dry_run"])
 
     def test_analysis_percentiles_and_strategy_mismatch_are_python_side(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             session_date = "2026-05-08"
@@ -2029,7 +2029,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(result["strategy_mismatch"]["mismatch_count"], 1)
 
     def test_analyze_candidate_audit_decomposes_watch_only_buckets(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             session_date = "2026-05-17"
@@ -2106,7 +2106,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
         self.assertEqual(decomp["examples"]["evidence_ceiling"][0]["ticker"], "111111")
 
     def test_audit_call_summary_separates_actual_prompt_and_watchlist_counts(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             store.upsert_call(
@@ -2144,7 +2144,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(summary["calls"]["watchlist_rows"], 2)
 
     def test_audit_call_summary_falls_back_when_actual_prompt_count_is_zero(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             store.upsert_call(
@@ -2178,7 +2178,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertEqual(summary["calls"]["actual_prompt_rows"], 2)
 
     def test_analysis_exposes_live_monitoring_operational_summaries(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             (root / "logs" / "raw_calls").mkdir(parents=True)
             (root / "logs" / "funnel").mkdir(parents=True)
@@ -2303,7 +2303,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertTrue(result["watch_trigger_shadow_summary"]["data_gap_dominant"])
 
     def test_candidate_latest_rows_view_deduplicates_session_ticker(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             store.upsert_candidate(
@@ -2356,7 +2356,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             )
 
     def test_update_execution_by_ticker_can_target_latest_row_only(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db_path = Path(tmp) / "candidate_audit.db"
             store = CandidateAuditStore(db_path)
             for call_id, known_at in (("call_old", "2026-05-08T09:00:00"), ("call_new", "2026-05-08T09:05:00")):
@@ -2442,7 +2442,7 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertIn("size_mult", rows[1]["us_early_entry_gate_json"])
 
     def test_analyze_candidate_audit_includes_row_uniqueness_summary(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             (root / "logs" / "raw_calls").mkdir(parents=True)
             (root / "logs" / "funnel").mkdir(parents=True)
