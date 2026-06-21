@@ -720,6 +720,22 @@ class PathBRuntime:
         consensus = dict((judgment or {}).get("consensus") or {})
         return str(consensus.get("mode") or (judgment or {}).get("mode") or "").strip().upper()
 
+    def _pathb_entry_market_regime(self, market: str) -> str:
+        """진입 시점 시장국면(모드) 캡처 전용 — 측정용(v2_learning_performance.market_regime).
+
+        today_judgment는 시장마다 덮어쓰이고 사이클마다 {}로 리셋돼 PathB가 읽는 시점엔
+        비어있을 수 있다(2026-06-21 진단: regime 0/304). consensus 확정 시 bot이 seed하는
+        안정 캐시(market_consensus_mode)를 1순위로, today_judgment를 fallback으로 읽는다.
+        둘 다 없으면 빈 값(NEUTRAL 등 기본값으로 위조하지 않는다). 라이브 게이팅 경로
+        (_pathb_consensus_mode)는 건드리지 않는다 — 측정만 복구한다.
+        """
+        mk = "US" if str(market or "").upper() == "US" else "KR"
+        cache = getattr(getattr(self, "bot", None), "market_consensus_mode", None) or {}
+        cached = str(cache.get(mk, "") or "").strip().upper()
+        if cached:
+            return cached
+        return self._pathb_consensus_mode(market)
+
     def _tail_capture_regime(self, market: str) -> str | None:
         """런타임 정합 regime(risk_on/risk_off/mixed) — consensus mode 기반. 미가용 None."""
         try:
@@ -11443,7 +11459,7 @@ class PathBRuntime:
         # 진입 시점 시장국면(모드)을 포지션에 캡처한다. 청산 시 exit_meta→CLOSED payload→
         # v2_learning_performance.market_regime으로 흘러가 모드별 적중확률 측정의 근거가 된다.
         try:
-            pos["entry_market_regime"] = self._pathb_consensus_mode(plan.market)
+            pos["entry_market_regime"] = self._pathb_entry_market_regime(plan.market)
         except Exception:
             pos["entry_market_regime"] = ""
         # hold_advisor가 B-플랜 목표가/손절을 알 수 있도록 포지션에 저장

@@ -5,7 +5,9 @@
 - C3 change_pct >= 15% fwd -2.15%
 페널티는 후보 점수만 낮춘다. 주문/매도/broker truth 무관.
 """
+import os
 import unittest
+from unittest.mock import patch
 
 from runtime.candidate_pool_runtime import (
     CandidateRecord,
@@ -76,6 +78,30 @@ class C3ChangeOverheatTests(unittest.TestCase):
         # 급락도 과열(abs) — 분출/패닉 양극단
         r = score_candidate(_rec("US", change_pct=-(CHANGE_OVERHEAT_PCT + 1.0)))
         self.assertIn("change_overheat", r.prompt_score_components)
+
+
+class C3ToggleTests(unittest.TestCase):
+    """C3 env 토글(2026-06-21 A~F 토론 결론으로 OFF). 기본 on, config에서 off."""
+
+    def test_change_overheat_disabled_when_env_off(self):
+        with patch.dict(os.environ, {"CANDIDATE_CHANGE_OVERHEAT_ENABLED": "false"}, clear=False):
+            r = score_candidate(_rec("US", change_pct=CHANGE_OVERHEAT_PCT + 5.0))
+            self.assertNotIn("change_overheat", r.prompt_score_components)
+
+    def test_c2_vol_unaffected_when_c3_off(self):
+        # C3 OFF여도 C2(KR vol_ratio) 페널티는 유지(분리)
+        with patch.dict(os.environ, {"CANDIDATE_CHANGE_OVERHEAT_ENABLED": "false"}, clear=False):
+            r = score_candidate(_rec("KR", vol_ratio=VOL_OVERHEAT_MID_RATIO))
+            self.assertEqual(
+                r.prompt_score_components.get("vol_overheat_mid"),
+                -SOURCE_PENALTIES["vol_overheat_mid"],
+            )
+
+    def test_change_overheat_enabled_by_default(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CANDIDATE_CHANGE_OVERHEAT_ENABLED", None)
+            r = score_candidate(_rec("US", change_pct=CHANGE_OVERHEAT_PCT + 5.0))
+            self.assertIn("change_overheat", r.prompt_score_components)
 
 
 if __name__ == "__main__":

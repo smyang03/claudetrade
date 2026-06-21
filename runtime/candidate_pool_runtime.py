@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -38,6 +39,12 @@ VOL_OVERHEAT_MID_RATIO = 1.5
 VOL_OVERHEAT_HIGH_RATIO = 2.0
 # C3 임계: 급등 과열(당일등락). 실측상 15%+가 양극단 중 하락. 보수적으로 15%.
 CHANGE_OVERHEAT_PCT = 15.0
+
+
+def _change_overheat_enabled() -> bool:
+    # C3 토글(2026-06-21 추가). 사후검증: US 급등후보(change>=15%) fwd3 +5.4~11.5%로 역효과,
+    # KR도 hit가 non-hit보다 덜 나쁨(방향 반전) → A~F 토론 결론으로 OFF. 기본 on(현행 보존), config에서 off.
+    return str(os.environ.get("CANDIDATE_CHANGE_OVERHEAT_ENABLED", "true")).strip().lower() in {"1", "true", "yes", "on"}
 
 DEFERRED_SOURCE_TAGS = {"intraday_momentum", "late_mover"}
 GRADE_RANK = {"A": 4, "B": 3, "C": 2, "D": 1}
@@ -329,12 +336,14 @@ def score_candidate(record: CandidateRecord, *, deferred_sources: set[str] | Non
         elif vol_ratio >= VOL_OVERHEAT_MID_RATIO:
             components["vol_overheat_mid"] = -SOURCE_PENALTIES["vol_overheat_mid"]
     # C3(2026-06-20): 당일등락 과열 페널티(KR/US 공통, 급등 분출 신호).
-    try:
-        change_pct = abs(float(feats.get("change_pct") or feats.get("change_rate") or 0.0))
-    except (TypeError, ValueError):
-        change_pct = 0.0
-    if change_pct >= CHANGE_OVERHEAT_PCT:
-        components["change_overheat"] = -SOURCE_PENALTIES["change_overheat"]
+    # 2026-06-21: 사후검증으로 역효과 확인 → env 토글로 OFF 가능(기본 on, config에서 off).
+    if _change_overheat_enabled():
+        try:
+            change_pct = abs(float(feats.get("change_pct") or feats.get("change_rate") or 0.0))
+        except (TypeError, ValueError):
+            change_pct = 0.0
+        if change_pct >= CHANGE_OVERHEAT_PCT:
+            components["change_overheat"] = -SOURCE_PENALTIES["change_overheat"]
     score = max(PROMPT_SCORE_MIN, min(PROMPT_SCORE_MAX, sum(components.values())))
     record.prompt_score_components = components
     record.prompt_score = score

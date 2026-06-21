@@ -868,6 +868,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         else:
             _log_normal("info", f"shared pool | total {init_cash_total:,.0f} KRW (KR/US shared)")
         self.today_judgment = {}
+        # 안정 per-market consensus mode 캐시(2026-06-21 regime 배선 복구). today_judgment가
+        # 리셋돼도 마지막 확정 consensus mode를 PathB entry regime 캡처에 제공. _apply_consensus_guards가 채움.
+        self.market_consensus_mode: dict[str, str] = {}
         self.today_tickers: dict = {}   # {market: [ticker, ...]} — 매일 아침 Claude가 선택
         self.today_ticker_reasons: dict = {}
         self.trade_ready_tickers: dict[str, list[str]] = {"KR": [], "US": []}
@@ -2002,6 +2005,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 f"size={(consensus or {}).get('size')}->{guarded.get('size')} "
                 f"unanimous={guarded.get('unanimous_direction')}"
             )
+        # 안정 per-market consensus mode 캐시 seed (2026-06-21 regime 배선 복구).
+        # today_judgment는 시장마다 덮어쓰이고 사이클마다 {}로 리셋돼 PathB 진입/청산 시점엔
+        # 비어있을 수 있다(진단: market_regime 0/304). consensus가 확정되는 이 보편 finalizer에서
+        # 모드를 저장해 두면, PathB가 entry regime을 안정적으로 캡처할 수 있다. 라이브 게이팅 불변.
+        _guard_mode = str((guarded or {}).get("mode") or "").strip().upper()
+        if _guard_mode:
+            _mk = "US" if str(market or "").upper() == "US" else "KR"
+            if not isinstance(getattr(self, "market_consensus_mode", None), dict):
+                self.market_consensus_mode = {}
+            self.market_consensus_mode[_mk] = _guard_mode
         return guarded
     def _ops_review_mode_value(self) -> str:
         return "paper" if getattr(self, "is_paper", True) else "live"
@@ -31288,7 +31301,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 entry_price = 0.0
             if entry_price > 0:
                 break
-        regime = str((getattr(self, "today_judgment", {}) or {}).get("consensus", {}).get("mode", "") or "")
+        # regime: 안정 per-market consensus 캐시 1순위, today_judgment fallback(2026-06-21 배선 복구).
+        # today_judgment는 사이클마다 리셋될 수 있어 단독 의존 시 빈 값이 된다(PathB regime 0/304와 동일 원인).
+        _regime_cache = getattr(self, "market_consensus_mode", {}) or {}
+        regime = str(
+            _regime_cache.get("US" if market_key == "US" else "KR", "")
+            or (getattr(self, "today_judgment", {}) or {}).get("consensus", {}).get("mode", "")
+            or ""
+        )
         # 지수 등락률은 이미 보유한 digest context에서 읽는다(shadow 관측에 브로커 API 신규
         # 호출을 추가하지 않기 위함 — early-judge는 종목 수만큼 이 경로를 탄다).
         index_change = None

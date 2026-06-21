@@ -667,8 +667,9 @@ until more data is available or a human explicitly approves the change.
 | `US_PATHB_PREOPEN_PROFIT_TARGET_DEFER_MODE` | `enforce` | **프리오픈 목표익절(claude_sell_target) 즉시실행 대신 개장+5분 재평가로 지연.** stop/ladder/하드가드는 무관(즉시). off=현행. 강세주 조기절단 방지 |
 | `KR_PATHB_PREOPEN_PROFIT_TARGET_DEFER_MODE` | `off` | KR은 PathB 손실·성과 분리로 미적용 |
 | `US_MOMENTUM_EARLY_ENTRY_ENABLED` | `true` | **강세(RISK_ON) 시 momentum 45분 대기 대신 최초 판단(개장+5분) 후 진입.** 비강세/off면 45분 유지 |
-| `KR_MOMENTUM_EARLY_ENTRY_ENABLED` | `true` | **KR momentum은 손실경로 — 운영자 명시 enforce(MD 위반 기록). net 악화 시 false로 즉시 롤백** |
+| `KR_MOMENTUM_EARLY_ENTRY_ENABLED` | `false` | **2026-06-21 A~F 토론으로 OFF.** 6/16 이후 KR momentum 체결 0(무발동)·손실경로라 검증 안 된 enforce 제거(위생). 코드 보존, 재ON은 KR momentum 실체결 표본 확보 후 |
 | `MOMENTUM_EARLY_ENTRY_MIN_ELAPSED` | `5` | 조기진입 허용 최소 경과(분, 최초 판단=개장+5분). floor 5, base(45) 초과 불가 |
+| `CANDIDATE_CHANGE_OVERHEAT_ENABLED` | `false` | **2026-06-21 A~F 토론으로 OFF.** C3 당일등락 과열 페널티(change≥15%, −12점, KR/US 공통). 사후검증: US 급등후보 fwd3 +5.4~11.5%(역효과·메모리 "당일등락차단=US −118%p"와 일치), KR도 hit가 non-hit보다 덜 나쁨(방향 반전). C2(KR vol_ratio)는 별개 경로로 유지. 기본 on(현행 보존), config에서 off |
 | `US_PATHB_WEAK_MFE_CUT_ENABLED` | `false` | **2026-06-16 OFF.** 단타 손절 게이트는 번지수 오인(손실 HOLD=stop_recovery는 정상). 청산은 hold advisor가 판단. 코드 보존 |
 | `KR_PATHB_WEAK_MFE_CUT_ENABLED` | `false` | **2026-06-16 OFF.** 동일 사유 |
 | `HOLD_ADVISOR_PROFIT_GUARD_ENABLED` | `true` | **hold advisor 이익보호 prior: 이익 중 HOLD 반납(-2.36%p, profit_pullback -8.91%p) 방지 익절 우선(단 러너는 HOLD 유지).** A/B 변별력 +25%p. 라이브 미검증 → 미국장 모니터, 악화 시 false 즉시 롤백 |

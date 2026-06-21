@@ -24,6 +24,20 @@ Updated: 2026-06-21
 - ⏳ **[운영자 확정 필요] regime 런타임 보강** — consensus mode 비면 실측추세(`_tail_capture_regime`) fallback. "수정보류·위조금지" 영역 + 봇 재시작 필요라 운영자 승인 전 미착수.
 - ⏳ **메모리 정정**: selection "무엣지" → "지수/비용은 못 이기나 미선정 대비 약한 위생 우위 존재(US 선정 forward_3d 중앙 +0.286% vs 미선정 +0.088%, KR 함정회피)". 알파 아닌 위생.
 
+## A~F 멀티에이전트 토론 적용 결과 (2026-06-21)
+
+A~F 3자토론(codex+빌더+사회) 후속. 상세: 메모리 `project_af_debate_20260621`, `docs/important/DEBATE_PREP_AF_20260621.md`.
+
+**완료(코드/config 반영, 봇 재시작 시 적용):**
+- ✅ **C3 과열페널티 OFF** (`CANDIDATE_CHANGE_OVERHEAT_ENABLED=false`) — US 급등후보(change≥15%) fwd3 +5.4~11.5%로 역효과 확정. C2(KR vol_ratio)는 유지. (아래 "B: C2/C3 페널티 크기 사후검증" TODO의 C3 부분이 이걸로 해소)
+- ✅ **`KR_MOMENTUM_EARLY_ENTRY_ENABLED=false`** — 6/16후 체결0·손실경로, 위생 OFF.
+- ✅ **regime 측정 배선 복구** — `market_regime` 0/304 버그 수정(`_apply_consensus_guards` 안정캐시 seed + `_pathb_entry_market_regime` 측정전용). 라이브 게이팅 불변. 봇 재시작 후 forward 캡처(과거 소급불가). 위 "[운영자 확정 필요] regime 런타임 보강" TODO와는 별건(그건 게이팅용 fallback).
+
+**TODO:**
+- ⏳ **[낮음] mfe_backfill 재실행** (영역 C, "B"로 호명) — `tools/backfill_mfe_yfinance.py` 6/13 정지분(→오늘) 재실행. **적용가치 낮음(marginal):** ① [진입,청산] 창만 봄=청산 후 forward 미포함(trailing 질문 못 답함, tail_capture가 담당) ② yfinance 오측(TARGET 26.7% impossible) ③ Phase 1c 라이브 MFE가 forward 대체재. 굳이 돌리면 거친 capture 모니터링용, **봇 idle/off 시점에**(라이브 decisions.db 락 경합). 안 돌려도 라이브 MFE가 채움.
+- ⏳ **[검증] regime fix 사후확인** — 봇 재시작 후 신규 청산 몇 건에서 `market_regime` non-empty인지 확인. 빈 값이면 seed 시점 vs 진입 시점 재조사.
+- ⏳ **pnl_pct_net 과거 203 NULL** — 오염방지 설계대로(forward 정상). 과거 measured net 소급불가 — 필요시 별도 근사 테이블(비권장).
+
 ## 진입 후보 순위/타이밍 개선 (2026-06-16) — selection/entry-timing
 
 운영자 통점: "매수 후보 순위가 너무 달라 타이밍 안 맞다. watch 15인데 trade_ready 5가 너무 놓치고, 5가 우선순위 정렬도 아니다." 분석으로 구조 원인 확정(`trading_bot.py` `_normalize_selection_meta_runtime` 슬롯배분 + `selection_compact_schema` 캡).
