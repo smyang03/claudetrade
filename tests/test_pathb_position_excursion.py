@@ -61,6 +61,74 @@ class PositionExcursionTests(unittest.TestCase):
         self.assertAlmostEqual(meta["position_mfe_pct"], 2.5)
         self.assertAlmostEqual(meta["position_mae_pct"], -1.5)
 
+    def test_exit_meta_recovers_from_durable_when_pos_none(self):
+        # 청산 finalize 시 pos가 sync로 이미 제거된(None) 케이스: plan_json 영속값에서 복원.
+        self.rt.bot = types.SimpleNamespace(risk=None)
+        durable = {"observed_mfe_pct": 7.2, "observed_mae_pct": -1.1}
+        meta = self.rt._pathb_exit_meta(None, "US", "CLOSED_CLAUDE_PRICE_PRE_CLOSE", durable=durable)
+        self.assertAlmostEqual(meta["position_mfe_pct"], 7.2)
+        self.assertAlmostEqual(meta["position_mae_pct"], -1.1)
+
+    def test_exit_meta_pos_none_no_durable_does_not_crash(self):
+        self.rt.bot = types.SimpleNamespace(risk=None)
+        meta = self.rt._pathb_exit_meta(None, "US", "CLOSED_PROFIT_LADDER")
+        self.assertEqual(meta["position_mfe_pct"], 0.0)
+        self.assertEqual(meta["position_mae_pct"], 0.0)
+
+    def test_exit_meta_prefers_live_pos_over_durable(self):
+        self.rt.bot = types.SimpleNamespace(risk=None)
+        pos = {"sl": 0, "observed_mfe_pct": 10.0, "observed_mae_pct": -4.0}
+        durable = {"observed_mfe_pct": 1.0, "observed_mae_pct": -9.0}
+        meta = self.rt._pathb_exit_meta(pos, "US", "CLOSED_PROFIT_LADDER", durable=durable)
+        self.assertAlmostEqual(meta["position_mfe_pct"], 10.0)
+        self.assertAlmostEqual(meta["position_mae_pct"], -4.0)
+
+
+class _FakeStore:
+    def __init__(self):
+        self.calls = []
+
+    def update_path_run(self, path_run_id, *, plan=None, merge_plan=False):
+        self.calls.append((path_run_id, dict(plan or {}), merge_plan))
+
+
+class PositionExcursionDurablePersistTests(unittest.TestCase):
+    def setUp(self):
+        self.rt = PathBRuntime.__new__(PathBRuntime)
+        self.rt.store = _FakeStore()
+
+    def test_persists_to_plan_json_on_new_extreme(self):
+        pos = {"entry": 100.0, "pathb_path_run_id": "run-1"}
+        self.rt._update_position_excursion(pos, 110.0, "KR")
+        self.assertEqual(len(self.rt.store.calls), 1)
+        path_run_id, plan, merge = self.rt.store.calls[0]
+        self.assertEqual(path_run_id, "run-1")
+        self.assertTrue(merge)
+        self.assertAlmostEqual(plan["observed_peak_price"], 110.0)
+        self.assertAlmostEqual(plan["observed_mfe_pct"], 10.0)
+
+    def test_no_persist_without_path_run_id(self):
+        pos = {"entry": 100.0}  # pathb_path_run_id 없음(브로커 주입 등)
+        self.rt._update_position_excursion(pos, 110.0, "KR")
+        self.assertEqual(self.rt.store.calls, [])
+
+    def test_persists_only_when_extreme_changes(self):
+        pos = {"entry": 100.0, "pathb_path_run_id": "run-1"}
+        self.rt._update_position_excursion(pos, 110.0, "KR")  # 최초: 고점·저점 세팅 → 영속화
+        self.rt._update_position_excursion(pos, 95.0, "KR")   # 새 저점 → 영속화
+        self.rt._update_position_excursion(pos, 100.0, "KR")  # 고점·저점 불변 → 영속화 없음
+        self.assertEqual(len(self.rt.store.calls), 2)
+
+    def test_persist_failure_does_not_break_tracking(self):
+        class _BoomStore:
+            def update_path_run(self, *a, **k):
+                raise RuntimeError("db locked")
+
+        self.rt.store = _BoomStore()
+        pos = {"entry": 100.0, "pathb_path_run_id": "run-1"}
+        self.rt._update_position_excursion(pos, 120.0, "KR")  # 예외 삼키고 추적 유지
+        self.assertAlmostEqual(pos["observed_mfe_pct"], 20.0)
+
 
 if __name__ == "__main__":
     unittest.main()

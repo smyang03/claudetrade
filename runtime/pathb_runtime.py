@@ -3716,6 +3716,15 @@ class PathBRuntime:
         pnl_pct = float(closed_trade.get("pnl_pct", 0) or 0)
         execution_id = str(execution_id or closed_trade.get("exit_execution_id", "") or closed_trade.get("order_no", "") or "")
         position_id = str(closed_trade.get("position_id", "") or "")
+        # 외부 청산도 로컬 포지션이 이미 비어 MFE/MAE가 closed_trade에 없을 수 있다.
+        # plan_json에 영속화된 observed_* excursion으로 fallback해 측정 누락을 막는다.
+        _ext_plan = run.get("plan") or {}
+        _ext_mfe = closed_trade.get("position_mfe_pct")
+        if _ext_mfe is None:
+            _ext_mfe = _ext_plan.get("observed_mfe_pct")
+        _ext_mae = closed_trade.get("position_mae_pct")
+        if _ext_mae is None:
+            _ext_mae = _ext_plan.get("observed_mae_pct")
         if str(run.get("status", "")) != "CLOSED":
             self.sell_manager.mark_closed(
                 path_run_id,
@@ -3727,8 +3736,8 @@ class PathBRuntime:
                 execution_id=execution_id,
                 position_id=position_id,
                 usd_krw=self._pathb_fill_fx(market_key),
-                mfe_pct=closed_trade.get("position_mfe_pct"),
-                mae_pct=closed_trade.get("position_mae_pct"),
+                mfe_pct=_ext_mfe,
+                mae_pct=_ext_mae,
                 entry_market_regime=str(closed_trade.get("entry_market_regime") or ""),
                 entry_native_override=float(
                     closed_trade.get("display_avg_price", 0)
@@ -9251,11 +9260,21 @@ class PathBRuntime:
         price_native = float(price or 0)
         exit_price_krw = self._price_to_krw(price_native, market)
         pos = self._find_position(market, plan.ticker, path_run_id=plan.path_run_id) or self._find_position(market, plan.ticker)
+        # 청산이 브로커 truth reconcile로 마감되면(보유 0 확인) sync가 로컬 pos를 먼저
+        # 제거해 pos=None인 경우가 잦다. 그때 plan_json에 영속화해 둔 observed_* excursion으로
+        # exit_meta를 복원해 MFE/MAE 측정 누락(전체 청산의 ~87%)을 막는다.
+        durable_excursion: dict[str, Any] = {}
+        try:
+            _finalize_plan = (self.store.find_path_run(plan.path_run_id) or {}).get("plan") or {}
+            for _dk in ("observed_mfe_pct", "observed_mae_pct", "observed_peak_price", "observed_low_price"):
+                if _dk in _finalize_plan:
+                    durable_excursion[_dk] = _finalize_plan[_dk]
+        except Exception:
+            durable_excursion = {}
         ex: dict[str, Any] | None = None
-        exit_meta: dict[str, Any] = {}
+        exit_meta: dict[str, Any] = self._pathb_exit_meta(pos, market, close_reason, durable=durable_excursion)
         if pos is not None:
             pos.pop("pathb_closing", None)
-            exit_meta = self._pathb_exit_meta(pos, market, close_reason)
             try:
                 ex = self.bot.risk.close_position(
                     plan.ticker,
@@ -11640,6 +11659,30 @@ class PathBRuntime:
         if entry > 0:
             pos["observed_mfe_pct"] = (peak / entry - 1.0) * 100.0
             pos["observed_mae_pct"] = (low / entry - 1.0) * 100.0
+        # 새 고점/저점일 때만 durable 영속화. 청산 finalize 시 브로커 보유가 이미 0이라
+        # 로컬 pos가 sync로 제거된 경우(전체 청산의 ~87%)에도 exit_meta가 plan_json에서
+        # MFE/MAE를 복원하도록 한다. observed_* 전용키만 쓰며 peak_pnl_pct(ladder 입력)는
+        # 건드리지 않는다.
+        if peak != prev_peak or low != prev_low:
+            self._persist_observed_excursion(pos)
+
+    def _persist_observed_excursion(self, pos: dict[str, Any]) -> None:
+        """observed_* excursion을 path_run plan_json에 durable 영속화(merge, 추가 전용)."""
+        path_run_id = str(pos.get("pathb_path_run_id", "") or "")
+        if not path_run_id:
+            return
+        durable: dict[str, Any] = {
+            "observed_peak_price": float(pos.get("observed_peak_price", 0) or 0),
+            "observed_low_price": float(pos.get("observed_low_price", 0) or 0),
+        }
+        if "observed_mfe_pct" in pos:
+            durable["observed_mfe_pct"] = float(pos.get("observed_mfe_pct") or 0)
+        if "observed_mae_pct" in pos:
+            durable["observed_mae_pct"] = float(pos.get("observed_mae_pct") or 0)
+        try:
+            self.store.update_path_run(path_run_id, plan=durable, merge_plan=True)
+        except Exception:
+            pass
 
     def _market_sharp_reversal_block(self, market: str) -> bool:
         """국면 급반전 enforce: 장중 지수 급반전이 active면 PathB 신규 진입을 보류한다.
@@ -11654,14 +11697,36 @@ class PathBRuntime:
         key = "US" if str(market or "").upper() == "US" else "KR"
         return bool(active.get(key))
 
-    def _pathb_exit_meta(self, pos: dict[str, Any], market: str, close_reason: str) -> dict[str, Any]:
+    def _pathb_exit_meta(
+        self,
+        pos: dict[str, Any] | None,
+        market: str,
+        close_reason: str,
+        *,
+        durable: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        # pos가 None이어도(브로커 보유 0으로 sync가 로컬 포지션을 먼저 제거한 청산 경로)
+        # durable(plan_json 영속값)에서 MFE/MAE/regime을 복원해 측정 누락을 막는다.
+        pos = pos or {}
+        durable = durable or {}
         risk = getattr(self.bot, "risk", None)
+
+        def _excursion(observed_key: str, legacy_key: str) -> float:
+            for src in (pos, durable):
+                val = src.get(observed_key)
+                if val is not None:
+                    try:
+                        return float(val)
+                    except (TypeError, ValueError):
+                        pass
+            return float(pos.get(legacy_key, 0) or 0)
+
         meta: dict[str, Any] = {
             "strategy_stop_price": float(pos.get("sl", 0) or 0),
             "peak_pnl_pct": float(pos.get("peak_pnl_pct", 0) or 0),
-            "position_mfe_pct": float(pos.get("observed_mfe_pct", pos.get("peak_pnl_pct", 0)) or 0),
-            "position_mae_pct": float(pos.get("observed_mae_pct", pos.get("trough_pnl_pct", 0)) or 0),
-            "entry_market_regime": str(pos.get("entry_market_regime") or ""),
+            "position_mfe_pct": _excursion("observed_mfe_pct", "peak_pnl_pct"),
+            "position_mae_pct": _excursion("observed_mae_pct", "trough_pnl_pct"),
+            "entry_market_regime": str(pos.get("entry_market_regime") or durable.get("entry_market_regime") or ""),
         }
         try:
             if callable(getattr(risk, "position_loss_budget_krw", None)):

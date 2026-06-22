@@ -184,7 +184,7 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         config = json.loads(config_path.read_text(encoding="utf-8"))
         env_overrides = config.get("env_overrides") or {}
 
-        self.assertEqual(env_overrides.get("CANDIDATE_PROMPT_POOL_HARD_CAP_US"), "40")
+        self.assertEqual(env_overrides.get("CANDIDATE_PROMPT_POOL_HARD_CAP_US"), "24")
         self.assertEqual(env_overrides.get("DISCOVERY_PROMPT_ENABLED"), "true")
         self.assertEqual(env_overrides.get("DISCOVERY_MAX_SLOTS_US"), "5")
         self.assertEqual(env_overrides.get("DISCOVERY_ALLOW_BUY_READY"), "false")

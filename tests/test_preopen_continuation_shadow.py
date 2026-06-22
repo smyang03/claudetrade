@@ -28,7 +28,7 @@ def _runtime_path(root: Path):
 
 class PreopenContinuationShadowTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.db_path = self.root / "data" / "preopen_continuation.db"
         self.patches = [
