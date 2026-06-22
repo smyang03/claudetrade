@@ -31,6 +31,22 @@ _POSTMORTEM_PLACEHOLDER_LESSONS = {
 }
 
 
+def _postmortem_fresh_brain_active() -> bool:
+    """사후분석 프롬프트에 레거시 brain summary를 주입할지 결정.
+
+    시장판단(_brain_context_for_judge)·selection(_v2_fresh_brain_selection_active)은
+    이미 동일 정책으로 레거시 brain/correction_guide를 차단하는데, postmortem 경로에만
+    가드가 빠져 stale brain 요약(예: 급락장 시점 correction_guide 시대의 누적 요약)이
+    매 사후분석에 계속 주입되던 누락을 메운다. 단일 출처(analysts) 정책을 재사용한다.
+    import 실패 시 현행 동작(주입)을 유지해 회귀를 만들지 않는다.
+    """
+    try:
+        from minority_report.analysts import _v2_fresh_brain_selection_active
+        return _v2_fresh_brain_selection_active()
+    except Exception:
+        return False
+
+
 def _append_lesson_candidate(
     market: str, date: str, key_lesson: str,
     bull_result: str, excluded: bool
@@ -492,7 +508,13 @@ def run(market: str, date: str, today_judgment: dict,
                                  "tuning_rules": [], "today_notes": ""},
         }
 
-    brain_summary = BrainDB.generate_prompt_summary(market)  # 실패해도 무시하지 않음
+    if _postmortem_fresh_brain_active():
+        # V2 fresh brain: selection/시장판단과 동일하게 레거시 brain 요약을 주입하지 않는다.
+        # stale correction_guide-시대 누적 요약이 다른 국면 사후분석에 새는 것을 차단.
+        brain_summary = ""
+        log.debug(f"[postmortem] V2 fresh brain — legacy brain summary skipped ({market})")
+    else:
+        brain_summary = BrainDB.generate_prompt_summary(market)  # 실패해도 무시하지 않음
     selection_feedback = _recent_selection_feedback_section(market)
     market_label = _market_system_label(market)
     trade_section = _format_trade_log(trade_log, market)

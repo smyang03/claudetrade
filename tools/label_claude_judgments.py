@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from minority_report.lesson_quality import QUALITY_VERSION
+from tools.build_claude_decision_facts import warn_if_fact_data_stale
 
 
 DEFAULT_FACT_DB = ROOT / "data" / "ml" / "claude_decision_facts.db"
@@ -675,9 +676,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--write-lesson-candidates", action="store_true")
     parser.add_argument("--lesson-output", default="")
     parser.add_argument("--lesson-min-sample", type=int, default=3)
+    parser.add_argument("--allow-stale", action="store_true",
+                        help="fact_* 가 묵었어도 라벨링 강행(기본은 stale이면 차단)")
     for key, default in DEFAULT_LABEL_CONFIG.items():
         parser.add_argument(f"--{key.replace('_', '-')}", dest=key, type=float, default=None)
     args = parser.parse_args(argv)
+
+    if warn_if_fact_data_stale(args.db, allow_stale=bool(args.allow_stale)):
+        print("[fact-freshness] fact 데이터가 stale이라 라벨링을 중단했다. "
+              "build_claude_decision_facts.py 실행 후 재시도하거나 --allow-stale 사용.", file=sys.stderr)
+        return 2
 
     summary = label_claude_judgments(
         db_path=args.db,

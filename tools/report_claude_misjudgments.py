@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.label_claude_judgments import DEFAULT_FACT_DB
+from tools.build_claude_decision_facts import warn_if_fact_data_stale
 
 
 def _utc_now() -> str:
@@ -411,7 +412,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--latest-only", action="store_true")
     parser.add_argument("--format", choices=("md", "json"), default="md")
     parser.add_argument("--output", default="")
+    parser.add_argument("--allow-stale", action="store_true",
+                        help="fact_* 가 묵었어도 분석 강행(기본은 stale이면 차단)")
     args = parser.parse_args(argv)
+
+    if warn_if_fact_data_stale(args.db, allow_stale=bool(args.allow_stale)):
+        print("[fact-freshness] fact 데이터가 stale이라 리포트를 중단했다. "
+              "build_claude_decision_facts.py 실행 후 재시도하거나 --allow-stale 사용.", file=sys.stderr)
+        return 2
 
     payload = build_report_payload(
         db_path=args.db,

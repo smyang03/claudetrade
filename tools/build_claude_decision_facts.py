@@ -22,6 +22,54 @@ DEFAULT_SELECTION_DB = ROOT / "data" / "ticker_selection_log.db"
 DEFAULT_ML_DB = ROOT / "data" / "ml" / "decisions.db"
 DEFAULT_EVENT_DB = ROOT / "data" / "v2_event_store.db"
 
+# fact_* 는 build_claude_decision_facts.py 수동 실행으로만 갱신된다(cron/훅 미등록).
+# 빌드가 멈추면 소비 도구(report_claude_misjudgments / label_claude_judgments)가
+# 몇 주 묵은 데이터를 "현재"로 착각해 쓰는 함정이 생긴다(2026-06-23 무결성 감사:
+# 26일 동결, 1d/3d/5d 0%). 소비 도구는 main() 시작에서 아래 가드로 신선도를 확인한다.
+FACT_STALE_WARN_DAYS = 7.0
+
+
+def fact_data_age_days(db_path: str | Path = DEFAULT_FACT_DB) -> float | None:
+    """fact_forward_outcome 최신 updated_at 기준 경과일. DB/행 없으면 None."""
+    path = Path(db_path)
+    if not path.exists():
+        return None
+    try:
+        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10)) as conn:
+            row = conn.execute("SELECT MAX(updated_at) FROM fact_forward_outcome").fetchone()
+    except sqlite3.Error:
+        return None
+    if not row or not row[0]:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(row[0]).strip())
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts.astimezone(timezone.utc)).total_seconds() / 86400.0
+
+
+def warn_if_fact_data_stale(db_path: str | Path = DEFAULT_FACT_DB, *,
+                            max_age_days: float = FACT_STALE_WARN_DAYS,
+                            allow_stale: bool = False) -> bool:
+    """fact_* 가 오래됐으면 stderr에 크게 경고. stale이면 True 반환.
+
+    소비 도구가 묵은 fact 데이터로 분석을 내놓는 함정을 막는다. allow_stale=False이고
+    stale이면 호출측이 종료(exit)하도록 True를 돌려준다(파괴적이지 않음 — 차단만).
+    """
+    age = fact_data_age_days(db_path)
+    if age is None:
+        print("[fact-freshness] WARNING: fact_forward_outcome 데이터 없음 또는 읽기 실패 "
+              "— build_claude_decision_facts.py 먼저 실행 필요.", file=sys.stderr)
+        return not allow_stale
+    if age > max_age_days:
+        print(f"[fact-freshness] WARNING: fact_* 데이터가 {age:.1f}일 묵음 (>{max_age_days:g}일). "
+              f"build_claude_decision_facts.py 재실행 전까지 결과는 과거 스냅샷이다. "
+              f"--allow-stale 로 강행 가능.", file=sys.stderr)
+        return not allow_stale
+    return False
+
 
 FACT_SCHEMA = """
 CREATE TABLE IF NOT EXISTS fact_selection (

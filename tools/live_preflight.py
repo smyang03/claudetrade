@@ -4574,6 +4574,30 @@ def _warning_classification_counts(checks: list[CheckResult]) -> dict[str, int]:
     }
 
 
+def _integrity_audit_checks(mode: str) -> list[CheckResult]:
+    """무결성 감사(tools/integrity_audit.py) 요약을 preflight에 표면화 — 비차단.
+
+    측정/brain/config 정합성 의심을 운영자에게 보이되, 이미 알려진 데이터 정합성 이슈
+    (예: market_regime 배선버그)가 live 시작 자체를 막지 않도록 ALERT를 WARN으로만
+    올린다(주문 안전 게이트가 아니라 데이터 위생 가시화). 상세는 report 파일 참조.
+    """
+    try:
+        from tools import integrity_audit
+        payload = integrity_audit.run_audit()
+    except Exception as exc:  # 감사 실패가 preflight를 죽이지 않게
+        return [CheckResult("integrity.audit", "WARN", f"무결성 감사 실행 실패: {exc}")]
+    counts = payload.get("counts", {})
+    alert_items = sorted({i["check"] for i in payload.get("items", []) if i["status"] == "ALERT"})
+    status = "WARN" if (counts.get("alert") or counts.get("warn")) else "PASS"
+    detail = (f"ALERT {counts.get('alert', 0)} / WARN {counts.get('warn', 0)} / "
+              f"AI판정필요 {counts.get('needs_ai', 0)}")
+    if alert_items:
+        detail += " | ALERT: " + ", ".join(alert_items[:6]) + (" 외" if len(alert_items) > 6 else "")
+    return [CheckResult("integrity.audit", status, detail,
+                        {"counts": counts, "alert_checks": alert_items,
+                         "report_path": "state/integrity_audit_report.json"})]
+
+
 def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, include_dashboard: bool = True) -> dict[str, Any]:
     checks: list[CheckResult] = []
     config_checks, config = _config_checks(mode, allow_config_conflicts)
@@ -4595,6 +4619,7 @@ def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, i
     checks.extend(_candidate_audit_outcome_checks(mode))
     checks.extend(_ticker_selection_attribution_checks(mode))
     checks.extend(_ops_summary_checks(mode))
+    checks.extend(_integrity_audit_checks(mode))
     fail_count = sum(1 for check in checks if check.status == "FAIL")
     warn_count = sum(1 for check in checks if check.status == "WARN")
     warning_counts = _warning_classification_counts(checks)
