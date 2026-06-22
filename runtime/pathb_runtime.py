@@ -3491,6 +3491,7 @@ class PathBRuntime:
                 continue
             self._clear_stale_pathb_closing_lock(pos, market, plan.path_run_id)
             if self._pathb_sell_in_flight(run, pos):
+                self._log_unfilled_sell_shadow(pos, market, plan)
                 continue
             current = self._current_native_price_for_exit(market, plan.ticker, pos)
             if current <= 0:
@@ -11280,11 +11281,8 @@ class PathBRuntime:
             age_sec = (datetime.now(KST) - closing_at.astimezone(KST)).total_seconds()
         except Exception:
             age_sec = ttl_sec + 1
-        if age_sec < ttl_sec:
-            return False
+        market_key = str(market or "").upper()
         ticker = str(pos.get("ticker", "") or "")
-        if self._find_pending_order(str(market or "").upper(), ticker, path_run_id=path_run_id):
-            return False
         try:
             qty = int(float(pos.get("qty", 0) or 0))
         except Exception:
@@ -11292,18 +11290,152 @@ class PathBRuntime:
         if qty <= 0:
             return False
 
+        # P0(데드락 buster): broker truth가 "미체결 매도주문 없음"을 확인하면, 로컬
+        # pending_orders 잔존 여부와 무관하게 짧은 grace 후 락을 해제한다. 운영자 수동
+        # 취소 등으로 broker엔 주문이 사라졌는데 로컬 메모리에만 남아 _find_pending_order가
+        # 영구히 막던 데드락을 끊는다(broker truth 우선 원칙). broker 조회 실패/stale/주문
+        # 존재 시에는 기존 TTL + 로컬 경로로 fail-closed 유지(약화 없음).
+        if self._broker_confirms_no_pending_sell(market_key, ticker, path_run_id):
+            try:
+                grace_sec = float(os.getenv("PATHB_CLOSING_LOCK_BROKER_CONFIRM_GRACE_SEC", "60") or 60)
+            except Exception:
+                grace_sec = 60.0
+            if age_sec < max(0.0, grace_sec):
+                return False
+            clear_reason = "broker_confirmed_no_pending_sell"
+        else:
+            if age_sec < ttl_sec:
+                return False
+            if self._find_pending_order(market_key, ticker, path_run_id=path_run_id):
+                return False
+            clear_reason = "still_held_no_pending_order"
+
         archived = self._clear_pathb_sell_evidence_from_position(
             pos,
-            market=str(market or "").upper(),
+            market=market_key,
             path_run_id=path_run_id,
             execution_id="",
-            reason="still_held_no_pending_order",
+            reason=clear_reason,
         )
         log.warning(
-            f"[PathB stale closing cleared] {market} {ticker} age_sec={age_sec:.0f} "
-            f"run={path_run_id}"
+            f"[PathB stale closing cleared] {market_key} {ticker} age_sec={age_sec:.0f} "
+            f"run={path_run_id} reason={clear_reason}"
         )
         return bool(archived)
+
+    def _broker_confirms_no_pending_sell(self, market: str, ticker: str, path_run_id: str = "") -> bool:
+        """broker truth로 해당 종목의 미체결 매도주문 부재를 확인한다.
+
+        반환 True: broker 신뢰 가능 + 미체결 매도주문 없음(취소/체결 완료).
+        반환 False: broker 조회 실패/stale/error 또는 매도주문 존재 → fail-closed.
+        """
+        market_key = str(market or "").upper()
+        try:
+            self.refresh_broker_truth(market_key, force=True)
+        except Exception:
+            return False
+        try:
+            market_data = self.broker_truth.market_snapshot(market_key)
+        except Exception:
+            return False
+        if not isinstance(market_data, dict):
+            return False
+        if (
+            bool(market_data.get("missing"))
+            or bool(market_data.get("stale"))
+            or str(market_data.get("error", "") or "")
+        ):
+            return False
+        try:
+            rows = self._broker_rows_for_ticker(market_data.get("open_orders", []), market_key, ticker)
+        except Exception:
+            return False
+        for order in rows:
+            side = str(order.get("side") or order.get("order_side") or order.get("action") or "").lower()
+            sell_like = (not side) or ("sell" in side) or side in {"s", "ask"}
+            try:
+                remaining = float(order.get("remaining_qty", order.get("qty", 0)) or 0)
+            except Exception:
+                remaining = 1.0  # 불확실 → 존재로 간주(fail-closed)
+            if sell_like and remaining > 0:
+                return False
+        return True
+
+    def _log_unfilled_sell_shadow(self, pos: dict[str, Any], market: str, plan: Any) -> None:
+        """P1 shadow: 미체결 매도(지정가 페이드)를 관측 기록한다. 실주문 무영향.
+
+        SELL 판단가에 지정가가 박혀 가격 하락 시 미체결로 방치되는 누수를 계측한다.
+        '추격(현재가 재제출) 매도 가정 pnl' vs '지정가 가정 pnl'을 함께 남겨, 사후 도구가
+        funnel + 청산원장을 조인해 추격이 net+인지 검증한 뒤에만 P1 enforce를 판단한다.
+        """
+        if not _env_bool("PATHB_UNFILLED_SELL_SHADOW_ENABLED", True):
+            return
+        try:
+            closing_raw = str(pos.get("pathb_closing", "") or "")
+            if not closing_raw:
+                return
+            now = datetime.now(KST)
+            try:
+                interval = float(os.getenv("PATHB_UNFILLED_SELL_SHADOW_INTERVAL_SEC", "120") or 120)
+            except Exception:
+                interval = 120.0
+            last_raw = str(pos.get("_unfilled_sell_shadow_last_at", "") or "")
+            if last_raw:
+                try:
+                    last_at = datetime.fromisoformat(last_raw)
+                    if last_at.tzinfo is None:
+                        last_at = last_at.replace(tzinfo=KST)
+                    if (now - last_at.astimezone(KST)).total_seconds() < max(1.0, interval):
+                        return
+                except Exception:
+                    pass
+            market_key = str(market or "").upper()
+            ticker = str(getattr(plan, "ticker", "") or pos.get("ticker", "") or "")
+            current = self._current_native_price_for_exit(market_key, ticker, pos)
+            if current <= 0:
+                return
+            try:
+                order_price = float(pos.get("pathb_pending_sell_price", 0) or 0)
+            except Exception:
+                order_price = 0.0
+            try:
+                entry_native = float(pos.get("entry_native", 0) or 0) or float(pos.get("display_avg_price", 0) or 0)
+            except Exception:
+                entry_native = 0.0
+            try:
+                closing_at = datetime.fromisoformat(closing_raw)
+                if closing_at.tzinfo is None:
+                    closing_at = closing_at.replace(tzinfo=KST)
+                age_sec = (now - closing_at.astimezone(KST)).total_seconds()
+            except Exception:
+                age_sec = None
+            gap_pct = round((current / order_price - 1.0) * 100, 3) if order_price > 0 else None
+            chase_pnl_pct = round((current / entry_native - 1.0) * 100, 3) if entry_native > 0 else None
+            limit_pnl_pct = round((order_price / entry_native - 1.0) * 100, 3) if entry_native > 0 and order_price > 0 else None
+            rec = {
+                "ts": now.isoformat(timespec="seconds"),
+                "market": market_key,
+                "ticker": ticker,
+                "path_run_id": str(getattr(plan, "path_run_id", "") or ""),
+                "order_no": str(pos.get("pathb_pending_sell_order_no", "") or ""),
+                "close_reason": str(pos.get("pathb_pending_close_reason", "") or ""),
+                "order_price": order_price,
+                "current": current,
+                "entry": entry_native,
+                "age_sec": round(age_sec, 0) if age_sec is not None else None,
+                "gap_pct": gap_pct,              # 현재가 vs 지정가 (음수=가격 빠져 미체결)
+                "limit_pnl_pct": limit_pnl_pct,  # 지정가 체결 가정 pnl
+                "chase_pnl_pct": chase_pnl_pct,  # 현재가 추격 매도 가정 pnl
+            }
+            path = get_runtime_path(
+                "logs", "funnel", f"unfilled_sell_shadow_{self._session_date(market_key)}.jsonl",
+                make_parents=True,
+            )
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            pos["_unfilled_sell_shadow_last_at"] = now.isoformat(timespec="seconds")
+        except Exception:
+            pass
 
     def _clear_pathb_sell_evidence_from_position(
         self,
