@@ -27,7 +27,8 @@ Compact active backlog only. Details and verification notes live in [../ACTIVE_W
 | Hold advisor cost/risk | Review `PRE_CLOSE_CARRY` challenge cost, pending intraday retry state, missed-runup bucket reporting, and read-only PathB block reporting. |
 | Existing audit backlog | Keep actual-prompt outcomes, entry/exit shadow, bucket/source/score quality, zero-holding fixtures, PathB TTL/order matching, sizing reason QA, canonical fallback exclusion, guard tests, tuning cleanup, and fill-truth monitoring open until direct evidence closes them. |
 | US vol_ratio 입력 품질 (#7-2 후속) | US `vol_ratio` 1.0 placeholder를 실값으로. 별도 producer(일평균 거래량) + 세션 진행률 보정. 실행 영향(bucket/continuation/mean_reversion/VB 소비)이므로 live 연결 전 US PathB 성과 확인 + shadow 선행. naive 실값 금지. |
-| hold advisor 국면 조건부화 (#4, 2026-06-23 검토 후속) | profit_guard '익절 우선'을 bear/weak·반전 active 국면에 한정하고 BULL+고점갱신은 러너 HOLD 강제. prior 표본이 5월 강세장 confound라 일반화 미검증(2자토론·`docs/reports/hold_advisor_review_20260623.md`). **선행조건**: profit_guard 라이브 A/B(forward-validation)에서 net+ 확인. 정식 lesson_validation `score_cell` 청산-outcome 차원 편입(현재 selection forward-frame 전용)도 함께 설계. 청산 행동 변경이므로 운영자 승인 + 검증 선행. |
+| hold advisor 정식 lesson_validation 편입 (#4a, **다음 세션 즉시 시작**) | profit_guard(익절) 교훈을 forward-validation에 편입 → 자동 셀 verdict. **설계 완비**: `docs/important/HOLD_ADVISOR_LESSON_VALIDATION_HANDOFF.md`(신규 3컴포넌트: forward 백필테이블 `hold_advisor_exit_outcome`+yfinance / regime 소스 / cost_floor 프레임. score_cell·upsert·rescore_lessons 패턴 재사용. control 자동토글 금지=verdict만). 라이브 무영향(격리 store+read-only). |
+| hold advisor 국면 조건부화 (#4b, A/B 검증 후) | profit_guard '익절 우선'을 bear/weak·반전 active 국면에 한정하고 BULL+고점갱신은 러너 HOLD 강제. prior 표본이 5월 강세장 confound라 일반화 미검증(`docs/reports/hold_advisor_review_20260623.md`). **선행조건**: #4a 정식 편입 verdict 또는 A/B 도구에서 net+ 확인. 청산 행동 변경이므로 운영자 승인 + 검증 선행. |
 
 ## P2 / Observe Only
 
