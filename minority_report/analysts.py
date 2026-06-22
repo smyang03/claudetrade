@@ -62,6 +62,20 @@ def _env_bool_flag(name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _v2_fresh_brain_selection_active() -> bool:
+    """selection 프롬프트에 레거시 brain/correction_guide를 주입할지 결정.
+
+    trading_bot._v2_fresh_brain_policy_enabled()와 동일 정책을 유지한다. 시장판단
+    경로(_brain_context_for_judge)는 이미 이 가드로 레거시 brain을 차단하는데,
+    selection 경로에만 가드가 빠져 stale correction_guide(예: 급락장 방어 지침)가
+    강세장에도 계속 주입되던 누락을 메운다. 정책 변경 시 두 함수를 함께 갱신할 것.
+    """
+    policy = str(os.getenv("V2_BRAIN_POLICY", "") or "").strip().lower()
+    if policy in {"fresh", "fresh_v2", "fresh_v2_reference_v1"}:
+        return True
+    return _env_bool_flag("V2_FRESH_BRAIN_START", False)
+
+
 def _r1_model_for(analyst_type: str) -> str:
     role = str(analyst_type or "").strip().lower()
     if role == "bull":
@@ -2733,21 +2747,29 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
     digest_news_section = _digest_news_excerpt(digest_prompt)
     intraday_section = f"\n장중 컨텍스트:\n{intraday_context[:400]}\n" if intraday_context else ""
     brain_section = ""
-    try:
-        from claude_memory import brain as BrainDB
-        brain_summary = BrainDB.generate_prompt_summary(market)
-        correction = json.dumps(
-            BrainDB.load().get("correction_guide", {}).get(market, {}),
-            ensure_ascii=False,
+    if _v2_fresh_brain_selection_active():
+        # V2 fresh brain: 시장판단(_brain_context_for_judge)과 동일하게 레거시 brain/
+        # correction_guide를 selection 프롬프트에 주입하지 않는다. stale 정책 메모리
+        # (예: 급락장 시점의 "MILD_BULL 차단" 지침)가 다른 국면에 새는 것을 차단한다.
+        log.debug(
+            f"[ticker-selection] V2 fresh brain — legacy brain/correction_guide skipped ({market})"
         )
-        if brain_summary or correction != "{}":
-            brain_section = (
-                "\n학습/교정 요약:\n"
-                f"{brain_summary[:700]}\n"
-                f"correction_guide: {correction[:450]}\n"
+    else:
+        try:
+            from claude_memory import brain as BrainDB
+            brain_summary = BrainDB.generate_prompt_summary(market)
+            correction = json.dumps(
+                BrainDB.load().get("correction_guide", {}).get(market, {}),
+                ensure_ascii=False,
             )
-    except Exception as _e:
-        log.debug(f"[ticker-selection] brain context skipped: {_e}")
+            if brain_summary or correction != "{}":
+                brain_section = (
+                    "\n학습/교정 요약:\n"
+                    f"{brain_summary[:700]}\n"
+                    f"correction_guide: {correction[:450]}\n"
+                )
+        except Exception as _e:
+            log.debug(f"[ticker-selection] brain context skipped: {_e}")
 
     tuner_section = ""
     try:
