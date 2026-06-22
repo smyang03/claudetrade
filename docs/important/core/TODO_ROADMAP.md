@@ -27,6 +27,7 @@ Compact active backlog only. Details and verification notes live in [../ACTIVE_W
 | Hold advisor cost/risk | Review `PRE_CLOSE_CARRY` challenge cost, pending intraday retry state, missed-runup bucket reporting, and read-only PathB block reporting. |
 | Existing audit backlog | Keep actual-prompt outcomes, entry/exit shadow, bucket/source/score quality, zero-holding fixtures, PathB TTL/order matching, sizing reason QA, canonical fallback exclusion, guard tests, tuning cleanup, and fill-truth monitoring open until direct evidence closes them. |
 | US vol_ratio 입력 품질 (#7-2 후속) | US `vol_ratio` 1.0 placeholder를 실값으로. 별도 producer(일평균 거래량) + 세션 진행률 보정. 실행 영향(bucket/continuation/mean_reversion/VB 소비)이므로 live 연결 전 US PathB 성과 확인 + shadow 선행. naive 실값 금지. |
+| hold advisor 국면 조건부화 (#4, 2026-06-23 검토 후속) | profit_guard '익절 우선'을 bear/weak·반전 active 국면에 한정하고 BULL+고점갱신은 러너 HOLD 강제. prior 표본이 5월 강세장 confound라 일반화 미검증(2자토론·`docs/reports/hold_advisor_review_20260623.md`). **선행조건**: profit_guard 라이브 A/B(forward-validation)에서 net+ 확인. 정식 lesson_validation `score_cell` 청산-outcome 차원 편입(현재 selection forward-frame 전용)도 함께 설계. 청산 행동 변경이므로 운영자 승인 + 검증 선행. |
 
 ## P2 / Observe Only
 
