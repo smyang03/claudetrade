@@ -23,7 +23,11 @@ class DailyBacklogHelperTests(unittest.TestCase):
 
     def test_backlog_collects_pending_dates_and_runs_daily_horizons(self):
         import sqlite3, tempfile
+        from datetime import datetime, timedelta
 
+        # 최근 세션은 lookback(10일) 내여야 한다 — 고정 날짜는 시간이 지나며 lookback을
+        # 이탈하므로 오늘 기준 상대 날짜로 생성한다.
+        recent = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "candidate_audit.db"
             con = sqlite3.connect(db)
@@ -31,7 +35,7 @@ class DailyBacklogHelperTests(unittest.TestCase):
             con.execute("CREATE TABLE audit_candidate_outcomes (candidate_key TEXT, status TEXT)")
             # 오래된 pending 세션 (lookback 밖) + 최근 세션
             con.execute("INSERT INTO audit_candidate_rows VALUES ('k1','2026-05-19','US')")
-            con.execute("INSERT INTO audit_candidate_rows VALUES ('k2','2026-06-10','US')")
+            con.execute("INSERT INTO audit_candidate_rows VALUES ('k2',?,'US')", (recent,))
             con.execute("INSERT INTO audit_candidate_outcomes VALUES ('k1','daily_pending')")
             con.commit()
             con.close()
@@ -47,7 +51,7 @@ class DailyBacklogHelperTests(unittest.TestCase):
 
         # 오래된 pending(5/19)도 lookback 밖이지만 포함돼야 한다
         self.assertIn("2026-05-19", result["dates"])
-        self.assertIn("2026-06-10", result["dates"])
+        self.assertIn(recent, result["dates"])
         for call in calls:
             self.assertEqual(tuple(sorted(call["horizons"])), (1440, 2880, 4320))
 
