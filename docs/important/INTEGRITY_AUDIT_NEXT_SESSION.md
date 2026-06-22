@@ -34,7 +34,11 @@ python tools/integrity_audit.py                  # market_regime/brain 오염 WA
 
 ## 2. 다음 세션 코드 작업 (우선순위순)
 
-### 2-1. [P0 측정] mfe/mae 영속화 — regime의 자매 버그
+### 2-1. [P0 측정] mfe/mae 영속화 — regime의 자매 버그  ✅ 완료(2026-06-23, 봇 재시작 시 적용)
+
+> **정정·완료 요약:** 핸드오프 원안(rehydrate 유실)을 직접 재쿼리로 반박 — same_day 청산도 92% NULL. 진짜 원인은 **브로커 truth reconcile 청산 시 sync가 보유 0 로컬 pos를 먼저 제거 → finalize의 `_find_position`=None → exit_meta 미생성**. 수정처방: ① `_update_position_excursion`이 새 극값마다 observed_*를 plan_json에 durable 영속화 ② `_finalize_pathb_sell_close`/`_pathb_exit_meta`/`on_external_close`가 pos 없어도 durable로 복원. 보호영역(MD 위반 기록 CLAUDE.md 2026-06-23). 테스트 12 + 회귀 291 passed. **§3 Path A는 오독: 진짜 Path A 청산 9건뿐·이미 충진 → 별개작업 불필요.** 아래 원본은 참고용.
+
+
 
 - **현상:** `v2_learning.mfe_pct`/`mae_pct` 최근 14일 3~4% 충진. 최근 CLOSED 12/54건만 `position_mfe_pct` 방출.
 - **근본원인(regime과 동일):** `observed_mfe_pct`/`observed_peak_price`가 **휘발성 pos에만** 저장(`runtime/pathb_runtime.py:11638-11642` `_update_position_excursion`), exit_meta가 거기서 읽음(`:11662-11663`). 멀티데이 보유·재시작 rehydrate 시 pos의 observed_* 유실 → CLOSED payload에 mfe 안 들어감.

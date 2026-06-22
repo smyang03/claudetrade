@@ -291,6 +291,19 @@ Work item: hold advisor 이익보호 prior 추가 + weak_mfe_cut OFF (전면 진
 - Tests run: hold advisor/weak_mfe/청산 회귀 124 passed; 전체 `pytest tests/` 2522 passed; `py_compile`; prior 토글 on/off 동작 확인; `check_mojibake --staged`; `live_preflight --mode live` ok=True FAIL 0.
 - Remaining risk: ① prior는 A/B 가상실현 50건만, **라이브 효과 미검증** → 미국장 모니터(profit_pullback giveback 줄었나)·악화 시 토글 off. ② system 전체 적용이라 profit_pullback 외 케이스(loss_deferral 등) 영향 미검증 → "이익 중" 한정으로 제한했으나 관찰 필요. ③ 진입 변별·alpha 근본 문제는 미해결(이번은 capture 개선만). ④ 잡전략 OFF·진입 빈도·profit_ladder 강화는 효과 없음/보호영역이라 제외 — 별도 검토.
 
+### MD 위반 사항
+
+Recorded date: 2026-06-23
+Work item: 무결성 감사 2-1 — PathB MFE/MAE 측정 누락 근본수정(observed_* durable 영속화 + 청산 finalize fallback). 운영자 지시: "수정처방으로 하고 같이봐줘"(핸드오프 원안 대신 데이터로 정정한 처방으로 진행).
+
+- Protected area touched: `runtime/pathb_runtime.py` exit/excursion 보호 계약 — `_update_position_excursion`(Phase 1c), `_pathb_exit_meta`, `_finalize_pathb_sell_close`, `on_external_close`.
+- Why unavoidable: v2_learning `mfe_pct` 충진율이 PathB 청산 261건 중 241건(87%) NULL인데, 누락이 발생하는 지점이 보호영역인 청산 finalize 경로 자체다. 핸드오프 진단(멀티데이 rehydrate 유실)을 직접 재쿼리로 검증했더니 same_day 청산도 92% NULL이라 영속화 가설이 반박됐고, 진짜 원인은 **브로커 truth reconcile 청산 시 `_sync_runtime_with_broker`가 보유 0인 로컬 pos를 먼저 제거 → `_finalize_pathb_sell_close`의 `_find_position`=None → exit_meta 미생성 → mark_closed가 mfe_pct=None으로 키 자체를 누락**. 보호영역 밖에서는 처방 불가.
+- Before/after behavior: before — `_pathb_exit_meta`는 `pos is not None`일 때만 생성, observed_*는 휘발성 pos에만 존재. pos 제거된 청산(PRE_CLOSE 44/0·LADDER 32/0·TARGET 25/0)은 MFE/MAE 전부 누락. after — `_update_position_excursion`이 새 고점/저점마다 observed_peak/low/mfe/mae를 path_run plan_json에 durable 영속화. `_pathb_exit_meta`는 pos=None 내성 + durable fallback. `_finalize_pathb_sell_close`/`on_external_close`는 pos 없어도 plan_json 영속값으로 exit_meta 복원해 MFE/MAE 방출.
+- Order/risk/broker truth/Claude/config/env impact: 주문 수량·하드스톱·loss_cap·profit_ladder floor·broker truth·Claude 호출량·`.env*`·`config`·`state/brain.json` 전부 **무변경**. 순수 측정 배선 복구. 신규 부작용은 live 중 새 고점/저점마다 v2_path_runs plan_json에 merge UPDATE 1회 추가(path_run_id PK 조회, bounded). `peak_pnl_pct`(ladder 입력)는 비접촉 — observed_* 전용키만 읽고/쓴다(2026-06-14 Phase 1c 계약 유지).
+- Replacement guard: ① durable 영속화는 path_run_id 있을 때만(브로커 주입 pos는 skip) + try/except로 감싸 DB 실패해도 청산 흐름·추적 무영향. ② `_excursion` fallback 순서 pos→durable→legacy(peak_pnl_pct)로 기존 동작 보존(observed 있으면 live 우선). ③ entry_market_regime은 durable에 안 실어 sync-layer fix(d056fad) 무회귀. ④ peak_pnl_pct/profit_ladder/하드스톱 무수정.
+- Tests run: `tests/test_pathb_position_excursion.py` 12 passed(+8: durable 영속화·새극값만·path_run_id 없으면 skip·DB실패 내성·pos=None durable 복원·live 우선); 보호영역 회귀 `test_pathb_runtime/profit_protection/loss_cap_profit_floor/auto_sell_claude_gate/pathb_sell_reconcile/weak_mfe_cut/tail_capture` 291 passed; `py_compile`; `check_mojibake --staged` 통과; `live_preflight --mode live` ok=True FAIL 0. 전체 `pytest tests/`는 2618 passed, 38 fail은 `test_candidate_audit*`(단독·내 테스트와 조합 시 전원 통과 → 전체 스위트 cross-test 상태오염, 본 변경 무관·§2-4 DB비대 sidecar 이슈와 겹침), 65 fail은 사전존재 Py3.9 비호환 preopen.
+- Remaining risk: ① 과거 NULL 244건은 소급 복원 불가(이 수정은 "앞으로 안 유실"용, 봇-다운 full sync로 이미 방출된 행만 learning 반영). ② 영속화 전 첫 1틱에 청산되는 포지션은 여전히 누락 가능(드묾, observed 추적 시작 전). ③ 진짜 unknown excursion일 때 0.0 방출(present-zero)은 기존 동작 유지 — "flat"과 "미측정" 미구분, 별도 측정품질 개선 후보. ④ Path A는 핸드오프 §3 오독 정정: 진짜 Path A(`plan_a` route) 청산은 9건뿐이고 5/9 이미 충진(risk_manager exit_meta 정상) — 별개작업 불필요. gap_pullback/momentum NULL행은 path_type=claude_price인 PathB origin 전략 라벨이라 본 수정이 커버.
+
 ### Commit, PR, and Security Standards
 
 - Commit units should be one behavior change at a time. Recent history uses Conventional Commit prefixes such as `feat:` and `fix:` with short Korean or English summaries.
