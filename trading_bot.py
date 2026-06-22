@@ -38316,6 +38316,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.info(f"[lesson validation {market}] session-close 재채점 {_lv_cells}셀 → store 갱신")
         except Exception as _lv_e:
             log.debug(f"[lesson validation] 재채점 실패: {_lv_e}")
+        # hold advisor profit_guard 청산 교훈(#4a) — 토글 ON일 때 rescore(라벨 읽기, 가벼움)만.
+        # forward 라벨(yfinance)은 tools/run_hold_advisor_exit_validation.py가 별도 주기로 공급.
+        try:
+            from minority_report import hold_advisor_exit_lessons as _hael
+            if _hael.enabled():
+                _ha_cells = _hael.rescore_safe()
+                log.info(f"[hold advisor exit lesson {market}] session-close 재채점 {_ha_cells}셀")
+        except Exception as _hael_e:
+            log.debug(f"[hold advisor exit lesson] 재채점 실패: {_hael_e}")
         self._persist_live_judgment(market)
         _ops_metrics = ops_review_snapshot.get("metrics", {})
         log.info(
