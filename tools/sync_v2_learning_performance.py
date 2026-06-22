@@ -777,6 +777,35 @@ def _entry_path_run_id_from_events(events: list[dict[str, Any]]) -> str:
     return ""
 
 
+def _entry_regime_from_events(events: list[dict[str, Any]]) -> str:
+    """진입 시점 consensus 모드를 lifecycle 이벤트에서 복원한다.
+
+    2026-06-23 무결성 감사: market_regime이 0/757. 원인은 entry_market_regime이 휘발성
+    in-memory pos에만 저장되고 durable store(path_run/FILLED)에 영속화되지 않아, 멀티데이
+    보유·봇 재시작으로 pos가 rehydrate되는 청산 경로에서 CLOSED payload까지 전달되지 못함.
+    CLOSED payload의 entry_market_regime이 비었을 때, 진입 시점에 안정적으로 기록되는
+    이벤트(CLAUDE_PRICE_PLAN_CREATED / CLAUDE_TRADE_READY)의 consensus_mode를 fallback으로
+    읽는다. 휘발성 pos 경로를 우회하므로 register/rehydrate 어느 드롭지점이든 견고하다.
+    위조하지 않는다 — 이벤트에도 없으면 빈 값.
+    """
+    plan_mode = ""
+    ready_mode = ""
+    for event in events:
+        et = str(event.get("event_type") or "")
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        if not payload:
+            continue
+        if et == "CLAUDE_PRICE_PLAN_CREATED" and not plan_mode:
+            plan = payload.get("plan") if isinstance(payload.get("plan"), dict) else {}
+            ctx = plan.get("context_components_at_creation")
+            ctx = ctx if isinstance(ctx, dict) else {}
+            plan_mode = str(ctx.get("consensus_mode") or "").strip()
+        elif et == "CLAUDE_TRADE_READY" and not ready_mode:
+            sm = payload.get("selection_meta") if isinstance(payload.get("selection_meta"), dict) else {}
+            ready_mode = str(sm.get("consensus_mode") or "").strip()
+    return (plan_mode or ready_mode).upper()
+
+
 def _load_path_run(conn: sqlite3.Connection, decision_id: str, path_run_id: str = "") -> dict[str, Any]:
     path_key = str(path_run_id or "").strip()
     if path_key:
@@ -976,7 +1005,7 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
         "fee_krw_est": fee_krw_est,
         "fx_change_pct": fx_change_pct,
         "net_basis": net_basis,
-        "market_regime": _text(close_payload, "entry_market_regime", "market_regime"),
+        "market_regime": _text(close_payload, "entry_market_regime", "market_regime") or _entry_regime_from_events(events),
         "close_reason": close_reason,
         "forward_complete": 1 if forward_complete else 0,
         "quality_grade": quality.grade.value,
