@@ -724,7 +724,7 @@ until more data is available or a human explicitly approves the change.
 | `LESSON_VALIDATION_MIN_SESSIONS` | `2` | 부호일관 독립확인 최소. 미달=pending(미반영) |
 | `LESSON_VALIDATION_MAX_AGE_DAYS` | `45` | 검증셀 신선도(일). 초과=적용무시(기존값 fallback). invalid_block 함정방어는 유지 |
 | `LESSON_VALIDATION_MIN_CONFIDENCE` | `0.3` | 적용 최소 confidence. 미만=미반영(기존값) |
-| `KR_FLOW_ENTRY_GATE_MODE` | `off` | **KR 수급 진입 게이트.** off=완전 no-op / shadow=flow-negative(전일 외인+기관 순매도) 진입 would_skip 관측만(주문 무영향) / enforce=실제 진입 차단. fail-open(수급 결손 시 미차단). KR 개선 트랙 1차 가설. 검증 전 shadow부터, kill 바 미달 시 철회 |
+| `KR_FLOW_ENTRY_GATE_MODE` | `shadow` | **KR 수급 진입 게이트.** off=완전 no-op / shadow(현재)=flow-negative(전일 외인+기관 순매도) 진입 would_skip 관측만(주문 무영향) / enforce=실제 진입 차단. fail-open(수급 결손 시 미차단). KR 개선 트랙 1차 가설. **2026-06-23 재시작 시 shadow 가동(관측 시작). flow_date_matched 확인 + kill 바 통과 전 enforce 금지** |
 
 이 설정들은 `.env.live`와 `config/v2_start_config.json` 두 곳에 존재한다. 한 곳만 바꾸면 반영이 안 될 수 있으므로 두 파일을 동시에 확인한다.
 
