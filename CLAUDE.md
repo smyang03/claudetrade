@@ -712,7 +712,7 @@ until more data is available or a human explicitly approves the change.
 | `CANDIDATE_CHANGE_OVERHEAT_ENABLED` | `false` | **2026-06-21 A~F 토론으로 OFF.** C3 당일등락 과열 페널티(change≥15%, −12점, KR/US 공통). 사후검증: US 급등후보 fwd3 +5.4~11.5%(역효과·메모리 "당일등락차단=US −118%p"와 일치), KR도 hit가 non-hit보다 덜 나쁨(방향 반전). C2(KR vol_ratio)는 별개 경로로 유지. 기본 on(현행 보존), config에서 off |
 | `US_PATHB_WEAK_MFE_CUT_ENABLED` | `false` | **2026-06-16 OFF.** 단타 손절 게이트는 번지수 오인(손실 HOLD=stop_recovery는 정상). 청산은 hold advisor가 판단. 코드 보존 |
 | `KR_PATHB_WEAK_MFE_CUT_ENABLED` | `false` | **2026-06-16 OFF.** 동일 사유 |
-| `HOLD_ADVISOR_PROFIT_GUARD_ENABLED` | `true` | **hold advisor 이익보호 prior: 이익 중 HOLD 반납(-2.36%p, profit_pullback -8.91%p) 방지 익절 우선(단 러너는 HOLD 유지).** A/B 변별력 +25%p. 라이브 미검증 → 미국장 모니터, 악화 시 false 즉시 롤백 |
+| `HOLD_ADVISOR_PROFIT_GUARD_ENABLED` | `true` | **hold advisor 이익보호 prior(익절 우선, 러너는 HOLD 유지).** 근거 수치 −8.91%p는 체리픽으로 판명(ae142b0 정직화). **유지/롤백은 #4a 청산 forward-validation verdict로 결정 — 2026-07-21경(또는 exit n_sell≥30) 재확인.** 6/23 조기데이터 KR+3.96·US+0.71(익절>HOLD, 단 insufficient n=5/3). **kill: 그 시점 verdict가 음수로 뒤집히면 false 롤백, 양수+sufficient면 유지.** regime 백필(6/23) 후 재채점 반영 |
 | `US_PATHB_STOP_MARKETABLE_LIMIT_ENABLED` | `true` | **US 손절성 매도(loss_cap/hard_stop/claude_price_stop)를 marketable 지정가(트리거 −pct%)로 깔아 급락 미체결 방치 차단.** 익절 경로·KR 무관. 2026-06-23 AVGO 매도 정정 실사례로 추가. 봇 재시작 시 적용, 라이브 체결률 모니터 후 유지/조정 |
 | `US_PATHB_STOP_MARKETABLE_LIMIT_PCT` | `0.5` | 위 marketable offset(%). 트리거가×(1−pct/100)로 호가. 상한 1.5% bounded. 첫 값(운영자확인 파라미터) — 체결률·실현가 보고 조정 |
 | `PATHB_WEAK_MFE_CUT_MIN_AGE_MIN` | `30` | 관찰창(분). 진입 후 이 시간 경과해야 weak-cut 평가(초기 정상 변동성 제외) |
