@@ -865,6 +865,9 @@ class PathBRuntime:
                 self._attach_recovered_broker_position(plan, positions, row, filled_qty, fill_price, fill_execution_id)
             except Exception:
                 pass
+            # 취소 전 체결됨 → 포지션이 됐으니 로컬 매수 pending stale 제거(유령 미체결 방지).
+            self._remove_pathb_pending_buy_order(
+                market, plan.ticker, path_run_id=path_run_id, execution_id=execution_id)
             return "filled"
         # 미체결 — 옛 주문이 아직 open이면 취소 미확정 → 재제출 보류(이중매수 차단)
         open_orders = self._broker_rows_for_ticker(market_data.get("open_orders", []), market, ticker)
@@ -886,6 +889,9 @@ class PathBRuntime:
             self.adapter.cancel_plan(
                 plan.path_run_id, reason="FAST_FILL_REQUOTE_CANCELLED",
                 runtime_mode=self.mode, brain_snapshot_id=self._brain_snapshot_id(market))
+            # broker 취소확정+미체결 → 원 매수 주문은 broker에 없다. 로컬 pending stale을 제거해
+            # 새 재호가 run이 PENDING_ORDER_EXISTS로 막히지 않게 한다(이 버그의 핵심 처방).
+            self._remove_pathb_pending_buy_order(market, plan.ticker, path_run_id=plan.path_run_id)
             self.adapter.register_plan(
                 new_plan, runtime_mode=self.mode, brain_snapshot_id=self._brain_snapshot_id(market),
                 initial_status="WAITING",
@@ -11641,6 +11647,57 @@ class PathBRuntime:
                 pass
             try:
                 self._save_positions_if_possible()
+            except Exception:
+                pass
+        return removed
+
+    def _remove_pathb_pending_buy_order(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        path_run_id: str,
+        execution_id: str = "",
+    ) -> int:
+        """fast-fill 매수 재호가가 broker 주문을 취소(또는 취소 전 체결)한 뒤 로컬 pending_orders에
+        남는 매수 entry stale을 제거한다. 미정리 시 PENDING_ORDER_EXISTS로 재호가가 막히고
+        대시보드에 유령 미체결로 보인다. 매도 pending(`_remove_pathb_pending_sell_orders`)과 대칭."""
+        orders = getattr(self.bot, "pending_orders", None)
+        if not isinstance(orders, list) or not orders:
+            return 0
+        market_key = str(market or "").upper()
+        ticker_key = self._ticker_key(market_key, ticker)
+        execution_key = str(execution_id or "").strip()
+        path_key = str(path_run_id or "").strip()
+        kept: list[dict[str, Any]] = []
+        removed = 0
+        for order in orders:
+            if not isinstance(order, dict):
+                kept.append(order)
+                continue
+            order_market = str(order.get("market", market_key) or market_key).upper()
+            order_ticker = self._ticker_key(market_key, str(order.get("ticker", "") or ""))
+            order_path_run_id = str(order.get("pathb_path_run_id") or order.get("path_run_id") or "").strip()
+            order_no = str(
+                order.get("order_no")
+                or order.get("execution_id")
+                or order.get("v2_execution_id")
+                or ""
+            ).strip()
+            side = str(order.get("side") or order.get("order_side") or order.get("action") or "").lower()
+            same_order = bool(execution_key and order_no == execution_key)
+            same_path = bool(path_key and order_path_run_id == path_key)
+            same_ticker = order_market == market_key and order_ticker == ticker_key
+            # 매도 pending은 절대 건드리지 않는다(side에 sell 단서가 있으면 제외).
+            sell_like = "sell" in side or side in {"s", "ask"} or bool(order.get("pathb_pending_sell_order_no"))
+            if same_ticker and not sell_like and (same_path or same_order):
+                removed += 1
+                continue
+            kept.append(order)
+        if removed:
+            orders[:] = kept
+            try:
+                self._save_pending_orders_if_possible()
             except Exception:
                 pass
         return removed
