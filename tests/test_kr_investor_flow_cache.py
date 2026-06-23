@@ -232,5 +232,109 @@ class KrInvestorFlowCacheTests(unittest.TestCase):
         self.assertEqual(features["institution_net_qty_5d"], 2)
 
 
+class FetchInvestorFlowDateMatchTests(unittest.TestCase):
+    """fetch_investor_flow_kr이 output[0] 맹신 대신 stck_bsop_date로 target_date를 매칭하는지."""
+
+    def _resp(self, output):
+        class _R:
+            def raise_for_status(self_inner):
+                return None
+
+            def json(self_inner):
+                return {"output": output}
+
+        return _R()
+
+    def test_matches_target_date_row_not_first(self) -> None:
+        from unittest.mock import patch
+        from phase1_trainer import supplement_collector as sc
+
+        output = [
+            {"stck_bsop_date": "20260601", "frgn_ntby_qty": "0", "orgn_ntby_qty": "0", "prsn_ntby_qty": "0"},
+            {"stck_bsop_date": "20260529", "frgn_ntby_qty": "100", "orgn_ntby_qty": "50", "prsn_ntby_qty": "-150"},
+        ]
+        with patch.object(sc.requests, "get", return_value=self._resp(output)):
+            flow = sc.fetch_investor_flow_kr("005930", "2026-05-29", "token")
+        self.assertEqual(flow["foreign"], 100)
+        self.assertEqual(flow["institution"], 50)
+        self.assertEqual(flow["individual"], -150)
+        self.assertTrue(flow["flow_date_matched"])
+        self.assertEqual(flow["flow_date"], "20260529")
+
+    def test_falls_back_to_first_when_target_absent(self) -> None:
+        from unittest.mock import patch
+        from phase1_trainer import supplement_collector as sc
+
+        # KIS가 당일행만 반환(target 미포함) → 폴백, 단 미매칭 표시
+        output = [{"stck_bsop_date": "20260601", "frgn_ntby_qty": "7", "orgn_ntby_qty": "3", "prsn_ntby_qty": "-10"}]
+        with patch.object(sc.requests, "get", return_value=self._resp(output)):
+            flow = sc.fetch_investor_flow_kr("005930", "2026-05-29", "token")
+        self.assertEqual(flow["foreign"], 7)
+        self.assertFalse(flow["flow_date_matched"])
+        self.assertEqual(flow["flow_date"], "20260601")
+
+    def test_empty_output_returns_empty(self) -> None:
+        from unittest.mock import patch
+        from phase1_trainer import supplement_collector as sc
+
+        with patch.object(sc.requests, "get", return_value=self._resp([])):
+            flow = sc.fetch_investor_flow_kr("005930", "2026-05-29", "token")
+        self.assertEqual(flow, {})
+
+
+class UnsettledZeroFlowTrustTests(unittest.TestCase):
+    """날짜 미매칭 + all-zero(=정산 전 당일값)는 신뢰 안 하고 재시도 유도."""
+
+    def test_unmatched_all_zero_is_untrusted(self) -> None:
+        def fetch(_ticker, _target, _token):
+            return {"foreign": 0, "institution": 0, "individual": 0,
+                    "flow_date": "20260601", "flow_date_matched": False}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "flow.json"
+            cache = update_candidate_flow_cache(
+                ["005930"], session_date="2026-06-01", flow_source_date="2026-05-29",
+                token="t", fetch_fn=fetch, sleep_sec=0, path=path,
+            )
+            rec = cache["records"]["005930"]
+            self.assertFalse(rec["flow_values_trusted"])
+            self.assertEqual(rec["flow_unavailable_reason"], "unsettled_zero_unmatched_date")
+            self.assertFalse(rec["flow_date_matched"])
+
+    def test_matched_nonzero_is_trusted(self) -> None:
+        def fetch(_ticker, _target, _token):
+            return {"foreign": 100, "institution": 50, "individual": -150,
+                    "flow_date": "20260529", "flow_date_matched": True}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "flow.json"
+            cache = update_candidate_flow_cache(
+                ["005930"], session_date="2026-06-01", flow_source_date="2026-05-29",
+                token="t", fetch_fn=fetch, sleep_sec=0, path=path,
+            )
+            rec = cache["records"]["005930"]
+            self.assertTrue(rec["flow_values_trusted"])
+            self.assertTrue(rec["flow_date_matched"])
+            self.assertEqual(rec["flow_reported_date"], "20260529")
+            self.assertEqual(flow_for_ticker(cache, "005930")["foreign"], 100)
+
+    def test_unmatched_nonzero_stays_trusted_no_regression(self) -> None:
+        # 미매칭이라도 non-zero면 기존처럼 trusted(무회귀), 단 관측 필드만 추가
+        def fetch(_ticker, _target, _token):
+            return {"foreign": 7, "institution": 0, "individual": -7,
+                    "flow_date": "20260601", "flow_date_matched": False}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "flow.json"
+            cache = update_candidate_flow_cache(
+                ["005930"], session_date="2026-06-01", flow_source_date="2026-05-29",
+                token="t", fetch_fn=fetch, sleep_sec=0, path=path,
+            )
+            rec = cache["records"]["005930"]
+            self.assertTrue(rec["flow_values_trusted"])
+            self.assertFalse(rec["flow_date_matched"])
+            self.assertEqual(rec["flow_reported_date"], "20260601")
+
+
 if __name__ == "__main__":
     unittest.main()

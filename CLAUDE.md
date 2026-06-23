@@ -304,6 +304,19 @@ Work item: 무결성 감사 2-1 — PathB MFE/MAE 측정 누락 근본수정(obs
 - Tests run: `tests/test_pathb_position_excursion.py` 12 passed(+8: durable 영속화·새극값만·path_run_id 없으면 skip·DB실패 내성·pos=None durable 복원·live 우선); 보호영역 회귀 `test_pathb_runtime/profit_protection/loss_cap_profit_floor/auto_sell_claude_gate/pathb_sell_reconcile/weak_mfe_cut/tail_capture` 291 passed; `py_compile`; `check_mojibake --staged` 통과; `live_preflight --mode live` ok=True FAIL 0. 전체 `pytest tests/`는 2618 passed, 38 fail은 `test_candidate_audit*`(단독·내 테스트와 조합 시 전원 통과 → 전체 스위트 cross-test 상태오염, 본 변경 무관·§2-4 DB비대 sidecar 이슈와 겹침), 65 fail은 사전존재 Py3.9 비호환 preopen.
 - Remaining risk: ① 과거 NULL 244건은 소급 복원 불가(이 수정은 "앞으로 안 유실"용, 봇-다운 full sync로 이미 방출된 행만 learning 반영). ② 영속화 전 첫 1틱에 청산되는 포지션은 여전히 누락 가능(드묾, observed 추적 시작 전). ③ 진짜 unknown excursion일 때 0.0 방출(present-zero)은 기존 동작 유지 — "flat"과 "미측정" 미구분, 별도 측정품질 개선 후보. ④ Path A는 핸드오프 §3 오독 정정: 진짜 Path A(`plan_a` route) 청산은 9건뿐이고 5/9 이미 충진(risk_manager exit_meta 정상) — 별개작업 불필요. gap_pullback/momentum NULL행은 path_type=claude_price인 PathB origin 전략 라벨이라 본 수정이 커버.
 
+### MD 위반 사항
+
+Recorded date: 2026-06-23
+Work item: KR 개선 트랙 1차 — 수급(flow) 진입 게이트 shadow/enforce 신규 추가 + flow 수집 버그 수정. 운영자 지시: "flow 수집 버그부터 고쳐서 커버리지 확보하고 shadow 설계해줘 나중에 설정만 하면 쓸수 있게".
+
+- Protected area touched: `runtime/pathb_runtime.py` PathB 진입 스캔 루프(`scan_waiting_entries`의 `_submit_buy` 직전)에 신규 진입 게이트 `_pathb_flow_entry_gate` 추가. (broker-truth entry fail-closed 보호계약 자체는 무수정.)
+- Why unavoidable: KR long 역선택 가설을 검증/처방하려면 "flow-negative 후보의 신규 진입을 거른다"가 필요하고, 진입 차단은 이 진입 스캔 루프가 유일한 지점이다. (주의: 초기 소급검증 "전일 순매수→다음세션 우위"는 flow 수집 1일 밀림 버그로 같은날 수급vs수익=동어반복으로 판명·철회 → flow 예측력은 미검증. 그래서 enforce가 아니라 shadow부터, 깨끗한 전일 데이터를 처음부터 수집해 검증한다.)
+- Before/after behavior: before — KR PathB 진입 스캔이 수급과 무관하게 zone-hit 시 `_submit_buy`. after — `KR_FLOW_ENTRY_GATE_MODE`가 shadow면 flow-negative(전일 외인+기관 순매도, 신뢰 가능) 진입을 would_skip으로 **관측만**(주문 그대로 진행), enforce면 `KR_FLOW_NEGATIVE_ENTRY_BLOCK`로 진입 차단. **기본 off면 메서드가 즉시 None 반환 = 완전 no-op(현행 동일).** US/비KR은 항상 no-op.
+- Order/risk/broker truth/Claude/config/env impact: off 기본이라 주문/수량/하드스톱/loss_cap/broker truth/Claude 호출량 **무변경**. enforce 시에도 영향은 "신규 진입 차단"만(청산/sizing/하드스톱 무관). fail-open 설계 — 수급 결손/untrusted면 막지 않음(데이터 결손으로 진입 죽이지 않음). 신규 env `KR_FLOW_ENTRY_GATE_MODE=off`(.env.live+config). 별도로 `phase1_trainer/supplement_collector.py::fetch_investor_flow_kr`를 stck_bsop_date 날짜매칭으로 수정(output[0] 맹신→target_date 매칭, 미매칭 시 폴백+표시) + `bot/kr_investor_flow_cache.py`에 미매칭 all-zero untrusted 가드 — 둘 다 수집 정확도 개선(폴백으로 무회귀).
+- Replacement guard: 기본 off=no-op, fail-open(결손 시 미차단), KR 한정, shadow는 순수 관측(JSONL만), broker-truth fail-closed 게이트 비접촉. flow fetch 수정은 매칭 실패 시 output[0] 폴백 유지로 기존 커버리지 무회귀.
+- Tests run: `tests/test_kr_flow_entry_gate.py`(10: off no-op·fail-open·would_skip·enforce block·positive allow·zero·로깅), `tests/test_kr_investor_flow_cache.py`(16: 날짜매칭·폴백·unsettled-zero untrusted 포함); 보호영역 회귀 `test_pathb_runtime/profit_protection/auto_sell_claude_gate/pathb_sell_reconcile` 227 passed; `py_compile` 5파일 OK; `check_mojibake --staged` 통과; `live_preflight --mode live` ok=True FAIL 0.
+- Remaining risk: ① flow fetch 수정은 라이브 KIS 응답으로 미검증(운영 머신 API 호출 금지) — 봇 재시작 후 캐시의 `flow_date_matched` 비율로 확인 필요. 매칭률 낮으면 KIS가 당일행만 주는 것 → 데이터 소스 자체 재검토. ② **flow 예측력은 미검증(초기 소급검증은 수집 1일 밀림으로 동어반복=무효 판명·철회). 과거 캐시 오염이라 shadow로 깨끗한 전일 데이터를 처음부터 수집해야만 검증 가능** — `tools/kr_flow_entry_gate_review.py`, KR 개선 트랙 규율 kill 바 미달 시 철회. ③ enforce 전환은 운영자 결정(현재 off).
+
 ### Commit, PR, and Security Standards
 
 - Commit units should be one behavior change at a time. Recent history uses Conventional Commit prefixes such as `feat:` and `fix:` with short Korean or English summaries.
@@ -711,6 +724,7 @@ until more data is available or a human explicitly approves the change.
 | `LESSON_VALIDATION_MIN_SESSIONS` | `2` | 부호일관 독립확인 최소. 미달=pending(미반영) |
 | `LESSON_VALIDATION_MAX_AGE_DAYS` | `45` | 검증셀 신선도(일). 초과=적용무시(기존값 fallback). invalid_block 함정방어는 유지 |
 | `LESSON_VALIDATION_MIN_CONFIDENCE` | `0.3` | 적용 최소 confidence. 미만=미반영(기존값) |
+| `KR_FLOW_ENTRY_GATE_MODE` | `off` | **KR 수급 진입 게이트.** off=완전 no-op / shadow=flow-negative(전일 외인+기관 순매도) 진입 would_skip 관측만(주문 무영향) / enforce=실제 진입 차단. fail-open(수급 결손 시 미차단). KR 개선 트랙 1차 가설. 검증 전 shadow부터, kill 바 미달 시 철회 |
 
 이 설정들은 `.env.live`와 `config/v2_start_config.json` 두 곳에 존재한다. 한 곳만 바꾸면 반영이 안 될 수 있으므로 두 파일을 동시에 확인한다.
 

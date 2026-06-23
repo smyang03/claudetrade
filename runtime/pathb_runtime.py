@@ -3254,6 +3254,25 @@ class PathBRuntime:
                         plan.path_run_id,
                     )
                 continue
+            flow_gate = self._pathb_flow_entry_gate(plan, signal, market)
+            if flow_gate is not None and flow_gate.get("block"):
+                self._record_blocked(
+                    market,
+                    plan.ticker,
+                    plan.decision_id,
+                    "KR_FLOW_NEGATIVE_ENTRY_BLOCK",
+                    {
+                        **self._execution_safety_payload(),
+                        "stage": "pathb_flow_entry_gate",
+                        "flow_combined_net": flow_gate.get("combined_net"),
+                        "flow_reported_date": flow_gate.get("flow_reported_date"),
+                        "price": float(current or 0.0),
+                        "limit_price": float(signal.limit_price or 0.0),
+                        "signal_reason": str(signal.reason or ""),
+                    },
+                    plan.path_run_id,
+                )
+                continue
             if self._submit_buy(plan, signal):
                 burst_submitted += 1
                 if risk_off_enforced:
@@ -4066,6 +4085,42 @@ class PathBRuntime:
                 summary["errors"].append(f"{market}:broker_truth_reconcile:{exc}")
         log.info(f"[PathB startup recovery] {summary}")
         return summary
+
+    def _pathb_flow_entry_gate(self, plan: PricePlan, signal: EntrySignal, market: str) -> dict[str, Any] | None:
+        """KR 수급(외인+기관) 진입 게이트. off/non-KR이면 None(완전 no-op).
+
+        shadow: would_skip 관측만 기록(진입 그대로 진행). enforce: flow-negative면 block=True.
+        fail-open: 수급 결손/untrusted면 막지 않음(데이터 결손으로 진입 죽이지 않음).
+        """
+        if str(market or "").upper() != "KR":
+            return None
+        from bot.kr_flow_entry_gate import normalize_mode
+        mode = normalize_mode(self._runtime_value("KR_FLOW_ENTRY_GATE_MODE", "off"))
+        if mode == "off":
+            return None
+        try:
+            from bot.kr_flow_entry_gate import evaluate_flow_entry_gate, record_flow_entry_gate
+            from bot.kr_investor_flow_cache import flow_for_ticker, load_effective_flow_cache
+
+            session_date = self._session_date(market)
+            flow = flow_for_ticker(load_effective_flow_cache(session_date), plan.ticker)
+            verdict = evaluate_flow_entry_gate(flow, mode)
+            record_flow_entry_gate(
+                session_date=session_date,
+                market=market,
+                ticker=plan.ticker,
+                verdict=verdict,
+                extra={
+                    "decision_id": plan.decision_id,
+                    "path_run_id": plan.path_run_id,
+                    "limit_price": float(signal.limit_price or 0.0),
+                    "signal_reason": str(signal.reason or ""),
+                },
+            )
+            return verdict
+        except Exception as exc:
+            log.debug(f"[PathB flow entry gate] {plan.ticker} eval skip: {exc}")
+            return None
 
     def _submit_buy(self, plan: PricePlan, signal: EntrySignal) -> bool:
         market = plan.market

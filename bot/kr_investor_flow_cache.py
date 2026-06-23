@@ -124,6 +124,14 @@ def update_candidate_flow_cache(
             flow = fetch(ticker, target_date, token) or {}
             if not isinstance(flow, dict):
                 flow = {}
+            fr = _optional_int(flow.get("foreign"))
+            ins = _optional_int(flow.get("institution"))
+            indv = _optional_int(flow.get("individual"))
+            flow_date = str(flow.get("flow_date") or "").strip() or None
+            date_matched = bool(flow.get("flow_date_matched"))
+            all_zero = (fr or 0) == 0 and (ins or 0) == 0 and (indv or 0) == 0
+            # 날짜 미매칭(=output[0] 폴백)인데 all-zero면 정산 전 당일값일 가능성 → 신뢰 안 함(재시도 유도)
+            unsettled_zero = bool(flow) and all_zero and not date_matched
             records[ticker] = {
                 "ticker": ticker,
                 "date": target_date,
@@ -131,14 +139,19 @@ def update_candidate_flow_cache(
                 "flow_age_trading_days": cache.get("flow_age_trading_days", 0),
                 "fetched_at": fetched_at,
                 "status": "ok" if flow else "missing",
-                "foreign": _optional_int(flow.get("foreign")),
-                "institution": _optional_int(flow.get("institution")),
-                "individual": _optional_int(flow.get("individual")),
-                "flow_values_trusted": bool(flow),
+                "foreign": fr,
+                "institution": ins,
+                "individual": indv,
+                "flow_values_trusted": bool(flow) and not unsettled_zero,
                 "source": "kis:inquire-investor",
             }
+            if flow_date:
+                records[ticker]["flow_reported_date"] = flow_date
+            records[ticker]["flow_date_matched"] = date_matched
             if not flow:
                 records[ticker]["flow_unavailable_reason"] = "missing"
+            elif unsettled_zero:
+                records[ticker]["flow_unavailable_reason"] = "unsettled_zero_unmatched_date"
         except Exception as exc:
             records[ticker] = {
                 "ticker": ticker,

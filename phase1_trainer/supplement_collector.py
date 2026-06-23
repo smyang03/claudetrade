@@ -99,11 +99,22 @@ def _kis_token():
 
 @log_retry(max_retries=3, delay=2.0, logger=log)
 def fetch_investor_flow_kr(ticker: str, target_date: str, token: str) -> dict:
-    """KIS API - 외국인/기관 수급 (투자자별 매매동향)"""
+    """KIS API - 외국인/기관 수급 (투자자별 매매동향)
+
+    inquire-investor(FHKST01010900)는 날짜 파라미터를 단일일 필터로 받지 않고
+    최근 거래일 리스트를 반환한다(output[0]=가장 최근일=장중엔 당일 미정산=0).
+    target_date(전일=정산 완료일)를 stck_bsop_date로 직접 매칭해 그 행을 쓴다.
+    매칭 실패 시에만 output[0]로 폴백하되 flow_date/flow_date_matched로 표시한다.
+    """
+    target = target_date.replace("-", "")
+    try:
+        start = (datetime.strptime(target, "%Y%m%d") - timedelta(days=10)).strftime("%Y%m%d")
+    except Exception:
+        start = target
     url = f"{KIS_BASE}/uapi/domestic-stock/v1/quotations/inquire-investor"
     params = {"FID_COND_MRKT_DIV_CODE":"J","FID_INPUT_ISCD":ticker,
-              "FID_INPUT_DATE_1":target_date.replace("-",""),
-              "FID_INPUT_DATE_2":target_date.replace("-",""),
+              "FID_INPUT_DATE_1":start,
+              "FID_INPUT_DATE_2":target,
               "FID_PERIOD_DIV_CODE":"D"}
     headers = {"Content-Type":"application/json",f"authorization":f"Bearer {token}",
                "appkey":KIS_KEY,"appsecret":KIS_SEC,"tr_id":"FHKST01010900"}
@@ -112,7 +123,15 @@ def fetch_investor_flow_kr(ticker: str, target_date: str, token: str) -> dict:
         resp.raise_for_status()
         output = resp.json().get("output",[{}])
         if not output: return {}
-        row = output[0]
+        rows = [r for r in output if isinstance(r, dict)]
+        if not rows: return {}
+
+        def _row_date(r) -> str:
+            return str(r.get("stck_bsop_date") or "").strip()
+
+        matched = next((r for r in rows if _row_date(r) == target), None)
+        row = matched if matched is not None else rows[0]
+        flow_date = _row_date(row)
         def _toint(v, default=0):
             try:
                 return int(v) if v != "" else default
@@ -121,8 +140,10 @@ def fetch_investor_flow_kr(ticker: str, target_date: str, token: str) -> dict:
         return {
             "foreign":      _toint(row.get("frgn_ntby_qty")),
             "institution":  _toint(row.get("orgn_ntby_qty")),
-            "individual":   _toint(row.get("indv_ntby_qty")),
+            "individual":   _toint(row.get("prsn_ntby_qty") or row.get("indv_ntby_qty")),
             "foreign_5d":   0,
+            "flow_date":    flow_date or None,
+            "flow_date_matched": matched is not None,
         }
     except Exception as e:
         log.debug(f"수급 조회 실패 [{ticker}]: {e}")
