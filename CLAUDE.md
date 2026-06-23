@@ -630,7 +630,7 @@ until more data is available or a human explicitly approves the change.
 ### 현재
 
 - US PathB 수익 구조 보존 (target/pre-close/profit_ladder/Claude sell 4개 경로)
-- KR 구조적 손실 분리 관찰: KR live 확대 금지, shadow/축소 우선
+- KR 개선 트랙: 포기가 아니라 개선해서 나아갈 수 있는 방향으로 진행한다 (운영자 결정 2026-06-23). 단 아래 "KR 개선 트랙 규율"의 기한·정량 기준·kill 조건을 전제로 한다.
 - v2 성과 원장 정합성 (decisions.db ↔ v2_event_store sync freshness)
 - ticker_selection attribution 누락 리포트 (execution_decision_id 누락률 추적)
 - candidate audit outcome freshness 표시 (daily_pending 상태 명시)
@@ -646,6 +646,20 @@ until more data is available or a human explicitly approves the change.
 
 - brain 자동 승격은 승인형 워크플로우가 안정화된 뒤 검토
 - 전략 추가보다 입력 품질과 실행 품질 개선 우선
+
+### KR 개선 트랙 규율 (운영자 결정 2026-06-23)
+
+운영자 결정: KR을 포기하지 않고 개선해서 나아갈 수 있는 방향으로 둔다. 단 막연한 낙관이 아니라 측정 가능한 허들과 철회 조건을 전제로 진행한다(CLAUDE.md 소통 원칙 "기한·정량 기준·미달 시 중단").
+
+- 현재 진단(2026-06-23, KIS 실측): KR long 진입의 약한고리는 늦은 진입(꼬리잡기)이 아니라 **역선택**이다. 눌림/매수존 진입 룰이 페이드될 종목을 통과시키고(진입), 직진하는 러너를 거부한다(미진입). 미진입(shadow) 종목 forward MFE 중앙 +17.1% vs 진입 종목 +7.1%, forward ret +7.4% vs +2.8%. 즉 selection(탐지)은 살아있고, capture가 안 되는 구조다.
+- 개선 작업 형태: 새 KR 진입/청산 가설은 **shadow에서 먼저 측정**한다. live 실탄·동시성·주문금액은 허들 통과 전까지 확대하지 않는다(기존 "KR live 확대 금지" 디테일은 이 규율 안에서 유지).
+- 정량 허들(아래 전부 충족해야 live 반영 검토):
+  - 표본 ≥ 20 KR 거래(또는 shadow 진입) 그리고 관찰 ≥ 2주.
+  - 비용 차감 후(왕복 ~0.5% 가정) net 양수.
+  - 양수율 및 net이 **단일 월·단일 종목·lookahead feature에 의존하지 않을 것**(메모리 KR 무엣지 함정: 단일월/outlier/lookahead corr 반복 확인됨).
+  - 같은 종목 동일 기간 단순 보유(또는 지수) 대비 초과.
+- Kill 조건: 위 허들을 기한 내 미달하면 해당 가설은 철회하고 KR은 veto-only(진입 안 하기)로 되돌린다. 실탄/에너지는 검증된 레버(US capture)로 회수한다. 철회는 "(기각) 이유"로 `docs/CHANGELOG.md`에 남겨 반복 논의를 막는다.
+- US 보호: KR 개선 작업은 US 전략 로직/수익 경로를 건드리지 않는다(KR·US 성과 분리 원칙, Revenue Structure 계약 유지).
 
 ## 운영자 확인 필수 설정값
 
@@ -686,6 +700,8 @@ until more data is available or a human explicitly approves the change.
 | `US_PATHB_WEAK_MFE_CUT_ENABLED` | `false` | **2026-06-16 OFF.** 단타 손절 게이트는 번지수 오인(손실 HOLD=stop_recovery는 정상). 청산은 hold advisor가 판단. 코드 보존 |
 | `KR_PATHB_WEAK_MFE_CUT_ENABLED` | `false` | **2026-06-16 OFF.** 동일 사유 |
 | `HOLD_ADVISOR_PROFIT_GUARD_ENABLED` | `true` | **hold advisor 이익보호 prior: 이익 중 HOLD 반납(-2.36%p, profit_pullback -8.91%p) 방지 익절 우선(단 러너는 HOLD 유지).** A/B 변별력 +25%p. 라이브 미검증 → 미국장 모니터, 악화 시 false 즉시 롤백 |
+| `US_PATHB_STOP_MARKETABLE_LIMIT_ENABLED` | `true` | **US 손절성 매도(loss_cap/hard_stop/claude_price_stop)를 marketable 지정가(트리거 −pct%)로 깔아 급락 미체결 방치 차단.** 익절 경로·KR 무관. 2026-06-23 AVGO 매도 정정 실사례로 추가. 봇 재시작 시 적용, 라이브 체결률 모니터 후 유지/조정 |
+| `US_PATHB_STOP_MARKETABLE_LIMIT_PCT` | `0.5` | 위 marketable offset(%). 트리거가×(1−pct/100)로 호가. 상한 1.5% bounded. 첫 값(운영자확인 파라미터) — 체결률·실현가 보고 조정 |
 | `PATHB_WEAK_MFE_CUT_MIN_AGE_MIN` | `30` | 관찰창(분). 진입 후 이 시간 경과해야 weak-cut 평가(초기 정상 변동성 제외) |
 | `PATHB_WEAK_MFE_CUT_MFE_MAX_PCT` | `0.5` | observed_mfe_pct 임계(미만이면 약한 포지션). 수익건 0건 절단되는 안전 임계 |
 | `PATHB_WEAK_MFE_CUT_MIN_LOSS_PCT` | `0.0` | 현재 손실 게이트(현재 pnl ≤ 이 값일 때만 발동). 이익 중이면 보류 |

@@ -7008,7 +7008,12 @@ class PathBRuntime:
                 )
                 return False
             qty = int(pos.get("qty", 0) or 0)
-            order_price = self._compute_sell_order_price(market, signal.price)
+            # US 손절성 매도(loss_cap/hard_stop/claude_price_stop)는 지정가가 트리거 가격에
+            # 박혀 급락 시 미체결로 방치되는 누수가 있다(운영자가 MTS에서 매도 정정으로 가격을
+            # 낮춰 체결시킨 실사례). 손절만 marketable 지정가(트리거 아래로 호가)로 깔아 확실
+            # 체결시킨다. 익절(target/ladder/claude_sell)은 무관(가격 양보 금지).
+            sell_raw_price = self._pathb_stop_marketable_sell_price(market, signal)
+            order_price = self._compute_sell_order_price(market, sell_raw_price)
             if qty <= 0 or order_price < 0:
                 return False
             preopen_policy = self._pathb_preopen_exit_policy_decision(plan, pos, signal, run=run)
@@ -7147,6 +7152,38 @@ class PathBRuntime:
         finally:
             if not keep_lock:
                 self._release_pathb_sell_attempt_lock(market, plan.ticker, plan.path_run_id)
+
+    # US 손절 매도를 marketable 지정가로 깔 close_reason(손절성만, 익절 제외)
+    _US_STOP_MARKETABLE_CLOSE_REASONS = frozenset({
+        "CLOSED_LOSS_CAP",
+        "CLOSED_HARD_STOP",
+        "CLOSED_CLAUDE_PRICE_STOP",
+    })
+
+    def _pathb_stop_marketable_sell_price(self, market: str, signal: ExitSignal) -> float:
+        """US 손절성 매도는 트리거 가격보다 일정 % 아래로 호가해 marketable(확실 체결) 지정가로
+        만든다. KIS 해외주문은 시장가가 없어 지정가가 트리거에 박히면 급락 시 미체결로 방치된다.
+
+        - US + 손절 close_reason + 토글 ON일 때만 적용. 그 외(KR=시장가, 익절 경로)는 원가 그대로.
+        - marketable 지정가는 호가를 낮춰 스프레드를 건너 즉시 체결시키는 것이지, 그 낮은 가격에
+          파는 게 아니다(체결은 우선 매수호가=가격개선). offset은 상한으로 bounded.
+        """
+        raw = float(getattr(signal, "price", 0) or 0)
+        if raw <= 0 or str(market or "").upper() != "US":
+            return raw
+        close_reason = str(getattr(signal, "close_reason", "") or "")
+        if close_reason not in self._US_STOP_MARKETABLE_CLOSE_REASONS:
+            return raw
+        if not _env_bool("US_PATHB_STOP_MARKETABLE_LIMIT_ENABLED", False):
+            return raw
+        try:
+            pct = float(os.getenv("US_PATHB_STOP_MARKETABLE_LIMIT_PCT", "0.5") or 0.5)
+        except Exception:
+            pct = 0.5
+        pct = max(0.0, min(pct, 1.5))  # 0~1.5%로 bounded(과도 양보 방지)
+        if pct <= 0:
+            return raw
+        return raw * (1.0 - pct / 100.0)
 
     def _compute_sell_order_price(self, market: str, raw_price: float) -> float:
         calculator = getattr(self.bot, "_compute_order_price", None)
@@ -11390,9 +11427,18 @@ class PathBRuntime:
         if not _env_bool("PATHB_UNFILLED_SELL_SHADOW_ENABLED", True):
             return
         try:
-            closing_raw = str(pos.get("pathb_closing", "") or "")
-            if not closing_raw:
+            # 게이트는 '진행 중인 미체결 매도가 실제로 존재하는가'로 잡는다. 과거엔
+            # pathb_closing(전송 마커)에 걸었는데, 이 키가 _clear_stale_pathb_closing_lock에
+            # 선행 클리어돼 캡처가 0건이 됐다. 페이드 계측에 필요한 건 pending 지정가이므로
+            # pathb_pending_sell_price(미체결 매도 호가)를 1차 조건으로 쓴다.
+            order_price = 0.0
+            try:
+                order_price = float(pos.get("pathb_pending_sell_price", 0) or 0)
+            except Exception:
+                order_price = 0.0
+            if order_price <= 0:
                 return
+            closing_raw = str(pos.get("pathb_closing", "") or "")
             now = datetime.now(KST)
             try:
                 interval = float(os.getenv("PATHB_UNFILLED_SELL_SHADOW_INTERVAL_SEC", "120") or 120)
@@ -11413,10 +11459,6 @@ class PathBRuntime:
             current = self._current_native_price_for_exit(market_key, ticker, pos)
             if current <= 0:
                 return
-            try:
-                order_price = float(pos.get("pathb_pending_sell_price", 0) or 0)
-            except Exception:
-                order_price = 0.0
             try:
                 entry_native = float(pos.get("entry_native", 0) or 0) or float(pos.get("display_avg_price", 0) or 0)
             except Exception:
