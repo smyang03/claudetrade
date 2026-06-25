@@ -3279,6 +3279,27 @@ class PathBRuntime:
                     plan.path_run_id,
                 )
                 continue
+            trend_gate = self._pathb_trend_overlay_gate(plan, signal, market)
+            if trend_gate is not None and trend_gate.get("block"):
+                self._record_blocked(
+                    market,
+                    plan.ticker,
+                    plan.decision_id,
+                    "TREND_OVERLAY_DOWNTREND_BLOCK",
+                    {
+                        **self._execution_safety_payload(),
+                        "stage": "pathb_trend_overlay_gate",
+                        "index_sym": trend_gate.get("index_sym"),
+                        "index_close": trend_gate.get("index_close"),
+                        "sma": trend_gate.get("sma"),
+                        "as_of": trend_gate.get("as_of"),
+                        "price": float(current or 0.0),
+                        "limit_price": float(signal.limit_price or 0.0),
+                        "signal_reason": str(signal.reason or ""),
+                    },
+                    plan.path_run_id,
+                )
+                continue
             if self._submit_buy(plan, signal):
                 burst_submitted += 1
                 if risk_off_enforced:
@@ -4126,6 +4147,43 @@ class PathBRuntime:
             return verdict
         except Exception as exc:
             log.debug(f"[PathB flow entry gate] {plan.ticker} eval skip: {exc}")
+            return None
+
+    def _pathb_trend_overlay_gate(self, plan: PricePlan, signal: EntrySignal, market: str) -> dict[str, Any] | None:
+        """지수 추세 방어 오버레이. off면 None(완전 no-op).
+
+        지수 월말종가 < 10mo SMA(하락추세)면: shadow=would_skip 관측만(진입 진행),
+        enforce=block=True(신규 진입만 보류). fail-open: 신호 결손/stale면 막지 않음.
+        신호는 tools/refresh_trend_overlay_signal.py가 캐시(루프 밖). 청산/보유 무관.
+        """
+        from bot.trend_overlay_gate import normalize_mode
+        mode = normalize_mode(self._runtime_value("TREND_OVERLAY_GATE_MODE", "off"))
+        if mode == "off":
+            return None
+        try:
+            from bot.trend_overlay_gate import (
+                evaluate_trend_overlay_gate,
+                load_trend_signal,
+                record_trend_overlay_gate,
+            )
+
+            session_date = self._session_date(market)
+            verdict = evaluate_trend_overlay_gate(load_trend_signal(), mode, market)
+            record_trend_overlay_gate(
+                session_date=session_date,
+                market=market,
+                ticker=plan.ticker,
+                verdict=verdict,
+                extra={
+                    "decision_id": plan.decision_id,
+                    "path_run_id": plan.path_run_id,
+                    "limit_price": float(signal.limit_price or 0.0),
+                    "signal_reason": str(signal.reason or ""),
+                },
+            )
+            return verdict
+        except Exception as exc:
+            log.debug(f"[PathB trend overlay gate] {plan.ticker} eval skip: {exc}")
             return None
 
     def _submit_buy(self, plan: PricePlan, signal: EntrySignal) -> bool:
