@@ -621,5 +621,39 @@ class EntryRiskControlTests(unittest.TestCase):
         self.assertEqual(candidates[0]["reason"], "mfe_breakeven")
 
 
+class TickerQuarantineTests(unittest.TestCase):
+    """독성 반복종목 격리: {MKT}_TICKER_DENYLIST 종목은 TICKER_QUARANTINE로 진입 차단."""
+
+    def tearDown(self) -> None:
+        for k in ("US_TICKER_DENYLIST", "KR_TICKER_DENYLIST"):
+            os.environ.pop(k, None)
+
+    def _bot(self) -> TradingBot:
+        bot = TradingBot.__new__(TradingBot)
+        bot.runtime_config = None
+        bot._is_order_allowed_now = lambda m: True
+        bot._in_entry_blackout = lambda m: False
+        return bot
+
+    def test_quarantined_ticker_blocked(self) -> None:
+        os.environ["US_TICKER_DENYLIST"] = "INTC,AMD,IONQ"
+        st = self._bot()._new_buy_block_state("US", "INTC")
+        self.assertFalse(bool(st.get("allowed", True)))
+        self.assertEqual(st.get("reason"), "TICKER_QUARANTINE")
+        self.assertEqual(st.get("scope"), "ticker")
+
+    def test_quarantine_set_parsing_normalizes(self) -> None:
+        os.environ["US_TICKER_DENYLIST"] = "intc, amd ;IONQ"
+        self.assertEqual(self._bot()._ticker_quarantine_set("US"), {"INTC", "AMD", "IONQ"})
+
+    def test_kr_denylist_keeps_raw_ticker(self) -> None:
+        os.environ["KR_TICKER_DENYLIST"] = "078150, 001440"
+        self.assertEqual(self._bot()._ticker_quarantine_set("KR"), {"078150", "001440"})
+
+    def test_empty_denylist_no_quarantine(self) -> None:
+        os.environ["US_TICKER_DENYLIST"] = ""
+        self.assertEqual(self._bot()._ticker_quarantine_set("US"), set())
+
+
 if __name__ == "__main__":
     unittest.main()
