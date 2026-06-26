@@ -7028,6 +7028,41 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "policy": f"{market_key.lower()}_early_entry_soft_size",
         }
 
+    def _late_entry_size_gate(self, market: str, now_dt: Optional[datetime] = None) -> dict:
+        """장 후반 진입 게이트 (2026-06-26 실측 enforce).
+
+        claude_price(PathB) net을 개장 경과분으로 가르면, 양 시장·모든 국면에서 late(>2h)가
+        early(≤2h)보다 -0.3~-0.9%p 더 샌다(BULL+early만 흑자 PF1.14, 비-BULL+late는 PF0.24).
+        confound(국면)에 독립. → 개장 full_end분까지 full, reduced_end분까지 size×mult, 이후 차단.
+        early soft gate와 동형(_market_open_elapsed_min 공유). PathB 사이징에서 적용.
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        prefix = market_key
+        enabled = self._runtime_bool(f"{prefix}_LATE_ENTRY_GATE_ENABLED", True)
+        elapsed = self._market_open_elapsed_min(market_key, now_dt=now_dt)
+        full_end = self._runtime_float(f"{prefix}_LATE_ENTRY_FULL_END_MIN", 120.0)
+        reduced_end = self._runtime_float(f"{prefix}_LATE_ENTRY_REDUCED_END_MIN", 240.0)
+        size_mult = max(0.1, min(1.0, float(self._runtime_float(f"{prefix}_LATE_ENTRY_SIZE_MULT", 0.5) or 0.5)))
+        action = "FULL"
+        effective_mult = 1.0
+        active = False
+        if enabled and elapsed is not None:
+            e = float(elapsed)
+            if e >= float(reduced_end):
+                action, effective_mult, active = "BLOCK", 0.0, True
+            elif e >= float(full_end):
+                action, effective_mult, active = "REDUCED", size_mult, True
+        return {
+            "active": active,
+            "action": action,
+            "market": market_key,
+            "elapsed_min": float(elapsed) if elapsed is not None else None,
+            "full_end_min": float(full_end),
+            "reduced_end_min": float(reduced_end),
+            "size_mult": float(effective_mult),
+            "policy": f"{market_key.lower()}_late_entry_gate",
+        }
+
     def _candidate_entry_timing_context(
         self,
         market: str,

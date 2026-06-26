@@ -12582,9 +12582,47 @@ class PathBRuntime:
                 ready_boost_mult = max(1.0, min(3.0, float(os.getenv("PATHB_READY_BOOST_MULT", "1.0") or 1.0)))
             except (TypeError, ValueError):
                 ready_boost_mult = 1.0
+        # 장 후반 진입 게이트(2026-06-26 실측 enforce): full_end분까지 full, reduced_end분까지
+        # ×0.5, 이후 BLOCK. late(>2h)가 모든 국면에서 -0.3~-0.9%p 더 샌다(confound 독립).
+        late_gate = self._late_entry_size_gate(market)
+        late_gate_action = str(late_gate.get("action") or "FULL")
+        late_gate_applied = bool(late_gate.get("active"))
+        late_gate_size_mult = max(0.0, min(1.0, float(late_gate.get("size_mult") or 1.0)))
+        if late_gate_action == "BLOCK":
+            sizing_context = {
+                "original_budget_krw": original_budget,
+                "effective_budget_krw": 0.0,
+                "fixed_order_budget_krw": fixed_budget,
+                "one_share_entry_cap_krw": original_budget,
+                "early_gate_applied": early_gate_applied,
+                "early_gate_size_mult": early_gate_size_mult,
+                "late_gate_applied": True,
+                "late_gate_action": "BLOCK",
+                "late_gate_elapsed_min": late_gate.get("elapsed_min"),
+                "can_buy_1_share": False,
+                "fixed_sizing": True,
+                "sizing_reason": "late_entry_block",
+                "sizing_details": {
+                    "pathb_sizing": {
+                        "qty": 0,
+                        "notional": 0.0,
+                        "blocker": "late_entry_block",
+                        "warnings": [],
+                        "size_intent": "normal",
+                        "effective_budget": 0.0,
+                        "hard_budget_cap": 0.0,
+                        "fixed_order_budget_krw": fixed_budget,
+                        "one_share_entry_cap_krw": original_budget,
+                        "late_gate": dict(late_gate),
+                    }
+                },
+            }
+            return 0, sizing_context
         budget = fixed_budget
         if early_gate_applied:
             budget *= early_gate_size_mult
+        if late_gate_applied and late_gate_size_mult < 1.0:
+            budget *= late_gate_size_mult
         if ready_boost_mult > 1.0:
             budget *= ready_boost_mult
         hard_budget_cap = budget
@@ -12622,7 +12660,7 @@ class PathBRuntime:
             cash_available=cash,
             min_order=min_order,
             size_intent="normal",
-            allow_one_share_over_budget=bool(self.config.pathb_allow_one_share_over_budget) and not early_gate.get("active"),
+            allow_one_share_over_budget=bool(self.config.pathb_allow_one_share_over_budget) and not early_gate.get("active") and not (late_gate_applied and late_gate_size_mult < 1.0),
             one_share_max_account_pct=float(self.config.pathb_one_share_over_budget_max_account_pct),
             total_equity=self._pathb_total_equity_krw(market, fallback_cash_krw=cash),
         )
@@ -12674,6 +12712,9 @@ class PathBRuntime:
             "early_gate_applied": early_gate_applied,
             "early_gate_size_mult": early_gate_size_mult,
             "early_gate_floor_applied": early_gate_floor_applied,
+            "late_gate_applied": late_gate_applied,
+            "late_gate_action": late_gate_action,
+            "late_gate_size_mult": late_gate_size_mult,
             "ready_boost_mult": ready_boost_mult,
             "ready_boost_applied": ready_boost_mult > 1.0,
             "can_buy_1_share": can_buy_1_share,
@@ -12696,6 +12737,16 @@ class PathBRuntime:
         except Exception:
             pass
         return {"active": False, "market": str(market or "").upper()}
+
+    def _late_entry_size_gate(self, market: str) -> dict[str, Any]:
+        try:
+            gate = getattr(getattr(self, "bot", None), "_late_entry_size_gate", None)
+            if callable(gate):
+                result = gate(market)
+                return dict(result or {})
+        except Exception:
+            pass
+        return {"active": False, "action": "FULL", "size_mult": 1.0, "market": str(market or "").upper()}
 
     def _pathb_total_equity_krw(self, market: str, *, fallback_cash_krw: float) -> float:
         try:
