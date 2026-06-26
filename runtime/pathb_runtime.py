@@ -6396,6 +6396,21 @@ class PathBRuntime:
             return max(0.0, (now - parsed).total_seconds())
         return None
 
+    @staticmethod
+    def _pathb_ladder_ab_enforce_b(plan: PricePlan, market: str) -> bool:
+        """Phase B A/B(2026-06-27): {MKT}_LADDER_AB_MODE=enforce면 decision_id 해시로 50:50 분할,
+        B 그룹만 peak-trail 적용. hard_stop/loss_cap는 상위에서 이미 체크 → 하방 불변(profit-side만)."""
+        import hashlib
+        market_key = "US" if str(market or getattr(plan, "market", "")).upper() == "US" else "KR"
+        mode = str(os.getenv(f"{market_key}_LADDER_AB_MODE", "off") or "off").strip().lower()
+        if mode != "enforce":
+            return False
+        key = str(getattr(plan, "decision_id", "") or getattr(plan, "path_run_id", "") or getattr(plan, "ticker", ""))
+        if not key:
+            return False
+        h = int(hashlib.md5(key.encode("utf-8")).hexdigest(), 16)
+        return (h % 2) == 1
+
     def _pathb_profit_ladder_floor(
         self,
         plan: PricePlan,
@@ -6436,6 +6451,28 @@ class PathBRuntime:
         if peak_price <= 0 and mfe_pct > 0:
             peak_price = entry * (1.0 + mfe_pct / 100.0)
         if mfe_pct <= 0 or peak_price <= 0:
+            return {}
+
+        # Phase B A/B(2026-06-27): enforce-B 그룹은 현행 tier 사다리 대신 단일 peak-trail로 대체.
+        # sweep(ladder_capture_sweep US n=32) act=4·give=2 → Δ+13%p·개선19/악화12·악화반납 통제.
+        # act% 미만은 ladder floor 없음(하방은 상위 hard_stop/loss_cap이 막음 = profit-side만 변경).
+        if self._pathb_ladder_ab_enforce_b(plan, market):
+            ab_act = _env_float("LADDER_AB_ACT_PCT", 4.0)
+            ab_give = _env_float("LADDER_AB_GIVE_PCT", 2.0)
+            if ab_act > 0 and mfe_pct >= ab_act:
+                ab_floor = peak_price * (1.0 - max(0.0, ab_give) / 100.0)
+                ab_floor = self._round_policy_price(ab_floor, str(market or plan.market or "").upper(), direction="down")
+                if ab_floor > 0:
+                    return {
+                        "tier": "ab_peak_trail",
+                        "floor": ab_floor,
+                        "entry": entry,
+                        "peak_price": peak_price,
+                        "mfe_pct": mfe_pct,
+                        "ab_group": "B",
+                        "ab_act_pct": ab_act,
+                        "ab_give_pct": ab_give,
+                    }
             return {}
 
         tier1 = _env_float("PATHB_LADDER_TIER1_PCT", 1.2)
