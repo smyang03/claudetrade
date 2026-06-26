@@ -132,7 +132,9 @@ def main() -> int:
                 "(v2_decision_id,market,ticker,yf_symbol,entry_price,exit_price,pnl_pct,close_reason,mfe_pct,mae_pct,bars,interval,source,synced_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(v2_decision_id) DO UPDATE SET yf_symbol=excluded.yf_symbol,mfe_pct=excluded.mfe_pct,"
-                "mae_pct=excluded.mae_pct,bars=excluded.bars,interval=excluded.interval,source=excluded.source,synced_at=excluded.synced_at",
+                "mae_pct=excluded.mae_pct,bars=excluded.bars,interval=excluded.interval,source=excluded.source,synced_at=excluded.synced_at "
+                # 재-sweep 시 yfinance 60일 윈도우 밖(no_bars→mfe NULL)이 기존 유효 추정치를 덮지 않도록 가드.
+                "WHERE excluded.mfe_pct IS NOT NULL",
                 (
                     p["v2_decision_id"], p["market"], str(p["ticker"]), sym,
                     float(p["entry_price"]), p.get("exit_price"), p.get("pnl_pct"), p.get("close_reason"),
