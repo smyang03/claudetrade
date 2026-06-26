@@ -782,6 +782,7 @@ class PathBRuntime:
                 current=float(current or 0),
                 target=target,
                 cancel_threshold=float(cancel_threshold or 0) or None,
+                buy_zone_high=float(getattr(plan, "buy_zone_high", 0) or 0) or None,
             )
             if decision is None:
                 return None
