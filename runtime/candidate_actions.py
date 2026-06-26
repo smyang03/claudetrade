@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import math
 from typing import Any
+
+# TZ 정합(2026-06-26): 이 모듈은 전부 naive로 동작하나 _parse_dt가 aware("Z"=UTC)를 정규화 없이
+# strip해 UTC 벽시계가 KST-naive와 섞여 만료 ±9h 왜곡. aware는 KST로 변환 후 strip해 단일 기준 통일.
+_KST = timezone(timedelta(hours=9))
+
+
+def _to_kst_naive(dt: datetime) -> datetime:
+    return dt.astimezone(_KST).replace(tzinfo=None) if dt.tzinfo is not None else dt
 
 
 CLAUDE_ACTIONS = {
@@ -138,7 +146,7 @@ def _parse_dt(value: Any) -> datetime:
     text = str(value or "").strip()
     if text:
         try:
-            return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+            return _to_kst_naive(datetime.fromisoformat(text.replace("Z", "+00:00")))
         except Exception:
             pass
     return datetime.now()
@@ -155,7 +163,7 @@ def _min_expiry(created_at: datetime, action: str, raw_valid_until: Any = None) 
     if not text:
         return runtime_expiry.isoformat(timespec="seconds"), []
     try:
-        raw_expiry = datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+        raw_expiry = _to_kst_naive(datetime.fromisoformat(text.replace("Z", "+00:00")))
         if raw_expiry <= created_at:
             return runtime_expiry.isoformat(timespec="seconds"), ["raw_valid_until_before_created_ignored"]
         return min(runtime_expiry, raw_expiry).isoformat(timespec="seconds"), []

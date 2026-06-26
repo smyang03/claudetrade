@@ -47,6 +47,16 @@ import brain as BrainDB
 
 log         = get_trainer_logger()
 client      = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
+
+
+def _brain_write_allowed() -> bool:
+    """historical_sim의 brain.json 쓰기 오염 가드(2026-06-26).
+
+    이 도구는 과거날짜를 LLM으로 재생하므로 cutoff 이전이면 암기누수(Lopez-Lira 2504.14765,
+    Profit Mirage 2510.07920) — 그 postmortem 교훈을 brain.json(라이브 정책메모리)에 쓰면 오염.
+    기본 차단. 의도적 사용만 HISTORICAL_SIM_ALLOW_BRAIN_WRITE=1로 opt-in(분석 출력은 항상 생성).
+    """
+    return str(os.getenv("HISTORICAL_SIM_ALLOW_BRAIN_WRITE", "0")).strip().lower() in {"1", "true", "yes", "on"}
 BASE_DIR    = Path(__file__).parent.parent
 PRICE_DIR   = BASE_DIR / "data" / "price"
 JUDGMENT_DIR= get_runtime_path("logs", "daily_judgment", make_parents=False)
@@ -382,45 +392,53 @@ def simulate_day(market: str, target_date: str, cumulative: float) -> dict:
     # 7. Brain 업데이트
     recent = brain_data["markets"][market].get("recent_days", [])
 
-    BrainDB.update_analyst(market, "bull",
-        postmortem.get("bull_result","MISS") == "HIT", recent)
-    BrainDB.update_analyst(market, "bear",
-        postmortem.get("bear_result","MISS") == "HIT", recent)
-    BrainDB.update_analyst(market, "neutral",
-        postmortem.get("neutral_result","MISS") == "HIT", recent)
-    BrainDB.update_mode_performance(
-        market, consensus["mode"], actual["pnl_pct"], actual["win"])
+    # 오염 가드(2026-06-26): 과거날짜 LLM 재생 postmortem을 brain.json에 쓰는 건 암기누수 오염.
+    # HISTORICAL_SIM_ALLOW_BRAIN_WRITE=1 opt-in일 때만 brain 변이. 기본은 분석 출력만 생성.
+    if not _brain_write_allowed():
+        log.warning(
+            f"[historical_sim] brain 쓰기 차단(오염가드) — {market} {target_date}. "
+            "의도적 사용은 HISTORICAL_SIM_ALLOW_BRAIN_WRITE=1"
+        )
+    else:
+        BrainDB.update_analyst(market, "bull",
+            postmortem.get("bull_result","MISS") == "HIT", recent)
+        BrainDB.update_analyst(market, "bear",
+            postmortem.get("bear_result","MISS") == "HIT", recent)
+        BrainDB.update_analyst(market, "neutral",
+            postmortem.get("neutral_result","MISS") == "HIT", recent)
+        BrainDB.update_mode_performance(
+            market, consensus["mode"], actual["pnl_pct"], actual["win"])
 
-    bu = postmortem.get("brain_updates", {})
-    if bu.get("new_lesson"):
-        BrainDB.update_beliefs(market, {"new_lesson": bu["new_lesson"]})
-    if bu.get("market_regime"):
-        BrainDB.update_beliefs(market, {"market_regime": bu["market_regime"]})
+        bu = postmortem.get("brain_updates", {})
+        if bu.get("new_lesson"):
+            BrainDB.update_beliefs(market, {"new_lesson": bu["new_lesson"]})
+        if bu.get("market_regime"):
+            BrainDB.update_beliefs(market, {"market_regime": bu["market_regime"]})
 
-    issue = {
-        "matched_id":   postmortem.get("pattern_id"),
-        "type":         postmortem.get("issue_type","미분류"),
-        "description":  postmortem.get("issue_description",""),
-        "bull_hit":     postmortem.get("bull_result") == "HIT",
-        "pnl_pct":      actual["pnl_pct"],
-        "example":      f"{target_date}: {digest.get('top_news',[{}])[0].get('title','') if digest.get('top_news') else ''}",
-        "insight":      postmortem.get("key_lesson",""),
-    }
-    BrainDB.update_issue_pattern(market, issue)
+        issue = {
+            "matched_id":   postmortem.get("pattern_id"),
+            "type":         postmortem.get("issue_type","미분류"),
+            "description":  postmortem.get("issue_description",""),
+            "bull_hit":     postmortem.get("bull_result") == "HIT",
+            "pnl_pct":      actual["pnl_pct"],
+            "example":      f"{target_date}: {digest.get('top_news',[{}])[0].get('title','') if digest.get('top_news') else ''}",
+            "insight":      postmortem.get("key_lesson",""),
+        }
+        BrainDB.update_issue_pattern(market, issue)
 
-    daily_record = {
-        "date":     target_date,
-        "mode":     consensus["mode"],
-        "pnl_pct":  actual["pnl_pct"],
-        "win":      actual["win"],
-        f"bull_result":   postmortem.get("bull_result","MISS"),
-        f"bear_result":   postmortem.get("bear_result","MISS"),
-        f"neutral_result":postmortem.get("neutral_result","MISS"),
-        "bull_reason":   bull.get("key_reason",""),
-        "bear_reason":   bear.get("key_reason",""),
-        "market_change": actual.get("market_change",0),
-    }
-    BrainDB.add_daily_record(market, daily_record)
+        daily_record = {
+            "date":     target_date,
+            "mode":     consensus["mode"],
+            "pnl_pct":  actual["pnl_pct"],
+            "win":      actual["win"],
+            f"bull_result":   postmortem.get("bull_result","MISS"),
+            f"bear_result":   postmortem.get("bear_result","MISS"),
+            f"neutral_result":postmortem.get("neutral_result","MISS"),
+            "bull_reason":   bull.get("key_reason",""),
+            "bear_reason":   bear.get("key_reason",""),
+            "market_change": actual.get("market_change",0),
+        }
+        BrainDB.add_daily_record(market, daily_record)
 
     # 8. 판단 기록 저장
     record = {

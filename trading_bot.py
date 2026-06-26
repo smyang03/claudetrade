@@ -244,7 +244,9 @@ try:
 except Exception as _v2_import_err:
     _V2LifecycleRuntime = None
     def _v2_close_reason(reason: str) -> str:
-        return "CLOSED_USER_MANUAL"
+        # import 실패 fallback(2026-06-26): 무조건 USER_MANUAL이면 모든 청산이 "수동"으로
+        # 오라벨되는 잠복 폭탄 → 원본 reason 보존(없으면 UNKNOWN).
+        return str(reason or "CLOSED_UNKNOWN")
     _V2_LIFECYCLE_AVAILABLE = False
 try:
     from runtime.pathb_runtime import PathBRuntime as _PathBRuntime
@@ -5722,7 +5724,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not expires_at:
             return False
         try:
-            return datetime.fromisoformat(expires_at.replace("Z", "+00:00")).replace(tzinfo=None) < datetime.now(KST).replace(tzinfo=None)
+            # TZ 정합(2026-06-26): tzinfo를 strip하면 UTC("Z") expiry가 KST 벽시계와 비교돼 ±9h 왜곡.
+            # aware로 통일 — "Z"는 UTC, naive는 시스템 로컬(KST) 가정 후 aware-aware 비교.
+            dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=KST)
+            return dt < datetime.now(KST)
         except Exception:
             return False
 
@@ -5732,7 +5739,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not text:
             return None
         try:
-            return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+            # TZ 정합(2026-06-26): tzinfo strip 금지 — UTC("Z") 시각이 KST 벽시계와 비교돼 ±9h 왜곡.
+            # aware로 통일: "Z"=UTC 유지, naive는 시스템 로컬(KST) 가정. 콜러(grace/stale)도 aware.
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            return dt if dt.tzinfo is not None else dt.replace(tzinfo=KST)
         except Exception:
             return None
 
@@ -6112,7 +6122,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
         if grace_min <= 0:
             return False
-        current = (now or datetime.now(KST)).replace(tzinfo=None)
+        # TZ 정합(2026-06-26): aware 유지(strip 금지). now naive면 KST 가정. expires/anchor도 aware.
+        current = now or datetime.now(KST)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=KST)
         ready_actions = {"PROBE_READY", "BUY_READY", "ADD_READY"}
         for route in routes:
             if not isinstance(route, dict):
@@ -6154,7 +6167,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         last_seen = self._parse_candidate_route_time((health or {}).get("last_seen_at"))
         if last_seen is None:
             return None
-        current = (now or datetime.now(KST)).replace(tzinfo=None)
+        # TZ 정합(2026-06-26): aware 유지. now naive면 KST 가정. last_seen도 aware(파서 수정).
+        current = now or datetime.now(KST)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=KST)
         try:
             return max(0.0, (current - last_seen).total_seconds() / 60.0)
         except Exception:

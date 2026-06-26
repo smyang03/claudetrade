@@ -3757,7 +3757,8 @@ class PathBRuntime:
         market_key = str(market or run.get("market", "") or "").upper()
         if not market_key:
             return False
-        close_reason = str(close_reason or closed_trade.get("close_reason", "") or "CLOSED_USER_MANUAL")
+        # default UNKNOWN(2026-06-26): 사유 미전파 외부청산이 "수동매도"로 오라벨되지 않게.
+        close_reason = str(close_reason or closed_trade.get("close_reason", "") or "CLOSED_UNKNOWN")
         price_native = float(price or closed_trade.get("display_exit_price", 0) or closed_trade.get("actual_exit_price", 0) or 0)
         pnl_pct = float(closed_trade.get("pnl_pct", 0) or 0)
         execution_id = str(execution_id or closed_trade.get("exit_execution_id", "") or closed_trade.get("order_no", "") or "")
@@ -4231,6 +4232,25 @@ class PathBRuntime:
                 plan.path_run_id,
             )
             return False
+        # A1: REQUIRE_TRADE_READY — ready=0(=PULLBACK_WAIT/PROBE 출신, not_patha_trade_ready) 신규 진입 완전 차단.
+        # ready=0는 양 시장 출혈 싱크(KR net -3.73%/PF0.08, US -1.97%). 차단 후 plan 취소(국면 내 ready 불변).
+        if str(os.getenv("REQUIRE_TRADE_READY", "false") or "false").strip().lower() in {"1", "true", "yes", "on"} \
+                and bool(getattr(plan, "not_patha_trade_ready", False)):
+            self._record_blocked(
+                market,
+                plan.ticker,
+                plan.decision_id,
+                "REQUIRE_TRADE_READY_BLOCK",
+                {"require_trade_ready": True, "not_patha_trade_ready": True, "stage": "pathb_submit_buy"},
+                plan.path_run_id,
+            )
+            self.adapter.cancel_plan(
+                plan.path_run_id,
+                reason="REQUIRE_TRADE_READY_BLOCK",
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(market),
+            )
+            return False
         reentry = self.reentry_guard.evaluate(
             market=market,
             runtime_mode=self.mode,
@@ -4261,7 +4281,12 @@ class PathBRuntime:
         risk_price_krw = self._price_to_krw(signal.limit_price, market)
         cash_krw = float(getattr(getattr(self.bot, "risk", None), "cash", 0) or 0)
         min_order_krw = self._pathb_min_order_krw(market)
-        qty, sizing_context = self._pathb_qty_with_context(market, risk_price_krw, cash_krw=cash_krw)
+        qty, sizing_context = self._pathb_qty_with_context(
+            market,
+            risk_price_krw,
+            cash_krw=cash_krw,
+            boost_eligible=(not bool(getattr(plan, "not_patha_trade_ready", False))),
+        )
         order_cost = float(qty) * float(risk_price_krw)
         realized_daily_pnl_pct = self._daily_pnl_pct(market)
         equity_daily_pnl_pct = self._equity_daily_pnl_pct(market)
@@ -12536,7 +12561,7 @@ class PathBRuntime:
         )
         return payload
 
-    def _pathb_qty_with_context(self, market: str, price_krw: float, *, cash_krw: float) -> tuple[int, dict[str, Any]]:
+    def _pathb_qty_with_context(self, market: str, price_krw: float, *, cash_krw: float, boost_eligible: bool = False) -> tuple[int, dict[str, Any]]:
         price = float(price_krw or 0)
         cash = max(0.0, float(cash_krw or 0))
         fixed_budget = float(self.config.pathb_fixed_order_krw)
@@ -12548,7 +12573,19 @@ class PathBRuntime:
             if early_gate_applied
             else 1.0
         )
-        budget = fixed_budget * early_gate_size_mult if early_gate_applied else fixed_budget
+        # A2: ready=1(=PathA trade_ready 출신) + claude_price(=PathB) 양수 셋업 자본 집중(×mult).
+        # MAX_ORDER_KRW(Path A 캡)는 PathB fixed_order_krw에 적용되지 않으므로 타겟 예외가 자연 성립.
+        ready_boost_mult = 1.0
+        if boost_eligible:
+            try:
+                ready_boost_mult = max(1.0, min(3.0, float(os.getenv("PATHB_READY_BOOST_MULT", "1.0") or 1.0)))
+            except (TypeError, ValueError):
+                ready_boost_mult = 1.0
+        budget = fixed_budget
+        if early_gate_applied:
+            budget *= early_gate_size_mult
+        if ready_boost_mult > 1.0:
+            budget *= ready_boost_mult
         hard_budget_cap = budget
         if price <= 0:
             sizing_context = {
@@ -12636,6 +12673,8 @@ class PathBRuntime:
             "early_gate_applied": early_gate_applied,
             "early_gate_size_mult": early_gate_size_mult,
             "early_gate_floor_applied": early_gate_floor_applied,
+            "ready_boost_mult": ready_boost_mult,
+            "ready_boost_applied": ready_boost_mult > 1.0,
             "can_buy_1_share": can_buy_1_share,
             "fixed_sizing": True,
             "sizing_reason": sizing_reason,

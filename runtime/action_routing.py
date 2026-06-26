@@ -536,6 +536,15 @@ def route_candidate_action(
         demoted_to: str = "",
         runtime_gate_reason: str = "",
     ) -> RouteDecision:
+        # A1: REQUIRE_TRADE_READY — PROBE_READY(=trade_ready 미만 탐색 진입, ready=0)는 WATCH 강등.
+        # ready=0 출혈 싱크 차단. BUY_READY/ADD_READY(=ready=1)는 통과.
+        if final_action == "PROBE_READY" and str(
+            os.getenv("REQUIRE_TRADE_READY", "false") or "false"
+        ).strip().lower() in {"1", "true", "yes", "on"}:
+            final_action = "WATCH"
+            demoted_to = demoted_to or "WATCH"
+            runtime_gate_reason = runtime_gate_reason or "require_trade_ready"
+            route = None
         gate_payload = dict(gate_context)
         if runtime_gate_reason:
             gate_payload["reason"] = runtime_gate_reason
