@@ -10484,22 +10484,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             state.update({"allowed": False, "reason": "kr_recovery_micro_late_session"})
         return state
 
-    def _ticker_quarantine_set(self, market_key: str) -> set:
-        """{MKT}_TICKER_DENYLIST(쉼표구분)로 지정한 독성 반복종목 격리 집합.
-
-        2026-06-26 실측: 특정 종목을 수십 회 반복 거래하며 구조적 손실(win0~24%·N≥20).
-        US INTC(N83 -118%p)·AMD(win0% -59%p)·IONQ(win0% -52%p), KR 078150·001440(win0%).
-        curve-fit 방지: N≥20·win≤25%·net≤-1% 기준으로만 선정, 토글·분기 재검토.
-        """
-        raw = str(self._runtime_value(f"{market_key}_TICKER_DENYLIST", "") or "")
-        out: set = set()
-        for tok in raw.replace(";", ",").split(","):
-            tok = tok.strip()
-            if not tok:
-                continue
-            out.add(tok.upper() if market_key == "US" else tok)
-        return out
-
     def _new_buy_block_state(self, market: str, ticker: str = "", strategy: str = "") -> dict:
         market_key = str(market or "").upper()
         raw_ticker = str(ticker or "").strip()
@@ -10524,14 +10508,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "blocked": True,
                 "reason": "ENTRY_BLACKOUT",
                 "scope": "market",
-                "details": details,
-            }
-        if ticker_key and ticker_key in self._ticker_quarantine_set(market_key):
-            return {
-                "allowed": False,
-                "blocked": True,
-                "reason": "TICKER_QUARANTINE",
-                "scope": "ticker",
                 "details": details,
             }
         stop_cluster = self._daily_stop_cluster_state(market_key, ticker_key)

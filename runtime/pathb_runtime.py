@@ -3094,19 +3094,6 @@ class PathBRuntime:
 
             waiting_items.sort(key=lambda item: (-_confidence_sort_value(item), item[0]))
         for _, run, plan in waiting_items:
-            # 독성 반복종목 격리(2026-06-26): per-ticker로 PathB 진입 차단. Path A 게이트는
-            # market-scoped 호출이라 종목격리를 못 잡으므로 여기서 ticker별로 확인한다.
-            _q_gate = self._new_buy_block_state(market, plan.ticker, "path_b")
-            if not bool(_q_gate.get("allowed", True)) and str(_q_gate.get("reason") or "") == "TICKER_QUARANTINE":
-                self._record_blocked(
-                    market,
-                    plan.ticker,
-                    plan.decision_id,
-                    "TICKER_QUARANTINE",
-                    {**self._execution_safety_payload(), "scope": "ticker"},
-                    plan.path_run_id,
-                )
-                continue
             current = self._current_native_price(market, plan.ticker)
             if current <= 0:
                 continue
