@@ -923,6 +923,15 @@ class PathBRuntime:
             "DEFENSIVE": self._runtime_int("PATHB_RISK_OFF_CAP_DEFENSIVE", 5),
         }
         cap = int(caps.get(mode, 0) or 0)
+        # shadow cap(측정 전용): 실제 진입 차단엔 절대 사용 안 함(enforce는 cap만 본다).
+        # cap=15는 2026-06-11 운영자가 의도적으로 푼 값 — 행동 불변, "더 조였으면 무엇이
+        # 차단됐을지(loss_cap 종목인지 TARGET 종목인지)"만 로깅해 cap 방향을 데이터로 검증.
+        shadow_caps = {
+            "MILD_BEAR": self._runtime_int("PATHB_RISK_OFF_CAP_SHADOW_MILD_BEAR", 10),
+            "CAUTIOUS_BEAR": self._runtime_int("PATHB_RISK_OFF_CAP_SHADOW_CAUTIOUS_BEAR", 10),
+            "DEFENSIVE": self._runtime_int("PATHB_RISK_OFF_CAP_SHADOW_DEFENSIVE", 5),
+        }
+        shadow_cap = int(shadow_caps.get(mode, 0) or 0)
         incoming_keys = sorted({self._ticker_key(market_key, item) for item in (incoming_tickers or []) if item})
         zone_hit_keys = sorted({self._ticker_key(market_key, item) for item in (zone_hit_tickers or []) if item})
         if cap <= 0:
@@ -983,6 +992,9 @@ class PathBRuntime:
             "projected_count": projected_count,
             "would_exceed": would_exceed,
             "would_block_count": max(0, projected_count - cap),
+            "risk_off_pathb_cap_shadow": shadow_cap,
+            "would_exceed_shadow": bool(shadow_cap > 0 and projected_count > shadow_cap),
+            "would_block_count_shadow": max(0, projected_count - shadow_cap) if shadow_cap > 0 else 0,
             "reason": "pathb_risk_off_cap_enforced" if enforce else "pathb_risk_off_cap_audit_only",
         }
 
@@ -1009,6 +1021,9 @@ class PathBRuntime:
             f"stage={state.get('stage')} current={state.get('current_count')} "
             f"incoming={state.get('incoming_count')} projected={state.get('projected_count')} "
             f"cap={state.get('risk_off_pathb_cap')} would_exceed={state.get('would_exceed')} "
+            f"cap_shadow={state.get('risk_off_pathb_cap_shadow')} "
+            f"would_exceed_shadow={state.get('would_exceed_shadow')} "
+            f"would_block_shadow={state.get('would_block_count_shadow')} "
             f"audit_only={str(bool(state.get('audit_only'))).lower()} enforced={str(bool(state.get('enforced'))).lower()}"
         )
         if bool(state.get("would_exceed")):
