@@ -99,6 +99,7 @@ def _append_lesson_candidate(
             "requires_operator_approval": True,
             "prompt_visible_after_approval": True,
             "hit_result": bull_result,
+            "hit_result_source": "bull_result",
         })
         store["markets"][market] = market_list
         path.write_text(json.dumps(store, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -329,6 +330,45 @@ def _code_judge_hit_miss(stance: str, market_change_pct: float) -> str:
         if abs_chg <= _FLAT_THRESHOLD:  return "HIT"
         if abs_chg <= _FLAT_PARTIAL:    return "PARTIAL"
         return "MISS"
+
+
+def _stance_dir(stance: str) -> str:
+    s = str(stance or "").strip().upper()
+    if s in _BULL_STANCES:
+        return "up"
+    if s in _BEAR_STANCES:
+        return "down"
+    if s in _AVOID_STANCES:
+        return "avoid"
+    return "flat"
+
+
+def _scoring_consistency_meta(judgments: dict, analyst_available: dict, code_results: dict) -> dict:
+    """채점 다의성 측정(읽기전용, 채점/학습 로직 변경 없음).
+
+    각 역할 분석가 stance 방향과 코드 채점 결과를 대조해, HIT 판정 역할들의 방향이
+    갈리는지 기록한다 — scoring_ambiguous: up/down/flat 중 2개 이상 동시 HIT,
+    scoring_multi_dir_hit: up·down 정면 충돌. lesson의 hit_result가 교훈 내용이
+    아니라 bull-role 방향 적중(bull_result)임을 가시화하는 메타.
+    """
+    per_role: dict = {}
+    hit_dirs: list = []
+    for role in ("bull", "bear", "neutral"):
+        if not analyst_available.get(role):
+            per_role[role] = {"dir": "unavailable", "result": "UNAVAILABLE"}
+            continue
+        d = _stance_dir((judgments.get(role) or {}).get("stance"))
+        r = code_results.get(role)
+        per_role[role] = {"dir": d, "result": r}
+        if r == "HIT":
+            hit_dirs.append(d)
+    distinct = sorted(set(hit_dirs))
+    return {
+        "scoring_dirs_by_role": per_role,
+        "scoring_hit_dirs": distinct,
+        "scoring_ambiguous": len(distinct) >= 2,
+        "scoring_multi_dir_hit": ("up" in distinct and "down" in distinct),
+    }
 
 
 def _format_decision_event_log(decision_event_log: list) -> str:
@@ -768,6 +808,13 @@ def run(market: str, date: str, today_judgment: dict,
         pm["analyst_unavailable_roles"] = list(analyst_unavailable_roles)
         pm["analyst_available"] = dict(analyst_available)
 
+    # 채점 다의성/거래0 측정(읽기전용 메타, 채점·학습 로직 불변 — Tier1-3 A)
+    pm.update(_scoring_consistency_meta(
+        judgments, analyst_available,
+        {"bull": pm.get("bull_result"), "bear": pm.get("bear_result"), "neutral": pm.get("neutral_result")},
+    ))
+    pm["trades_zero"] = int(actual_result.get("trades", len(sells)) or 0) == 0
+
     execution_learning_excluded = bool(
         actual_result.get(
             "execution_learning_excluded",
@@ -841,6 +888,10 @@ def run(market: str, date: str, today_judgment: dict,
         "worst_trade":       pm.get("worst_trade"),
         "worst_trade_reason": pm.get("worst_trade_reason", ""),
         "trades":            sell_count,
+        "trades_zero":       pm.get("trades_zero", sell_count == 0),
+        "scoring_hit_dirs":  pm.get("scoring_hit_dirs"),
+        "scoring_ambiguous": pm.get("scoring_ambiguous"),
+        "scoring_multi_dir_hit": pm.get("scoring_multi_dir_hit"),
         "execution_contaminated": bool(actual_result.get("execution_contaminated", False)),
         "execution_learning_excluded": execution_learning_excluded,
         "prompt_policy_excluded": prompt_policy_excluded,

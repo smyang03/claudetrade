@@ -149,6 +149,7 @@ from minority_report.consensus import (
     apply_unanimous_override,
     build_consensus,
     build_judgment_eval,
+    detect_consensus_judgment_desync,
 )
 from minority_report.lesson_quality import apply_lesson_conflict_guards, lesson_quality_fields
 from minority_report.tuner import tune
@@ -1392,6 +1393,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             previous_judgment = {}
         self._audit_judgment_size_direction(market_key, previous_judgment, self.today_judgment)
+        desync_meta = detect_consensus_judgment_desync(
+            self.today_judgment.get("judgments"), self.today_judgment.get("consensus")
+        )
+        if desync_meta.get("consensus_judgment_desync"):
+            log.warning(
+                f"[consensus desync] {market} {desync_meta.get('consensus_judgment_desync_reason')} "
+                f"mode={str((self.today_judgment.get('consensus') or {}).get('mode'))}"
+            )
         try:
             with open(live_path, "w", encoding="utf-8") as f:
                 json.dump({
@@ -1401,6 +1410,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "selection_meta": self.selection_meta.get(market, {}),
                     "trade_ready_tickers": self.trade_ready_tickers.get(market, []),
                     "claude_runtime_overrides": persisted_overrides,
+                    **desync_meta,
                 }, f, ensure_ascii=False, indent=2)
         except Exception as e:
             log.warning(f"판단 임시저장 실패: {e}")
