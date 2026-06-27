@@ -2121,7 +2121,10 @@ def get_index_snapshot(market: str = "KR", index: str = "KOSPI", token: str = ""
         url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-index-price"
         resp = _kis_get(
             url,
-            headers=_headers(token or get_access_token(market="KR"), "FHKUP03500100"),
+            # FHPUP02100000=업종 현재지수(snapshot). 기존 FHKUP03500100은 업종 "기간별 시세"라
+            # FID_INPUT_DATE_1/2를 요구하고 현재지수(bstp_nmix_prpr)를 주지 않아 5/04부터 상수 결측이었음.
+            # 2026-06-28 라이브 호출로 0001=코스피·1001=코스닥 현재지수/등락/상승하락 정상 확인.
+            headers=_headers(token or get_access_token(market="KR"), "FHPUP02100000"),
             params={"FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": code},
             timeout=10,
         )
