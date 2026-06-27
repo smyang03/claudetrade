@@ -32,6 +32,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_collector_logger, log_retry, log_call, ProgressLogger
 from kis_api import get_access_token, _headers, _kis_get, _get_us_quote_codes, get_kis_market_profile
+from runtime_paths import get_runtime_path
 
 load_dotenv()
 
@@ -225,13 +226,35 @@ def fetch_av_news(ticker: str, target_date: str) -> list[dict]:
     return results
 
 
+def _av_exhausted_path() -> Path:
+    return Path(get_runtime_path("state", "av_exhausted_date.txt"))
+
+
 def _is_av_exhausted(target_date: str) -> bool:
-    return _AV_EXHAUSTED_DATE == target_date
+    """AV 일일 소진 여부. 전역(메모리)은 collector가 데이터 사이클마다 새 프로세스로
+    떠서 매번 리셋되므로, state 파일로 영속화해 프로세스 간 공유한다(하루 1회 헛호출로 제한)."""
+    global _AV_EXHAUSTED_DATE
+    if _AV_EXHAUSTED_DATE == target_date:
+        return True
+    try:
+        p = _av_exhausted_path()
+        if p.exists() and p.read_text(encoding="utf-8").strip() == target_date:
+            _AV_EXHAUSTED_DATE = target_date
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _mark_av_exhausted(target_date: str):
     global _AV_EXHAUSTED_DATE
     _AV_EXHAUSTED_DATE = target_date
+    try:
+        p = _av_exhausted_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(target_date, encoding="utf-8")
+    except Exception:
+        pass
     log.warning(f"AV 일일 한도 소진 감지 — {target_date} 남은 세션 동안 AV 호출 중단")
 
 
