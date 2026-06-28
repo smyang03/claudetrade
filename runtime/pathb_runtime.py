@@ -1602,7 +1602,11 @@ class PathBRuntime:
             if price is not None and float(price) > 0:
                 self.store.update_path_run(
                     path_run_id,
-                    plan={"stop_trigger_price": float(price), "stop_trigger_kind": kind},
+                    plan={
+                        "stop_trigger_price": float(price),
+                        "stop_trigger_kind": kind,
+                        "stop_trigger_at": datetime.now(timezone.utc).isoformat(),
+                    },
                     merge_plan=True,
                 )
         except Exception:
