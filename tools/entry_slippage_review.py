@@ -3,9 +3,10 @@ from __future__ import annotations
 """진입 슬리피지 리뷰 — 발주가→체결가 갭 (read-only).
 
 execution이 수익 레버인데 슬리피지 계측이 비어 있었다. 이 도구는 lifecycle_events의
-ORDER_SENT(price_native=발주가)와 FILLED(fill_price_native=체결가)를 path_run_id로
-조인해 진입 체결의 실제 슬리피지를 측정한다(매수 한정). 시장별 슬리피지 캡(KR 0.3%/
-US 0.2%) 대비 초과 비율도 본다.
+ORDER_SENT(발주가)와 FILLED(fill_price_native=체결가)를 execution_id로 조인해 진입
+체결의 실제 슬리피지를 측정한다(매수 한정). 발주가 key는 경로별로 다르다 — PathA는
+price_native, PathB(adapter)는 price — 둘 다 본다(둘 포함 시 커버리지 ~100%).
+시장별 슬리피지 캡(KR 0.3%/US 0.2%) 대비 초과 비율도 본다.
 
 슬리피지%는 매수 기준 (체결가-발주가)/발주가*100 — 양수가 불리(비용). 입력은 로컬
 sqlite(v2_event_store)뿐, 외부 호출 없음. 한 path_run에 발주/체결 다건이면 occurred_at
@@ -108,7 +109,10 @@ def load_slippage(
             continue
         mkt = "US" if str(market or "").upper() == "US" else "KR"
         cov[mkt]["buy_sent"] += 1
+        # 발주가 key는 경로별로 다름: PathA=price_native, PathB(adapter)=price
         price = p.get("price_native")
+        if price in (None, 0):
+            price = p.get("price")
         if not exec_id or price in (None, 0):
             continue
         cov[mkt]["with_price"] += 1
