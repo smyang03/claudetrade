@@ -49,7 +49,7 @@ def _postmortem_fresh_brain_active() -> bool:
 
 def _append_lesson_candidate(
     market: str, date: str, key_lesson: str,
-    bull_result: str, excluded: bool
+    bull_result: str, excluded: bool, consensus_hit: str = ""
 ) -> None:
     if excluded or _is_placeholder_lesson(key_lesson):
         return
@@ -100,6 +100,7 @@ def _append_lesson_candidate(
             "prompt_visible_after_approval": True,
             "hit_result": bull_result,
             "hit_result_source": "bull_result",
+            "consensus_hit": consensus_hit,
         })
         store["markets"][market] = market_list
         path.write_text(json.dumps(store, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -827,7 +828,7 @@ def run(market: str, date: str, today_judgment: dict,
     )
 
     # ── brain 업데이트 ───────────────────────────────────────────────
-    if not execution_learning_excluded:
+    if not execution_learning_excluded and not pm.get("trades_zero"):
         recent = BrainDB.load()["markets"][market].get("recent_days", [])
 
         for role in ("bull", "bear", "neutral"):
@@ -838,6 +839,10 @@ def run(market: str, date: str, today_judgment: dict,
             market, consensus_mode,
             actual_result.get("pnl_pct", 0), actual_result.get("win", False)
         )
+    elif not execution_learning_excluded and pm.get("trades_zero"):
+        # Tier1-3B: 거래 0인 세션은 실현 성과가 없어 mode_performance에 가짜 무승부(pnl=0/win=False),
+        # update_analyst에 거래로 전환 안 된 방향적중이 누적돼 brain reliability를 진동시킨다 → 갱신 제외.
+        log.info(f"[brain skip] {date} {market} trades==0 — 성과 갱신 제외(가짜 무승부·미전환 방향적중 누적 방지)")
 
     bu = pm.get("brain_updates", {})
     # new_lesson 없으면 key_lesson을 fallback으로 사용
@@ -905,11 +910,13 @@ def run(market: str, date: str, today_judgment: dict,
     })
 
     # lesson_candidates.json 자동 append
+    consensus_hit_label = _code_judge_hit_miss(consensus_mode, market_chg) if consensus_mode else ""
     _append_lesson_candidate(
         market=market,
         date=date,
         key_lesson=daily_key_lesson,
         bull_result=pm["bull_result"],
+        consensus_hit=consensus_hit_label,
         excluded=execution_learning_excluded or pm.get("_system_error", False),
     )
 

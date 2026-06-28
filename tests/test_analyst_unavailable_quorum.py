@@ -257,9 +257,10 @@ def test_postmortem_does_not_update_brain_performance_for_unavailable_analyst():
             "KR",
             "2026-05-22",
             today_judgment,
-            {"market_change": 0.2, "pnl_pct": 0.0, "win": False},
+            {"market_change": 0.2, "pnl_pct": 0.0, "win": False, "trades": 1},
             "digest",
-            trade_log=[],
+            # 1-3B: trades==0이면 brain 갱신이 전부 스킵되므로, unavailable analyst 제외 검증은 거래 1건으로 한다.
+            trade_log=[{"side": "sell", "pnl": -100, "pnl_pct": -0.5, "ticker": "005930", "strategy": "claude_price"}],
             decision_event_log=[],
         )
 
