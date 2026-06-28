@@ -1592,6 +1592,22 @@ class PathBRuntime:
         }
         return payload
 
+    def _record_stop_trigger_price(self, path_run_id: str, kind: str, price: float | None) -> None:
+        """loss_cap/hard_stop 트리거 시 트리거 임계가를 path_run plan에 기록(측정 전용).
+
+        트리거가→체결가 갭(loss_cap 오버슈트)을 사후 측정하기 위함이며, 청산 동작·주문에는
+        영향을 주지 않는다(plan merge 기록만). 실패해도 청산을 막지 않는다(fail-open).
+        """
+        try:
+            if price is not None and float(price) > 0:
+                self.store.update_path_run(
+                    path_run_id,
+                    plan={"stop_trigger_price": float(price), "stop_trigger_kind": kind},
+                    merge_plan=True,
+                )
+        except Exception:
+            pass
+
     def _audit_pathb_exit_signal(self, plan: PricePlan, pos: dict[str, Any], signal: ExitSignal) -> str:
         bot = getattr(self, "bot", None)
         emit_signal = getattr(bot, "_audit_emit_signal", None)
@@ -3619,8 +3635,10 @@ class PathBRuntime:
                     and current <= loss_cap_price
                 ):
                     exit_signal = ExitSignal(True, "loss_cap", "CLOSED_LOSS_CAP", current, plan.path_run_id)
+                    self._record_stop_trigger_price(plan.path_run_id, "loss_cap", loss_cap_price)
                 elif hard_stop_price is not None and hard_stop_price > 0 and current <= hard_stop_price:
                     exit_signal = ExitSignal(True, "hard_stop", "CLOSED_HARD_STOP", current, plan.path_run_id)
+                    self._record_stop_trigger_price(plan.path_run_id, "hard_stop", hard_stop_price)
                 elif tail_capture_signal is not None:
                     # 꼬리-capture enforce: 하방(loss_cap/hard_stop) 통과 후 trailing이 profit-side 청산.
                     exit_signal = tail_capture_signal
