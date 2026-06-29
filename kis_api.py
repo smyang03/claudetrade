@@ -2135,11 +2135,20 @@ def get_index_snapshot(market: str = "KR", index: str = "KOSPI", token: str = ""
         o = body.get("output") or {}
         sign = o.get("prdy_vrss_sign", "")
         name = o.get("hts_kor_isnm") or ("KOSDAQ" if code == "1001" else "KOSPI")
+        price = _signed_kis_float(o.get("bstp_nmix_prpr"), "")
+        # fail-loud: 현재지수(bstp_nmix_prpr) 결측이면 0을 조용히 캐시하지 않고 raise한다.
+        # 5/04~6/28 상수결측의 근본 원인이 빈 output을 rt_cd=0이라 예외 없이 0으로 캐시한 것 →
+        # _retry_kis 재시도 후 get_index_change가 yfinance로 fallback(최종 0.0)하도록 신호한다.
+        if not o or price <= 0:
+            raise RuntimeError(
+                f"KIS index quote empty output {code}: price={o.get('bstp_nmix_prpr')!r} "
+                f"(TR FHPUP02100000 결측 의심) msg={body.get('msg1') or '(no output)'}"
+            )
         snap = {
             "market": "KR",
             "index": name,
             "code": code,
-            "price": _signed_kis_float(o.get("bstp_nmix_prpr"), ""),
+            "price": price,
             "change": _signed_kis_float(o.get("bstp_nmix_prdy_vrss"), sign),
             "change_pct": _signed_kis_float(o.get("bstp_nmix_prdy_ctrt"), sign),
             "open": _signed_kis_float(o.get("bstp_nmix_oprc"), ""),

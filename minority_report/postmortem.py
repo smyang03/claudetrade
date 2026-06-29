@@ -814,7 +814,16 @@ def run(market: str, date: str, today_judgment: dict,
         judgments, analyst_available,
         {"bull": pm.get("bull_result"), "bear": pm.get("bear_result"), "neutral": pm.get("neutral_result")},
     ))
-    pm["trades_zero"] = int(actual_result.get("trades", len(sells)) or 0) == 0
+    # trades_zero: '매도 0건'이 아니라 '진입·청산 체결이 전무'로 판정(운영자 결정 2026-06-29).
+    # PATHB_INTRADAY_ONLY=false(멀티데이 홀드)라 신규 진입만 하고 당일 청산이 없는 활동 세션이
+    # 존재한다 — 이를 trades_zero로 잡으면 유효한 방향적중 학습이 통째 누락되므로, trade_log의
+    # buy/sell 체결 전체로 활동을 본다. 매도건수 fallback과 OR 결합해 거짓 스킵을 최소화한다.
+    _trade_activity = sum(
+        1 for t in trade_log
+        if str((t or {}).get("side", "") or "").lower() in ("buy", "sell")
+    )
+    _sells_reported = int(actual_result.get("trades", len(sells)) or 0)
+    pm["trades_zero"] = (_trade_activity == 0 and _sells_reported == 0)
 
     execution_learning_excluded = bool(
         actual_result.get(
@@ -840,9 +849,10 @@ def run(market: str, date: str, today_judgment: dict,
             actual_result.get("pnl_pct", 0), actual_result.get("win", False)
         )
     elif not execution_learning_excluded and pm.get("trades_zero"):
-        # Tier1-3B: 거래 0인 세션은 실현 성과가 없어 mode_performance에 가짜 무승부(pnl=0/win=False),
-        # update_analyst에 거래로 전환 안 된 방향적중이 누적돼 brain reliability를 진동시킨다 → 갱신 제외.
-        log.info(f"[brain skip] {date} {market} trades==0 — 성과 갱신 제외(가짜 무승부·미전환 방향적중 누적 방지)")
+        # Tier1-3B: 진입·청산 체결이 전무한 세션은 실현 성과가 없어 mode_performance에 가짜 무승부
+        # (pnl=0/win=False), update_analyst에 거래로 전환 안 된 방향적중이 누적돼 brain reliability를
+        # 진동시킨다 → 갱신 제외. (매수만 한 활동 세션은 trades_zero=False라 정상 학습)
+        log.info(f"[brain skip] {date} {market} 진입·청산 체결 0 — 성과 갱신 제외(가짜 무승부·미전환 방향적중 누적 방지)")
 
     bu = pm.get("brain_updates", {})
     # new_lesson 없으면 key_lesson을 fallback으로 사용
