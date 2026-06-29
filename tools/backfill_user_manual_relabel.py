@@ -94,6 +94,45 @@ def main() -> None:
             )
             con.commit()
     con.close()
+
+    # v2_path_runs(event store, plan_json 내 close_reason) — 과거 백필이 누락하던 경로 (2026-06-30 추가).
+    # ML_DB(v2_learning/canonical)만 고쳐 v2_event_store.db 원본은 USER_MANUAL 잔존하던 것 교정.
+    evw = sqlite3.connect(str(EV_DB)) if args.apply else sqlite3.connect(f"file:{EV_DB}?mode=ro", uri=True)
+    evw.execute("PRAGMA busy_timeout=5000")
+    pr_rows = list(evw.execute(
+        "SELECT path_run_id, decision_id, plan_json FROM v2_path_runs WHERE status='CLOSED'"
+    ))
+    pr_updates = []
+    pr_unres = 0
+    pr_trans = Counter()
+    for prid, did, pj in pr_rows:
+        try:
+            d = json.loads(pj)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if d.get("close_reason") != "CLOSED_USER_MANUAL":
+            continue
+        rr = rawmap.get(did)
+        if not rr:
+            pr_unres += 1
+            continue
+        nl = v2_close_reason(rr)
+        if nl == "CLOSED_USER_MANUAL":
+            continue  # 진짜 manual 유지
+        d["close_reason"] = nl
+        if d.get("pending_close_reason") == "CLOSED_USER_MANUAL":
+            d["pending_close_reason"] = nl
+        pr_trans[f"{rr} -> {nl}"] += 1
+        pr_updates.append((json.dumps(d, ensure_ascii=False), prid))
+
+    print(f"[v2_path_runs] USER_MANUAL → 재라벨 {len(pr_updates)}건 (raw 미해결 {pr_unres})")
+    for k, v in pr_trans.most_common():
+        print(f"    {k}: {v}")
+    if args.apply and pr_updates:
+        evw.executemany("UPDATE v2_path_runs SET plan_json=? WHERE path_run_id=?", pr_updates)
+        evw.commit()
+    evw.close()
+
     if not args.apply:
         print("\n→ 기록: python tools/backfill_user_manual_relabel.py --apply")
 
