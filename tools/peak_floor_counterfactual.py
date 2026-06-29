@@ -86,7 +86,7 @@ def net_of(row: dict[str, Any], fee: dict[str, float], fx: dict[str, float]) -> 
 
 def mfe_for(row: dict[str, Any], backfill: dict[str, float]) -> tuple[float | None, str | None]:
     v = row.get("mfe_pct")
-    if v not in (None, 0):
+    if v is not None:  # mfe=0.0도 유효값(진입 후 우호적 초과 전무 = 최악 leak 케이스) — 결측은 None뿐
         return float(v), "ledger"
     b = backfill.get(str(row.get("v2_decision_id") or ""))
     if b is not None:

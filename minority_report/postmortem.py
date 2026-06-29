@@ -844,10 +844,14 @@ def run(market: str, date: str, today_judgment: dict,
             if not analyst_available.get(role):
                 continue
             BrainDB.update_analyst(market, role, pm[f"{role}_result"] == "HIT", recent)
-        BrainDB.update_mode_performance(
-            market, consensus_mode,
-            actual_result.get("pnl_pct", 0), actual_result.get("win", False)
-        )
+        # mode_performance는 '실현 성과'다 — 매도(청산)가 있을 때만 갱신한다. 매수만 한 멀티데이
+        # 활동 세션은 실현 pnl=0이라 가짜 무승부(0-pnl 패)가 누적돼 mode_performance를 오염시키므로
+        # 제외한다(Tier1-3B 의도 유지). update_analyst는 방향적중이라 매수만 해도 유효해 위에서 실행.
+        if _sells_reported > 0:
+            BrainDB.update_mode_performance(
+                market, consensus_mode,
+                actual_result.get("pnl_pct", 0), actual_result.get("win", False)
+            )
     elif not execution_learning_excluded and pm.get("trades_zero"):
         # Tier1-3B: 진입·청산 체결이 전무한 세션은 실현 성과가 없어 mode_performance에 가짜 무승부
         # (pnl=0/win=False), update_analyst에 거래로 전환 안 된 방향적중이 누적돼 brain reliability를

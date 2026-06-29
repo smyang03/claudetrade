@@ -54,7 +54,9 @@ def _parse_dt(raw: Any) -> datetime | None:
         dt = datetime.fromisoformat(txt.replace("Z", "+00:00"))
     except ValueError:
         return None
-    return dt  # tz-aware (UTC 또는 KST offset 포함) — aware끼리 빼면 절대시각 차
+    # tz-aware/naive 혼재 시 빼기 TypeError 방지 — tzinfo만 제거(벽시계값)해 naive끼리 빼게 한다.
+    # (정밀 delay는 정식 표본에서 동일 시간대 기록 확인 후. 현재는 표본 0이라 크래시 방지 우선)
+    return dt.replace(tzinfo=None)
 
 
 def _stats(values: list[float]) -> dict[str, Any]:

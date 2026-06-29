@@ -186,13 +186,15 @@ def detect_consensus_judgment_desync(judgments: dict, consensus: dict) -> dict:
     # 낸다 → stance '과반 방향'이 stored mode와 정반대(bull↔bear)일 때만 desync로 본다.
     # 분열·약한 신호(과반 없음)는 desync 아님.
     cats = [_cat(s) for s in stances]
-    n = len(cats)
-    bull_n, bear_n = cats.count("bull"), cats.count("bear")
-    majority_dir = "bull" if bull_n * 2 > n else ("bear" if bear_n * 2 > n else None)
-    if majority_dir is not None and {majority_dir, _cat(stored_mode)} == {"bull", "bear"}:
+    stored_cat = _cat(stored_mode)
+    opposite = {"bull": "bear", "bear": "bull"}.get(stored_cat)
+    # desync: stored mode 방향을 지지하는 분석가가 한 명도 없고 반대 방향 지지자가 있을 때.
+    # (과반 기준은 2-분석가 정족수의 혼합쌍(bull+neutral 등)을 놓쳐 false-negative였다 —
+    #  '지지자 전무 + 반대 존재'가 시점혼합의 더 명확한 신호이고 약한 신호의 false-positive도 안 늘린다)
+    if opposite and cats.count(stored_cat) == 0 and cats.count(opposite) > 0:
         result["consensus_judgment_desync"] = True
         result["consensus_judgment_desync_reason"] = (
-            "dir_opposite:judg=%s/cons=%s" % (majority_dir, _cat(stored_mode))
+            "dir_opposite:judg_no_%s/has_%s vs cons=%s" % (stored_cat, opposite, stored_cat)
         )
     return result
 

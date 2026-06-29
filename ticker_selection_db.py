@@ -229,6 +229,8 @@ def _derive_from_high_bucket(from_high_pct):
         value = float(from_high_pct)
     except (TypeError, ValueError):
         return None
+    if value != value:  # NaN — 모든 경계 비교가 False라 at_high로 오라벨되는 것 방지
+        return None
     if value <= -5.0:
         return "deep"
     if value <= -2.0:

@@ -99,7 +99,8 @@ def build_on_intervals(events):
                 cur["end"] = e["ts"]
                 cur["clear_val"] = e["value"]
                 cur["delta_pp"] = round(e["value"] - cur["detect_val"], 4)
-                cur["dur_min"] = _hhmm_to_min(e["ts"]) - _hhmm_to_min(cur["start"])
+                _dur = _hhmm_to_min(e["ts"]) - _hhmm_to_min(cur["start"])
+                cur["dur_min"] = _dur + 1440 if _dur < 0 else _dur  # US 야간세션 자정 통과 보정
                 cur["closed"] = True
                 intervals.append(cur)
                 cur = None

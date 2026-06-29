@@ -16500,7 +16500,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 from kis_api import get_index_snapshot
                 sp500 = get_index_snapshot("US", "SP500")
                 nasdaq = get_index_snapshot("US", "NASDAQ")
-                vix = get_index_snapshot("US", "VIX")
+                # VIX는 결측(prev_close 빈값)이 잦아 fail-loud raise 빈도가 높다 — 개별 try로 감싸
+                # VIX 결측이 이미 받은 S&P500/NASDAQ 컨텍스트까지 폐기하지 않게 한다(보조 지표).
+                try:
+                    vix = get_index_snapshot("US", "VIX")
+                except Exception as _vix_exc:
+                    log.debug(f"US VIX snapshot 결측 — 무시: {_vix_exc}")
+                    vix = {}
                 self._kis_index_cache["US"] = {"sp500": sp500, "nasdaq": nasdaq, "vix": vix, "ts": _now_ts}
                 lines.append(
                     f"US live index: S&P500 {float(sp500.get('change_pct', 0.0) or 0.0):+.2f}% "

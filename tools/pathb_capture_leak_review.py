@@ -110,7 +110,7 @@ def run(since: str, market: str):
         sub = [r for r in R if r["mkt"] == mkt]
         cap = [r["pnl"] / r["peak"] for r in sub if r["peak"] and r["peak"] > 0.5]
         w = [r["pnl"] for r in sub if r["pnl"] > 0]
-        l = [r["pnl"] for r in sub if r["pnl"] <= 0]
+        l = [r["pnl"] for r in sub if r["pnl"] < 0]  # 본전(0) 제외 — 손익비 분모 0나눗셈 방지
         capt = f"capture {statistics.mean(cap)*100:.0f}%(n{len(cap)})" if cap else "capture n/a"
         pf = f"손익비 {statistics.mean(w)/abs(statistics.mean(l)):.2f}" if w and l else ""
         print(f"  [{mkt}] {capt}  이익 {statistics.mean(w) if w else 0:+.2f}/손실 {statistics.mean(l) if l else 0:+.2f} {pf}")
