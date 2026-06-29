@@ -182,12 +182,17 @@ def detect_consensus_judgment_desync(judgments: dict, consensus: dict) -> dict:
     if len(avail) < 2:
         return result
     stances = [str((judgments.get(r) or {}).get("stance") or "").strip().upper() for r in avail]
-    avg = sum(STANCE_SCORE.get(s, 0.0) for s in stances) / len(stances)
-    implied_mode, _ = _score_to_mode(avg)
-    if {_cat(implied_mode), _cat(stored_mode)} == {"bull", "bear"}:
+    # 무가중 단순평균은 build_consensus의 가중 mode와 어긋나(역할 weight 편향 시) false-positive를
+    # 낸다 → stance '과반 방향'이 stored mode와 정반대(bull↔bear)일 때만 desync로 본다.
+    # 분열·약한 신호(과반 없음)는 desync 아님.
+    cats = [_cat(s) for s in stances]
+    n = len(cats)
+    bull_n, bear_n = cats.count("bull"), cats.count("bear")
+    majority_dir = "bull" if bull_n * 2 > n else ("bear" if bear_n * 2 > n else None)
+    if majority_dir is not None and {majority_dir, _cat(stored_mode)} == {"bull", "bear"}:
         result["consensus_judgment_desync"] = True
         result["consensus_judgment_desync_reason"] = (
-            "dir_opposite:judg=%s/cons=%s" % (_cat(implied_mode), _cat(stored_mode))
+            "dir_opposite:judg=%s/cons=%s" % (majority_dir, _cat(stored_mode))
         )
     return result
 

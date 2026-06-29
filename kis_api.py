@@ -2079,8 +2079,15 @@ def _yf_index_snapshot(index_key: str) -> dict:
             if len(closes) >= 2 and not prev_close:
                 prev_close = float(closes.iloc[-2])
 
-    change = price - prev_close if price and prev_close else 0.0
-    change_pct = (change / prev_close * 100.0) if prev_close else 0.0
+    # fail-loud: price·prev_close 결측이면 change_pct=0.0을 조용히 캐시하지 않고 raise한다(KR P2 대칭).
+    # yfinance 장애 시 0.0이 캐시돼 regime이 조용히 NEUTRAL로 가던 취약점 차단 — _cache_set 미실행으로
+    # 다음 호출 재시도, caller(get_index_change/regime context)는 try/except로 캐시 fallback한다.
+    if not price or price <= 0 or not prev_close or prev_close <= 0:
+        raise RuntimeError(
+            f"yfinance index snapshot empty {symbol}: price={price} prev_close={prev_close} (결측)"
+        )
+    change = price - prev_close
+    change_pct = change / prev_close * 100.0
     snap = {
         "market": "US",
         "index": label_map.get(symbol, key),
