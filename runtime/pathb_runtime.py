@@ -1612,6 +1612,46 @@ class PathBRuntime:
         except Exception:
             pass
 
+    def _record_floor_shadow(self, plan: PricePlan, pos: dict[str, Any], reason_key: str, exit_price: float | None) -> None:
+        """entry-기준 floor/stop 청산 시 실시간 peak·peak-trail floor·실제 청산가를 plan에 기록(측정 전용, A1).
+
+        A1 counterfactual(entry-floor를 peak-trail로 치환 시 net)을 yfinance backfill MFE 의존 없이
+        라이브 실측으로 소비하기 위함이다. peak는 auto_sell_policy에 실시간 갱신(_mark_pathb_auto_sell_policy)된
+        값을, entry는 actual_entry_price를 쓴다. 청산 동작·주문에는 영향을 주지 않는다(fail-open, plan merge만).
+        """
+        try:
+            if exit_price is None or float(exit_price) <= 0:
+                return
+            run = self.store.find_path_run(plan.path_run_id) or {}
+            plan_data = run.get("plan") or {}
+            policy = plan_data.get("auto_sell_policy") or {}
+            peak_price = self._policy_float(
+                policy.get("peak_price") or pos.get("peak_price") or pos.get("position_peak_price")
+            )
+            entry = self._policy_float(
+                plan_data.get("actual_entry_price") or plan_data.get("entry_price") or pos.get("entry_price")
+            )
+            if peak_price <= 0 or entry <= 0:
+                return
+            give = _env_float("LADDER_AB_GIVE_PCT", 2.0)
+            peak_trail_floor = peak_price * (1.0 - max(0.0, give) / 100.0)
+            mfe_pct = (peak_price / entry - 1.0) * 100.0
+            self.store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "floor_shadow_reason": str(reason_key),
+                    "floor_shadow_peak_price": float(peak_price),
+                    "floor_shadow_peak_trail_floor": float(peak_trail_floor),
+                    "floor_shadow_actual_exit": float(exit_price),
+                    "floor_shadow_mfe_pct": float(mfe_pct),
+                    "floor_shadow_give_pct": float(give),
+                    "floor_shadow_at": datetime.now(timezone.utc).isoformat(),
+                },
+                merge_plan=True,
+            )
+        except Exception:
+            pass
+
     def _audit_pathb_exit_signal(self, plan: PricePlan, pos: dict[str, Any], signal: ExitSignal) -> str:
         bot = getattr(self, "bot", None)
         emit_signal = getattr(bot, "_audit_emit_signal", None)
@@ -3630,8 +3670,10 @@ class PathBRuntime:
                 )
                 if mfe_signal is not None:
                     exit_signal = mfe_signal
+                    self._record_floor_shadow(plan, pos, "mfe_breakeven", current)
                 elif weak_mfe_signal is not None:
                     exit_signal = weak_mfe_signal
+                    self._record_floor_shadow(plan, pos, "weak_mfe", current)
                 elif (
                     loss_cap_price is not None
                     and loss_cap_price > 0
@@ -3660,6 +3702,7 @@ class PathBRuntime:
                     )
                     if ladder_signal is not None:
                         exit_signal = ladder_signal
+                        self._record_floor_shadow(plan, pos, getattr(ladder_signal, "reason", "ladder"), current)
                     else:
                         policy_eval = self._evaluate_pathb_auto_sell_policy(plan, pos, current)
                         policy_action = str(policy_eval.get("action", "proceed") or "proceed")

@@ -218,6 +218,26 @@ def init() -> None:
         )
 
 
+def _derive_from_high_bucket(from_high_pct):
+    """from_high_bucket 라벨이 적재 입력에서 누락된 후보를 raw from_high_pct로 파생한다(위생 복구).
+    경계는 minority_report.analysts._candidate_pullback_bucket과 동일(deep/pullback/near_high/at_high).
+    5월말~6월초 후보 파이프 변경으로 라벨 문자열이 insert_batch 입력에서 빠져 6월 커버리지 0이 된 것을 보정 —
+    raw from_high_pct는 100% 살아있으므로 적재 직전 파생해 from_high_bucket 층화 측정을 되살린다."""
+    if from_high_pct is None or from_high_pct == "":
+        return None
+    try:
+        value = float(from_high_pct)
+    except (TypeError, ValueError):
+        return None
+    if value <= -5.0:
+        return "deep"
+    if value <= -2.0:
+        return "pullback"
+    if value <= -0.5:
+        return "near_high"
+    return "at_high"
+
+
 def insert_batch(
     date: str,
     market: str,
@@ -288,7 +308,7 @@ def insert_batch(
                     c.get("category"),
                     c.get("sector"),
                     c.get("liquidity_bucket"),
-                    c.get("from_high_bucket"),
+                    c.get("from_high_bucket") or _derive_from_high_bucket(c.get("from_high_pct")),
                     int(ticker in trade_ready),
                     risk_tags_text,
                     recommended_strategy.get(ticker),
