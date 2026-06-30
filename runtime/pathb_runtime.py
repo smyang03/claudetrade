@@ -6401,10 +6401,16 @@ class PathBRuntime:
         observed_mfe_pct(Phase 1c 관측 전용 키)만 읽으므로 ladder의 peak_pnl_pct는 건드리지 않는다.
         """
         mk = "US" if str(market or "").upper() == "US" else "KR"
-        if not self._runtime_bool(
+        enabled = self._runtime_bool(
             f"{mk}_PATHB_WEAK_MFE_CUT_ENABLED",
             self._runtime_bool("PATHB_WEAK_MFE_CUT_ENABLED", False),
-        ):
+        )
+        # C3 shadow: enforce off여도 조건 충족 시 would-cut만 기록(실매도 보류) → false-cut율·절단손실 측정
+        shadow = self._runtime_bool(
+            f"{mk}_PATHB_WEAK_MFE_CUT_SHADOW",
+            self._runtime_bool("PATHB_WEAK_MFE_CUT_SHADOW", False),
+        )
+        if not enabled and not shadow:
             return None
         current_price = float(current or 0)
         if current_price <= 0:
@@ -6445,6 +6451,10 @@ class PathBRuntime:
             self._runtime_float("PATHB_WEAK_MFE_CUT_MIN_LOSS_PCT", 0.0),
         )
         if cur_pnl_pct > min_loss:
+            return None
+        if not enabled:
+            # shadow 전용: 실제 매도 보류, would-cut만 기록(다국면 false-cut 검증용)
+            self._record_floor_shadow(plan, pos, "weak_mfe_shadow", current_price)
             return None
         return ExitSignal(True, "weak_mfe_cut", "CLOSED_WEAK_MFE", current_price, plan.path_run_id)
 

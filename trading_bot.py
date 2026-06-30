@@ -3746,11 +3746,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         change_pct = self._selection_optional_float(features.get("change_pct"))
         if change_pct is None:
             change_pct = self._selection_optional_float(features.get("change_rate"))
+        gap_pct = self._selection_optional_float(features.get("gap_pct"))
         min_pct = self._runtime_float("SELECTION_US_MIDRANGE_TRAP_MIN_PCT", 2.0)
         max_pct = self._runtime_float("SELECTION_US_MIDRANGE_TRAP_MAX_PCT", 5.0)
+        gap_split_pct = self._runtime_float("SELECTION_US_MIDRANGE_TRAP_GAP_SPLIT_PCT", 2.0)
         evidence = {
             "strategy": strategy,
             "change_pct": change_pct,
+            "gap_pct": gap_pct,
             "trap_min_pct": min_pct,
             "trap_max_pct": max_pct,
         }
@@ -3758,6 +3761,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             # 결측은 거르지 않는다 — 이 guard는 확인된 함정 구간만 차단
             return "", strategy, evidence
         if min_pct <= change_pct < max_pct:
+            # gap split shadow: 실측상 비갭(gap<2%)은 forward +0.40%/win53%로 부당강등,
+            # 갭상승(gap>=2%)만 win41.5%로 정당(2026-06-30 변별력 감사). gap 정보를
+            # evidence에 기록(shadow). enforce 토글(기본 off)일 때만 비갭 강등을 해제한다.
+            is_non_gap = gap_pct is not None and gap_pct < gap_split_pct
+            evidence["gap_split_non_gap"] = is_non_gap
+            evidence["would_release_if_gap_split"] = is_non_gap
+            if is_non_gap and self._runtime_bool(
+                "SELECTION_US_MIDRANGE_TRAP_GAP_SPLIT_ENFORCE", False
+            ):
+                return "", strategy, evidence
             return "us_midrange_momentum_trap", strategy, evidence
         return "", strategy, evidence
 
