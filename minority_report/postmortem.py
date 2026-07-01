@@ -17,6 +17,7 @@ from claude_memory import brain as BrainDB
 from credit_tracker import record as credit_record
 from minority_report.consensus import is_available_judgment
 from minority_report.raw_call_logger import save as save_raw_call
+from minority_report.claude_utils import response_text, thinking_extra_body
 
 log          = get_minority_logger()
 judgment_log = get_judgment_logger()
@@ -716,10 +717,11 @@ def run(market: str, date: str, today_judgment: dict,
         started = time.monotonic()
         resp = client.messages.create(
             model=MODEL, max_tokens=2500,
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
+            extra_body=thinking_extra_body("postmortem"),
         )
         duration_ms = int((time.monotonic() - started) * 1000)
-        raw = resp.content[0].text.strip()
+        raw = response_text(resp)
         call_id = f"postmortem_{market}_{date}_{uuid.uuid4().hex[:10]}"
         credit_record(
             resp.usage.input_tokens, resp.usage.output_tokens, "postmortem", model=MODEL,

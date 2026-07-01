@@ -28,7 +28,7 @@ load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_trainer_logger, log_call, ProgressLogger
-from minority_report.claude_utils import extract_json
+from minority_report.claude_utils import extract_json, response_text, thinking_extra_body
 from minority_report.consensus import build_consensus as runtime_build_consensus
 from phase1_trainer.digest_builder import (
     build_kr_digest, build_us_digest,
@@ -143,9 +143,10 @@ def call_claude_analyst(
         resp = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=512,
-            messages=[{"role":"user","content":prompt}]
+            messages=[{"role":"user","content":prompt}],
+            extra_body=thinking_extra_body("historical_sim"),
         )
-        raw = resp.content[0].text.strip()
+        raw = response_text(resp)
         result = extract_json(raw)
         log.debug(f"  [{analyst_type}] {result.get('stance','-')} "
                   f"conf={result.get('confidence',0):.2f} | {result.get('key_reason','')[:50]}")
@@ -214,9 +215,10 @@ def call_claude_postmortem(
         resp = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=512,
-            messages=[{"role":"user","content":prompt}]
+            messages=[{"role":"user","content":prompt}],
+            extra_body=thinking_extra_body("historical_sim"),
         )
-        raw = resp.content[0].text.strip()
+        raw = response_text(resp)
         return extract_json(raw)
     except Exception as e:
         log.error(f"postmortem 오류: {e}")

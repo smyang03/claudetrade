@@ -67,7 +67,7 @@ class SelectionPromptStabilityTests(unittest.TestCase):
     def test_select_tickers_prompt_includes_digest_news_excerpt(self) -> None:
         captured = {}
 
-        def fake_create(*, model, max_tokens, messages):
+        def fake_create(*, model, max_tokens, messages, **kwargs):
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
                 content=[SimpleNamespace(text='{"watchlist":["TSLA"],"trade_ready":[],"reasons":{"TSLA":"watch"}}')],
@@ -101,7 +101,7 @@ class SelectionPromptStabilityTests(unittest.TestCase):
     def test_select_tickers_prompt_includes_ticker_scoped_news_hint_only_for_matching_candidate(self) -> None:
         captured = {}
 
-        def fake_create(*, model, max_tokens, messages):
+        def fake_create(*, model, max_tokens, messages, **kwargs):
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
                 content=[

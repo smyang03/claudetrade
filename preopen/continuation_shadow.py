@@ -15,6 +15,7 @@ from typing import Any, Iterable
 from bot.session_date import KST, resolve_session_date_str
 from preopen.storage import load_preopen_state, log_path, read_jsonl_tail, state_path
 from runtime_paths import get_runtime_path
+from minority_report.claude_utils import response_text, thinking_extra_body
 
 
 SCHEMA_VERSION = "preopen_continuation_shadow.v1"
@@ -1847,11 +1848,13 @@ def _call_claude(prompt: str, *, model: str, max_tokens: int) -> tuple[str, int,
     resp = client.messages.create(
         model=model,
         max_tokens=int(max_tokens),
-        temperature=0,
         messages=[{"role": "user", "content": prompt}],
+        extra_body=thinking_extra_body("continuation_shadow"),
     )
     text_parts = []
     for block in getattr(resp, "content", []) or []:
+        if getattr(block, "type", None) != "text":
+            continue
         text = getattr(block, "text", None)
         if text:
             text_parts.append(text)

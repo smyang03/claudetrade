@@ -138,7 +138,7 @@ class SelectionNewsRuntimeTests(unittest.TestCase):
         }
         captured: dict[str, str] = {}
 
-        def fake_create(*, model, max_tokens, messages):
+        def fake_create(*, model, max_tokens, messages, **kwargs):
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
                 content=[

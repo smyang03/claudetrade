@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 load_dotenv(r"E:\code\claudetrade\.env.live")
 sys.path.insert(0, r"E:\code\claudetrade")
 import anthropic
+from minority_report.claude_utils import response_text, thinking_extra_body
 
 DB_PATH = r"E:\code\claudetrade\data\audit\candidate_audit.db"
 MODEL = "claude-haiku-4-5-20251001"
@@ -132,8 +133,9 @@ def call_claude(prompt_text: str) -> tuple[dict, object]:
         model=MODEL,
         max_tokens=800,
         messages=[{"role": "user", "content": prompt_text}],
+        extra_body=thinking_extra_body("tier1_quality_check"),
     )
-    raw = resp.content[0].text.strip()
+    raw = response_text(resp)
     # 마크다운 코드펜스 제거
     if raw.startswith("```"):
         parts = raw.split("```")

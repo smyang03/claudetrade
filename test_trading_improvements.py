@@ -3236,7 +3236,7 @@ class AnalystSelectionPromptTests(unittest.TestCase):
 
         captured = {}
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, **kwargs):
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
                 content=[SimpleNamespace(text='{"watchlist":["005930"],"trade_ready":["005930"],"reasons":{"005930":"ok"}}')],
@@ -3384,7 +3384,7 @@ class UniverseManagerTests(unittest.TestCase):
         except Exception as exc:
             self.skipTest(f"analysts import unavailable: {exc}")
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, **kwargs):
             return SimpleNamespace(
                 content=[SimpleNamespace(text='{"watchlist":["NVDA","AAPL"],"trade_ready":["NVDA"],"reasons":{"NVDA":"ok"}')],
                 usage=SimpleNamespace(input_tokens=1, output_tokens=1),
@@ -3419,7 +3419,7 @@ class UniverseManagerTests(unittest.TestCase):
 
         captured = {}
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, **kwargs):
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
                 content=[SimpleNamespace(text='{"watchlist":["NVDA"],"trade_ready":[],"reasons":{"NVDA":"ok"}}')],
@@ -3455,7 +3455,7 @@ class UniverseManagerTests(unittest.TestCase):
 
         captured = {}
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, **kwargs):
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
                 content=[SimpleNamespace(text='{"watchlist":["NVDA"],"trade_ready":[],"reasons":{"NVDA":"watch earnings drift"}}')],
@@ -3496,7 +3496,7 @@ class UniverseManagerTests(unittest.TestCase):
 
         captured = {}
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, **kwargs):
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
                 content=[SimpleNamespace(text='{"stance":"NEUTRAL","confidence":0.55,"key_reason":"ok","full_reasoning":"ok","top_risks":["a"],"suggested_strategy":"관망","suggested_size_pct":30}')],
@@ -3530,7 +3530,7 @@ class UniverseManagerTests(unittest.TestCase):
             '{"watchlist":["NVDA","AAPL"],"trade_ready":["NVDA"],"reasons":{"NVDA":"strong","AAPL":"watch"}}',
         ]
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, **kwargs):
             prompts.append(messages[0]["content"])
             text = responses[len(prompts) - 1]
             return SimpleNamespace(
@@ -3572,7 +3572,7 @@ class UniverseManagerTests(unittest.TestCase):
         except Exception as exc:
             self.skipTest(f"analysts import unavailable: {exc}")
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, **kwargs):
             return SimpleNamespace(
                 content=[SimpleNamespace(text="selection unavailable")],
                 usage=SimpleNamespace(input_tokens=1, output_tokens=1),
@@ -3692,7 +3692,7 @@ class PostmortemSelectionFeedbackTests(unittest.TestCase):
 
         captured = {}
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, **kwargs):
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
                 content=[SimpleNamespace(text=json.dumps({
@@ -3777,7 +3777,7 @@ class PostmortemSelectionFeedbackTests(unittest.TestCase):
 
         captured = {"issue_pattern_calls": 0, "correction_guide_calls": 0}
 
-        def _raise_create(*, model, max_tokens, messages):
+        def _raise_create(*, model, max_tokens, messages, **kwargs):
             captured["prompt"] = messages[0]["content"]
             raise ValueError("Expecting ',' delimiter: line 1 column 2")
 

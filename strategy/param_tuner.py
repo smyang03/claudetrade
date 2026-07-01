@@ -37,7 +37,7 @@ try:
 except Exception:
     log = logging.getLogger(__name__)
 
-from minority_report.claude_utils import extract_json as _extract_json_shared
+from minority_report.claude_utils import extract_json as _extract_json_shared, response_text, thinking_extra_body
 
 _PROD_DB_PATH = (_ROOT / "data" / "ml" / "decisions.db").resolve()
 _DB_PATH  = _PROD_DB_PATH
@@ -470,8 +470,9 @@ JSON으로만 응답 (비활성 전략 제외):
         resp = client.messages.create(
             model=model, max_tokens=1200,
             messages=[{"role": "user", "content": prompt}],
+            extra_body=thinking_extra_body("param_tuner"),
         )
-        raw = resp.content[0].text.strip()
+        raw = response_text(resp)
         parsed = _extract_json_shared(raw)
 
         # credit tracking

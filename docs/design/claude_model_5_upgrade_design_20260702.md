@@ -257,6 +257,34 @@
 - **`single_symbol_judge`(opus 진입)**: thinking-on이 결정을 바꿈 → 먼저 **shadow(thinking-off vs on 병행 로깅)로 방향분포·net 확인** 후에만 승격. 초기 off.
 - **비용**: sonnet-5 도입가 $2/$10(8/31까지)·opus-4-8 $5/$25를 credit_tracker env로 반영.
 
+### 9-Z. 구현 완료 (2026-07-02, 코드 반영 — 내일 아침 KR장 적용 대기, 재시작은 운영자)
+
+운영자 지시로 설계를 **실제 코드에 반영**. 재시작은 하지 않음(내일 아침 운영자).
+
+**핵심 인프라(claude_utils.py)**
+- `response_text(resp)`: text 블록만 안전 추출(thinking 블록 skip). 1차 type=="text", 2차 fallback(type 없는 mock 대비, thinking계열 제외). thinking off에서 기존 `content[0].text`와 동일 결과.
+- `thinking_extra_body(scope)`: env 기반 thinking/effort를 `messages.create(extra_body=...)`로 반환. sonnet-5는 미지정 시 adaptive 기본 ON이라 OFF 유지도 disabled 명시.
+- **SDK 0.86.0은 `extra_body`로 adaptive thinking+effort 전송 가능 확정**(검증). typed kwarg 아닌 extra_body 경로 사용.
+
+**호출부 리팩터(전 프로덕션 경로 + 오프라인/도구 14파일)**: 모든 `resp.content[0].text` → `response_text(resp)`, 각 create에 `extra_body=thinking_extra_body("<scope>")` 주입, `temperature=0` 3곳 제거(sonnet-5 400 회피).
+
+**thinking 정책 매트릭스(env, 전부 토글 가능)**
+| scope | thinking | 이유 |
+|---|---|---|
+| 전역 기본 `CLAUDE_THINKING_ENABLED=true`·`CLAUDE_EFFORT_DEFAULT=medium` | ON(medium) | A/B: medium 5~6s·안잘림 |
+| analyst_r1/r2, selection, hold_advisor(triage/challenge), 오프라인 | ON(medium 상속) | live지만 하드타임아웃 없음 |
+| `single_symbol_judge` | **OFF** | opus 진입 thinking이 결정 바꿈(A/B) → shadow 선행 |
+| `buy_time_confirm` | **OFF** | 2.5s 하드 타임아웃 |
+| `quick_exit_check` | **OFF** | 8s timeout·220토큰 |
+| `dashboard` | **OFF** | haiku 숫자파싱(20토큰) |
+→ 킬스위치: `CLAUDE_THINKING_ENABLED=false`면 전부 무thinking(=sonnet-5 drop-in, A/B 안전 확인). 개별 게이트 on: `CLAUDE_THINKING_SINGLE_SYMBOL_JUDGE=on` 등.
+
+**모델 config(config/v2_start_config.json + .env.live 동시)**: `ANTHROPIC_MODEL`/`R1`/`BULL_R1`/`BEAR_R1`/`NEUTRAL_R1` = `claude-sonnet-5`(Haiku 3자리 승격). `SINGLE_SYMBOL_JUDGE_MODEL`=opus-4-8 유지. credit_tracker opus 단가 $15/$75→$5/$25 정정.
+
+**동작 점검**: 편집 전 파일 py_compile 전부 OK. Claude 경로 pytest **271 pass**(analysts/hold_advisor/single_symbol/postmortem/selection/active_lessons 등). 실패 2건은 `ticker_selection_db.format_recent_selection_feedback` 문구 drift(내 변경·모델 무관, 기존 실패). 테스트 mock 시그니처에 `**kwargs` 추가(extra_body 수용).
+
+**미커밋(의도)**: config/v2_start_config.json은 운영자 buy-restore 미커밋 변경과 한 파일에 섞여 **디스크 반영만**(내일 재시작에 유효), 운영자가 본인 변경과 함께 커밋. .env.live·docs/reports/*.json은 gitignore.
+
 ### 9-E. "변화가 좋은가" 정직한 판정
 - **좋다(확정)**: 파싱 안정성(리팩터 시 100%), sonnet-5 무thinking 무해 이행, effort-medium의 지연/토큰 경제성.
 - **미결(표본부족)**: thinking이 *판단 품질*을 올리는가 — 방향은 대부분 보존되나 opus 진입에서 1건 변화. **selection 무알파 전제상 thinking의 net 이득은 작을 가능성**(메모리 반복 교훈). thinking의 진짜 값은 "예측 향상"보다 **일관성·파싱 안정·근거 품질**로 보는 게 정직. net은 shadow/실거래 국면분리 누적으로만.
