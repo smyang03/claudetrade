@@ -62,7 +62,7 @@ PRICE_DIR   = BASE_DIR / "data" / "price"
 JUDGMENT_DIR= get_runtime_path("logs", "daily_judgment", make_parents=False)
 JUDGMENT_DIR.mkdir(parents=True, exist_ok=True)
 
-CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
