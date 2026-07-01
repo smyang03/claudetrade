@@ -3345,13 +3345,22 @@ Rules:
                         result = recovered_compact
                         parse_stage = "compact_watch_recovered"
                     else:
+                        # stop_reason이 max_tokens가 아닌데 파싱 실패 = 모델이 완료했으나 JSON이 아님
+                        # (thinking-on sonnet-5가 가끔 JSON 대신 산문/마크다운 요약 출력하는 형식 이탈).
+                        # 동작은 동일(tr=[] → 그 사이클 후보 전부 스킵, 잘못된 진입 없음). 추세 관찰용으로만 태그 분리.
+                        _format_drift = stop_reason != "max_tokens"
                         result = {
                             "wl": _safe_watch_fallback(prompt_candidates, market),
                             "tr": [],
                             "ca": [],
-                            "_fallback_mode": "selection_parse_failed",
+                            "_fallback_mode": "selection_format_drift" if _format_drift else "selection_parse_failed",
                         }
-                        parse_stage = "compact_parse_failed"
+                        parse_stage = "compact_format_drift" if _format_drift else "compact_parse_failed"
+                        if _format_drift:
+                            log.warning(
+                                f"[ticker-selection] {market} thinking 형식이탈(JSON 대신 산문) → 후보 스킵(tr=0). "
+                                f"stop={stop_reason} out_tok={getattr(resp.usage, 'output_tokens', 0)}"
+                            )
                     parse_error = True
                 else:
                     raise
