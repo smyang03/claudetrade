@@ -64,8 +64,11 @@ class LessonQualityBackfillTests(unittest.TestCase):
             rows = updated["markets"]["KR"]
             watch = next(row for row in rows if row["id"] == "watch_only_missed_runup_review")
             affordability = next(row for row in rows if row["id"] == "affordability_fail_cluster")
-            self.assertTrue(watch["claude_actionable"])
-            self.assertIn("66.5%", watch["action_hint"])
+            # watch_only_missed_runup: 2026-07-01 중립화 — lookahead/생존편향 함정이라
+            # Claude 프롬프트 주입 차단(claude_actionable=False, hint 제거, ops 진단용만).
+            self.assertFalse(watch["claude_actionable"])
+            self.assertTrue(watch["ops_flag"])
+            self.assertEqual(watch["action_hint"], "")
             self.assertTrue(affordability["ops_flag"])
             self.assertFalse(affordability["claude_actionable"])
 

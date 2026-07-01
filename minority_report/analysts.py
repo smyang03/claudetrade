@@ -2908,21 +2908,21 @@ execution_phase: {execution_phase or 'unspecified'}
   "price_targets":{{
     "code1":{{
       "reference_price":73200,
-      "buy_zone_low":73000,
-      "buy_zone_high":73500,
-      "sell_target":76000,
-      "stop_loss":71000,
+      "buy_zone_low":72200,
+      "buy_zone_high":72700,
+      "sell_target":74500,
+      "stop_loss":71500,
       "reward_risk":1.5,
-      "risk_pct":2.7,
-      "reward_pct":3.4,
+      "risk_pct":1.64,
+      "reward_pct":2.46,
       "hold_days":1,
       "confidence":0.65,
-      "cancel_if_open_above":74500,
-      "target_basis":"VWAP reclaim + resistance",
+      "cancel_if_open_above":73200,
+      "target_basis":"VWAP reclaim + nearest resistance",
       "invalid_if":"breaks opening range low",
-      "entry_rationale":"support pullback",
-      "exit_rationale":"near resistance",
-      "rationale":"buy near support, sell into resistance"
+      "entry_rationale":"pullback to support below current price",
+      "exit_rationale":"realistic intraday peak near resistance",
+      "rationale":"buy on pullback to support, sell into a realistic ~2.5% resistance target"
     }}
     }}{candidate_actions_example}
 }}"""

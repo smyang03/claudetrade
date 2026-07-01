@@ -1211,7 +1211,8 @@ def format_recent_selection_feedback(
             f"(n={summary['watch_only_forward_n']})"
         ),
         (
-            f"- missed watch_only: runup>={float(strong_runup_pct):.1f}% "
+            f"- watch_only touched runup>={float(strong_runup_pct):.1f}% "
+            f"(peak/unrealized only, NOT realizable close; realized avg = avg_fwd above): "
             f"{summary['missed_watch_only_count']}건"
             + (
                 f" ({summary['missed_watch_only_rate_3d']:.1f}%)"

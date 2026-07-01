@@ -65,6 +65,44 @@ def _cancel_above_zone_multiplier(market: str) -> float:
     return DEFAULT_CANCEL_ABOVE_ZONE_MULTIPLIER
 
 
+def _consistent_reward_risk_enabled() -> bool:
+    """reward/risk 기준 일관화 토글 (기본 off = 현행 유지).
+
+    off(기본): risk = buy_zone_low - stop_loss (레거시, 존 바닥 기준).
+    on: risk = buy_zone_high - stop_loss (보상과 같은 앵커 = 보수적 fill 일관 기준).
+    on일 때 게이트가 정직한 reward/risk로 판정 → shadow/net 검증 후 enforce 전환용.
+    """
+    raw = os.getenv("PATHB_CONSISTENT_REWARD_RISK")
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _deterministic_sell_target_cap_pct() -> float:
+    """sell_target 결정론 상한 % (기본 0 = off = 현행 유지).
+
+    Claude가 RR 게이트 통과하려 sell_target을 부풀리는 loophole 차단용.
+    설정값 X(예 4) → sell_target = min(Claude값, buy_zone_high*(1+X/100)).
+    0/미설정 = 캡 없음(현행). 신규 데이터 배관 없음(buy_zone_high만 사용).
+    """
+    raw = os.getenv("PATHB_DETERMINISTIC_SELL_TARGET_CAP_PCT")
+    try:
+        val = float(str(raw or "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        return 0.0
+    return val if val > 0 else 0.0
+
+
+def _capped_sell_target(raw: dict[str, Any]) -> float:
+    """cap off면 Claude값 그대로(현행), on이면 buy_zone_high 기준 상한으로 min."""
+    sell = _as_float(raw.get("sell_target"))
+    cap_pct = _deterministic_sell_target_cap_pct()
+    if cap_pct <= 0:
+        return sell
+    bzh = _as_float(raw.get("buy_zone_high"))
+    if bzh <= 0:
+        return sell
+    return min(sell, bzh * (1.0 + cap_pct / 100.0))
+
+
 def _default_cancel_if_open_above(market: str, buy_zone_high: float) -> float | None:
     try:
         high = float(buy_zone_high or 0)
@@ -137,7 +175,10 @@ class PricePlan:
             errors.append("confidence_below_minimum")
         if self.prompt_stage not in VALID_PROMPT_STAGES:
             errors.append("invalid_prompt_stage")
-        risk = self.buy_zone_low - self.stop_loss
+        if _consistent_reward_risk_enabled():
+            risk = self.buy_zone_high - self.stop_loss
+        else:
+            risk = self.buy_zone_low - self.stop_loss
         reward = self.sell_target - self.buy_zone_high
         if risk <= 0:
             errors.append("risk_nonpositive")
@@ -291,7 +332,7 @@ def parse_plan_from_claude(
             session_date=session_date,
             buy_zone_low=_as_float(raw.get("buy_zone_low")),
             buy_zone_high=_as_float(raw.get("buy_zone_high")),
-            sell_target=_as_float(raw.get("sell_target")),
+            sell_target=_capped_sell_target(raw),
             stop_loss=_as_float(raw.get("stop_loss")),
             hold_days=_as_int(raw.get("hold_days")),
             confidence=_as_float(raw.get("confidence")),
