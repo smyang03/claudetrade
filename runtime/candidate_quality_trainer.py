@@ -247,6 +247,20 @@ def score_candidate_for_trainer(
             components["kr_mid_liquidity"] = _trainer_weight("KR_MID_LIQUIDITY", 4.0)
         elif liquidity == "high":
             components["kr_high_liquidity_chase_penalty"] = _trainer_weight("KR_HIGH_LIQUIDITY_CHASE_PENALTY", -2.0)
+        # catalyst(뉴스/실적) 가중 (2026-07-01, 운영자 승인 enforce, KR 한정). 토글 off면 무영향.
+        # 근거: catalyst 후보가 KR 멀티데이서 robust(무catalyst 종가 -2.5~-5.7% vs 방어, placebo 초과).
+        # 6월 단일기간이라 라이브 net 추적 필수. revert=KR_CATALYST_SCORE_BONUS_ENABLED=false.
+        if _env_bool("KR_CATALYST_SCORE_BONUS_ENABLED", False):
+            _has_catalyst = bool(row.get("news_or_earnings_sources")) or bool(row.get("news_prompt_eligible"))
+            if not _has_catalyst:
+                _ctags = row.get("quality_tags") or row.get("news_or_earnings_sources_json") or []
+                if isinstance(_ctags, str):
+                    _has_catalyst = any(tag in _ctags for tag in ("direct_catalyst", "earnings_or_guidance"))
+                else:
+                    _has_catalyst = any(str(_t) in {"direct_catalyst", "earnings_or_guidance"} for _t in _ctags)
+            if _has_catalyst:
+                components["kr_catalyst_bonus"] = _trainer_weight("KR_CATALYST_BONUS", 12.0)
+                row["catalyst_flagged"] = True
     else:
         if _env_bool("CANDIDATE_TRAINER_US_QUALITY_SCORE_ENABLED", False):
             quality_score = _first_present(row, "candidate_quality_score", default=None)
