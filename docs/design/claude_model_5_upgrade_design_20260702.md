@@ -289,3 +289,20 @@
 - **좋다(확정)**: 파싱 안정성(리팩터 시 100%), sonnet-5 무thinking 무해 이행, effort-medium의 지연/토큰 경제성.
 - **미결(표본부족)**: thinking이 *판단 품질*을 올리는가 — 방향은 대부분 보존되나 opus 진입에서 1건 변화. **selection 무알파 전제상 thinking의 net 이득은 작을 가능성**(메모리 반복 교훈). thinking의 진짜 값은 "예측 향상"보다 **일관성·파싱 안정·근거 품질**로 보는 게 정직. net은 shadow/실거래 국면분리 누적으로만.
 - **판정 기준**: 계약충족·파싱 유효율 ≥ 기준선 + 지연 하드제약 내 + shadow 방향 일관 → 채택. 하나라도 악화 시 해당 호출부 롤백.
+
+---
+
+## 11. 신/구 코드경로 리플레이 비교 (2026-07-02, 80샘플 실측)
+
+전문: `docs/reports/model5_beforeafter_report_20260702.md`, 원본 `docs/reports/model5_beforeafter_20260702.json`. 실제 로그 프롬프트를 프로덕션 추출/파싱으로 신(sonnet-5)·구 대조.
+
+| 항목 | n | dir_match | json(신) | ms 구→신 | 판정 |
+|---|---|---|---|---|---|
+| hold_advisor challenge/triage | 20 | **100%** | 100% | 6~8s→**5s** | **완승**(결정 동일·더 빠름) |
+| select_tickers | 20 | 90% | 12/20 | ~0→**22s** | 안정하나 thinking시 22s·4000토큰서 JSON절단(프로덕션 6000+retry로 완화, 모니터) |
+| analyst r1(하이쿠 포함) | 30 | 80% | 100% | 4~7s→7~9s | 극단→온건 보정(과신완화, 메모리부합) |
+| single_symbol* | 10 | 70% | 100% | — | 프로덕션 무변경(opus 유지·off), 행은 가정 |
+
+**핵심**: ①thinking ON(hold/analyst)서 **JSON 100%** = 응답추출 리팩터 실증 ②토크나이저 +11~24% ③thinking 순효과는 "예측향상"보다 **극단→온건 보정·파싱안정**(selection 무알파 부합). ④하이쿠→sonnet5는 80% 유지·20% 온건화.
+
+**내일 모니터링 1순위 = selection JSON 유효율·지연**. 악화 시 `CLAUDE_THINKING_SELECTION=off`(1-flip 회수, sonnet-5 무thinking=안전 drop-in). single_symbol thinking-on은 shadow 후 판정.
