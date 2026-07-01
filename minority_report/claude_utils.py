@@ -153,7 +153,8 @@ def extract_json(raw: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # 잘린 응답 감지 (max_tokens 부족 가능성)
+    # JSON 미검출/불완전: 절단(max_tokens)일 수도, 형식 이탈(thinking이 JSON 대신 산문 출력)일 수도 있음.
+    # stop_reason=end_turn인데 여기 오면 절단이 아니라 형식 이탈이다 — "잘림"으로 단정하지 않는다.
     if raw and not raw.rstrip().endswith("}"):
-        raise ValueError(f"JSON 응답 잘림 (max_tokens 부족 가능): {raw[:200]!r}")
+        raise ValueError(f"JSON 미검출/불완전 (절단 또는 형식이탈 가능): {raw[:200]!r}")
     raise ValueError(f"JSON 파싱 실패: {raw[:200]!r}")
