@@ -976,8 +976,33 @@ def _candidate_quality_hint(candidate: dict) -> str:
     return "quality=" + ",".join(parts) if parts else ""
 
 
-def _candidate_trainer_hint(candidate: dict) -> str:
+def _trainer_hint_ab_group(market: str) -> str:
+    """trainer 힌트 숨김 A/B (2026-07-02 풀·선정·hold 토론 합의, 운영자 enforce 승인).
+
+    근거: trainer 상태서열이 forward와 역전(KR PLAN_A -1.94 < WATCH +1.91 < BENCH +6.14,
+    spearman ~0)인 무상관 숫자를 매 후보 라인에 주입 중 — 숨김군 대비로 앵커 효과를 분리.
+    단위 = 시장×세션일 md5 50:50 (US는 KST 06시 전=전일 세션 규칙으로 세션 내 arm 고정).
+    결정론적이라 사후 재계산 가능(로깅 불요). TRAINER_HINT_AB_ENABLED=false면 전원 show(무변경).
+    킬 기준: 숨김군 픽 fwd/net이 노출군 대비 악화 시 A/B 종료·힌트 유지.
+    """
+    if not _env_bool_flag("TRAINER_HINT_AB_ENABLED", False):
+        return "show"
+    try:
+        import hashlib
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone(timedelta(hours=9)))
+        if str(market or "").upper() == "US" and now.hour < 6:
+            now = now - timedelta(days=1)
+        key = f"{str(market or '').upper()}|{now.strftime('%Y-%m-%d')}"
+        return "hide" if int(hashlib.md5(key.encode()).hexdigest(), 16) % 2 else "show"
+    except Exception:
+        return "show"
+
+
+def _candidate_trainer_hint(candidate: dict, market: str = "") -> str:
     if not _env_bool_flag("CANDIDATE_QUALITY_TRAINER_PROMPT_HINT_ENABLED", True):
+        return ""
+    if _trainer_hint_ab_group(market) == "hide":
         return ""
     state = str(candidate.get("trainer_candidate_state") or "").strip().upper()
     score = candidate.get("trainer_prompt_score")
@@ -1215,7 +1240,7 @@ def _format_selection_candidate_line(
         last_trade_token,
         news_hint,
         _candidate_discovery_hint(candidate),
-        _candidate_trainer_hint(candidate),
+        _candidate_trainer_hint(candidate, market),
         _candidate_quality_hint(candidate),
         _candidate_evidence_hint(candidate),
         _candidate_earnings_hint(candidate),
@@ -2628,7 +2653,7 @@ def select_tickers(market: str, digest_prompt: str, consensus_mode: str, candida
             _last_trade_line_token(candidate),
             _candidate_news_hint(candidate),
             _candidate_discovery_hint(candidate),
-            _candidate_trainer_hint(candidate),
+            _candidate_trainer_hint(candidate, market),
             _candidate_quality_hint(candidate),
             _candidate_evidence_hint(candidate),
             _candidate_earnings_hint(candidate),
