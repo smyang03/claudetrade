@@ -4001,6 +4001,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     ) -> list[str]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         feasibility_by_ticker = self._strategy_feasibility_map(market_key, meta)
+        # Selection Feasibility Contract(ac3fa55, 2026-06-07) enforce 토글.
+        # 이 계약은 추천전략 기술신호(MA정렬·MACD 등) 미충족 시 trade_ready를 WATCH로 강등하는데,
+        # Claude 눌림 selection은 구조적으로 momentum 정렬이 없어 승격이 100% 스트립됨(applied_tr=0).
+        # enforce=False(=shadow) 시 강등하지 않고 log-only → trade_ready 유지(6/7 이전 동작 복원, 매수 재개).
+        # 기본 True=현행 무변경. 시장별 override 후 글로벌 fallback. 소스는 .env.live+config 양쪽 일치.
+        feasibility_enforce = self._runtime_bool(
+            f"STRATEGY_FEASIBILITY_ENFORCE_{market_key}",
+            self._runtime_bool("STRATEGY_FEASIBILITY_ENFORCE", True),
+        )
         filtered: list[str] = []
         demoted: dict[str, str] = {}
         demoted_from: dict[str, str] = {}
@@ -4017,6 +4026,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 filtered.append(ticker)
                 continue
             reason_code = f"strategy_feasibility:{reason}"
+            if not feasibility_enforce:
+                # shadow: 강등 없이 log-only. trade_ready 유지 → ready=1 매수 재개(A1은 ready=0만 차단).
+                runtime_filtered[ticker] = f"shadow:{reason_code}"
+                filtered.append(ticker)
+                continue
             runtime_filtered[ticker] = reason_code
             demoted[key] = reason_code
             demoted_from[key] = strategy or ""
