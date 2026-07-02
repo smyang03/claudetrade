@@ -181,6 +181,40 @@ def should_carry_overnight(pos: dict[str, Any], current: float, market: str,
         return False
 
 
+def would_carry_meta(pos: dict[str, Any], current: float, market: str,
+                     regime: str | None = None, entry_native: float | None = None) -> dict[str, Any] | None:
+    """관측 전용 (D3 2026-07-02): mode/enforce 게이트와 무관하게 캐리 자격 판정을 계산해 반환.
+
+    행동 없음 — pre_close 시점 로깅용. 판정 기준은 should_carry_overnight와 동일하되
+    게이트(mode/CARRY_ENFORCE)만 뺀다. shadow 데이터가 0건이던 원인 = should_carry_overnight가
+    mode!=enforce에서 즉시 False라 would-carry 판정 자체가 기록 경로에 없었음.
+    킬 기준(설계 고정): would_carry n>=25에서 오버나이트→익일시가 med<=0 → CARRY 폐기.
+    """
+    try:
+        entry = float(entry_native) if entry_native and float(entry_native) > 0 \
+            else float(pos.get("entry") or pos.get("entry_price") or 0)
+        if entry <= 0 or current <= 0:
+            return None
+        net_pct = (current / entry - 1) * 100
+        mfe = pos.get("observed_mfe_pct")
+        mfe_pct = float(mfe) if mfe is not None else net_pct
+        regime_ok = (regime or "").strip().lower() in _carry_regimes()
+        strength_ok = net_pct >= _carry_strength_pct() and mfe_pct >= _activation_pct()
+        return {
+            "event": "would_carry",
+            "mode": mode(),
+            "net_pct": round(net_pct, 3),
+            "mfe_pct": round(mfe_pct, 3),
+            "regime": str(regime or ""),
+            "regime_ok": regime_ok,
+            "strength_ok": strength_ok,
+            "carry_market_enabled": _carry_enabled(market),
+            "would_carry": bool(strength_ok and regime_ok and _carry_enabled(market)),
+        }
+    except Exception:
+        return None
+
+
 def shadow_decision(pos: dict[str, Any], current: float, market: str,
                     regime: str | None = None, mins_to_close: float | None = None,
                     entry_native: float | None = None) -> dict[str, Any] | None:

@@ -4082,6 +4082,15 @@ class PathBRuntime:
             if not pos:
                 continue
             current = self._current_native_price(market, plan.ticker) or float(pos.get("display_current_price", 0) or 0)
+            # would_carry 관측 로깅 (D3 2026-07-02): mode 무관하게 캐리 자격 판정을 funnel jsonl에
+            # 기록한다(행동 0). shadow 모드에서 would-carry 데이터가 0건이던 계측 공백 수정.
+            try:
+                _wc = tail_capture.would_carry_meta(pos, current, market, self._tail_capture_regime(market),
+                                                    entry_native=self._position_entry_native(pos, market))
+                if _wc is not None:
+                    self._log_tail_capture(plan, pos, current, _wc)
+            except Exception:
+                pass
             # 꼬리-capture: 증명된 강한 러너는 오버나잇 캐리(enforce+서브게이트일 때만). 하방은 다음세션 loss_cap.
             try:
                 if tail_capture.should_carry_overnight(pos, current, market, self._tail_capture_regime(market),
