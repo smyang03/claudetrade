@@ -261,5 +261,40 @@ def rescore_safe(store_db: str | None = None) -> int:
         return 0
 
 
+def session_close_pipeline_safe(store_db: str | None = None) -> dict[str, int]:
+    """세션마감 hook용 통합 파이프 (2026-07-02 H2 수리, 운영자 enforce 승인).
+
+    결함: rescore만 hook에 물려 있어 collect/backfill이 어디서도 자동 실행되지 않았고
+    hold_advisor_exit_outcome이 15행에서 6/23 이후 사망 — "데이터가 안 받쳐줌" 판정 후
+    데이터를 늘릴 파이프 자체가 죽어 있었다(debate_pool_selection_hold_quality_20260702.md).
+
+    수리: collect(DB만, 가벼움)는 동기 실행, backfill_forward(yfinance)는 봇 루프 보호를
+    위해 데몬 스레드로 분리(예외 자체 삼킴). rescore는 collect 후 실행. 예외 전부 삼킴.
+    """
+    out = {"collected": 0, "cells": 0, "backfill_spawned": 0}
+    try:
+        out["collected"] = collect_exit_outcomes()
+    except Exception:
+        pass
+    try:
+        out["cells"] = len(rescore(store_db=store_db))
+    except Exception:
+        pass
+    try:
+        import threading
+
+        def _bf():
+            try:
+                backfill_forward()
+            except Exception:
+                pass
+
+        threading.Thread(target=_bf, name="hold_exit_backfill", daemon=True).start()
+        out["backfill_spawned"] = 1
+    except Exception:
+        pass
+    return out
+
+
 def enabled() -> bool:
     return os.getenv("HOLD_ADVISOR_EXIT_LESSON_ENABLED", "false").lower() == "true"
