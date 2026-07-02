@@ -25,6 +25,7 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_trainer_logger
+from minority_report.claude_utils import response_text, thinking_extra_body
 
 log = get_trainer_logger()
 
@@ -239,8 +240,9 @@ def evaluate_sector_play(
             model=R1_MODEL,
             max_tokens=200,
             messages=[{"role": "user", "content": prompt}],
+            extra_body=thinking_extra_body("sector_play"),
         )
-        raw = response.content[0].text.strip()
+        raw = response_text(response)
         # JSON 파싱
         start = raw.find("{")
         end   = raw.rfind("}") + 1
@@ -389,8 +391,9 @@ def evaluate_kr_sector_play(
         response = client.messages.create(
             model=R1_MODEL, max_tokens=200,
             messages=[{"role": "user", "content": prompt}],
+            extra_body=thinking_extra_body("sector_play"),
         )
-        raw = response.content[0].text.strip()
+        raw = response_text(response)
         start, end = raw.find("{"), raw.rfind("}") + 1
         if start >= 0 and end > start:
             result = json.loads(raw[start:end])

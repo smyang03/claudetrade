@@ -15,6 +15,7 @@ for line in open(".env.live", encoding="utf-8", errors="ignore"):
 
 os.environ["HOLD_ADVISOR_PROFIT_GUARD_ENABLED"] = "false"  # import 시 prior 제외(=OFF baseline)
 import minority_report.hold_advisor as h  # noqa: E402
+from minority_report.claude_utils import response_text, thinking_extra_body  # noqa: E402
 
 SYS_OFF = h._HOLD_ADVISOR_SYSTEM
 SYS_ON = SYS_OFF + h._PROFIT_GUARD_PRIOR
@@ -44,8 +45,9 @@ def judge(prompt, system):
     try:
         r = client.messages.create(model=MODEL, max_tokens=600,
             system=[{"type": "text", "text": system}],
-            messages=[{"role": "user", "content": prompt}])
-        m = re.search(r'"action"\s*:\s*"(HOLD|SELL)"', r.content[0].text)
+            messages=[{"role": "user", "content": prompt}],
+            extra_body=thinking_extra_body("hold_advisor_discriminate_test"))
+        m = re.search(r'"action"\s*:\s*"(HOLD|SELL)"', response_text(r))
         return m.group(1) if m else "?"
     except Exception as e:
         return f"ERR"

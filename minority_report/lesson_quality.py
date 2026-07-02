@@ -59,14 +59,13 @@ def lesson_quality_fields(metric_key: str, scope: str, value: Any, sample: int) 
     scope_key = str(scope or "").strip().lower()
 
     if key == "watch_only_missed_runup_ratio":
+        # 중립화(2026-07-01): max_runup_3d(peak/미실현) 기반 일방향 "적극 승격" nudge는
+        # no-lookahead/생존편향 함정(못고른 승자 회수불가 확정). ops 진단용으로만 유지,
+        # Claude 프롬프트 주입 차단(claude_actionable=False, hint 제거).
         return _base_fields(
-            claude_actionable=True,
-            ops_flag=False,
-            action_hint=(
-                f"watch_only 종목 중 {_fmt_pct(value)}가 3일 내 +5% 이상 runup을 기록했습니다. "
-                "명확한 veto(sector_weak, momentum_stall, liquidity_bad, RSI>75)가 없으면 "
-                "trade_ready 승격을 더 적극적으로 고려하세요."
-            ),
+            claude_actionable=False,
+            ops_flag=True,
+            action_hint="",
             min_sample=20,
         )
     if key == "trade_ready_signal_conversion":

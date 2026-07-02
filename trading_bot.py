@@ -149,6 +149,7 @@ from minority_report.consensus import (
     apply_unanimous_override,
     build_consensus,
     build_judgment_eval,
+    detect_consensus_judgment_desync,
 )
 from minority_report.lesson_quality import apply_lesson_conflict_guards, lesson_quality_fields
 from minority_report.tuner import tune
@@ -244,7 +245,9 @@ try:
 except Exception as _v2_import_err:
     _V2LifecycleRuntime = None
     def _v2_close_reason(reason: str) -> str:
-        return "CLOSED_USER_MANUAL"
+        # import 실패 fallback(2026-06-26): 무조건 USER_MANUAL이면 모든 청산이 "수동"으로
+        # 오라벨되는 잠복 폭탄 → 원본 reason 보존(없으면 UNKNOWN).
+        return str(reason or "CLOSED_UNKNOWN")
     _V2_LIFECYCLE_AVAILABLE = False
 try:
     from runtime.pathb_runtime import PathBRuntime as _PathBRuntime
@@ -1390,6 +1393,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             previous_judgment = {}
         self._audit_judgment_size_direction(market_key, previous_judgment, self.today_judgment)
+        desync_meta = detect_consensus_judgment_desync(
+            self.today_judgment.get("judgments"), self.today_judgment.get("consensus")
+        )
+        if desync_meta.get("consensus_judgment_desync"):
+            log.warning(
+                f"[consensus desync] {market} {desync_meta.get('consensus_judgment_desync_reason')} "
+                f"mode={str((self.today_judgment.get('consensus') or {}).get('mode'))}"
+            )
         try:
             with open(live_path, "w", encoding="utf-8") as f:
                 json.dump({
@@ -1399,6 +1410,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "selection_meta": self.selection_meta.get(market, {}),
                     "trade_ready_tickers": self.trade_ready_tickers.get(market, []),
                     "claude_runtime_overrides": persisted_overrides,
+                    **desync_meta,
                 }, f, ensure_ascii=False, indent=2)
         except Exception as e:
             log.warning(f"판단 임시저장 실패: {e}")
@@ -3734,11 +3746,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         change_pct = self._selection_optional_float(features.get("change_pct"))
         if change_pct is None:
             change_pct = self._selection_optional_float(features.get("change_rate"))
+        gap_pct = self._selection_optional_float(features.get("gap_pct"))
         min_pct = self._runtime_float("SELECTION_US_MIDRANGE_TRAP_MIN_PCT", 2.0)
         max_pct = self._runtime_float("SELECTION_US_MIDRANGE_TRAP_MAX_PCT", 5.0)
+        gap_split_pct = self._runtime_float("SELECTION_US_MIDRANGE_TRAP_GAP_SPLIT_PCT", 2.0)
         evidence = {
             "strategy": strategy,
             "change_pct": change_pct,
+            "gap_pct": gap_pct,
             "trap_min_pct": min_pct,
             "trap_max_pct": max_pct,
         }
@@ -3746,6 +3761,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             # 결측은 거르지 않는다 — 이 guard는 확인된 함정 구간만 차단
             return "", strategy, evidence
         if min_pct <= change_pct < max_pct:
+            # gap split shadow: 실측상 비갭(gap<2%)은 forward +0.40%/win53%로 부당강등,
+            # 갭상승(gap>=2%)만 win41.5%로 정당(2026-06-30 변별력 감사). gap 정보를
+            # evidence에 기록(shadow). enforce 토글(기본 off)일 때만 비갭 강등을 해제한다.
+            is_non_gap = gap_pct is not None and gap_pct < gap_split_pct
+            evidence["gap_split_non_gap"] = is_non_gap
+            evidence["would_release_if_gap_split"] = is_non_gap
+            if is_non_gap and self._runtime_bool(
+                "SELECTION_US_MIDRANGE_TRAP_GAP_SPLIT_ENFORCE", False
+            ):
+                return "", strategy, evidence
             return "us_midrange_momentum_trap", strategy, evidence
         return "", strategy, evidence
 
@@ -5722,7 +5747,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not expires_at:
             return False
         try:
-            return datetime.fromisoformat(expires_at.replace("Z", "+00:00")).replace(tzinfo=None) < datetime.now(KST).replace(tzinfo=None)
+            # TZ 정합(2026-06-26): tzinfo를 strip하면 UTC("Z") expiry가 KST 벽시계와 비교돼 ±9h 왜곡.
+            # aware로 통일 — "Z"는 UTC, naive는 시스템 로컬(KST) 가정 후 aware-aware 비교.
+            dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=KST)
+            return dt < datetime.now(KST)
         except Exception:
             return False
 
@@ -5732,7 +5762,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not text:
             return None
         try:
-            return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+            # TZ 정합(2026-06-26): tzinfo strip 금지 — UTC("Z") 시각이 KST 벽시계와 비교돼 ±9h 왜곡.
+            # aware로 통일: "Z"=UTC 유지, naive는 시스템 로컬(KST) 가정. 콜러(grace/stale)도 aware.
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            return dt if dt.tzinfo is not None else dt.replace(tzinfo=KST)
         except Exception:
             return None
 
@@ -6112,7 +6145,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
         if grace_min <= 0:
             return False
-        current = (now or datetime.now(KST)).replace(tzinfo=None)
+        # TZ 정합(2026-06-26): aware 유지(strip 금지). now naive면 KST 가정. expires/anchor도 aware.
+        current = now or datetime.now(KST)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=KST)
         ready_actions = {"PROBE_READY", "BUY_READY", "ADD_READY"}
         for route in routes:
             if not isinstance(route, dict):
@@ -6154,7 +6190,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         last_seen = self._parse_candidate_route_time((health or {}).get("last_seen_at"))
         if last_seen is None:
             return None
-        current = (now or datetime.now(KST)).replace(tzinfo=None)
+        # TZ 정합(2026-06-26): aware 유지. now naive면 KST 가정. last_seen도 aware(파서 수정).
+        current = now or datetime.now(KST)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=KST)
         try:
             return max(0.0, (current - last_seen).total_seconds() / 60.0)
         except Exception:
@@ -7010,6 +7049,41 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "end_min": float(end_min),
             "size_mult": float(size_mult),
             "policy": f"{market_key.lower()}_early_entry_soft_size",
+        }
+
+    def _late_entry_size_gate(self, market: str, now_dt: Optional[datetime] = None) -> dict:
+        """장 후반 진입 게이트 (2026-06-26 실측 enforce).
+
+        claude_price(PathB) net을 개장 경과분으로 가르면, 양 시장·모든 국면에서 late(>2h)가
+        early(≤2h)보다 -0.3~-0.9%p 더 샌다(BULL+early만 흑자 PF1.14, 비-BULL+late는 PF0.24).
+        confound(국면)에 독립. → 개장 full_end분까지 full, reduced_end분까지 size×mult, 이후 차단.
+        early soft gate와 동형(_market_open_elapsed_min 공유). PathB 사이징에서 적용.
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        prefix = market_key
+        enabled = self._runtime_bool(f"{prefix}_LATE_ENTRY_GATE_ENABLED", True)
+        elapsed = self._market_open_elapsed_min(market_key, now_dt=now_dt)
+        full_end = self._runtime_float(f"{prefix}_LATE_ENTRY_FULL_END_MIN", 120.0)
+        reduced_end = self._runtime_float(f"{prefix}_LATE_ENTRY_REDUCED_END_MIN", 240.0)
+        size_mult = max(0.1, min(1.0, float(self._runtime_float(f"{prefix}_LATE_ENTRY_SIZE_MULT", 0.5) or 0.5)))
+        action = "FULL"
+        effective_mult = 1.0
+        active = False
+        if enabled and elapsed is not None:
+            e = float(elapsed)
+            if e >= float(reduced_end):
+                action, effective_mult, active = "BLOCK", 0.0, True
+            elif e >= float(full_end):
+                action, effective_mult, active = "REDUCED", size_mult, True
+        return {
+            "active": active,
+            "action": action,
+            "market": market_key,
+            "elapsed_min": float(elapsed) if elapsed is not None else None,
+            "full_end_min": float(full_end),
+            "reduced_end_min": float(reduced_end),
+            "size_mult": float(effective_mult),
+            "policy": f"{market_key.lower()}_late_entry_gate",
         }
 
     def _candidate_entry_timing_context(
@@ -16439,7 +16513,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 from kis_api import get_index_snapshot
                 sp500 = get_index_snapshot("US", "SP500")
                 nasdaq = get_index_snapshot("US", "NASDAQ")
-                vix = get_index_snapshot("US", "VIX")
+                # VIX는 결측(prev_close 빈값)이 잦아 fail-loud raise 빈도가 높다 — 개별 try로 감싸
+                # VIX 결측이 이미 받은 S&P500/NASDAQ 컨텍스트까지 폐기하지 않게 한다(보조 지표).
+                try:
+                    vix = get_index_snapshot("US", "VIX")
+                except Exception as _vix_exc:
+                    log.debug(f"US VIX snapshot 결측 — 무시: {_vix_exc}")
+                    vix = {}
                 self._kis_index_cache["US"] = {"sp500": sp500, "nasdaq": nasdaq, "vix": vix, "ts": _now_ts}
                 lines.append(
                     f"US live index: S&P500 {float(sp500.get('change_pct', 0.0) or 0.0):+.2f}% "

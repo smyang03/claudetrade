@@ -29,8 +29,9 @@ PRICE_BY_MODEL_PER_M = {
         float(os.getenv("CLAUDE_PRICE_SONNET_OUTPUT_PER_M", str(PRICE_OUTPUT_PER_M))),
     ),
     "opus": (
-        float(os.getenv("CLAUDE_PRICE_OPUS_INPUT_PER_M", "15.00")),
-        float(os.getenv("CLAUDE_PRICE_OPUS_OUTPUT_PER_M", "75.00")),
+        # Opus 4.8: $5.00/$25.00 (구 코드 $15/$75는 구세대 Opus 3 단가 오기 — 2026-07-02 정정)
+        float(os.getenv("CLAUDE_PRICE_OPUS_INPUT_PER_M", "5.00")),
+        float(os.getenv("CLAUDE_PRICE_OPUS_OUTPUT_PER_M", "25.00")),
     ),
 }
 

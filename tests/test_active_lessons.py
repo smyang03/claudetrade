@@ -429,7 +429,7 @@ class ActiveLessonSelectionPromptTests(unittest.TestCase):
 
         captured: dict[str, object] = {}
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, **kwargs):
             captured["model"] = model
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
@@ -509,7 +509,7 @@ class ActiveLessonSelectionPromptTests(unittest.TestCase):
 
         captured: dict[str, object] = {}
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, **kwargs):
             captured["model"] = model
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
@@ -542,7 +542,7 @@ class ActiveLessonSelectionPromptTests(unittest.TestCase):
 
         captured: dict[str, object] = {}
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, **kwargs):
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
                 content=[SimpleNamespace(text='{"stance":"NEUTRAL","confidence":0.5,"key_reason":"mixed"}')],
@@ -566,7 +566,7 @@ class ActiveLessonSelectionPromptTests(unittest.TestCase):
         prompts: list[str] = []
         raw_calls: list[dict] = []
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, **kwargs):
             prompts.append(messages[0]["content"])
             return SimpleNamespace(
                 content=[SimpleNamespace(text="{}")],

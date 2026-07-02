@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from credit_tracker import record as credit_record
 from logger import get_trading_logger
-from minority_report.claude_utils import extract_json
+from minority_report.claude_utils import extract_json, response_text, thinking_extra_body
 from minority_report.raw_call_logger import save as save_raw_call
 from minority_report.prompt_contracts import COMMON_DECISION_CONTRACT, HARD_SOFT_RULE_CONTRACT
 
@@ -113,8 +113,9 @@ JSON schema:
             model=MODEL,
             max_tokens=tokens,
             messages=[{"role": "user", "content": prompt}],
+            extra_body=thinking_extra_body("quick_exit_check"),
         )
-        raw = resp.content[0].text.strip()
+        raw = response_text(resp)
         parsed = extract_json(raw)
         usage = getattr(resp, "usage", None)
         input_tokens = int(getattr(usage, "input_tokens", 0) or 0)

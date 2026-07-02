@@ -1240,7 +1240,7 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
             },
         }
 
-        def _fake_create(*, model, max_tokens, messages):
+        def _fake_create(*, model, max_tokens, messages, **kwargs):
             captured["prompt"] = messages[0]["content"]
             return SimpleNamespace(
                 content=[SimpleNamespace(text=json.dumps(response_payload))],

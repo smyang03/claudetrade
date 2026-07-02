@@ -10,8 +10,12 @@ forward gain**(했더라면 − 실제)으로 채점하고, validity가 국면×
 enforce일 때만 조정값을 반환(기본 OFF면 {} → 현행 동작 불변).
 
 안전계약:
-- 기본 OFF(`LESSON_VALIDATION_ENABLED=false`, `LESSON_VALIDATION_APPLY_MODE=off`).
-- `get_runtime_adjustments()`는 enforce가 아니면 항상 {} → 켜기 전엔 라이브 영향 0.
+- 코드 기본값 OFF(`LESSON_VALIDATION_ENABLED=false`, `LESSON_VALIDATION_APPLY_MODE=off`).
+- **현재 라이브 운영값(.env.live, 2026-06-26): ENABLED=true, APPLY_MODE=shadow.**
+  축적·채점은 항상, 반영은 shadow(would_apply 로깅만, 라이브 적용 0). 2026-06-17 enforce였으나
+  입력 dedup 오염(selection_log ~4.1x)·효능 미측정(valid_apply=0) 이유로 토론 후 shadow 강등.
+  dedup 수정(lesson_scoring) + 효능 측정 후 enforce 재검토.
+- `get_runtime_adjustments()`는 enforce가 아니면 항상 {} → shadow/off에선 라이브 영향 0.
 - 조정은 CLAUDE.md bounded control 범위 내로만 clamp. hard safety/brain 무접촉.
 - brain.json 자동변이 아님 — 별도 store(`data/lesson_validation.db`)에만 흐름.
 """

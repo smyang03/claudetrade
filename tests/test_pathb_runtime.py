@@ -5662,6 +5662,53 @@ class EarlyGateFloorOneShareTests(unittest.TestCase):
             self.assertFalse(ctx["early_gate_applied"])
 
 
+class LateEntryGateTests(unittest.TestCase):
+    """장 후반 진입 게이트: FULL=무변화, REDUCED=예산×0.5, BLOCK=qty 0."""
+
+    def _runtime(self, tmp: str, late_gate: dict) -> "PathBRuntime":
+        bot = _Bot()
+        bot.current_market = "US"
+        bot.usd_krw_rate = 1_380
+        bot.risk.cash = 5_000_000
+        bot._us_early_entry_soft_gate = lambda market: {"active": False}
+        bot._late_entry_size_gate = lambda market: dict(late_gate)
+        store = EventStore(Path(tmp) / "events.db")
+        return PathBRuntime(
+            bot,
+            is_paper=False,
+            store=store,
+            config=V2Config(pathb_fixed_order_krw=450_000, us_min_order_krw=50_000),
+        )
+
+    def test_full_no_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rt = self._runtime(tmp, {"active": False, "action": "FULL", "size_mult": 1.0})
+            rt.control_store = _Control()
+            qty, ctx = rt._pathb_qty_with_context("US", 200_000.0, cash_krw=5_000_000.0)
+            self.assertEqual(qty, 2)  # 450,000 / 200,000
+            self.assertEqual(ctx["late_gate_action"], "FULL")
+            self.assertFalse(ctx["late_gate_applied"])
+
+    def test_reduced_halves_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rt = self._runtime(tmp, {"active": True, "action": "REDUCED", "size_mult": 0.5, "elapsed_min": 150.0})
+            rt.control_store = _Control()
+            qty, ctx = rt._pathb_qty_with_context("US", 200_000.0, cash_krw=5_000_000.0)
+            self.assertEqual(qty, 1)  # 225,000 / 200,000
+            self.assertEqual(ctx["late_gate_action"], "REDUCED")
+            self.assertTrue(ctx["late_gate_applied"])
+            self.assertAlmostEqual(ctx["effective_budget_krw"], 225_000.0)
+
+    def test_block_returns_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rt = self._runtime(tmp, {"active": True, "action": "BLOCK", "size_mult": 0.0, "elapsed_min": 300.0})
+            rt.control_store = _Control()
+            qty, ctx = rt._pathb_qty_with_context("US", 200_000.0, cash_krw=5_000_000.0)
+            self.assertEqual(qty, 0)
+            self.assertEqual(ctx["sizing_reason"], "late_entry_block")
+            self.assertEqual(ctx["late_gate_action"], "BLOCK")
+
+
 class EntryScanBrokerTruthRetryTests(unittest.TestCase):
     """Phase A: BLOCKED 조회 성공률 개선 — transient 조회 실패 1회 재시도(기본 OFF).
 

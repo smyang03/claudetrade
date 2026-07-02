@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from claude_memory import brain as BrainDB
 from credit_tracker import record as credit_record
 from logger import get_minority_logger
-from minority_report.claude_utils import extract_json, is_claude_retryable_error, claude_response_meta
+from minority_report.claude_utils import extract_json, is_claude_retryable_error, claude_response_meta, response_text, thinking_extra_body
 from minority_report.raw_call_logger import save as save_raw_call
 from runtime.tuning_bounds import RUNTIME_ADJUSTMENT_BOUNDS, coerce_runtime_adjustments
 
@@ -237,8 +237,9 @@ JSON으로만 응답:
                 model=MODEL,
                 max_tokens=500,
                 messages=[{"role": "user", "content": prompt}],
+                extra_body=thinking_extra_body("tuner"),
             )
-            raw = resp.content[0].text.strip()
+            raw = response_text(resp)
             result = _coerce_runtime_adjustments(extract_json(raw))
             if result.get("mode") not in _VALID_MODES:
                 result["mode"] = prev_mode

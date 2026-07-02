@@ -17,6 +17,7 @@ from claude_memory import brain as BrainDB
 from credit_tracker import record as credit_record
 from minority_report.consensus import is_available_judgment
 from minority_report.raw_call_logger import save as save_raw_call
+from minority_report.claude_utils import response_text, thinking_extra_body
 
 log          = get_minority_logger()
 judgment_log = get_judgment_logger()
@@ -49,7 +50,7 @@ def _postmortem_fresh_brain_active() -> bool:
 
 def _append_lesson_candidate(
     market: str, date: str, key_lesson: str,
-    bull_result: str, excluded: bool
+    bull_result: str, excluded: bool, consensus_hit: str = ""
 ) -> None:
     if excluded or _is_placeholder_lesson(key_lesson):
         return
@@ -99,6 +100,8 @@ def _append_lesson_candidate(
             "requires_operator_approval": True,
             "prompt_visible_after_approval": True,
             "hit_result": bull_result,
+            "hit_result_source": "bull_result",
+            "consensus_hit": consensus_hit,
         })
         store["markets"][market] = market_list
         path.write_text(json.dumps(store, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -329,6 +332,45 @@ def _code_judge_hit_miss(stance: str, market_change_pct: float) -> str:
         if abs_chg <= _FLAT_THRESHOLD:  return "HIT"
         if abs_chg <= _FLAT_PARTIAL:    return "PARTIAL"
         return "MISS"
+
+
+def _stance_dir(stance: str) -> str:
+    s = str(stance or "").strip().upper()
+    if s in _BULL_STANCES:
+        return "up"
+    if s in _BEAR_STANCES:
+        return "down"
+    if s in _AVOID_STANCES:
+        return "avoid"
+    return "flat"
+
+
+def _scoring_consistency_meta(judgments: dict, analyst_available: dict, code_results: dict) -> dict:
+    """채점 다의성 측정(읽기전용, 채점/학습 로직 변경 없음).
+
+    각 역할 분석가 stance 방향과 코드 채점 결과를 대조해, HIT 판정 역할들의 방향이
+    갈리는지 기록한다 — scoring_ambiguous: up/down/flat 중 2개 이상 동시 HIT,
+    scoring_multi_dir_hit: up·down 정면 충돌. lesson의 hit_result가 교훈 내용이
+    아니라 bull-role 방향 적중(bull_result)임을 가시화하는 메타.
+    """
+    per_role: dict = {}
+    hit_dirs: list = []
+    for role in ("bull", "bear", "neutral"):
+        if not analyst_available.get(role):
+            per_role[role] = {"dir": "unavailable", "result": "UNAVAILABLE"}
+            continue
+        d = _stance_dir((judgments.get(role) or {}).get("stance"))
+        r = code_results.get(role)
+        per_role[role] = {"dir": d, "result": r}
+        if r == "HIT":
+            hit_dirs.append(d)
+    distinct = sorted(set(hit_dirs))
+    return {
+        "scoring_dirs_by_role": per_role,
+        "scoring_hit_dirs": distinct,
+        "scoring_ambiguous": len(distinct) >= 2,
+        "scoring_multi_dir_hit": ("up" in distinct and "down" in distinct),
+    }
 
 
 def _format_decision_event_log(decision_event_log: list) -> str:
@@ -675,10 +717,11 @@ def run(market: str, date: str, today_judgment: dict,
         started = time.monotonic()
         resp = client.messages.create(
             model=MODEL, max_tokens=2500,
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
+            extra_body=thinking_extra_body("postmortem"),
         )
         duration_ms = int((time.monotonic() - started) * 1000)
-        raw = resp.content[0].text.strip()
+        raw = response_text(resp)
         call_id = f"postmortem_{market}_{date}_{uuid.uuid4().hex[:10]}"
         credit_record(
             resp.usage.input_tokens, resp.usage.output_tokens, "postmortem", model=MODEL,
@@ -768,6 +811,22 @@ def run(market: str, date: str, today_judgment: dict,
         pm["analyst_unavailable_roles"] = list(analyst_unavailable_roles)
         pm["analyst_available"] = dict(analyst_available)
 
+    # 채점 다의성/거래0 측정(읽기전용 메타, 채점·학습 로직 불변 — Tier1-3 A)
+    pm.update(_scoring_consistency_meta(
+        judgments, analyst_available,
+        {"bull": pm.get("bull_result"), "bear": pm.get("bear_result"), "neutral": pm.get("neutral_result")},
+    ))
+    # trades_zero: '매도 0건'이 아니라 '진입·청산 체결이 전무'로 판정(운영자 결정 2026-06-29).
+    # PATHB_INTRADAY_ONLY=false(멀티데이 홀드)라 신규 진입만 하고 당일 청산이 없는 활동 세션이
+    # 존재한다 — 이를 trades_zero로 잡으면 유효한 방향적중 학습이 통째 누락되므로, trade_log의
+    # buy/sell 체결 전체로 활동을 본다. 매도건수 fallback과 OR 결합해 거짓 스킵을 최소화한다.
+    _trade_activity = sum(
+        1 for t in trade_log
+        if str((t or {}).get("side", "") or "").lower() in ("buy", "sell")
+    )
+    _sells_reported = int(actual_result.get("trades", len(sells)) or 0)
+    pm["trades_zero"] = (_trade_activity == 0 and _sells_reported == 0)
+
     execution_learning_excluded = bool(
         actual_result.get(
             "execution_learning_excluded",
@@ -780,17 +839,26 @@ def run(market: str, date: str, today_judgment: dict,
     )
 
     # ── brain 업데이트 ───────────────────────────────────────────────
-    if not execution_learning_excluded:
+    if not execution_learning_excluded and not pm.get("trades_zero"):
         recent = BrainDB.load()["markets"][market].get("recent_days", [])
 
         for role in ("bull", "bear", "neutral"):
             if not analyst_available.get(role):
                 continue
             BrainDB.update_analyst(market, role, pm[f"{role}_result"] == "HIT", recent)
-        BrainDB.update_mode_performance(
-            market, consensus_mode,
-            actual_result.get("pnl_pct", 0), actual_result.get("win", False)
-        )
+        # mode_performance는 '실현 성과'다 — 매도(청산)가 있을 때만 갱신한다. 매수만 한 멀티데이
+        # 활동 세션은 실현 pnl=0이라 가짜 무승부(0-pnl 패)가 누적돼 mode_performance를 오염시키므로
+        # 제외한다(Tier1-3B 의도 유지). update_analyst는 방향적중이라 매수만 해도 유효해 위에서 실행.
+        if _sells_reported > 0:
+            BrainDB.update_mode_performance(
+                market, consensus_mode,
+                actual_result.get("pnl_pct", 0), actual_result.get("win", False)
+            )
+    elif not execution_learning_excluded and pm.get("trades_zero"):
+        # Tier1-3B: 진입·청산 체결이 전무한 세션은 실현 성과가 없어 mode_performance에 가짜 무승부
+        # (pnl=0/win=False), update_analyst에 거래로 전환 안 된 방향적중이 누적돼 brain reliability를
+        # 진동시킨다 → 갱신 제외. (매수만 한 활동 세션은 trades_zero=False라 정상 학습)
+        log.info(f"[brain skip] {date} {market} 진입·청산 체결 0 — 성과 갱신 제외(가짜 무승부·미전환 방향적중 누적 방지)")
 
     bu = pm.get("brain_updates", {})
     # new_lesson 없으면 key_lesson을 fallback으로 사용
@@ -841,6 +909,10 @@ def run(market: str, date: str, today_judgment: dict,
         "worst_trade":       pm.get("worst_trade"),
         "worst_trade_reason": pm.get("worst_trade_reason", ""),
         "trades":            sell_count,
+        "trades_zero":       pm.get("trades_zero", sell_count == 0),
+        "scoring_hit_dirs":  pm.get("scoring_hit_dirs"),
+        "scoring_ambiguous": pm.get("scoring_ambiguous"),
+        "scoring_multi_dir_hit": pm.get("scoring_multi_dir_hit"),
         "execution_contaminated": bool(actual_result.get("execution_contaminated", False)),
         "execution_learning_excluded": execution_learning_excluded,
         "prompt_policy_excluded": prompt_policy_excluded,
@@ -854,11 +926,13 @@ def run(market: str, date: str, today_judgment: dict,
     })
 
     # lesson_candidates.json 자동 append
+    consensus_hit_label = _code_judge_hit_miss(consensus_mode, market_chg) if consensus_mode else ""
     _append_lesson_candidate(
         market=market,
         date=date,
         key_lesson=daily_key_lesson,
         bull_result=pm["bull_result"],
+        consensus_hit=consensus_hit_label,
         excluded=execution_learning_excluded or pm.get("_system_error", False),
     )
 

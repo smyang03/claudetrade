@@ -63,7 +63,7 @@ _CORR_MARK = "CORRECTION_MARKER_X"
 def _capture_selection_prompt(monkeypatch, fresh_brain: bool) -> str:
     prompts: list[str] = []
 
-    def _fake_create(*, model, max_tokens, messages):
+    def _fake_create(*, model, max_tokens, messages, **kwargs):
         prompts.append(messages[0]["content"])
         return SimpleNamespace(
             content=[SimpleNamespace(text='{"watchlist": [], "trade_ready": [], "reasons": {}}')],

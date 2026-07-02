@@ -6,7 +6,7 @@ import os
 import time
 from typing import Any
 
-from minority_report.claude_utils import extract_json
+from minority_report.claude_utils import extract_json, response_text, thinking_extra_body
 from minority_report.prompt_contracts import COMMON_DECISION_CONTRACT
 
 
@@ -167,6 +167,7 @@ def call_buy_time_confirm_judge(
             # 공유 결정 계약(수량/브로커/게이트 불결정 경계)은 system으로 전달 — 인라인 재기술 제거
             "system": [{"type": "text", "text": COMMON_DECISION_CONTRACT}],
             "messages": [{"role": "user", "content": prompt}],
+            "extra_body": thinking_extra_body("buy_time_confirm"),
         }
         if timeout_sec > 0:
             try:
@@ -191,7 +192,7 @@ def call_buy_time_confirm_judge(
         else:
             resp = _create_response()
         duration_ms = int((time.perf_counter() - started) * 1000)
-        raw = resp.content[0].text.strip()
+        raw = response_text(resp)
     except Exception:
         return unavailable_result(market=market, ticker=ticker, reason="api_error")
     parse_error = False

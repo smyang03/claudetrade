@@ -39,6 +39,8 @@ VOL_OVERHEAT_MID_RATIO = 1.5
 VOL_OVERHEAT_HIGH_RATIO = 2.0
 # C3 임계: 급등 과열(당일등락). 실측상 15%+가 양극단 중 하락. 보수적으로 15%.
 CHANGE_OVERHEAT_PCT = 15.0
+# C4 band: 이 값 이상(20%+)은 강러너로 보고 overheat 감점 면제 후보(BAND_ENFORCE on시만)
+CHANGE_OVERHEAT_RUNNER_FLOOR_PCT = 20.0
 
 
 def _change_overheat_enabled() -> bool:
@@ -343,7 +345,11 @@ def score_candidate(record: CandidateRecord, *, deferred_sources: set[str] | Non
         except (TypeError, ValueError):
             change_pct = 0.0
         if change_pct >= CHANGE_OVERHEAT_PCT:
-            components["change_overheat"] = -SOURCE_PENALTIES["change_overheat"]
+            # C4 band: 20%+ 강러너는 감점 면제 후보(감사: 12-20% fade vs 20%+ 강러너 역효과).
+            # BAND_ENFORCE 기본 off=현행(15%+ 전부 감점). on이면 runner_floor 이상 면제.
+            band_enforce = str(os.environ.get("CANDIDATE_CHANGE_OVERHEAT_BAND_ENFORCE", "false")).strip().lower() in {"1", "true", "yes", "on"}
+            if not (change_pct >= CHANGE_OVERHEAT_RUNNER_FLOOR_PCT and band_enforce):
+                components["change_overheat"] = -SOURCE_PENALTIES["change_overheat"]
     score = max(PROMPT_SCORE_MIN, min(PROMPT_SCORE_MAX, sum(components.values())))
     record.prompt_score_components = components
     record.prompt_score = score

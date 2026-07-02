@@ -85,6 +85,20 @@ class FastFillDecisionTests(unittest.TestCase):
         self.assertEqual(d["action"], "MISS")
         self.assertEqual(d["reason"], "current_above_bound")
 
+    def test_buy_zone_high_caps_chase(self):
+        # 2026-06-26: planned buy_zone_high 위로는 추격 안 함.
+        # limit 100, current 100.8, zone_high 100.5: chase_ceiling 101 위지만 zone_high가 더 낮아
+        # 100.5로 캡 → current 100.8 > 100.5 → MISS(zone 위 추격 차단).
+        d_miss = fast_fill.requote_decision(
+            market="US", limit_price=100, current=100.8, target=110, buy_zone_high=100.5)
+        self.assertEqual(d_miss["action"], "MISS")
+        self.assertEqual(d_miss["reason"], "current_above_bound")
+        # zone 안(current 100.3 <= zone_high 100.5)이면 데드존 보완 재호가는 유지.
+        d_ok = fast_fill.requote_decision(
+            market="US", limit_price=100, current=100.3, target=110, buy_zone_high=100.5)
+        self.assertEqual(d_ok["action"], "REQUOTE")
+        self.assertAlmostEqual(d_ok["requote_price"], 100.3)
+
     def test_invalid_inputs_return_none(self):
         self.assertIsNone(fast_fill.requote_decision(
             market="US", limit_price=0, current=101, target=110))

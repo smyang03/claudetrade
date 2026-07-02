@@ -121,6 +121,84 @@ def _availability_meta(judgments: dict) -> dict:
     }
 
 
+def _agreement_meta(vote_cats: list, weighted_score: float) -> dict:
+    """분석가 입장 일치도(가용성과 별개)와 dead-band wash를 측정하는 읽기전용 메타.
+
+    consensus_quality(가용성 quorum count)는 분열을 못 보므로 — distinct=1(만장일치)과
+    distinct=3(완전분열)이 같은 full_consensus — 입장 distinct 기반 agreement_quality를
+    별도 산출한다. dead_band_wash는 weighted_score가 NEUTRAL 밴드라 stance 과반과
+    어긋난 방향으로 세탁됐는지 표시(측정만, mode/size 변경 없음).
+    """
+    cats = [c for c in (vote_cats or []) if c]
+    n = len(cats)
+    distinct = len(set(cats))
+    if n == 0:
+        agreement = "none"
+    elif distinct == 1:
+        agreement = "unanimous"
+    elif distinct == n:
+        agreement = "split"
+    else:
+        agreement = "contested"
+    score_mode, _ = _score_to_mode(weighted_score)
+    bear_n = cats.count("bear")
+    bull_n = cats.count("bull")
+    majority_dir = None
+    if bear_n * 2 > n:
+        majority_dir = "bear"
+    elif bull_n * 2 > n:
+        majority_dir = "bull"
+    dead_band_wash = bool(score_mode == "NEUTRAL" and majority_dir is not None)
+    return {
+        "agreement_quality": agreement,
+        "stance_distinct_count": distinct,
+        "dead_band_wash": dead_band_wash,
+        "dead_band_wash_dir": majority_dir if dead_band_wash else None,
+    }
+
+
+def detect_consensus_judgment_desync(judgments: dict, consensus: dict) -> dict:
+    """judgments(분석가 stance)와 consensus.mode가 서로 다른 시점 스냅샷으로 섞였는지
+    (시점혼합 오염) 감지하는 읽기전용 헬퍼. 판단/주문 변경 없음(측정·플래그만).
+
+    가용 분석가 stance 평균이 함의하는 방향과 저장된 consensus.mode 방향이 정반대
+    (bull↔bear)거나 mode 라벨이 taxonomy에 없을 때 desync로 본다. unanimous override·
+    minority 발동은 정당하게 방향을 바꾸므로 제외한다. NEUTRAL 경계 1단계 차이는
+    dead-band 산물일 수 있어 desync로 보지 않는다(_agreement_meta가 별도 측정).
+    """
+    result = {"consensus_judgment_desync": False, "consensus_judgment_desync_reason": None}
+    if not isinstance(judgments, dict) or not isinstance(consensus, dict):
+        return result
+    stored_mode = str(consensus.get("mode") or "").strip().upper()
+    if not stored_mode:
+        return result
+    if stored_mode not in STANCE_SCORE:
+        result["consensus_judgment_desync"] = True
+        result["consensus_judgment_desync_reason"] = "unknown_mode:%s" % stored_mode
+        return result
+    if consensus.get("unanimous_override_applied") or consensus.get("minority_triggered"):
+        return result
+    avail = [r for r in ANALYST_ROLES if is_available_judgment(judgments.get(r) or {})]
+    if len(avail) < 2:
+        return result
+    stances = [str((judgments.get(r) or {}).get("stance") or "").strip().upper() for r in avail]
+    # 무가중 단순평균은 build_consensus의 가중 mode와 어긋나(역할 weight 편향 시) false-positive를
+    # 낸다 → stance '과반 방향'이 stored mode와 정반대(bull↔bear)일 때만 desync로 본다.
+    # 분열·약한 신호(과반 없음)는 desync 아님.
+    cats = [_cat(s) for s in stances]
+    stored_cat = _cat(stored_mode)
+    opposite = {"bull": "bear", "bear": "bull"}.get(stored_cat)
+    # desync: stored mode 방향을 지지하는 분석가가 한 명도 없고 반대 방향 지지자가 있을 때.
+    # (과반 기준은 2-분석가 정족수의 혼합쌍(bull+neutral 등)을 놓쳐 false-negative였다 —
+    #  '지지자 전무 + 반대 존재'가 시점혼합의 더 명확한 신호이고 약한 신호의 false-positive도 안 늘린다)
+    if opposite and cats.count(stored_cat) == 0 and cats.count(opposite) > 0:
+        result["consensus_judgment_desync"] = True
+        result["consensus_judgment_desync_reason"] = (
+            "dir_opposite:judg_no_%s/has_%s vs cons=%s" % (stored_cat, opposite, stored_cat)
+        )
+    return result
+
+
 def _quorum_fail_closed_result(judgments: dict, *, quality: str, vote_cats: list[str]) -> dict:
     meta = _availability_meta(judgments)
     meta["consensus_quality"] = quality
@@ -496,6 +574,7 @@ def build_consensus(judgments: dict, check_minority: bool = True,
         "minority_triggered": minority_triggered,
         "vote": list(cats),
         **availability,
+        **_agreement_meta(vote_cats, weighted_score),
     }
     result = apply_unanimous_override(judgments, result)
     new_buy_constraints = _analyst_new_buy_constraints(

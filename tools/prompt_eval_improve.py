@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from minority_report.claude_utils import response_text, thinking_extra_body
 from dotenv import load_dotenv
 for _env in (".env.live", ".env.paper", ".env"):
     if Path(_env).exists():
@@ -194,8 +195,9 @@ def evaluate_current_prompt(samples: list[dict]) -> dict:
         model=EVAL_MODEL,
         max_tokens=2000,
         messages=[{"role": "user", "content": eval_prompt}],
+        extra_body=thinking_extra_body("prompt_eval_improve"),
     )
-    raw = resp.content[0].text.strip()
+    raw = response_text(resp)
     print(f"  토큰: in={resp.usage.input_tokens} out={resp.usage.output_tokens}")
     result = _parse_json_response(raw)
     result["_sample_summary"] = sample_summary
@@ -277,8 +279,9 @@ def generate_improved_prompt(eval_result: dict) -> dict:
         model=EVAL_MODEL,
         max_tokens=3000,
         messages=[{"role": "user", "content": improve_prompt}],
+        extra_body=thinking_extra_body("prompt_eval_improve"),
     )
-    raw = resp.content[0].text.strip()
+    raw = response_text(resp)
     print(f"  토큰: in={resp.usage.input_tokens} out={resp.usage.output_tokens}")
     try:
         import re
@@ -350,8 +353,9 @@ def compare_sonnet_haiku(improved: dict, samples: list[dict], n_test: int = 6) -
                         model=model,
                         max_tokens=300,
                         messages=[{"role": "user", "content": prompt}],
+                        extra_body=thinking_extra_body("prompt_eval_improve"),
                     )
-                    raw = resp.content[0].text.strip()
+                    raw = response_text(resp)
                     import re
                     m = re.search(r"\{.*\}", raw, re.DOTALL)
                     parsed = json.loads(m.group(0)) if m else {}

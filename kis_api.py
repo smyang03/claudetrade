@@ -2079,8 +2079,15 @@ def _yf_index_snapshot(index_key: str) -> dict:
             if len(closes) >= 2 and not prev_close:
                 prev_close = float(closes.iloc[-2])
 
-    change = price - prev_close if price and prev_close else 0.0
-    change_pct = (change / prev_close * 100.0) if prev_close else 0.0
+    # fail-loud: price·prev_close 결측이면 change_pct=0.0을 조용히 캐시하지 않고 raise한다(KR P2 대칭).
+    # yfinance 장애 시 0.0이 캐시돼 regime이 조용히 NEUTRAL로 가던 취약점 차단 — _cache_set 미실행으로
+    # 다음 호출 재시도, caller(get_index_change/regime context)는 try/except로 캐시 fallback한다.
+    if not price or price <= 0 or not prev_close or prev_close <= 0:
+        raise RuntimeError(
+            f"yfinance index snapshot empty {symbol}: price={price} prev_close={prev_close} (결측)"
+        )
+    change = price - prev_close
+    change_pct = change / prev_close * 100.0
     snap = {
         "market": "US",
         "index": label_map.get(symbol, key),
@@ -2121,7 +2128,10 @@ def get_index_snapshot(market: str = "KR", index: str = "KOSPI", token: str = ""
         url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-index-price"
         resp = _kis_get(
             url,
-            headers=_headers(token or get_access_token(market="KR"), "FHKUP03500100"),
+            # FHPUP02100000=업종 현재지수(snapshot). 기존 FHKUP03500100은 업종 "기간별 시세"라
+            # FID_INPUT_DATE_1/2를 요구하고 현재지수(bstp_nmix_prpr)를 주지 않아 5/04부터 상수 결측이었음.
+            # 2026-06-28 라이브 호출로 0001=코스피·1001=코스닥 현재지수/등락/상승하락 정상 확인.
+            headers=_headers(token or get_access_token(market="KR"), "FHPUP02100000"),
             params={"FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": code},
             timeout=10,
         )
@@ -2132,11 +2142,20 @@ def get_index_snapshot(market: str = "KR", index: str = "KOSPI", token: str = ""
         o = body.get("output") or {}
         sign = o.get("prdy_vrss_sign", "")
         name = o.get("hts_kor_isnm") or ("KOSDAQ" if code == "1001" else "KOSPI")
+        price = _signed_kis_float(o.get("bstp_nmix_prpr"), "")
+        # fail-loud: 현재지수(bstp_nmix_prpr) 결측이면 0을 조용히 캐시하지 않고 raise한다.
+        # 5/04~6/28 상수결측의 근본 원인이 빈 output을 rt_cd=0이라 예외 없이 0으로 캐시한 것 →
+        # _retry_kis 재시도 후 get_index_change가 yfinance로 fallback(최종 0.0)하도록 신호한다.
+        if not o or price <= 0:
+            raise RuntimeError(
+                f"KIS index quote empty output {code}: price={o.get('bstp_nmix_prpr')!r} "
+                f"(TR FHPUP02100000 결측 의심) msg={body.get('msg1') or '(no output)'}"
+            )
         snap = {
             "market": "KR",
             "index": name,
             "code": code,
-            "price": _signed_kis_float(o.get("bstp_nmix_prpr"), ""),
+            "price": price,
             "change": _signed_kis_float(o.get("bstp_nmix_prdy_vrss"), sign),
             "change_pct": _signed_kis_float(o.get("bstp_nmix_prdy_ctrt"), sign),
             "open": _signed_kis_float(o.get("bstp_nmix_oprc"), ""),

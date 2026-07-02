@@ -36,6 +36,7 @@ for line in open(".env.live", encoding="utf-8", errors="ignore"):
 
 import anthropic  # noqa: E402
 from minority_report.hold_advisor import _HOLD_ADVISOR_SYSTEM  # noqa: E402
+from minority_report.claude_utils import response_text, thinking_extra_body  # noqa: E402
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
 SONNET = "claude-sonnet-4-6"
@@ -110,8 +111,9 @@ def _call(prompt, model):
             model=model, max_tokens=700,
             system=[{"type": "text", "text": _HOLD_ADVISOR_SYSTEM}],
             messages=[{"role": "user", "content": prompt}],
+            extra_body=thinking_extra_body("hold_advisor_ab_test"),
         )
-        raw = resp.content[0].text.strip()
+        raw = response_text(resp)
         m = re.search(r'"action"\s*:\s*"(HOLD|SELL)"', raw)
         return (m.group(1) if m else "?"), resp.usage.input_tokens, resp.usage.output_tokens
     except Exception as e:

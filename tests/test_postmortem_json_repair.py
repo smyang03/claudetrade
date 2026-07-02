@@ -14,7 +14,7 @@ def test_extract_json_repairs_fenced_trailing_comma_and_truncation() -> None:
 def test_postmortem_parse_failure_writes_fallback_daily_record_without_policy_learning() -> None:
     calls = {"beliefs": [], "issue_patterns": [], "daily_records": []}
 
-    def fake_create(*, model, max_tokens, messages):
+    def fake_create(*, model, max_tokens, messages, **kwargs):
         return SimpleNamespace(
             content=[SimpleNamespace(text="not json")],
             usage=SimpleNamespace(input_tokens=1, output_tokens=1),
@@ -113,7 +113,7 @@ def test_postmortem_parse_failure_writes_fallback_daily_record_without_policy_le
 def test_postmortem_parse_failure_with_execution_contamination_keeps_policy_excluded() -> None:
     calls = {"beliefs": [], "issue_patterns": [], "daily_records": []}
 
-    def fake_create(*, model, max_tokens, messages):
+    def fake_create(*, model, max_tokens, messages, **kwargs):
         return SimpleNamespace(
             content=[SimpleNamespace(text="not json")],
             usage=SimpleNamespace(input_tokens=1, output_tokens=1),

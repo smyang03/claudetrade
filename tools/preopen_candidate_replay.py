@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 from preopen.news_enrichment import enrich_candidates_with_news, load_preopen_news_payload
 from preopen.scheduler import regular_open_dt
 from runtime_paths import get_runtime_path
+from minority_report.claude_utils import response_text, thinking_extra_body
 
 
 PROMPT_STRICT_LOSS_FILTER_V1 = "strict_loss_filter_v1"
@@ -36,7 +37,7 @@ SUPPORTED_PROMPT_VERSIONS = {
     PROMPT_US_SLATE_ADAPTIVE_V6,
 }
 DEFAULT_PROMPT_VERSION = PROMPT_STRICT_LOSS_FILTER_V1
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-sonnet-5"
 DEFAULT_MAX_CANDIDATES = 60
 DEFAULT_PROMOTE_LIMIT = 5
 DEFAULT_KEEP_WATCH_LIMIT = 8
@@ -656,10 +657,10 @@ def call_claude_tool(prompt: str, *, model: str, max_tokens: int = 1800) -> tupl
     resp = client.messages.create(
         model=model,
         max_tokens=max_tokens,
-        temperature=0,
         tools=decision_tool_schema(),
         tool_choice={"type": "tool", "name": "preopen_shadow_decision"},
         messages=[{"role": "user", "content": prompt}],
+        extra_body=thinking_extra_body("preopen_candidate_replay"),
     )
     for block in getattr(resp, "content", []) or []:
         if getattr(block, "type", "") == "tool_use" and getattr(block, "name", "") == "preopen_shadow_decision":

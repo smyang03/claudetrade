@@ -33,20 +33,33 @@ def rescore_lessons(
     try:
         con.execute("PRAGMA busy_timeout=5000")
         rows = con.execute(
-            "SELECT market,date,trade_ready,forward_3d,consensus_mode FROM ticker_selection_log "
+            "SELECT market,date,ticker,trade_ready,forward_3d,consensus_mode FROM ticker_selection_log "
             "WHERE forward_3d IS NOT NULL"
         ).fetchall()
     finally:
         con.close()
 
+    # dedup(2026-06-26): selection_log은 rescreen 다중배치로 (market,date,ticker)당 ~4.1x 중복 +
+    # trade_ready flip(같은 키가 ready=1·0 양쪽)으로 forward가 tr/wo 양 버킷에 동시 기여 → 표본·
+    # 게이트 오염. (market,date,ticker)당 1행으로 축약: trade_ready=max(한번이라도 ready=1이면
+    # trade_ready arm), forward_3d는 키당 동일(audit 확인), consensus_mode 대표값.
+    dedup: dict[tuple, dict] = {}
+    for market, dt, ticker, tr, fwd, cmode in rows:
+        key = (market, str(dt)[:10], str(ticker))
+        d = dedup.get(key)
+        if d is None:
+            dedup[key] = {"market": market, "dt": dt, "tr": int(tr or 0), "fwd": fwd, "cmode": cmode}
+        else:
+            d["tr"] = max(d["tr"], int(tr or 0))
+
     # (market, regime) → month → {tr:[fwd], wo:[fwd]} (부호 일관 계산용 월 분할)
     g: dict[tuple, dict] = defaultdict(lambda: defaultdict(lambda: {"tr": [], "wo": []}))
-    for market, dt, tr, fwd, cmode in rows:
-        regime = lv.regime_from_consensus_mode(cmode)
+    for d in dedup.values():
+        regime = lv.regime_from_consensus_mode(d["cmode"])
         if not regime:
             continue
-        bucket = g[(market, regime)][str(dt)[:7]]
-        (bucket["tr"] if tr == 1 else bucket["wo"]).append(fwd)
+        bucket = g[(d["market"], regime)][str(d["dt"])[:7]]
+        (bucket["tr"] if d["tr"] == 1 else bucket["wo"]).append(d["fwd"])
 
     cells = []
     for (market, regime), months in g.items():

@@ -5,7 +5,7 @@ import os
 import time
 from typing import Any
 
-from minority_report.claude_utils import extract_json, claude_response_meta
+from minority_report.claude_utils import extract_json, claude_response_meta, response_text, thinking_extra_body
 from minority_report.prompt_contracts import PULLBACK_ZONE_RULE
 
 
@@ -381,9 +381,10 @@ def call_single_symbol_judge(
         model=model,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
+        extra_body=thinking_extra_body("single_symbol_judge"),
     )
     duration_ms = int((time.perf_counter() - started) * 1000)
-    raw = resp.content[0].text.strip()
+    raw = response_text(resp)
     parse_error = False
     try:
         parsed = parse_single_symbol_judge_response(raw)

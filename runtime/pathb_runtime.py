@@ -782,6 +782,7 @@ class PathBRuntime:
                 current=float(current or 0),
                 target=target,
                 cancel_threshold=float(cancel_threshold or 0) or None,
+                buy_zone_high=float(getattr(plan, "buy_zone_high", 0) or 0) or None,
             )
             if decision is None:
                 return None
@@ -922,6 +923,15 @@ class PathBRuntime:
             "DEFENSIVE": self._runtime_int("PATHB_RISK_OFF_CAP_DEFENSIVE", 5),
         }
         cap = int(caps.get(mode, 0) or 0)
+        # shadow cap(측정 전용): 실제 진입 차단엔 절대 사용 안 함(enforce는 cap만 본다).
+        # cap=15는 2026-06-11 운영자가 의도적으로 푼 값 — 행동 불변, "더 조였으면 무엇이
+        # 차단됐을지(loss_cap 종목인지 TARGET 종목인지)"만 로깅해 cap 방향을 데이터로 검증.
+        shadow_caps = {
+            "MILD_BEAR": self._runtime_int("PATHB_RISK_OFF_CAP_SHADOW_MILD_BEAR", 10),
+            "CAUTIOUS_BEAR": self._runtime_int("PATHB_RISK_OFF_CAP_SHADOW_CAUTIOUS_BEAR", 10),
+            "DEFENSIVE": self._runtime_int("PATHB_RISK_OFF_CAP_SHADOW_DEFENSIVE", 5),
+        }
+        shadow_cap = int(shadow_caps.get(mode, 0) or 0)
         incoming_keys = sorted({self._ticker_key(market_key, item) for item in (incoming_tickers or []) if item})
         zone_hit_keys = sorted({self._ticker_key(market_key, item) for item in (zone_hit_tickers or []) if item})
         if cap <= 0:
@@ -982,6 +992,9 @@ class PathBRuntime:
             "projected_count": projected_count,
             "would_exceed": would_exceed,
             "would_block_count": max(0, projected_count - cap),
+            "risk_off_pathb_cap_shadow": shadow_cap,
+            "would_exceed_shadow": bool(shadow_cap > 0 and projected_count > shadow_cap),
+            "would_block_count_shadow": max(0, projected_count - shadow_cap) if shadow_cap > 0 else 0,
             "reason": "pathb_risk_off_cap_enforced" if enforce else "pathb_risk_off_cap_audit_only",
         }
 
@@ -1008,6 +1021,9 @@ class PathBRuntime:
             f"stage={state.get('stage')} current={state.get('current_count')} "
             f"incoming={state.get('incoming_count')} projected={state.get('projected_count')} "
             f"cap={state.get('risk_off_pathb_cap')} would_exceed={state.get('would_exceed')} "
+            f"cap_shadow={state.get('risk_off_pathb_cap_shadow')} "
+            f"would_exceed_shadow={state.get('would_exceed_shadow')} "
+            f"would_block_shadow={state.get('would_block_count_shadow')} "
             f"audit_only={str(bool(state.get('audit_only'))).lower()} enforced={str(bool(state.get('enforced'))).lower()}"
         )
         if bool(state.get("would_exceed")):
@@ -1575,6 +1591,66 @@ class PathBRuntime:
             "path_run_id": plan.path_run_id,
         }
         return payload
+
+    def _record_stop_trigger_price(self, path_run_id: str, kind: str, price: float | None) -> None:
+        """loss_cap/hard_stop 트리거 시 트리거 임계가를 path_run plan에 기록(측정 전용).
+
+        트리거가→체결가 갭(loss_cap 오버슈트)을 사후 측정하기 위함이며, 청산 동작·주문에는
+        영향을 주지 않는다(plan merge 기록만). 실패해도 청산을 막지 않는다(fail-open).
+        """
+        try:
+            if price is not None and float(price) > 0:
+                self.store.update_path_run(
+                    path_run_id,
+                    plan={
+                        "stop_trigger_price": float(price),
+                        "stop_trigger_kind": kind,
+                        "stop_trigger_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    merge_plan=True,
+                )
+        except Exception:
+            pass
+
+    def _record_floor_shadow(self, plan: PricePlan, pos: dict[str, Any], reason_key: str, exit_price: float | None) -> None:
+        """entry-기준 floor/stop 청산 시 실시간 peak·peak-trail floor·실제 청산가를 plan에 기록(측정 전용, A1).
+
+        A1 counterfactual(entry-floor를 peak-trail로 치환 시 net)을 yfinance backfill MFE 의존 없이
+        라이브 실측으로 소비하기 위함이다. peak는 auto_sell_policy에 실시간 갱신(_mark_pathb_auto_sell_policy)된
+        값을, entry는 actual_entry_price를 쓴다. 청산 동작·주문에는 영향을 주지 않는다(fail-open, plan merge만).
+        """
+        try:
+            if exit_price is None or float(exit_price) <= 0:
+                return
+            run = self.store.find_path_run(plan.path_run_id) or {}
+            plan_data = run.get("plan") or {}
+            policy = plan_data.get("auto_sell_policy") or {}
+            peak_price = self._policy_float(
+                policy.get("peak_price") or pos.get("peak_price") or pos.get("position_peak_price")
+            )
+            entry = self._policy_float(
+                plan_data.get("actual_entry_price") or plan_data.get("entry_price") or pos.get("entry_price")
+            )
+            if peak_price <= 0 or entry <= 0:
+                return
+            give = _env_float("LADDER_AB_GIVE_PCT", 2.0)
+            peak_trail_floor = peak_price * (1.0 - max(0.0, give) / 100.0)
+            mfe_pct = (peak_price / entry - 1.0) * 100.0
+            self.store.update_path_run(
+                plan.path_run_id,
+                plan={
+                    "floor_shadow_reason": str(reason_key),
+                    "floor_shadow_peak_price": float(peak_price),
+                    "floor_shadow_peak_trail_floor": float(peak_trail_floor),
+                    "floor_shadow_actual_exit": float(exit_price),
+                    "floor_shadow_mfe_pct": float(mfe_pct),
+                    "floor_shadow_give_pct": float(give),
+                    "floor_shadow_at": datetime.now(timezone.utc).isoformat(),
+                },
+                merge_plan=True,
+            )
+        except Exception:
+            pass
 
     def _audit_pathb_exit_signal(self, plan: PricePlan, pos: dict[str, Any], signal: ExitSignal) -> str:
         bot = getattr(self, "bot", None)
@@ -3279,6 +3355,27 @@ class PathBRuntime:
                     plan.path_run_id,
                 )
                 continue
+            trend_gate = self._pathb_trend_overlay_gate(plan, signal, market)
+            if trend_gate is not None and trend_gate.get("block"):
+                self._record_blocked(
+                    market,
+                    plan.ticker,
+                    plan.decision_id,
+                    "TREND_OVERLAY_DOWNTREND_BLOCK",
+                    {
+                        **self._execution_safety_payload(),
+                        "stage": "pathb_trend_overlay_gate",
+                        "index_sym": trend_gate.get("index_sym"),
+                        "index_close": trend_gate.get("index_close"),
+                        "sma": trend_gate.get("sma"),
+                        "as_of": trend_gate.get("as_of"),
+                        "price": float(current or 0.0),
+                        "limit_price": float(signal.limit_price or 0.0),
+                        "signal_reason": str(signal.reason or ""),
+                    },
+                    plan.path_run_id,
+                )
+                continue
             if self._submit_buy(plan, signal):
                 burst_submitted += 1
                 if risk_off_enforced:
@@ -3573,8 +3670,10 @@ class PathBRuntime:
                 )
                 if mfe_signal is not None:
                     exit_signal = mfe_signal
+                    self._record_floor_shadow(plan, pos, "mfe_breakeven", current)
                 elif weak_mfe_signal is not None:
                     exit_signal = weak_mfe_signal
+                    self._record_floor_shadow(plan, pos, "weak_mfe", current)
                 elif (
                     loss_cap_price is not None
                     and loss_cap_price > 0
@@ -3582,8 +3681,10 @@ class PathBRuntime:
                     and current <= loss_cap_price
                 ):
                     exit_signal = ExitSignal(True, "loss_cap", "CLOSED_LOSS_CAP", current, plan.path_run_id)
+                    self._record_stop_trigger_price(plan.path_run_id, "loss_cap", loss_cap_price)
                 elif hard_stop_price is not None and hard_stop_price > 0 and current <= hard_stop_price:
                     exit_signal = ExitSignal(True, "hard_stop", "CLOSED_HARD_STOP", current, plan.path_run_id)
+                    self._record_stop_trigger_price(plan.path_run_id, "hard_stop", hard_stop_price)
                 elif tail_capture_signal is not None:
                     # 꼬리-capture enforce: 하방(loss_cap/hard_stop) 통과 후 trailing이 profit-side 청산.
                     exit_signal = tail_capture_signal
@@ -3601,6 +3702,7 @@ class PathBRuntime:
                     )
                     if ladder_signal is not None:
                         exit_signal = ladder_signal
+                        self._record_floor_shadow(plan, pos, getattr(ladder_signal, "reason", "ladder"), current)
                     else:
                         policy_eval = self._evaluate_pathb_auto_sell_policy(plan, pos, current)
                         policy_action = str(policy_eval.get("action", "proceed") or "proceed")
@@ -3736,7 +3838,8 @@ class PathBRuntime:
         market_key = str(market or run.get("market", "") or "").upper()
         if not market_key:
             return False
-        close_reason = str(close_reason or closed_trade.get("close_reason", "") or "CLOSED_USER_MANUAL")
+        # default UNKNOWN(2026-06-26): 사유 미전파 외부청산이 "수동매도"로 오라벨되지 않게.
+        close_reason = str(close_reason or closed_trade.get("close_reason", "") or "CLOSED_UNKNOWN")
         price_native = float(price or closed_trade.get("display_exit_price", 0) or closed_trade.get("actual_exit_price", 0) or 0)
         pnl_pct = float(closed_trade.get("pnl_pct", 0) or 0)
         execution_id = str(execution_id or closed_trade.get("exit_execution_id", "") or closed_trade.get("order_no", "") or "")
@@ -4128,6 +4231,43 @@ class PathBRuntime:
             log.debug(f"[PathB flow entry gate] {plan.ticker} eval skip: {exc}")
             return None
 
+    def _pathb_trend_overlay_gate(self, plan: PricePlan, signal: EntrySignal, market: str) -> dict[str, Any] | None:
+        """지수 추세 방어 오버레이. off면 None(완전 no-op).
+
+        지수 월말종가 < 10mo SMA(하락추세)면: shadow=would_skip 관측만(진입 진행),
+        enforce=block=True(신규 진입만 보류). fail-open: 신호 결손/stale면 막지 않음.
+        신호는 tools/refresh_trend_overlay_signal.py가 캐시(루프 밖). 청산/보유 무관.
+        """
+        from bot.trend_overlay_gate import normalize_mode
+        mode = normalize_mode(self._runtime_value("TREND_OVERLAY_GATE_MODE", "off"))
+        if mode == "off":
+            return None
+        try:
+            from bot.trend_overlay_gate import (
+                evaluate_trend_overlay_gate,
+                load_trend_signal,
+                record_trend_overlay_gate,
+            )
+
+            session_date = self._session_date(market)
+            verdict = evaluate_trend_overlay_gate(load_trend_signal(), mode, market)
+            record_trend_overlay_gate(
+                session_date=session_date,
+                market=market,
+                ticker=plan.ticker,
+                verdict=verdict,
+                extra={
+                    "decision_id": plan.decision_id,
+                    "path_run_id": plan.path_run_id,
+                    "limit_price": float(signal.limit_price or 0.0),
+                    "signal_reason": str(signal.reason or ""),
+                },
+            )
+            return verdict
+        except Exception as exc:
+            log.debug(f"[PathB trend overlay gate] {plan.ticker} eval skip: {exc}")
+            return None
+
     def _submit_buy(self, plan: PricePlan, signal: EntrySignal) -> bool:
         market = plan.market
         if self._plan_shadow_only(plan):
@@ -4173,6 +4313,25 @@ class PathBRuntime:
                 plan.path_run_id,
             )
             return False
+        # A1: REQUIRE_TRADE_READY — ready=0(=PULLBACK_WAIT/PROBE 출신, not_patha_trade_ready) 신규 진입 완전 차단.
+        # ready=0는 양 시장 출혈 싱크(KR net -3.73%/PF0.08, US -1.97%). 차단 후 plan 취소(국면 내 ready 불변).
+        if str(os.getenv("REQUIRE_TRADE_READY", "false") or "false").strip().lower() in {"1", "true", "yes", "on"} \
+                and bool(getattr(plan, "not_patha_trade_ready", False)):
+            self._record_blocked(
+                market,
+                plan.ticker,
+                plan.decision_id,
+                "REQUIRE_TRADE_READY_BLOCK",
+                {"require_trade_ready": True, "not_patha_trade_ready": True, "stage": "pathb_submit_buy"},
+                plan.path_run_id,
+            )
+            self.adapter.cancel_plan(
+                plan.path_run_id,
+                reason="REQUIRE_TRADE_READY_BLOCK",
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id(market),
+            )
+            return False
         reentry = self.reentry_guard.evaluate(
             market=market,
             runtime_mode=self.mode,
@@ -4203,7 +4362,12 @@ class PathBRuntime:
         risk_price_krw = self._price_to_krw(signal.limit_price, market)
         cash_krw = float(getattr(getattr(self.bot, "risk", None), "cash", 0) or 0)
         min_order_krw = self._pathb_min_order_krw(market)
-        qty, sizing_context = self._pathb_qty_with_context(market, risk_price_krw, cash_krw=cash_krw)
+        qty, sizing_context = self._pathb_qty_with_context(
+            market,
+            risk_price_krw,
+            cash_krw=cash_krw,
+            boost_eligible=(not bool(getattr(plan, "not_patha_trade_ready", False))),
+        )
         order_cost = float(qty) * float(risk_price_krw)
         realized_daily_pnl_pct = self._daily_pnl_pct(market)
         equity_daily_pnl_pct = self._equity_daily_pnl_pct(market)
@@ -6237,10 +6401,16 @@ class PathBRuntime:
         observed_mfe_pct(Phase 1c 관측 전용 키)만 읽으므로 ladder의 peak_pnl_pct는 건드리지 않는다.
         """
         mk = "US" if str(market or "").upper() == "US" else "KR"
-        if not self._runtime_bool(
+        enabled = self._runtime_bool(
             f"{mk}_PATHB_WEAK_MFE_CUT_ENABLED",
             self._runtime_bool("PATHB_WEAK_MFE_CUT_ENABLED", False),
-        ):
+        )
+        # C3 shadow: enforce off여도 조건 충족 시 would-cut만 기록(실매도 보류) → false-cut율·절단손실 측정
+        shadow = self._runtime_bool(
+            f"{mk}_PATHB_WEAK_MFE_CUT_SHADOW",
+            self._runtime_bool("PATHB_WEAK_MFE_CUT_SHADOW", False),
+        )
+        if not enabled and not shadow:
             return None
         current_price = float(current or 0)
         if current_price <= 0:
@@ -6282,6 +6452,10 @@ class PathBRuntime:
         )
         if cur_pnl_pct > min_loss:
             return None
+        if not enabled:
+            # shadow 전용: 실제 매도 보류, would-cut만 기록(다국면 false-cut 검증용)
+            self._record_floor_shadow(plan, pos, "weak_mfe_shadow", current_price)
+            return None
         return ExitSignal(True, "weak_mfe_cut", "CLOSED_WEAK_MFE", current_price, plan.path_run_id)
 
     def _pathb_position_age_sec(self, plan: PricePlan, pos: dict[str, Any]) -> float | None:
@@ -6311,6 +6485,21 @@ class PathBRuntime:
                 continue
             return max(0.0, (now - parsed).total_seconds())
         return None
+
+    @staticmethod
+    def _pathb_ladder_ab_enforce_b(plan: PricePlan, market: str) -> bool:
+        """Phase B A/B(2026-06-27): {MKT}_LADDER_AB_MODE=enforce면 decision_id 해시로 50:50 분할,
+        B 그룹만 peak-trail 적용. hard_stop/loss_cap는 상위에서 이미 체크 → 하방 불변(profit-side만)."""
+        import hashlib
+        market_key = "US" if str(market or getattr(plan, "market", "")).upper() == "US" else "KR"
+        mode = str(os.getenv(f"{market_key}_LADDER_AB_MODE", "off") or "off").strip().lower()
+        if mode != "enforce":
+            return False
+        key = str(getattr(plan, "decision_id", "") or getattr(plan, "path_run_id", "") or getattr(plan, "ticker", ""))
+        if not key:
+            return False
+        h = int(hashlib.md5(key.encode("utf-8")).hexdigest(), 16)
+        return (h % 2) == 1
 
     def _pathb_profit_ladder_floor(
         self,
@@ -6352,6 +6541,28 @@ class PathBRuntime:
         if peak_price <= 0 and mfe_pct > 0:
             peak_price = entry * (1.0 + mfe_pct / 100.0)
         if mfe_pct <= 0 or peak_price <= 0:
+            return {}
+
+        # Phase B A/B(2026-06-27): enforce-B 그룹은 현행 tier 사다리 대신 단일 peak-trail로 대체.
+        # sweep(ladder_capture_sweep US n=32) act=4·give=2 → Δ+13%p·개선19/악화12·악화반납 통제.
+        # act% 미만은 ladder floor 없음(하방은 상위 hard_stop/loss_cap이 막음 = profit-side만 변경).
+        if self._pathb_ladder_ab_enforce_b(plan, market):
+            ab_act = _env_float("LADDER_AB_ACT_PCT", 4.0)
+            ab_give = _env_float("LADDER_AB_GIVE_PCT", 2.0)
+            if ab_act > 0 and mfe_pct >= ab_act:
+                ab_floor = peak_price * (1.0 - max(0.0, ab_give) / 100.0)
+                ab_floor = self._round_policy_price(ab_floor, str(market or plan.market or "").upper(), direction="down")
+                if ab_floor > 0:
+                    return {
+                        "tier": "ab_peak_trail",
+                        "floor": ab_floor,
+                        "entry": entry,
+                        "peak_price": peak_price,
+                        "mfe_pct": mfe_pct,
+                        "ab_group": "B",
+                        "ab_act_pct": ab_act,
+                        "ab_give_pct": ab_give,
+                    }
             return {}
 
         tier1 = _env_float("PATHB_LADDER_TIER1_PCT", 1.2)
@@ -12478,7 +12689,7 @@ class PathBRuntime:
         )
         return payload
 
-    def _pathb_qty_with_context(self, market: str, price_krw: float, *, cash_krw: float) -> tuple[int, dict[str, Any]]:
+    def _pathb_qty_with_context(self, market: str, price_krw: float, *, cash_krw: float, boost_eligible: bool = False) -> tuple[int, dict[str, Any]]:
         price = float(price_krw or 0)
         cash = max(0.0, float(cash_krw or 0))
         fixed_budget = float(self.config.pathb_fixed_order_krw)
@@ -12490,7 +12701,57 @@ class PathBRuntime:
             if early_gate_applied
             else 1.0
         )
-        budget = fixed_budget * early_gate_size_mult if early_gate_applied else fixed_budget
+        # A2: ready=1(=PathA trade_ready 출신) + claude_price(=PathB) 양수 셋업 자본 집중(×mult).
+        # MAX_ORDER_KRW(Path A 캡)는 PathB fixed_order_krw에 적용되지 않으므로 타겟 예외가 자연 성립.
+        ready_boost_mult = 1.0
+        if boost_eligible:
+            try:
+                ready_boost_mult = max(1.0, min(3.0, float(os.getenv("PATHB_READY_BOOST_MULT", "1.0") or 1.0)))
+            except (TypeError, ValueError):
+                ready_boost_mult = 1.0
+        # 장 후반 진입 게이트(2026-06-26 실측 enforce): full_end분까지 full, reduced_end분까지
+        # ×0.5, 이후 BLOCK. late(>2h)가 모든 국면에서 -0.3~-0.9%p 더 샌다(confound 독립).
+        late_gate = self._late_entry_size_gate(market)
+        late_gate_action = str(late_gate.get("action") or "FULL")
+        late_gate_applied = bool(late_gate.get("active"))
+        late_gate_size_mult = max(0.0, min(1.0, float(late_gate.get("size_mult") or 1.0)))
+        if late_gate_action == "BLOCK":
+            sizing_context = {
+                "original_budget_krw": original_budget,
+                "effective_budget_krw": 0.0,
+                "fixed_order_budget_krw": fixed_budget,
+                "one_share_entry_cap_krw": original_budget,
+                "early_gate_applied": early_gate_applied,
+                "early_gate_size_mult": early_gate_size_mult,
+                "late_gate_applied": True,
+                "late_gate_action": "BLOCK",
+                "late_gate_elapsed_min": late_gate.get("elapsed_min"),
+                "can_buy_1_share": False,
+                "fixed_sizing": True,
+                "sizing_reason": "late_entry_block",
+                "sizing_details": {
+                    "pathb_sizing": {
+                        "qty": 0,
+                        "notional": 0.0,
+                        "blocker": "late_entry_block",
+                        "warnings": [],
+                        "size_intent": "normal",
+                        "effective_budget": 0.0,
+                        "hard_budget_cap": 0.0,
+                        "fixed_order_budget_krw": fixed_budget,
+                        "one_share_entry_cap_krw": original_budget,
+                        "late_gate": dict(late_gate),
+                    }
+                },
+            }
+            return 0, sizing_context
+        budget = fixed_budget
+        if early_gate_applied:
+            budget *= early_gate_size_mult
+        if late_gate_applied and late_gate_size_mult < 1.0:
+            budget *= late_gate_size_mult
+        if ready_boost_mult > 1.0:
+            budget *= ready_boost_mult
         hard_budget_cap = budget
         if price <= 0:
             sizing_context = {
@@ -12526,7 +12787,7 @@ class PathBRuntime:
             cash_available=cash,
             min_order=min_order,
             size_intent="normal",
-            allow_one_share_over_budget=bool(self.config.pathb_allow_one_share_over_budget) and not early_gate.get("active"),
+            allow_one_share_over_budget=bool(self.config.pathb_allow_one_share_over_budget) and not early_gate.get("active") and not (late_gate_applied and late_gate_size_mult < 1.0),
             one_share_max_account_pct=float(self.config.pathb_one_share_over_budget_max_account_pct),
             total_equity=self._pathb_total_equity_krw(market, fallback_cash_krw=cash),
         )
@@ -12578,6 +12839,11 @@ class PathBRuntime:
             "early_gate_applied": early_gate_applied,
             "early_gate_size_mult": early_gate_size_mult,
             "early_gate_floor_applied": early_gate_floor_applied,
+            "late_gate_applied": late_gate_applied,
+            "late_gate_action": late_gate_action,
+            "late_gate_size_mult": late_gate_size_mult,
+            "ready_boost_mult": ready_boost_mult,
+            "ready_boost_applied": ready_boost_mult > 1.0,
             "can_buy_1_share": can_buy_1_share,
             "fixed_sizing": True,
             "sizing_reason": sizing_reason,
@@ -12598,6 +12864,16 @@ class PathBRuntime:
         except Exception:
             pass
         return {"active": False, "market": str(market or "").upper()}
+
+    def _late_entry_size_gate(self, market: str) -> dict[str, Any]:
+        try:
+            gate = getattr(getattr(self, "bot", None), "_late_entry_size_gate", None)
+            if callable(gate):
+                result = gate(market)
+                return dict(result or {})
+        except Exception:
+            pass
+        return {"active": False, "action": "FULL", "size_mult": 1.0, "market": str(market or "").upper()}
 
     def _pathb_total_equity_krw(self, market: str, *, fallback_cash_krw: float) -> float:
         try:

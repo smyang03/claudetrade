@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_analysis_logger, get_judgment_logger, get_minority_logger
 from credit_tracker import record as credit_record, throttle_state
 from minority_report.raw_call_logger import save as save_raw_call
-from minority_report.claude_utils import is_claude_retryable_error, claude_response_meta
+from minority_report.claude_utils import is_claude_retryable_error, claude_response_meta, response_text, thinking_extra_body
 from minority_report.active_lessons import build_active_lesson_context
 from minority_report.consensus import is_available_judgment
 from bot.candidate_policy import normalize_selection_result, selection_limits
@@ -2075,9 +2075,10 @@ JSON으로만 응답 (다른 텍스트 없이):
         r1_max_tokens = _env_int_bound("CLAUDE_ANALYST_R1_MAX_TOKENS", 700, 200, 2000)
         _t0 = time.perf_counter()
         resp = client.messages.create(model=_r1_model, max_tokens=r1_max_tokens,
-                                      messages=[{"role": "user", "content": prompt}])
+                                      messages=[{"role": "user", "content": prompt}],
+                                      extra_body=thinking_extra_body("analyst_r1"))
         _duration_ms = int((time.perf_counter() - _t0) * 1000)
-        raw = resp.content[0].text.strip()
+        raw = response_text(resp)
         result = _sanitize_analyst_result(_extract_json(raw), analyst_type)
         credit_record(
             resp.usage.input_tokens, resp.usage.output_tokens,
@@ -2212,9 +2213,10 @@ JSON으로만 응답:
         r2_max_tokens = _env_int_bound("CLAUDE_ANALYST_R2_MAX_TOKENS", 900, 300, 2500)
         _t0 = time.perf_counter()
         resp = client.messages.create(model=MODEL, max_tokens=r2_max_tokens,
-                                      messages=[{"role": "user", "content": prompt}])
+                                      messages=[{"role": "user", "content": prompt}],
+                                      extra_body=thinking_extra_body("analyst_r2"))
         _duration_ms = int((time.perf_counter() - _t0) * 1000)
-        raw = resp.content[0].text.strip()
+        raw = response_text(resp)
         result = _extract_json(raw)
         merged = _merge_debate_result(my_r1, result)
         credit_record(
@@ -2908,21 +2910,21 @@ execution_phase: {execution_phase or 'unspecified'}
   "price_targets":{{
     "code1":{{
       "reference_price":73200,
-      "buy_zone_low":73000,
-      "buy_zone_high":73500,
-      "sell_target":76000,
-      "stop_loss":71000,
+      "buy_zone_low":72200,
+      "buy_zone_high":72700,
+      "sell_target":74500,
+      "stop_loss":71500,
       "reward_risk":1.5,
-      "risk_pct":2.7,
-      "reward_pct":3.4,
+      "risk_pct":1.64,
+      "reward_pct":2.46,
       "hold_days":1,
       "confidence":0.65,
-      "cancel_if_open_above":74500,
-      "target_basis":"VWAP reclaim + resistance",
+      "cancel_if_open_above":73200,
+      "target_basis":"VWAP reclaim + nearest resistance",
       "invalid_if":"breaks opening range low",
-      "entry_rationale":"support pullback",
-      "exit_rationale":"near resistance",
-      "rationale":"buy near support, sell into resistance"
+      "entry_rationale":"pullback to support below current price",
+      "exit_rationale":"realistic intraday peak near resistance",
+      "rationale":"buy on pullback to support, sell into a realistic ~2.5% resistance target"
     }}
     }}{candidate_actions_example}
 }}"""
@@ -3298,6 +3300,7 @@ Rules:
                 "model": MODEL,
                 "max_tokens": selection_max_tokens,
                 "messages": [{"role": "user", "content": prompt}],
+                "extra_body": thinking_extra_body("selection"),
             }
             if selection_system_blocks:
                 _select_kwargs["system"] = selection_system_blocks
@@ -3318,7 +3321,7 @@ Rules:
     try:
         if last_err is not None:
             raise last_err
-        raw = resp.content[0].text.strip()
+        raw = response_text(resp)
         stop_reason = str(getattr(resp, "stop_reason", "") or "")
         parse_error = False
         parse_stage = "strict_compact" if compact_selection_enabled else "legacy"
@@ -3342,13 +3345,22 @@ Rules:
                         result = recovered_compact
                         parse_stage = "compact_watch_recovered"
                     else:
+                        # stop_reason이 max_tokens가 아닌데 파싱 실패 = 모델이 완료했으나 JSON이 아님
+                        # (thinking-on sonnet-5가 가끔 JSON 대신 산문/마크다운 요약 출력하는 형식 이탈).
+                        # 동작은 동일(tr=[] → 그 사이클 후보 전부 스킵, 잘못된 진입 없음). 추세 관찰용으로만 태그 분리.
+                        _format_drift = stop_reason != "max_tokens"
                         result = {
                             "wl": _safe_watch_fallback(prompt_candidates, market),
                             "tr": [],
                             "ca": [],
-                            "_fallback_mode": "selection_parse_failed",
+                            "_fallback_mode": "selection_format_drift" if _format_drift else "selection_parse_failed",
                         }
-                        parse_stage = "compact_parse_failed"
+                        parse_stage = "compact_format_drift" if _format_drift else "compact_parse_failed"
+                        if _format_drift:
+                            log.warning(
+                                f"[ticker-selection] {market} thinking 형식이탈(JSON 대신 산문) → 후보 스킵(tr=0). "
+                                f"stop={stop_reason} out_tok={getattr(resp.usage, 'output_tokens', 0)}"
+                            )
                     parse_error = True
                 else:
                     raise
@@ -3472,8 +3484,9 @@ Rules:
                         model=MODEL,
                         max_tokens=_env_int_bound("CLAUDE_SELECTION_RETRY_MAX_TOKENS", 1800, 700, 4000),
                         messages=[{"role": "user", "content": retry_prompt}],
+                        extra_body=thinking_extra_body("selection"),
                     )
-                    retry_raw = retry_resp.content[0].text.strip()
+                    retry_raw = response_text(retry_resp)
                     retry_result = _extract_json(retry_raw)
                     retry_trade_ready = list(retry_result.get("trade_ready") or []) if isinstance(retry_result.get("trade_ready"), list) else []
                     if retry_trade_ready:

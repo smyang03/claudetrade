@@ -41,6 +41,12 @@ def v2_close_reason(reason: str) -> str:
         "claude_sell": "CLOSED_CLAUDE_SELL",
         "policy_forced_sell": "CLOSED_CLAUDE_SELL",
         "CLOSED_CLAUDE_SELL": "CLOSED_CLAUDE_SELL",
+        # 라벨 진실복원(2026-06-26): Claude 장중리뷰 매도/프리세션 매도가 default(USER_MANUAL)로
+        # 흡수돼 "운영자 수동매도"로 오라벨되던 것 분리. intraday_review_sell은 profit_guard 익절
+        # (CLOSED_CLAUDE_SELL)과 다른 손실컷 경로라 별도 라벨로 분석 분리.
+        "intraday_review_sell": "CLOSED_CLAUDE_INTRADAY_SELL",
+        "CLOSED_CLAUDE_INTRADAY_SELL": "CLOSED_CLAUDE_INTRADAY_SELL",
+        "pre_session_sell": "CLOSED_CLAUDE_SELL",
         "manual": "CLOSED_USER_MANUAL",
         "panic": "CLOSED_PANIC",
         "session_force": "CLOSED_SESSION_FORCE",
@@ -55,7 +61,9 @@ def v2_close_reason(reason: str) -> str:
         "pathb_kill": "CLOSED_PANIC",
         "pathb_closeall": "CLOSED_USER_MANUAL",
     }
-    return mapping.get(str(reason or ""), "CLOSED_USER_MANUAL")
+    # default 변경(2026-06-26): 미매핑 reason이 "수동매도"로 위장하지 않게 UNKNOWN으로.
+    # 진짜 운영자 수동매도는 'manual'만 USER_MANUAL.
+    return mapping.get(str(reason or ""), "CLOSED_UNKNOWN")
 
 
 def _fresh_brain_policy_enabled() -> bool:

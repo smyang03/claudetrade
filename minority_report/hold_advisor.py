@@ -14,7 +14,7 @@ from typing import Any, Optional
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_trading_logger
-from minority_report.claude_utils import extract_json, claude_response_meta
+from minority_report.claude_utils import extract_json, claude_response_meta, response_text, thinking_extra_body
 from credit_tracker import record as credit_record
 from runtime_paths import get_runtime_path
 from minority_report.raw_call_logger import save as save_raw_call
@@ -919,7 +919,7 @@ def _ask_challenge(
     call_started = time.perf_counter()
     try:
         max_tokens = _challenge_max_tokens()
-        _create_kwargs: dict = {"model": MODEL, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
+        _create_kwargs: dict = {"model": MODEL, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}], "extra_body": thinking_extra_body("hold_advisor_challenge")}
         # 공유 계약은 항상 system으로 전달 (user 프롬프트의 인라인 중복은 제거됨).
         # cache_control은 플래그로만 제어 — 현재 prefix가 최소 토큰 미달이라 no-op (상단 주석 참고).
         _system_block: dict = {"type": "text", "text": _HOLD_ADVISOR_SYSTEM}
@@ -928,7 +928,7 @@ def _ask_challenge(
         _create_kwargs["system"] = [_system_block]
         resp = client.messages.create(**_create_kwargs)
         duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
-        raw = resp.content[0].text.strip()
+        raw = response_text(resp)
         result = extract_json(raw)
         credit_record(
             resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor_challenge", model=MODEL,
@@ -1176,7 +1176,7 @@ def _ask_triage(
     call_started = time.perf_counter()
     try:
         max_tokens = _triage_max_tokens()
-        _create_kwargs: dict = {"model": MODEL, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}]}
+        _create_kwargs: dict = {"model": MODEL, "max_tokens": max_tokens, "messages": [{"role": "user", "content": prompt}], "extra_body": thinking_extra_body("hold_advisor_triage")}
         # 공유 계약은 항상 system으로 전달 (user 프롬프트의 인라인 중복은 제거됨).
         # cache_control은 플래그로만 제어 — 현재 prefix가 최소 토큰 미달이라 no-op (상단 주석 참고).
         _system_block: dict = {"type": "text", "text": _HOLD_ADVISOR_SYSTEM}
@@ -1185,7 +1185,7 @@ def _ask_triage(
         _create_kwargs["system"] = [_system_block]
         resp = client.messages.create(**_create_kwargs)
         duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
-        raw = resp.content[0].text.strip()
+        raw = response_text(resp)
         result = extract_json(raw)
         credit_record(
             resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor_triage", model=MODEL,
@@ -1770,9 +1770,10 @@ JSON으로만 응답:
             model=MODEL, max_tokens=700,
             system=[_system_block],
             messages=[{"role": "user", "content": prompt}],
+            extra_body=thinking_extra_body("hold_advisor"),
         )
         duration_ms = int(max(0.0, (time.perf_counter() - call_started) * 1000.0))
-        raw = resp.content[0].text.strip()
+        raw = response_text(resp)
         result = extract_json(raw)
         credit_record(
             resp.usage.input_tokens, resp.usage.output_tokens, "hold_advisor", model=MODEL,

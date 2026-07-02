@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from minority_report.claude_utils import extract_json
+from minority_report.claude_utils import extract_json, response_text, thinking_extra_body
 
 
 INPUT_PRICE_PER_M = 3.0
@@ -447,11 +447,11 @@ def run_claude(prompt: str, model: str, max_tokens: int) -> dict[str, Any]:
     resp = client.messages.create(
         model=model,
         max_tokens=max_tokens,
-        temperature=0,
         messages=[{"role": "user", "content": prompt}],
+        extra_body=thinking_extra_body("simulate_hold_advisor"),
     )
     duration_ms = int((time.perf_counter() - started) * 1000)
-    raw = resp.content[0].text.strip()
+    raw = response_text(resp)
     parsed = extract_json(raw)
     input_tokens = int(resp.usage.input_tokens)
     output_tokens = int(resp.usage.output_tokens)

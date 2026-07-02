@@ -32,6 +32,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import get_collector_logger, log_retry, log_call, ProgressLogger
 from kis_api import get_access_token, _headers, _kis_get, _get_us_quote_codes, get_kis_market_profile
+from runtime_paths import get_runtime_path
 
 load_dotenv()
 
@@ -225,14 +226,45 @@ def fetch_av_news(ticker: str, target_date: str) -> list[dict]:
     return results
 
 
+def _av_exhausted_path() -> Path:
+    return Path(get_runtime_path("state", "av_exhausted_date.txt"))
+
+
+def _av_runtime_day() -> str:
+    """AV 일일 한도는 뉴스 target_date가 아니라 실제 호출한 달력일 기준이다.
+    (AV rate limit은 API 콜 시점 기준 — 멀티데이 백필에서 target_date마다 재호출하던 버그 차단)"""
+    return datetime.now().strftime("%Y-%m-%d")
+
+
 def _is_av_exhausted(target_date: str) -> bool:
-    return _AV_EXHAUSTED_DATE == target_date
+    """AV 일일 소진 여부. 한도는 호출일(달력일) 기준으로 판단한다 — 멀티데이 백필에서
+    target_date가 날짜마다 달라 이미 소진된 AV를 매 날짜 재호출하던 헛호출을 막는다.
+    전역(메모리)은 collector가 데이터 사이클마다 새 프로세스로 떠 리셋되므로 state 파일로 영속화한다."""
+    global _AV_EXHAUSTED_DATE
+    today = _av_runtime_day()
+    if _AV_EXHAUSTED_DATE == today:
+        return True
+    try:
+        p = _av_exhausted_path()
+        if p.exists() and p.read_text(encoding="utf-8").strip() == today:
+            _AV_EXHAUSTED_DATE = today
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _mark_av_exhausted(target_date: str):
     global _AV_EXHAUSTED_DATE
-    _AV_EXHAUSTED_DATE = target_date
-    log.warning(f"AV 일일 한도 소진 감지 — {target_date} 남은 세션 동안 AV 호출 중단")
+    today = _av_runtime_day()
+    _AV_EXHAUSTED_DATE = today
+    try:
+        p = _av_exhausted_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(today, encoding="utf-8")
+    except Exception:
+        pass
+    log.warning(f"AV 일일 한도 소진 감지 — {today}(호출일) 남은 세션 동안 AV 호출 중단")
 
 
 # ── Finnhub 뉴스 (백업) ───────────────────────────────────────────────────────

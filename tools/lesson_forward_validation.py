@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 
 """교훈 forward-validation 채점기 (PoC) — 운영자 비전 1단계.
 
@@ -42,6 +43,14 @@ def _med(xs):
 
 
 def main() -> int:
+    # DEPRECATED(2026-06-26): 정식 forward-validation은 minority_report/lesson_scoring.rescore_lessons
+    # (regime·cost_floor·sessions 게이트 포함, data/lesson_validation.db)로 대체됨. 이 PoC는 별도
+    # stale DB(data/analysis/lesson_validation.db)에 정식엔진과 불일치 verdict를 만들어 혼선원이라
+    # 기본 차단. 의도적 실행만 LESSON_FWD_POC_ALLOW=1.
+    if str(os.getenv("LESSON_FWD_POC_ALLOW", "0")).strip().lower() not in {"1", "true", "yes", "on"}:
+        print("[DEPRECATED] lesson_forward_validation.py는 lesson_scoring.rescore_lessons로 대체됨. "
+              "정식: python -m tools.run_lesson_validation. 강제 실행: LESSON_FWD_POC_ALLOW=1")
+        return 0
     con = sqlite3.connect(f"file:{SEL_DB}?mode=ro", uri=True)
     rows = con.execute(
         "SELECT market, substr(date,1,7) AS period, trade_ready, forward_3d "
