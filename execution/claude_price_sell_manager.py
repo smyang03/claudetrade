@@ -328,6 +328,19 @@ class ClaudePriceSellManager:
                     entry_backfill["filled_qty"] = int(qty_override)
         except Exception:
             entry_backfill = {}
+        # 보유시간 영속화 (2026-07-02 D2): closed_at 커버리지 3%가 보유기간 분석을
+        # 계산법 의존(부호 역전)으로 만들던 측정 결함 수정. CLOSED 정본 경로인 여기서
+        # 항상 기록한다. 관측 전용 키 — 어떤 트리거/보호 계약도 읽지 않는다.
+        _now_kst = datetime.now(KST)
+        hold_meta: dict[str, Any] = {"closed_at": _now_kst.isoformat(timespec="seconds")}
+        try:
+            _entry_at = str((plan or {}).get("entry_filled_at") or "")
+            if _entry_at:
+                _entry_dt = datetime.fromisoformat(_entry_at.replace("Z", "+00:00"))
+                if _entry_dt.tzinfo is not None:
+                    hold_meta["minutes_to_close"] = round((_now_kst - _entry_dt).total_seconds() / 60.0, 1)
+        except Exception:
+            pass
         self.store.update_path_run(
             path_run_id,
             status="CLOSED",
@@ -339,6 +352,7 @@ class ClaudePriceSellManager:
                 "exit_fill_confirmed": bool(execution_id),
                 **cost_meta,
                 **entry_backfill,
+                **hold_meta,
             },
             merge_plan=True,
         )
