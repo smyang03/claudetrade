@@ -4323,8 +4323,13 @@ class PathBRuntime:
             )
             return False
         # A1: REQUIRE_TRADE_READY — ready=0(=PULLBACK_WAIT/PROBE 출신, not_patha_trade_ready) 신규 진입 완전 차단.
-        # ready=0는 양 시장 출혈 싱크(KR net -3.73%/PF0.08, US -1.97%). 차단 후 plan 취소(국면 내 ready 불변).
-        if str(os.getenv("REQUIRE_TRADE_READY", "false") or "false").strip().lower() in {"1", "true", "yes", "on"} \
+        # 시장별 토글(_US/_KR override 후 글로벌 fallback, 기본 os.getenv=현행). 2026-07-02:
+        # 시장별 나은 코호트가 다름 — US ready=0 -1.97%(차단 유지) vs KR ready=0 브레이크이븐·개선중
+        # (4월-1.78→6월-0.07). KR은 ready=1이 -0.97%로 더 나쁘고 데이터 순환결핍 → KR ready=0 unblock 시도(모니터링·가역).
+        _mkt_key = "US" if str(market or "").upper() == "US" else "KR"
+        _global_rtr = str(os.getenv("REQUIRE_TRADE_READY", "false") or "false").strip().lower() in {"1", "true", "yes", "on"}
+        require_trade_ready = self._runtime_bool(f"REQUIRE_TRADE_READY_{_mkt_key}", _global_rtr)
+        if require_trade_ready \
                 and bool(getattr(plan, "not_patha_trade_ready", False)):
             self._record_blocked(
                 market,
