@@ -118,7 +118,11 @@ HARD_RULES = {
     "max_order_krw":        float(os.getenv("MAX_ORDER_KRW",      "500000")),   # 1회 최대 주문금액
     "no_new_entry_min":       int(os.getenv("NO_NEW_ENTRY_MIN",       "10")),   # 장 시작 후 N분 진입 금지
     "close_before_min":       int(os.getenv("CLOSE_BEFORE_MIN",       "10")),   # 장 마감 전 N분 신규 금지
-    "max_sector_positions":   int(os.getenv("MAX_SECTOR_POSITIONS",    "2")),   # 동일 섹터 최대 보유
+    # ⚠️ 미배선(2026-07-02 갭감사 H1): 이 값은 로드만 되고 repo 어디서도 소비되지 않는다 —
+    # 섹터 동시보유를 실제로 제한하지 않음(환상 안전장치 금지). 상관 동시노출은 측정 도구
+    # (tools/sector_concurrent_exposure_review.py)로만 관찰 중이며, enforce 배선은 양방향
+    # 실측(동섹터 승자 공존) 근거로 부당 판정(docs/reports/debate_funnel_gap_audit_20260702.md).
+    "max_sector_positions":   int(os.getenv("MAX_SECTOR_POSITIONS",    "2")),   # 동일 섹터 최대 보유 [미배선]
 }
 
 
