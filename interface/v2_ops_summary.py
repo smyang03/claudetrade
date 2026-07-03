@@ -1840,6 +1840,7 @@ def _closed_trade_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _path_performance_comparison(events: list[dict[str, Any]], pathb_runs: list[dict[str, Any]]) -> dict[str, Any]:
     path_a_rows: list[dict[str, Any]] = []
+    counted_a_decisions: set[str] = set()  # 이중 CLOSED 기록(실측 12%) dedup — 진입당 1회
     for event in events:
         if event.get("event_type") != "CLOSED":
             continue
@@ -1851,6 +1852,11 @@ def _path_performance_comparison(events: list[dict[str, Any]], pathb_runs: list[
             continue
         if str(payload.get("path_type") or "") == "claude_price" or str(payload.get("path_run_id") or ""):
             continue
+        did = str(event.get("decision_id") or "").strip()
+        if did:
+            if did in counted_a_decisions:
+                continue
+            counted_a_decisions.add(did)
         path_a_rows.append(
             {
                 "ticker": event.get("ticker", ""),

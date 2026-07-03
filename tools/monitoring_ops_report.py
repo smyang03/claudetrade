@@ -1195,6 +1195,8 @@ def _pathb_profit_protection_report(
         selected = ["market", "session_date", "ticker", "reason_code", "payload_json"]
         if "occurred_at" in columns:
             selected.append("occurred_at")
+        if "decision_id" in columns:  # 이중 CLOSED dedup용(스키마 변형 방어 — 없으면 dedup 자동 skip)
+            selected.append("decision_id")
         rows = [
             dict(row)
             for row in conn.execute(
@@ -1208,6 +1210,7 @@ def _pathb_profit_protection_report(
             )
         ]
         close_reason_rows: dict[str, dict[str, Any]] = {}
+        seen_decisions: set[str] = set()  # 이중 CLOSED 기록(실측 12%) dedup — 진입(decision_id)당 1회
         examples: list[dict[str, Any]] = []
         pnl_values: list[float] = []
         mfe_values: list[float] = []
@@ -1230,6 +1233,11 @@ def _pathb_profit_protection_report(
             )
             if not is_pathb:
                 continue
+            did = str(row.get("decision_id") or "").strip()
+            if did:
+                if did in seen_decisions:
+                    continue
+                seen_decisions.add(did)
             closed_count += 1
             close_reason = str(payload.get("close_reason") or row.get("reason_code") or "unknown")
             pnl = _float_or_none(payload.get("pnl_pct"))

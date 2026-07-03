@@ -78,13 +78,15 @@ def load_closes(ev_db: Path, runtime_mode: str | None) -> dict[str, dict[str, li
     conn = _connect_ro(ev_db)
     try:
         rows = conn.execute(
-            "SELECT market, runtime_mode, reason_code, payload_json "
-            "FROM lifecycle_events WHERE event_type='CLOSED'"
+            "SELECT market, runtime_mode, reason_code, payload_json, decision_id "
+            "FROM lifecycle_events WHERE event_type='CLOSED' "
+            "ORDER BY event_id ASC"
         ).fetchall()
     finally:
         conn.close()
     data: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-    for market, mode, rc, pj in rows:
+    seen_decisions: set[str] = set()  # 이중 CLOSED 기록(실측 12%) dedup — 진입당 최초(실제 청산) 1회
+    for market, mode, rc, pj, decision_id in rows:
         if runtime_mode and mode != runtime_mode:
             continue
         try:
@@ -94,6 +96,11 @@ def load_closes(ev_db: Path, runtime_mode: str | None) -> dict[str, dict[str, li
         pnl = p.get("pnl_pct")
         if pnl is None:
             continue
+        did = str(decision_id or "").strip()
+        if did:
+            if did in seen_decisions:
+                continue
+            seen_decisions.add(did)
         data[str(market)][str(rc or "?")].append(float(pnl))
     return data
 
