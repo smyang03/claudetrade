@@ -4277,8 +4277,65 @@ class PathBRuntime:
             log.debug(f"[PathB trend overlay gate] {plan.ticker} eval skip: {exc}")
             return None
 
+    def _falling_knife_reentry_shadow(self, plan: PricePlan, current_price: float) -> None:
+        """하락 지속 재진입 shadow (2026-07-03, 운영자 승인 — 관측 전용, 절대 차단 안 함).
+
+        실측 근거: 손실출구 후 10일 내 재진입 자체는 무죄(n=39 med -0.53 vs 베이스 -0.91)지만,
+        직전 손실 청산가 대비 -3%+ 아래에서 다시 사는 서브셋은 유죄 신호(n=13 med -1.54,
+        77% 음수, 재진입 손실의 사실상 전부). IREN 2전2패(-18% 아래 재진입)가 전형.
+        in-sample 발굴이라 enforce 금지 — plan_json에 durable 플래그만 남겨 forward net으로 판정.
+        승격 문턱(고정): would_block 코호트 forward net med < -1.0 재현(n>=10) 시 enforce 논의,
+        med >= 0이면 킬.
+        """
+        if str(os.getenv("PATHB_FALLING_KNIFE_REENTRY_SHADOW", "true")).strip().lower() not in ("1", "true", "yes", "on"):
+            return
+        try:
+            if current_price <= 0:
+                return
+            import json as _json
+            with self.store.connect() as conn:
+                rows = conn.execute(
+                    "SELECT plan_json FROM v2_path_runs WHERE market=? AND ticker=? AND status='CLOSED' "
+                    "ORDER BY updated_at DESC LIMIT 8",
+                    (str(plan.market or "").upper(), str(plan.ticker or "")),
+                ).fetchall()
+            loss_reasons = {"CLOSED_LOSS_CAP", "CLOSED_HARD_STOP", "CLOSED_CLAUDE_PRICE_STOP",
+                            "CLOSED_WEAK_MFE", "CLOSED_CLAUDE_INTRADAY_SELL"}
+            now = datetime.now(KST)
+            for (pj,) in rows:
+                d = _json.loads(pj or "{}")
+                if str(d.get("close_reason") or "") not in loss_reasons:
+                    continue
+                exit_px = float(d.get("actual_exit_price") or 0)
+                closed_at = str(d.get("closed_at") or d.get("sell_order_sent_at") or "")
+                if exit_px <= 0 or not closed_at:
+                    continue
+                try:
+                    closed_dt = datetime.fromisoformat(closed_at)
+                    if closed_dt.tzinfo is None:
+                        closed_dt = closed_dt.replace(tzinfo=KST)
+                except ValueError:
+                    continue
+                if (now - closed_dt).days > 10:
+                    continue
+                if current_price <= exit_px * 0.97:
+                    meta = {
+                        "falling_knife_reentry_shadow": True,
+                        "fk_prior_exit_price": exit_px,
+                        "fk_prior_closed_at": closed_at,
+                        "fk_entry_vs_prior_exit_pct": round((current_price / exit_px - 1) * 100, 2),
+                    }
+                    self.store.update_path_run(plan.path_run_id, plan=meta, merge_plan=True)
+                    log.info(f"[falling_knife shadow] {plan.market} {plan.ticker} 직전 손실청산가 "
+                             f"{exit_px} 대비 {meta['fk_entry_vs_prior_exit_pct']}%에서 재진입 (관측만)")
+                return  # 최근 손실 1건만 검사
+        except Exception:
+            pass
+
     def _submit_buy(self, plan: PricePlan, signal: EntrySignal) -> bool:
         market = plan.market
+        # 하락 지속 재진입 shadow 마킹 (관측 전용 — 차단·순서 무영향)
+        self._falling_knife_reentry_shadow(plan, float(getattr(signal, "price", 0) or 0))
         if self._plan_shadow_only(plan):
             self._record_blocked(
                 market,
