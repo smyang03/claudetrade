@@ -76,6 +76,15 @@ KIS_TOKEN_RETRY = int(os.getenv("KIS_TOKEN_RETRY", "3"))
 KIS_QUERY_RETRY = int(os.getenv("KIS_QUERY_RETRY", "3"))
 KIS_CACHE_TTL_SEC = int(os.getenv("KIS_CACHE_TTL_SEC", "120"))
 KIS_RATE_RPS = float(os.getenv("KIS_RATE_RPS", "12"))
+# EGW00201(초당 거래건수 초과) 대응: 주문경로 pre-accept 거부 시 안전 재시도(중복무), hit 후 후속호출 penalty gap.
+KIS_ORDER_RATE_RETRY = int(os.getenv("KIS_ORDER_RATE_RETRY", "2"))
+KIS_RATE_PENALTY_SEC = float(os.getenv("KIS_RATE_PENALTY_SEC", "1.0"))
+KIS_RATE_PENALTY_FACTOR = float(os.getenv("KIS_RATE_PENALTY_FACTOR", "2.0"))
+# 프로세스 간 rate 조율(옵션, 기본 OFF): 같은 앱키를 공유하는 봇+대시보드+tools의 합산 초당초과 방지.
+# _rate_limit_wait는 프로세스별 전역이라 다중 프로세스가 각자 12rps로 self-limit → 합산 초과 가능.
+# 활성화 시 크레덴셜별 파일락 티켓으로 프로세스 간 min_gap을 공유한다. 실패/타임아웃 시 per-process로 안전 fallback.
+_CROSS_PROC_RATE_ENABLED = os.getenv("KIS_CROSS_PROC_RATE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+_CROSS_PROC_RATE_TIMEOUT = float(os.getenv("KIS_CROSS_PROC_RATE_TIMEOUT", "2.0"))
 
 _BALANCE_CACHE = {}
 _PRICE_CACHE = {}
@@ -85,6 +94,7 @@ _INTRADAY_CACHE = {}
 _CACHE_LOG_TS = {}
 _KIS_HTTP_LOCK = threading.Lock()
 _KIS_LAST_CALL_TS = 0.0
+_KIS_RATE_PENALTY_UNTIL = 0.0  # EGW00201 hit 후 이 시각까지 min_gap 확대(wall-clock)
 _TOKEN_ALIAS_LOCK = threading.Lock()
 _TOKEN_ALIAS: dict[str, str] = {}
 _TOKEN_MARKET: dict[str, str] = {}
@@ -355,12 +365,135 @@ def _retry_kis(label: str, fn, retries: int = None, delay_sec: float = 0.6):
 def _rate_limit_wait():
     global _KIS_LAST_CALL_TS
     min_gap = 1.0 / max(KIS_RATE_RPS, 1.0)
+    # EGW00201 직후 penalty 구간에서는 gap을 넓혀 초당 초과 재발을 억제한다.
+    if _KIS_RATE_PENALTY_UNTIL and time.time() < _KIS_RATE_PENALTY_UNTIL:
+        min_gap = max(min_gap, min_gap * max(1.0, KIS_RATE_PENALTY_FACTOR))
+    # 프로세스 간 조율(옵션): 성공 시 필요한 만큼 sleep했으므로 per-process gap을 건너뛴다.
+    if _CROSS_PROC_RATE_ENABLED and _cross_process_rate_reserve(min_gap):
+        return
     with _KIS_HTTP_LOCK:
         now = time.monotonic()
         wait_sec = min_gap - (now - _KIS_LAST_CALL_TS)
         if wait_sec > 0:
             time.sleep(wait_sec)
         _KIS_LAST_CALL_TS = time.monotonic()
+
+
+def _cross_proc_rate_file() -> str:
+    """프로세스 간 rate 티켓 파일 경로. 앱키 fingerprint로 스코프(공유버킷=KR/US 동일키면 한 파일)."""
+    try:
+        fp = _fingerprint(APP_KEY) if APP_KEY else "default"
+        mode = "paper" if IS_PAPER else "live"
+        return str(get_runtime_path("state", f"{mode}_kis_rate_gap_{fp}.ts"))
+    except Exception:
+        return ""
+
+
+def _acquire_dir_lock(lock_dir: str, timeout_sec: float) -> bool:
+    """mkdir 원자성 기반 크로스플랫폼 뮤텍스. 획득 True, 타임아웃 False.
+
+    크래시로 남은 stale lock은 mtime 기준으로 회수한다. 획득 실패는 per-process fallback으로 안전 강등.
+    """
+    deadline = time.monotonic() + max(0.05, float(timeout_sec or 0.05))
+    stale_after = 5.0
+    while True:
+        try:
+            os.mkdir(lock_dir)
+            return True
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock_dir) > stale_after:
+                    os.rmdir(lock_dir)
+                    continue
+            except Exception:
+                pass
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.003)
+        except Exception:
+            return False
+
+
+def _release_dir_lock(lock_dir: str) -> None:
+    try:
+        os.rmdir(lock_dir)
+    except Exception:
+        pass
+
+
+def _cross_process_rate_reserve(min_gap: float) -> bool:
+    """파일락 티켓으로 프로세스 간 min_gap 예약. 성공 시 필요한 만큼 sleep 후 True, 실패 시 False(fallback).
+
+    lock은 tiny 파일 read/modify/write 동안만 잠깐 잡고, sleep은 lock 밖에서 한다(락 보유시간 최소화).
+    """
+    path = _cross_proc_rate_file()
+    if not path:
+        return False
+    lock_dir = path + ".lock"
+    if not _acquire_dir_lock(lock_dir, _CROSS_PROC_RATE_TIMEOUT):
+        return False
+    next_allowed = time.time()
+    try:
+        last = 0.0
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+            if raw:
+                last = float(raw)
+        except Exception:
+            last = 0.0
+        next_allowed = max(time.time(), last + min_gap)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(f"{next_allowed:.6f}")
+        except Exception:
+            pass
+    finally:
+        _release_dir_lock(lock_dir)
+    sleep_for = next_allowed - time.time()
+    if sleep_for > 0:
+        # 시계 왜곡 방어: 한 슬롯(또는 1초) 이상은 자지 않는다.
+        time.sleep(min(sleep_for, max(min_gap, 1.0)))
+    return True
+
+
+def _is_egw00201(data) -> bool:
+    """KIS 초당 거래건수 초과(EGW00201) 응답 여부. 주문은 HTTP 200 + rt_cd!=0로 온다."""
+    try:
+        return str(data.get("msg_cd", "")).strip() == "EGW00201"
+    except Exception:
+        return False
+
+
+def _note_rate_limit_hit(context: str = "") -> None:
+    """EGW00201 감지 시 후속 호출 penalty gap을 건다(프로세스 로컬)."""
+    global _KIS_RATE_PENALTY_UNTIL
+    if KIS_RATE_PENALTY_SEC > 0:
+        _KIS_RATE_PENALTY_UNTIL = time.time() + KIS_RATE_PENALTY_SEC
+    log.warning(
+        f"[KIS rate] EGW00201 초당 거래건수 초과 감지"
+        f"{(' — ' + context) if context else ''}; penalty_gap {KIS_RATE_PENALTY_SEC:.1f}s"
+    )
+
+
+def _order_rate_backoff_sec(attempt: int) -> float:
+    return min(2.0, 0.3 * max(1, int(attempt)))
+
+
+def _submit_order_with_rate_retry(submit_fn, ticker, qty, price, side, token):
+    """주문 EGW00201(pre-accept 거부)에 한해 bounded backoff 재시도.
+
+    주문 미접수 확정이라 중복 위험이 없다. HTTP 500/기타 오류는 재시도하지 않고 그대로 전파한다.
+    """
+    attempt = 0
+    while True:
+        try:
+            return submit_fn(ticker, qty, price, side, token)
+        except KISOrderRateLimitedError:
+            attempt += 1
+            if attempt > max(0, KIS_ORDER_RATE_RETRY):
+                raise
+            time.sleep(_order_rate_backoff_sec(attempt))
 
 
 def _bearer_from_headers(headers: Optional[dict]) -> str:
@@ -508,6 +641,18 @@ class KISOrderHTTPError(RuntimeError):
         self.response_text = str(response_text or "")
         self.order_body = order_body or {}
         super().__init__(message)
+
+
+class KISOrderRateLimitedError(KISOrderHTTPError):
+    """주문 EGW00201(초당 거래건수 초과, pre-accept 거부).
+
+    주문이 접수 전에 거부된 것이 확정이므로(중복 위험 없음) backoff 후 안전하게 재시도할 수 있다.
+    재시도 소진 시에는 기존 KISOrderHTTPError 계약대로 상위로 raise된다.
+    """
+
+
+class KISRateLimitedError(RuntimeError):
+    """조회 EGW00201. _retry_kis가 backoff로 재시도하도록 예외로 표면화한다."""
 
 
 def load_token(market: str = "KR"):
@@ -2268,6 +2413,9 @@ def _require_kis_success(data: dict, label: str):
             raise KISTokenExpiredError(
                 f"KIS 토큰 만료(EGW00123): {data.get('msg1', '')} — get_access_token(force_refresh=True) 로 갱신 필요"
             )
+        if _is_egw00201(data):
+            _note_rate_limit_hit(label)
+            raise KISRateLimitedError(f"{label} 실패: EGW00201 초당 거래건수 초과")
         raise RuntimeError(f"{label} 실패: {data.get('msg1') or data.get('msg_cd') or '응답 오류'}")
 
 
@@ -3389,6 +3537,14 @@ def _submit_order_kr_once(ticker, qty, price, side, token) -> dict:
     if int(getattr(resp, "status_code", 0) or 0) >= 400:
         _raise_order_http_error(f"KR order [{side} {ticker}]", resp, body)
     r = resp.json()
+    if _is_egw00201(r):
+        _note_rate_limit_hit(f"KR order [{side} {ticker}]")
+        raise KISOrderRateLimitedError(
+            f"KR order [{side} {ticker}] EGW00201 초당 거래건수 초과 (주문 미접수)",
+            status_code=int(getattr(resp, "status_code", 0) or 0),
+            response_text=_response_text(resp),
+            order_body=_mask_order_body(body),
+        )
     return _normalize_order_result("KR", side, ticker, qty_i, price_i, r)
 
 
@@ -3413,7 +3569,7 @@ def _place_order_kr(ticker, qty, price, side, token):
     qty_i, price_i = _normalize_kr_order_inputs(qty, price)
     submitted_at = datetime.now()
     try:
-        return _submit_order_kr_once(ticker, qty_i, price_i, side, token)
+        return _submit_order_with_rate_retry(_submit_order_kr_once, ticker, qty_i, price_i, side, token)
     except KISOrderHTTPError as first_error:
         if first_error.status_code != 500:
             raise
@@ -3444,7 +3600,7 @@ def _place_order_kr(ticker, qty, price, side, token):
 
         log.warning(f"[KIS KR order retry] {side} {ticker} HTTP 500 with no broker truth; retrying once")
         try:
-            return _submit_order_kr_once(ticker, qty_i, price_i, side, token)
+            return _submit_order_with_rate_retry(_submit_order_kr_once, ticker, qty_i, price_i, side, token)
         except KISOrderHTTPError as retry_error:
             msg = f"{retry_error}; retry_after_no_broker_truth_failed"
             raise KISOrderHTTPError(
@@ -3507,6 +3663,14 @@ def _submit_order_us_once(ticker, qty, price, side, token) -> dict:
     if int(getattr(resp, "status_code", 0) or 0) >= 400:
         _raise_order_http_error(f"US order [{side} {ticker}]", resp, body)
     r = resp.json()
+    if _is_egw00201(r):
+        _note_rate_limit_hit(f"US order [{side} {ticker}]")
+        raise KISOrderRateLimitedError(
+            f"US order [{side} {ticker}] EGW00201 초당 거래건수 초과 (주문 미접수)",
+            status_code=int(getattr(resp, "status_code", 0) or 0),
+            response_text=_response_text(resp),
+            order_body=_mask_order_body(body),
+        )
     return _normalize_order_result("US", side, ticker, qty_i, price_f, r)
 
 
@@ -3532,7 +3696,7 @@ def _place_order_us(ticker, qty, price, side, token):
     price_f = float(price or 0)
     submitted_at = datetime.now()
     try:
-        return _submit_order_us_once(ticker_u, qty_i, price_f, side, token)
+        return _submit_order_with_rate_retry(_submit_order_us_once, ticker_u, qty_i, price_f, side, token)
     except KISOrderHTTPError as first_error:
         if first_error.status_code != 500:
             raise
@@ -3563,7 +3727,7 @@ def _place_order_us(ticker, qty, price, side, token):
 
         log.warning(f"[KIS US order retry] {side} {ticker_u} HTTP 500 with no broker truth; retrying once")
         try:
-            return _submit_order_us_once(ticker_u, qty_i, price_f, side, token)
+            return _submit_order_with_rate_retry(_submit_order_us_once, ticker_u, qty_i, price_f, side, token)
         except KISOrderHTTPError as retry_error:
             msg = f"{retry_error}; retry_after_no_broker_truth_failed"
             raise KISOrderHTTPError(
