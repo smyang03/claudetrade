@@ -8,7 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, replace
 from datetime import datetime, time as dt_time, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from bot.market_utils import _is_trading_day
@@ -4337,53 +4337,84 @@ class PathBRuntime:
         except Exception:
             pass
 
-    def _red_tape_at_entry_shadow(self, plan: PricePlan) -> None:
-        """반응형 tape 게이트 shadow (2026-07-03, 운영자 승인 — 로그 전용, 차단 안 함).
+    def _entry_tape_idx(self, plan: PricePlan) -> Optional[float]:
+        """세션개장→진입 지수 이동(%)을 캐시에서 계산. shadow 기록·enforce 게이트 공통 입력.
 
         근거: 진입 순간 지수가 개장 대비 하락(빨간tape)이면 US net -1.16(no-lookahead,
-        비-red 대비 +1.41%p, n=53 문턱통과). 예측(mode 60%)이 아니라 사실 → 무알파 벽 밖
-        유일한 방어 후보. 킬/승격: red-tape 진입 net이 비-red보다 지속 나쁘고
-        (격차≥0.5%p) n≥30이면 enforce 논의. 단 방어 천장=본전(초록 진입도 흑자 아님),
-        양날(red-tape 승자 손실)은 forward로 측정. sharp_reversal enforce와 중복은 판독시 분리.
+        비-red 대비 +1.41%p, n=53). 예측 아니라 사실 → 무알파 벽 밖 유일한 방어 후보.
+        검증(이전 DB): 임계견고·용량반응 단조·양날 clean·sharp_reversal 상보·staleness 생존·
+        시간대 무관·QQQ 재현·종목 광범위. 미지수=6월 표본편중(forward만).
 
-        기준(2026-07-03 수정): 검증 도구(reactive_tape_gate_review)는 **세션개장→진입** 장중
-        이동으로 갈랐다. 이전 코드는 _index_history 마지막값=`get_index_change`=전일종가 대비
-        당일등락(overnight gap 포함)이라 검증 신호와 부호가 어긋날 수 있었다(갭업 후 페이드=
-        도구는 빨강, 구코드는 초록). 이제 세션개장 기준값(봇이 세션 첫 튜닝샘플로 1회 고정,
-        _session_open_index_change)을 빼서 개장→진입으로 맞춘다. API 무호출(둘 다 캐시).
-        한계: 개장기준=개장+≤30분 첫샘플, "현재"=마지막 튜닝샘플(≤30분 지연)의 근사.
+        기준: 검증 도구(reactive_tape_gate_review)는 세션개장→진입 장중이동으로 갈랐다.
+        _index_history 마지막값=get_index_change=전일종가 대비(gap 포함)라, 세션개장 기준값
+        (_session_open_index_change, 첫 튜닝샘플 1회 고정)을 빼서 개장→진입으로 맞춘다.
+        API 무호출(둘 다 캐시). 한계: 개장기준=개장+≤30분, 현재=≤30분 지연 근사(staleness 통과).
         """
-        if str(os.getenv("PATHB_RED_TAPE_SHADOW", "true")).strip().lower() not in ("1", "true", "yes", "on"):
-            return
         try:
             mk = str(plan.market or "").upper()
             hist = getattr(self.bot, "_index_history", {}) or {}
             vals = hist.get(mk) or hist.get(plan.market)
             if not vals:
-                return
+                return None
             now_val = float(list(vals)[-1])  # 전일종가 기준 당일등락(캐시)
             open_base = (getattr(self.bot, "_session_open_index_change", {}) or {}).get(mk)
             if open_base is None:
                 open_base = float(list(vals)[0])  # 폴백: deque 첫 샘플(evict 전이면 개장근사)
-            idx = now_val - float(open_base)     # 세션개장→진입 장중이동(검증 신호와 동일 기준)
-            meta = {
-                "red_tape_shadow": True,
-                "entry_tape_index_change_pct": round(idx, 3),            # 세션개장→진입(수정 후)
-                "entry_tape_prevclose_change_pct": round(now_val, 3),    # 참고: 전일종가 기준(구 값)
-                "red_tape_at_entry": bool(idx < -0.1),
-            }
-            self.store.update_path_run(plan.path_run_id, plan=meta, merge_plan=True)
-            if meta["red_tape_at_entry"]:
-                log.info(f"[red_tape shadow] {plan.market} {plan.ticker} 진입시 개장대비 {idx:+.2f}% (빨간tape, 관측만)")
+            return now_val - float(open_base), now_val  # (세션개장→진입, 전일종가기준 현재값)
         except Exception:
-            pass
+            return None
+
+    def _red_tape_at_entry_shadow(self, plan: PricePlan) -> Optional[float]:
+        """반응형 tape shadow 기록 + 게이트 입력 idx 반환. 기록은 PATHB_RED_TAPE_SHADOW on일 때만.
+
+        enforce(차단)는 _red_tape_entry_gate_block이 담당(독립 토글). 이 메서드는 idx 계산·기록만.
+        """
+        pair = self._entry_tape_idx(plan)
+        if pair is None:
+            return None
+        idx, now_val = pair
+        if str(os.getenv("PATHB_RED_TAPE_SHADOW", "true")).strip().lower() in ("1", "true", "yes", "on"):
+            try:
+                meta = {
+                    "red_tape_shadow": True,
+                    "entry_tape_index_change_pct": round(idx, 3),            # 세션개장→진입
+                    "entry_tape_prevclose_change_pct": round(now_val, 3),    # 참고: 전일종가 기준
+                    "red_tape_at_entry": bool(idx < -0.1),
+                }
+                self.store.update_path_run(plan.path_run_id, plan=meta, merge_plan=True)
+                if meta["red_tape_at_entry"]:
+                    log.info(f"[red_tape shadow] {plan.market} {plan.ticker} 진입시 개장대비 {idx:+.2f}% (빨간tape, 관측만)")
+            except Exception:
+                pass
+        return idx
+
+    def _red_tape_gate_threshold(self, market: str) -> float:
+        try:
+            return float(os.getenv(f"PATHB_RED_TAPE_GATE_THRESHOLD_{str(market or '').upper()}", "-0.3") or -0.3)
+        except (TypeError, ValueError):
+            return -0.3
+
+    def _red_tape_entry_gate_block(self, market: str, tape_idx: Optional[float]) -> bool:
+        """반응형 red-tape 진입 게이트(enforce). 개장대비 지수가 임계 미만이면 신규진입 차단.
+
+        US 전용 설계(design_red_tape_entry_gate_enforce_20260703.md): KR은 net 흑자라 red-tape
+        진입도 수익(+0.17)이라 부적합 → config 기본 MODE_KR 미설정=off로 KR 미차단. sharp_reversal
+        가드와 상보(중복 아님). 기본 MODE=off라 토글 전 매매 무변경. 가역(토글 off 즉시 복귀).
+        """
+        if tape_idx is None:
+            return False
+        mk = str(market or "").upper()
+        mode = str(os.getenv(f"PATHB_RED_TAPE_GATE_MODE_{mk}", "off") or "off").strip().lower()
+        if mode != "enforce":
+            return False
+        return float(tape_idx) < self._red_tape_gate_threshold(mk)
 
     def _submit_buy(self, plan: PricePlan, signal: EntrySignal) -> bool:
         market = plan.market
         # 하락 지속 재진입 shadow 마킹 (관측 전용 — 차단·순서 무영향)
         self._falling_knife_reentry_shadow(plan, float(getattr(signal, "price", 0) or 0))
-        # 반응형 tape shadow: 진입 순간 지수(캐시)를 기록 (관측 전용 — API 무호출·차단 없음)
-        self._red_tape_at_entry_shadow(plan)
+        # 반응형 tape shadow: 진입 순간 지수(캐시)를 기록 + 게이트 입력 idx 확보 (API 무호출)
+        _tape_idx = self._red_tape_at_entry_shadow(plan)
         if self._plan_shadow_only(plan):
             self._record_blocked(
                 market,
@@ -4426,6 +4457,21 @@ class PathBRuntime:
                 {"market_sharp_reversal_active": True, "guard_mode": "enforce"},
                 plan.path_run_id,
             )
+            return False
+        if self._red_tape_entry_gate_block(market, _tape_idx):
+            # 반응형 red-tape enforce: 개장대비 지수하락 진입 차단(US 전용, sharp_reversal과 상보).
+            # plan 유지 → tape 회복 후 재진입 가능. 청산/보유 무관. 기본 off라 토글 전 무변경.
+            _thr = self._red_tape_gate_threshold(market)
+            self._record_blocked(
+                market,
+                plan.ticker,
+                plan.decision_id,
+                "RED_TAPE_ENTRY_GATE",
+                {"red_tape_entry_gate": True, "entry_tape_index_change_pct": round(float(_tape_idx), 3),
+                 "threshold_pct": _thr, "guard_mode": "enforce"},
+                plan.path_run_id,
+            )
+            log.warning(f"[red_tape gate] {market} {plan.ticker} 진입 차단 — 개장대비 {float(_tape_idx):+.2f}% < {_thr}% (enforce)")
             return False
         # A1: REQUIRE_TRADE_READY — ready=0(=PULLBACK_WAIT/PROBE 출신, not_patha_trade_ready) 신규 진입 완전 차단.
         # 시장별 토글(_US/_KR override 후 글로벌 fallback, 기본 os.getenv=현행). 2026-07-02:
