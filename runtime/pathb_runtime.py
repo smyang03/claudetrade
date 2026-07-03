@@ -1625,8 +1625,13 @@ class PathBRuntime:
             run = self.store.find_path_run(plan.path_run_id) or {}
             plan_data = run.get("plan") or {}
             policy = plan_data.get("auto_sell_policy") or {}
+            # peak 소스: auto_sell_policy.peak_price는 특정 ladder 조건에서만 세팅돼 약/손실 포지션엔
+            # 대부분 None이라 floor_shadow가 전량 미기록됐다(peak<=0 가드). observed_peak_price는
+            # _update_position_excursion가 매 사이클·출구평가 직전(pathb_runtime:3622) live로 채우므로
+            # 이를 fallback으로 읽어 실측 데이터로 기록한다. observed_* 전용키만 읽어 보호계약 무영향.
             peak_price = self._policy_float(
                 policy.get("peak_price") or pos.get("peak_price") or pos.get("position_peak_price")
+                or pos.get("observed_peak_price") or plan_data.get("observed_peak_price")
             )
             entry = self._policy_float(
                 plan_data.get("actual_entry_price") or plan_data.get("entry_price") or pos.get("entry_price")

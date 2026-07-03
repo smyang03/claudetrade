@@ -130,5 +130,67 @@ class PositionExcursionDurablePersistTests(unittest.TestCase):
         self.assertAlmostEqual(pos["observed_mfe_pct"], 20.0)
 
 
+class _RWStore:
+    """find_path_run(읽기) + update_path_run(쓰기) 둘 다 지원하는 fake."""
+
+    def __init__(self, run):
+        self._run = run
+        self.writes = []
+
+    def find_path_run(self, _prid):
+        return self._run
+
+    def update_path_run(self, path_run_id, *, plan=None, merge_plan=False):
+        self.writes.append(dict(plan or {}))
+
+
+class FloorShadowPeakSourceTests(unittest.TestCase):
+    """floor_shadow가 observed_peak_price(live)를 peak 소스로 읽어 기록하는지.
+
+    회귀 대상: auto_sell_policy.peak_price가 약/손실 포지션엔 대부분 None이라 floor_shadow가
+    전량 미기록(0/46)됐던 소스 키 불일치 버그. observed_peak_price fallback 추가로 복구.
+    """
+
+    def _rt(self, run):
+        rt = PathBRuntime.__new__(PathBRuntime)
+        rt.store = _RWStore(run)
+        return rt
+
+    @staticmethod
+    def _plan():
+        return types.SimpleNamespace(path_run_id="run-1")
+
+    def test_records_from_observed_peak_when_policy_peak_absent(self):
+        # policy.peak_price 없음(약/손실 포지션 실태), observed_peak_price는 live 존재(3622 세팅)
+        rt = self._rt({"plan": {"actual_entry_price": 100.0, "auto_sell_policy": {}}})
+        rt._record_floor_shadow(self._plan(), {"observed_peak_price": 103.0}, "weak_mfe_shadow", 99.0)
+        self.assertEqual(len(rt.store.writes), 1)  # 이전엔 0 (peak<=0 가드)
+        w = rt.store.writes[0]
+        self.assertEqual(w["floor_shadow_reason"], "weak_mfe_shadow")
+        self.assertAlmostEqual(w["floor_shadow_peak_price"], 103.0)
+        self.assertAlmostEqual(w["floor_shadow_mfe_pct"], 3.0)  # (103/100-1)*100
+        self.assertAlmostEqual(w["floor_shadow_actual_exit"], 99.0)
+
+    def test_records_from_durable_plan_observed_peak(self):
+        # pos에 없고 plan_json 영속값에만 있는 경우도 fallback으로 기록
+        rt = self._rt({"plan": {"actual_entry_price": 100.0, "observed_peak_price": 105.0}})
+        rt._record_floor_shadow(self._plan(), {}, "ladder", 101.0)
+        self.assertEqual(len(rt.store.writes), 1)
+        self.assertAlmostEqual(rt.store.writes[0]["floor_shadow_peak_price"], 105.0)
+
+    def test_no_record_when_no_peak_anywhere(self):
+        # peak가 아무 소스에도 없으면 기존대로 미기록(가드 보존)
+        rt = self._rt({"plan": {"actual_entry_price": 100.0}})
+        rt._record_floor_shadow(self._plan(), {}, "ladder", 99.0)
+        self.assertEqual(rt.store.writes, [])
+
+    def test_policy_peak_still_takes_priority(self):
+        # 기존 경로 보존: policy.peak_price 있으면 그것을 우선 사용
+        rt = self._rt({"plan": {"actual_entry_price": 100.0, "auto_sell_policy": {"peak_price": 108.0}}})
+        rt._record_floor_shadow(self._plan(), {"observed_peak_price": 103.0}, "ladder", 99.0)
+        self.assertEqual(len(rt.store.writes), 1)
+        self.assertAlmostEqual(rt.store.writes[0]["floor_shadow_peak_price"], 108.0)
+
+
 if __name__ == "__main__":
     unittest.main()
