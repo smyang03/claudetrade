@@ -335,7 +335,7 @@ class SameDayReentryGuard:
                 """,
                 (market, runtime_mode, ticker),
             ).fetchall()
-        losses = 0
+        loss_decisions: set[str] = set()
         last_loss_at: datetime | None = None
         for row in rows:
             event = self.store._event_row_to_dict(row)
@@ -352,9 +352,14 @@ class SameDayReentryGuard:
             close_reason = str(payload.get("close_reason") or event.get("reason_code") or "")
             is_loss = (pnl is not None and pnl < 0) or close_reason.upper() in self.STRICT_CLOSE_REASONS
             if is_loss:
-                losses += 1
+                # 이중 CLOSED 기록(같은 포지션이 여러 exit reason으로 재기록, 실측 12%) 방어: 손실은
+                # 진입(decision_id)당 1회만 계수한다. 이벤트당 계수는 한 손실을 2~3회로 세어 max_losses를
+                # 조기 도달시켜 재진입을 과차단했다(실측 7종목: AAPL/AMZN/GOOGL/NFLX/AMD/INTC/KR006340).
+                did = str(event.get("decision_id") or "").strip()
+                loss_decisions.add(did or f"_evt:{event.get('event_id')}")
                 if last_loss_at is None:
                     last_loss_at = occ
+        losses = len(loss_decisions)
         if losses >= max_losses and last_loss_at is not None:
             age_hours = (now - last_loss_at).total_seconds() / 3600.0
             if age_hours < cooldown_hours:

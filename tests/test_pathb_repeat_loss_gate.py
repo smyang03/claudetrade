@@ -29,7 +29,9 @@ class RepeatLossGateTests(unittest.TestCase):
     def _store(self, tmp: str) -> EventStore:
         return EventStore(Path(tmp) / "events.db")
 
-    def _close(self, store, ticker, occurred_at, pnl_pct, reason="CLOSED_LOSS_CAP", session="2026-06-09"):
+    def _close(self, store, ticker, occurred_at, pnl_pct, reason="CLOSED_LOSS_CAP", session="2026-06-09", decision_id="d"):
+        # decision_id는 진입(포지션) 식별자. 서로 다른 손실 진입은 distinct해야 하며, 같은 포지션의
+        # 이중 CLOSED 기록은 동일 decision_id로 표현한다(게이트는 진입당 1회로 dedup).
         store.append(
             LifecycleEvent(
                 event_type="CLOSED",
@@ -37,7 +39,7 @@ class RepeatLossGateTests(unittest.TestCase):
                 runtime_mode="live",
                 session_date=session,
                 ticker=ticker,
-                decision_id="d",
+                decision_id=decision_id,
                 prompt_version="v2",
                 brain_snapshot_id="brain1",
                 reason_code=reason,
@@ -56,7 +58,7 @@ class RepeatLossGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = self._store(tmp)
             for i in range(3):
-                self._close(store, "IREN", now - timedelta(days=i + 1, hours=1), -2.0)
+                self._close(store, "IREN", now - timedelta(days=i + 1, hours=1), -2.0, decision_id=f"d{i}")
             d = self._eval(store, now)
             self.assertFalse(d.allowed)
             self.assertEqual(d.reason_code, "REPEAT_LOSS_COOLDOWN")
@@ -67,7 +69,7 @@ class RepeatLossGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = self._store(tmp)
             for i in range(2):
-                self._close(store, "IREN", now - timedelta(days=i + 1, hours=1), -2.0)
+                self._close(store, "IREN", now - timedelta(days=i + 1, hours=1), -2.0, decision_id=f"d{i}")
             d = self._eval(store, now)
             self.assertTrue(d.allowed)
 
@@ -77,7 +79,7 @@ class RepeatLossGateTests(unittest.TestCase):
             store = self._store(tmp)
             # 3회 손실이지만 마지막 손실이 3일 전(>48h cooldown)
             for i in range(3):
-                self._close(store, "IREN", now - timedelta(days=i + 3, hours=1), -2.0)
+                self._close(store, "IREN", now - timedelta(days=i + 3, hours=1), -2.0, decision_id=f"d{i}")
             d = self._eval(store, now)
             self.assertTrue(d.allowed)
 
@@ -87,6 +89,30 @@ class RepeatLossGateTests(unittest.TestCase):
             store = self._store(tmp)
             for i in range(4):
                 self._close(store, "IREN", now - timedelta(days=i + 1, hours=1), +1.5, reason="CLOSED_CLAUDE_PRICE_TARGET")
+            d = self._eval(store, now)
+            self.assertTrue(d.allowed)
+
+    def test_duplicate_closed_same_position_not_multi_counted(self):
+        # 이중 CLOSED 기록(같은 포지션이 3개 exit reason으로 재기록)은 손실 1회로만 계수 →
+        # max_losses(3) 미달 → 차단 안 됨. 실측 12% 이중기록이 재진입을 과차단하던 버그 방어.
+        now = datetime(2026, 6, 12, 15, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            for reason in ("CLOSED_HARD_STOP", "CLOSED_CLAUDE_PRICE_PRE_CLOSE", "CLOSED_CLAUDE_PRICE_PRE_CLOSE"):
+                self._close(store, "IREN", now - timedelta(hours=1), -2.0, reason=reason, decision_id="dup1")
+            d = self._eval(store, now)
+            self.assertTrue(d.allowed)  # 1 distinct 손실 진입 < 3
+
+    def test_two_real_losses_plus_duplicate_still_pass(self):
+        # 실제 손실 2진입 + 그 중 하나가 이중기록(총 3 CLOSED). dedup 없으면 3으로 차단됐으나,
+        # 진입당 1회 계수라 2 distinct → 통과(과차단 방지).
+        now = datetime(2026, 6, 12, 15, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            self._close(store, "IREN", now - timedelta(days=1, hours=1), -2.0, decision_id="dA")
+            self._close(store, "IREN", now - timedelta(days=2, hours=1), -2.0, decision_id="dB")
+            self._close(store, "IREN", now - timedelta(days=2, hours=1), -2.0,
+                        reason="CLOSED_CLAUDE_PRICE_PRE_CLOSE", decision_id="dB")  # dB 이중기록
             d = self._eval(store, now)
             self.assertTrue(d.allowed)
 
