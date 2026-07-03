@@ -14,13 +14,32 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from credit_tracker import record as credit_record
 from logger import get_trading_logger
-from minority_report.claude_utils import extract_json, response_text, thinking_extra_body
+from minority_report.claude_utils import extract_json, response_text, thinking_extra_body, with_json_schema
 from minority_report.raw_call_logger import save as save_raw_call
 from minority_report.prompt_contracts import COMMON_DECISION_CONTRACT, HARD_SOFT_RULE_CONTRACT
 
 
 log = get_trading_logger()
 MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+
+# C1: 출력 JSON 무결성 보장(structured outputs). quick_exit는 4필드 고정 스키마라 깨끗하게 적합.
+# thinking-OFF 경로. 라이브 API 미검증이라 기본 OFF — 운영자가 1콜 검증 후 활성.
+# 실패(400) 시에도 quick_exit_check의 except→HOLD fallback이 blind sell을 막는다.
+_QUICK_EXIT_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "action": {"type": "string", "enum": ["HOLD", "SELL"]},
+        "confidence": {"type": "number"},
+        "protective_stop": {"type": "number"},
+        "reason": {"type": "string"},
+    },
+    "required": ["action", "confidence", "protective_stop", "reason"],
+    "additionalProperties": False,
+}
+
+
+def _quick_exit_structured_enabled() -> bool:
+    return os.getenv("QUICK_EXIT_STRUCTURED_OUTPUT", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _client(timeout_sec: float):
@@ -109,11 +128,16 @@ JSON schema:
 
     try:
         client = _client(timeout)
+        _extra_body = with_json_schema(
+            thinking_extra_body("quick_exit_check"),
+            _QUICK_EXIT_JSON_SCHEMA,
+            enabled=_quick_exit_structured_enabled(),
+        )
         resp = client.messages.create(
             model=MODEL,
             max_tokens=tokens,
             messages=[{"role": "user", "content": prompt}],
-            extra_body=thinking_extra_body("quick_exit_check"),
+            extra_body=_extra_body,
         )
         raw = response_text(resp)
         parsed = extract_json(raw)

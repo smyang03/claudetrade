@@ -90,6 +90,28 @@ def thinking_extra_body(scope: str = "") -> dict:
     return body
 
 
+def with_json_schema(extra_body: dict, schema: dict, *, enabled: bool = True) -> dict:
+    """thinking extra_body에 output_config.format(json_schema)를 병합해 반환.
+
+    output_config.format(structured outputs)은 extended/adaptive thinking과 호환된다
+    (citations·assistant prefill과는 비호환). 우리 콜사이트는 이미 output_config.effort를
+    extra_body로 넘기므로 같은 채널에 format을 병합한다.
+
+    ⚠️ schema는 structured-output 지원 범위만 사용해야 한다(미지원 제약이 있으면 400):
+    기본 타입/enum/const/anyOf, 모든 property를 required에, additionalProperties: false.
+    minLength/maximum 등 수치·문자열 제약과 recursive는 미지원.
+
+    enabled=False거나 schema가 dict가 아니면 원본 extra_body를 그대로 돌려준다(무변경).
+    """
+    if not enabled or not isinstance(schema, dict):
+        return extra_body
+    body = dict(extra_body or {})
+    output_config = dict(body.get("output_config") or {})
+    output_config["format"] = {"type": "json_schema", "schema": schema}
+    body["output_config"] = output_config
+    return body
+
+
 def claude_response_meta(resp: Any) -> dict:
     """API 응답에서 request_id, service_tier, cache 토큰을 안전하게 추출."""
     usage = getattr(resp, "usage", None) or {}
