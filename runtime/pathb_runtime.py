@@ -4332,10 +4332,41 @@ class PathBRuntime:
         except Exception:
             pass
 
+    def _red_tape_at_entry_shadow(self, plan: PricePlan) -> None:
+        """반응형 tape 게이트 shadow (2026-07-03, 운영자 승인 — 로그 전용, 차단 안 함).
+
+        근거: 진입 순간 지수가 개장 대비 하락(빨간tape)이면 US net -0.95(no-lookahead,
+        비-red 대비 +0.68%p, n=31 문턱통과). 예측(mode 60%)이 아니라 사실 → 무알파 벽 밖
+        유일한 방어 후보. 봇이 30분 캐싱한 _index_history 마지막값(개장→최근 지수%)을 읽어
+        plan_json에 기록. API 무호출. 킬/승격: red-tape 진입 net이 비-red보다 지속 나쁘고
+        (격차≥0.5%p) n≥30이면 enforce 논의. 단 방어 천장=본전(초록 진입도 흑자 아님),
+        양날(red-tape 승자 손실)은 forward로 측정. sharp_reversal enforce와 중복은 판독시 분리.
+        """
+        if str(os.getenv("PATHB_RED_TAPE_SHADOW", "true")).strip().lower() not in ("1", "true", "yes", "on"):
+            return
+        try:
+            hist = getattr(self.bot, "_index_history", {}) or {}
+            vals = hist.get(str(plan.market or "").upper()) or hist.get(plan.market)
+            if not vals:
+                return
+            idx = float(list(vals)[-1])
+            meta = {
+                "red_tape_shadow": True,
+                "entry_tape_index_change_pct": round(idx, 3),
+                "red_tape_at_entry": bool(idx < -0.1),
+            }
+            self.store.update_path_run(plan.path_run_id, plan=meta, merge_plan=True)
+            if meta["red_tape_at_entry"]:
+                log.info(f"[red_tape shadow] {plan.market} {plan.ticker} 진입시 지수 {idx:+.2f}% (빨간tape, 관측만)")
+        except Exception:
+            pass
+
     def _submit_buy(self, plan: PricePlan, signal: EntrySignal) -> bool:
         market = plan.market
         # 하락 지속 재진입 shadow 마킹 (관측 전용 — 차단·순서 무영향)
         self._falling_knife_reentry_shadow(plan, float(getattr(signal, "price", 0) or 0))
+        # 반응형 tape shadow: 진입 순간 지수(캐시)를 기록 (관측 전용 — API 무호출·차단 없음)
+        self._red_tape_at_entry_shadow(plan)
         if self._plan_shadow_only(plan):
             self._record_blocked(
                 market,
