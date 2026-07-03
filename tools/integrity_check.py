@@ -165,9 +165,12 @@ def check_sync_coverage(ml_db: Path, event_db: Path, now: datetime, window_days:
             "SELECT DISTINCT decision_id FROM lifecycle_events WHERE event_type='CLOSED' AND session_date>=?",
             (cutoff_date,)) if r[0]}
     with _connect_ro(ml_db) as ml:
+        # 학습행 session_date=진입일, CLOSED 창=청산일. 오버나이트/멀티데이 홀드는 진입일<청산일이라
+        # 학습행에도 청산일 cutoff를 걸면 창 경계 청산이 가짜 미스매치가 된다(false-positive FAIL).
+        # closed_ids가 이미 최근 청산으로 창을 한정하므로 학습행은 decision_id+closed=1로만 매칭한다.
         learn_ids = {r[0] for r in ml.execute(
-            "SELECT DISTINCT v2_decision_id FROM v2_learning_performance WHERE closed=1 AND session_date>=?",
-            (cutoff_date,)) if r[0]}
+            "SELECT DISTINCT v2_decision_id FROM v2_learning_performance WHERE closed=1")
+            if r[0]}
     synced = len(closed_ids & learn_ids)
     return [evaluate_ratio(f"sync 커버리지 CLOSED→학습 (최근{window_days}일)", synced, len(closed_ids),
                            warn_below=90, fail_below=70,
