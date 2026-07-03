@@ -2357,7 +2357,23 @@ def get_three_judgments(digest_prompt: str, brain_summary: str,
         debate_history = ""
 
     r2 = {}
+    # R2 조건부 스킵 (2026-07-03 미검증층 감사, 운영자 enforce 승인): R1 3인 만장일치면 토론 생략.
+    # 실측 근거: 만장일치 14/139 세션 중 R2가 결과를 바꾼 건 1건, 전체 R2 스탠스 변경률 7%.
+    # 토글 off(기본)면 무변경. 스킵 시 R1 결과를 최종으로 쓰고 debate_skip_reason 기록.
+    _r1_stances = {a: str((r1.get(a) or {}).get("stance") or "") for a in ("bull", "bear", "neutral")}
+    _r2_skip_unanimous = bool(
+        _env_bool_flag("ANALYST_R2_SKIP_ON_UNANIMOUS", False)
+        and all(is_available_judgment(r1.get(a) or {}) for a in ("bull", "bear", "neutral"))
+        and all(_r1_stances.values())
+        and len(set(_r1_stances.values())) == 1
+    )
+    if _r2_skip_unanimous:
+        log.info(f"━━ Round 2 스킵: R1 만장일치({_r1_stances['bull']}) ━━")
+        r2 = {a: {**dict(r1[a]), "debate_skipped": True, "debate_skip_reason": "unanimous_r1"}
+              for a in ("bull", "bear", "neutral")}
     for atype in ("bull", "bear", "neutral"):
+        if _r2_skip_unanimous:
+            break
         if not is_available_judgment(r1.get(atype) or {}):
             r2[atype] = {
                 **dict(r1.get(atype) or {}),

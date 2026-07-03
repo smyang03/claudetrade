@@ -2111,6 +2111,38 @@ def ask(
     return result_payload
 
 
+def _peak_giveback_shadow(pos: dict, cur_pnl_pct: float) -> dict:
+    """peak give-back 관측 shadow (2026-07-03, 운영자 승인 — 로그 전용, 결정 무변경).
+
+    문제: hold_advisor 프롬프트의 give-back 표시(hold_advisor.py:1640)가 읽는 peak_pnl_pct는
+    Plan A 필드라 Path B 포지션엔 거의 미채움 → 출구 관리자가 "얼마 반납 중"을 못 봄.
+    실측: US 이익중 HOLD 90%가 이익 반납(중앙 +1.42%→-1.04%).
+    여기선 Path B 영속 peak(observed_mfe_pct, 84.6% 커버)로 반납량을 계산해 결정 로그에만 기록.
+    프롬프트/결정 무접촉. H2 outcome 파이프 결과와 대조해 "observed_mfe를 프롬프트에 배선하면
+    반납 HOLD를 SELL로 돌릴 수 있나"를 판정. 토글 off면 no-op.
+    킬/승격 문턱(고정): 반납≥1.5%p인 HOLD의 outcome이 반납<1.5%p HOLD보다 지속 나쁘고 n≥30이면
+    observed_mfe→프롬프트 배선 enforce 논의. 격차 없으면 각하(예측 아니라 규칙이라 살아있는 후보).
+    """
+    if str(os.getenv("HOLD_ADVISOR_PEAK_GIVEBACK_SHADOW", "true")).strip().lower() not in ("1", "true", "yes", "on"):
+        return {}
+    try:
+        omfe = pos.get("observed_mfe_pct")
+        prompt_peak = _as_float(pos.get("peak_pnl_pct"), 0.0)  # 프롬프트가 실제 읽는 값
+        if omfe is None:
+            return {"observed_mfe_available": False, "prompt_peak_pnl_pct": prompt_peak}
+        omfe = float(omfe)
+        giveback = round(omfe - cur_pnl_pct, 3) if omfe > cur_pnl_pct else 0.0
+        return {
+            "observed_mfe_available": True,
+            "observed_peak_pnl_pct": round(omfe, 3),      # Path B 진짜 peak
+            "prompt_peak_pnl_pct": prompt_peak,           # 프롬프트가 본 값(대개 0)
+            "giveback_pct": giveback,                     # 반납량(peak-현재)
+            "giveback_hidden": bool(giveback >= 0.5 and prompt_peak <= 0),  # 반납중인데 프롬프트가 못 봄
+        }
+    except Exception:
+        return {}
+
+
 def _log_decision(ticker: str, market: str, pos: dict,
                   action: str, trail_pct: float, votes: dict,
                   decision_stage: str = "TP_REVIEW",
@@ -2199,6 +2231,8 @@ def _log_decision(ticker: str, market: str, pos: dict,
             "price_currency": price_currency,
             "pnl_pct":    round((current_price / entry_price - 1) * 100, 3) if entry_price and current_price else 0.0,
             "held_days":  pos.get("held_days", 0),
+            "peak_giveback_shadow": _peak_giveback_shadow(
+                pos, round((current_price / entry_price - 1) * 100, 3) if entry_price and current_price else 0.0),
             "decision":   action,
             "decision_stage": decision_stage,
             "decision_source": decision_source,
