@@ -4335,29 +4335,41 @@ class PathBRuntime:
     def _red_tape_at_entry_shadow(self, plan: PricePlan) -> None:
         """반응형 tape 게이트 shadow (2026-07-03, 운영자 승인 — 로그 전용, 차단 안 함).
 
-        근거: 진입 순간 지수가 개장 대비 하락(빨간tape)이면 US net -0.95(no-lookahead,
-        비-red 대비 +0.68%p, n=31 문턱통과). 예측(mode 60%)이 아니라 사실 → 무알파 벽 밖
-        유일한 방어 후보. 봇이 30분 캐싱한 _index_history 마지막값(개장→최근 지수%)을 읽어
-        plan_json에 기록. API 무호출. 킬/승격: red-tape 진입 net이 비-red보다 지속 나쁘고
+        근거: 진입 순간 지수가 개장 대비 하락(빨간tape)이면 US net -1.16(no-lookahead,
+        비-red 대비 +1.41%p, n=53 문턱통과). 예측(mode 60%)이 아니라 사실 → 무알파 벽 밖
+        유일한 방어 후보. 킬/승격: red-tape 진입 net이 비-red보다 지속 나쁘고
         (격차≥0.5%p) n≥30이면 enforce 논의. 단 방어 천장=본전(초록 진입도 흑자 아님),
         양날(red-tape 승자 손실)은 forward로 측정. sharp_reversal enforce와 중복은 판독시 분리.
+
+        기준(2026-07-03 수정): 검증 도구(reactive_tape_gate_review)는 **세션개장→진입** 장중
+        이동으로 갈랐다. 이전 코드는 _index_history 마지막값=`get_index_change`=전일종가 대비
+        당일등락(overnight gap 포함)이라 검증 신호와 부호가 어긋날 수 있었다(갭업 후 페이드=
+        도구는 빨강, 구코드는 초록). 이제 세션개장 기준값(봇이 세션 첫 튜닝샘플로 1회 고정,
+        _session_open_index_change)을 빼서 개장→진입으로 맞춘다. API 무호출(둘 다 캐시).
+        한계: 개장기준=개장+≤30분 첫샘플, "현재"=마지막 튜닝샘플(≤30분 지연)의 근사.
         """
         if str(os.getenv("PATHB_RED_TAPE_SHADOW", "true")).strip().lower() not in ("1", "true", "yes", "on"):
             return
         try:
+            mk = str(plan.market or "").upper()
             hist = getattr(self.bot, "_index_history", {}) or {}
-            vals = hist.get(str(plan.market or "").upper()) or hist.get(plan.market)
+            vals = hist.get(mk) or hist.get(plan.market)
             if not vals:
                 return
-            idx = float(list(vals)[-1])
+            now_val = float(list(vals)[-1])  # 전일종가 기준 당일등락(캐시)
+            open_base = (getattr(self.bot, "_session_open_index_change", {}) or {}).get(mk)
+            if open_base is None:
+                open_base = float(list(vals)[0])  # 폴백: deque 첫 샘플(evict 전이면 개장근사)
+            idx = now_val - float(open_base)     # 세션개장→진입 장중이동(검증 신호와 동일 기준)
             meta = {
                 "red_tape_shadow": True,
-                "entry_tape_index_change_pct": round(idx, 3),
+                "entry_tape_index_change_pct": round(idx, 3),            # 세션개장→진입(수정 후)
+                "entry_tape_prevclose_change_pct": round(now_val, 3),    # 참고: 전일종가 기준(구 값)
                 "red_tape_at_entry": bool(idx < -0.1),
             }
             self.store.update_path_run(plan.path_run_id, plan=meta, merge_plan=True)
             if meta["red_tape_at_entry"]:
-                log.info(f"[red_tape shadow] {plan.market} {plan.ticker} 진입시 지수 {idx:+.2f}% (빨간tape, 관측만)")
+                log.info(f"[red_tape shadow] {plan.market} {plan.ticker} 진입시 개장대비 {idx:+.2f}% (빨간tape, 관측만)")
         except Exception:
             pass
 

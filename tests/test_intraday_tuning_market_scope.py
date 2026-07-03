@@ -12,6 +12,7 @@ def _make_tuning_bot(market: str = "KR") -> TradingBot:
     bot.current_market = market
     bot.tuning_count = 0
     bot._index_history = {market: []}
+    bot._session_open_index_change = {market: None}
     bot.today_judgment = {
         "consensus": {"mode": "CAUTIOUS", "size": 35},
         "judgments": {},

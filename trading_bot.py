@@ -892,6 +892,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "KR": deque(maxlen=8),
             "US": deque(maxlen=8),
         }
+        # 세션개장 기준 지수등락(전일종가 대비, 세션당 1회 고정 — deque evict 무관).
+        # red_tape shadow가 "세션개장→진입" 장중이동 계산에 사용(검증 도구와 동일 기준).
+        self._session_open_index_change: dict[str, Optional[float]] = {"KR": None, "US": None}
         self._active_session_date: dict[str, Optional[date]] = {"KR": None, "US": None}
         self.ws_by_market: dict[str, Optional[KISWebSocket]] = {"KR": None, "US": None}
         self.price_cache = {}
@@ -29260,6 +29263,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._last_tune_result[market] = {}
         self._tune_maintain_streak[market] = 0
         self._index_history[market].clear()
+        self._session_open_index_change[market] = None
         self._session_events = []
         self._entry_blocked = {}
         self._order_error_count = {}
@@ -36482,6 +36486,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         _idx_now = get_index_change(market)
         _hist    = self._index_history[market]
         _hist.append(_idx_now)
+        # 세션 첫 샘플을 개장 기준값으로 1회 고정(deque evict 무관) — red_tape shadow용.
+        if self._session_open_index_change.get(market) is None:
+            self._session_open_index_change[market] = _idx_now
         # 직전 튜닝 대비 기울기: 현재 - 30분 전 (버퍼 2개 이상 있을 때만)
         _slope_30m = round(_idx_now - _hist[-2], 2) if len(_hist) >= 2 else None
         def _pos_pnl(p):
