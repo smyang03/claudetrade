@@ -9,9 +9,11 @@ from zoneinfo import ZoneInfo
 from config.v2 import DEFAULT_V2_CONFIG, V2Config
 from execution.claude_price_adapter import ClaudePriceAdapter
 from lifecycle.models import LifecycleEventType
+from logger import get_trading_logger
 
 
 KST = ZoneInfo("Asia/Seoul")
+log = get_trading_logger()
 
 
 def _env_rate(name: str, default: float) -> float:
@@ -306,6 +308,14 @@ class ClaudePriceSellManager:
         mae_pct: float | None = None,
         entry_market_regime: str = "",
     ) -> None:
+        # 멱등성 가드(2026-07-03): 이미 CLOSED된 포지션의 재호출을 차단해 이중 CLOSED 기록을 막는다.
+        # 주 매도 경로(pathb_runtime)는 매도 no-op(ex=None)·세션말 PRE_CLOSE 재처리 시에도 mark_closed를
+        # 호출했고, 외부청산 경로엔 있던 status 가드가 여기엔 없어 청산의 12%가 이중 기록됐다(매도
+        # 이중발화 0=자금안전, 이벤트 카운트만 오염). 첫 청산 때는 아직 CLOSED가 아니므로 진짜 재호출만 skip.
+        _existing = self.store.find_path_run(path_run_id) or {}
+        if str(_existing.get("status", "")) == "CLOSED":
+            log.info(f"[mark_closed] {path_run_id} 이미 CLOSED — 이중 CLOSED 기록 skip (reason={close_reason})")
+            return
         try:
             cost_meta = self._close_cost_meta(
                 path_run_id,

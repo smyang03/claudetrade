@@ -81,6 +81,22 @@ class NetPnlCostMetaTests(unittest.TestCase):
         self.assertAlmostEqual(plan["pnl_krw_net_est"], 714000 - 675000 - 3472.5, delta=1.0)
         self.assertGreater(plan["fx_change_pct"], 0)
 
+    def test_mark_closed_idempotent_no_duplicate_closed(self):
+        # 이미 CLOSED된 포지션에 mark_closed 재호출(세션말 PRE_CLOSE가 매도 no-op으로 재처리하는
+        # 실측 12% 이중기록 시나리오) → CLOSED 이벤트는 1건만, 첫 청산이 authoritative.
+        run_id = _register_filled_run(self.store, self.adapter, entry=100.0, qty=5, usd_krw_at_fill=1350.0)
+        self.manager.mark_closed(
+            run_id, close_reason="CLOSED_HARD_STOP", price=94.0, pnl_pct=-6.0,
+            runtime_mode="live", brain_snapshot_id="bs_test", usd_krw=1350.0,
+        )
+        self.manager.mark_closed(
+            run_id, close_reason="CLOSED_CLAUDE_PRICE_PRE_CLOSE", price=95.0, pnl_pct=-5.0,
+            runtime_mode="live", brain_snapshot_id="bs_test", usd_krw=1350.0,
+        )
+        self.assertEqual(self.store.count_events("CLOSED"), 1)  # 이중 CLOSED 기록 방지
+        plan = self.store.find_path_run(run_id)["plan"]
+        self.assertEqual(plan["close_reason"], "CLOSED_HARD_STOP")  # 첫 청산 불변
+
     def test_us_close_records_fx_spread_net(self):
         run_id = _register_filled_run(self.store, self.adapter, entry=100.0, qty=5, usd_krw_at_fill=1350.0)
         with mock.patch.dict(os.environ, {"US_FEE_RATE_PER_SIDE": "0.0025", "US_FX_SPREAD_RATE_PER_SIDE": "0.001"}):
