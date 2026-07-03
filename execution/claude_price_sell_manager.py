@@ -317,7 +317,10 @@ class ClaudePriceSellManager:
         except Exception:
             cost_meta = {}
         # ORDER_ACKED 중 청산(매수 fill 반영 전 손절 레이스) 시 plan entry를 브로커 단가로 백필
+        # plan은 try 밖 초기화 — 조회 실패 시 아래 hold_meta 블록이 NameError로 죽어
+        # minutes_to_close가 누락되던 버그 수정(2026-07-03, IREN 실증).
         entry_backfill: dict[str, Any] = {}
+        plan: dict[str, Any] = {}
         try:
             run = self.store.find_path_run(path_run_id) or {}
             plan = run.get("plan") if isinstance(run.get("plan"), dict) else {}
@@ -334,7 +337,8 @@ class ClaudePriceSellManager:
         _now_kst = datetime.now(KST)
         hold_meta: dict[str, Any] = {"closed_at": _now_kst.isoformat(timespec="seconds")}
         try:
-            _entry_at = str((plan or {}).get("entry_filled_at") or "")
+            _p = plan if plan else ((self.store.find_path_run(path_run_id) or {}).get("plan") or {})
+            _entry_at = str(_p.get("entry_filled_at") or _p.get("filled_at") or "")
             if _entry_at:
                 _entry_dt = datetime.fromisoformat(_entry_at.replace("Z", "+00:00"))
                 if _entry_dt.tzinfo is not None:
