@@ -153,6 +153,7 @@ class PathBRuntime:
     ORDER_UNKNOWN_HARD_TIMEOUT_SEC = ORDER_UNKNOWN_HARD_TIMEOUT_SEC_DEFAULT
     ORDER_UNKNOWN_MIN_RECONCILE_ATTEMPTS = ORDER_UNKNOWN_MIN_RECONCILE_ATTEMPTS_DEFAULT
     SELL_PENDING_LOOKBACK_SESSIONS = 5
+    FILLED_CROSS_SESSION_LOOKBACK_SESSIONS = 5
     SELL_FILL_TIMESTAMP_GRACE_SEC = 60
     PRE_CLOSE_CARRY_REVIEW_MINUTES = 15.0
     HOLD_POLICY_MIN_VALID_MINUTES = 3
@@ -8378,7 +8379,14 @@ class PathBRuntime:
     def finalize_sell_pending_at_session_close(self, market: str) -> dict[str, Any]:
         return self.reconcile_sell_pending(str(market or "").upper(), force=True, session_end=True)
 
-    def reconcile_filled_positions(self, market: str, *, force: bool = False) -> dict[str, Any]:
+    def reconcile_filled_positions(
+        self,
+        market: str,
+        *,
+        force: bool = False,
+        include_cross_session: bool = False,
+        refresh_snapshot: bool = True,
+    ) -> dict[str, Any]:
         market_key = str(market or "").upper()
         summary: dict[str, Any] = {
             "market": market_key,
@@ -8391,22 +8399,27 @@ class PathBRuntime:
             "errors": [],
         }
         runs: list[dict[str, Any]] = []
-        for status in ("FILLED", "PARTIAL_FILLED"):
-            runs.extend(
-                self.store.path_runs_for_session(
-                    market=market_key,
-                    runtime_mode=self.mode,
-                    session_date=self._session_date(market_key),
-                    status=status,
-                    path_type="claude_price",
+        if include_cross_session:
+            # 세션 오픈 시 이전 세션 낙오 FILLED/PARTIAL(로컬 앵커 상실→영구 orphan)을 재대조.
+            runs = self._filled_runs_cross_session(market_key)
+        else:
+            for status in ("FILLED", "PARTIAL_FILLED"):
+                runs.extend(
+                    self.store.path_runs_for_session(
+                        market=market_key,
+                        runtime_mode=self.mode,
+                        session_date=self._session_date(market_key),
+                        status=status,
+                        path_type="claude_price",
+                    )
                 )
-            )
         if not runs:
             return summary
-        try:
-            self.refresh_broker_truth(market_key, force=force)
-        except Exception as exc:
-            summary["errors"].append(f"snapshot_refresh:{exc}")
+        if refresh_snapshot:
+            try:
+                self.refresh_broker_truth(market_key, force=force)
+            except Exception as exc:
+                summary["errors"].append(f"snapshot_refresh:{exc}")
         market_data = self.broker_truth.market_snapshot(market_key)
         if bool(market_data.get("missing")) or bool(market_data.get("stale")) or str(market_data.get("error", "") or ""):
             summary["broker_truth_unavailable"] = len(runs)
@@ -8421,6 +8434,42 @@ class PathBRuntime:
         if summary["checked"] or summary["errors"]:
             log.info(f"[PathB FILLED reconcile] {summary}")
         return summary
+
+    def _filled_runs_cross_session(self, market: str) -> list[dict[str, Any]]:
+        """세션 무관하게 비종결 FILLED/PARTIAL_FILLED run을 모아 최근 N개 세션으로 제한.
+
+        세션 스코프 reconcile(session_date=오늘)은 이전 세션에 체결됐다가 CLOSED로 넘어가지
+        못한 run(로컬 포지션 앵커 상실 시)을 다시는 재검사하지 못해 영구 FILLED orphan을 남긴다.
+        ORDER_UNKNOWN의 _order_unknown_runs_cross_session과 동일 패턴으로 세션 오픈 시 낙오분을
+        재대조한다. 오래된 낙오분은 lookback 창 밖이면 포기(무한 전이력 재스캔 회피).
+        """
+        market_key = str(market or "").upper()
+        candidates: list[dict[str, Any]] = []
+        for status in ("FILLED", "PARTIAL_FILLED"):
+            candidates.extend(
+                self.store.path_runs_for_session(
+                    market=market_key,
+                    runtime_mode=self.mode,
+                    status=status,
+                    path_type="claude_price",
+                )
+            )
+        sessions: list[str] = []
+        for run in sorted(candidates, key=lambda item: str(item.get("session_date", "") or ""), reverse=True):
+            session_date = str(run.get("session_date", "") or "")
+            if session_date and session_date not in sessions:
+                sessions.append(session_date)
+            if len(sessions) >= self.FILLED_CROSS_SESSION_LOOKBACK_SESSIONS:
+                break
+        current_session = self._session_date(market_key)
+        if current_session and current_session not in sessions:
+            sessions.append(current_session)
+        allowed_sessions = set(sessions)
+        return [
+            run
+            for run in candidates
+            if not allowed_sessions or str(run.get("session_date", "") or "") in allowed_sessions
+        ]
 
     def _reconcile_filled_position_run(self, run: dict[str, Any], market: str, market_data: dict[str, Any]) -> str:
         path_run_id = str(run.get("path_run_id", "") or "")

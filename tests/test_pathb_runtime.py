@@ -3399,6 +3399,113 @@ class PathBRuntimeTests(unittest.TestCase):
             self.assertEqual(run["status"], "FILLED")
             self.assertEqual(run["plan"]["entry_execution_id"], "buy1")
 
+    def test_cross_session_filled_reconcile_demotes_stale_orphan(self) -> None:
+        # 이전 세션에 체결됐다 CLOSED 못 넘어간 orphan(로컬 앵커 없음). 세션 스코프 reconcile은
+        # session_date=오늘만 조회해 영영 놓치지만(갭), 교차세션 reconcile은 잡아 ORDER_UNKNOWN으로
+        # 강등한다(정직 플래그, 영구 FILLED 탈출). 브로커 미보유+당일 매도체결 없음 케이스.
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.broker_truth = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=Path(tmp) / "broker_truth.json",
+                token_provider=lambda: "token",
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [],
+                date_provider=lambda market: "2026-04-27",
+            )
+            plan = make_price_plan(
+                decision_id="dec_orphan",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-20",  # 현재 세션(_Bot=2026-04-27)보다 이전
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_filled(
+                plan.path_run_id,
+                price=52_200,
+                qty=2,
+                execution_id="buy1",
+                runtime_mode="live",
+                brain_snapshot_id="brain1",
+            )
+            # 로컬 포지션 앵커 없음 → orphan.
+
+            # 갭 재현: 세션 스코프 reconcile은 이전 세션 run을 조회조차 안 함.
+            session_scoped = runtime.reconcile_filled_positions("KR", force=True)
+            self.assertEqual(session_scoped["checked"], 0)
+            self.assertEqual(store.find_path_run(plan.path_run_id)["status"], "FILLED")
+
+            # 수정: 교차세션 reconcile이 낙오분을 잡아 강등.
+            cross = runtime.reconcile_filled_positions(
+                "KR", force=True, include_cross_session=True
+            )
+            self.assertEqual(cross["checked"], 1)
+            self.assertEqual(cross["order_unknown"], 1)
+            self.assertEqual(store.find_path_run(plan.path_run_id)["status"], "ORDER_UNKNOWN")
+
+    def test_cross_session_filled_reconcile_keeps_run_with_local_anchor(self) -> None:
+        # 교차세션 스윕이 아직 로컬 포지션이 살아있는 이전 세션 보유(multi-day hold)를 오청산하지
+        # 않는지 검증 — 브로커 잔고 지연 시에도 로컬 앵커가 있으면 FILLED 유지(kept_open_local).
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = _Bot()
+            store = EventStore(Path(tmp) / "events.db")
+            runtime = PathBRuntime(bot, is_paper=False, store=store)
+            runtime.control_store = _Control()
+            runtime.broker_truth = BrokerTruthSnapshot(
+                runtime_mode="live",
+                path=Path(tmp) / "broker_truth.json",
+                token_provider=lambda: "token",
+                balance_provider=lambda market, force: {"cash": 0, "stocks": []},
+                ccld_provider=lambda market, day: [],
+                date_provider=lambda market: "2026-04-27",
+            )
+            plan = make_price_plan(
+                decision_id="dec_anchor",
+                ticker="005930",
+                market="KR",
+                session_date="2026-04-20",
+                buy_zone_low=52_000,
+                buy_zone_high=52_500,
+                sell_target=54_500,
+                stop_loss=51_000,
+                hold_days=1,
+                confidence=0.7,
+            )
+            runtime.adapter.register_plan(plan, runtime_mode="live", brain_snapshot_id="brain1")
+            runtime.adapter.mark_filled(
+                plan.path_run_id,
+                price=52_200,
+                qty=2,
+                execution_id="buy1",
+                runtime_mode="live",
+                brain_snapshot_id="brain1",
+            )
+            bot.risk.positions.append(
+                {
+                    "ticker": "005930",
+                    "qty": 2,
+                    "entry": 52_200,
+                    "path_type": "claude_price",
+                    "pathb_path_run_id": plan.path_run_id,
+                }
+            )
+
+            cross = runtime.reconcile_filled_positions(
+                "KR", force=True, include_cross_session=True
+            )
+            run = store.find_path_run(plan.path_run_id)
+            self.assertEqual(cross["kept_open_local"], 1)
+            self.assertEqual(run["status"], "FILLED")
+
     def test_submit_buy_same_day_reentry_guard_blocks_before_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bot = _Bot()

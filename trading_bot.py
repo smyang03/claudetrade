@@ -29287,6 +29287,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             try:
                 self.pathb.refresh_broker_truth(market, force=True)
                 self._reconcile_broker_open_orders(market, reason="session_open", force=False)
+                # 이전 세션 낙오 FILLED/PARTIAL orphan(로컬 앵커 상실→영구 FILLED)을 세션 오픈 시
+                # 교차세션 재대조: 브로커 보유면 유지, 미보유+당일 매도체결이면 CLOSED, 그 외 ORDER_UNKNOWN.
+                # 직전 force refresh 재사용(refresh_snapshot=False). 후속 ORDER_UNKNOWN 스윕이 demote분 흡수.
+                try:
+                    _filled_x = self.pathb.reconcile_filled_positions(
+                        market, force=True, include_cross_session=True, refresh_snapshot=False
+                    )
+                    if _filled_x.get("checked") or _filled_x.get("errors"):
+                        log.info(f"[session_open cross-session filled reconcile] {market} {_filled_x}")
+                except Exception as _fx_exc:
+                    log.warning(f"[session_open cross-session filled reconcile] {market} 실패: {_fx_exc}")
                 _ou_summary = self.pathb.reconcile_order_unknowns_at_open(market)
                 try:
                     _esc = (_ou_summary or {}).get("escalator") or {}
