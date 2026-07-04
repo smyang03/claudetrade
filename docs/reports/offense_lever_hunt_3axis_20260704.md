@@ -17,7 +17,7 @@
 
 ## 구조적 진실 (공격면 exhaustive 후)
 1. **gross edge 자체가 얇음**: US gross +0.19/거래, KR +0.44. 비용 0 이어도 얇은 양(+). 이 얇은 edge를 두껍게 할 DB 레버가 selection·capture·sizing 어디에도 없음(전부 탐색 완료).
-2. **상방=하방 결합**: 큰 러너 셋업은 큰 드로다운 동반 → 상방만 harvest 불가. 이게 capture·sizing·carry 공격이 다 죽는 공통 死因.
+2. **상방=하방 결합**: 큰 러너 셋업은 큰 드로다운 동반 → 상방만 harvest 불가. 이게 capture·sizing·carry 공격이 다 죽는 공통 원인.
 3. **수익=fat-tail 출현(예측불가)을 trail이 잡는 것**. 빈도·국면 luck 의존. 시스템은 이미 그걸 함(trail 배포).
 
 ## 정직한 함의 (DB 재단으로는 끝)
