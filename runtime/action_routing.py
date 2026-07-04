@@ -538,9 +538,15 @@ def route_candidate_action(
     ) -> RouteDecision:
         # A1: REQUIRE_TRADE_READY — PROBE_READY(=trade_ready 미만 탐색 진입, ready=0)는 WATCH 강등.
         # ready=0 출혈 싱크 차단. BUY_READY/ADD_READY(=ready=1)는 통과.
-        if final_action == "PROBE_READY" and str(
-            os.getenv("REQUIRE_TRADE_READY", "false") or "false"
-        ).strip().lower() in {"1", "true", "yes", "on"}:
+        # 2026-07-02: 시장별 토글(_US/_KR override 후 글로벌 fallback). pathb _submit_buy와 동일 정책 —
+        # KR ready=0(브레이크이븐·개선중)은 REQUIRE_TRADE_READY_KR=false로 unblock, US는 글로벌 true 유지.
+        _rtr_global = str(os.getenv("REQUIRE_TRADE_READY", "false") or "false").strip().lower() in {"1", "true", "yes", "on"}
+        _rtr_env = os.getenv(f"REQUIRE_TRADE_READY_{market_text}")
+        _require_trade_ready = (
+            str(_rtr_env).strip().lower() in {"1", "true", "yes", "on"}
+            if _rtr_env not in (None, "") else _rtr_global
+        )
+        if final_action == "PROBE_READY" and _require_trade_ready:
             final_action = "WATCH"
             demoted_to = demoted_to or "WATCH"
             runtime_gate_reason = runtime_gate_reason or "require_trade_ready"
