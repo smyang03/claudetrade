@@ -23,7 +23,11 @@ ROOT = Path(__file__).resolve().parents[1]
 SIGNAL_PATH = ROOT / "state" / "trend_overlay_signal.json"
 FUNNEL_DIR = ROOT / "logs" / "funnel"
 # 신호 신선도 한도(일). 초과면 untrusted → fail-open.
-SIGNAL_MAX_AGE_DAYS = 7
+# 신호 rule = monthly_close_vs_10mo_sma(월간). 7일은 월간 신호를 매월 대부분 기간 stale 처리해
+# shadow에 stale_signal만 쌓이고 enforce 시 대부분 기간 fail-open(부비트랩)이었다(전면스캔 B1).
+# 월간 주기(+갱신 지연 버퍼)에 맞춰 40일로. ★완전한 수정은 refresh_trend_overlay_signal.py를
+# 월간 스케줄(cron)에 배선하는 것 — 미배선 상태라 40일 초과 시 여전히 stale된다.
+SIGNAL_MAX_AGE_DAYS = 40
 
 
 def normalize_mode(value: str | None) -> str:

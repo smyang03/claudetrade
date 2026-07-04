@@ -744,6 +744,37 @@ class PathBRuntime:
         except Exception:
             return None
 
+    def _maybe_log_would_carry_shadow(
+        self, plan, pos, current: float, market: str, minutes_to_close: float
+    ) -> None:
+        """would_carry 관측 로깅(D3 재복구 2026-07-04, 행동 0). 캐리 자격 판정을 funnel jsonl에 기록.
+
+        기존 로깅은 close_all_open(kill/수동 bulk-close만)·_maybe_run_pre_close_carry_review
+        (intraday_only=true 요구 → config false라 dead) 두 경로에 갇혀 정상세션 0건이었다.
+        이 헬퍼는 정상 per-cycle 루프의 pre-close 윈도우(≤15분) 안에서 세션당 1회만 기록한다.
+        keep/kill 게이트(would_carry n≥25)가 실제 세션 데이터로 누적되게 한다.
+        """
+        try:
+            if float(minutes_to_close if minutes_to_close is not None else 999.0) > self.PRE_CLOSE_CARRY_REVIEW_MINUTES:
+                return
+            run = self.store.find_path_run(plan.path_run_id)
+            plan_json = (run or {}).get("plan") or {}
+            if str(plan_json.get("would_carry_logged_at", "") or ""):
+                return
+            _wc = tail_capture.would_carry_meta(
+                pos, current, market, self._tail_capture_regime(market),
+                entry_native=self._position_entry_native(pos, market),
+            )
+            if _wc is not None:
+                self._log_tail_capture(plan, pos, current, _wc)
+            self.store.update_path_run(
+                plan.path_run_id,
+                plan={"would_carry_logged_at": datetime.now(KST).isoformat(timespec="seconds")},
+                merge_plan=True,
+            )
+        except Exception:
+            pass
+
     def _log_tail_capture(self, plan, pos, current: float, decision: dict) -> None:
         """꼬리-capture 엔진 결정 + 실제 포지션 상태 페어 로깅(shadow/enforce 관측). 라이브 무영향."""
         try:
@@ -3717,6 +3748,8 @@ class PathBRuntime:
                             exit_signal = policy_eval["signal"]
                         else:
                             exit_signal = self.sell_manager.check_exit(plan.path_run_id, current, hard_stop_price=hard_stop_price)
+            # would_carry 관측(행동 0): pre-close 윈도우서 각 보유의 캐리자격 기록(정상세션 계측 복구).
+            self._maybe_log_would_carry_shadow(plan, pos, current, market, minutes_to_close)
             if not exit_signal.signal:
                 self._maybe_trigger_profit_protection_review(plan, pos, current, market)
             if not exit_signal.signal:

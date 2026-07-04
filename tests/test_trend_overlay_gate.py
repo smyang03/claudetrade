@@ -52,7 +52,7 @@ def test_missing_market_fail_open():
 
 
 def test_stale_signal_fail_open():
-    v = evaluate_trend_overlay_gate(_sig(below=True, age_days=30.0), "enforce", "US")
+    v = evaluate_trend_overlay_gate(_sig(below=True, age_days=45.0), "enforce", "US")  # SIGNAL_MAX_AGE_DAYS=40
     assert v["trusted"] is False
     assert v["block"] is False
     assert v["reason"] == "stale_signal"

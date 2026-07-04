@@ -2,9 +2,11 @@
 """net 기준 종합 수익성 리뷰 (A1, read-only).
 
 운영자가 보는 성과를 gross(pnl_pct) 착시가 아니라 net(수수료·FX 반영)으로 본다.
-net 소스 우선순위: plan_json.pnl_pct_net_est(실측 수수료반영) > pnl_pct - 비용가정.
-비용가정은 한투 일반 사용자 실측: US 0.70%p(수수료0.50+FX0.20), KR 0.21%p (KOSPI 0.147+거래세).
-외부 API 없음. v2_event_store.db만 읽는다.
+net 소스 우선순위: plan_json.pnl_pct_net_after_fx_est(수수료+FX, 정직한 자) > pnl_pct - 비용가정.
+※ pnl_pct_net_est(수수료만)는 US 왕복비용을 과소계상(0.23~0.50 vs 진짜 0.70)해 적자를 낙관
+   왜곡하므로 사용하지 않는다(전면스캔 A2). 비용가정은 한투 일반 실측: US 0.70%p(수수료0.50+FX0.20),
+   KR 0.21%p (KOSPI 0.147+거래세).
+decision_id로 dedup(이중 CLOSED 방지, 전면스캔 B3). 외부 API 없음. v2_event_store.db만 읽는다.
 
 사용: python tools/net_profitability_review.py [--since YYYY-MM-DD]
 """
@@ -28,10 +30,11 @@ def _f(d: dict, k: str):
 
 
 def net_of(market: str, d: dict) -> float | None:
-    """net 우선순위: 실측 net_est > gross - 비용가정."""
-    ne = _f(d, "pnl_pct_net_est")
-    if ne is not None:
-        return ne
+    """net 우선순위: 실측 net_after_fx_est(수수료+FX, 정직) > gross − 일관비용가정.
+    pnl_pct_net_est(수수료만)는 과소계상이라 사용 금지(A2)."""
+    fx = _f(d, "pnl_pct_net_after_fx_est")
+    if fx is not None:
+        return fx
     g = _f(d, "pnl_pct")
     if g is None:
         return None
@@ -52,20 +55,32 @@ def main() -> int:
 
     con = sqlite3.connect(str(DB))
     con.execute("PRAGMA busy_timeout=8000")
-    q = ("SELECT market, session_date, plan_json FROM v2_path_runs "
+    q = ("SELECT decision_id, market, session_date, plan_json, updated_at FROM v2_path_runs "
          "WHERE status='CLOSED' AND path_type='claude_price' AND plan_json IS NOT NULL")
     if args.since:
         q += f" AND session_date >= '{args.since}'"
-    rows = []
-    for market, sd, pj in con.execute(q):
+    raw = []
+    for did, market, sd, pj, ua in con.execute(q):
         try:
             d = json.loads(pj)
         except Exception:
             continue
-        rows.append((market, sd, d))
+        raw.append((did, market, sd, d, ua or ""))
     con.close()
 
-    print(f"=== net 기준 수익성 리뷰 (CLOSED {len(rows)}건{', since '+args.since if args.since else ''}) ===")
+    # decision_id dedup (이중 CLOSED 방지): net_after_fx 있는 행 > net_est 있는 행 > 최신 updated_at
+    def _rank(t):
+        _did, _m, _sd, d, ua = t
+        return (d.get("pnl_pct_net_after_fx_est") is not None,
+                d.get("pnl_pct_net_est") is not None, ua)
+    best: dict = {}
+    for i, t in enumerate(raw):
+        key = t[0] or f"__nodid_{i}"
+        if key not in best or _rank(t) > _rank(best[key]):
+            best[key] = t
+    rows = [(m, sd, d) for (_did, m, sd, d, _ua) in best.values()]
+
+    print(f"=== net 기준 수익성 리뷰 (CLOSED raw {len(raw)}→dedup {len(rows)}건{', since '+args.since if args.since else ''}) ===")
     print(f"  비용가정(net_est 없을때): US {COST['US']}%p · KR {COST['KR']}%p (한투 일반 실측)")
 
     print("\n[1] 시장별 — gross vs net")
@@ -73,11 +88,11 @@ def main() -> int:
         sub = [d for m, _, d in rows if m == mkt]
         g = [_f(d, "pnl_pct") for d in sub if _f(d, "pnl_pct") is not None]
         n = [net_of(mkt, d) for d in sub if net_of(mkt, d) is not None]
-        cov = sum(1 for d in sub if _f(d, "pnl_pct_net_est") is not None)
+        cov = sum(1 for d in sub if _f(d, "pnl_pct_net_after_fx_est") is not None)
         if g:
             print(f"  {mkt} gross: {_agg(g)}")
         if n:
-            print(f"  {mkt} NET  : {_agg(n)}  (실측net_est 커버 {cov}/{len(sub)})")
+            print(f"  {mkt} NET  : {_agg(n)}  (실측net_after_fx 커버 {cov}/{len(sub)}, 나머지 일관비용)")
 
     print("\n[2] 시장 x 월별 — net")
     mm = defaultdict(list)
