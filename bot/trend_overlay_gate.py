@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from runtime_paths import get_runtime_path
+
 ROOT = Path(__file__).resolve().parents[1]
 SIGNAL_PATH = ROOT / "state" / "trend_overlay_signal.json"
 FUNNEL_DIR = ROOT / "logs" / "funnel"
@@ -101,7 +103,8 @@ def record_trend_overlay_gate(*, session_date: str, market: str, ticker: str,
                               verdict: dict[str, Any], extra: dict[str, Any] | None = None) -> None:
     """관측 funnel 기록(JSONL). 실패해도 진입 흐름에 영향 없음."""
     try:
-        FUNNEL_DIR.mkdir(parents=True, exist_ok=True)
+        # get_runtime_path: 테스트 격리(CLAUDETRADE_RUNTIME_DIR) 인식 — 다른 funnel writer와 동일.
+        # 기존 모듈레벨 FUNNEL_DIR 직접쓰기는 pytest가 라이브 logs/funnel에 합성행 오염(전면스캔 B6).
         rec = {
             "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "session_date": session_date,
@@ -113,7 +116,9 @@ def record_trend_overlay_gate(*, session_date: str, market: str, ticker: str,
         }
         if extra:
             rec.update(extra)
-        fp = FUNNEL_DIR / f"trend_overlay_{str(session_date or 'unknown').replace('-', '')}.jsonl"
+        fp = get_runtime_path("logs", "funnel",
+                              f"trend_overlay_{str(session_date or 'unknown').replace('-', '')}.jsonl",
+                              make_parents=True)
         with open(fp, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except Exception:
