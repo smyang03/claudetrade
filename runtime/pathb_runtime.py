@@ -4430,6 +4430,46 @@ class PathBRuntime:
                 pass
         return idx
 
+    def _zone_fill_at_entry_shadow(self, plan: PricePlan, signal) -> None:
+        """체결가 품질(zone-fill) shadow — 진입 주문가가 buy_zone 어디에 들어가는지 기록.
+
+        실측(2026-07-05, zone_fill_quality_review): US는 buy_zone 하단 체결이 gross median 양수
+        (유일), top-of-zone 추격(zone_pos>0.67)+목표부풀림(reward_pct>=5)이 최악셀 per -1.15·
+        양월 음수(회피 Δ+0.207/거래). = Claude 매도(TARGET)가 더 잘 발동되게 하는 강점 강화 레버.
+        KR은 정반대(하단 최악)라 US 전용. 양날(체결 조이면 미체결로 승자 놓침)은 forward shadow로만
+        확증 가능해 지금은 관측(태그)만 — 차단·순서·주문 무영향. 진입 주문가(우리가 통제)로 판정.
+
+        기록은 PATHB_ZONE_FILL_SHADOW on일 때만. enforce(차단)는 미배선(양날 확증 후 별도 토글).
+        """
+        if str(os.getenv("PATHB_ZONE_FILL_SHADOW", "true")).strip().lower() not in ("1", "true", "yes", "on"):
+            return
+        if str(plan.market or "").upper() != "US":
+            return
+        try:
+            lo = float(getattr(plan, "buy_zone_low", 0) or 0)
+            hi = float(getattr(plan, "buy_zone_high", 0) or 0)
+            entry = float(getattr(signal, "limit_price", 0) or getattr(signal, "price", 0) or 0)
+            if hi <= lo or entry <= 0:
+                return
+            zone_pos = (entry - lo) / (hi - lo)
+            reward_pct = float(getattr(plan, "reward_pct", 0) or 0)
+            top_thr = float(os.getenv("PATHB_ZONE_FILL_TOP_THRESHOLD", "0.67") or 0.67)
+            rp_thr = float(os.getenv("PATHB_ZONE_FILL_REWARD_PCT", "5.0") or 5.0)
+            top_of_zone = zone_pos > top_thr
+            worst_cell = top_of_zone and reward_pct >= rp_thr
+            meta = {
+                "zone_fill_shadow": True,
+                "zone_fill_pos": round(zone_pos, 3),          # 0=하단(좋음) 1=상단(추격)
+                "zone_fill_top_of_zone": bool(top_of_zone),   # zone_pos>0.67 추격
+                "zone_fill_worst_cell": bool(worst_cell),     # 추격 + 목표부풀림(reward_pct>=5)
+            }
+            self.store.update_path_run(plan.path_run_id, plan=meta, merge_plan=True)
+            if worst_cell:
+                log.info(f"[zone_fill shadow] {plan.market} {plan.ticker} 진입 zone_pos={zone_pos:.2f} "
+                         f"reward_pct={reward_pct:.1f} (top-of-zone 추격 최악셀, 관측만)")
+        except Exception:
+            pass
+
     def _red_tape_gate_threshold(self, market: str) -> float:
         try:
             return float(os.getenv(f"PATHB_RED_TAPE_GATE_THRESHOLD_{str(market or '').upper()}", "-0.3") or -0.3)
@@ -4457,6 +4497,8 @@ class PathBRuntime:
         self._falling_knife_reentry_shadow(plan, float(getattr(signal, "price", 0) or 0))
         # 반응형 tape shadow: 진입 순간 지수(캐시)를 기록 + 게이트 입력 idx 확보 (API 무호출)
         _tape_idx = self._red_tape_at_entry_shadow(plan)
+        # 체결가 품질(zone-fill) shadow: 진입 주문가의 zone 위치 기록 (US 전용, 관측만·차단 없음)
+        self._zone_fill_at_entry_shadow(plan, signal)
         if self._plan_shadow_only(plan):
             self._record_blocked(
                 market,
