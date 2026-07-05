@@ -314,7 +314,35 @@ class ClaudePriceSellManager:
         # 이중발화 0=자금안전, 이벤트 카운트만 오염). 첫 청산 때는 아직 CLOSED가 아니므로 진짜 재호출만 skip.
         _existing = self.store.find_path_run(path_run_id) or {}
         if str(_existing.get("status", "")) == "CLOSED":
-            log.info(f"[mark_closed] {path_run_id} 이미 CLOSED — 이중 CLOSED 기록 skip (reason={close_reason})")
+            # 이중 CLOSED 이벤트는 막되, 첫 청산이 미확정(exit_execution_id 없음=provisional)인데
+            # 이번 호출이 실제 체결 execution_id를 실어오면 식별·비용 메타만 backfill한다.
+            # 기록된 actual_exit_price/pnl_pct는 무접촉(PRE_CLOSE 재처리가 덮어쓰는 것 방지),
+            # CLOSED 이벤트도 재기록하지 않는다.
+            _ep = _existing.get("plan") or {}
+            _had_exec = bool(str(_ep.get("exit_execution_id", "") or ""))
+            if execution_id and not _had_exec:
+                try:
+                    _cm = self._close_cost_meta(
+                        path_run_id,
+                        exit_native=price,
+                        usd_krw=usd_krw,
+                        entry_native_override=entry_native_override,
+                        qty_override=qty_override,
+                    )
+                except Exception:
+                    _cm = {}
+                self.store.update_path_run(
+                    path_run_id,
+                    plan={
+                        "exit_execution_id": execution_id,
+                        "exit_fill_confirmed": True,
+                        **_cm,
+                    },
+                    merge_plan=True,
+                )
+                log.info(f"[mark_closed] {path_run_id} CLOSED 유지, 누락 체결정보 backfill (exec={execution_id})")
+            else:
+                log.info(f"[mark_closed] {path_run_id} 이미 CLOSED — 이중 CLOSED 기록 skip (reason={close_reason})")
             return
         try:
             cost_meta = self._close_cost_meta(

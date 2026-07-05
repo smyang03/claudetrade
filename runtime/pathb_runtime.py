@@ -4391,9 +4391,17 @@ class PathBRuntime:
             if not vals:
                 return None
             now_val = float(list(vals)[-1])  # 전일종가 기준 당일등락(캐시)
+            # get_index_change()는 조회 실패 시 0.0을 돌려준다(kis_api.py). 0.0이 개장 baseline과
+            # 결합하면 유효한 진입을 red-tape enforce가 오차단하므로, 실패 추정 0.0은 fail-open(None).
+            if now_val == 0.0:
+                return None
             open_base = (getattr(self.bot, "_session_open_index_change", {}) or {}).get(mk)
             if open_base is None:
-                open_base = float(list(vals)[0])  # 폴백: deque 첫 샘플(evict 전이면 개장근사)
+                # 폴백: deque에서 실패(0.0) 아닌 첫 유효 샘플을 개장근사로 사용(evict 전이면 개장근사)
+                _valid = [float(v) for v in vals if float(v) != 0.0]
+                if not _valid:
+                    return None
+                open_base = _valid[0]
             return now_val - float(open_base), now_val  # (세션개장→진입, 전일종가기준 현재값)
         except Exception:
             return None

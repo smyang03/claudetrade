@@ -539,9 +539,12 @@ def route_candidate_action(
         # A1: REQUIRE_TRADE_READY — PROBE_READY(=trade_ready 미만 탐색 진입, ready=0)는 WATCH 강등.
         # ready=0 출혈 싱크 차단. BUY_READY/ADD_READY(=ready=1)는 통과.
         # 2026-07-02: 시장별 토글(_US/_KR override 후 글로벌 fallback). pathb _submit_buy와 동일 정책 —
-        # KR ready=0(브레이크이븐·개선중)은 REQUIRE_TRADE_READY_KR=false로 unblock, US는 글로벌 true 유지.
+        # KR ready=0(브레이크이븐·개선중)은 REQUIRE_TRADE_READY_KR=false로 unblock, US는 config대로 적용.
+        # 시장키 정규화를 pathb _submit_buy와 일치시킨다(미해석 market도 KR로 → 두 경로 분기 제거).
+        # runtime_config 계층은 라이브에서 env로 미러링되므로 여기선 env만 읽는다(standalone 함수).
+        _rtr_mkt_key = "US" if market_text == "US" else "KR"
         _rtr_global = str(os.getenv("REQUIRE_TRADE_READY", "false") or "false").strip().lower() in {"1", "true", "yes", "on"}
-        _rtr_env = os.getenv(f"REQUIRE_TRADE_READY_{market_text}")
+        _rtr_env = os.getenv(f"REQUIRE_TRADE_READY_{_rtr_mkt_key}")
         _require_trade_ready = (
             str(_rtr_env).strip().lower() in {"1", "true", "yes", "on"}
             if _rtr_env not in (None, "") else _rtr_global

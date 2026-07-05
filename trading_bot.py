@@ -36497,8 +36497,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         _idx_now = get_index_change(market)
         _hist    = self._index_history[market]
         _hist.append(_idx_now)
-        # 세션 첫 샘플을 개장 기준값으로 1회 고정(deque evict 무관) — red_tape shadow용.
-        if self._session_open_index_change.get(market) is None:
+        # 세션 첫 샘플을 개장 기준값으로 1회 고정(deque evict 무관) — red_tape shadow/enforce용.
+        # get_index_change()가 조회 실패로 돌려준 0.0을 baseline으로 고정하면 red-tape 게이트가
+        # 유효 진입을 오차단하므로, 유효(비-0.0) 첫 샘플이 올 때까지 고정을 미룬다.
+        if self._session_open_index_change.get(market) is None and _idx_now != 0.0:
             self._session_open_index_change[market] = _idx_now
         # 직전 튜닝 대비 기울기: 현재 - 30분 전 (버퍼 2개 이상 있을 때만)
         _slope_30m = round(_idx_now - _hist[-2], 2) if len(_hist) >= 2 else None
@@ -36665,8 +36667,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         elif alert_cp > 0 and self.usd_krw_rate > 0:
                             alert_cp = alert_cp / float(self.usd_krw_rate)
                     if not self.is_paper:
-                        place_order(pos["ticker"], pos["qty"], 0, "sell",
-                                    self._token_for_market(self._ticker_market(pos["ticker"])), market=self._ticker_market(pos["ticker"]))
+                        # EGW00201 등 주문 예외/거부가 청산 루프를 중단시키지 않게 개별 처리한다.
+                        # 매도 미접수면 로컬 close_position을 하지 않아 phantom close/desync를 막고
+                        # (다음 사이클 broker_sync가 복구), 다음 포지션 청산을 계속한다.
+                        _pm = self._ticker_market(pos["ticker"])
+                        try:
+                            _rr = place_order(pos["ticker"], pos["qty"], 0, "sell",
+                                              self._token_for_market(_pm), market=_pm)
+                        except Exception as _re:
+                            log.error(f"[REVERSE] 매도 주문 예외 [{pos['ticker']}]: {_re} — 청산 스킵, 루프 계속")
+                            continue
+                        if not (_rr or {}).get("success"):
+                            log.error(f"[REVERSE] 매도 주문 실패 [{pos['ticker']}]: {(_rr or {}).get('msg','')} — 청산 스킵, 루프 계속")
+                            continue
                     ex = self.risk.close_position(pos["ticker"], cp, "tuner_reverse")
                     if ex:
                         ex_name = str(ex.get("name", "") or "").strip() or self._lookup_ticker_name(ex["ticker"], market)
