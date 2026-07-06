@@ -107,6 +107,26 @@ class MinRewardRiskRuntimeDefaultTests(unittest.TestCase):
         )
         self.assertEqual(PathBRuntime._pathb_min_reward_risk(dummy), 1.5)
 
+    def _dummy(self, overrides):
+        return types.SimpleNamespace(
+            _runtime_float=lambda key, default=0.0: overrides.get(key, default),
+            _runtime_value=lambda key, default=None: overrides.get(key, default),
+        )
+
+    def test_market_override_kr_used_when_set(self):
+        dummy = self._dummy({"PATHB_MIN_REWARD_RISK_KR": "1.1"})
+        self.assertEqual(PathBRuntime._pathb_min_reward_risk(dummy, "KR"), 1.1)
+        # US는 override 미설정 → 글로벌 기본 유지
+        self.assertEqual(PathBRuntime._pathb_min_reward_risk(dummy, "US"), 1.5)
+
+    def test_market_override_unset_falls_back_to_global(self):
+        dummy = self._dummy({"PATHB_MIN_REWARD_RISK": 1.5})
+        self.assertEqual(PathBRuntime._pathb_min_reward_risk(dummy, "KR"), 1.5)
+
+    def test_market_override_invalid_falls_back(self):
+        dummy = self._dummy({"PATHB_MIN_REWARD_RISK_KR": "abc"})
+        self.assertEqual(PathBRuntime._pathb_min_reward_risk(dummy, "KR"), 1.5)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1068,8 +1068,19 @@ class PathBRuntime:
         """US 체결/청산 시점 환율 — net 손익(수수료+환차) 기록용. KR은 0."""
         return float(self._usd_krw() or 0) if str(market or "").upper() == "US" else 0.0
 
-    def _pathb_min_reward_risk(self) -> float:
+    def _pathb_min_reward_risk(self, market: str = "") -> float:
         # rr<1.5 플랜 등록 차단 — live 실측: rr<1.5 평균 +0.02%(수수료 차감 시 음수), rr>=2 평균 +0.74%
+        # 시장별 override(PATHB_MIN_REWARD_RISK_KR/_US, 미설정=글로벌과 동일):
+        # RR 3중조합(일관앵커×목표캡4%×min1.5)이 stop<=2.67%를 강제해 KR 통상 stop 폭(2~3.6%)과
+        # 충돌 → KR fill 반사망(2026-07-07 실측). US 스로틀은 유지한 채 KR만 완화하기 위한 키.
+        market_key = str(market or "").upper()
+        if market_key:
+            raw = self._runtime_value(f"PATHB_MIN_REWARD_RISK_{market_key}", None)
+            if raw is not None and str(raw).strip() != "":
+                try:
+                    return float(str(raw).replace(",", "").strip())
+                except Exception:
+                    pass
         return self._runtime_float("PATHB_MIN_REWARD_RISK", 1.5)
 
     def _pathb_us_midday_entry_block_state(self, market: str) -> dict[str, Any]:
@@ -2439,7 +2450,7 @@ class PathBRuntime:
                     prompt_stage="PRE_SESSION",
                     prompt_version="pathb_price_v1.0",
                     min_confidence=float(self.config.pathb_min_confidence),
-                    min_reward_risk=self._pathb_min_reward_risk(),
+                    min_reward_risk=self._pathb_min_reward_risk(market),
                 )
                 if plan is None:
                     self._record_blocked(
