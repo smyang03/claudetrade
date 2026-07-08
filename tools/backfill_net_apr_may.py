@@ -23,8 +23,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ML_DB = ROOT / "data" / "ml" / "decisions.db"
 
-# capture_net_review.py와 동일 상수 (왕복 수수료 %, US FX 스프레드 왕복 %)
-FEE_PCT = {"US": 0.5, "KR": 0.5}
+# 왕복 수수료 % (권위값: execution.claude_price_sell_manager._fee_rates_for_market).
+# US 왕복 0.50%(편도 0.25×2). KR 왕복 0.21%(매수 0.015 + 매도 0.195 거래세 포함) — 환전 없음.
+# ★2026-07-08 정정: KR을 0.5로 하드코딩했던 버그(US fee 오적용)를 0.21로 수정.
+FEE_PCT = {"US": 0.5, "KR": 0.21}
 FX_SPREAD_PCT = {"US": 0.2, "KR": 0.0}
 
 TABLES = ("v2_learning_performance", "v2_canonical_performance")
@@ -36,7 +38,7 @@ def _basis_for(market: str) -> str:
     return "backfilled_exact" if str(market).upper() == "KR" else "backfilled_fee_only"
 
 
-def backfill_table(con: sqlite3.Connection, table: str, apply: bool) -> dict:
+def backfill_table(con: sqlite3.Connection, table: str, apply: bool, months: tuple = TARGET_MONTHS) -> dict:
     cur = con.cursor()
     # 컬럼 존재 확인
     cols = {d[1] for d in cur.execute(f"PRAGMA table_info({table})")}
@@ -45,8 +47,8 @@ def backfill_table(con: sqlite3.Connection, table: str, apply: bool) -> dict:
     if missing:
         return {"table": table, "skipped": f"missing columns: {sorted(missing)}"}
 
-    month_pred = " OR ".join("session_date LIKE ?" for _ in TARGET_MONTHS)
-    params = [f"{m}%" for m in TARGET_MONTHS]
+    month_pred = " OR ".join("session_date LIKE ?" for _ in months)
+    params = [f"{m}%" for m in months]
     rows = list(
         cur.execute(
             f"""SELECT rowid, market, pnl_pct, net_basis FROM {table}
@@ -87,14 +89,21 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--db", default=str(DEFAULT_ML_DB))
     ap.add_argument("--apply", action="store_true", help="실제 기록 (미지정 시 dry-run)")
+    ap.add_argument(
+        "--months",
+        default=",".join(TARGET_MONTHS),
+        help="대상 월 CSV (기본 2026-04,2026-05). 2026-07-09 C1: 6월 NULL-net 잔여 백필용 확장 — "
+             "가드(net_basis='measured' 제외·backfilled% 제외)로 라이브 측정값은 건드리지 않음",
+    )
     args = ap.parse_args()
 
     con = sqlite3.connect(args.db)
     print(f"DB: {args.db}")
     print(f"모드: {'APPLY (기록)' if args.apply else 'DRY-RUN (미기록)'}")
-    print(f"대상 월: {', '.join(TARGET_MONTHS)} / 수수료 왕복 KR·US {FEE_PCT['KR']}% (US FX는 데이터 없어 미반영=근사)\n")
+    months = tuple(m.strip() for m in str(args.months or "").split(",") if m.strip())
+    print(f"대상 월: {', '.join(months)} / 수수료 왕복 KR·US {FEE_PCT['KR']}% (US FX는 데이터 없어 미반영=근사)\n")
     for table in TABLES:
-        r = backfill_table(con, table, args.apply)
+        r = backfill_table(con, table, args.apply, months)
         if "skipped" in r:
             print(f"[{r['table']}] SKIP — {r['skipped']}")
             continue
