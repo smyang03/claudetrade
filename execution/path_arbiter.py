@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -7,6 +8,8 @@ from typing import Any
 
 from config.v2 import DEFAULT_V2_CONFIG, V2Config
 from lifecycle.event_store import EventStore
+
+log = logging.getLogger(__name__)
 
 
 PATHB_BUY_IN_PROGRESS_STATUSES = frozenset(
@@ -360,6 +363,19 @@ class SameDayReentryGuard:
                 if last_loss_at is None:
                     last_loss_at = occ
         losses = len(loss_decisions)
+        # C3 shadow(2026-07-09 최적성 토론): 임계 2 하향 would-block 관측 — enforce 아님, 로그만.
+        # 근거: 2+손실 후 재진입 US n=39 net 합 −20.3(6월 편중이라 shadow 선행). 판독: 로그 grep 누적.
+        try:
+            _shadow_min = int(float(os.getenv("PATHB_REPEAT_LOSS_SHADOW_MIN", "2") or 2))
+        except (TypeError, ValueError):
+            _shadow_min = 2
+        if 0 < _shadow_min <= losses < max_losses and last_loss_at is not None:
+            _age_h = (now - last_loss_at).total_seconds() / 3600.0
+            if _age_h < cooldown_hours:
+                log.info(
+                    f"[repeat_loss_shadow] {market} {ticker} would_block min={_shadow_min} "
+                    f"losses={losses} age_h={_age_h:.1f} enforce_min={max_losses} (미차단)"
+                )
         if losses >= max_losses and last_loss_at is not None:
             age_hours = (now - last_loss_at).total_seconds() / 3600.0
             if age_hours < cooldown_hours:
