@@ -3324,13 +3324,20 @@ Rules:
     # 킬스위치: SELECTION_RULE_DIRECT_<시장>=false 로 즉시 원복.
     if _env_bool_flag(f"SELECTION_RULE_DIRECT_{str(market).upper()}", False):
         rule_watch: list[str] = []
+        _rule_reasons: dict[str, str] = {}
         for _row in prompt_candidates:
             _tk = str((_row or {}).get("ticker") or "").strip()
-            if _tk and _tk not in rule_watch:
-                rule_watch.append(_tk)
+            if not _tk or _tk in rule_watch:
+                continue
+            rule_watch.append(_tk)
+            # P3(2026-07-08): 룰 랭크·핵심 피처를 구조화 기록 — 사후 분석/대시보드 변별력 확보
+            _chg = _safe_float((_row or {}).get("change_rate", (_row or {}).get("change_pct", 0.0)), 0.0)
+            _vr = _safe_float((_row or {}).get("vol_ratio", 0.0), 0.0)
+            _bucket = str((_row or {}).get("primary_bucket") or (_row or {}).get("source_type") or "screener").strip()
+            _rule_reasons[_tk] = f"rule_direct(rank={len(rule_watch)},chg={_chg:+.1f}%,vr={_vr:.1f},{_bucket})"
             if len(rule_watch) >= limits["watch_max"]:
                 break
-        reasons = {t: "rule_direct(screener_rank)" for t in rule_watch}
+        reasons = _rule_reasons
         selection_meta = _attach_prompt_pool_meta({
             "watchlist": list(rule_watch),
             "trade_ready": [],

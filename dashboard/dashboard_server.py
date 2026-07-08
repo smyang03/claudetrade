@@ -5875,6 +5875,10 @@ def _resolve_ticker_select_reason(
         return f"TRADE_READY 제외 · {veto_reason}"
 
     trade_ready = rec.get("trade_ready_tickers") or meta.get("trade_ready") or []
+    if bool(meta.get("_selection_rule_direct")):
+        # rule_direct(2026-07-08): trade_ready 상시 공백이 정상 — 룰 컷 사유를 그대로 표시
+        _rule_reason = str(_selection_meta_lookup(meta.get("reasons", {}) or {}, ticker, market) or "").strip()
+        return _rule_reason or "룰 컷 직결 후보 · judge 플랜 대기"
     if str(item.get("selection_status", "") or "").upper() == "WATCH_ONLY" and not trade_ready:
         return "trade_ready 비어 있음 · 개별 사유 미기록"
 

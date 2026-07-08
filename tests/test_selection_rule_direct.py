@@ -50,8 +50,10 @@ class SelectionRuleDirectTest(unittest.TestCase):
 
         self.assertTrue(tickers, "rule_direct watchlist가 비었다")
         self.assertLessEqual(len(tickers), 5, "watch_max 캡 미준수")
-        for t in tickers:
-            self.assertEqual(reasons.get(t), "rule_direct(screener_rank)")
+        for i, t in enumerate(tickers):
+            reason = reasons.get(t) or ""
+            self.assertTrue(reason.startswith("rule_direct(rank="), f"사유 구조화 누락: {reason}")
+            self.assertIn(f"rank={i+1}", reason, "룰 랭크 기록 불일치")
 
         meta = analysts.get_last_selection_meta() if hasattr(analysts, "get_last_selection_meta") else analysts._LAST_SELECTION_META
         self.assertTrue(meta.get("_selection_rule_direct"))
