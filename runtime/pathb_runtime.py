@@ -12934,6 +12934,14 @@ class PathBRuntime:
 
     def _pathb_registration_max_entry_krw(self, market: str, *, fallback_cash_krw: float | None = None) -> float:
         fixed_budget = max(0.0, float(self.config.pathb_fixed_order_krw or 0.0))
+        # 시장별 오버라이드(2026-07-09 운영자: US 소액화 20만) — PATHB_MIN_REWARD_RISK_KR과 동일 접미 패턴
+        _mkt = "US" if str(market or "").upper() == "US" else "KR"
+        _ov = os.getenv(f"PATHB_FIXED_ORDER_KRW_{_mkt}")
+        if _ov not in (None, ""):
+            try:
+                fixed_budget = max(0.0, float(_ov))
+            except (TypeError, ValueError):
+                pass
         max_entry = fixed_budget
         if not bool(self.config.pathb_allow_one_share_over_budget):
             return max_entry

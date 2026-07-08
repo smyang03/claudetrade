@@ -6622,6 +6622,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
 
         fixed_budget = max(0.0, _cfg_float("pathb_fixed_order_krw", "PATHB_FIXED_ORDER_KRW", 100_000.0))
+        # 시장별 오버라이드(2026-07-09 운영자: US 소액화 20만)
+        _mkt_ov = os.getenv(f"PATHB_FIXED_ORDER_KRW_{'US' if str(market or '').upper() == 'US' else 'KR'}")
+        if _mkt_ov not in (None, ""):
+            try:
+                fixed_budget = max(0.0, float(_mkt_ov))
+            except (TypeError, ValueError):
+                pass
         max_entry = fixed_budget
         if not _cfg_bool("pathb_allow_one_share_over_budget", "PATHB_ALLOW_ONE_SHARE_OVER_BUDGET", True):
             return max_entry
@@ -30817,8 +30824,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except (TypeError, ValueError):
             cash = None
         order_krw = self._runtime_float(
-            f"{market_key}_FIXED_ORDER_KRW",
-            self._runtime_float("PATHB_FIXED_ORDER_KRW", 500000.0),
+            f"PATHB_FIXED_ORDER_KRW_{market_key}",
+            self._runtime_float(
+                f"{market_key}_FIXED_ORDER_KRW",
+                self._runtime_float("PATHB_FIXED_ORDER_KRW", 500000.0),
+            ),
         )
         if cash is not None and order_krw > 0 and cash < order_krw:
             return True, f"cash_below_order({cash:,.0f}<{order_krw:,.0f})"
