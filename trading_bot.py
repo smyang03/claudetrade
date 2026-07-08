@@ -30791,6 +30791,55 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return False
         return self._runtime_bool(f"{market_key}_PREOPEN_PLANB_BRIDGE_ENABLED", True)
 
+    def _entry_claude_buying_power_gate(self, market: str) -> tuple[bool, str]:
+        """진입측 Claude 콜(judge/가격플랜) 실행 전 구매력 게이트 (운영자 결정 2026-07-08).
+
+        살 수 없는 상태(현금<주문금액 or 시장 포지션 한도 or PathB 한도)에서는
+        진입측 Claude 콜이 행동으로 이어질 수 없으므로 스킵한다.
+        보유/매도/장판단 콜은 이 게이트와 무관하다.
+        fail-open: 값 조회가 불확실하면 차단하지 않는다.
+        킬스위치: ENTRY_CLAUDE_BUYING_POWER_GATE_<시장>=false.
+        반환: (blocked, reason)
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not self._runtime_bool(f"ENTRY_CLAUDE_BUYING_POWER_GATE_{market_key}", False):
+            return False, ""
+        # 1) 현금 < 주문금액 (공유 풀 기준)
+        cash = None
+        try:
+            raw_cash = getattr(getattr(self, "risk", None), "cash", None)
+            if raw_cash is not None:
+                cash = float(raw_cash)
+        except (TypeError, ValueError):
+            cash = None
+        order_krw = self._runtime_float(
+            f"{market_key}_FIXED_ORDER_KRW",
+            self._runtime_float("PATHB_FIXED_ORDER_KRW", 500000.0),
+        )
+        if cash is not None and order_krw > 0 and cash < order_krw:
+            return True, f"cash_below_order({cash:,.0f}<{order_krw:,.0f})"
+        # 2) 시장별 포지션 한도
+        pos = None
+        try:
+            pos = int(self._position_count_by_market(market_key))
+        except Exception:
+            pos = None
+        max_pos = self._runtime_int(f"{market_key}_MAX_POSITIONS", 20)
+        if pos is not None and max_pos > 0 and pos >= max_pos:
+            return True, f"market_positions_full({pos}>={max_pos})"
+        # 3) PathB 오픈 런 한도
+        pathb_count = None
+        try:
+            pathb = getattr(self, "pathb", None)
+            if pathb is not None and hasattr(pathb, "_pathb_open_position_count"):
+                pathb_count = int(pathb._pathb_open_position_count(market_key) or 0)
+        except Exception:
+            pathb_count = None
+        pathb_max = self._runtime_int("PATHB_MAX_POSITIONS", 15)
+        if pathb_count is not None and pathb_max > 0 and pathb_count >= pathb_max:
+            return True, f"pathb_positions_full({pathb_count}>={pathb_max})"
+        return False, ""
+
     def _planb_bridge_capacity_remaining(self, market: str) -> int:
         self._ensure_planb_bridge_state()
         market_key = "US" if str(market or "").upper() == "US" else "KR"
@@ -30815,6 +30864,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         run_interval_sec = self._runtime_float("PREOPEN_PLANB_BRIDGE_RUN_INTERVAL_MIN", 5.0) * 60
         last_run = float((self._planb_bridge_last_run_at or {}).get(market_key, 0.0) or 0.0)
         if last_run and (now_ts - last_run) < run_interval_sec:
+            return
+        _bp_blocked, _bp_reason = self._entry_claude_buying_power_gate(market_key)
+        if _bp_blocked:
+            log.info(f"[entry_claude_gate] {market_key} planb_bridge skip: {_bp_reason}")
             return
         capacity = self._planb_bridge_capacity_remaining(market_key)
         if capacity <= 0:
@@ -31485,6 +31538,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not self._early_judge_enabled(market_key):
             return []
         self._ensure_early_judge_state()
+        _bp_blocked, _bp_reason = self._entry_claude_buying_power_gate(market_key)
+        if _bp_blocked:
+            log.info(f"[entry_claude_gate] {market_key} early_judge skip: {_bp_reason}")
+            return []
         capacity = self._early_judge_capacity_remaining(market_key)
         if capacity <= 0:
             log.info(f"[early judge] {market_key} capacity exhausted source={source}")
