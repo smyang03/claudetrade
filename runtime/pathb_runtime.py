@@ -2714,6 +2714,9 @@ class PathBRuntime:
             "raw_trade_ready": self._selection_reconcile_keys_from(market, (meta or {}).get("_raw_trade_ready")),
             "raw_watchlist": self._selection_reconcile_keys_from(market, (meta or {}).get("_raw_watchlist")),
             "watchlist": self._selection_reconcile_keys_from(market, (meta or {}).get("watchlist")),
+            # rule_direct(2026-07-08): 룰 컷 직결 selection은 Claude 검토가 아니므로
+            # "reviewed_and_removed" 취소 의미론을 적용하지 않는다 (완결성 토론 P2).
+            "rule_direct": bool((meta or {}).get("_selection_rule_direct")),
         }
 
     def _selection_reconcile_verdict(
@@ -2788,6 +2791,14 @@ class PathBRuntime:
 
         retained = ticker_key in (indexes.get("retained_keys") or set())
         if reviewed and not retained:
+            if indexes.get("rule_direct"):
+                # rule_direct 랭크 이탈 = 검토 후 탈락이 아님 — 취소하지 않는다.
+                # 플랜 수명은 고유 규칙(expiry·cancel_if_open_above·stop)이 관리 (P2 패치 2026-07-08).
+                return "KEEP", "rule_direct_watch_rotation", {
+                    "reviewed": True,
+                    "route_missing": False,
+                    "route_incomplete": False,
+                }
             return "INVALID_CANCEL", "reviewed_and_removed", {
                 "reviewed": True,
                 "route_missing": False,
