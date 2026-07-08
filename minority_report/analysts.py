@@ -3318,6 +3318,58 @@ Rules:
         )
         return tickers, reasons
 
+    # 운영자 결정(2026-07-08, debate_design_rule_candidates_claude_exit_only_20260708):
+    # Claude selection(멀티티커 랭킹) 콜 제거 — 룰 컷(prompt pool) 상위를 watchlist로 직결.
+    # 진입 가격플랜(single_symbol_judge/claude_price)·매도/보유 Claude 경로는 무변경.
+    # 킬스위치: SELECTION_RULE_DIRECT_<시장>=false 로 즉시 원복.
+    if _env_bool_flag(f"SELECTION_RULE_DIRECT_{str(market).upper()}", False):
+        rule_watch: list[str] = []
+        for _row in prompt_candidates:
+            _tk = str((_row or {}).get("ticker") or "").strip()
+            if _tk and _tk not in rule_watch:
+                rule_watch.append(_tk)
+            if len(rule_watch) >= limits["watch_max"]:
+                break
+        reasons = {t: "rule_direct(screener_rank)" for t in rule_watch}
+        selection_meta = _attach_prompt_pool_meta({
+            "watchlist": list(rule_watch),
+            "trade_ready": [],
+            "reasons": reasons,
+            "veto": {},
+            "risk_tags": {},
+            "recommended_strategy": {},
+            "max_position_pct": {},
+            "allocation_intent": {},
+            "max_order_cap_pct": {},
+            "risk_budget_pct": {},
+            "size_reason": {},
+            "_selection_rule_direct": True,
+            "_selection_source_type": "rule_direct",
+            "_full_claude_call_skipped": True,
+        })
+        _LAST_SELECTION_META = selection_meta
+        log.info(
+            f"[ticker-selection] {market} rule_direct enforce: Claude 랭킹 콜 스킵, "
+            f"룰 컷 직결 watch={rule_watch} trade_ready=[]"
+        )
+        analysis_log.info(
+            f"[selection rule_direct] {market} watch={rule_watch} trade_ready=[]",
+            extra={
+                "extra": {
+                    "event": "ticker_selection_rule_direct",
+                    "log_contract": "selection_rule_direct_enforce_v1",
+                    "source": "rule_direct",
+                    "market": market,
+                    "consensus_mode": consensus_mode,
+                    "selected": rule_watch,
+                    "trade_ready": [],
+                    "candidate_count": len(prompt_candidates),
+                    "full_claude_call_skipped": True,
+                }
+            },
+        )
+        return rule_watch, reasons
+
     US_INVERSE_ETFS = {"TZA", "SPDN", "NVD", "SQQQ", "SDOW", "SPXU", "SH", "PSQ", "MYY"}
     US_STABLE_ANCHORS = ["T", "VZ", "XLU", "KO", "JNJ", "PG", "O", "VYM", "SCHD"]
 
