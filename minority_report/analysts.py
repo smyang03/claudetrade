@@ -3263,19 +3263,25 @@ Rules:
         prompt_pool_core_hash=smart_skip_core_hash,
         prompt_pool_tail_hash=smart_skip_tail_hash,
     )
-    try:
-        smart_skip = selection_smart_skip.maybe_reuse(
-            market=market,
-            consensus_mode=consensus_mode,
-            execution_phase=execution_phase,
-            prompt_hash=smart_skip_prompt_hash,
-            prompt_candidate_count=len(prompt_candidates),
-            preopen_watch=preopen_watch,
-            session_date=smart_skip_session_date,
-        )
-    except Exception as smart_skip_exc:
-        log.debug(f"[ticker-selection] smart skip fail-open {market}: {smart_skip_exc}")
-        smart_skip = {"reuse": False, "reason": "smart_skip_error"}
+    _rule_direct_active = _env_bool_flag(f"SELECTION_RULE_DIRECT_{str(market).upper()}", False)
+    if _rule_direct_active:
+        # 하드가드(2026-07-09, 완결성 검토 #2): rule_direct 활성 시 smart_skip 재사용 금지 —
+        # smart_skip을 실수로 재활성화해도 구 Claude 선정 캐시가 rule_direct를 우회하지 못한다.
+        smart_skip = {"reuse": False, "reason": "rule_direct_hard_guard"}
+    else:
+        try:
+            smart_skip = selection_smart_skip.maybe_reuse(
+                market=market,
+                consensus_mode=consensus_mode,
+                execution_phase=execution_phase,
+                prompt_hash=smart_skip_prompt_hash,
+                prompt_candidate_count=len(prompt_candidates),
+                preopen_watch=preopen_watch,
+                session_date=smart_skip_session_date,
+            )
+        except Exception as smart_skip_exc:
+            log.debug(f"[ticker-selection] smart skip fail-open {market}: {smart_skip_exc}")
+            smart_skip = {"reuse": False, "reason": "smart_skip_error"}
     if bool(smart_skip.get("reuse")):
         selection_meta = dict(smart_skip.get("selection_meta") or {})
         selection_meta = _attach_prompt_pool_meta(selection_meta)
@@ -3322,7 +3328,7 @@ Rules:
     # Claude selection(멀티티커 랭킹) 콜 제거 — 룰 컷(prompt pool) 상위를 watchlist로 직결.
     # 진입 가격플랜(single_symbol_judge/claude_price)·매도/보유 Claude 경로는 무변경.
     # 킬스위치: SELECTION_RULE_DIRECT_<시장>=false 로 즉시 원복.
-    if _env_bool_flag(f"SELECTION_RULE_DIRECT_{str(market).upper()}", False):
+    if _rule_direct_active:
         rule_watch: list[str] = []
         _rule_reasons: dict[str, str] = {}
         for _row in prompt_candidates:

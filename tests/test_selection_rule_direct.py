@@ -76,6 +76,35 @@ class SelectionRuleDirectTest(unittest.TestCase):
 
         self.assertGreaterEqual(called["n"], 1, "토글 off인데 Claude 콜이 없다(경로 변경 회귀)")
 
+    def test_rule_direct_hard_guard_beats_smart_skip_cache(self) -> None:
+        """하드가드(2026-07-09): smart_skip을 켜고 캐시 히트가 나도 rule_direct가 우선.
+
+        구 Claude 선정 캐시(STALE)가 rule_direct를 우회하면 안 된다 — maybe_reuse 자체가
+        호출되지 않아야 한다."""
+        from minority_report import analysts
+
+        stale = {
+            "reuse": True,
+            "selection_meta": {"watchlist": ["STALE1", "STALE2"], "trade_ready": ["STALE1"], "reasons": {}},
+            "reasons": {"STALE1": "cached"},
+        }
+        env = {
+            "SELECTION_RULE_DIRECT_US": "true",
+            "SELECTION_SMART_SKIP_ENABLED": "true",
+            "US_WATCHLIST_MAX": "5",
+        }
+        with patch.dict("os.environ", env, clear=False), \
+                patch.object(analysts.selection_smart_skip, "maybe_reuse", return_value=stale) as mock_reuse, \
+                patch.object(analysts.client.messages, "create", side_effect=_fail_create):
+            tickers, reasons = analysts.select_tickers(
+                "US", "digest", "NEUTRAL", _candidates(8)
+            )
+
+        mock_reuse.assert_not_called()
+        self.assertNotIn("STALE1", tickers, "구 캐시가 rule_direct를 우회했다")
+        for t in tickers:
+            self.assertTrue((reasons.get(t) or "").startswith("rule_direct("))
+
     def test_rule_direct_market_isolation(self) -> None:
         """US만 켜면 KR은 기존 경로."""
         from minority_report import analysts
