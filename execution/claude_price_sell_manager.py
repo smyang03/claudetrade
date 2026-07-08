@@ -282,6 +282,10 @@ class ClaudePriceSellManager:
             exit_value_krw = exit_px * qty
         fee_krw_est = entry_cost_krw * buy_rate + exit_value_krw * sell_rate
         meta["fee_krw_est"] = round(fee_krw_est, 0)
+        # C1-② 배관수리(2026-07-09): gross 원화 손익 — PathB 청산 소유권 이전 후
+        # Writer B(이 경로)에 pnl_krw가 처음부터 미배선이라 6월+ 결측이었음. entry/FX 결측 시
+        # 위쪽 조기 return으로 여기 도달 못함 = 위조 없음(진단서 참조).
+        meta["pnl_krw"] = round(exit_value_krw - entry_cost_krw, 0)
         meta["pnl_krw_net_est"] = round(exit_value_krw - entry_cost_krw - fee_krw_est, 0)
         fx_spread_krw_est = (entry_cost_krw + exit_value_krw) * fx_spread_rate
         meta["fx_spread_krw_est"] = round(fx_spread_krw_est, 0)

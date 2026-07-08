@@ -19355,6 +19355,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "model": str((meta or {}).get("model") or ""),
                     "prompt_version": self._v2_prompt_version(),
                     "source_file": "trading_bot._record_candidate_funnel_snapshot",
+                    # C1-③(2026-07-09): 토큰 회계 복구 — select_tickers가 meta에 주입한 값.
+                    # rule_direct/smart_skip처럼 API 콜이 없던 selection은 0이 정직한 값.
+                    "input_tokens": int((meta or {}).get("_input_tokens") or 0),
+                    "output_tokens": int((meta or {}).get("_output_tokens") or 0),
                     "prompt_candidate_count": actual_prompt_count,
                     "actual_prompt_count": actual_prompt_count,
                     "watchlist_count": len(watchlist),

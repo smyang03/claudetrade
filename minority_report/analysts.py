@@ -3534,6 +3534,10 @@ Rules:
             if key in selection_meta
         }
         _resp_meta = claude_response_meta(resp)
+        # C1-③ 배관수리(2026-07-09): selection_meta에 토큰 주입 — 라이브 audit 작성자
+        # (_write_candidate_audit_live)가 읽을 소스가 처음부터 없어 5/9+ 토큰 0이었음(진단서).
+        selection_meta["_input_tokens"] = int(getattr(resp.usage, "input_tokens", 0) or 0)
+        selection_meta["_output_tokens"] = int(getattr(resp.usage, "output_tokens", 0) or 0)
         save_raw_call(
             label="select_tickers",
             prompt=prompt,

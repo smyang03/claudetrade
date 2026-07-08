@@ -951,6 +951,14 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
     exit_price = _close_price(close_payload)
     qty = _close_qty(close_payload, fill_payload)
     pnl_krw = _num(close_payload, "pnl_krw", "pnl")
+    if pnl_krw is None:
+        # C1-② 2차결함(2026-07-09): 이중 CLOSED에서 마지막 이벤트(pathb mark_closed)가
+        # pnl_krw 없이 기록돼 Writer A의 값을 덮는 사고 — pnl_krw 실린 CLOSED로 fallback.
+        for _ev in reversed([e for e in events if str(e.get("event_type")) == "CLOSED"]):
+            _v = _num(dict(_ev.get("payload") or {}), "pnl_krw", "pnl")
+            if _v is not None:
+                pnl_krw = _v
+                break
     pnl_pct = _num(close_payload, "pnl_pct", "position_pnl_pct")
     # net 실현손익(수수료/환율 반영). CLOSED payload에 net 추정치가 있을 때만 measured로 기록.
     pnl_pct_net = _num(close_payload, "pnl_pct_net_est", "pnl_pct_net")
