@@ -3640,6 +3640,16 @@ Rules:
                     )
                     if not retry_result.get("_parse_recovered") and retry_meta.get("watchlist"):
                         result = retry_result
+                        # 외부 검토 ④(7/9): retry 채택 시 meta 교체로 토큰이 유실되던 결함 —
+                        # primary+retry 합산 주입(실제 API 소비와 일치).
+                        retry_meta["_input_tokens"] = (
+                            int(getattr(resp.usage, "input_tokens", 0) or 0)
+                            + int(getattr(retry_resp.usage, "input_tokens", 0) or 0)
+                        )
+                        retry_meta["_output_tokens"] = (
+                            int(getattr(resp.usage, "output_tokens", 0) or 0)
+                            + int(getattr(retry_resp.usage, "output_tokens", 0) or 0)
+                        )
                         selection_meta = retry_meta
                         selection_meta["_selection_retry_trade_ready_ignored"] = retry_trade_ready
                         selection_meta["_selection_retry_candidate_count"] = len(retry_candidates)

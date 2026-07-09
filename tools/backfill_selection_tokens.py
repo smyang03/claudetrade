@@ -38,6 +38,8 @@ def _fn_dt(path: str):
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--allow-rerun", action="store_true",
+                    help="이미 백필된 DB에 재실행 허용(위험: 같은 raw가 다른 행에 재배정=이중계상). 기본 차단")
     args = ap.parse_args()
 
     # raw 인덱스 (파일명에서 시각·시장 — json 로드는 매칭된 것만)
@@ -51,11 +53,32 @@ def main() -> None:
 
     con = sqlite3.connect(str(DB))
     cur = con.cursor()
-    rows = list(cur.execute(
-        "SELECT call_id, market, called_at FROM audit_claude_calls "
+    # 재실행 하드가드(7/9): 도구는 무상태 1:1 그리디라, 1차 실행 후 재실행하면 이미 소비된
+    # raw가 차순위 행에 재배정돼 토큰 이중계상된다. 백필 흔적이 있으면 apply 차단.
+    already = cur.execute(
+        "SELECT COUNT(*) FROM audit_claude_calls WHERE label='selection_meta_live' "
+        "AND COALESCE(input_tokens,0)>0 AND called_at >= ?", (SINCE,)
+    ).fetchone()[0]
+    if already > 0 and args.apply and not args.allow_rerun:
+        print(f"차단: 이미 백필된 행 {already}건 존재 — 재실행은 이중계상 위험. --allow-rerun으로만 강제 가능")
+        return
+    raw_rows = list(cur.execute(
+        "SELECT call_id, market, called_at, payload_json FROM audit_claude_calls "
         "WHERE label='selection_meta_live' AND COALESCE(input_tokens,0)=0 "
         "AND called_at >= ?", (SINCE,)
     ))
+    # 외부 검토 ③(7/9): API 콜이 없어 0이 정직한 행(smart_skip 재사용·rule_direct)은 백필 제외
+    rows = []
+    for cid, mkt, at, pj in raw_rows:
+        try:
+            p = json.loads(pj or "{}")
+        except Exception:
+            p = {}
+        if bool(p.get("smart_skip_reused")) or bool(p.get("_smart_skip_reused")) \
+                or bool(p.get("_selection_rule_direct")) or bool(p.get("_full_claude_call_skipped")):
+            continue
+        rows.append((cid, mkt, at))
+    print(f"제외(정직한 0콜): {len(raw_rows) - len(rows)}")
     # called_at '+09:00' aware KST → naive KST
     targets = []
     for cid, mkt, at in rows:

@@ -295,6 +295,11 @@ class PathBRuntime:
             "operator_enabled": control.enabled,
             "emergency_disabled": control.emergency_disabled or bool(self.config.pathb_emergency_disable),
             "fixed_order_krw": int(self.config.pathb_fixed_order_krw),
+            # 시장별 실효 주문예산 (2026-07-09 US 소액화 20만 — 표시/텔레그램용)
+            "fixed_order_krw_by_market": {
+                "KR": int(self._pathb_fixed_order_krw_for("KR")),
+                "US": int(self._pathb_fixed_order_krw_for("US")),
+            },
             "allow_one_share_over_budget": bool(self.config.pathb_allow_one_share_over_budget),
             "one_share_over_budget_max_krw": int(self.config.pathb_one_share_over_budget_max_krw),
             "one_share_over_budget_max_account_pct": float(
@@ -12932,9 +12937,13 @@ class PathBRuntime:
         loss_ok = max_loss_pct <= 0 or pnl_pct <= max_loss_pct
         return bool(cost_ok and loss_ok)
 
-    def _pathb_registration_max_entry_krw(self, market: str, *, fallback_cash_krw: float | None = None) -> float:
+    def _pathb_fixed_order_krw_for(self, market: str) -> float:
+        """시장별 고정 주문예산 — PATHB_FIXED_ORDER_KRW_{KR|US} 오버라이드 우선(2026-07-09 US 소액화 20만).
+
+        소비처 3곳(등록 cap·수량 계산·사이징 컨텍스트)이 반드시 이 헬퍼를 쓴다 —
+        외부 검토(7/9): 등록 cap만 20만이고 수량 계산이 50만으로 남는 불일치 적발.
+        """
         fixed_budget = max(0.0, float(self.config.pathb_fixed_order_krw or 0.0))
-        # 시장별 오버라이드(2026-07-09 운영자: US 소액화 20만) — PATHB_MIN_REWARD_RISK_KR과 동일 접미 패턴
         _mkt = "US" if str(market or "").upper() == "US" else "KR"
         _ov = os.getenv(f"PATHB_FIXED_ORDER_KRW_{_mkt}")
         if _ov not in (None, ""):
@@ -12942,6 +12951,10 @@ class PathBRuntime:
                 fixed_budget = max(0.0, float(_ov))
             except (TypeError, ValueError):
                 pass
+        return fixed_budget
+
+    def _pathb_registration_max_entry_krw(self, market: str, *, fallback_cash_krw: float | None = None) -> float:
+        fixed_budget = self._pathb_fixed_order_krw_for(market)
         max_entry = fixed_budget
         if not bool(self.config.pathb_allow_one_share_over_budget):
             return max_entry
@@ -12995,7 +13008,7 @@ class PathBRuntime:
             "buy_zone_low_krw": buy_zone_low_krw,
             "buy_zone_high_krw": buy_zone_high_krw,
             "max_entry_krw": max_entry_krw,
-            "pathb_fixed_order_krw": float(self.config.pathb_fixed_order_krw or 0.0),
+            "pathb_fixed_order_krw": float(self._pathb_fixed_order_krw_for(getattr(plan, "market", ""))),
             "pathb_allow_one_share_over_budget": bool(self.config.pathb_allow_one_share_over_budget),
             "pathb_one_share_over_budget_max_krw": float(
                 self.config.pathb_one_share_over_budget_max_krw or 0.0
@@ -13019,7 +13032,9 @@ class PathBRuntime:
     def _pathb_qty_with_context(self, market: str, price_krw: float, *, cash_krw: float, boost_eligible: bool = False) -> tuple[int, dict[str, Any]]:
         price = float(price_krw or 0)
         cash = max(0.0, float(cash_krw or 0))
-        fixed_budget = float(self.config.pathb_fixed_order_krw)
+        # 외부 검토 High(7/9): 등록 cap만 시장별 20만이고 수량 계산은 글로벌 50만으로 남아
+        # 실체결 노출이 깨지던 불일치 — 헬퍼로 통일.
+        fixed_budget = self._pathb_fixed_order_krw_for(market)
         original_budget = self._pathb_registration_max_entry_krw(market, fallback_cash_krw=cash)
         early_gate = self._us_early_entry_soft_gate(market)
         early_gate_applied = bool(early_gate.get("active"))

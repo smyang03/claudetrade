@@ -2082,8 +2082,9 @@ def _path_b_config(runtime_mode: str | None = None) -> dict[str, Any]:
         "mode": str(env.get("PATHB_MODE", cfg.pathb_mode) or cfg.pathb_mode),
         "fixed_order_krw": fixed_order_krw,
         "fixed_order_krw_by_market": {
-            "KR": _env_int(env, "KR_FIXED_ORDER_KRW", fixed_order_krw),
-            "US": _env_int(env, "US_FIXED_ORDER_KRW", us_fixed_default) or fixed_order_krw,
+            # PATHB_FIXED_ORDER_KRW_{MKT}가 실효값(수량 계산 소비 키, 2026-07-09 US 소액화) — 레거시 키는 fallback
+            "KR": _env_int(env, "PATHB_FIXED_ORDER_KRW_KR", _env_int(env, "KR_FIXED_ORDER_KRW", fixed_order_krw)),
+            "US": _env_int(env, "PATHB_FIXED_ORDER_KRW_US", _env_int(env, "US_FIXED_ORDER_KRW", us_fixed_default)) or fixed_order_krw,
         },
         "min_order_krw_by_market": {
             "KR": _env_int(env, "KR_MIN_ORDER_KRW", cfg.kr_min_order_krw),

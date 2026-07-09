@@ -376,7 +376,13 @@ def _pathb_status(bot: Any) -> str:
         f"운영자 허용: {_ko_onoff(status.get('operator_enabled'))}",
         f"긴급 중지: {_ko_bool(status.get('emergency_disabled'))}",
         f"모드: {_ko_pathb_mode(status.get('mode'))} / 런타임={_ko_runtime_mode(status.get('runtime_mode'))}",
-        f"1회 주문금액: {int(status.get('fixed_order_krw') or 0):,}원",
+        (
+            # 시장별 실효 주문예산 표시 (2026-07-09 US 소액화 — status에 by_market 있으면 우선)
+            f"1회 주문금액: KR {int((status.get('fixed_order_krw_by_market') or {}).get('KR') or 0):,}원"
+            f" / US {int((status.get('fixed_order_krw_by_market') or {}).get('US') or 0):,}원"
+            if status.get("fixed_order_krw_by_market")
+            else f"1회 주문금액: {int(status.get('fixed_order_krw') or 0):,}원"
+        ),
         f"최대 보유: {status.get('max_positions')}개 / 하루 진입: {status.get('max_daily_entries')}회",
         f"최소 신뢰도: {status.get('min_confidence')}",
     ]
