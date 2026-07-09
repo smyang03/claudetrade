@@ -31559,6 +31559,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         capacity = self._early_judge_capacity_remaining(market_key)
         if capacity <= 0:
             log.info(f"[early judge] {market_key} capacity exhausted source={source}")
+            # green-tape 계측(2026-07-09 설계 v0): 캡이 버린 후보를 기록 — "어떤 상태에서
+            # 용량이 돈을 버리는가"의 판독 원료. 임계는 사후 판독으로 결정(창구일 실시간
+            # 단일신호 확립 실패 — 지수tape는 6/17만, hot비율은 4/28·5/7만 분리).
+            try:
+                _dropped = [
+                    {
+                        "ticker": self._selection_ticker_key(market_key, (r or {}).get("ticker") or ""),
+                        "price": (dict((r or {}).get("post_open_features") or {}) or {}).get("current_price"),
+                    }
+                    for r in list(rows or [])[:20]
+                    if isinstance(r, dict) and str((r or {}).get("ticker") or "").strip()
+                ]
+                if _dropped:
+                    self._write_funnel_event(
+                        "early_judge_capacity_dropped",
+                        market_key,
+                        {"source": source, "dropped": _dropped, "capacity": 0},
+                    )
+                    log.info(
+                        f"[green_tape_shadow] {market_key} capacity_dropped "
+                        f"n={len(_dropped)} tickers={[d['ticker'] for d in _dropped][:8]}"
+                    )
+            except Exception:
+                pass
             return []
         meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
         guarded_rows = self._early_judge_rows_with_runtime_guards(market_key, list(rows or []))
