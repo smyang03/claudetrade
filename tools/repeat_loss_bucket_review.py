@@ -31,7 +31,7 @@ def main() -> None:
     mc.row_factory = sqlite3.Row
     trades = [dict(r) for r in mc.execute(
         """SELECT DISTINCT v2_decision_id, market, session_date, ticker, filled_at,
-                  pnl_pct_net, pnl_pct
+                  pnl_pct_net, pnl_pct, market_regime
            FROM v2_learning_performance
            WHERE closed=1 AND filled=1 AND runtime_mode='live' AND pnl_pct IS NOT NULL
            ORDER BY COALESCE(filled_at, session_date)"""
@@ -72,7 +72,8 @@ def main() -> None:
         recent = [x for x in loss_hist[bk] if x >= cutoff]
         if len(recent) >= args.max_losses:
             net = t["pnl_pct_net"] if t["pnl_pct_net"] is not None else t["pnl_pct"]
-            would.append((mk, bucket, str(t["session_date"])[:7], float(net)))
+            would.append((mk, bucket, str(t["session_date"])[:7], float(net),
+                          str(t.get("market_regime") or "?")))
         pnl = t["pnl_pct_net"] if t["pnl_pct_net"] is not None else t["pnl_pct"]
         if pnl is not None and float(pnl) < 0:
             loss_hist[bk].append(dt)
@@ -82,9 +83,11 @@ def main() -> None:
     print(f"총 {len(would)}건 | net 합 {sum(w[3] for w in would):+.2f}")
     by_mon = defaultdict(list)
     by_bkt = defaultdict(list)
-    for mk, bk, mon, net in would:
+    by_reg = defaultdict(list)
+    for mk, bk, mon, net, reg in would:
         by_mon[f"{mk} {mon}"].append(net)
         by_bkt[f"{mk}:{bk}"].append(net)
+        by_reg[f"{mk}:{reg}"].append(net)
     print("-- 월별 (방향 일치 확인용) --")
     for k in sorted(by_mon):
         v = by_mon[k]
@@ -93,6 +96,11 @@ def main() -> None:
     for k in sorted(by_bkt, key=lambda x: sum(by_bkt[x]))[:8]:
         v = by_bkt[k]
         print(f"  {k}: n={len(v)} 합={sum(v):+.2f}")
+    print("-- regime별 (regime+bucket throttle 검증: bull에서도 음수인가) --")
+    for k in sorted(by_reg, key=lambda x: sum(by_reg[x])):
+        v = by_reg[k]
+        if len(v) >= 3:
+            print(f"  {k}: n={len(v)} 합={sum(v):+.2f}")
 
 
 if __name__ == "__main__":
