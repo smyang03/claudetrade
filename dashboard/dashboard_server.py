@@ -577,6 +577,9 @@ def _order_size_config_keys(market: str) -> list[str]:
             "KR_FIXED_ORDER_KRW",
             "US_FIXED_ORDER_KRW",
             "PATHB_FIXED_ORDER_KRW",
+            # 시장별 실효 예산 키 (예산값 단일화 7/9 — 수량 계산이 소비하는 실제 키)
+            "PATHB_FIXED_ORDER_KRW_KR",
+            "PATHB_FIXED_ORDER_KRW_US",
         ]
     raise ValueError("market must be KR or US")
 

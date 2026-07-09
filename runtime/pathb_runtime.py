@@ -11309,7 +11309,7 @@ class PathBRuntime:
                         or (payload or {}).get("max_entry_krw")
                         or 0.0
                     ),
-                    fixed_order_krw=float(getattr(self.config, "pathb_fixed_order_krw", 0.0) or 0.0),
+                    fixed_order_krw=float(self._pathb_fixed_order_krw_for(market)),  # 예산값 단일화(7/9)
                     cash_krw=0.0,
                     available_budget_krw=0.0,
                     qty=0,
