@@ -20,9 +20,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from runtime.us_swing_authority import evaluate_swing_authority, load_swing_policy
-from runtime.us_swing_order_handoff import ensure_handoff_schema
+from runtime.us_swing_order_handoff import ensure_handoff_schema, summarize_forward_evidence
 from tools.build_us_yahoo_point_in_time import BENCHMARKS, build_ticker_frame, _read_price
 from tools.us_daily_alpha_walkforward import YAHOO_FEATURES, load_yahoo_dataset
+from tools.us_swing_exit_counterfactual import simulate_exit
 
 
 SCHEMA_VERSION = "us_swing_shadow_v1"
@@ -318,19 +319,132 @@ def refresh_fx_map(base: dict[str, float], *, start: str, end: str) -> dict[str,
     return output
 
 
+def _latest_fx(fx_map: dict[str, float], date: str) -> float | None:
+    eligible = [key for key in fx_map if str(key) <= str(date)]
+    if not eligible:
+        return None
+    value = fx_map[max(eligible)]
+    return float(value) if np.isfinite(value) and float(value) > 100 else None
+
+
+def annotate_execution_shadow(
+    con: sqlite3.Connection,
+    *,
+    signal_date: str,
+    fx_map: dict[str, float],
+    policy: dict[str, Any],
+    base_order_budget_krw: float = 500_000.0,
+) -> dict[str, Any]:
+    """Select the exact MICRO path: one slot, rank1 only, whole shares."""
+    ensure_handoff_schema(con)
+    micro = dict((policy.get("authority_caps") or {}).get("micro") or {})
+    multiplier = float(micro.get("size_multiplier") or 0.0)
+    budget = float(base_order_budget_krw) * multiplier
+    fx = _latest_fx(fx_map, signal_date)
+    evaluated_at = datetime.now(timezone.utc).isoformat()
+    prior = con.execute(
+        """SELECT signal_date,execution_shadow_exit_date FROM signals
+           WHERE execution_shadow_eligible=1 AND signal_date<?
+           ORDER BY signal_date DESC LIMIT 1""",
+        (str(signal_date),),
+    ).fetchone()
+    slot_free = True
+    slot_reason = ""
+    if prior:
+        prior_date, actual_exit = str(prior[0]), str(prior[1] or "")
+        if actual_exit:
+            slot_free = str(signal_date) > actual_exit
+            if not slot_free:
+                slot_reason = f"slot_occupied_until:{actual_exit}"
+        else:
+            later_sessions = con.execute(
+                "SELECT COUNT(DISTINCT signal_date) FROM signals WHERE signal_date>? AND signal_date<=?",
+                (prior_date, str(signal_date)),
+            ).fetchone()[0]
+            slot_free = int(later_sessions or 0) >= int(
+                (policy.get("execution_contract") or {}).get("max_hold_sessions", 5)
+            )
+            if not slot_free:
+                slot_reason = f"slot_occupied_pending:{prior_date}"
+
+    rows = con.execute(
+        "SELECT ticker,rank,reference_close FROM signals WHERE signal_date=? ORDER BY rank",
+        (str(signal_date),),
+    ).fetchall()
+    selected: dict[str, Any] = {}
+    for ticker, rank, reference_close in rows:
+        eligible = 0
+        qty = 0
+        price_krw = None
+        reason = "rank_outside_micro_contract"
+        if int(rank) == 1:
+            reference = float(reference_close) if reference_close is not None else None
+            price_krw = reference * fx if reference and fx else None
+            if not slot_free:
+                reason = slot_reason
+            elif not fx:
+                reason = "fx_missing"
+            elif not reference or reference <= 0:
+                reason = "reference_price_missing"
+            else:
+                qty = int(budget // price_krw) if budget > 0 else 0
+                if qty <= 0:
+                    reason = "micro_budget_cannot_buy_one_share"
+                else:
+                    eligible = 1
+                    reason = "selected_rank1_whole_share"
+                    selected = {"ticker": str(ticker), "rank": 1, "qty": qty}
+        con.execute(
+            """UPDATE signals SET execution_shadow_eligible=?,execution_shadow_reason=?,
+                execution_shadow_qty=?,execution_shadow_budget_krw=?,
+                execution_shadow_entry_proxy_usd=?,execution_shadow_entry_price_krw=?,
+                execution_shadow_fx=?,execution_shadow_policy=?,execution_shadow_evaluated_at=?
+                WHERE signal_date=? AND ticker=?""",
+            (
+                eligible,
+                reason,
+                qty,
+                budget,
+                reference_close,
+                price_krw,
+                fx,
+                "rank1_skip_v1",
+                evaluated_at,
+                str(signal_date),
+                str(ticker),
+            ),
+        )
+    con.commit()
+    return {
+        "policy": "rank1_skip_v1",
+        "budget_krw": budget,
+        "fx": fx,
+        "slot_free": slot_free,
+        "slot_reason": slot_reason,
+        "selected": selected,
+    }
+
+
 def mature_pending(
     con: sqlite3.Connection,
     *,
     price_dir: Path,
     fx_map: dict[str, float],
     cost_pct: float,
+    entry_slippage_pct: float = 0.5,
+    tp_pct: float = 0.12,
+    sl_pct: float = 0.25,
 ) -> dict[str, int]:
+    ensure_handoff_schema(con)
     pending = con.execute(
-        "SELECT signal_date,ticker FROM signals WHERE status='PENDING' ORDER BY signal_date,ticker"
+        """SELECT signal_date,ticker,execution_shadow_eligible,execution_shadow_budget_krw
+           FROM signals WHERE status='PENDING' ORDER BY signal_date,ticker"""
     ).fetchall()
     matured = 0
     waiting = 0
-    for signal_date, ticker in pending:
+    execution_matured = 0
+    execution_unaffordable = 0
+    for signal_date, ticker, execution_eligible, execution_budget in pending:
         path = price_dir / f"us_{str(ticker).upper()}.csv"
         if not path.exists():
             waiting += 1
@@ -340,6 +454,43 @@ def mature_pending(
         # The feature bar is the prior session, so entry is signal_date open and the
         # outcome is the fifth session close including the entry session.
         future = bars[bars["date"].astype(str) >= str(signal_date)].sort_values("date")
+        if int(execution_eligible or 0) == 1 and not future.empty:
+            first = future.iloc[0]
+            first_fx = fx_map.get(str(first["date"])) or _latest_fx(fx_map, str(first["date"]))
+            shadow_entry = float(first["open"]) * (1.0 + float(entry_slippage_pct) / 100.0)
+            budget = float(execution_budget or 0.0)
+            shadow_qty = int(budget // (shadow_entry * first_fx)) if budget > 0 and first_fx else 0
+            if shadow_qty <= 0:
+                con.execute(
+                    """UPDATE signals SET execution_shadow_eligible=0,
+                        execution_shadow_reason='entry_open_unaffordable',execution_shadow_qty=0,
+                        execution_shadow_entry_fill_usd=?,execution_shadow_entry_price_krw=?,
+                        execution_shadow_fx=? WHERE signal_date=? AND ticker=?""",
+                    (
+                        shadow_entry,
+                        shadow_entry * first_fx if first_fx else None,
+                        first_fx,
+                        signal_date,
+                        ticker,
+                    ),
+                )
+                execution_eligible = 0
+                execution_unaffordable += 1
+            else:
+                con.execute(
+                    """UPDATE signals SET execution_shadow_reason='entry_open_whole_share_confirmed',
+                        execution_shadow_qty=?,execution_shadow_entry_fill_usd=?,
+                        execution_shadow_entry_price_krw=?,execution_shadow_fx=?
+                       WHERE signal_date=? AND ticker=?""",
+                    (
+                        shadow_qty,
+                        shadow_entry,
+                        shadow_entry * first_fx,
+                        first_fx,
+                        signal_date,
+                        ticker,
+                    ),
+                )
         if len(future) < 5:
             waiting += 1
             continue
@@ -355,20 +506,72 @@ def mature_pending(
         gross_usd = (exit_price / entry_price - 1.0) * 100.0
         gross_krw = ((exit_price / entry_price) * (exit_fx / entry_fx) - 1.0) * 100.0
         net_krw = gross_krw - float(cost_pct)
+        execution_values: tuple[Any, ...] = (None, None, None, None, None)
+        if int(execution_eligible or 0) == 1:
+            budget = float(execution_budget or 0.0)
+            execution_entry_price = entry_price * (1.0 + float(entry_slippage_pct) / 100.0)
+            qty = int(budget // (execution_entry_price * entry_fx)) if budget > 0 else 0
+            if qty <= 0:
+                con.execute(
+                    """UPDATE signals SET execution_shadow_eligible=0,
+                        execution_shadow_reason='entry_open_unaffordable',execution_shadow_qty=0
+                       WHERE signal_date=? AND ticker=?""",
+                    (signal_date, ticker),
+                )
+                execution_unaffordable += 1
+            else:
+                contract_exit_date, contract_exit_price, contract_reason = simulate_exit(
+                    future.head(5),
+                    entry_price=execution_entry_price,
+                    tp_pct=tp_pct,
+                    sl_pct=sl_pct,
+                    tie_break="sl_first",
+                )
+                contract_exit_fx = fx_map.get(str(contract_exit_date)) or _latest_fx(
+                    fx_map, str(contract_exit_date)
+                )
+                if contract_exit_fx:
+                    contract_net = (
+                        (contract_exit_price / execution_entry_price) * (contract_exit_fx / entry_fx) - 1.0
+                    ) * 100.0 - float(cost_pct)
+                    contract_pnl = qty * execution_entry_price * entry_fx * contract_net / 100.0
+                    execution_values = (
+                        str(contract_exit_date),
+                        float(contract_exit_price),
+                        str(contract_reason),
+                        float(contract_net),
+                        float(contract_pnl),
+                    )
+                    con.execute(
+                        """UPDATE signals SET execution_shadow_qty=?,
+                            execution_shadow_entry_fill_usd=?,execution_shadow_entry_price_krw=?
+                           WHERE signal_date=? AND ticker=?""",
+                        (qty, execution_entry_price, execution_entry_price * entry_fx, signal_date, ticker),
+                    )
+                    execution_matured += 1
         con.execute(
             """
             UPDATE signals SET entry_date=?,entry_price=?,exit_date=?,exit_price=?,entry_fx=?,exit_fx=?,
-                gross_usd_pct=?,gross_krw_pct=?,net_krw_pct=?,status='MATURED',error=NULL
+                gross_usd_pct=?,gross_krw_pct=?,net_krw_pct=?,status='MATURED',error=NULL,
+                execution_shadow_exit_date=?,execution_shadow_exit_price=?,
+                execution_shadow_exit_reason=?,execution_shadow_net_krw_pct=?,execution_shadow_pnl_krw=?
             WHERE signal_date=? AND ticker=? AND status='PENDING'
             """,
             (
                 str(entry["date"]), entry_price, str(exit_row["date"]), exit_price, entry_fx, exit_fx,
-                gross_usd, gross_krw, net_krw, signal_date, ticker,
+                gross_usd, gross_krw, net_krw,
+                *execution_values,
+                signal_date, ticker,
             ),
         )
         matured += 1
     con.commit()
-    return {"matured_now": matured, "waiting": waiting}
+    return {
+        "matured_now": matured,
+        "waiting": waiting,
+        "execution_matured_now": execution_matured,
+        "execution_unaffordable_now": execution_unaffordable,
+    }
 
 
 def _block_lcb(values: np.ndarray, *, seed: int = 20260710) -> float | None:
@@ -426,6 +629,10 @@ def summarize_forward(con: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def summarize_executable_forward(con: sqlite3.Connection) -> dict[str, Any]:
+    return summarize_forward_evidence(con)
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -469,6 +676,11 @@ def main() -> int:
         price_dir=price_dir,
         fx_map=fx_map,
         cost_pct=float(policy.get("cost_pct", 0.50)),
+        entry_slippage_pct=float(
+            (policy.get("execution_contract") or {}).get("max_entry_slippage_pct", 0.5)
+        ),
+        tp_pct=float((policy.get("execution_contract") or {}).get("take_profit_pct", 0.12)),
+        sl_pct=float((policy.get("execution_contract") or {}).get("catastrophe_stop_pct", 0.25)),
     )
     generated = 0
     candidates_n = 0
@@ -477,6 +689,7 @@ def main() -> int:
     selected: list[dict[str, Any]] = []
     applied_vetoes: list[dict[str, str]] = []
     breadth_context: dict[str, Any] = {}
+    execution_shadow: dict[str, Any] = {}
     if not args.mature_only:
         snapshot = Path(args.snapshot) if args.snapshot else ROOT / "state" / f"preopen_US_{args.session_date.replace('-', '')}.json"
         veto_path = Path(args.veto_file) if args.veto_file else ROOT / "state" / f"us_swing_veto_{args.session_date.replace('-', '')}.json"
@@ -516,6 +729,13 @@ def main() -> int:
         generated = write_signals(
             con, signal_date=args.session_date, scored=scored, model_version=model_version
         )
+        execution_shadow = annotate_execution_shadow(
+            con,
+            signal_date=args.session_date,
+            fx_map=fx_map,
+            policy=policy,
+            base_order_budget_krw=500_000.0,
+        )
         selected = [
             {
                 "ticker": str(row["ticker"]), "rank": int(row["rank"]),
@@ -525,7 +745,8 @@ def main() -> int:
             }
             for row in scored.to_dict("records")
         ]
-    forward = summarize_forward(con)
+    model_forward = summarize_forward(con)
+    forward = summarize_executable_forward(con)
     historical = _load_json(Path(args.historical_evidence))
     execution_evidence = _load_json(Path(args.execution_evidence))
     authority = evaluate_swing_authority(
@@ -547,7 +768,9 @@ def main() -> int:
         "breadth_context": breadth_context,
         "feature_errors": feature_errors,
         "maturity": maturity,
+        "execution_shadow": execution_shadow,
         "forward_evidence": forward,
+        "model_forward_diagnostic_only": model_forward,
         "historical_evidence_present": bool(historical),
         "execution_evidence_present": bool(execution_evidence),
         "authority": authority.to_dict(),

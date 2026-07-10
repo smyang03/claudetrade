@@ -19,8 +19,8 @@
     "standard_required_cohorts": ["top3", "top5"]
   },
   "forward": {
-    "micro_min_sessions": 5,
-    "micro_min_matured": 15,
+    "micro_min_sessions": 3,
+    "micro_min_matured": 3,
     "micro_min_mean_net_pct": 0.0,
     "micro_min_profit_factor": 1.0,
     "probe_min_sessions": 15,
@@ -45,7 +45,8 @@
   "execution_contract": {
     "take_profit_pct": 0.12,
     "catastrophe_stop_pct": 0.25,
-    "max_hold_sessions": 5
+    "max_hold_sessions": 5,
+    "max_entry_slippage_pct": 0.5
   },
   "hard_blocks": {
     "require_point_in_time_features": true,

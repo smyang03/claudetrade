@@ -27,11 +27,13 @@ def _build_db(path: Path) -> None:
             con.execute(
                 """INSERT INTO signals(
                     signal_date,ticker,feature_date,model_version,rank,predicted_net_pct,
-                    probability,created_at,status,data_quality,net_krw_pct,reference_close
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    probability,created_at,status,data_quality,net_krw_pct,reference_close,
+                    execution_shadow_eligible,execution_shadow_net_krw_pct,execution_shadow_policy
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     signal_date, f"M{day_idx}{rank}", signal_date, "m", rank, 1.0,
                     0.60, "now", "MATURED", "point_in_time", value, 100.0,
+                    1 if rank == 1 else 0, value if rank == 1 else None, "rank1_skip_v1",
                 ),
             )
     con.execute(

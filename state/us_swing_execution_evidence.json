@@ -1,14 +1,148 @@
 {
   "authority": "EVIDENCE_ONLY_NO_AUTO_PROMOTION",
+  "capacity_report": "reports/us_swing_capacity_counterfactual_20260711.json",
+  "capacity_report_sha256": "327c7686230eb2470de592dd9bb2295bb57d32a5cda2e4e9f6721cb52e580835",
   "contract": {
     "catastrophe_stop_pct": 0.25,
     "cost_pct": 0.5,
     "entry_proxy": "session_open",
+    "max_entry_slippage_pct": 0.5,
     "max_hold_sessions": 5,
     "take_profit_pct": 0.12
   },
   "modes": {
     "micro": {
+      "capacity_metrics": {
+        "scenarios": {
+          "0": {
+            "account_return_pct": 1.247613890412447,
+            "annualized_trades_at_252_sessions": 47.3037542662116,
+            "block_lcb_pct": 0.3514869967025773,
+            "by_year": {
+              "2025": {
+                "mean_net_pct": 0.5954143069955146,
+                "net_pnl_krw": 10656.87995558611,
+                "profit_factor": 1.1363589785650974,
+                "trades": 40,
+                "win_rate": 0.525
+              },
+              "2026": {
+                "mean_net_pct": 7.758105368578853,
+                "net_pnl_krw": 51723.81456503626,
+                "profit_factor": 5.0804683960610495,
+                "trades": 15,
+                "win_rate": 0.6666666666666666
+              }
+            },
+            "decision_sessions": 293,
+            "ending_sleeve_krw": 562380.6945206224,
+            "fallback_trades": 0,
+            "mean_net_pct": 2.5488755056091525,
+            "median_net_pct": 2.9236403701442875,
+            "missing_outcome_sessions": 0,
+            "net_pnl_krw": 62380.694520622346,
+            "profit_factor": 1.689970232410104,
+            "rank_counts": {
+              "1": 55
+            },
+            "realized_equity_max_drawdown_pct": -2.6105807773145417,
+            "skipped_slot_sessions": 170,
+            "skipped_unaffordable_sessions": 68,
+            "sleeve_return_pct": 12.476138904124468,
+            "trade_rate_per_decision_session": 0.18771331058020477,
+            "trades": 55,
+            "win_rate": 0.5636363636363636,
+            "worst_net_pct": -27.18487064266398
+          },
+          "0.25": {
+            "account_return_pct": 1.0638793469696999,
+            "annualized_trades_at_252_sessions": 47.3037542662116,
+            "block_lcb_pct": -0.04855583343293057,
+            "by_year": {
+              "2025": {
+                "mean_net_pct": 0.42105722017611547,
+                "net_pnl_krw": 7772.868823153969,
+                "profit_factor": 1.0941939909564242,
+                "trades": 40,
+                "win_rate": 0.525
+              },
+              "2026": {
+                "mean_net_pct": 6.6959213843584,
+                "net_pnl_krw": 45421.098525331014,
+                "profit_factor": 3.5628712485012155,
+                "trades": 15,
+                "win_rate": 0.6
+              }
+            },
+            "decision_sessions": 293,
+            "ending_sleeve_krw": 553193.967348485,
+            "fallback_trades": 0,
+            "mean_net_pct": 2.132383810407647,
+            "median_net_pct": 2.6655664781931714,
+            "missing_outcome_sessions": 0,
+            "net_pnl_krw": 53193.96734848499,
+            "profit_factor": 1.5380009552100078,
+            "rank_counts": {
+              "1": 55
+            },
+            "realized_equity_max_drawdown_pct": -2.720782292594429,
+            "skipped_slot_sessions": 171,
+            "skipped_unaffordable_sessions": 67,
+            "sleeve_return_pct": 10.638793469697,
+            "trade_rate_per_decision_session": 0.18771331058020477,
+            "trades": 55,
+            "win_rate": 0.5454545454545454,
+            "worst_net_pct": -27.18487064266398
+          },
+          "0.5": {
+            "account_return_pct": 1.0329536597733107,
+            "annualized_trades_at_252_sessions": 47.3037542662116,
+            "block_lcb_pct": -0.10964891952318097,
+            "by_year": {
+              "2025": {
+                "mean_net_pct": 0.42036234185712473,
+                "net_pnl_krw": 7114.719831999835,
+                "profit_factor": 1.091919086965219,
+                "trades": 40,
+                "win_rate": 0.525
+              },
+              "2026": {
+                "mean_net_pct": 6.540884234345481,
+                "net_pnl_krw": 44532.963156665704,
+                "profit_factor": 3.4170309979844045,
+                "trades": 15,
+                "win_rate": 0.6
+              }
+            },
+            "decision_sessions": 293,
+            "ending_sleeve_krw": 551647.6829886655,
+            "fallback_trades": 0,
+            "mean_net_pct": 2.0895955852630403,
+            "median_net_pct": 2.408935715809613,
+            "missing_outcome_sessions": 0,
+            "net_pnl_krw": 51647.68298866553,
+            "profit_factor": 1.5141730846338954,
+            "rank_counts": {
+              "1": 55
+            },
+            "realized_equity_max_drawdown_pct": -2.608960665310078,
+            "skipped_slot_sessions": 169,
+            "skipped_unaffordable_sessions": 69,
+            "sleeve_return_pct": 10.329536597733107,
+            "trade_rate_per_decision_session": 0.18771331058020477,
+            "trades": 55,
+            "win_rate": 0.5454545454545454,
+            "worst_net_pct": -27.18487064266398
+          }
+        },
+        "selected_policy": "rank1_skip",
+        "stress_boundary_entry_slippage_pct": 1.0,
+        "validated_entry_slippage_pct": [
+          0.0,
+          0.25,
+          0.5
+        ]
+      },
       "metrics": {
         "block_lcb_pct": -0.17140039293121645,
         "by_year": {
@@ -100,7 +234,7 @@
   },
   "schema_version": "us_swing_execution_evidence_v1",
   "sealed": true,
-  "sealed_at": "2026-07-10T17:47:46.128465+00:00",
+  "sealed_at": "2026-07-10T18:07:21.911394+00:00",
   "source_report": "reports/us_swing_exit_counterfactual_20260711.json",
   "source_report_sha256": "5abfc5dcdfb45a910503cfd9b1034a548f0784ee51493528f75c37eebd256c86"
 }

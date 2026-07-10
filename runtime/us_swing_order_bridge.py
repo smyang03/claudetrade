@@ -128,7 +128,7 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
                 ),
                 max_abs_gap_pct=bot._runtime_float("US_SWING_ORDER_MAX_ABS_GAP_PCT", 3.0),
                 max_reference_deviation_pct=bot._runtime_float("US_SWING_ORDER_MAX_REFERENCE_DEVIATION_PCT", 1.0),
-                max_chase_pct=bot._runtime_float("US_SWING_ORDER_MAX_CHASE_PCT", 1.0),
+                max_chase_pct=bot._runtime_float("US_SWING_ORDER_MAX_CHASE_PCT", 0.5),
                 max_fade_from_open_pct=bot._runtime_float("US_SWING_ORDER_MAX_FADE_PCT", 2.0),
                 max_order_krw=bot._runtime_float("US_SWING_ORDER_MAX_KRW", 250000.0),
             )

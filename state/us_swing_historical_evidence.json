@@ -49,10 +49,10 @@
   ],
   "oos_sessions": 293,
   "point_in_time": true,
-  "policy_sha256": "3479281f7c12dc392848a76b98c0d61f16e455264b2737111d84a6282410caf8",
+  "policy_sha256": "1b6e92600cf5f4e9699dd451da94ab4c28d2d90167dd9a714e1b8926dab77d0d",
   "schema_version": "us_swing_historical_evidence_v1",
   "sealed": true,
-  "sealed_at": "2026-07-10T17:06:45.946440+00:00",
+  "sealed_at": "2026-07-10T18:09:27.582926+00:00",
   "seeds": [
     20260710,
     20260711,

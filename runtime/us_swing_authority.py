@@ -136,8 +136,11 @@ def _execution_checks(
         ("take_profit_pct", "take_profit_pct"),
         ("catastrophe_stop_pct", "catastrophe_stop_pct"),
         ("max_hold_sessions", "max_hold_sessions"),
+        ("max_entry_slippage_pct", "max_entry_slippage_pct"),
     )
     for policy_key, evidence_key in comparisons:
+        if policy_key not in expected:
+            continue
         expected_value = _number(expected.get(policy_key))
         actual_value = _number(actual.get(evidence_key))
         if expected_value is None or actual_value is None or abs(expected_value - actual_value) > 1e-9:

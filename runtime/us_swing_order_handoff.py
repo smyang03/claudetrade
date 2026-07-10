@@ -26,6 +26,21 @@ _HANDOFF_COLUMNS = {
     "handoff_qty": "INTEGER",
     "handoff_order_cost_krw": "REAL",
     "handoff_mode": "TEXT",
+    "execution_shadow_eligible": "INTEGER",
+    "execution_shadow_reason": "TEXT",
+    "execution_shadow_qty": "INTEGER",
+    "execution_shadow_budget_krw": "REAL",
+    "execution_shadow_entry_proxy_usd": "REAL",
+    "execution_shadow_entry_fill_usd": "REAL",
+    "execution_shadow_entry_price_krw": "REAL",
+    "execution_shadow_fx": "REAL",
+    "execution_shadow_policy": "TEXT",
+    "execution_shadow_evaluated_at": "TEXT",
+    "execution_shadow_exit_date": "TEXT",
+    "execution_shadow_exit_price": "REAL",
+    "execution_shadow_exit_reason": "TEXT",
+    "execution_shadow_net_krw_pct": "REAL",
+    "execution_shadow_pnl_krw": "REAL",
 }
 
 
@@ -74,12 +89,27 @@ def _block_lcb(values: np.ndarray, *, seed: int = 20260710) -> float | None:
 
 
 def summarize_forward_evidence(con: sqlite3.Connection) -> dict[str, Any]:
+    ensure_handoff_schema(con)
+    missing_outcomes = con.execute(
+        """SELECT COUNT(*) FROM signals WHERE status='MATURED'
+           AND execution_shadow_eligible=1 AND execution_shadow_net_krw_pct IS NULL"""
+    ).fetchone()[0]
+    critical_errors = ["execution_shadow_matured_outcome_missing"] if missing_outcomes else []
     rows = con.execute(
-        """SELECT signal_date,net_krw_pct FROM signals
-           WHERE status='MATURED' AND net_krw_pct IS NOT NULL ORDER BY signal_date"""
+        """SELECT signal_date,execution_shadow_net_krw_pct FROM signals
+           WHERE status='MATURED' AND execution_shadow_eligible=1
+             AND execution_shadow_net_krw_pct IS NOT NULL ORDER BY signal_date"""
     ).fetchall()
     if not rows:
-        return {"sessions": 0, "matured": 0, "critical_data_errors": []}
+        observation_sessions = con.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+        return {
+            "sessions": 0,
+            "matured": 0,
+            "observation_sessions": int(observation_sessions or 0),
+            "strategy_matched": True,
+            "execution_shadow_policy": "rank1_skip_v1",
+            "critical_data_errors": critical_errors,
+        }
     by_date: dict[str, list[float]] = {}
     for signal_date, value in rows:
         parsed = _number(value)
@@ -89,14 +119,18 @@ def summarize_forward_evidence(con: sqlite3.Connection) -> dict[str, Any]:
     positive = float(daily[daily > 0].sum())
     negative = float(-daily[daily < 0].sum())
     ordered = np.sort(daily)[::-1]
+    observation_sessions = con.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
     return {
         "sessions": int(len(daily)),
         "matured": int(sum(len(values) for values in by_date.values())),
+        "observation_sessions": int(observation_sessions or 0),
+        "strategy_matched": True,
+        "execution_shadow_policy": "rank1_skip_v1",
         "mean_net_pct": float(daily.mean()),
-        "profit_factor": float(positive / negative) if negative > 0 else None,
+        "profit_factor": float(positive / negative) if negative > 0 else (999.0 if positive > 0 else None),
         "block_lcb_pct": _block_lcb(daily),
         "ex_top3_days_pct": float(ordered[3:].mean()) if len(ordered) > 3 else None,
-        "critical_data_errors": [],
+        "critical_data_errors": critical_errors,
     }
 
 
@@ -229,7 +263,7 @@ def evaluate_handoff(
     absolute_hurdles_enforced: bool = True,
     max_abs_gap_pct: float = 3.0,
     max_reference_deviation_pct: float = 1.0,
-    max_chase_pct: float = 1.0,
+    max_chase_pct: float = 0.5,
     max_fade_from_open_pct: float = 2.0,
     max_order_krw: float = 250_000.0,
 ) -> SwingHandoffDecision:
