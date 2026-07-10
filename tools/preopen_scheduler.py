@@ -29,6 +29,43 @@ from preopen.storage import (
 )
 
 
+def _load_env(mode: str, env_path: str | Path | None = None) -> str:
+    try:
+        from dotenv import load_dotenv
+    except Exception:
+        return ""
+
+    runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+    path = Path(env_path) if env_path else ROOT / f".env.{runtime_mode}"
+    if not path.is_absolute():
+        path = ROOT / path
+    if not path.exists():
+        path = ROOT / ".env"
+    if not path.exists():
+        return ""
+    load_dotenv(dotenv_path=path, override=True)
+    _apply_start_config_env()
+    return str(path)
+
+
+def _apply_start_config_env() -> None:
+    path = Path(os.getenv("V2_START_CONFIG_PATH", "config/v2_start_config.json"))
+    if not path.is_absolute():
+        path = ROOT / path
+    if not path.exists():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    overrides = data.get("env_overrides") if isinstance(data, dict) else {}
+    if not isinstance(overrides, dict):
+        return
+    for key, value in overrides.items():
+        if key:
+            os.environ[str(key)] = str(value)
+
+
 def _now_iso() -> str:
     return datetime.now(KST).isoformat(timespec="seconds")
 
@@ -207,6 +244,8 @@ def _command_for_job(job: PreopenJob) -> list[str]:
 
 def _job_timeout_sec(job: PreopenJob, default_timeout_sec: int) -> int:
     timeout = max(10, int(default_timeout_sec))
+    if job.kind == "swing_shadow":
+        return max(timeout, 600)
     if job.kind != "news":
         return timeout
     try:
@@ -394,6 +433,11 @@ def main() -> int:
     parser.add_argument("--outcome-catchup-min", type=int, default=180)
     parser.add_argument("--timeout-sec", type=int, default=120)
     args = parser.parse_args()
+
+    # 라이브 스택의 다른 스케줄러(broker_truth_scheduler)와 동일하게 .env + v2_start_config
+    # env_overrides를 적용해 os.environ을 채운다. 이 값이 없으면 US_SWING_SHADOW_SCHEDULER_ENABLED
+    # 같은 override-전용 플래그가 재시작 시 조용히 누락되어 job이 등록되지 않는다.
+    _load_env(args.mode)
 
     if not args.once and not args.loop:
         args.once = True
