@@ -13717,8 +13717,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         signal_row: dict,
         probe_meta: dict,
     ) -> bool:
+        self._last_micro_probe_submit_result = {
+            "status": "NOT_ATTEMPTED",
+            "ticker": str(ticker or ""),
+            "order_no": "",
+            "reason": "",
+        }
         order_cost = float(qty or 0) * float(risk_price_krw or 0.0)
         if qty <= 0 or raw_price <= 0 or risk_price_krw <= 0 or order_cost <= 0:
+            self._last_micro_probe_submit_result.update(status="INVALID", reason="invalid_order_values")
             return False
         analysis_log.info(
             f"[signal {market}] {ticker} MICRO_PROBE qty={qty}",
@@ -13760,6 +13767,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             profit_evidence=signal_row,
         )
         if not bool(buy_gate.get("allowed", True)):
+            self._last_micro_probe_submit_result.update(
+                status="BLOCKED", reason=str(buy_gate.get("reason") or "buy_gate_blocked")
+            )
             self._record_new_buy_block(
                 market,
                 ticker,
@@ -13778,6 +13788,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return False
         precheck = precheck_order(ticker, qty, precheck_px, "buy", self._token_for_market(market), market=market)
         if not precheck.get("ok"):
+            self._last_micro_probe_submit_result.update(
+                status="REJECTED_PRECHECK", reason=str(precheck.get("reason") or "precheck_failed")
+            )
             self._record_decision_event(
                 market,
                 "buy_failed",
@@ -13813,6 +13826,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         try:
             result = place_order(ticker, qty, order_px, "buy", self._token_for_market(market), market=market)
         except Exception as exc:
+            self._last_micro_probe_submit_result.update(
+                status="UNKNOWN", reason="order_exception", detail=str(exc)[:240]
+            )
             self._record_decision_event(
                 market,
                 "buy_failed",
@@ -13834,6 +13850,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not result.get("success"):
             detail = result.get("msg", "")
             reject_reason = broker_reject_reason(detail)
+            self._last_micro_probe_submit_result.update(
+                status="REJECTED", reason=str(reject_reason or "broker_reject"), detail=str(detail)[:240]
+            )
             self._record_decision_event(
                 market,
                 "buy_failed",
@@ -13860,6 +13879,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._funnel.setdefault(market, {}).setdefault("ordered", 0)
         self._funnel[market]["ordered"] += 1
         order_no = str(result.get("order_no", "") or "")
+        self._last_micro_probe_submit_result.update(
+            status="SUBMITTED" if order_no else "UNKNOWN",
+            reason="broker_accepted" if order_no else "broker_accepted_without_order_no",
+            order_no=order_no,
+        )
         log.info(
             f"[{'PAPER' if self.is_paper else 'LIVE'} MICRO_PROBE BUY] "
             f"{ticker} {qty}@{raw_price:,} | source={source_strategy} | order_no={order_no}"
@@ -32263,6 +32287,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     os.environ.pop("SELECTION_SMART_SKIP_FORCE_CALL", None)
                 else:
                     os.environ["SELECTION_SMART_SKIP_FORCE_CALL"] = prev_force_call
+    def _maybe_run_us_swing_order_handoff(self, market: str) -> dict:
+        """Run the separately locked US 5-session swing order handoff."""
+        if str(market or "").upper() != "US":
+            return {"status": "SKIPPED", "reason": "non_us_market"}
+        if not self._runtime_bool("US_SWING_ORDER_HANDOFF_ENABLED", False):
+            return {"status": "DISABLED", "reason": "handoff_disabled"}
+        from runtime.us_swing_order_bridge import run_us_swing_handoff
+
+        return run_us_swing_handoff(self)
+
     def run_entry_scan(self, market: str):
         if not self.session_active or self.current_market != market:
             return
@@ -32295,6 +32329,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._run_preopen_planb_bridge(market)
         except Exception as _bridge_e:
             log.warning(f"[planb_bridge 오류] {market}: {_bridge_e}", exc_info=True)
+        try:
+            self._maybe_run_us_swing_order_handoff(market)
+        except Exception as _swing_handoff_e:
+            log.error(f"[us_swing_handoff error] {market}: {_swing_handoff_e}", exc_info=True)
         try:
             self.run_cycle(market)
         except Exception as _es_e:

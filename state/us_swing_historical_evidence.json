@@ -1,0 +1,65 @@
+{
+  "authority": "EVIDENCE_ONLY_NO_AUTO_PROMOTION",
+  "base_cost_pct": 0.5,
+  "cohorts": {
+    "top3": {
+      "ensemble_metrics": {
+        "block_bootstrap_lcb_pct": -0.15249404303360098,
+        "mean_excess_vs_candidate_universe_pct": 1.077925300285093,
+        "mean_net_ex_top3_days_pct": 1.079886119640498,
+        "mean_net_pct": 1.3568312301658798,
+        "median_net_pct": -0.029965230932770925,
+        "profit_factor": 1.511951866506713,
+        "rows": 879,
+        "sessions": 293,
+        "win_rate": 0.4948805460750853
+      },
+      "worst_block_lcb_pct": -0.15249404303360098,
+      "worst_ex_top3_days_pct": 1.079886119640498,
+      "worst_mean_net_pct": 1.3568312301658798,
+      "worst_profit_factor": 1.511951866506713,
+      "worst_stress_mean_net_pct": 1.0568312301658798
+    },
+    "top5": {
+      "ensemble_metrics": {
+        "block_bootstrap_lcb_pct": -0.29094866210255205,
+        "mean_excess_vs_candidate_universe_pct": 0.5005580190086367,
+        "mean_net_ex_top3_days_pct": 0.5830478992675192,
+        "mean_net_pct": 0.7794639488894236,
+        "median_net_pct": 0.31171685509458413,
+        "profit_factor": 1.3475964205890254,
+        "rows": 1465,
+        "sessions": 293,
+        "win_rate": 0.5119453924914675
+      },
+      "worst_block_lcb_pct": -0.29094866210255205,
+      "worst_ex_top3_days_pct": 0.5830478992675192,
+      "worst_mean_net_pct": 0.7794639488894236,
+      "worst_profit_factor": 1.3475964205890254,
+      "worst_stress_mean_net_pct": 0.47946394888942356
+    }
+  },
+  "critical_data_errors": [],
+  "dataset_rows": 13672,
+  "dataset_sha256": "71e84b72c3555352cc8a7a03ee1f8e8433fed217089b0235f9afd76b7dd833a8",
+  "lookahead_checks_passed": true,
+  "oos_range": [
+    "2025-02-03",
+    "2026-04-02"
+  ],
+  "oos_sessions": 293,
+  "point_in_time": true,
+  "policy_sha256": "3479281f7c12dc392848a76b98c0d61f16e455264b2737111d84a6282410caf8",
+  "schema_version": "us_swing_historical_evidence_v1",
+  "sealed": true,
+  "sealed_at": "2026-07-10T17:06:45.946440+00:00",
+  "seeds": [
+    20260710,
+    20260711,
+    20260712
+  ],
+  "source": "Yahoo adjusted OHLCV + KRW=X anchored to historical backfill candidate rows",
+  "source_independence": "single_market_data_vendor; independent vendor cross-check still pending",
+  "strategy_id": "US_SWING_5D_TOP_RANK",
+  "stress_cost_pct": 0.8
+}

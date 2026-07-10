@@ -1111,11 +1111,16 @@ def _get_price_us_kis(ticker: str, token: str) -> dict:
     out = data.get("output", {})
 
     price = _to_float(_pick_first(out, ["last", "ovrs_nmix_prpr", "stck_prpr", "clos"]), 0)
-    prev_close = _to_float(_pick_first(out, ["base", "prev", "prdy_vrss_sign", "tomv"]), price)
+    change = _to_float(_pick_first(out, ["diff", "t_xdif", "prdy_vrss"]), 0)
+    prev_close = _to_float(
+        _pick_first(out, ["base", "prev", "pclose", "prdy_clpr", "t_clpr"]),
+        price - change,
+    )
+    if prev_close <= 0:
+        prev_close = price - change if price - change > 0 else price
     open_price = _to_float(_pick_first(out, ["open", "t_open", "ovrs_oprc"]), price)
     high_price = _to_float(_pick_first(out, ["high", "t_high", "ovrs_hgpr"]), price)
     low_price = _to_float(_pick_first(out, ["low", "t_low", "ovrs_lwpr"]), price)
-    change = _to_float(_pick_first(out, ["diff", "t_xdif", "prdy_vrss"]), price - prev_close)
     change_rate = _to_float(
         _pick_first(out, ["rate", "t_xrat", "prdy_ctrt"]),
         (change / prev_close * 100.0) if prev_close else 0.0,
@@ -1150,6 +1155,7 @@ def _get_price_us_kis(ticker: str, token: str) -> dict:
         "ticker": ticker.upper(),
         "name": _pick_first(out, ["e_hname", "hts_kor_isnm", "ovrs_item_name"], ticker.upper()),
         "price": round(price, 4),
+        "prev_close": round(prev_close, 4),
         "change": round(change, 4),
         "change_rate": round(change_rate, 2),
         "volume": volume,
@@ -1178,6 +1184,7 @@ def _get_price_us_finnhub(ticker: str) -> dict:
     return {
         "ticker": ticker, "name": ticker,
         "price": round(price, 4),
+        "prev_close": round(prev, 4),
         "change": round(change, 4),
         "change_rate": round(change / prev * 100 if prev else 0, 2),
         "volume": 0,
@@ -1199,6 +1206,7 @@ def _get_price_us_alpha(ticker):
         return {
             "ticker": ticker, "name": ticker,
             "price": round(float(q.get("05. price", 0)), 4),
+            "prev_close": round(float(q.get("08. previous close", 0)), 4),
             "change": round(float(q.get("09. change", 0)), 4),
             "change_rate": float(q.get("10. change percent", "0%").replace("%", "")),
             "volume": int(float(q.get("06. volume", 0))),
@@ -2067,6 +2075,7 @@ def _get_price_us_yf(ticker: str) -> dict:
     return {
         "ticker": ticker, "name": ticker,
         "price": round(price, 4),
+        "prev_close": round(prev_close, 4),
         "change": round(change, 4),
         "change_rate": round(change / prev_close * 100 if prev_close else 0, 2),
         "volume": int(row["Volume"]),
@@ -3615,14 +3624,14 @@ def _place_order_kr(ticker, qty, price, side, token):
 _US_EXCHANGE_MAP = {
     "NASD": [
         "AAPL", "ADBE", "AMD", "AMZN", "AVGO", "COST", "CSCO", "GOOG",
-        "GOOGL", "INTC", "META", "MSFT", "NFLX", "NVDA", "ORCL", "PEP", "PLTR",
+        "GOOGL", "INTC", "META", "MSFT", "NFLX", "NVDA", "PEP", "PLTR",
         "QCOM", "QQQ", "SBUX", "SMCI", "SNOW", "TSLA", "TXN", "UBER",
         "ARM", "BRZE", "CORT", "PAYS", "SRPT",
     ],
     "NYSE": ["BRK.B","JPM","BAC","WFC","GS","MS","C","USB","BLK","AXP",
              "XOM","CVX","COP","SLB","WMT","HD","MCD","NKE","PG","KO",
              "PFE","JNJ","MRK","ABT","UNH","V","MA","HIMS",
-             "LLY","ABBV","CAT","GE","NOK","CRM"],
+             "LLY","ABBV","CAT","GE","NOK","CRM","ORCL"],
     "AMEX": ["SPY","IWM","GLD","SLV","USO"],
 }
 

@@ -87,3 +87,36 @@ def test_missing_evidence_stays_shadow() -> None:
     assert result.effective_mode == "shadow"
     assert result.allowed_to_emit_orders is False
     assert result.size_multiplier == 0.0
+
+
+def test_execution_contract_can_cap_eligible_authority_at_micro() -> None:
+    policy = _policy()
+    policy["hard_blocks"] = {"require_execution_contract_evidence": True}
+    policy["execution_contract"] = {
+        "take_profit_pct": 0.12, "catastrophe_stop_pct": 0.25, "max_hold_sessions": 5
+    }
+    forward = {
+        "sessions": 50, "matured": 200, "mean_net_pct": 0.5,
+        "profit_factor": 1.5, "block_lcb_pct": 0.2,
+        "ex_top3_days_pct": 0.2, "critical_data_errors": [],
+    }
+    execution = {
+        "sealed": True,
+        "contract": {
+            "take_profit_pct": 0.12, "catastrophe_stop_pct": 0.25, "max_hold_sessions": 5
+        },
+        "modes": {
+            "micro": {"passed": True},
+            "probe": {"passed": False},
+            "standard": {"passed": False},
+        },
+    }
+
+    result = evaluate_swing_authority(
+        configured_mode="probe", historical_evidence=_historical(),
+        forward_evidence=forward, execution_evidence=execution, policy=policy,
+    )
+
+    assert result.eligible_mode == "micro"
+    assert result.effective_mode == "micro"
+    assert "execution_contract_probe_failed" in result.blockers

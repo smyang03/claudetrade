@@ -1,0 +1,631 @@
+{
+  "csv_sha256": "8c7c553e367afea78d9227a1d1cee26e512fe6cbed5a9665ec8f7cfc6259ee8e",
+  "db": "E:\\code\\claudetrade\\data\\analysis\\us_yahoo_point_in_time.db",
+  "model_result": {
+    "candidate_universe": {
+      "block_bootstrap_lcb_pct": -0.3644542766378391,
+      "mean_excess_vs_candidate_universe_pct": 0.0,
+      "mean_net_ex_top3_days_pct": 0.18279387942146447,
+      "mean_net_pct": 0.2789059298807867,
+      "median_net_pct": 0.5093989828467587,
+      "profit_factor": 1.2311810831733507,
+      "rows": 11437,
+      "sessions": 293,
+      "win_rate": 0.552901023890785
+    },
+    "cohorts": {
+      "confident_top10_by_year": {
+        "2025": {
+          "block_bootstrap_lcb_pct": -1.4688975092851786,
+          "mean_excess_vs_candidate_universe_pct": -0.738055281710051,
+          "mean_net_ex_top3_days_pct": -0.7033026398424227,
+          "mean_net_pct": -0.4173626996233064,
+          "median_net_pct": -0.13504397178971295,
+          "profit_factor": 0.8364724210922072,
+          "rows": 1458,
+          "sessions": 213,
+          "win_rate": 0.48826291079812206
+        },
+        "2026": {
+          "block_bootstrap_lcb_pct": 0.2670326979320432,
+          "mean_excess_vs_candidate_universe_pct": 7.346572933277657,
+          "mean_net_ex_top3_days_pct": 4.7764341368747,
+          "mean_net_pct": 7.973837523318254,
+          "median_net_pct": 2.9505058682792726,
+          "profit_factor": 5.566050138821997,
+          "rows": 200,
+          "sessions": 39,
+          "win_rate": 0.6923076923076923
+        }
+      },
+      "confident_top10_per_day": {
+        "block_bootstrap_lcb_pct": -0.6032137694064297,
+        "mean_excess_vs_candidate_universe_pct": 0.5131371801332847,
+        "mean_net_ex_top3_days_pct": 0.33354768637640525,
+        "mean_net_pct": 0.8812754301176495,
+        "median_net_pct": 0.2613884813772216,
+        "profit_factor": 1.3630350495568566,
+        "rows": 1658,
+        "sessions": 252,
+        "win_rate": 0.5198412698412699
+      },
+      "confident_top1_by_year": {
+        "2025": {
+          "block_bootstrap_lcb_pct": -1.8457510854106758,
+          "mean_excess_vs_candidate_universe_pct": -0.3611576657789176,
+          "mean_net_ex_top3_days_pct": -0.6690720587282526,
+          "mean_net_pct": -0.04046508369217275,
+          "median_net_pct": -1.5992018610526677,
+          "profit_factor": 0.9907615302005729,
+          "rows": 213,
+          "sessions": 213,
+          "win_rate": 0.4413145539906103
+        },
+        "2026": {
+          "block_bootstrap_lcb_pct": -1.6198894434650393,
+          "mean_excess_vs_candidate_universe_pct": 8.433120974434681,
+          "mean_net_ex_top3_days_pct": 5.121998256669602,
+          "mean_net_pct": 9.060385564475277,
+          "median_net_pct": 2.585944414691788,
+          "profit_factor": 4.169903118521632,
+          "rows": 39,
+          "sessions": 39,
+          "win_rate": 0.5128205128205128
+        }
+      },
+      "confident_top1_per_day": {
+        "block_bootstrap_lcb_pct": -1.0640119067447322,
+        "mean_excess_vs_candidate_universe_pct": 0.9998616475874726,
+        "mean_net_ex_top3_days_pct": 0.7059151582878423,
+        "mean_net_pct": 1.3679998975718373,
+        "median_net_pct": -1.4086932798534286,
+        "profit_factor": 1.3300723822738667,
+        "rows": 252,
+        "sessions": 252,
+        "win_rate": 0.4523809523809524
+      },
+      "confident_top3_by_year": {
+        "2025": {
+          "block_bootstrap_lcb_pct": -1.5492282169848335,
+          "mean_excess_vs_candidate_universe_pct": -0.5455259414056727,
+          "mean_net_ex_top3_days_pct": -0.5603556418222714,
+          "mean_net_pct": -0.22483335931892814,
+          "median_net_pct": -0.5532048123129533,
+          "profit_factor": 0.927607781375196,
+          "rows": 587,
+          "sessions": 213,
+          "win_rate": 0.4413145539906103
+        },
+        "2026": {
+          "block_bootstrap_lcb_pct": 1.1472736803878643,
+          "mean_excess_vs_candidate_universe_pct": 8.427815738730926,
+          "mean_net_ex_top3_days_pct": 5.947780509449076,
+          "mean_net_pct": 9.055080328771519,
+          "median_net_pct": 5.958668999941504,
+          "profit_factor": 5.31633329156495,
+          "rows": 103,
+          "sessions": 39,
+          "win_rate": 0.6666666666666666
+        }
+      },
+      "confident_top3_per_day": {
+        "block_bootstrap_lcb_pct": -0.540785943860198,
+        "mean_excess_vs_candidate_universe_pct": 0.8432055090916581,
+        "mean_net_ex_top3_days_pct": 0.6675927421896988,
+        "mean_net_pct": 1.2113437590760223,
+        "median_net_pct": -0.3091134914816732,
+        "profit_factor": 1.410655354691495,
+        "rows": 690,
+        "sessions": 252,
+        "win_rate": 0.47619047619047616
+      },
+      "confident_top5_by_year": {
+        "2025": {
+          "block_bootstrap_lcb_pct": -1.3638382789394674,
+          "mean_excess_vs_candidate_universe_pct": -0.5706094079031911,
+          "mean_net_ex_top3_days_pct": -0.546256318481547,
+          "mean_net_pct": -0.2499168258164466,
+          "median_net_pct": -0.13656014035165764,
+          "profit_factor": 0.9075655424294834,
+          "rows": 912,
+          "sessions": 213,
+          "win_rate": 0.47417840375586856
+        },
+        "2026": {
+          "block_bootstrap_lcb_pct": 0.13715421359992186,
+          "mean_excess_vs_candidate_universe_pct": 7.206005096012802,
+          "mean_net_ex_top3_days_pct": 4.624152313171109,
+          "mean_net_pct": 7.833269686053398,
+          "median_net_pct": 2.952245016055475,
+          "profit_factor": 5.043210612678902,
+          "rows": 152,
+          "sessions": 39,
+          "win_rate": 0.6666666666666666
+        }
+      },
+      "confident_top5_per_day": {
+        "block_bootstrap_lcb_pct": -0.6249307932603331,
+        "mean_excess_vs_candidate_universe_pct": 0.6329142653219029,
+        "mean_net_ex_top3_days_pct": 0.4547678689769347,
+        "mean_net_pct": 1.0010525153062675,
+        "median_net_pct": 0.23866662819523088,
+        "profit_factor": 1.3872363108800674,
+        "rows": 1064,
+        "sessions": 252,
+        "win_rate": 0.503968253968254
+      },
+      "top10_by_year": {
+        "2025": {
+          "block_bootstrap_lcb_pct": -0.7299739699688108,
+          "mean_excess_vs_candidate_universe_pct": -0.024391745798532476,
+          "mean_net_ex_top3_days_pct": 0.07687596113092092,
+          "mean_net_pct": 0.25547360345164155,
+          "median_net_pct": 0.3216603330469836,
+          "profit_factor": 1.134433248296803,
+          "rows": 2300,
+          "sessions": 230,
+          "win_rate": 0.5173913043478261
+        },
+        "2026": {
+          "block_bootstrap_lcb_pct": -0.6838352956099476,
+          "mean_excess_vs_candidate_universe_pct": 1.3138366964580255,
+          "mean_net_ex_top3_days_pct": 0.9392736781717718,
+          "mean_net_pct": 1.5892399841966045,
+          "median_net_pct": 2.206453316929397,
+          "profit_factor": 1.939230599944891,
+          "rows": 630,
+          "sessions": 63,
+          "win_rate": 0.6190476190476191
+        }
+      },
+      "top10_per_day": {
+        "block_bootstrap_lcb_pct": -0.36973670409481046,
+        "mean_excess_vs_candidate_universe_pct": 0.26335020594946457,
+        "mean_net_ex_top3_days_pct": 0.3830556246915162,
+        "mean_net_pct": 0.5422561358302513,
+        "median_net_pct": 0.6042505003920045,
+        "profit_factor": 1.2922291956944685,
+        "rows": 2930,
+        "sessions": 293,
+        "win_rate": 0.5392491467576792
+      },
+      "top1_by_year": {
+        "2025": {
+          "block_bootstrap_lcb_pct": -1.364668870850478,
+          "mean_excess_vs_candidate_universe_pct": 0.09814415594989785,
+          "mean_net_ex_top3_days_pct": -0.19799067537658055,
+          "mean_net_pct": 0.37800950520007215,
+          "median_net_pct": -1.3533811568589011,
+          "profit_factor": 1.0900004285391653,
+          "rows": 230,
+          "sessions": 230,
+          "win_rate": 0.45652173913043476
+        },
+        "2026": {
+          "block_bootstrap_lcb_pct": 0.7944944453516656,
+          "mean_excess_vs_candidate_universe_pct": 7.58486736178687,
+          "mean_net_ex_top3_days_pct": 5.437232519094554,
+          "mean_net_pct": 7.86027064952545,
+          "median_net_pct": 4.08665867915351,
+          "profit_factor": 3.7708453646751865,
+          "rows": 63,
+          "sessions": 63,
+          "win_rate": 0.5714285714285714
+        }
+      },
+      "top1_per_day": {
+        "block_bootstrap_lcb_pct": -0.14568345188442486,
+        "mean_excess_vs_candidate_universe_pct": 1.7079174049865167,
+        "mean_net_ex_top3_days_pct": 1.4247453011782407,
+        "mean_net_pct": 1.986823334867304,
+        "median_net_pct": -1.1767322153141686,
+        "profit_factor": 1.5085355117696302,
+        "rows": 293,
+        "sessions": 293,
+        "win_rate": 0.4812286689419795
+      },
+      "top3_by_year": {
+        "2025": {
+          "block_bootstrap_lcb_pct": -1.1571545372298375,
+          "mean_excess_vs_candidate_universe_pct": -0.05655882537951376,
+          "mean_net_ex_top3_days_pct": -0.05423726379781969,
+          "mean_net_pct": 0.22330652387066036,
+          "median_net_pct": -0.5117859129109295,
+          "profit_factor": 1.079499636177052,
+          "rows": 690,
+          "sessions": 230,
+          "win_rate": 0.45217391304347826
+        },
+        "2026": {
+          "block_bootstrap_lcb_pct": 1.2631676476417746,
+          "mean_excess_vs_candidate_universe_pct": 5.219692743187626,
+          "mean_net_ex_top3_days_pct": 4.363441236758209,
+          "mean_net_pct": 5.495096030926203,
+          "median_net_pct": 4.606738150754997,
+          "profit_factor": 3.6529292465440615,
+          "rows": 189,
+          "sessions": 63,
+          "win_rate": 0.6507936507936508
+        }
+      },
+      "top3_per_day": {
+        "block_bootstrap_lcb_pct": -0.15249404303360098,
+        "mean_excess_vs_candidate_universe_pct": 1.077925300285093,
+        "mean_net_ex_top3_days_pct": 1.079886119640498,
+        "mean_net_pct": 1.3568312301658798,
+        "median_net_pct": -0.029965230932770925,
+        "profit_factor": 1.511951866506713,
+        "rows": 879,
+        "sessions": 293,
+        "win_rate": 0.4948805460750853
+      },
+      "top5_by_year": {
+        "2025": {
+          "block_bootstrap_lcb_pct": -0.8632012007101103,
+          "mean_excess_vs_candidate_universe_pct": -0.07361856949369311,
+          "mean_net_ex_top3_days_pct": -0.0006261873010229633,
+          "mean_net_pct": 0.206246779756481,
+          "median_net_pct": -0.17908436504247405,
+          "profit_factor": 1.0920976033234655,
+          "rows": 1150,
+          "sessions": 230,
+          "win_rate": 0.4782608695652174
+        },
+        "2026": {
+          "block_bootstrap_lcb_pct": -0.2226437675374287,
+          "mean_excess_vs_candidate_universe_pct": 2.5967582627473016,
+          "mean_net_ex_top3_days_pct": 2.027452190726499,
+          "mean_net_pct": 2.87216155048588,
+          "median_net_pct": 2.861868787823002,
+          "profit_factor": 2.2745895704728345,
+          "rows": 315,
+          "sessions": 63,
+          "win_rate": 0.6349206349206349
+        }
+      },
+      "top5_per_day": {
+        "block_bootstrap_lcb_pct": -0.29094866210255205,
+        "mean_excess_vs_candidate_universe_pct": 0.5005580190086367,
+        "mean_net_ex_top3_days_pct": 0.5830478992675192,
+        "mean_net_pct": 0.7794639488894236,
+        "median_net_pct": 0.31171685509458413,
+        "profit_factor": 1.3475964205890254,
+        "rows": 1465,
+        "sessions": 293,
+        "win_rate": 0.5119453924914675
+      }
+    },
+    "test_range": [
+      "2025-02-03",
+      "2026-04-02"
+    ],
+    "test_rows": 11437,
+    "test_sessions": 293,
+    "windows": [
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2025-01-23",
+          "2025-01-24",
+          "2025-01-27",
+          "2025-01-28",
+          "2025-01-29",
+          "2025-01-30",
+          "2025-01-31"
+        ],
+        "test_month": "2025-02",
+        "test_n": 441,
+        "train_end": "2025-01-22",
+        "train_n": 2117,
+        "train_start": "2024-07-23"
+      },
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2025-02-20",
+          "2025-02-21",
+          "2025-02-24",
+          "2025-02-25",
+          "2025-02-26",
+          "2025-02-27",
+          "2025-02-28"
+        ],
+        "test_month": "2025-03",
+        "test_n": 612,
+        "train_end": "2025-02-19",
+        "train_n": 2480,
+        "train_start": "2024-07-23"
+      },
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2025-03-21",
+          "2025-03-24",
+          "2025-03-25",
+          "2025-03-26",
+          "2025-03-27",
+          "2025-03-28",
+          "2025-03-31"
+        ],
+        "test_month": "2025-04",
+        "test_n": 590,
+        "train_end": "2025-03-20",
+        "train_n": 3085,
+        "train_start": "2024-07-23"
+      },
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2025-04-22",
+          "2025-04-23",
+          "2025-04-24",
+          "2025-04-25",
+          "2025-04-28",
+          "2025-04-29",
+          "2025-04-30"
+        ],
+        "test_month": "2025-05",
+        "test_n": 640,
+        "train_end": "2025-04-21",
+        "train_n": 3680,
+        "train_start": "2024-07-23"
+      },
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2025-05-21",
+          "2025-05-22",
+          "2025-05-23",
+          "2025-05-27",
+          "2025-05-28",
+          "2025-05-29",
+          "2025-05-30"
+        ],
+        "test_month": "2025-06",
+        "test_n": 623,
+        "train_end": "2025-05-20",
+        "train_n": 4301,
+        "train_start": "2024-07-23"
+      },
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2025-06-20",
+          "2025-06-23",
+          "2025-06-24",
+          "2025-06-25",
+          "2025-06-26",
+          "2025-06-27",
+          "2025-06-30"
+        ],
+        "test_month": "2025-07",
+        "test_n": 689,
+        "train_end": "2025-06-18",
+        "train_n": 4919,
+        "train_start": "2024-07-23"
+      },
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2025-07-23",
+          "2025-07-24",
+          "2025-07-25",
+          "2025-07-28",
+          "2025-07-29",
+          "2025-07-30",
+          "2025-07-31"
+        ],
+        "test_month": "2025-08",
+        "test_n": 664,
+        "train_end": "2025-07-22",
+        "train_n": 5614,
+        "train_start": "2024-07-23"
+      },
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2025-08-21",
+          "2025-08-22",
+          "2025-08-25",
+          "2025-08-26",
+          "2025-08-27",
+          "2025-08-28",
+          "2025-08-29"
+        ],
+        "test_month": "2025-09",
+        "test_n": 692,
+        "train_end": "2025-08-20",
+        "train_n": 6267,
+        "train_start": "2024-07-23"
+      },
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2025-09-22",
+          "2025-09-23",
+          "2025-09-24",
+          "2025-09-25",
+          "2025-09-26",
+          "2025-09-29",
+          "2025-09-30"
+        ],
+        "test_month": "2025-10",
+        "test_n": 1057,
+        "train_end": "2025-09-19",
+        "train_n": 6955,
+        "train_start": "2024-07-23"
+      },
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2025-10-23",
+          "2025-10-24",
+          "2025-10-27",
+          "2025-10-28",
+          "2025-10-29",
+          "2025-10-30",
+          "2025-10-31"
+        ],
+        "test_month": "2025-11",
+        "test_n": 948,
+        "train_end": "2025-10-22",
+        "train_n": 7900,
+        "train_start": "2024-07-23"
+      },
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2025-11-19",
+          "2025-11-20",
+          "2025-11-21",
+          "2025-11-24",
+          "2025-11-25",
+          "2025-11-26",
+          "2025-11-28"
+        ],
+        "test_month": "2025-12",
+        "test_n": 1109,
+        "train_end": "2025-11-18",
+        "train_n": 8842,
+        "train_start": "2024-07-23"
+      },
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2025-12-22",
+          "2025-12-23",
+          "2025-12-24",
+          "2025-12-26",
+          "2025-12-29",
+          "2025-12-30",
+          "2025-12-31"
+        ],
+        "test_month": "2026-01",
+        "test_n": 1000,
+        "train_end": "2025-12-19",
+        "train_n": 9945,
+        "train_start": "2024-07-23"
+      },
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2026-01-22",
+          "2026-01-23",
+          "2026-01-26",
+          "2026-01-27",
+          "2026-01-28",
+          "2026-01-29",
+          "2026-01-30"
+        ],
+        "test_month": "2026-02",
+        "test_n": 1004,
+        "train_end": "2026-01-21",
+        "train_n": 10950,
+        "train_start": "2024-07-23"
+      },
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2026-02-19",
+          "2026-02-20",
+          "2026-02-23",
+          "2026-02-24",
+          "2026-02-25",
+          "2026-02-26",
+          "2026-02-27"
+        ],
+        "test_month": "2026-03",
+        "test_n": 1300,
+        "train_end": "2026-02-18",
+        "train_n": 11929,
+        "train_start": "2024-07-23"
+      },
+      {
+        "model_seeds": [
+          20260710,
+          20260711,
+          20260712
+        ],
+        "purged_dates": [
+          "2026-03-23",
+          "2026-03-24",
+          "2026-03-25",
+          "2026-03-26",
+          "2026-03-27",
+          "2026-03-30",
+          "2026-03-31"
+        ],
+        "test_month": "2026-04",
+        "test_n": 68,
+        "train_end": "2026-03-20",
+        "train_n": 13100,
+        "train_start": "2024-07-23"
+      }
+    ]
+  },
+  "policy": "E:\\code\\claudetrade\\config\\us_swing_accelerated.json",
+  "range": [
+    "2025-02-03",
+    "2026-04-02"
+  ],
+  "rows": 879,
+  "schema_version": "us_swing_oos_selected_v1",
+  "sessions": 293,
+  "top_k": 3
+}

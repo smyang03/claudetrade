@@ -20,11 +20,21 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from runtime.us_swing_authority import evaluate_swing_authority, load_swing_policy
+from runtime.us_swing_order_handoff import ensure_handoff_schema
 from tools.build_us_yahoo_point_in_time import BENCHMARKS, build_ticker_frame, _read_price
 from tools.us_daily_alpha_walkforward import YAHOO_FEATURES, load_yahoo_dataset
 
 
 SCHEMA_VERSION = "us_swing_shadow_v1"
+_BREADTH_COLUMNS = {
+    "reference_close": "REAL",
+    "breadth_context_date": "TEXT",
+    "prior_spy_return_pct": "REAL",
+    "prior_narrow_excess_pct": "REAL",
+    "prior_rsp_spy_ratio_5d_pct": "REAL",
+    "prior_adv_pct": "REAL",
+    "breadth_context_state": "TEXT",
+}
 
 
 def ensure_schema(con: sqlite3.Connection) -> None:
@@ -63,7 +73,63 @@ def ensure_schema(con: sqlite3.Connection) -> None:
         );
         """
     )
+    existing = {str(row[1]) for row in con.execute("PRAGMA table_info(signals)")}
+    for column, sql_type in _BREADTH_COLUMNS.items():
+        if column not in existing:
+            con.execute(f"ALTER TABLE signals ADD COLUMN {column} {sql_type}")
     con.commit()
+
+
+def classify_breadth_context(narrow_excess_pct: float | None) -> str:
+    if narrow_excess_pct is None or not np.isfinite(narrow_excess_pct):
+        return "MISSING"
+    if narrow_excess_pct <= -0.30:
+        return "NARROW"
+    if narrow_excess_pct >= 0.30:
+        return "BROAD"
+    return "BALANCED"
+
+
+def load_breadth_context(
+    *,
+    feature_date: str,
+    breadth_path: Path,
+    adv_path: Path,
+) -> dict[str, Any]:
+    try:
+        breadth = pd.read_csv(breadth_path)
+        adv = pd.read_csv(adv_path)
+    except (OSError, ValueError):
+        return {"breadth_context_date": feature_date, "breadth_context_state": "MISSING"}
+    for frame in (breadth, adv):
+        frame["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    breadth = breadth.sort_values("date")
+    breadth["spy_return_pct"] = pd.to_numeric(breadth["SPY"], errors="coerce").pct_change() * 100.0
+    breadth["rsp_return_pct"] = pd.to_numeric(breadth["RSP"], errors="coerce").pct_change() * 100.0
+    breadth["narrow_excess_pct"] = breadth["rsp_return_pct"] - breadth["spy_return_pct"]
+    breadth["ratio_full"] = pd.to_numeric(breadth["RSP"], errors="coerce") / pd.to_numeric(
+        breadth["SPY"], errors="coerce"
+    )
+    breadth["ratio_5d_pct"] = breadth["ratio_full"].pct_change(5) * 100.0
+    merged = breadth.merge(adv[["date", "adv_pct"]], on="date", how="left")
+    row = merged[merged["date"].eq(str(feature_date))]
+    if row.empty:
+        return {"breadth_context_date": feature_date, "breadth_context_state": "MISSING"}
+    record = row.iloc[-1]
+
+    def finite(name: str) -> float | None:
+        value = pd.to_numeric(pd.Series([record.get(name)]), errors="coerce").iloc[0]
+        return float(value) if pd.notna(value) and np.isfinite(value) else None
+
+    narrow = finite("narrow_excess_pct")
+    return {
+        "breadth_context_date": str(feature_date),
+        "prior_spy_return_pct": finite("spy_return_pct"),
+        "prior_narrow_excess_pct": narrow,
+        "prior_rsp_spy_ratio_5d_pct": finite("ratio_5d_pct"),
+        "prior_adv_pct": finite("adv_pct"),
+        "breadth_context_state": classify_breadth_context(narrow),
+    }
 
 
 def _benchmark_frame(price_dir: Path, *, before_date: str) -> pd.DataFrame:
@@ -199,13 +265,20 @@ def write_signals(
             """
             INSERT OR IGNORE INTO signals (
                 signal_date,ticker,feature_date,model_version,rank,alpha_score,
-                predicted_net_pct,probability,candidate_source,created_at,status,data_quality
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                predicted_net_pct,probability,candidate_source,created_at,status,data_quality,
+                reference_close,
+                breadth_context_date,prior_spy_return_pct,prior_narrow_excess_pct,
+                prior_rsp_spy_ratio_5d_pct,prior_adv_pct,breadth_context_state
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 signal_date, str(row["ticker"]), str(row["date"]), model_version, int(row["rank"]),
                 float(row["alpha_score"]), float(row["predicted_net_pct"]), float(row["probability"]),
                 str(row.get("candidate_source") or ""), created_at, "PENDING", "point_in_time",
+                float(row.get("close")) if pd.notna(row.get("close")) else None,
+                row.get("breadth_context_date"), row.get("prior_spy_return_pct"),
+                row.get("prior_narrow_excess_pct"), row.get("prior_rsp_spy_ratio_5d_pct"),
+                row.get("prior_adv_pct"), row.get("breadth_context_state"),
             ),
         )
         written += int(con.execute("SELECT changes()").fetchone()[0])
@@ -318,7 +391,8 @@ def _block_lcb(values: np.ndarray, *, seed: int = 20260710) -> float | None:
 
 def summarize_forward(con: sqlite3.Connection) -> dict[str, Any]:
     frame = pd.read_sql_query(
-        "SELECT signal_date,ticker,net_krw_pct FROM signals WHERE status='MATURED' AND net_krw_pct IS NOT NULL",
+        """SELECT signal_date,ticker,net_krw_pct,breadth_context_state
+           FROM signals WHERE status='MATURED' AND net_krw_pct IS NOT NULL""",
         con,
     )
     if frame.empty:
@@ -328,6 +402,17 @@ def summarize_forward(con: sqlite3.Connection) -> dict[str, Any]:
     positive = float(values[values > 0].sum())
     negative = float(-values[values < 0].sum())
     ordered = np.sort(values)[::-1]
+    breadth_diagnostic: dict[str, Any] = {}
+    for state, group in frame.groupby(frame["breadth_context_state"].fillna("MISSING")):
+        state_daily = group.groupby("signal_date")["net_krw_pct"].mean().to_numpy(dtype=float)
+        state_positive = float(state_daily[state_daily > 0].sum())
+        state_negative = float(-state_daily[state_daily < 0].sum())
+        breadth_diagnostic[str(state)] = {
+            "sessions": int(len(state_daily)),
+            "signals": int(len(group)),
+            "mean_net_pct": float(state_daily.mean()),
+            "profit_factor": float(state_positive / state_negative) if state_negative > 0 else None,
+        }
     return {
         "sessions": int(len(daily)),
         "matured": int(len(frame)),
@@ -337,6 +422,7 @@ def summarize_forward(con: sqlite3.Connection) -> dict[str, Any]:
         "block_lcb_pct": _block_lcb(values),
         "ex_top3_days_pct": float(ordered[3:].mean()) if len(ordered) > 3 else None,
         "critical_data_errors": [],
+        "breadth_context_diagnostic_only": breadth_diagnostic,
     }
 
 
@@ -357,8 +443,11 @@ def main() -> int:
     parser.add_argument("--shadow-db", default=str(ROOT / "data" / "analysis" / "us_swing_shadow.db"))
     parser.add_argument("--policy", default=str(ROOT / "config" / "us_swing_accelerated.json"))
     parser.add_argument("--historical-evidence", default=str(ROOT / "state" / "us_swing_historical_evidence.json"))
+    parser.add_argument("--execution-evidence", default=str(ROOT / "state" / "us_swing_execution_evidence.json"))
     parser.add_argument("--status-output", default=str(ROOT / "state" / "us_swing_status.json"))
     parser.add_argument("--veto-file", default="")
+    parser.add_argument("--breadth", default=str(ROOT / "data" / "analysis" / "us_breadth_proxy_daily.csv"))
+    parser.add_argument("--adv-breadth", default=str(ROOT / "data" / "analysis" / "us_adv_dec_breadth_daily.csv"))
     parser.add_argument("--authority-mode", default=os.getenv("US_SWING_AUTHORITY_MODE", "shadow"))
     parser.add_argument("--mature-only", action="store_true")
     args = parser.parse_args()
@@ -367,6 +456,7 @@ def main() -> int:
     shadow_path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(shadow_path)
     ensure_schema(con)
+    ensure_handoff_schema(con)
     price_dir = Path(args.price_dir)
     earliest_pending = con.execute("SELECT MIN(signal_date) FROM signals WHERE status='PENDING'").fetchone()[0]
     fx_start = str(earliest_pending or (datetime.now(timezone.utc) - timedelta(days=45)).date())
@@ -386,6 +476,7 @@ def main() -> int:
     feature_errors: list[str] = []
     selected: list[dict[str, Any]] = []
     applied_vetoes: list[dict[str, str]] = []
+    breadth_context: dict[str, Any] = {}
     if not args.mature_only:
         snapshot = Path(args.snapshot) if args.snapshot else ROOT / "state" / f"preopen_US_{args.session_date.replace('-', '')}.json"
         veto_path = Path(args.veto_file) if args.veto_file else ROOT / "state" / f"us_swing_veto_{args.session_date.replace('-', '')}.json"
@@ -414,6 +505,14 @@ def main() -> int:
             seeds=[int(value) for value in policy.get("seeds", [20260710])],
             top_k=int(policy.get("top_k", 5)),
         )
+        feature_date = str(scored["date"].iloc[0]) if not scored.empty else ""
+        breadth_context = load_breadth_context(
+            feature_date=feature_date,
+            breadth_path=Path(args.breadth),
+            adv_path=Path(args.adv_breadth),
+        )
+        for key, value in breadth_context.items():
+            scored[key] = value
         generated = write_signals(
             con, signal_date=args.session_date, scored=scored, model_version=model_version
         )
@@ -422,16 +521,19 @@ def main() -> int:
                 "ticker": str(row["ticker"]), "rank": int(row["rank"]),
                 "predicted_net_pct": float(row["predicted_net_pct"]),
                 "probability": float(row["probability"]), "feature_date": str(row["date"]),
+                "breadth_context_state": str(row.get("breadth_context_state") or "MISSING"),
             }
             for row in scored.to_dict("records")
         ]
     forward = summarize_forward(con)
     historical = _load_json(Path(args.historical_evidence))
+    execution_evidence = _load_json(Path(args.execution_evidence))
     authority = evaluate_swing_authority(
         configured_mode=args.authority_mode,
         historical_evidence=historical,
         forward_evidence=forward,
         policy=policy,
+        execution_evidence=execution_evidence,
     )
     report = {
         "schema_version": SCHEMA_VERSION,
@@ -442,12 +544,14 @@ def main() -> int:
         "new_signals": generated,
         "selected": selected,
         "applied_vetoes": applied_vetoes,
+        "breadth_context": breadth_context,
         "feature_errors": feature_errors,
         "maturity": maturity,
         "forward_evidence": forward,
         "historical_evidence_present": bool(historical),
+        "execution_evidence_present": bool(execution_evidence),
         "authority": authority.to_dict(),
-        "order_integration": "NOT_CONNECTED; report and permission contract only",
+        "order_integration": "WIRED_FAIL_CLOSED_DISABLED; separate handoff, submit, and live-ack locks",
     }
     con.execute(
         "INSERT OR REPLACE INTO runs(signal_date,created_at,report_json) VALUES (?,?,?)",

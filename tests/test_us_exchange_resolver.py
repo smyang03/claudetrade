@@ -8,6 +8,16 @@ import kis_api
 
 
 class UsExchangeResolverTests(unittest.TestCase):
+    def test_orcl_is_forced_to_nyse_even_with_stale_nasdaq_cache(self) -> None:
+        with patch.dict(kis_api._US_EXCHANGE_CACHE, {"ORCL": "NASD"}, clear=True), patch.object(
+            kis_api, "_save_exchange_cache"
+        ) as save_mock:
+            code = kis_api._get_ovrs_excg_cd("ORCL", token=None)
+
+        self.assertEqual(code, "NYSE")
+        self.assertEqual(kis_api._US_EXCHANGE_CACHE["ORCL"], "NYSE")
+        save_mock.assert_called_once()
+
     def test_hardcoded_exchange_overrides_stale_cache_and_saves(self) -> None:
         with patch.dict(kis_api._US_EXCHANGE_CACHE, {"NOK": "NASD"}, clear=True), patch.object(
             kis_api, "_save_exchange_cache"

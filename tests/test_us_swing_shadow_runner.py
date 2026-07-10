@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from tools.us_swing_shadow_runner import ensure_schema, mature_pending, summarize_forward
+from tools.us_swing_shadow_runner import (
+    classify_breadth_context,
+    ensure_schema,
+    mature_pending,
+    summarize_forward,
+)
 
 
 def test_mature_pending_uses_next_open_fifth_close_fx_and_cost(tmp_path: Path) -> None:
@@ -36,3 +41,19 @@ def test_mature_pending_uses_next_open_fifth_close_fx_and_cost(tmp_path: Path) -
     assert abs(row[2] - ((110 / 101 - 1) * 100 - 0.5)) < 1e-9
     assert row[3] == "MATURED"
     assert summarize_forward(con)["matured"] == 1
+
+
+def test_breadth_context_is_observational_three_way_tag() -> None:
+    assert classify_breadth_context(-0.31) == "NARROW"
+    assert classify_breadth_context(0.00) == "BALANCED"
+    assert classify_breadth_context(0.31) == "BROAD"
+    assert classify_breadth_context(None) == "MISSING"
+
+
+def test_schema_migrates_existing_signal_table_with_breadth_columns() -> None:
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE signals(signal_date TEXT, ticker TEXT, status TEXT)")
+    ensure_schema(con)
+    columns = {row[1] for row in con.execute("PRAGMA table_info(signals)")}
+    assert "prior_narrow_excess_pct" in columns
+    assert "breadth_context_state" in columns

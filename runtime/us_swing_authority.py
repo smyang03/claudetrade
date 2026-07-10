@@ -121,12 +121,42 @@ def _forward_checks(evidence: Mapping[str, Any], policy: Mapping[str, Any], *, m
     return blockers
 
 
+def _execution_checks(
+    evidence: Mapping[str, Any], policy: Mapping[str, Any], *, mode: str
+) -> list[str]:
+    hard_blocks = policy.get("hard_blocks") if isinstance(policy.get("hard_blocks"), Mapping) else {}
+    if hard_blocks.get("require_execution_contract_evidence") is not True:
+        return []
+    blockers: list[str] = []
+    if evidence.get("sealed") is not True:
+        blockers.append("execution_contract_not_sealed")
+    expected = policy.get("execution_contract") if isinstance(policy.get("execution_contract"), Mapping) else {}
+    actual = evidence.get("contract") if isinstance(evidence.get("contract"), Mapping) else {}
+    comparisons = (
+        ("take_profit_pct", "take_profit_pct"),
+        ("catastrophe_stop_pct", "catastrophe_stop_pct"),
+        ("max_hold_sessions", "max_hold_sessions"),
+    )
+    for policy_key, evidence_key in comparisons:
+        expected_value = _number(expected.get(policy_key))
+        actual_value = _number(actual.get(evidence_key))
+        if expected_value is None or actual_value is None or abs(expected_value - actual_value) > 1e-9:
+            blockers.append("execution_contract_mismatch")
+            break
+    modes = evidence.get("modes") if isinstance(evidence.get("modes"), Mapping) else {}
+    mode_evidence = modes.get(mode) if isinstance(modes.get(mode), Mapping) else {}
+    if mode_evidence.get("passed") is not True:
+        blockers.append(f"execution_contract_{mode}_failed")
+    return blockers
+
+
 def evaluate_swing_authority(
     *,
     configured_mode: str,
     historical_evidence: Mapping[str, Any] | None,
     forward_evidence: Mapping[str, Any] | None,
     policy: Mapping[str, Any],
+    execution_evidence: Mapping[str, Any] | None = None,
 ) -> SwingAuthorityDecision:
     requested = str(configured_mode or "shadow").strip().lower()
     warnings: list[str] = []
@@ -135,11 +165,13 @@ def evaluate_swing_authority(
         requested = "shadow"
     historical = historical_evidence or {}
     forward = forward_evidence or {}
+    execution = execution_evidence or {}
     eligible = "shadow"
     blockers_by_mode: dict[str, list[str]] = {}
     for mode in ("micro", "probe", "standard"):
         blockers = _historical_checks(historical, policy, mode=mode)
         blockers.extend(_forward_checks(forward, policy, mode=mode))
+        blockers.extend(_execution_checks(execution, policy, mode=mode))
         blockers_by_mode[mode] = list(dict.fromkeys(blockers))
         if not blockers:
             eligible = mode
