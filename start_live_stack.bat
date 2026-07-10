@@ -106,6 +106,18 @@ call :kill_matching "dashboard\dashboard_server.py" "dashboard"
 call :kill_matching "tools\live_guardian.py" "live_guardian"
 call :kill_matching "tools\broker_truth_scheduler.py" "broker_truth_scheduler"
 call :kill_matching "tools\preopen_scheduler.py" "preopen_scheduler"
+:: [improve B] preopen_scheduler can survive as an orphan python (parent cmd gone) that kill_matching
+:: (which requires PROJECT_DIR in the CommandLine) misses, and its stale single-instance lock then
+:: blocks the fresh scheduler. Needle-only re-kill + clear the stale lock so the new one can acquire it.
+if "%DRY_RUN%"=="1" (
+  echo [DRY-RUN] would needle-kill orphan preopen_scheduler and clear stale lock
+) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' -and $_.CommandLine -like '*preopen_scheduler.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+  if exist "%STATE_DIR%\preopen_scheduler.lock.json" (
+    del /f /q "%STATE_DIR%\preopen_scheduler.lock.json" >nul 2>nul
+    echo [OK] cleared stale preopen_scheduler lock
+  )
+)
 call :kill_matching "tools\run_counterfactual_pipeline.py" "counterfactual_pipeline"
 call :kill_matching "tools\integrity_check.py" "integrity_check"
 
@@ -138,7 +150,7 @@ echo [START] opening live stack tabs...
 wt ^
   new-tab --title "trading_bot" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting trading_bot && call conda activate %CONDA_ENV% && python trading_bot.py --live" ^
   ; new-tab --title "dashboard" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting dashboard && call conda activate %CONDA_ENV% && python dashboard\dashboard_server.py" ^
-  ; new-tab --title "live_guardian" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting live_guardian && call conda activate %CONDA_ENV% && python tools\live_guardian.py --mode live --watch --interval-sec 300 --telegram-alert" ^
+  ; new-tab --title "live_guardian" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting live_guardian (wait 45s for fresh bot config snapshot) && call conda activate %CONDA_ENV% && timeout /t 45 /nobreak >nul && python tools\live_guardian.py --mode live --watch --interval-sec 300 --telegram-alert" ^
   ; new-tab --title "broker_truth_scheduler" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting broker_truth_scheduler && call conda activate %CONDA_ENV% && python tools\broker_truth_scheduler.py --mode live --markets KR,US --loop --interval-sec 30 --refresh-interval-min 2 --failure-retry-min 2 --preopen-min 20 --postclose-min 15 --ttl-sec 180 --no-refresh-on-start" ^
   ; new-tab --title "preopen_scheduler" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting preopen_scheduler && call conda activate %CONDA_ENV% && python tools\preopen_scheduler.py --mode live --markets KR,US --loop --interval-sec 60" ^
   ; new-tab --title "counterfactual_pipeline" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting counterfactual_pipeline && call conda activate %CONDA_ENV% && python tools\run_counterfactual_pipeline.py --phase due --market KR,US --loop --interval-sec 300 --json" ^
