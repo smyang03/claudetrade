@@ -34,6 +34,18 @@ class SubScreenerTests(unittest.TestCase):
         self.assertFalse(result.should_trigger)
         self.assertEqual(result.trigger_reason, "no_trigger")
 
+    def test_triage_raw_order_does_not_promote_high_trainer_score(self) -> None:
+        result = sub_screener.SubScanResult(
+            True,
+            [_row("FIRST", "PLAN_A", 10.0), _row("SECOND", "PLAN_A", 99.0)],
+            [],
+            [],
+            "new_plan_a:2",
+        )
+        with patch.dict(os.environ, {"SUB_SCREENER_TRIAGE_SCORE_MODE": "raw_order"}, clear=False):
+            rows = sub_screener.triage_candidates(result, max_add=1)
+        self.assertEqual([row["ticker"] for row in rows], ["FIRST"])
+
     def test_trigger_on_new_plan_a(self) -> None:
         result = sub_screener.scan_new_candidates(
             "US",

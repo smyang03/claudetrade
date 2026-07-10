@@ -899,7 +899,8 @@ def _candidate_quality_hint(candidate: dict) -> str:
     grade = str(candidate.get("candidate_quality_grade") or "").strip()
     score = candidate.get("candidate_quality_score")
     parts = []
-    if grade:
+    show_composite = _env_bool_flag("CANDIDATE_QUALITY_COMPOSITE_SCORE_PROMPT_ENABLED", True)
+    if grade and show_composite:
         try:
             parts.append(f"q={grade}{float(score):.0f}")
         except Exception:

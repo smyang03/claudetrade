@@ -10531,7 +10531,152 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             state.update({"allowed": False, "reason": "kr_recovery_micro_late_session"})
         return state
 
-    def _new_buy_block_state(self, market: str, ticker: str = "", strategy: str = "") -> dict:
+    def _record_profit_evidence_shadow_once(self, decision: dict) -> None:
+        if not bool((decision or {}).get("would_block")):
+            return
+        market = str((decision or {}).get("market") or "").upper()
+        ticker = str((decision or {}).get("ticker") or "").strip()
+        strategy = str((decision or {}).get("strategy") or "").strip()
+        reasons = tuple(str(value) for value in ((decision or {}).get("reasons") or []))
+        model_version = str((decision or {}).get("model_version") or "")
+        evidence = dict((decision or {}).get("evidence") or {})
+        path_name = str(evidence.get("path_name") or (decision or {}).get("path") or "")
+        decision_ts = str(evidence.get("decision_ts") or "")[:16]
+        cache = getattr(self, "_profit_evidence_shadow_seen", None)
+        if not isinstance(cache, set):
+            cache = set()
+            self._profit_evidence_shadow_seen = cache
+        # A ticker can legitimately produce a new path prediction later in the
+        # same session.  Suppress only exact minute/path duplicates, not every
+        # future observation for the process lifetime.
+        key = (market, ticker, strategy, path_name, model_version, decision_ts, reasons)
+        if key in cache:
+            return
+        cache.add(key)
+        log.warning(
+            f"[PROFIT_EVIDENCE shadow] {market} {ticker} {strategy} "
+            f"would_block={','.join(reasons) or 'unknown'}"
+        )
+        try:
+            decision_id = self._v2_decision_id_for_ticker(market, ticker)
+            if not decision_id:
+                decision_id = self._v2_ensure_execution_decision_id(
+                    market,
+                    ticker,
+                    strategy_hint=strategy,
+                    payload={
+                        "registration_source": "profit_evidence_shadow",
+                        "shadow_only": True,
+                        "model_version": model_version,
+                        "path_name": path_name,
+                    },
+                )
+            self._v2_record_lifecycle_event(
+                "PROFIT_EVIDENCE_SHADOW",
+                market,
+                ticker,
+                decision_id=decision_id,
+                reason_code="PROFIT_EVIDENCE_ABSTAIN",
+                payload=dict(decision or {}),
+            )
+        except Exception as exc:
+            log.debug(f"[profit evidence shadow event failed] {market} {ticker}: {exc}")
+
+    def _profit_evidence_gate_state(
+        self,
+        market: str,
+        ticker: str,
+        strategy: str,
+        *,
+        explicit: Optional[dict] = None,
+    ) -> dict:
+        market_key = str(market or "").upper()
+        ticker_key = str(ticker or "").strip().upper() if market_key == "US" else str(ticker or "").strip()
+        if not ticker_key:
+            return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": {}}
+        try:
+            from runtime.profit_evidence_gate import evaluate_profit_evidence, resolve_profit_evidence
+
+            selection_meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+            today = dict(getattr(self, "today_judgment", {}) or {})
+            today_selection_meta = (
+                dict(today.get("selection_meta") or {})
+                if str(today.get("market") or "").upper() == market_key
+                else {}
+            )
+            evidence, evidence_source = resolve_profit_evidence(
+                market=market_key,
+                ticker=ticker_key,
+                explicit=explicit,
+                sources=(selection_meta, today_selection_meta, today),
+            )
+            if not evidence:
+                from runtime.profit_path_predictor import predict_profit_path_evidence
+
+                post_open_by_ticker = dict(
+                    (getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key) or {}
+                )
+                runtime_source = {"_post_open_features_by_ticker": post_open_by_ticker}
+                evidence = predict_profit_path_evidence(
+                    market=market_key,
+                    ticker=ticker_key,
+                    strategy=strategy,
+                    context=explicit,
+                    sources=(selection_meta, today_selection_meta, today, runtime_source),
+                )
+                if evidence:
+                    evidence_source = "profit_path_shadow_model"
+            decision = evaluate_profit_evidence(
+                market=market_key,
+                ticker=ticker_key,
+                strategy=strategy,
+                evidence=evidence,
+                evidence_source=evidence_source,
+            ).to_dict()
+            if evidence:
+                # The lifecycle shadow event is the immutable point-in-time
+                # prediction ledger used by the forward outcome monitor.
+                decision["evidence"] = dict(evidence)
+        except Exception as exc:
+            decision = {
+                "allowed": False,
+                "passed": False,
+                "would_block": True,
+                "mode": "enforce",
+                "path": "",
+                "reason_code": "PROFIT_EVIDENCE_ABSTAIN",
+                "reasons": ["gate_error"],
+                "market": market_key,
+                "ticker": ticker_key,
+                "strategy": str(strategy or ""),
+                "evidence_source": "error",
+                "gate_error": str(exc)[:240],
+            }
+        if str(decision.get("mode") or "") == "shadow" and bool(decision.get("would_block")):
+            self._record_profit_evidence_shadow_once(decision)
+        if not bool(decision.get("allowed", True)):
+            return {
+                "allowed": False,
+                "blocked": True,
+                "reason": str(decision.get("reason_code") or "PROFIT_EVIDENCE_ABSTAIN"),
+                "scope": "ticker",
+                "details": {"profit_evidence_gate": decision},
+            }
+        return {
+            "allowed": True,
+            "blocked": False,
+            "reason": "",
+            "scope": "",
+            "details": {"profit_evidence_gate": decision},
+        }
+
+    def _new_buy_block_state(
+        self,
+        market: str,
+        ticker: str = "",
+        strategy: str = "",
+        profit_evidence: Optional[dict] = None,
+    ) -> dict:
         market_key = str(market or "").upper()
         raw_ticker = str(ticker or "").strip()
         ticker_key = raw_ticker.upper() if market_key == "US" else raw_ticker
@@ -10673,6 +10818,22 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "recheck_after_seconds": recheck_after_seconds,
                 },
             }
+        if ticker_key:
+            profit_gate = self._profit_evidence_gate_state(
+                market_key,
+                ticker_key,
+                str(strategy or ""),
+                explicit=profit_evidence,
+            )
+            details.update(dict(profit_gate.get("details") or {}))
+            if not bool(profit_gate.get("allowed", True)):
+                return {
+                    "allowed": False,
+                    "blocked": True,
+                    "reason": str(profit_gate.get("reason") or "PROFIT_EVIDENCE_ABSTAIN"),
+                    "scope": str(profit_gate.get("scope") or "ticker"),
+                    "details": details,
+                }
         return {"allowed": True, "blocked": False, "reason": "", "scope": "", "details": details}
     def _record_new_buy_block(
         self,
@@ -13592,7 +13753,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         )
         order_px = self._compute_order_price("buy", market, float(raw_price))
         precheck_px = float(raw_price) if order_px == 0 else order_px
-        buy_gate = self._new_buy_block_state(market, ticker, _MICRO_PROBE_STRATEGY)
+        buy_gate = self._new_buy_block_state(
+            market,
+            ticker,
+            _MICRO_PROBE_STRATEGY,
+            profit_evidence=signal_row,
+        )
         if not bool(buy_gate.get("allowed", True)):
             self._record_new_buy_block(
                 market,
@@ -35683,7 +35849,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             )
                             log.warning(f"[KR late entry order gate] {_s_tk} blocked: {_reason}")
                             continue
-                    _buy_gate = self._new_buy_block_state(market, _s_tk, _s_strat)
+                    _buy_gate = self._new_buy_block_state(
+                        market,
+                        _s_tk,
+                        _s_strat,
+                        profit_evidence=_s_row,
+                    )
                     if not bool(_buy_gate.get("allowed", True)):
                         self._record_new_buy_block(
                             market,
@@ -36079,7 +36250,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 for _play in _tier2_plays:
                     _t2_ticker = _play["ticker"]
                     try:
-                        _tier2_ticker_gate = self._new_buy_block_state("US", _t2_ticker, "sector_play")
+                        _tier2_ticker_gate = self._new_buy_block_state(
+                            "US",
+                            _t2_ticker,
+                            "sector_play",
+                            profit_evidence=_play,
+                        )
                         if not bool(_tier2_ticker_gate.get("allowed", True)):
                             self._record_new_buy_block(
                                 "US", _t2_ticker, "sector_play", _tier2_ticker_gate, stage="tier2_ticker_preflight"
@@ -36191,7 +36367,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             )
                             log.debug(f"  [Tier2] {_t2_ticker} 현금 부족 ({_t2_cost:,.0f}원)")
                             continue
-                        _tier2_submit_gate = self._new_buy_block_state("US", _t2_ticker, "sector_play")
+                        _tier2_submit_gate = self._new_buy_block_state(
+                            "US",
+                            _t2_ticker,
+                            "sector_play",
+                            profit_evidence=_play,
+                        )
                         if not bool(_tier2_submit_gate.get("allowed", True)):
                             self._record_new_buy_block(
                                 "US",
@@ -36303,7 +36484,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 for _play in _kr_t2_plays:
                     _t2_ticker = _play["ticker"]
                     try:
-                        _kr_tier2_ticker_gate = self._new_buy_block_state("KR", _t2_ticker, "kr_sector_play")
+                        _kr_tier2_ticker_gate = self._new_buy_block_state(
+                            "KR",
+                            _t2_ticker,
+                            "kr_sector_play",
+                            profit_evidence=_play,
+                        )
                         if not bool(_kr_tier2_ticker_gate.get("allowed", True)):
                             self._record_new_buy_block(
                                 "KR", _t2_ticker, "kr_sector_play", _kr_tier2_ticker_gate, stage="tier2_ticker_preflight"
@@ -36474,7 +36660,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 }},
                             )
                             continue
-                        _kr_tier2_submit_gate = self._new_buy_block_state("KR", _t2_ticker, "kr_sector_play")
+                        _kr_tier2_submit_gate = self._new_buy_block_state(
+                            "KR",
+                            _t2_ticker,
+                            "kr_sector_play",
+                            profit_evidence=_play,
+                        )
                         if not bool(_kr_tier2_submit_gate.get("allowed", True)):
                             self._record_new_buy_block(
                                 "KR",

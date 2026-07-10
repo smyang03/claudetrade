@@ -146,6 +146,7 @@ class PricePlan:
     registration_scope: str = ""
     not_patha_trade_ready: bool = False
     origin_reason: str = ""
+    profit_evidence: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now_iso)
 
     def validate(self, *, min_confidence: float | None = None, min_reward_risk: float = 1.2) -> list[str]:
@@ -232,6 +233,7 @@ class PricePlan:
             "registration_scope": self.registration_scope,
             "not_patha_trade_ready": bool(self.not_patha_trade_ready),
             "origin_reason": self.origin_reason,
+            "profit_evidence": dict(self.profit_evidence or {}),
             "created_at": self.created_at,
         }
 
@@ -268,6 +270,7 @@ def make_price_plan(
     registration_scope: str = "",
     not_patha_trade_ready: bool = False,
     origin_reason: str = "",
+    profit_evidence: dict[str, Any] | None = None,
 ) -> PricePlan:
     market_value = str(market or "").upper()
     ticker_value = str(ticker or "").strip().upper() if market_value == "US" else str(ticker or "").strip()
@@ -303,6 +306,7 @@ def make_price_plan(
         registration_scope=str(registration_scope or "")[:120],
         not_patha_trade_ready=bool(not_patha_trade_ready),
         origin_reason=str(origin_reason or "")[:240],
+        profit_evidence=dict(profit_evidence or {}),
     )
 
 
@@ -360,6 +364,11 @@ def parse_plan_from_claude(
             registration_scope=str(raw.get("_registration_scope") or raw.get("registration_scope") or ""),
             not_patha_trade_ready=bool(raw.get("_not_patha_trade_ready") or raw.get("not_patha_trade_ready")),
             origin_reason=str(raw.get("_origin_reason") or raw.get("origin_reason") or ""),
+            profit_evidence=(
+                dict(raw.get("profit_evidence") or {})
+                if isinstance(raw.get("profit_evidence"), dict)
+                else {}
+            ),
         )
     except Exception as exc:
         return None, [f"parse_error:{exc}"]

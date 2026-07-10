@@ -41,6 +41,7 @@ from runtime.pathb_reasons import (
     ORDER_UNKNOWN_SOFT_TIMEOUT_SEC_DEFAULT,
     normalize_pathb_decision_exit_reason,
 )
+from runtime.profit_evidence_gate import resolve_profit_evidence
 from runtime.sizing_contract import calculate_order_quantity
 from runtime_paths import get_runtime_path
 from telegram_reporter import buy_order_alert, send as tg_send
@@ -2446,6 +2447,23 @@ class PathBRuntime:
                         "_not_patha_trade_ready": bool(origin.get("not_patha_trade_ready", False)),
                         "_origin_reason": str(origin.get("reason") or origin.get("origin_reason") or ""),
                     }
+                if not isinstance(raw_plan, dict):
+                    raw_plan = {}
+                if not isinstance(raw_plan.get("profit_evidence"), dict):
+                    profit_evidence, profit_evidence_source = resolve_profit_evidence(
+                        market=market,
+                        ticker=key,
+                        explicit=origin if isinstance(origin, dict) else None,
+                        sources=(meta,),
+                    )
+                    if profit_evidence:
+                        raw_plan = {
+                            **raw_plan,
+                            "profit_evidence": {
+                                **profit_evidence,
+                                "evidence_source": profit_evidence.get("evidence_source") or profit_evidence_source,
+                            },
+                        }
                 plan, errors = parse_plan_from_claude(
                     decision_id=decision_id,
                     ticker=key,
@@ -4558,7 +4576,23 @@ class PathBRuntime:
                 brain_snapshot_id=self._brain_snapshot_id(market),
             )
             return False
-        entry_gate = self._new_buy_block_state(market, plan.ticker, strategy="path_b")
+        profit_context = plan.to_dict()
+        profit_context.update(
+            {
+                "entry_price": float(signal.limit_price or signal.price or 0.0),
+                "signal_reason": str(signal.reason or ""),
+                "candidate_price": float(plan.reference_price or plan.buy_zone_high or 0.0),
+                "profit_path_name": (
+                    "vwap_reclaim" if "vwap" in str(signal.reason or "").lower() else "pullback_reclaim"
+                ),
+            }
+        )
+        entry_gate = self._new_buy_block_state(
+            market,
+            plan.ticker,
+            strategy="path_b",
+            profit_evidence=profit_context,
+        )
         if not bool(entry_gate.get("allowed", True)):
             reason = str(entry_gate.get("reason") or "MARKET_CLOSED")
             self._record_blocked(market, plan.ticker, plan.decision_id, reason, entry_gate, plan.path_run_id)
@@ -12791,12 +12825,26 @@ class PathBRuntime:
         except Exception:
             return False
 
-    def _new_buy_block_state(self, market: str, ticker: str = "", strategy: str = "path_b") -> dict[str, Any]:
+    def _new_buy_block_state(
+        self,
+        market: str,
+        ticker: str = "",
+        strategy: str = "path_b",
+        profit_evidence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         fn = getattr(self.bot, "_new_buy_block_state", None)
         gate: dict[str, Any] | None = None
         if callable(fn):
             try:
-                gate = dict(fn(market, ticker=ticker, strategy=strategy) or {"allowed": True})
+                gate = dict(
+                    fn(
+                        market,
+                        ticker=ticker,
+                        strategy=strategy,
+                        profit_evidence=profit_evidence,
+                    )
+                    or {"allowed": True}
+                )
             except TypeError:
                 gate = dict(fn(market, ticker, strategy) or {"allowed": True})
             except Exception as exc:

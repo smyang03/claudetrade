@@ -58,6 +58,23 @@ class KrCandidateQualityPromptTests(unittest.TestCase):
         self.assertIn("flow=unavailable:all_zero_cluster", hint)
         self.assertNotIn("flow=F", hint)
 
+    def test_composite_score_can_be_hidden_while_raw_features_remain(self) -> None:
+        candidate = {
+            "candidate_quality_grade": "A",
+            "candidate_quality_score": 88,
+            "rs_20d_vs_board": 3.5,
+            "turnover_vs_20d": 1.8,
+        }
+        env = {
+            "ENABLE_KR_CANDIDATE_QUALITY_PROMPT": "true",
+            "CANDIDATE_QUALITY_COMPOSITE_SCORE_PROMPT_ENABLED": "false",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            hint = _candidate_quality_hint(candidate)
+        self.assertNotIn("q=A88", hint)
+        self.assertIn("rs20=+3.5", hint)
+        self.assertIn("turn20=1.8x", hint)
+
     def test_trainer_hint_regression_keeps_existing_score_fields(self) -> None:
         from minority_report.analysts import _candidate_trainer_hint
 

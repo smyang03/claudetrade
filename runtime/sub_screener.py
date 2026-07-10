@@ -360,8 +360,16 @@ def triage_candidates(result: SubScanResult, *, max_add: int = 5) -> list[dict[s
             continue
         seen.add(ticker)
         pool.append(dict(row))
-    # score 내림차순 정렬 후 상위 limit개 반환 — PLAN_A/B 순서보다 실제 점수 기준
-    pool.sort(key=lambda r: float(r.get("trainer_prompt_score") or r.get("candidate_quality_score") or 0), reverse=True)
+    # 역분별 가능성이 있는 trainer/quality 점수의 live 권한을 설정으로 분리한다.
+    # raw_order는 upstream의 결정론적 PLAN_A/PLAN_B/source 순서를 보존한다.
+    score_mode = str(os.getenv("SUB_SCREENER_TRIAGE_SCORE_MODE", "trainer") or "trainer").strip().lower()
+    if score_mode == "trainer":
+        pool.sort(
+            key=lambda r: float(r.get("trainer_prompt_score") or r.get("candidate_quality_score") or 0),
+            reverse=True,
+        )
+    elif score_mode == "screen":
+        pool.sort(key=lambda r: float(r.get("screen_score") or r.get("raw_score_current") or 0), reverse=True)
     return pool[:limit]
 
 
