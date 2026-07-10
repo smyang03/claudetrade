@@ -3919,6 +3919,9 @@ class PathBRuntime:
         _ext_mae = closed_trade.get("position_mae_pct")
         if _ext_mae is None:
             _ext_mae = _ext_plan.get("observed_mae_pct")
+        # 시간축(2026-07-10): external close 경로도 관측 시각 전달(plan durable 복원)
+        _ext_mfe_at = closed_trade.get("observed_peak_at") or _ext_plan.get("observed_peak_at") or ""
+        _ext_mae_at = closed_trade.get("observed_low_at") or _ext_plan.get("observed_low_at") or ""
         if str(run.get("status", "")) != "CLOSED":
             self.sell_manager.mark_closed(
                 path_run_id,
@@ -3933,6 +3936,8 @@ class PathBRuntime:
                 mfe_pct=_ext_mfe,
                 mae_pct=_ext_mae,
                 entry_market_regime=str(closed_trade.get("entry_market_regime") or ""),
+                mfe_time=str(_ext_mfe_at),
+                mae_time=str(_ext_mae_at),
                 entry_native_override=float(
                     closed_trade.get("display_avg_price", 0)
                     or closed_trade.get("entry_native", 0)
@@ -9995,6 +10000,8 @@ class PathBRuntime:
             mfe_pct=exit_meta.get("position_mfe_pct"),
             mae_pct=exit_meta.get("position_mae_pct"),
             entry_market_regime=str(exit_meta.get("entry_market_regime") or ""),
+            mfe_time=str(exit_meta.get("observed_peak_at") or ""),
+            mae_time=str(exit_meta.get("observed_low_at") or ""),
         )
         self.store.update_path_run(
             plan.path_run_id,
@@ -12343,6 +12350,12 @@ class PathBRuntime:
         prev_low = float(pos.get("observed_low_price", 0) or 0)
         peak = current_native if prev_peak <= 0 else max(prev_peak, current_native)
         low = current_native if prev_low <= 0 else min(prev_low, current_native)
+        # 시간축(2026-07-10): 새 고점/저점 갱신 시각 기록 → MFE/MAE '순서'를 DB로 판정
+        # (B breakeven 러너학살·낙관비관 갭·capture를 분봉 replay 없이). 기록만, 로직 무변경.
+        if peak != prev_peak:
+            pos["observed_peak_at"] = datetime.now(KST).isoformat(timespec="seconds")
+        if low != prev_low:
+            pos["observed_low_at"] = datetime.now(KST).isoformat(timespec="seconds")
         pos["observed_peak_price"] = peak
         pos["observed_low_price"] = low
         if entry > 0:
@@ -12368,6 +12381,11 @@ class PathBRuntime:
             durable["observed_mfe_pct"] = float(pos.get("observed_mfe_pct") or 0)
         if "observed_mae_pct" in pos:
             durable["observed_mae_pct"] = float(pos.get("observed_mae_pct") or 0)
+        # 시간축(2026-07-10): peak/low 갱신 시각도 durable로 — 청산 후 순서 판정용
+        if pos.get("observed_peak_at"):
+            durable["observed_peak_at"] = str(pos.get("observed_peak_at"))
+        if pos.get("observed_low_at"):
+            durable["observed_low_at"] = str(pos.get("observed_low_at"))
         try:
             self.store.update_path_run(path_run_id, plan=durable, merge_plan=True)
         except Exception:
@@ -12417,6 +12435,11 @@ class PathBRuntime:
             "position_mae_pct": _excursion("observed_mae_pct", "trough_pnl_pct"),
             "entry_market_regime": str(pos.get("entry_market_regime") or durable.get("entry_market_regime") or ""),
         }
+        # 시간축(2026-07-10): MFE/MAE 관측 시각(pos 우선, durable 복원) — 순서 판정용
+        for _tk in ("observed_peak_at", "observed_low_at"):
+            _tv = pos.get(_tk) or durable.get(_tk)
+            if _tv:
+                meta[_tk] = str(_tv)
         try:
             if callable(getattr(risk, "position_loss_budget_krw", None)):
                 meta["loss_budget_krw"] = float(risk.position_loss_budget_krw(pos) or 0)

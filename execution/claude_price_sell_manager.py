@@ -311,6 +311,8 @@ class ClaudePriceSellManager:
         mfe_pct: float | None = None,
         mae_pct: float | None = None,
         entry_market_regime: str = "",
+        mfe_time: str = "",
+        mae_time: str = "",
     ) -> None:
         # 멱등성 가드(2026-07-03): 이미 CLOSED된 포지션의 재호출을 차단해 이중 CLOSED 기록을 막는다.
         # 주 매도 경로(pathb_runtime)는 매도 no-op(ex=None)·세션말 PRE_CLOSE 재처리 시에도 mark_closed를
@@ -419,6 +421,11 @@ class ClaudePriceSellManager:
         # 국면조건부 capture 분석의 귀속 기준. 빈값이면 위조하지 않고 생략(mfe/mae와 동일 규율).
         if entry_market_regime:
             closed_extra["entry_market_regime"] = str(entry_market_regime)
+        # 시간축(2026-07-10): MFE/MAE 관측 시각 → sync(mfe_time/mae_time)로 순서 판정 전달
+        if mfe_time:
+            closed_extra["mfe_time"] = str(mfe_time)
+        if mae_time:
+            closed_extra["mae_time"] = str(mae_time)
         self.adapter._append_event(
             LifecycleEventType.CLOSED,
             path_run_id,

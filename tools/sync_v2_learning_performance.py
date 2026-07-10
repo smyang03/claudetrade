@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS v2_learning_performance (
     pnl_pct              REAL,
     mfe_pct              REAL,
     mae_pct              REAL,
+    mfe_time             TEXT,
+    mae_time             TEXT,
     close_reason         TEXT,
     forward_complete     INTEGER NOT NULL DEFAULT 0,
     quality_grade        TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN',
@@ -117,6 +119,8 @@ CREATE TABLE IF NOT EXISTS v2_canonical_performance (
     pnl_pct              REAL,
     mfe_pct              REAL,
     mae_pct              REAL,
+    mfe_time             TEXT,
+    mae_time             TEXT,
     quality_grade        TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN',
     learning_allowed     INTEGER NOT NULL DEFAULT 0,
     raw_fill_event_count INTEGER NOT NULL DEFAULT 0,
@@ -167,7 +171,7 @@ INSERT INTO v2_learning_performance (
     discovery_action_ceiling, discovery_signal_family, discovery_reason,
     discovery_overlay_rank, timing_style,
     filled, closed, portfolio_realized, fill_event_id, close_event_id, filled_at, closed_at,
-    entry_price, exit_price, qty, pnl_krw, pnl_pct, mfe_pct, mae_pct,
+    entry_price, exit_price, qty, pnl_krw, pnl_pct, mfe_pct, mae_pct, mfe_time, mae_time,
     pnl_pct_net, pnl_krw_net, fee_pct_round_trip, fee_krw_est, fx_change_pct, net_basis,
     market_regime,
     close_reason, forward_complete, quality_grade, quality_reasons_json,
@@ -180,7 +184,7 @@ VALUES (
     :discovery_action_ceiling, :discovery_signal_family, :discovery_reason,
     :discovery_overlay_rank, :timing_style,
     :filled, :closed, :portfolio_realized, :fill_event_id, :close_event_id, :filled_at, :closed_at,
-    :entry_price, :exit_price, :qty, :pnl_krw, :pnl_pct, :mfe_pct, :mae_pct,
+    :entry_price, :exit_price, :qty, :pnl_krw, :pnl_pct, :mfe_pct, :mae_pct, :mfe_time, :mae_time,
     :pnl_pct_net, :pnl_krw_net, :fee_pct_round_trip, :fee_krw_est, :fx_change_pct, :net_basis,
     :market_regime,
     :close_reason, :forward_complete, :quality_grade, :quality_reasons_json,
@@ -220,6 +224,8 @@ ON CONFLICT(v2_decision_id) DO UPDATE SET
     pnl_pct=excluded.pnl_pct,
     mfe_pct=excluded.mfe_pct,
     mae_pct=excluded.mae_pct,
+    mfe_time=excluded.mfe_time,
+    mae_time=excluded.mae_time,
     pnl_pct_net=excluded.pnl_pct_net,
     pnl_krw_net=excluded.pnl_krw_net,
     fee_pct_round_trip=excluded.fee_pct_round_trip,
@@ -246,7 +252,7 @@ INSERT INTO v2_canonical_performance (
     filled, closed, portfolio_realized, first_fill_event_id, first_close_event_id, last_close_event_id,
     earliest_fill_at, first_closed_at, last_closed_at,
     entry_price, first_exit_price, last_exit_price, qty, pnl_krw, pnl_pct,
-    mfe_pct, mae_pct, pnl_pct_net, pnl_krw_net, fee_pct_round_trip, fee_krw_est, fx_change_pct, net_basis,
+    mfe_pct, mae_pct, mfe_time, mae_time, pnl_pct_net, pnl_krw_net, fee_pct_round_trip, fee_krw_est, fx_change_pct, net_basis,
     quality_grade, learning_allowed, raw_fill_event_count,
     raw_close_event_count, source_event_count, metric_contract_json, synced_at
 )
@@ -259,7 +265,7 @@ VALUES (
     :filled, :closed, :portfolio_realized, :first_fill_event_id, :first_close_event_id, :last_close_event_id,
     :earliest_fill_at, :first_closed_at, :last_closed_at,
     :entry_price, :first_exit_price, :last_exit_price, :qty, :pnl_krw, :pnl_pct,
-    :mfe_pct, :mae_pct, :pnl_pct_net, :pnl_krw_net, :fee_pct_round_trip, :fee_krw_est, :fx_change_pct, :net_basis,
+    :mfe_pct, :mae_pct, :mfe_time, :mae_time, :pnl_pct_net, :pnl_krw_net, :fee_pct_round_trip, :fee_krw_est, :fx_change_pct, :net_basis,
     :quality_grade, :learning_allowed, :raw_fill_event_count,
     :raw_close_event_count, :source_event_count, :metric_contract_json, :synced_at
 )
@@ -300,6 +306,8 @@ ON CONFLICT(v2_decision_id) DO UPDATE SET
     pnl_pct=excluded.pnl_pct,
     mfe_pct=excluded.mfe_pct,
     mae_pct=excluded.mae_pct,
+    mfe_time=excluded.mfe_time,
+    mae_time=excluded.mae_time,
     pnl_pct_net=excluded.pnl_pct_net,
     pnl_krw_net=excluded.pnl_krw_net,
     fee_pct_round_trip=excluded.fee_pct_round_trip,
@@ -471,6 +479,13 @@ MODE_PERFORMANCE_COLUMNS = {
     "market_regime": "TEXT",
 }
 
+# 시간축(2026-07-10): MFE/MAE 관측 시각 — 순서 판정(B breakeven 러너학살·낙관비관 갭·capture)용.
+# 기존 테이블에 ALTER로 추가. 전방 축적(과거 소급 불가).
+TIME_AXIS_COLUMNS = {
+    "mfe_time": "TEXT",
+    "mae_time": "TEXT",
+}
+
 
 def _connect(path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path), timeout=30, factory=ClosingConnection)
@@ -492,6 +507,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     _ensure_columns(conn, "v2_learning_performance", NET_PERFORMANCE_COLUMNS)
     _ensure_columns(conn, "v2_canonical_performance", NET_PERFORMANCE_COLUMNS)
     _ensure_columns(conn, "v2_learning_performance", MODE_PERFORMANCE_COLUMNS)
+    _ensure_columns(conn, "v2_learning_performance", TIME_AXIS_COLUMNS)
+    _ensure_columns(conn, "v2_canonical_performance", TIME_AXIS_COLUMNS)
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_v2_learning_perf_experiment
@@ -1007,6 +1024,9 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
         "pnl_pct": pnl_pct,
         "mfe_pct": _num(close_payload, "mfe_pct", "position_mfe_pct"),
         "mae_pct": _num(close_payload, "mae_pct", "position_mae_pct"),
+        # 시간축(2026-07-10): MFE/MAE 관측 시각 — 순서 판정용(observed_peak_at/low_at 폴백)
+        "mfe_time": (_text(close_payload, "mfe_time", "observed_peak_at") or None),
+        "mae_time": (_text(close_payload, "mae_time", "observed_low_at") or None),
         "pnl_pct_net": pnl_pct_net,
         "pnl_krw_net": pnl_krw_net,
         "fee_pct_round_trip": fee_pct_round_trip,
@@ -1085,6 +1105,8 @@ def build_canonical_row(
         "pnl_pct": learning_row.get("pnl_pct"),
         "mfe_pct": learning_row.get("mfe_pct"),
         "mae_pct": learning_row.get("mae_pct"),
+        "mfe_time": learning_row.get("mfe_time"),
+        "mae_time": learning_row.get("mae_time"),
         "pnl_pct_net": learning_row.get("pnl_pct_net"),
         "pnl_krw_net": learning_row.get("pnl_krw_net"),
         "fee_pct_round_trip": learning_row.get("fee_pct_round_trip"),
