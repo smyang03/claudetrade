@@ -213,27 +213,43 @@ def _collect_us_screen_candidates(
         volume = _safe_float(row.get("volume"))
         change_rate = _safe_float(row.get("change_rate"))
         dollar_volume = price * volume if price > 0 and volume > 0 else 0.0
-        candidates.append(normalize_candidate({
+        raw_volume_ratio = row.get("vol_ratio")
+        volume_ratio = None if _safe_float(raw_volume_ratio, 1.0) == 1.0 else raw_volume_ratio
+        candidate = normalize_candidate({
             "ticker": row.get("ticker", ""),
             "name": row.get("name", row.get("ticker", "")),
             "source": str(row.get("category") or "us_screen_market"),
             "provider": "us_screen_market",
             "provider_rank": idx,
             "source_status": "us_screen_market",
-            "data_quality": "us_screen_market",
+            "data_quality": "regular_session_screen_only",
             "stale": False,
-            "quality_tags": ["us_screen_market", str(row.get("category", "") or "").lower()],
-            "risk_tags": [],
+            "quality_tags": [
+                "us_screen_market",
+                "regular_session_snapshot_not_premarket",
+                str(row.get("category", "") or "").lower(),
+            ],
+            "risk_tags": ["premarket_quote_unavailable"],
             "price": price,
-            "extended_price": price,
             "change_rate": change_rate,
-            "gap_pct": change_rate,
-            "extended_change_pct": change_rate,
             "volume": volume,
-            "extended_volume": volume,
-            "extended_dollar_volume": dollar_volume,
-            "volume_ratio": row.get("vol_ratio"),
-        }, market="US", session_date=session_date, captured_at=captured_at))
+            "prior_day_traded_value": dollar_volume,
+            "volume_ratio": volume_ratio,
+        }, market="US", session_date=session_date, captured_at=captured_at)
+        # normalize_candidate mirrors price into extended_price for generic
+        # display compatibility.  A regular-session Yahoo/FMP screener row is
+        # not an extended-hours quote, so clear every premarket semantic field.
+        candidate.update(
+            {
+                "extended_price": None,
+                "gap_pct": None,
+                "extended_change_pct": None,
+                "extended_volume": None,
+                "extended_dollar_volume": None,
+                "quote_timestamp": "",
+            }
+        )
+        candidates.append(candidate)
     return candidates
 
 
