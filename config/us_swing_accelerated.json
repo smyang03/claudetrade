@@ -1,0 +1,52 @@
+{
+  "schema_version": "us_swing_accelerated_v1",
+  "strategy_id": "US_SWING_5D_TOP_RANK",
+  "horizon_sessions": 5,
+  "cost_pct": 0.5,
+  "stress_cost_pct": 0.8,
+  "top_k": 5,
+  "seeds": [20260710, 20260711, 20260712],
+  "historical": {
+    "min_oos_sessions": 200,
+    "min_mean_net_pct": 0.25,
+    "min_profit_factor": 1.2,
+    "min_ex_top3_days_pct": 0.0,
+    "micro_min_block_lcb_pct": -0.25,
+    "probe_min_block_lcb_pct": 0.0,
+    "min_stress_mean_net_pct": 0.0,
+    "micro_required_cohorts": ["top3"],
+    "probe_required_cohorts": ["top3", "top5"],
+    "standard_required_cohorts": ["top3", "top5"]
+  },
+  "forward": {
+    "micro_min_sessions": 5,
+    "micro_min_matured": 15,
+    "micro_min_mean_net_pct": 0.0,
+    "micro_min_profit_factor": 1.0,
+    "probe_min_sessions": 15,
+    "probe_min_matured": 60,
+    "probe_min_mean_net_pct": 0.25,
+    "probe_min_profit_factor": 1.2,
+    "probe_min_block_lcb_pct": 0.0,
+    "probe_min_ex_top3_days_pct": 0.0,
+    "standard_min_sessions": 40,
+    "standard_min_matured": 150,
+    "standard_min_mean_net_pct": 0.25,
+    "standard_min_profit_factor": 1.2,
+    "standard_min_block_lcb_pct": 0.0,
+    "standard_min_ex_top3_days_pct": 0.0
+  },
+  "authority_caps": {
+    "shadow": {"size_multiplier": 0.0, "max_new_per_day": 0, "max_open_slots": 0},
+    "micro": {"size_multiplier": 0.1, "max_new_per_day": 1, "max_open_slots": 1},
+    "probe": {"size_multiplier": 0.25, "max_new_per_day": 3, "max_open_slots": 3},
+    "standard": {"size_multiplier": 1.0, "max_new_per_day": 5, "max_open_slots": 15}
+  },
+  "hard_blocks": {
+    "require_point_in_time_features": true,
+    "require_next_open_entry": true,
+    "require_fx_and_cost": true,
+    "require_no_critical_data_errors": true,
+    "auto_promotion": false
+  }
+}

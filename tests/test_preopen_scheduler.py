@@ -138,6 +138,17 @@ class PreopenSchedulerTests(unittest.TestCase):
         self.assertEqual(len(news_jobs), 1)
         self.assertEqual(news_jobs[0].due_at, "2026-05-04T22:10:00+09:00")
 
+    def test_us_swing_shadow_job_runs_ten_minutes_before_open_when_enabled(self) -> None:
+        now = datetime(2026, 5, 4, 22, 21, tzinfo=KST)
+        with patch.dict("os.environ", {"US_SWING_SHADOW_SCHEDULER_ENABLED": "true"}), patch(
+            "preopen.scheduler.is_trading_day", return_value=True
+        ):
+            jobs = due_jobs(now_dt=now, markets=["US"], mode="live")
+        swing = [job for job in jobs if job.kind == "swing_shadow"]
+        self.assertEqual(len(swing), 1)
+        self.assertEqual(swing[0].due_at, "2026-05-04T22:20:00+09:00")
+        self.assertEqual(swing[0].script, "tools/us_swing_shadow_runner.py")
+
     def test_us_outcome_catchup_after_kst_midnight_keeps_us_session_date(self) -> None:
         now = datetime(2026, 5, 5, 1, 0, tzinfo=KST)
 

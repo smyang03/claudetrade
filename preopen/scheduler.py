@@ -223,6 +223,13 @@ def news_lead_min(market: str) -> int:
     return max(1, _market_env_int(market, "PREOPEN_NEWS_LEAD_MIN", default))
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def regular_open_time(market: str, session_date: str | None = None) -> dt_time:
     if market_key(market) == "US":
         session_date = session_date or resolve_session_date_str("US", datetime.now(KST))
@@ -292,6 +299,21 @@ def due_jobs(
                     due_at=news_due_dt.isoformat(timespec="seconds"),
                     script="tools/collect_preopen_candidate_news.py",
                     args=("--market", mkt, "--session-date", session_date, "--mode", runtime_mode),
+                ))
+
+        if mkt == "US" and _env_bool("US_SWING_SHADOW_SCHEDULER_ENABLED", False):
+            swing_due_dt = open_dt - timedelta(minutes=10)
+            swing_late_by = (now_dt - swing_due_dt).total_seconds() / 60.0
+            job_id = f"{runtime_mode}:{session_date}:{mkt}:swing_shadow"
+            if 0 <= swing_late_by <= max(0, int(outcome_catchup_min)) and (force or job_id not in completed):
+                jobs.append(PreopenJob(
+                    market=mkt,
+                    session_date=session_date,
+                    kind="swing_shadow",
+                    job_id=job_id,
+                    due_at=swing_due_dt.isoformat(timespec="seconds"),
+                    script="tools/us_swing_shadow_runner.py",
+                    args=("--session-date", session_date),
                 ))
 
         offsets = (
