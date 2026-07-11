@@ -30,7 +30,7 @@ ML_DB = ROOT / "data" / "ml" / "decisions.db"
 FUNNEL_DIR = ROOT / "logs" / "funnel"
 
 # 수수료 왕복(%) — capture_net_review와 동일. net_basis='measured'/'backfilled_*'면 pnl_pct_net 우선.
-FEE_PCT = {"US": 0.5, "KR": 0.5}
+FEE_PCT = {"US": 0.5, "KR": 0.21}  # KR 왕복 0.21%(거래세 포함, 환전없음). 2026-07-08 KR=0.5 버그 정정.
 FX_SPREAD_PCT = {"US": 0.2, "KR": 0.0}  # US 환전 스프레드 왕복(%) — backfilled_fee_only는 미반영이라 추가 차감
 KILL_NET_THRESHOLD_PCT = 0.0  # skip 후보 net_avg가 이 값보다 크면(양수) 오버레이 해로움
 

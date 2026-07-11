@@ -31,8 +31,8 @@ DEFAULT_ML_DB = ROOT / "data" / "ml" / "decisions.db"
 DEFAULT_SEL_DB = ROOT / "data" / "ticker_selection_log.db"
 
 # 왕복 수수료 근사(%). 한투 미국 온라인 0.25%/편도 = 0.5% 왕복, 수수료 우대 없음(운영자 확인 2026-06-13).
-# KR 왕복 수수료/세금은 미확인이라 보수적으로 동일 가정 — CLI로 조정 가능.
-DEFAULT_FEE_PCT = {"US": 0.5, "KR": 0.5}
+# KR은 runtime 권위값(매수 0.015% + 매도 0.195%, 거래세 포함)과 동일하게 사용한다.
+DEFAULT_FEE_PCT = {"US": 0.5, "KR": 0.21}  # KR 왕복 0.21%(거래세 포함, 환전없음). 2026-07-08 KR=0.5 버그 정정.
 # 환전 스프레드 왕복(%). US 해외주식은 매수(원→달러)·매도(달러→원) 환전 2회 → net에 별도 차감해야
 # 정직(usd_krw 참조환율엔 미반영). 우대(0.1%/회)=0.2% / 무우대=~2%. 미확인이라 우대 기본, CLI 조정.
 DEFAULT_FX_SPREAD_PCT = {"US": 0.2, "KR": 0.0}

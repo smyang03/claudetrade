@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ML_DB = ROOT / "data" / "ml" / "decisions.db"
 EVENT_DB = ROOT / "data" / "v2_event_store.db"
 
-FEE_PCT = {"US": 0.5, "KR": 0.5}
+FEE_PCT = {"US": 0.5, "KR": 0.21}  # KR 왕복 0.21%(거래세 포함, 환전없음). 2026-07-08 KR=0.5 버그 정정.
 FX_SPREAD_PCT = {"US": 0.2, "KR": 0.0}
 
 

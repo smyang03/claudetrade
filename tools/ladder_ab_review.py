@@ -8,7 +8,7 @@ import argparse, hashlib, sqlite3
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ML_DB = ROOT / "data" / "ml" / "decisions.db"
-FEE = {"US": 0.7, "KR": 0.5}
+FEE = {"US": 0.7, "KR": 0.21}  # US 0.7=수수료0.5+FX0.2 올인. KR 0.21(거래세포함,환전없음). 2026-07-08 KR=0.5 버그 정정.
 def _net(market, pnl, pnl_net, basis):
     mkt = str(market or "").upper(); b = str(basis or "")
     if pnl_net is not None and b in ("measured", "backfilled_exact", "backfilled_fee_only"):

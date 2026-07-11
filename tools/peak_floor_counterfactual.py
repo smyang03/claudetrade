@@ -39,7 +39,7 @@ TARGET_REASONS = (
     "CLOSED_MFE_BREAKEVEN",
     "CLOSED_CLAUDE_PRICE_STOP",
 )
-DEFAULT_FEE_PCT = {"US": 0.5, "KR": 0.5}
+DEFAULT_FEE_PCT = {"US": 0.5, "KR": 0.21}  # KR 왕복 0.21%(거래세 포함, 환전없음). 2026-07-08 KR=0.5 버그 정정.
 DEFAULT_FX_SPREAD_PCT = {"US": 0.2, "KR": 0.0}
 EPS = 1e-9
 
