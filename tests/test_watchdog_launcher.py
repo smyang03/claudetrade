@@ -26,3 +26,14 @@ def test_live_stack_starts_broker_truth_scheduler() -> None:
     assert "--failure-retry-min 2" in text
     assert "--ttl-sec 180" in text
     assert "--no-refresh-on-start" in text
+
+
+def test_live_stack_guardian_delay_does_not_require_console_input() -> None:
+    text = (ROOT / "start_live_stack.bat").read_text(encoding="utf-8")
+    guardian_line = next(
+        line for line in text.splitlines() if 'new-tab --title "live_guardian"' in line
+    )
+
+    assert "timeout /t" not in guardian_line
+    assert "ping 127.0.0.1 -n 46 >nul" in guardian_line
+    assert r"python tools\live_guardian.py --mode live --watch" in guardian_line
