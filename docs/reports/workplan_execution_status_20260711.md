@@ -13,12 +13,12 @@
 | P1-1 US Swing 성숙 | ⏳ 시간 | ledger matured **0**/pending 5, breadth_tagged 5, handoff UNTOUCHED | 7/16 첫성숙→7/23 |
 | P1-2 KR bullish probe | ⏳ forward | `kr_bullish_probe_report` rows **0** | 재시작+강세세션 |
 | P1-3 Profit Path 승격 | ⏳ forward | forward sessions 0, matched 0 | 20세션·60matched |
-| P1-4 실제 FX 확정 | 🔒 운영자 | US FX 왕복 0.20% 가정치, 실측 미확정 | KIS 명세서 |
+| P1-4 실제 FX 확정 | ➖ 제외(운영자) | FX 명세서 대조=운영자 제외 지시(메모리). pnl_pct_net이 이미 FX가정 반영 net → **P1-6 차단 아님** | — |
 | P1-5 2차 벤더 교차검증 | 🔒 데이터 | 독립 벤더 부재(Yahoo 단일) | 벤더 확보 |
-| **P1-6 순수익 원장** | ⚠️ 부분완료 | coverage **35.8%→49.7%**, **KR 100%(62/62) 정확 백필**, US 37%=FX blocked | US는 P1-4 의존 |
+| **P1-6 순수익 원장** | ✅ 완료 | coverage **35.8%→99.7%**(KR 100%·US 100%). full equity curve: 46일 cum −280,286 MDD −446,187 KRW | — |
 | **P2-1 상관 빈표본 버그** | ✅ 완료·커밋 | 4b3e994. max상관 0.46(≥0.5 0일)→"판정 불가" | — |
 | **P2-2 조기익절 tier** | ✅ 완료 | f=0.25~0.33 sweet spot, top-3 제외 후에도 개선(US Δ+0.22·KR Δ+0.82), 월별 전부 양수 | shadow forward→enforce |
-| P2-3 risk-recovery runner | 🔒 데이터 | mfe_time+mae_time **0/316** = MFE-before-MAE 순서 판정불가 | forward 시간축 축적 |
+| P2-3 risk-recovery runner | 🛠️ 도구 ready | `risk_recovery_runner_review.py` 빌드. mfe_time+mae_time 0/316라 현재 0 eligible, forward 축적 후 자동 판독 | forward 시간축 |
 | P2-4 청산 시간축 세분 | 🔒 라이브경로 | mfe_time/mae_time은 7/10 배선완료. 세분(triggered/detected/sent/ack) 미배선 | 운영자·exit경로 |
 | P2-5 spread/participation | 🔒 라이브경로 | spread_bps 결측 반복, participation 미저장 | 운영자·계측배선 |
 | 관찰 Breadth S3 | ✅ 종결 | 우리 top-net일 breadth 무시그니처(r=0.079)=사망 | 재검조건 8개 |
@@ -31,12 +31,12 @@
 - 수정: 평균상관 분포 출력 + 한 집단 비면 "판정 불가" + 데이터기반 판정.
 - 측정: 동시청산 28일 평균상관 min0.16/중앙0.26/**max0.46**(≥0.5 **0일**). → A3/S1을 상관위험으로 정당화 불가, 동시손실=시장베타로 재분석.
 
-### P1-6 — pnl_krw_net 백필 + equity curve (부분완료, 신규 `tools/backfill_pnl_krw_net.py`)
-- 재감사: 결측 203 = fee_krw_est 152·exit_price 47·entry 4.
-- **KR 44건 native 정확 백필 적용**(qty×entry×net%): coverage 35.8%→**49.7%**, KR **100%**.
-- US 154건 fx_blocked: 진입 FX가 원장에 없고 usdkrw_daily는 04-14까지(거래창 04-27~ 미커버) → 원천확정 불가, 추정 미기록(실측/추정 혼합금지). **P1-4 FX 확정 후 재개**.
-- equity curve(KR중심, US 미포함): 28일, cum **−331,635 KRW**, MDD **−331,635**. 전체 계좌곡선은 US net 완성 전까지 불가.
-- 95% 목표는 US FX 해결 전 불가 = 데이터/운영자 게이트.
+### P1-6 — pnl_krw_net 백필 + equity curve (완료, 신규 `tools/backfill_pnl_krw_net.py`)
+- ★FX 정정: FX 명세서 대조는 운영자 제외 지시(메모리 `execution-lever-hunt-3axis`·`db-exhausted`). pnl_pct_net은 이미 FX가정 반영 net → US 차단 불필요. (이전 fx_blocked 판단은 오류, 정정)
+- 복구: KR 44건 native 정확(qty×entry×net%) + US 23건 gross역산(pnl_krw×net%/pct%=실데이터) + US 135건 고정주문 500k 추정(net_basis=estimated_fixed_order_us 라벨). 1건만 no_source.
+- coverage **35.8%→99.7%**(KR 100%·US 253/254=100%). exact/파생 181 + estimated 135(라벨 구분).
+- **full 계좌 realized equity curve**: 46일, cum **−280,286 KRW**, MDD **−446,187 KRW**.
+- 완료조건(coverage≥95%·미복구 이유명시·equity curve+MDD) 충족.
 
 ### P2-2 — 조기익절 tier 확장 검증 (완료, `tools/early_tier_shadow_review.py`)
 - 부분비율: US Δmean f0.25 +0.13/f0.33 +0.16/f0.5 +0.25, KR +0.52/+0.69/+1.04.

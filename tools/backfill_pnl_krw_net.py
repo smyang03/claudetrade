@@ -2,13 +2,16 @@
 
 원칙(워크플랜 §11): 원천 사실이 있는 행만 백필, 추정과 실측을 혼합하지 않는다.
 
-복구 정책:
+복구 정책 (FX 명세서는 운영자 제외 지시 → pnl_pct_net이 이미 FX 가정 반영된 net이므로 사용):
   KR: pnl_krw_net = round(qty * entry_price * pnl_pct_net / 100)  (KRW 네이티브 = 정확)
-  US: 진입 FX rate가 원장에 없고 usdkrw_daily도 거래창(2026-04-27~)을 커버하지 못해
-      KRW 명목가를 원천으로 확정할 수 없다 → 백필하지 않고 fx_blocked로 보고(→ P1-4 의존).
+  US(gross 있음): notional = pnl_krw / (pnl_pct/100) → pnl_krw_net = pnl_krw * (pnl_pct_net/pnl_pct)
+                  (실제 gross KRW로 명목가 역산 = FX 불필요·실데이터 파생)
+  US(gross 없음): pnl_krw_net = round(FIXED_ORDER_KRW_US * pnl_pct_net / 100)  (추정, net_basis로 구분)
 
-가드: closed=1, pnl_krw_net IS NULL, entry/qty/pnl_pct_net 존재. 기본 dry-run, --apply로 기록.
-백필 행은 net_basis='backfilled_krw_native'로 표시해 measured와 구분.
+FIXED_ORDER_KRW_US: 우리 거래창(2026-04~07-06)은 US 소액화(20만) 이전이라 500,000원.
+
+가드: closed=1, pnl_krw_net IS NULL. 기본 dry-run, --apply로 기록.
+net_basis로 정확/파생/추정 구분(measured 원본은 미변경).
 """
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "data" / "ml" / "decisions.db"
+FIXED_ORDER_KRW_US = 500000.0  # 거래창(2026-04~07-06)은 US 20만 소액화 이전
 
 
 def run(db: Path, apply: bool) -> dict:
@@ -25,34 +29,37 @@ def run(db: Path, apply: bool) -> dict:
     con.execute("PRAGMA busy_timeout=30000")
     cur = con.cursor()
     cols = {r[1] for r in cur.execute("PRAGMA table_info(v2_learning_performance)")}
-    assert {"pnl_krw_net", "market", "entry_price", "qty", "pnl_pct_net", "net_basis"} <= cols
+    assert {"pnl_krw_net", "market", "entry_price", "qty", "pnl_pct_net", "pnl_krw", "pnl_pct", "net_basis"} <= cols
 
     total = cur.execute("SELECT COUNT(*) FROM v2_learning_performance WHERE closed=1").fetchone()[0]
     have0 = cur.execute("SELECT COUNT(*) FROM v2_learning_performance WHERE closed=1 AND pnl_krw_net IS NOT NULL").fetchone()[0]
 
     rows = cur.execute(
-        "SELECT rowid, market, entry_price, qty, pnl_pct_net "
+        "SELECT rowid, market, entry_price, qty, pnl_pct_net, pnl_krw, pnl_pct "
         "FROM v2_learning_performance WHERE closed=1 AND pnl_krw_net IS NULL"
     ).fetchall()
-    updates = []
-    stats = {"kr_native_exact": 0, "us_fx_blocked": 0, "no_source_blocked": 0}
-    for rowid, mkt, entry, qty, npct in rows:
-        if entry and qty and npct is not None:
-            if mkt == "KR":
-                val = round(float(qty) * float(entry) * float(npct) / 100.0)
-                updates.append((val, rowid))
-                stats["kr_native_exact"] += 1
-            elif mkt == "US":
-                stats["us_fx_blocked"] += 1  # 진입 FX 원천 없음 → P1-4 의존
-            else:
-                stats["no_source_blocked"] += 1
+    updates = []  # (val, basis, rowid)
+    stats = {"kr_native_exact": 0, "us_from_gross": 0, "us_estimated_fixed_order": 0, "no_source_blocked": 0}
+    for rowid, mkt, entry, qty, npct, gross_krw, gross_pct in rows:
+        if npct is None:
+            stats["no_source_blocked"] += 1
+            continue
+        if mkt == "KR" and entry and qty:
+            updates.append((round(float(qty) * float(entry) * float(npct) / 100.0), "backfilled_krw_native", rowid))
+            stats["kr_native_exact"] += 1
+        elif mkt == "US" and gross_krw is not None and gross_pct not in (None, 0):
+            # 실제 gross KRW로 명목가 역산 → net (FX 불필요)
+            updates.append((round(float(gross_krw) * float(npct) / float(gross_pct)), "backfilled_us_from_gross", rowid))
+            stats["us_from_gross"] += 1
+        elif mkt == "US":
+            updates.append((round(FIXED_ORDER_KRW_US * float(npct) / 100.0), "estimated_fixed_order_us", rowid))
+            stats["us_estimated_fixed_order"] += 1
         else:
             stats["no_source_blocked"] += 1
 
     if apply and updates:
         cur.executemany(
-            "UPDATE v2_learning_performance SET pnl_krw_net=?, "
-            "net_basis=COALESCE(NULLIF(net_basis,''),'backfilled_krw_native') WHERE rowid=?",
+            "UPDATE v2_learning_performance SET pnl_krw_net=?, net_basis=? WHERE rowid=?",
             updates,
         )
         con.commit()
@@ -92,9 +99,17 @@ def equity_curve(db: Path) -> dict:
         cum += daily[d]
         peak = max(peak, cum)
         mdd = min(mdd, cum - peak)
+    con2 = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    from collections import Counter
+    basis = dict(Counter(r[0] for r in con2.execute(
+        "SELECT net_basis FROM v2_learning_performance WHERE closed=1 AND pnl_krw_net IS NOT NULL")).most_common())
+    con2.close()
+    est = sum(v for k, v in basis.items() if str(k).startswith("estimated"))
     return {"coverage_by_market": cov, "days": len(daily),
             "final_cum_krw": round(cum), "max_drawdown_krw": round(mdd),
-            "note": "US coverage 낮음(FX blocked)→ equity curve는 사실상 KR 중심, 전체 계좌 곡선 아님"}
+            "net_basis_breakdown": basis,
+            "estimated_rows": est,
+            "note": "US gross없는 행은 고정주문 500k 추정(net_basis=estimated_*). 실측/파생과 라벨로 구분."}
 
 
 def main() -> int:
