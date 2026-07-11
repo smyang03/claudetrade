@@ -99,14 +99,35 @@ def main():
         nets = [x[3] for x in arr]
         print(f"  {name}: n={len(arr)}일 결합net합={sum(nets):+.1f} 중앙={st.median(nets):+.1f} 손실일{sum(1 for x in nets if x<0)}/{len(arr)}")
 
-    print(f"상관계산 성공 {len(hi)+len(lo)}일 / CSV부족 스킵 {skip}")
+    all_days = hi + lo
+    print(f"상관계산 성공 {len(all_days)}일 / CSV부족 스킵 {skip}")
+    # 평균상관 분포 먼저 — threshold 0.5가 현 종목군에서 과도한지 판단 근거
+    if all_days:
+        corrs = sorted(x[2] for x in all_days)
+        n = len(corrs)
+        print(f"평균상관 분포: min={corrs[0]:.2f} 중앙={st.median(corrs):.2f} p90={corrs[min(n - 1, int(n * 0.9))]:.2f} max={corrs[-1]:.2f}")
+        for thr in (0.3, 0.4, 0.5):
+            print(f"  평균상관≥{thr}: {sum(1 for c in corrs if c >= thr)}일")
     print("=== 동시보유일 평균상관 ≥0.5(고상관 클러스터) vs <0.5 ===")
     rep("고상관", hi)
     rep("저상관", lo)
-    print("\n최악 고상관 손실일:")
-    for x in sorted(hi, key=lambda z: z[3])[:6]:
-        print(f"  {x[0]} {x[1]} 상관{x[2]} {x[4]}종목 결합net{x[3]}")
-    print("\n판정: 고상관일 결합손실 >> 저상관일 → 상관 사이징/청산순위(A3/S1)가 손실 겨냥. gross 방향만.")
+    if hi:
+        print("\n최악 고상관 손실일:")
+        for x in sorted(hi, key=lambda z: z[3])[:6]:
+            print(f"  {x[0]} {x[1]} 상관{x[2]} {x[4]}종목 결합net{x[3]}")
+    # 데이터 기반 판정 — 한 집단이 비면 방향 결론 금지(빈 표본 버그 수정)
+    if not hi or not lo:
+        empty = "고상관(≥0.5)" if not hi else "저상관(<0.5)"
+        print(f"\n판정 불가: {empty} 표본 n=0 — 한 집단이 비어 방향 비교 불가.")
+        if not hi:
+            print("  현 종목군에 평균상관 0.5 이상 동시보유일 없음 = 고상관 클러스터 위험 근거 없음(threshold 0.5 과도 가능, 위 분포 참조).")
+            print("  → A3(상관 사이징)/S1(청산순위)를 '상관 위험'으로 정당화 불가. 동시손실 원인=상관 아닌 시장베타/급락 등 별도 변수로 재분석.")
+    else:
+        hn = [x[3] for x in hi]
+        ln = [x[3] for x in lo]
+        hm, lm = st.median(hn), st.median(ln)
+        direction = "더 큼" if hm < lm else "더 작거나 같음"
+        print(f"\n판정: 고상관일 결합net중앙 {hm:+.1f} vs 저상관일 {lm:+.1f} → 고상관일 손실이 {direction}. (gross 방향, hi={len(hi)}/lo={len(lo)})")
 
 
 if __name__ == "__main__":
