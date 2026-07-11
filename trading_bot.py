@@ -11473,16 +11473,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         last_post_open = (getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key)
         if isinstance(last_post_open, dict) and last_post_open and not meta.get("_post_open_features_by_ticker"):
             meta["_post_open_features_by_ticker"] = dict(last_post_open)
+        meta = self._apply_candidate_action_live_routes(market, meta)
+        meta = self._apply_candidate_pool_role_ceiling(market, meta, stage="post_route")
+        meta = self._apply_selection_evidence_ceiling(market, meta, stage="post_route")
         meta = attach_adaptive_live_condition_shadow(
             market=market,
             selection_meta=meta,
             consensus_mode=mode,
-            market_context={"consensus_mode": mode},
+            market_context=self._adaptive_live_market_context(market, consensus_mode=mode),
             enabled=self._runtime_bool("ADAPTIVE_LIVE_CONDITION_SHADOW_ENABLED", True),
         )
-        meta = self._apply_candidate_action_live_routes(market, meta)
-        meta = self._apply_candidate_pool_role_ceiling(market, meta, stage="post_route")
-        meta = self._apply_selection_evidence_ceiling(market, meta, stage="post_route")
         meta = self._apply_kr_trade_ready_carry(market, meta, source=route_source, selected=selected)
         meta = self._normalize_selection_meta_runtime(market, meta, selected, mode=mode)
         allow_missing_price_targets = meta.get("_trade_ready_without_price_targets_allowed") or []
@@ -16479,6 +16479,66 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         key = "kosdaq" if market == "KR" else "nasdaq"
         v = (ctx.get(key) or {}).get("change_pct")
         return float(v) if v is not None else None
+
+    def _adaptive_live_market_context(self, market: str, *, consensus_mode: str = "") -> dict:
+        """Return fresh, point-in-time market facts for non-executable adaptive shadows."""
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        payload = {
+            "consensus_mode": str(consensus_mode or "").strip().upper(),
+            "fresh": False,
+            "source": "unavailable",
+        }
+        if market_key != "KR":
+            return payload
+        now_dt = datetime.now(KST)
+        cache = (getattr(self, "_kis_index_cache", {}) or {}).get("KR")
+        cache_age_sec = None
+        if isinstance(cache, dict) and isinstance(cache.get("ts"), datetime):
+            try:
+                cache_age_sec = max(0.0, (now_dt - cache["ts"]).total_seconds())
+            except Exception:
+                cache_age_sec = None
+        reuse_sec = max(5.0, self._runtime_float("KR_BULLISH_PROBE_INDEX_CACHE_SEC", 60.0))
+        kospi = cache.get("kospi") if isinstance(cache, dict) and cache_age_sec is not None and cache_age_sec <= reuse_sec else None
+        kosdaq = cache.get("kosdaq") if isinstance(cache, dict) and cache_age_sec is not None and cache_age_sec <= reuse_sec else None
+        source = "kis_index_cache"
+        if not isinstance(kospi, dict) or not isinstance(kosdaq, dict):
+            try:
+                from kis_api import get_index_snapshot
+
+                kospi = get_index_snapshot("KR", "KOSPI")
+                kosdaq = get_index_snapshot("KR", "KOSDAQ")
+                if not isinstance(getattr(self, "_kis_index_cache", None), dict):
+                    self._kis_index_cache = {}
+                self._kis_index_cache["KR"] = {"kospi": kospi, "kosdaq": kosdaq, "ts": now_dt}
+                cache_age_sec = 0.0
+                source = "kis_index_live"
+            except Exception as exc:
+                payload["error"] = str(exc)[:160]
+                if isinstance(cache, dict):
+                    kospi = cache.get("kospi")
+                    kosdaq = cache.get("kosdaq")
+                    source = "kis_index_stale_cache"
+        if not isinstance(kospi, dict) or not isinstance(kosdaq, dict):
+            return payload
+
+        advancers = int(float(kospi.get("advancers", 0) or 0)) + int(float(kosdaq.get("advancers", 0) or 0))
+        decliners = int(float(kospi.get("decliners", 0) or 0)) + int(float(kosdaq.get("decliners", 0) or 0))
+        breadth_total = advancers + decliners
+        freshness_sec = max(30.0, self._runtime_float("KR_BULLISH_PROBE_CONTEXT_FRESH_SEC", 120.0))
+        payload.update(
+            {
+                "fresh": cache_age_sec is not None and cache_age_sec <= freshness_sec,
+                "source": source,
+                "index_change_pct": self._strength_capture_float(kospi.get("change_pct")),
+                "secondary_index_change_pct": self._strength_capture_float(kosdaq.get("change_pct")),
+                "breadth_up_ratio_pct": (advancers / breadth_total * 100.0) if breadth_total > 0 else None,
+                "advancers": advancers,
+                "decliners": decliners,
+                "cache_age_sec": cache_age_sec,
+            }
+        )
+        return payload
     def _log_screen_candidates(self, market: str, candidates: list, source: str):
         """대시보드가 최신 후보 집합을 알 수 있도록 재스크리닝도 analysis 로그에 남긴다."""
         today = self._current_session_date_str(market)
@@ -18802,6 +18862,39 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "strength_capture_rules": rules,
         }
 
+    @staticmethod
+    def _bullish_probe_audit_fields(meta: dict, ticker: str) -> dict:
+        adaptive = dict((meta or {}).get("_adaptive_live_condition") or {})
+        probe = dict(adaptive.get("kr_bullish_strength_probe") or {})
+        key = str(ticker or "").strip()
+        eligible = {
+            str(item.get("ticker") or "").strip()
+            for item in list(probe.get("eligible") or [])
+            if isinstance(item, dict)
+        }
+        selected = str(probe.get("selected_ticker") or "").strip()
+        selected_payload = dict(probe.get("selected") or {}) if key == selected else {}
+        thresholds = dict(probe.get("thresholds") or {})
+        reason = ""
+        if key == selected:
+            reason = "top_plan_a_in_broad_bull_market"
+        elif key in eligible:
+            reason = "eligible_not_top_ranked"
+        elif key in dict(probe.get("rejected") or {}):
+            reason = ",".join(str(value) for value in list((probe.get("rejected") or {}).get(key) or []))
+        elif probe and not probe.get("market_eligible"):
+            failed = [name for name, passed in dict(probe.get("market_checks") or {}).items() if not passed]
+            reason = "market_ineligible:" + ",".join(failed)
+        return {
+            "bullish_probe_shadow": key in eligible and bool(probe.get("market_eligible")),
+            "bullish_probe_selected": bool(selected and key == selected),
+            "bullish_probe_version": str(probe.get("version") or ""),
+            "bullish_probe_reason": reason[:300],
+            "bullish_probe_claude_reason": str(selected_payload.get("claude_reason_code") or "")[:160],
+            "bullish_probe_recheck_condition": str(selected_payload.get("recheck_condition") or "")[:240],
+            "bullish_probe_cost_pct": thresholds.get("round_trip_cost_pct"),
+        }
+
     def _write_candidate_audit_live(
         self,
         market: str,
@@ -19725,6 +19818,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             market=market_key,
                             consensus_mode=consensus_mode,
                         ),
+                        **self._bullish_probe_audit_fields(meta, key),
                         **_stale_cycle_audit_fields(key, prompt_row),
                         **_runtime_evidence_audit_fields(
                             runtime_gate,
@@ -19797,6 +19891,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             market=market_key,
                             consensus_mode=consensus_mode,
                         ),
+                        **self._bullish_probe_audit_fields(meta, key),
                         **_stale_cycle_audit_fields(key, row),
                         **_runtime_evidence_audit_fields({}, prompt_row=row),
                         "payload": {
@@ -19866,6 +19961,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             market=market_key,
                             consensus_mode=consensus_mode,
                         ),
+                        **self._bullish_probe_audit_fields(meta, key),
                         **_stale_cycle_audit_fields(key, row),
                         **_runtime_evidence_audit_fields({}, prompt_row=row),
                         "payload": {

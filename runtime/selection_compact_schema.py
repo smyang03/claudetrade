@@ -121,11 +121,12 @@ ca item keys only: t,a,s,c,fr,mat,ceil,rc,blk,inv,pt.
 Field meanings:
 t=ticker, a=action, s=strategy, c=numeric confidence 0.0-1.0.
 fr=freshness label, mat=setup maturity label, ceil=max action allowed by evidence.
-rc=required short reason code (WATCH/AVOID must include specific reason, not empty or MISSING_ACTION), blk=array of blockers, inv=short invalidation condition.
+rc=required short reason code (WATCH/AVOID must include specific reason, not empty, WATCH_ONLY, or MISSING_ACTION), blk=array of blockers, inv=short observable re-evaluation/invalidation condition.
 Allowed actions: BUY_READY, PROBE_READY, PULLBACK_WAIT, WATCH, AVOID.
 pt is required for every ca item.
 BUY_READY/PROBE_READY/PULLBACK_WAIT use populated pt.
 WATCH/AVOID use empty pt={{}}.
+If ceil=BUY_READY but a=WATCH, rc must name the missing confirmation and inv must encode when to recheck (example RECHECK_5M_IF_VWAP_RECLAIM). Generic setup_invalid is prohibited. If no intraday repair is possible, use inv=TERMINAL:<reason>.
 When exec feas shows soft/mutable blocker (macd_not_ready,gap_below_min,breakout_not_ready,orp_entry_window_expired,volume_low) AND price structure is bullish (positive returns,OR break,above VWAP), use PULLBACK_WAIT with populated pt instead of WATCH. pt.lo/hi must be below current price. pt.stp below pt.lo. pt.tgt above current price.
 pt keys only: ref,lo,hi,tgt,stp,days,conf.
 pt.days must be numeric hold_days, not direction text.
@@ -386,6 +387,14 @@ def canonicalize_compact_selection(
         maturity = str(raw_item.get("mat") or "WEAK").strip().upper() or "WEAK"
         ceiling = str(raw_item.get("ceil") or action).strip().upper() or action
         blocking_factors = _list_str(raw_item.get("blk"), 4)
+        invalidation_condition = str(raw_item.get("inv") or reason_code or "setup_invalid").strip()[:120]
+        watch_review_required = action == "WATCH" and ceiling == "BUY_READY"
+        watch_review_complete = not watch_review_required or (
+            reason_code.upper() not in {"", "WATCH", "WATCH_ONLY", "MISSING_ACTION"}
+            and invalidation_condition.lower() not in {"", "setup_invalid", "watch", "watch_only"}
+        )
+        if watch_review_required and not watch_review_complete:
+            item_warnings.append("buy_ready_ceiling_watch_missing_recheck_contract")
         if action in READY_ACTIONS and confidence <= 0:
             item_warnings.append("ready_confidence_missing_demoted")
             action = "WATCH"
@@ -431,7 +440,9 @@ def canonicalize_compact_selection(
                 "soft_gate_overrides": [],
                 "required_confirmations": [],
                 "entry_type": strategy or action.lower(),
-                "invalidation_condition": str(raw_item.get("inv") or reason_code or "setup_invalid")[:120],
+                "invalidation_condition": invalidation_condition,
+                "watch_review_required": watch_review_required,
+                "watch_review_complete": watch_review_complete,
                 "price_targets": dict(target),
                 "source_prompt_id": source_prompt_id,
                 "contract_warnings": item_warnings,

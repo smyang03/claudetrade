@@ -579,6 +579,93 @@ class ClaudeTradeQualityReworkTests(unittest.TestCase):
         self.assertEqual(result["probe_ready_shadow"], [])
         self.assertTrue(result["shadow_only"])
 
+    def test_kr_bullish_strength_probe_selects_one_top_plan_a_without_promotion(self) -> None:
+        result = build_adaptive_live_condition(
+            market="KR",
+            consensus_mode="MILD_BULL",
+            market_context={
+                "fresh": True,
+                "source": "test",
+                "index_change_pct": 3.52,
+                "secondary_index_change_pct": 1.29,
+                "breadth_up_ratio_pct": 86.0,
+            },
+            selection_meta={
+                "selection_snapshot_ts": "2026-07-10T09:37:05+09:00",
+                "watchlist": ["003280", "058730"],
+                "candidate_actions": [
+                    {
+                        "ticker": "003280",
+                        "action": "WATCH",
+                        "reason_code": "WAIT_VWAP_CONFIRM",
+                        "invalidation_condition": "RECHECK_5M_IF_VWAP_RECLAIM",
+                    },
+                    {
+                        "ticker": "058730",
+                        "action": "WATCH",
+                        "reason_code": "WAIT_VOLUME_CONFIRM",
+                        "invalidation_condition": "RECHECK_5M_IF_VOLUME_EXPANDS",
+                    },
+                ],
+                "_final_prompt_pool": [
+                    {
+                        "ticker": "003280",
+                        "price": 1704,
+                        "trainer_candidate_state": "PLAN_A",
+                        "trainer_plan_a_score": 76.644,
+                        "trainer_risk_score": 25.0,
+                        "selection_evidence_action_ceiling": "BUY_READY",
+                    },
+                    {
+                        "ticker": "058730",
+                        "price": 4980,
+                        "trainer_candidate_state": "PLAN_A",
+                        "trainer_plan_a_score": 74.001,
+                        "trainer_risk_score": 25.0,
+                        "selection_evidence_action_ceiling": "BUY_READY",
+                    },
+                ],
+            },
+        )
+
+        probe = result["kr_bullish_strength_probe"]
+        self.assertTrue(probe["market_eligible"])
+        self.assertEqual(probe["eligible_count"], 2)
+        self.assertEqual(probe["selected_ticker"], "003280")
+        self.assertTrue(probe["shadow_only"])
+        self.assertTrue(probe["non_executable"])
+        self.assertFalse(probe["local_promotion_allowed"])
+        self.assertEqual(probe["maturation"]["minimum_distinct_sessions"], 20)
+
+    def test_kr_bullish_strength_probe_requires_fresh_broad_market_confirmation(self) -> None:
+        result = build_adaptive_live_condition(
+            market="KR",
+            consensus_mode="MILD_BULL",
+            market_context={
+                "fresh": False,
+                "index_change_pct": 3.0,
+                "breadth_up_ratio_pct": 80.0,
+            },
+            selection_meta={
+                "selection_snapshot_ts": "2026-07-10T09:30:00+09:00",
+                "watchlist": ["003280"],
+                "candidate_actions": [{"ticker": "003280", "action": "WATCH"}],
+                "_final_prompt_pool": [
+                    {
+                        "ticker": "003280",
+                        "trainer_candidate_state": "PLAN_A",
+                        "trainer_plan_a_score": 80,
+                        "trainer_risk_score": 20,
+                        "selection_evidence_action_ceiling": "BUY_READY",
+                    }
+                ],
+            },
+        )
+
+        probe = result["kr_bullish_strength_probe"]
+        self.assertFalse(probe["market_eligible"])
+        self.assertEqual(probe["selected_ticker"], "")
+
     def test_adaptive_live_condition_late_mover_reasks_with_micro_probe_suggestion(self) -> None:
         result = build_adaptive_live_condition(
             market="US",

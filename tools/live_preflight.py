@@ -3026,15 +3026,10 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
         inconsistent_runs = _pathb_terminal_missing_events(list(recent_runs), list(terminal_events))
         window_missing_path = _pathb_like_missing_path_run_id_rows(list(recent_events), decision_ids_with_runs)
         checks.append(_pathb_lifecycle_window_check_result(inconsistent_runs, window_missing_path))
-        full_events = conn.execute(
-            """
-            SELECT event_type, market, runtime_mode, session_date, ticker, decision_id, payload_json
-            FROM lifecycle_events
-            WHERE runtime_mode=?
-            ORDER BY event_id
-            """,
-            (mode,),
-        ).fetchall()
+        # Terminal consistency only consumes FILLED/PARTIAL_FILLED/CLOSED rows.
+        # Reuse the bounded-column terminal query above instead of materializing
+        # the entire lifecycle history (including large prompt payloads).
+        full_events = terminal_events
         full_runs = conn.execute(
             """
             SELECT path_run_id, market, runtime_mode, session_date, ticker, status, plan_json

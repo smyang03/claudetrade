@@ -171,6 +171,13 @@ EXTRA_CANDIDATE_COLUMNS: dict[str, str] = {
     "consensus_mode": "TEXT",
     "strength_capture_shadow": "INTEGER",
     "strength_capture_rules": "TEXT",
+    "bullish_probe_shadow": "INTEGER",
+    "bullish_probe_selected": "INTEGER",
+    "bullish_probe_version": "TEXT",
+    "bullish_probe_reason": "TEXT",
+    "bullish_probe_claude_reason": "TEXT",
+    "bullish_probe_recheck_condition": "TEXT",
+    "bullish_probe_cost_pct": "REAL",
     "candidate_pool_role": "TEXT",
     "discovery_signal_family": "TEXT",
     "discovery_reason": "TEXT",
@@ -206,6 +213,8 @@ _INT_BOOL_COLUMNS = {
     "stale_cycle",
     "evidence_ceiling_applied",
     "strength_capture_shadow",
+    "bullish_probe_shadow",
+    "bullish_probe_selected",
     "discovery_action_ceiling_applied",
 }
 _PROMPT_STAGE_SOURCE_FILES = {

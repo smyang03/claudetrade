@@ -119,6 +119,38 @@ class SelectionCompactSchemaTests(unittest.TestCase):
         warnings = meta["_compact_validation"]["warnings"]
         self.assertFalse(any("non_actionable_price_targets_ignored" in item for item in warnings))
 
+    def test_buy_ready_ceiling_watch_requires_specific_recheck_contract(self) -> None:
+        meta = normalize_selection_result(
+            {
+                "wl": ["SMCI"],
+                "tr": [],
+                "ca": [
+                    {
+                        "t": "SMCI",
+                        "a": "WATCH",
+                        "s": "continuation",
+                        "c": 0.2,
+                        "fr": "FRESH",
+                        "mat": "FORMING",
+                        "ceil": "BUY_READY",
+                        "rc": "WATCH_ONLY",
+                        "blk": [],
+                        "inv": "setup_invalid",
+                        "pt": {},
+                    }
+                ],
+            },
+            self._candidates(),
+            "US",
+            reference_prices=reference_prices_from_candidates(self._candidates(), "US"),
+            stop_reason="end_turn",
+        )
+
+        action = meta["candidate_actions"][0]
+        self.assertTrue(action["watch_review_required"])
+        self.assertFalse(action["watch_review_complete"])
+        self.assertIn("buy_ready_ceiling_watch_missing_recheck_contract", action["warnings"])
+
     def test_compact_watch_non_empty_pt_is_ignored_with_warning(self) -> None:
         meta = normalize_selection_result(
             {

@@ -6,7 +6,8 @@ from typing import Any
 from runtime.live_evidence_pack import build_fade_recovered_shadow
 
 
-VERSION = "adaptive_live_condition.v2"
+VERSION = "adaptive_live_condition.v3"
+BULLISH_PROBE_VERSION = "kr_bullish_strength_probe.v1"
 
 
 RISK_ON_MODES = {"AGGRESSIVE", "MODERATE_BULL", "MILD_BULL"}
@@ -96,6 +97,194 @@ def _features_for(meta: dict[str, Any], market: str, ticker: str) -> dict[str, A
             if str(raw_key).upper() == key and isinstance(value, dict):
                 return dict(value)
     return {}
+
+
+def _prompt_rows(selection_meta: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        dict(row)
+        for row in list((selection_meta or {}).get("_final_prompt_pool") or [])
+        if isinstance(row, dict) and str(row.get("ticker") or "").strip()
+    ]
+
+
+def _action_map(selection_meta: dict[str, Any], market: str) -> dict[str, dict[str, Any]]:
+    return {
+        _ticker_key(market, row.get("ticker")): dict(row)
+        for row in list((selection_meta or {}).get("candidate_actions") or [])
+        if isinstance(row, dict) and str(row.get("ticker") or "").strip()
+    }
+
+
+def _route_map(selection_meta: dict[str, Any], market: str) -> dict[str, dict[str, Any]]:
+    return {
+        _ticker_key(market, row.get("ticker")): dict(row)
+        for row in list((selection_meta or {}).get("_candidate_action_routes") or [])
+        if isinstance(row, dict) and str(row.get("ticker") or "").strip()
+    }
+
+
+def _minutes_after_kr_open(value: Any) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        from datetime import datetime
+
+        stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return float((stamp.hour * 60 + stamp.minute) - (9 * 60))
+    except Exception:
+        return None
+
+
+def build_kr_bullish_strength_probe(
+    *,
+    market: str,
+    selection_meta: dict[str, Any],
+    consensus_mode: str,
+    market_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Choose at most one deterministic KR strength candidate for measurement only.
+
+    This contract never changes Claude actions, trade_ready, routing, or order state.
+    It exists to measure whether broad bullish sessions justify a tightly bounded
+    probe instead of allowing every evidence-ready candidate to end as WATCH.
+    """
+    market_key = str(market or "").upper()
+    meta = dict(selection_meta or {})
+    context = dict(market_context or {})
+    mode = str(consensus_mode or meta.get("consensus_mode") or "").strip().upper()
+    enabled = _bool_true(os.getenv("KR_BULLISH_STRENGTH_PROBE_SHADOW_ENABLED", "true"))
+    index_change_pct = _num(context.get("index_change_pct"))
+    secondary_change_pct = _num(context.get("secondary_index_change_pct"))
+    breadth_up_ratio_pct = _num(context.get("breadth_up_ratio_pct"))
+    elapsed_min = _minutes_after_kr_open(meta.get("selection_snapshot_ts"))
+    thresholds = {
+        "index_change_min_pct": _env_float("KR_BULLISH_PROBE_INDEX_CHANGE_MIN_PCT", 2.0),
+        "breadth_up_ratio_min_pct": _env_float("KR_BULLISH_PROBE_BREADTH_MIN_PCT", 60.0),
+        "trainer_plan_a_min": _env_float("KR_BULLISH_PROBE_PLAN_A_MIN", 65.0),
+        "trainer_risk_max": _env_float("KR_BULLISH_PROBE_RISK_MAX", 35.0),
+        "entry_window_max_min": _env_float("KR_BULLISH_PROBE_ENTRY_WINDOW_MAX_MIN", 90.0),
+        "round_trip_cost_pct": _env_float("KR_BULLISH_PROBE_ROUND_TRIP_COST_PCT", 0.5),
+        "order_cap_krw": _env_float("KR_BULLISH_PROBE_ORDER_CAP_KRW", 200000.0),
+    }
+    market_checks = {
+        "enabled": enabled,
+        "kr_market": market_key == "KR",
+        "risk_on_mode": mode in RISK_ON_MODES,
+        "fresh_market_context": _bool_true(context.get("fresh")),
+        "index_strong": index_change_pct is not None and index_change_pct >= thresholds["index_change_min_pct"],
+        "breadth_strong": breadth_up_ratio_pct is not None and breadth_up_ratio_pct >= thresholds["breadth_up_ratio_min_pct"],
+        "inside_entry_window": elapsed_min is not None and 0.0 <= elapsed_min <= thresholds["entry_window_max_min"],
+    }
+    market_eligible = all(market_checks.values())
+    actions = _action_map(meta, market_key)
+    routes = _route_map(meta, market_key)
+    eligible: list[dict[str, Any]] = []
+    rejected: dict[str, list[str]] = {}
+
+    for prompt_rank, row in enumerate(_prompt_rows(meta), start=1):
+        ticker = _ticker_key(market_key, row.get("ticker"))
+        action = actions.get(ticker, {})
+        route = routes.get(ticker, {})
+        score = _num(row.get("trainer_plan_a_score"))
+        risk_score = _num(row.get("trainer_risk_score"))
+        evidence_ceiling = str(
+            row.get("selection_evidence_action_ceiling")
+            or row.get("evidence_action_ceiling")
+            or ((route.get("runtime_gate") or {}).get("evidence_action_ceiling"))
+            or ""
+        ).strip().upper()
+        claude_action = str(action.get("action") or "WATCH").strip().upper()
+        route_final = str(route.get("final_action") or claude_action or "WATCH").strip().upper()
+        blockers = [str(value) for value in list(action.get("blocking_factors") or []) if str(value)]
+        hard_block_tokens = (
+            "hard", "risk_off", "halt", "forbidden", "stale", "missing", "liquidity",
+            "afford", "extreme_chase", "news_risk", "quarantine", "same_day_stop",
+        )
+        hard_blockers = [
+            value for value in blockers
+            if any(token in value.strip().lower() for token in hard_block_tokens)
+        ]
+        runtime_reason = str(route.get("runtime_gate_reason") or "").strip()
+        reasons: list[str] = []
+        if str(row.get("trainer_candidate_state") or "").strip().upper() != "PLAN_A":
+            reasons.append("not_plan_a")
+        if score is None or score < thresholds["trainer_plan_a_min"]:
+            reasons.append("plan_a_score_below_min")
+        if risk_score is None or risk_score > thresholds["trainer_risk_max"]:
+            reasons.append("risk_score_above_max_or_missing")
+        if evidence_ceiling != "BUY_READY":
+            reasons.append("evidence_ceiling_not_buy_ready")
+        if claude_action != "WATCH" or route_final not in {"", "WATCH"}:
+            reasons.append("not_watch_missed_opportunity")
+        if hard_blockers:
+            reasons.append("claude_hard_blocking_factors")
+        if runtime_reason and runtime_reason not in {"watch", "judgment_not_executable"}:
+            reasons.append("runtime_hard_block")
+        if reasons:
+            rejected[ticker] = reasons
+            continue
+        eligible.append(
+            {
+                "ticker": ticker,
+                "prompt_rank": int(row.get("prompt_rank") or row.get("prompt_rank_after_trim") or prompt_rank),
+                "trainer_plan_a_score": score,
+                "trainer_risk_score": risk_score,
+                "evidence_action_ceiling": evidence_ceiling,
+                "claude_action": claude_action,
+                "claude_reason_code": str(action.get("reason_code") or action.get("reason") or ""),
+                "recheck_condition": str(action.get("invalidation_condition") or ""),
+                "soft_blocking_factors": [value for value in blockers if value not in hard_blockers],
+                "reference_price": _num(row.get("price") or row.get("current_price")),
+            }
+        )
+
+    eligible.sort(
+        key=lambda item: (
+            -float(item.get("trainer_plan_a_score") or 0.0),
+            float(item.get("trainer_risk_score") or 999.0),
+            int(item.get("prompt_rank") or 9999),
+            str(item.get("ticker") or ""),
+        )
+    )
+    selected = dict(eligible[0]) if market_eligible and eligible else {}
+    if selected:
+        reference_price = _num(selected.get("reference_price"))
+        quantity = int(thresholds["order_cap_krw"] // reference_price) if reference_price and reference_price > 0 else 0
+        selected["simulated_quantity"] = quantity
+        selected["simulated_invested_krw"] = quantity * reference_price if reference_price else 0.0
+    return {
+        "version": BULLISH_PROBE_VERSION,
+        "enabled": enabled,
+        "shadow_only": True,
+        "non_executable": True,
+        "local_promotion_allowed": False,
+        "max_candidates": 1,
+        "consensus_mode": mode,
+        "market_context": {
+            "fresh": bool(context.get("fresh")),
+            "source": str(context.get("source") or ""),
+            "index_change_pct": index_change_pct,
+            "secondary_index_change_pct": secondary_change_pct,
+            "breadth_up_ratio_pct": breadth_up_ratio_pct,
+            "minutes_after_open": elapsed_min,
+        },
+        "thresholds": thresholds,
+        "market_checks": market_checks,
+        "market_eligible": market_eligible,
+        "eligible_count": len(eligible),
+        "eligible": eligible,
+        "selected": selected,
+        "selected_ticker": str(selected.get("ticker") or ""),
+        "rejected": rejected,
+        "maturation": {
+            "paths": ["immediate", "volume_surge", "wait_30m", "wait_60m"],
+            "net_cost_pct": thresholds["round_trip_cost_pct"],
+            "order_cap_krw": thresholds["order_cap_krw"],
+            "minimum_distinct_sessions": int(_env_float("KR_BULLISH_PROBE_MIN_SESSIONS", 20.0)),
+            "promotion_is_manual": True,
+        },
+    }
 
 
 def build_adaptive_live_condition(
@@ -342,6 +531,12 @@ def build_adaptive_live_condition(
             "micro_probe_shadow": 0,
             "watch_shadow": len(watch_shadow),
         },
+        "kr_bullish_strength_probe": build_kr_bullish_strength_probe(
+            market=market_key,
+            selection_meta=meta,
+            consensus_mode=consensus_mode,
+            market_context=market_context,
+        ),
     }
 
 

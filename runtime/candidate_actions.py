@@ -45,13 +45,14 @@ def candidate_action_prompt_contract(*, enabled: bool = True) -> str:
 - PROBE_READY means small initial entry only; BUY_READY means normal entry; PULLBACK_WAIT requires price_targets.
 - Every v2 candidate_action, including WATCH, must include action_ceiling_ack.
 - WATCH/PULLBACK_WAIT/AVOID must include reason_code and blocking_factors when evidence blocks immediate execution.
+- When evidence permits BUY_READY but Claude chooses WATCH, reason_code must name the specific missing confirmation and invalidation_condition must state the observable price/time condition for re-evaluation. Generic WATCH_ONLY/setup_invalid is not sufficient.
 - BUY_READY/PROBE_READY must include why_not_watch, freshness_verdict, setup_maturity, and action_ceiling_ack.
 - If local evidence says action_ceiling=WATCH, Claude may override only with soft_gate_overrides backed by actual input evidence.
 - If exec feas shows a soft/mutable blocker (macd_not_ready, gap_below_min, breakout_not_ready, orp_entry_window_expired, volume_low) AND price structure is bullish (positive returns, OR break, above VWAP), prefer PULLBACK_WAIT over WATCH. PULLBACK_WAIT creates a PathB waiting plan that enters when price pulls back to the buy zone.
 - valid_until is required for v2 BUY_READY/PROBE_READY unless runtime TTL should be shorter.
 - For PULLBACK_WAIT, price_targets must include buy_zone_low, buy_zone_high, sell_target, stop_loss, hold_days, confidence. buy_zone must be BELOW current price. stop_loss below buy_zone_low. sell_target above current price.
 - ADD_READY is valid only for an already-held position.
-- Include invalidation_condition for every non-WATCH action.
+- Include invalidation_condition for every action. For WATCH it means the observable re-evaluation trigger, or TERMINAL:<reason> when no intraday trigger can repair the setup.
 - valid_until is optional; runtime will cap it with a shorter TTL.
 - If valid_until is uncertain, omit it; runtime ignores valid_until values that are earlier than created_at.
 
@@ -107,6 +108,8 @@ class CandidateAction:
     required_confirmations: list[str] = field(default_factory=list)
     max_entry_price: float = 0.0
     max_chase_pct: float = 0.0
+    watch_review_required: bool = False
+    watch_review_complete: bool = True
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -137,6 +140,8 @@ class CandidateAction:
             "required_confirmations": list(self.required_confirmations),
             "max_entry_price": self.max_entry_price,
             "max_chase_pct": self.max_chase_pct,
+            "watch_review_required": self.watch_review_required,
+            "watch_review_complete": self.watch_review_complete,
             "contract_warnings": list(self.warnings),
             "warnings": list(self.warnings),
         }
@@ -287,6 +292,14 @@ def normalize_candidate_action(
             warnings.append("v2_missing_why_not_watch_demoted")
             action = "WATCH"
             price_targets = {}
+    invalidation_condition = str(raw.get("invalidation_condition") or raw.get("inv") or "").strip()
+    watch_review_required = is_v2 and action == "WATCH" and action_ceiling_ack == "BUY_READY"
+    watch_review_complete = not watch_review_required or (
+        reason_code.upper() not in {"", "WATCH", "WATCH_ONLY", "MISSING_ACTION"}
+        and invalidation_condition.lower() not in {"", "setup_invalid", "watch", "watch_only"}
+    )
+    if watch_review_required and not watch_review_complete:
+        warnings.append("buy_ready_ceiling_watch_missing_recheck_contract")
     expires_at, expiry_warnings = _min_expiry(created, action, raw.get("valid_until") or raw.get("expires_at"))
     warnings.extend(expiry_warnings)
 
@@ -314,7 +327,7 @@ def normalize_candidate_action(
         size_intent=str(raw.get("size_intent") or ("normal" if action == "BUY_READY" else ("probe" if action == "PROBE_READY" else "none"))),
         strategy=str(raw.get("strategy") or raw.get("s") or ""),
         reason=str(raw.get("reason") or reason_code or ""),
-        invalidation_condition=str(raw.get("invalidation_condition") or raw.get("inv") or ""),
+        invalidation_condition=invalidation_condition,
         price_targets=dict(price_targets),
         created_at=created_text,
         expires_at=expires_at,
@@ -333,6 +346,8 @@ def normalize_candidate_action(
         required_confirmations=_list_str(raw.get("required_confirmations"), 8),
         max_entry_price=_float_nonneg(raw.get("max_entry_price")),
         max_chase_pct=_float_nonneg(raw.get("max_chase_pct")),
+        watch_review_required=watch_review_required,
+        watch_review_complete=watch_review_complete,
         warnings=warnings,
     )
     return item.to_dict()
