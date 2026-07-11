@@ -1,130 +1,201 @@
-"""pnl_krw_net(순원화 손익) 백필 + realized equity curve (워크플랜 P1-6).
+"""Safe pnl_krw_net backfill and realized-equity audit.
 
-원칙(워크플랜 §11): 원천 사실이 있는 행만 백필, 추정과 실측을 혼합하지 않는다.
+Canonical write policy:
+- KR: qty * entry_price * pnl_pct_net is native-KRW exact enough for backfill.
+- US: never write an assumed fixed order size or fee-only approximation into
+  pnl_krw_net. Without measured KRW notional/FX, keep the canonical value NULL.
 
-복구 정책 (FX 명세서는 운영자 제외 지시 → pnl_pct_net이 이미 FX 가정 반영된 net이므로 사용):
-  KR: pnl_krw_net = round(qty * entry_price * pnl_pct_net / 100)  (KRW 네이티브 = 정확)
-  US(gross 있음): notional = pnl_krw / (pnl_pct/100) → pnl_krw_net = pnl_krw * (pnl_pct_net/pnl_pct)
-                  (실제 gross KRW로 명목가 역산 = FX 불필요·실데이터 파생)
-  US(gross 없음): pnl_krw_net = round(FIXED_ORDER_KRW_US * pnl_pct_net / 100)  (추정, net_basis로 구분)
-
-FIXED_ORDER_KRW_US: 우리 거래창(2026-04~07-06)은 US 소액화(20만) 이전이라 500,000원.
-
-가드: closed=1, pnl_krw_net IS NULL. 기본 dry-run, --apply로 기록.
-net_basis로 정확/파생/추정 구분(measured 원본은 미변경).
+The tool is dry-run by default. Every write creates a SQLite-consistent backup.
 """
 from __future__ import annotations
 
 import argparse
 import sqlite3
+from collections import Counter, defaultdict
+from datetime import datetime
 from pathlib import Path
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "data" / "ml" / "decisions.db"
-FIXED_ORDER_KRW_US = 500000.0  # 거래창(2026-04~07-06)은 US 20만 소액화 이전
+DEFAULT_BACKUP_DIR = ROOT / "state" / "backups"
+UNSAFE_US_BASES = ("estimated_fixed_order_us", "backfilled_us_from_gross")
 
 
-def run(db: Path, apply: bool) -> dict:
-    con = sqlite3.connect(db, timeout=30)
-    con.execute("PRAGMA busy_timeout=30000")
-    cur = con.cursor()
-    cols = {r[1] for r in cur.execute("PRAGMA table_info(v2_learning_performance)")}
-    assert {"pnl_krw_net", "market", "entry_price", "qty", "pnl_pct_net", "pnl_krw", "pnl_pct", "net_basis"} <= cols
+def _backup_database(db: Path, backup_dir: Path) -> Path:
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = backup_dir / f"{db.name}.bak_{stamp}_pnl_krw_net"
+    with sqlite3.connect(db, timeout=30) as source, sqlite3.connect(target) as dest:
+        source.backup(dest)
+    with sqlite3.connect(target) as check:
+        verdict = str(check.execute("PRAGMA integrity_check").fetchone()[0])
+    if verdict.lower() != "ok":
+        target.unlink(missing_ok=True)
+        raise RuntimeError(f"backup integrity failed: {verdict}")
+    return target
 
-    total = cur.execute("SELECT COUNT(*) FROM v2_learning_performance WHERE closed=1").fetchone()[0]
-    have0 = cur.execute("SELECT COUNT(*) FROM v2_learning_performance WHERE closed=1 AND pnl_krw_net IS NOT NULL").fetchone()[0]
 
-    rows = cur.execute(
-        "SELECT rowid, market, entry_price, qty, pnl_pct_net, pnl_krw, pnl_pct "
-        "FROM v2_learning_performance WHERE closed=1 AND pnl_krw_net IS NULL"
-    ).fetchall()
-    updates = []  # (val, basis, rowid)
-    stats = {"kr_native_exact": 0, "us_from_gross": 0, "us_estimated_fixed_order": 0, "no_source_blocked": 0}
-    for rowid, mkt, entry, qty, npct, gross_krw, gross_pct in rows:
-        if npct is None:
-            stats["no_source_blocked"] += 1
-            continue
-        if mkt == "KR" and entry and qty:
-            updates.append((round(float(qty) * float(entry) * float(npct) / 100.0), "backfilled_krw_native", rowid))
-            stats["kr_native_exact"] += 1
-        elif mkt == "US" and gross_krw is not None and gross_pct not in (None, 0):
-            # 실제 gross KRW로 명목가 역산 → net (FX 불필요)
-            updates.append((round(float(gross_krw) * float(npct) / float(gross_pct)), "backfilled_us_from_gross", rowid))
-            stats["us_from_gross"] += 1
-        elif mkt == "US":
-            updates.append((round(FIXED_ORDER_KRW_US * float(npct) / 100.0), "estimated_fixed_order_us", rowid))
-            stats["us_estimated_fixed_order"] += 1
-        else:
-            stats["no_source_blocked"] += 1
-
-    if apply and updates:
-        cur.executemany(
-            "UPDATE v2_learning_performance SET pnl_krw_net=?, net_basis=? WHERE rowid=?",
-            updates,
-        )
-        con.commit()
-
-    have1 = have0 + (len(updates) if apply else 0)
+def audit(db: Path) -> dict:
+    con = sqlite3.connect(f"file:{db.resolve().as_posix()}?mode=ro", uri=True, timeout=30)
+    con.row_factory = sqlite3.Row
+    total = int(con.execute("SELECT COUNT(*) FROM v2_learning_performance WHERE closed=1").fetchone()[0])
+    have = int(con.execute(
+        "SELECT COUNT(*) FROM v2_learning_performance WHERE closed=1 AND pnl_krw_net IS NOT NULL"
+    ).fetchone()[0])
+    unsafe = int(con.execute(
+        "SELECT COUNT(*) FROM v2_learning_performance WHERE closed=1 AND net_basis IN (?,?)",
+        UNSAFE_US_BASES,
+    ).fetchone()[0])
+    kr_exact_candidates = int(con.execute(
+        """
+        SELECT COUNT(*) FROM v2_learning_performance
+        WHERE closed=1 AND market='KR' AND pnl_krw_net IS NULL
+          AND pnl_pct_net IS NOT NULL AND entry_price>0 AND qty>0
+        """
+    ).fetchone()[0])
+    us_blocked = int(con.execute(
+        """
+        SELECT COUNT(*) FROM v2_learning_performance
+        WHERE closed=1 AND market='US' AND pnl_krw_net IS NULL AND pnl_pct_net IS NOT NULL
+        """
+    ).fetchone()[0])
     con.close()
     return {
         "total_closed": total,
-        "coverage_before": round(100 * have0 / total, 1),
-        "backfilled": len(updates),
-        "applied": apply,
-        "coverage_after": round(100 * have1 / total, 1),
-        "stats": stats,
+        "canonical_coverage_n": have,
+        "canonical_coverage_pct": round(100.0 * have / total, 1) if total else 0.0,
+        "unsafe_us_rows": unsafe,
+        "kr_exact_candidates": kr_exact_candidates,
+        "us_blocked_without_measured_krw_notional_fx": us_blocked,
+    }
+
+
+def apply_safe_backfill(
+    db: Path,
+    *,
+    repair_unsafe_us: bool = False,
+    backup_dir: Path = DEFAULT_BACKUP_DIR,
+) -> dict:
+    backup = _backup_database(db, backup_dir)
+    con = sqlite3.connect(db, timeout=30)
+    con.execute("PRAGMA busy_timeout=30000")
+    repaired = 0
+    filled = 0
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        if repair_unsafe_us:
+            repaired = con.execute(
+                """
+                UPDATE v2_learning_performance
+                   SET pnl_krw_net=NULL,
+                       net_basis='backfilled_fee_only'
+                 WHERE market='US' AND net_basis IN (?,?)
+                """,
+                UNSAFE_US_BASES,
+            ).rowcount
+        rows = con.execute(
+            """
+            SELECT rowid, entry_price, qty, pnl_pct_net, net_basis
+            FROM v2_learning_performance
+            WHERE closed=1 AND market='KR' AND pnl_krw_net IS NULL
+              AND pnl_pct_net IS NOT NULL AND entry_price>0 AND qty>0
+            """
+        ).fetchall()
+        updates = []
+        for rowid, entry_price, qty, pnl_pct_net, net_basis in rows:
+            value = round(float(qty) * float(entry_price) * float(pnl_pct_net) / 100.0)
+            basis = str(net_basis or "backfilled_exact")
+            updates.append((value, basis, rowid))
+        if updates:
+            con.executemany(
+                "UPDATE v2_learning_performance SET pnl_krw_net=?, net_basis=? WHERE rowid=?",
+                updates,
+            )
+            filled = len(updates)
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+    return {
+        "backup_path": str(backup),
+        "unsafe_us_repaired": repaired,
+        "kr_exact_filled": filled,
+        "audit_after": audit(db),
     }
 
 
 def equity_curve(db: Path) -> dict:
-    """일자순 realized equity curve + MDD (pnl_krw_net 있는 행만; 시장별 coverage 명시)."""
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    """Realized curve using canonical non-null rows only; estimates are excluded."""
+    con = sqlite3.connect(f"file:{db.resolve().as_posix()}?mode=ro", uri=True, timeout=30)
     rows = con.execute(
-        "SELECT substr(closed_at,1,10) d, market, pnl_krw_net "
-        "FROM v2_learning_performance WHERE closed=1 AND pnl_krw_net IS NOT NULL AND closed_at IS NOT NULL "
-        "ORDER BY closed_at"
+        """
+        SELECT substr(closed_at,1,10), market, pnl_krw_net, net_basis
+        FROM v2_learning_performance
+        WHERE closed=1 AND pnl_krw_net IS NOT NULL AND closed_at IS NOT NULL
+          AND net_basis NOT IN (?,?)
+        ORDER BY closed_at
+        """,
+        UNSAFE_US_BASES,
     ).fetchall()
-    cov = {}
-    for m in ("KR", "US"):
-        tot = con.execute("SELECT COUNT(*) FROM v2_learning_performance WHERE closed=1 AND market=?", (m,)).fetchone()[0]
-        hv = con.execute("SELECT COUNT(*) FROM v2_learning_performance WHERE closed=1 AND market=? AND pnl_krw_net IS NOT NULL", (m,)).fetchone()[0]
-        cov[m] = f"{hv}/{tot} ({round(100*hv/tot) if tot else 0}%)"
+    coverage = {}
+    for market in ("KR", "US"):
+        total = int(con.execute(
+            "SELECT COUNT(*) FROM v2_learning_performance WHERE closed=1 AND market=?", (market,)
+        ).fetchone()[0])
+        have = int(con.execute(
+            """
+            SELECT COUNT(*) FROM v2_learning_performance
+            WHERE closed=1 AND market=? AND pnl_krw_net IS NOT NULL
+              AND net_basis NOT IN (?,?)
+            """,
+            (market, *UNSAFE_US_BASES),
+        ).fetchone()[0])
+        coverage[market] = {"n": have, "total": total, "pct": round(100 * have / total, 1) if total else 0.0}
     con.close()
-    from collections import defaultdict
-    daily = defaultdict(float)
-    for d, m, v in rows:
-        daily[d] += float(v)
-    cum, peak, mdd = 0.0, 0.0, 0.0
-    for d in sorted(daily):
-        cum += daily[d]
-        peak = max(peak, cum)
-        mdd = min(mdd, cum - peak)
-    con2 = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    from collections import Counter
-    basis = dict(Counter(r[0] for r in con2.execute(
-        "SELECT net_basis FROM v2_learning_performance WHERE closed=1 AND pnl_krw_net IS NOT NULL")).most_common())
-    con2.close()
-    est = sum(v for k, v in basis.items() if str(k).startswith("estimated"))
-    return {"coverage_by_market": cov, "days": len(daily),
-            "final_cum_krw": round(cum), "max_drawdown_krw": round(mdd),
-            "net_basis_breakdown": basis,
-            "estimated_rows": est,
-            "note": "US gross없는 행은 고정주문 500k 추정(net_basis=estimated_*). 실측/파생과 라벨로 구분."}
+    daily: dict[str, float] = defaultdict(float)
+    bases: Counter[str] = Counter()
+    for day, _market, value, basis in rows:
+        daily[str(day)] += float(value)
+        bases[str(basis or "unknown")] += 1
+    cumulative = peak = drawdown = 0.0
+    for day in sorted(daily):
+        cumulative += daily[day]
+        peak = max(peak, cumulative)
+        drawdown = min(drawdown, cumulative - peak)
+    return {
+        "coverage_by_market": coverage,
+        "days": len(daily),
+        "final_cum_krw": round(cumulative),
+        "max_drawdown_krw": round(drawdown),
+        "net_basis_breakdown": dict(bases),
+        "estimated_rows_included": 0,
+        "label": "canonical_measured_or_exact_only",
+    }
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="pnl_krw_net 백필 + equity curve (P1-6)")
-    ap.add_argument("--db", default=str(DEFAULT_DB))
-    ap.add_argument("--apply", action="store_true", help="실제 DB 기록 (기본 dry-run)")
-    args = ap.parse_args()
-    db = Path(args.db)
-    res = run(db, args.apply)
-    print("=== pnl_krw_net 백필 ===")
-    for k, v in res.items():
-        print(f"  {k}: {v}")
-    print("=== realized equity curve (pnl_krw_net 있는 행) ===")
-    for k, v in equity_curve(db).items():
-        print(f"  {k}: {v}")
+    parser = argparse.ArgumentParser(description="safe pnl_krw_net backfill and audit")
+    parser.add_argument("--db", type=Path, default=DEFAULT_DB)
+    parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--repair-unsafe-us", action="store_true")
+    parser.add_argument("--backup-dir", type=Path, default=DEFAULT_BACKUP_DIR)
+    args = parser.parse_args()
+    if args.repair_unsafe_us and not args.apply:
+        parser.error("--repair-unsafe-us requires --apply")
+    print("=== audit before ===")
+    print(audit(args.db))
+    if args.apply:
+        print("=== write result ===")
+        print(apply_safe_backfill(
+            args.db,
+            repair_unsafe_us=args.repair_unsafe_us,
+            backup_dir=args.backup_dir,
+        ))
+    print("=== canonical realized equity curve ===")
+    print(equity_curve(args.db))
     return 0
 
 

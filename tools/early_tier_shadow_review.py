@@ -60,14 +60,14 @@ def load_trades(ml_db: Path, since: str | None) -> list[dict]:
         params = (since,)
     with _connect_ro(ml_db) as c:
         rows = list(c.execute(
-            f"SELECT v2_decision_id, market, session_date, entry_price, mfe_pct, pnl_pct_net, "
+            f"SELECT v2_decision_id, market, session_date, entry_price, qty, mfe_pct, pnl_pct_net, "
             f"fee_pct_round_trip FROM v2_learning_performance WHERE {where}",
             params,
         ))
     out = []
-    for did, m, sd, ep, mfe, net, fee in rows:
+    for did, m, sd, ep, qty, mfe, net, fee in rows:
         out.append(dict(did=str(did or ""), market=m, session_date=sd, entry=ep,
-                        mfe=mfe, net=net, fee=fee))
+                        qty=int(qty or 0), mfe=mfe, net=net, fee=fee))
     return out
 
 
@@ -79,12 +79,18 @@ def tier_counterfactual(t: dict, target: float, level: float, f: float, cost: fl
     target_pct = (target - ep) / ep * 100.0
     if target_pct <= 0:
         return None
-    reached = t["mfe"] >= level
-    if reached:
-        cf_net = f * (level - cost) + (1.0 - f) * t["net"]
+    signal_reached = t["mfe"] >= level
+    qty = max(0, int(t.get("qty") or 0))
+    sell_qty = int(qty * max(0.0, min(1.0, f)))
+    executable = bool(signal_reached and 0 < sell_qty < qty)
+    effective_f = (sell_qty / qty) if executable and qty else 0.0
+    if executable:
+        cf_net = effective_f * (level - cost) + (1.0 - effective_f) * t["net"]
     else:
         cf_net = t["net"]
-    return dict(target_pct=target_pct, reached=reached, cf_net=cf_net, actual_net=t["net"])
+    return dict(target_pct=target_pct, reached=signal_reached, executable=executable,
+                qty=qty, sell_qty=sell_qty if executable else 0, effective_f=effective_f,
+                cf_net=cf_net, actual_net=t["net"])
 
 
 def summarize(rows: list[dict]) -> dict:
@@ -95,7 +101,9 @@ def summarize(rows: list[dict]) -> dict:
     a_s, c_s = sorted(a), sorted(c)
     return {
         "n": len(rows),
-        "reach_rate": round(sum(r["reached"] for r in rows) / len(rows), 3),
+        "signal_reach_rate": round(sum(r["reached"] for r in rows) / len(rows), 3),
+        "execution_rate": round(sum(r.get("executable", False) for r in rows) / len(rows), 3),
+        "executable_n": sum(r.get("executable", False) for r in rows),
         "actual_mean": round(mean(a), 3), "actual_median": round(median(a), 3),
         "tier_mean": round(mean(c), 3), "tier_median": round(median(c), 3),
         "delta_mean": round(mean(c) - mean(a), 3),
@@ -140,7 +148,10 @@ def main() -> int:
         if s["n"] == 0:
             print(f"  {m}: (표본 없음)")
             continue
-        print(f"  {m} (n={s['n']}, 도달률 {s['reach_rate']}):")
+        print(
+            f"  {m} (n={s['n']}, signal_reach={s['signal_reach_rate']}, "
+            f"integer_executable={s['execution_rate']}):"
+        )
         print(f"     net  실제 mean {s['actual_mean']:+.3f} / med {s['actual_median']:+.3f}"
               f"  → tier mean {s['tier_mean']:+.3f} / med {s['tier_median']:+.3f}  (Δmean {s['delta_mean']:+.3f})")
         print(f"     러너 보존  실제 max {s['actual_max']:+.2f} / p90 {s['actual_p90']:+.2f}"
