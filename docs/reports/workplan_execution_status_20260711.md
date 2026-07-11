@@ -21,7 +21,7 @@
 | P2-3 risk-recovery runner | 🔒 데이터 | mfe_time+mae_time **0/316** = MFE-before-MAE 순서 판정불가 | forward 시간축 축적 |
 | P2-4 청산 시간축 세분 | 🔒 라이브경로 | mfe_time/mae_time은 7/10 배선완료. 세분(triggered/detected/sent/ack) 미배선 | 운영자·exit경로 |
 | P2-5 spread/participation | 🔒 라이브경로 | spread_bps 결측 반복, participation 미저장 | 운영자·계측배선 |
-| 관찰 Breadth S3 | ✅ 종결 | 우리 top-net일 breadth 무시그니처(r=0.079)=死 | 재검조건 8개 |
+| 관찰 Breadth S3 | ✅ 종결 | 우리 top-net일 breadth 무시그니처(r=0.079)=사망 | 재검조건 8개 |
 | 종료 VIX S2 | ✅ 종결 | 방어 OOS기각·공격 부호불안정 | 별도 전략시 재개 |
 
 ## 이번 세션 실제 실행분 (신규 코드·측정)
