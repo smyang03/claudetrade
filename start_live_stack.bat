@@ -1,159 +1,90 @@
 @echo off
+chcp 65001 >nul
 setlocal EnableExtensions EnableDelayedExpansion
-goto :main
 
-:kill_pid_file
-set "PID_FILE=%~1"
-set "LABEL=%~2"
-set "SCRIPT_NEEDLE=%~3"
-if not exist "%PID_FILE%" (
-  echo [SKIP] %LABEL% pid file not found: %PID_FILE%
-  exit /b 0
-)
-set "PID="
-for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [int]((Get-Content -Raw -LiteralPath '%PID_FILE%' | ConvertFrom-Json).pid) } catch { '' }"') do (
-  if not defined PID set "PID=%%P"
-)
-if not defined PID (
-  echo [WARN] %LABEL% pid file has no pid: %PID_FILE%
-  exit /b 0
-)
-call :pid_owner_ok "%PID%" "%SCRIPT_NEEDLE%" "%LABEL%"
-if errorlevel 2 (
-  if "%DRY_RUN%"=="1" (
-    echo [DRY-RUN] would remove stale pid file for missing process: %PID_FILE%
-  ) else (
-    del /f /q "%PID_FILE%" >nul 2>nul
-    echo [OK] removed stale pid file for missing process: %PID_FILE%
-  )
-  exit /b 0
-)
-if errorlevel 1 (
-  echo [WARN] %LABEL% pid=%PID% is not owned by this project/script; taskkill skipped.
-  if "%DRY_RUN%"=="1" (
-    echo [DRY-RUN] would move foreign/stale pid file to %PID_FILE%.stale
-  ) else (
-    move /Y "%PID_FILE%" "%PID_FILE%.stale" >nul 2>nul
-    if errorlevel 1 echo [WARN] failed to mark stale pid file: %PID_FILE%
-    if not errorlevel 1 echo [OK] moved stale pid file: %PID_FILE%.stale
-  )
-  exit /b 0
-)
-call :kill_pid_tree "%PID%" "%LABEL%"
-if "%DRY_RUN%"=="1" exit /b 0
-tasklist /FI "PID eq %PID%" 2>nul | findstr /r /c:"[ ]%PID%[ ]" >nul
-if errorlevel 1 (
-  del /f /q "%PID_FILE%" >nul 2>nul
-  echo [OK] removed pid file: %PID_FILE%
-) else (
-  echo [WARN] %LABEL% pid %PID% is still alive; pid file kept.
-)
-exit /b 0
+:: 라이브 스택 통제 재시작 — 소유자는 headless watchdog 하나뿐이다.
+::
+:: 과거 이 파일은 wt 탭으로 자체 스택을 띄웠다. 그런데 watchdog(schtasks, 5분 주기)이
+:: 이미 스택을 띄워둔 상태에서 실행하면, CommandLine에 프로젝트 경로가 없는 watchdog
+:: 프로세스를 "남의 프로세스"로 오판해 죽이지 못한 채 두 번째 스택을 띄웠다.
+:: → 라이브 봇 2개 동시 실행(2026-07-13 텔레그램 getUpdates 409 충돌로 실측).
+:: 이제는 정지(cwd 기준 tools\stop_live_stack.py)만 하고, 기동은 watchdog에 위임한다.
 
-:pid_owner_ok
-set "CHECK_PID=%~1"
-set "CHECK_NEEDLE=%~2"
-set "CHECK_LABEL=%~3"
-if "%CHECK_PID%"=="" exit /b 1
-if "%CHECK_NEEDLE%"=="" exit /b 1
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$pidValue = [int]'%CHECK_PID%'; $root = '%PROJECT_DIR%'; $needle = '%CHECK_NEEDLE%'; $me = $PID; $p = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $pidValue) -ErrorAction SilentlyContinue; if (-not $p) { exit 2 }; $cmd = [string]$p.CommandLine; if ($p.ProcessId -eq $me -or -not $cmd -or $cmd -notlike ('*' + $root + '*') -or $cmd -notlike ('*' + $needle + '*')) { exit 1 }; Write-Output ('[PID-OWNER] ' + '%CHECK_LABEL%' + ' pid=' + $pidValue + ' cmd=' + $cmd); exit 0"
-exit /b %ERRORLEVEL%
-
-:kill_matching
-set "SCRIPT_NEEDLE=%~1"
-set "LABEL=%~2"
-set "FOUND_MATCH=0"
-for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$root = '%PROJECT_DIR%'; $needle = '%SCRIPT_NEEDLE%'; $me = $PID; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $me -and $_.CommandLine -and $_.CommandLine -like ('*' + $root + '*') -and $_.CommandLine -like ('*' + $needle + '*') } | Select-Object -ExpandProperty ProcessId"') do (
-  set "FOUND_MATCH=1"
-  call :kill_pid_tree "%%P" "%LABEL%"
-)
-if "%FOUND_MATCH%"=="0" echo [SKIP] %LABEL% process not found.
-exit /b 0
-
-:kill_pid_tree
-set "TARGET_PID=%~1"
-set "TARGET_LABEL=%~2"
-if "%TARGET_PID%"=="" exit /b 0
-if "%DRY_RUN%"=="1" (
-  echo [DRY-RUN] taskkill /PID %TARGET_PID% /T /F  [%TARGET_LABEL%]
-  exit /b 0
-)
-echo [KILL] %TARGET_LABEL% pid=%TARGET_PID%
-taskkill /PID %TARGET_PID% /T /F >nul 2>nul
-if errorlevel 1 echo [WARN] taskkill failed or process already exited: pid=%TARGET_PID%
-exit /b 0
-
-:main
 set "PROJECT_DIR=E:\code\claudetrade"
 set "CONDA_ENV=upbit"
-set "STATE_DIR=%PROJECT_DIR%\state"
+set "WATCHDOG_TASK=claudetrade_live_stack_watchdog"
 set "DRY_RUN=0"
 if /I "%~1"=="--dry-run" set "DRY_RUN=1"
 
 echo [INFO] project=%PROJECT_DIR%
-if "%DRY_RUN%"=="1" echo [INFO] dry-run mode: no process will be killed and wt will not be started.
+if "%DRY_RUN%"=="1" echo [INFO] dry-run: 프로세스를 죽이거나 기동하지 않는다.
 
 if not exist "%PROJECT_DIR%\trading_bot.py" (
   echo [ERROR] PROJECT_DIR is invalid: %PROJECT_DIR%
   exit /b 1
 )
 
-echo [STOP] stopping existing live stack processes...
-call :kill_pid_file "%STATE_DIR%\live_trading_bot.pid" "live trading_bot" "trading_bot.py --live"
-call :kill_pid_file "%STATE_DIR%\dashboard_server.pid" "dashboard" "dashboard\dashboard_server.py"
-call :kill_matching "trading_bot.py --live" "live trading_bot"
-call :kill_matching "dashboard\dashboard_server.py" "dashboard"
-call :kill_matching "tools\live_guardian.py" "live_guardian"
-call :kill_matching "tools\broker_truth_scheduler.py" "broker_truth_scheduler"
-call :kill_matching "tools\preopen_scheduler.py" "preopen_scheduler"
-:: [improve B] preopen_scheduler can survive as an orphan python (parent cmd gone) that kill_matching
-:: (which requires PROJECT_DIR in the CommandLine) misses, and its stale single-instance lock then
-:: blocks the fresh scheduler. Needle-only re-kill + clear the stale lock so the new one can acquire it.
-if "%DRY_RUN%"=="1" (
-  echo [DRY-RUN] would needle-kill orphan preopen_scheduler and clear stale lock
-) else (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' -and $_.CommandLine -like '*preopen_scheduler.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
-  if exist "%STATE_DIR%\preopen_scheduler.lock.json" (
-    del /f /q "%STATE_DIR%\preopen_scheduler.lock.json" >nul 2>nul
-    echo [OK] cleared stale preopen_scheduler lock
-  )
-)
-call :kill_matching "tools\run_counterfactual_pipeline.py" "counterfactual_pipeline"
-call :kill_matching "tools\integrity_check.py" "integrity_check"
-
-if "%DRY_RUN%"=="1" (
-  echo [DRY-RUN] startup skipped.
-  exit /b 0
-)
-
-ping 127.0.0.1 -n 4 >nul
-
-where wt >nul 2>nul
-if errorlevel 1 (
-  echo [ERROR] Windows Terminal wt.exe was not found in PATH.
-  exit /b 1
-)
-
-echo [REFRESH] refreshing broker truth snapshots before live stack start...
+cd /d "%PROJECT_DIR%"
 call conda activate %CONDA_ENV%
 if errorlevel 1 (
   echo [ERROR] failed to activate conda env: %CONDA_ENV%
   exit /b 1
 )
-python tools\broker_truth_scheduler.py --mode live --markets KR,US --once --force --ttl-sec 180 --json
-if errorlevel 1 (
-  echo [WARN] broker truth startup refresh failed (KIS unavailable or weekend^); continuing startup...
-  echo [WARN] broker_truth_scheduler will retry automatically after stack starts.
+
+:: 1) watchdog 잠금 — 정지~기동 사이에 되살리지 못하게 한다.
+echo [LOCK] watchdog 일시 중지...
+if "%DRY_RUN%"=="1" (
+  echo [DRY-RUN] schtasks /change /tn "%WATCHDOG_TASK%" /disable
+) else (
+  schtasks /change /tn "%WATCHDOG_TASK%" /disable >nul 2>nul
+  if errorlevel 1 echo [WARN] watchdog 태스크 비활성화 실패(미등록? register_tasks.bat 확인^)
 )
 
-echo [START] opening live stack tabs...
-wt ^
-  new-tab --title "trading_bot" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting trading_bot && call conda activate %CONDA_ENV% && python trading_bot.py --live" ^
-  ; new-tab --title "dashboard" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting dashboard && call conda activate %CONDA_ENV% && python dashboard\dashboard_server.py" ^
-  ; new-tab --title "live_guardian" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting live_guardian (wait 45s for fresh bot config snapshot) && call conda activate %CONDA_ENV% && ping 127.0.0.1 -n 46 >nul && python tools\live_guardian.py --mode live --watch --interval-sec 300 --telegram-alert" ^
-  ; new-tab --title "broker_truth_scheduler" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting broker_truth_scheduler && call conda activate %CONDA_ENV% && python tools\broker_truth_scheduler.py --mode live --markets KR,US --loop --interval-sec 30 --refresh-interval-min 2 --failure-retry-min 2 --preopen-min 20 --postclose-min 15 --ttl-sec 180 --no-refresh-on-start" ^
-  ; new-tab --title "preopen_scheduler" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting preopen_scheduler && call conda activate %CONDA_ENV% && python tools\preopen_scheduler.py --mode live --markets KR,US --loop --interval-sec 60" ^
-  ; new-tab --title "counterfactual_pipeline" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting counterfactual_pipeline && call conda activate %CONDA_ENV% && python tools\run_counterfactual_pipeline.py --phase due --market KR,US --loop --interval-sec 300 --json" ^
-  ; new-tab --title "integrity_check" cmd /k "cd /d %PROJECT_DIR% && echo [RUN] starting integrity_check && call conda activate %CONDA_ENV% && python tools\integrity_check.py --watch --interval-sec 600 --telegram-alert"
+:: 2) 전체 정지 — headless/wt 어느 쪽이 띄웠든 cwd 기준으로 잡는다.
+echo [STOP] 라이브 스택 정지...
+if "%DRY_RUN%"=="1" (
+  python tools\stop_live_stack.py --dry-run
+) else (
+  python tools\stop_live_stack.py
+  if errorlevel 1 (
+    echo [ERROR] 스택 정지 실패 — 살아있는 프로세스가 있어 중단한다(중복 기동 방지^)
+    schtasks /change /tn "%WATCHDOG_TASK%" /enable >nul 2>nul
+    exit /b 1
+  )
+)
 
-exit /b %ERRORLEVEL%
+:: 3) 브로커 truth 선갱신 — 봇이 뜨기 전에 스냅샷을 데워둔다.
+::    (watchdog은 broker_truth_scheduler를 --no-refresh-on-start로 띄운다)
+if "%DRY_RUN%"=="1" (
+  echo [DRY-RUN] broker truth 선갱신 생략
+) else (
+  echo [REFRESH] broker truth 스냅샷 갱신...
+  python tools\broker_truth_scheduler.py --mode live --markets KR,US --once --force --ttl-sec 180 --json
+  if errorlevel 1 echo [WARN] broker truth 선갱신 실패(KIS 불가 또는 휴장^) — 스택 기동 후 자동 재시도한다.
+)
+
+:: 4) watchdog 해제 + 즉시 1회 실행 → 단일 스택 기동
+echo [START] watchdog 재활성화 + 즉시 기동...
+if "%DRY_RUN%"=="1" (
+  echo [DRY-RUN] schtasks /change /tn "%WATCHDOG_TASK%" /enable
+  echo [DRY-RUN] powershell -File tools\start_live_stack_headless.ps1
+  exit /b 0
+)
+schtasks /change /tn "%WATCHDOG_TASK%" /enable >nul 2>nul
+if errorlevel 1 echo [WARN] watchdog 재활성화 실패 — 자동복구가 꺼진 상태다. register_tasks.bat 실행 필요.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%\tools\start_live_stack_headless.ps1"
+if errorlevel 1 (
+  echo [ERROR] 스택 기동 실패.
+  exit /b 1
+)
+
+:: 5) 결과 확인 — 역할별 1개여야 한다(DUP 경고가 뜨면 즉시 조치^)
+echo.
+echo [VERIFY] 역할별 프로세스 확인...
+timeout /t 20 /nobreak >nul
+python tools\stop_live_stack.py --dry-run
+
+echo.
+echo [OK] 단일 스택 기동 완료. 로그: logs\runtime\*.log / logs\system\live_trading_*.log
+echo      자동복구: watchdog(%WATCHDOG_TASK%)이 5분마다 죽은 역할을 되살린다.
+exit /b 0
