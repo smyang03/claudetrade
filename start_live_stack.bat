@@ -126,7 +126,7 @@ if "%DRY_RUN%"=="1" (
   exit /b 0
 )
 
-timeout /t 3 /nobreak >nul
+ping 127.0.0.1 -n 4 >nul
 
 where wt >nul 2>nul
 if errorlevel 1 (
