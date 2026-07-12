@@ -145,6 +145,40 @@ class LivePreflightPathBConflictTests(unittest.TestCase):
         self.assertTrue(item["pathb_recoverable_entry_holding"])
         self.assertFalse(item["pathb_recoverable_still_held"])
 
+    def test_missing_path_run_id_rows_accept_trimmed_dict_payload(self) -> None:
+        # _db_checks는 payload_json(단건 최대 1.7MB)을 전량 적재하면 MemoryError가 나므로
+        # 커서를 스트리밍하며 판정에 쓰이는 키만 dict로 추려 넘긴다. 그 축약 payload로도
+        # 동일 판정이 나와야 한다.
+        trimmed_rows = [
+            {
+                "event_type": "CLAUDE_PRICE_PLAN",
+                "market": "US",
+                "ticker": "NVDA",
+                "decision_id": "dec_linked",
+                "payload_json": {},
+            },
+            {
+                "event_type": "CLAUDE_TRADE_READY",
+                "market": "KR",
+                "ticker": "005930",
+                "decision_id": "dec_orphan",
+                "payload_json": {"path_type": "claude_price"},
+            },
+            {
+                "event_type": "CLAUDE_PRICE_PLAN",
+                "market": "US",
+                "ticker": "AMD",
+                "decision_id": "dec_ok",
+                "payload_json": {"path_run_id": "path_amd"},
+            },
+        ]
+
+        result = live_preflight._pathb_like_missing_path_run_id_rows(trimmed_rows, {"dec_linked"})
+
+        self.assertEqual([row["ticker"] for row in result["rows"]], ["NVDA", "005930"])
+        self.assertEqual(result["decision_id_linkable_count"], 1)
+        self.assertEqual(result["decision_id_unlinkable_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

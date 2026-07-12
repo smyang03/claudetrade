@@ -2970,7 +2970,9 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
             )
         )
 
-        recent_events = conn.execute(
+        # payload_json은 단건 1.7MB·최근 1000건 합계 90MB를 넘어 fetchall()로 전량 적재하면 MemoryError가 난다.
+        # 커서를 스트리밍하며 하위 판정이 실제로 읽는 키만 남긴다(_path_run_id_from_payload + path_type/buy_path).
+        event_cursor = conn.execute(
             """
             SELECT event_type, market, runtime_mode, session_date, ticker, decision_id, payload_json
             FROM lifecycle_events
@@ -2979,10 +2981,27 @@ def _db_checks(mode: str = "live") -> list[CheckResult]:
             LIMIT 1000
             """,
             (mode,),
-        ).fetchall()
+        )
+        recent_events: list[dict[str, Any]] = []
         invalid_event_market_runtime = []
-        for row in recent_events:
+        for row in event_cursor:
             event_type = str(row["event_type"] or "")
+            payload = _safe_json_object(row["payload_json"])
+            recent_events.append(
+                {
+                    "event_type": event_type,
+                    "market": row["market"],
+                    "runtime_mode": row["runtime_mode"],
+                    "session_date": row["session_date"],
+                    "ticker": row["ticker"],
+                    "decision_id": row["decision_id"],
+                    "payload_json": {
+                        key: payload.get(key)
+                        for key in ("path_run_id", "pathb_path_run_id", "path_type", "buy_path")
+                        if payload.get(key) is not None
+                    },
+                }
+            )
             if row["market"] not in {"KR", "US"} or row["runtime_mode"] not in {"live", "paper"}:
                 invalid_event_market_runtime.append(
                     {
