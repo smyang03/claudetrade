@@ -87,4 +87,21 @@ python tools\stop_live_stack.py --dry-run
 echo.
 echo [OK] 단일 스택 기동 완료. 로그: logs\runtime\*.log / logs\system\live_trading_*.log
 echo      자동복구: watchdog(%WATCHDOG_TASK%)이 5분마다 죽은 역할을 되살린다.
+
+:: 6) 로그 tail 탭 — 프로세스를 띄우는 게 아니라 읽기만 한다(중복 위험 없음^).
+::    스택은 headless라 실행 창이 없으므로, 돌아가는 걸 눈으로 보려면 이 탭들을 쓴다.
+where wt >nul 2>nul
+if errorlevel 1 (
+  echo [INFO] Windows Terminal(wt^)이 없어 로그 탭을 열지 않는다. 대시보드: http://localhost:5000
+) else (
+  echo [VIEW] 로그 tail 탭 여는 중...
+  wt ^
+    new-tab --title "live_trading" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%PROJECT_DIR%\tools\tail_live_logs.ps1" -Role live_trading ^
+    ; new-tab --title "bot_stderr" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%PROJECT_DIR%\tools\tail_live_logs.ps1" -Role trading_bot ^
+    ; new-tab --title "live_error" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%PROJECT_DIR%\tools\tail_live_logs.ps1" -Role error
+)
+
+echo.
+echo      대시보드: http://localhost:5000
+pause
 exit /b 0
