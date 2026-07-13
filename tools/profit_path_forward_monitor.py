@@ -15,6 +15,62 @@ from sklearn.metrics import roc_auc_score
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# runtime/profit_path_predictor.build_runtime_feature_row가 만드는 numeric 피처.
+# _ood()가 "관측 numeric < 5"를 OOD로 보므로 같은 기준을 여기서도 쓴다.
+NUMERIC_FEATURES = (
+    "candidate_price",
+    "change_pct",
+    "volume_ratio",
+    "from_high_pct",
+    "raw_score_current",
+    "entry_delay_min",
+    "entry_vs_candidate_pct",
+    "market_open_elapsed_min",
+    "ret_3m_pct",
+    "ret_5m_pct",
+    "ret_10m_pct",
+    "ret_30m_pct",
+    "volume_ratio_open",
+    "vwap_distance_pct",
+    "pullback_from_high_pct",
+)
+MIN_OBSERVED_FEATURES = 5
+
+ABSTAIN_UNSUPPORTED_COHORT = "unsupported_cohort"
+ABSTAIN_FEATURE_COVERAGE = "feature_coverage_insufficient"
+
+
+def _observed_feature_n(feature_snapshot: Any) -> int:
+    if not isinstance(feature_snapshot, dict):
+        return 0
+    observed = 0
+    for key in NUMERIC_FEATURES:
+        value = feature_snapshot.get(key)
+        if value is None or value == "__MISSING__":
+            continue
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(parsed):
+            observed += 1
+    return observed
+
+
+def classify_prediction(*, ood: Any, observed_feature_n: int) -> tuple[bool, str]:
+    """승격 표본 자격 판정.
+
+    OOD 관측은 삭제하지 않는다. 예측을 낼 수는 있지만 그 값은 학습분포 밖의 상수에 가까워
+    AUC/ECE/LCB에 섞이면 승격 통계를 오염시킨다. 그래서 보존하되 evaluable에서만 뺀다.
+    - unsupported_cohort: 후보 피처가 하나도 없다(Tier2 섹터플레이처럼 스크리너 후보가 아닌 종목).
+    - feature_coverage_insufficient: 피처가 일부 있으나 모델이 OOD로 판정했거나 관측 수가 부족하다.
+    """
+    if observed_feature_n <= 0:
+        return False, ABSTAIN_UNSUPPORTED_COHORT
+    if bool(ood) or observed_feature_n < MIN_OBSERVED_FEATURES:
+        return False, ABSTAIN_FEATURE_COVERAGE
+    return True, ""
+
 
 def _load_predictions(con: sqlite3.Connection, market: str = "") -> pd.DataFrame:
     params: list[Any] = []
@@ -38,6 +94,10 @@ def _load_predictions(con: sqlite3.Connection, market: str = "") -> pd.DataFrame
         evidence = payload.get("evidence") if isinstance(payload, dict) else None
         if not isinstance(evidence, dict) or not evidence.get("model_version"):
             continue
+        observed_n = _observed_feature_n(evidence.get("feature_snapshot"))
+        evaluable, abstain_reason = classify_prediction(
+            ood=evidence.get("ood"), observed_feature_n=observed_n
+        )
         output.append(
             {
                 "event_id": event_id,
@@ -51,6 +111,10 @@ def _load_predictions(con: sqlite3.Connection, market: str = "") -> pd.DataFrame
                 "expected_net_pct": evidence.get("expected_net_pct"),
                 "uncertainty": evidence.get("uncertainty"),
                 "ood": evidence.get("ood"),
+                "strategy": str(payload.get("strategy") or ""),
+                "observed_feature_n": observed_n,
+                "evaluable": evaluable,
+                "abstain_reason": abstain_reason,
             }
         )
     frame = pd.DataFrame(output)
@@ -196,19 +260,79 @@ def main() -> int:
     finally:
         event_con.close()
         audit_con.close()
-    matched = match_predictions(predictions, outcomes, tolerance_min=args.tolerance_min)
-    now = pd.Timestamp(datetime.now(timezone.utc))
-    matured = predictions[predictions["prediction_ts"] <= now - pd.Timedelta(minutes=60)] if not predictions.empty else predictions
-    report = {
-        "ok": True,
-        "market": args.market.upper(),
-        "prediction_n": int(len(predictions)),
-        "matured_prediction_n": int(len(matured)),
-        "unmatched_matured_n": max(0, int(len(matured) - len(matched))),
-        **summarize(matched, min_matched=args.min_matched, min_sessions=args.min_sessions),
-    }
+    report = build_report(
+        predictions,
+        outcomes,
+        market=args.market,
+        tolerance_min=args.tolerance_min,
+        min_matched=args.min_matched,
+        min_sessions=args.min_sessions,
+    )
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False))
     return 0
+
+
+def build_report(
+    predictions: pd.DataFrame,
+    outcomes: pd.DataFrame,
+    *,
+    market: str,
+    tolerance_min: int = 10,
+    min_matched: int = 60,
+    min_sessions: int = 20,
+    now: pd.Timestamp | None = None,
+) -> dict[str, Any]:
+    now = now if now is not None else pd.Timestamp(datetime.now(timezone.utc))
+    if predictions.empty:
+        evaluable = abstained = predictions
+    else:
+        evaluable = predictions[predictions["evaluable"]]
+        abstained = predictions[~predictions["evaluable"]]
+
+    # 승격 통계(AUC/ECE/LCB/matched_n/sessions)는 evaluable 표본만 쓴다.
+    # abstain 관측은 삭제하지 않고 커버리지 부채로 따로 센다.
+    matched = match_predictions(evaluable, outcomes, tolerance_min=tolerance_min)
+    matured_evaluable = (
+        evaluable[evaluable["prediction_ts"] <= now - pd.Timedelta(minutes=60)]
+        if not evaluable.empty
+        else evaluable
+    )
+    matured_observed = (
+        predictions[predictions["prediction_ts"] <= now - pd.Timedelta(minutes=60)]
+        if not predictions.empty
+        else predictions
+    )
+    # 필터가 없었다면 승격 통계에 섞였을 abstain 관측 = 오염 부채의 실제 크기.
+    abstain_matchable = match_predictions(abstained, outcomes, tolerance_min=tolerance_min)
+
+    report = {
+        "ok": True,
+        "market": str(market).upper(),
+        "observed_n": int(len(predictions)),
+        "evaluable_n": int(len(evaluable)),
+        "abstain_n": int(len(abstained)),
+        "abstain_by_reason": (
+            {str(k): int(v) for k, v in abstained["abstain_reason"].value_counts().items()}
+            if not abstained.empty
+            else {}
+        ),
+        "abstain_by_strategy": (
+            {str(k): int(v) for k, v in abstained["strategy"].value_counts().items()}
+            if not abstained.empty
+            else {}
+        ),
+        "coverage_debt": {
+            "abstain_matchable_n": int(len(abstain_matchable)),
+            "abstain_sessions": int(abstained["session_date"].nunique()) if not abstained.empty else 0,
+        },
+        "matured_observed_n": int(len(matured_observed)),
+        "matured_evaluable_n": int(len(matured_evaluable)),
+        "unmatched_matured_n": max(0, int(len(matured_evaluable) - len(matched))),
+        # 하위호환: prediction_n은 관측 전체를 뜻한다(승격 표본이 아니다).
+        "prediction_n": int(len(predictions)),
+        **summarize(matched, min_matched=min_matched, min_sessions=min_sessions),
+    }
+    return report
 
 
 if __name__ == "__main__":
