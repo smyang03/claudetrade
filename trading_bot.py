@@ -14808,9 +14808,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         existing_low = _positive(self._or_low.get(key))
         if bool(self._or_formed.get(key)) and existing_high is not None and existing_low is not None:
             return False
-        self._or_high[key] = float(high)
-        self._or_low[key] = float(low)
-        self._or_formed[key] = True
+        # 캐시 키 정합: 라이브 틱 누적 경로(_or_high[ticker])는 raw ticker로 쓰고 읽는다.
+        # 여기서 정규화 키로만 쓰면 US 소문자 티커에서 조용히 어긋난다 → 양쪽에 쓴다.
+        for cache_key in {key, str(ticker or "").strip()}:
+            if not cache_key:
+                continue
+            self._or_high[cache_key] = float(high)
+            self._or_low[cache_key] = float(low)
+            self._or_formed[cache_key] = True
         return True
     def _backfill_post_open_minutes(self, market: str, ticker: str, *, reason: str = "") -> bool:
         """분봉 표적 백필 — 피처 결측 후보의 가격 이력을 분봉으로 시딩하고 스냅샷 재계산.
@@ -33828,6 +33833,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     # 장초반 opening window 판단용 — gap_pullback.signal()이 사용
                     p["session_elapsed_min"] = self._market_elapsed_min(market)
                     if strat == "opening_range_pullback":
+                        # ★2026-07-13 배선 연결: OR이 없으면 전략은 orp_not_formed(range=0.00%)로 끝난다.
+                        # 늦게 발견된 후보(first_observed US 52%)는 개장 구간 분봉이 없어 OR이 영영 안 생겼고,
+                        # 그 결과 Path A 5개 전략이 682/682 신호 0이었다. 진입창 안이면 분봉 백필로 복구한다.
+                        # 폭주 방지: trade_ready 후보만 + 백필 자체의 종목·세션 TTL 가드(10분) + fail-open.
+                        if not bool(self._or_formed.get(ticker, False)) and self._is_trade_ready_ticker(market, ticker):
+                            _elapsed = p.get("session_elapsed_min")
+                            _or_min = float(p.get("or_minutes") or (15.0 if market == "US" else 10.0))
+                            _entry_win = float(p.get("entry_window_min") or 60.0)
+                            if _elapsed is not None and 0.0 <= float(_elapsed) <= (_or_min + _entry_win):
+                                self._backfill_post_open_minutes(market, ticker, reason="orp_range_missing")
                         _or_high = float(self._or_high.get(ticker, 0.0) or 0.0)
                         _or_low_raw = self._or_low.get(ticker, float("inf"))
                         _or_low = 0.0 if _or_low_raw == float("inf") else float(_or_low_raw or 0.0)
