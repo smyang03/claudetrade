@@ -64,3 +64,23 @@
 
 - 집중 테스트 29 passed(재시작 전) + pathb/orp/price_plan/waiting 579 passed(수정 후) + attribution 테스트 2건 신규.
 - mojibake 통과. 커밋: 3307960.
+
+## 7. 선제 시뮬레이션 (개장 대기 없이 검증 — 2026-07-14 02:00 추가)
+
+**리허설 하네스**(`tools/ops_rehearsal.py`, 라이브 상태 보호 가드 내장) 전 시나리오 통과:
+`kr_patha_buy` · `us_pathb_buy` · `us_pathb_sell_target` · `broker_truth_fail_closed` · `order_unknown_reconcile` — 5/5 ok.
+
+**RR 매트릭스 시뮬**(라이브 env 로딩 순서 재현: `.env.live` → `env_overrides` 덮어쓰기, 실판정 함수에 합성 플랜 주입):
+
+| 검증 항목 | 결과 |
+|---|---|
+| 실효 임계 해석 | KR 1.1 / US 1.5 (등록·zone update·judge 경로 모두 동일) |
+| 등록 경로 RR 매트릭스 | KR: 1.15~2.0 PASS, ≤1.1 거부 / US: 1.5~2.0 PASS, ≤1.45 거부 |
+| judge 경로(strict features) | KR 1.15 PASS·1.05 거부 / US 1.55 PASS·1.3 거부 — 시장별 분리 작동 |
+| confidence 게이트 | 0.5 이상 통과(경계 포함), 0.49 거부 |
+| RR 분모 | consistent(존상단 앵커) 확인 — 구분모였다면 1.5 설계 플랜이 2.25로 과대 |
+| judge strict 필수필드 | `invalid_if`·구조적 근거 없는 플랜은 RR 무관 거부 (CRM 실플랜은 보유 확인) |
+
+**경계값 노트**: RR이 산술상 정확히 1.1인 플랜은 부동소수점 오차로 KR에서 탈락할 수 있다(실효 임계 = 1.1 + ε). 실플랜은 경계에 정확히 앉는 일이 드물어 무해하나, 임계 재캘리 시 epsilon 처리 여부를 함께 결정할 것.
+
+→ **KR 09:00을 기다리지 않고도 게이트 로직은 양 시장 검증 완료.** 개장 후 남는 확인은 "judge가 1.1~1.5 밴드 플랜을 실제로 생산하는가"(생산량 문제)뿐이며, 게이트가 그것을 막지 않음은 확정됐다.
