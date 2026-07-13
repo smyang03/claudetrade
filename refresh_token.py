@@ -2,7 +2,11 @@
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(__file__))
+ROOT = os.path.dirname(os.path.abspath(__file__))
+# Task Scheduler starts actions with an empty Start In directory.  Resolve the
+# live env and token paths from the project root instead of System32.
+os.chdir(ROOT)
+sys.path.insert(0, ROOT)
 
 from kis_api import get_access_token, IS_PAPER
 
