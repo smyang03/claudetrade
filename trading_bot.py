@@ -304,6 +304,22 @@ from universe_manager import (
 )
 log = get_trading_logger()
 analysis_log = get_analysis_logger()
+
+
+def _post_open_ts_or_none(value) -> Optional[str]:
+    """isoformat으로 파싱 가능한 ts 문자열만 통과시킨다(아니면 None).
+
+    분봉 datetime이 None/NaT면 str()이 "None"/"NaT" 문자열을 만들어 post-open history를
+    오염시키고, fromisoformat 크래시로 해당 종목 사이클 전체가 죽는다(2026-07-14 SPCX 실측).
+    """
+    text = str(value or "").strip()[:19]
+    if not text:
+        return None
+    try:
+        datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return text
 judgment_log = get_judgment_logger()
 normal_log = get_normal_logger()
 risk_log = get_risk_logger()
@@ -14770,7 +14786,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 history.append({"ts": known_at, "price": float(current_price), "source": "restored_snapshot"})
             dedup: dict[str, dict] = {}
             for item in history:
-                ts = str((item or {}).get("ts") or "").strip()
+                ts = _post_open_ts_or_none((item or {}).get("ts"))
                 price = self._positive_float_or_none((item or {}).get("price"))
                 if ts and price is not None:
                     dedup[ts] = {"ts": ts, "price": float(price), "source": str((item or {}).get("source") or "")}
@@ -14908,7 +14924,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             for _, row in df.iterrows():
                 close = self._positive_float_or_none(row.get("close"))
                 ts = row.get("datetime") or row.get("date") or row.get("time")
-                ts_text = str(ts)[:19]
+                ts_text = _post_open_ts_or_none(ts)
                 if close is None or not ts_text:
                     continue
                 if first_open is None:
@@ -14931,7 +14947,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 backfilled_or_low = min(or_lows)
             dedup: dict[str, dict] = {}
             for item in history:
-                ts = str((item or {}).get("ts") or "").strip()
+                ts = _post_open_ts_or_none((item or {}).get("ts"))
                 price = self._positive_float_or_none((item or {}).get("price"))
                 if ts and price is not None:
                     dedup[ts] = {"ts": ts, "price": float(price), "source": str((item or {}).get("source") or "")}
@@ -18356,7 +18372,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             }
             self._post_open_anchor[key] = anchor
         history = self._post_open_price_history.setdefault(key, [])
-        if not history or (observed - datetime.fromisoformat(history[-1]["ts"])).total_seconds() >= 10:
+        _last_ts = _post_open_ts_or_none((history[-1] or {}).get("ts")) if history else None
+        if _last_ts is None or (observed - datetime.fromisoformat(_last_ts)).total_seconds() >= 10:
             history.append({
                 "ts": observed.isoformat(timespec="seconds"),
                 "price": float(raw_price),

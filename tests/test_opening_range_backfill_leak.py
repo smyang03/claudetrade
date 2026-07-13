@@ -175,6 +175,31 @@ class MinuteBackfillAdapterTests(unittest.TestCase):
         self.assertTrue(bot._or_formed["NVDA"])
         self.assertEqual(bot._last_post_open_features_by_ticker["US"]["NVDA"]["data_quality"], "minute_backfill")
 
+    def test_backfill_skips_bars_with_missing_datetime(self) -> None:
+        # 회귀: datetime=None 봉이 str(None)="None" ts로 history를 오염시켜
+        # _observe_post_open_price의 fromisoformat 크래시(사이클 사망)를 유발했다(2026-07-14 SPCX).
+        rows = [{"datetime": None, "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0}]
+        for minute in range(15):
+            rows.append(
+                {
+                    "datetime": f"2026-07-13 22:{30 + minute:02d}:00",
+                    "open": 100.0,
+                    "high": 101.0 + minute / 10,
+                    "low": 99.0 - minute / 20,
+                    "close": 100.0 + minute / 20,
+                }
+            )
+        frame = pd.DataFrame(rows)
+        bot = _BackfillStub()
+
+        with patch("kis_api.get_intraday_candles", return_value=frame):
+            self.assertTrue(bot._backfill_post_open_minutes("US", "NVDA", reason="test"))
+
+        history = bot._post_open_price_history["US:NVDA"]
+        self.assertTrue(history)
+        for item in history:
+            self.assertNotEqual(item["ts"], "None")
+
 
 if __name__ == "__main__":
     unittest.main()
