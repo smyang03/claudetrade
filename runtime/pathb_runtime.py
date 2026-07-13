@@ -6880,6 +6880,12 @@ class PathBRuntime:
         if mfe_pct <= 0 or peak_price <= 0:
             return {}
 
+        # ★2026-07-14 조기익절 tier (운영자 승인 A안): sell_target이 도달가능 MFE 대비 2.3배 과대라
+        # 원목표 대기 중 이익 왕복이 US 적자 핵심. MFE가 목표거리×fraction(기본 0.4)에 도달하면
+        # peak-giveback으로 floor를 잠근다. 러너는 원목표 유지(floor는 눌림에만 발동 = 러너 uncapped).
+        # 근거: DB n=291 시뮬 KR -0.22→+2.15/US -0.18→+0.48, 7월 KR 1.1밴드 리플레이 승률 27%→64%.
+        early_info = self._pathb_early_tier_floor(plan, entry, peak_price, mfe_pct, market)
+
         # Phase B A/B(2026-06-27): enforce-B 그룹은 현행 tier 사다리 대신 단일 peak-trail로 대체.
         # sweep(ladder_capture_sweep US n=32) act=4·give=2 → Δ+13%p·개선19/악화12·악화반납 통제.
         # act% 미만은 ladder floor 없음(하방은 상위 hard_stop/loss_cap이 막음 = profit-side만 변경).
@@ -6890,7 +6896,7 @@ class PathBRuntime:
                 ab_floor = peak_price * (1.0 - max(0.0, ab_give) / 100.0)
                 ab_floor = self._round_policy_price(ab_floor, str(market or plan.market or "").upper(), direction="down")
                 if ab_floor > 0:
-                    return {
+                    ab_info = {
                         "tier": "ab_peak_trail",
                         "floor": ab_floor,
                         "entry": entry,
@@ -6900,7 +6906,11 @@ class PathBRuntime:
                         "ab_act_pct": ab_act,
                         "ab_give_pct": ab_give,
                     }
-            return {}
+                    # 조기익절 tier가 더 높은 floor를 제시하면 그것이 이긴다(이익 잠금 우선).
+                    if early_info and float(early_info.get("floor") or 0) > ab_floor:
+                        return early_info
+                    return ab_info
+            return early_info or {}
 
         tier1 = _env_float("PATHB_LADDER_TIER1_PCT", 1.2)
         tier2 = _env_float("PATHB_LADDER_TIER2_PCT", 2.0)
@@ -6924,15 +6934,65 @@ class PathBRuntime:
             tier = "tier1"
             floor = entry * (1.0 + max(0.0, _env_float("PATHB_LADDER_TIER1_FLOOR_BUFFER_PCT", 0.0)))
         if floor <= 0:
-            return {}
+            return early_info or {}
         market_key = str(market or plan.market or "").upper()
         floor = self._round_policy_price(floor, market_key, direction="down")
+        # 조기익절 tier가 더 높은 floor를 제시하면 그것이 이긴다(이익 잠금 우선).
+        if early_info and float(early_info.get("floor") or 0) > floor:
+            return early_info
         return {
             "tier": tier,
             "floor": floor,
             "entry": entry,
             "peak_price": peak_price,
             "mfe_pct": mfe_pct,
+        }
+
+    def _pathb_early_tier_floor(
+        self,
+        plan: PricePlan,
+        entry: float,
+        peak_price: float,
+        mfe_pct: float,
+        market: str,
+    ) -> dict[str, Any]:
+        """목표거리 기반 조기익절 tier — MFE >= 목표거리×fraction이면 peak-giveback floor.
+
+        절대 MFE% tier와 달리 플랜의 sell_target 거리에 비례해 발동하므로,
+        과대 목표(도달률 US 17%)를 기다리다 이익을 왕복하는 패턴을 겨냥한다.
+        """
+        if not _env_bool("PATHB_EARLY_TIER_ENABLED", False):
+            return {}
+        market_key = str(market or plan.market or "").upper()
+        fraction = _env_float(
+            f"PATHB_EARLY_TIER_TARGET_FRACTION_{market_key}",
+            _env_float("PATHB_EARLY_TIER_TARGET_FRACTION", 0.4),
+        )
+        if fraction <= 0:
+            return {}
+        target = float(plan.sell_target or 0)
+        if entry <= 0 or target <= entry:
+            return {}
+        target_gain_pct = (target / entry - 1.0) * 100.0
+        act_pct = fraction * target_gain_pct
+        if act_pct <= 0 or mfe_pct < act_pct:
+            return {}
+        giveback = max(0.0, _env_float("PATHB_EARLY_TIER_PEAK_GIVEBACK_PCT", 0.006))
+        floor = peak_price * (1.0 - giveback)
+        # 진입가 아래로는 잠그지 않는다(이익 잠금 목적 — 손실측은 hard_stop/loss_cap 소관).
+        floor = max(floor, entry)
+        floor = self._round_policy_price(floor, market_key, direction="down")
+        if floor <= 0:
+            return {}
+        return {
+            "tier": "early_target",
+            "floor": floor,
+            "entry": entry,
+            "peak_price": peak_price,
+            "mfe_pct": mfe_pct,
+            "early_tier_fraction": fraction,
+            "early_tier_act_pct": round(act_pct, 4),
+            "early_tier_target_gain_pct": round(target_gain_pct, 4),
         }
 
     def _pathb_profit_ladder_signal(
