@@ -40,19 +40,29 @@ def _payload(raw: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def is_shadow_ready(payload: dict[str, Any]) -> bool:
+    """profit_evidence shadow가 만든 가짜 trade_ready인가.
+
+    ★계측 오염(2026-07-13 실측): `trading_bot.py:10534 _record_profit_evidence_shadow_once`가
+    `_v2_ensure_execution_decision_id` → `registry.register_trade_ready()`를 호출해서
+    **shadow 관측이 CLAUDE_TRADE_READY 이벤트로 발행된다.** 그대로 세면 실제 후보 수가 과대집계된다.
+    구분은 payload로 가능하다: shadow는 `shadow_only=True` / `registration_source=profit_evidence_shadow`,
+    진짜 ready는 `selection_meta`·`ticker_origin`을 갖는다.
+    """
+    if bool(payload.get("shadow_only")):
+        return True
+    return str(payload.get("registration_source") or "").strip().lower() == "profit_evidence_shadow"
+
+
 def trade_ready_split(
     con: sqlite3.Connection,
     audit: sqlite3.Connection,
     session: str,
     market: str,
 ) -> dict[str, int]:
-    """CLAUDE_TRADE_READY를 '플랜 경로를 탈 수 있는 것'과 '아닌 것'으로 나눈다.
-
-    판정 기준은 payload의 strategy가 아니라 **그 세션의 스크리너 후보로 등재됐는지**다.
-    Tier2 섹터플레이 종목은 audit_candidate_rows에 행이 없다(실측: 2026-07-13 KR 4종목 전부 0행).
-    payload에는 strategy가 실리지 않는 경우가 있어 문자열 판정은 조용히 실패한다.
-    """
-    plan_eligible = 0
+    """CLAUDE_TRADE_READY를 실제 ready / shadow ready / 스크리너 미등재로 완전히 분리한다."""
+    real_ready = 0
+    shadow_ready = 0
     non_plan = Counter()
     rows = con.execute(
         """
@@ -63,18 +73,22 @@ def trade_ready_split(
     ).fetchall()
     for ticker, raw in rows:
         payload = _payload(raw)
+        if is_shadow_ready(payload):
+            shadow_ready += 1
+            continue
         strategy = str(payload.get("strategy") or payload.get("strategy_used") or "").strip().lower()
         screened = audit.execute(
             "SELECT 1 FROM audit_candidate_rows WHERE session_date=? AND market=? AND ticker=? LIMIT 1",
             (session, market, str(ticker)),
         ).fetchone()
         if screened and strategy not in NON_PLAN_STRATEGIES:
-            plan_eligible += 1
+            real_ready += 1
         else:
             non_plan[strategy or "not_screened"] += 1
     return {
         "trade_ready_total": len(rows),
-        "trade_ready_plan_eligible": plan_eligible,
+        "trade_ready_real": real_ready,
+        "trade_ready_shadow": shadow_ready,
         "trade_ready_non_plan": int(sum(non_plan.values())),
         "non_plan_by_strategy": dict(non_plan),
     }
@@ -97,6 +111,42 @@ def block_reasons(con: sqlite3.Connection, session: str, market: str) -> dict[st
     return dict(counter.most_common())
 
 
+def plan_split(con: sqlite3.Connection, session: str, market: str) -> dict[str, Any]:
+    """가격 플랜을 wait-only와 매수가능으로 나누고 종착점을 센다.
+
+    wait-only 플랜(`_registration_scope=candidate_actions_wait_only` / `_not_patha_trade_ready`)은
+    애초에 즉시 매수 후보가 아니다. 이걸 매수 퍼널에 섞으면 전환율이 왜곡된다.
+    """
+    rows = con.execute(
+        "SELECT status, plan_json FROM v2_path_runs WHERE session_date=? AND market=?",
+        (session, market),
+    ).fetchall()
+    wait_only = 0
+    buy_capable = 0
+    status_counter: Counter = Counter()
+    cancel_counter: Counter = Counter()
+    for status, raw in rows:
+        plan = _payload(raw)
+        status_counter[str(status or "")] += 1
+        if str(status or "") == "CANCELLED":
+            cancel_counter[str(plan.get("cancel_reason") or "unrecorded")] += 1
+        # raw_plan(SAFETY_BLOCKED payload)은 `_` 접두, v2_path_runs.plan_json은 무접두로 저장된다.
+        # 한쪽만 보면 wait-only가 조용히 0으로 집계된다.
+        scope = str(plan.get("registration_scope") or plan.get("_registration_scope") or "").strip().lower()
+        not_ready = bool(plan.get("not_patha_trade_ready") or plan.get("_not_patha_trade_ready"))
+        if scope == "candidate_actions_wait_only" or not_ready:
+            wait_only += 1
+        else:
+            buy_capable += 1
+    return {
+        "plan_total": len(rows),
+        "plan_wait_only": wait_only,
+        "plan_buy_capable": buy_capable,
+        "plan_status": dict(status_counter),
+        "cancel_reasons": dict(cancel_counter.most_common()),
+    }
+
+
 def session_funnel(con: sqlite3.Connection, audit: sqlite3.Connection, session: str, market: str) -> dict[str, Any]:
     stages = {
         stage: con.execute(
@@ -107,6 +157,7 @@ def session_funnel(con: sqlite3.Connection, audit: sqlite3.Connection, session: 
     }
     output: dict[str, Any] = {"session_date": session, "market": market}
     output.update(trade_ready_split(con, audit, session, market))
+    output.update(plan_split(con, session, market))
     output.update(stages)
     output["blocked_by"] = block_reasons(con, session, market)
     return output
@@ -144,24 +195,26 @@ def main() -> int:
         return 0
 
     for market in sorted({row["market"] for row in report}):
-        print(f"\n=== {market} 진입 퍼널 (trade_ready는 플랜 가능/불가로 분리) ===")
+        print(f"\n=== {market} 진입 퍼널 (실제 ready / shadow ready / wait-only 분리) ===")
         print(
-            "%-11s %6s %6s %6s %6s %6s %6s  %s"
-            % ("session", "TR(계)", "TR(플랜)", "TR(제외)", "PLAN", "SENT", "FILL", "차단사유")
+            "%-11s %5s %5s %5s | %5s %5s %5s | %4s %4s  %s"
+            % ("session", "TR계", "실제", "shadow", "플랜", "매수", "wait", "SENT", "FILL", "취소사유")
         )
         for row in [item for item in report if item["market"] == market]:
-            blocked = ", ".join(f"{key}:{value}" for key, value in list(row["blocked_by"].items())[:2])
+            cancels = ", ".join(f"{key}:{value}" for key, value in list(row["cancel_reasons"].items())[:2])
             print(
-                "%-11s %6d %6d %6d %6d %6d %6d  %s"
+                "%-11s %5d %5d %5d | %5d %5d %5d | %4d %4d  %s"
                 % (
                     row["session_date"],
                     row["trade_ready_total"],
-                    row["trade_ready_plan_eligible"],
-                    row["trade_ready_non_plan"],
-                    row["CLAUDE_PRICE_PLAN_CREATED"],
+                    row["trade_ready_real"],
+                    row["trade_ready_shadow"],
+                    row["plan_total"],
+                    row["plan_buy_capable"],
+                    row["plan_wait_only"],
                     row["ORDER_SENT"],
                     row["FILLED"],
-                    blocked[:60],
+                    cancels[:52],
                 )
             )
     return 0
