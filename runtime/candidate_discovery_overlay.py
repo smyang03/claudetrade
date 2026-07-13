@@ -6,7 +6,12 @@ import os
 from typing import Any
 
 
-log = logging.getLogger(__name__)
+# ★2026-07-14: 이 로거는 핸들러가 0개고 root도 비어 있어 WARNING조차 파일에 안 남았다
+# (실측: handlers=0, root handlers=[]). kis_api와 같은 계열의 죽은 로거 —
+# 실패가 아무 흔적도 남기지 않아 감사가 불가능했다. 프로젝트 표준 로거로 교체한다.
+from logger import get_trading_logger  # noqa: E402
+
+log = get_trading_logger()
 DISCOVERY_OVERLAY_VERSION = "discovery_overlay_v1"
 USEFUL_SIGNAL_FAMILIES = {
     "near_breakout",

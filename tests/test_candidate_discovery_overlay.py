@@ -348,9 +348,13 @@ class CandidateDiscoveryOverlayTests(unittest.TestCase):
             ]
         }
 
+        # ★2026-07-14: 모듈이 logging.getLogger(__name__)을 쓰면 핸들러가 0개라 로그가 파일에
+        # 남지 않았다(죽은 로거). 프로젝트 표준 로거로 교체했으므로 로거 이름도 그것을 따른다.
+        from runtime.candidate_discovery_overlay import log as overlay_log
+
         with patch.dict("os.environ", {"DISCOVERY_PROMPT_ENABLED": "true"}, clear=False), \
              patch("bot.bucket_classifier.classify_candidate_bucket", side_effect=RuntimeError("boom")), \
-             self.assertLogs("runtime.candidate_discovery_overlay", level="DEBUG") as logs:
+             self.assertLogs(overlay_log.name, level="DEBUG") as logs:
             rows, out_meta = apply_discovery_overlay([], meta, market="US")
 
         self.assertEqual(rows, [])
