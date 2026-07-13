@@ -14850,6 +14850,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             history = list(self._post_open_price_history.get(key) or [])
             first_open = None
             first_ts = None
+            # ★2026-07-13 누수 봉합: 개장 구간 분봉을 손에 쥐고도 OR을 만들지 않아
+            # opening_range_pullback이 영구 orp_not_formed(range=0.00%)였다.
+            # df의 첫 or_minutes개 봉에서 고가/저가를 직접 계산한다(빈 _or_high 캐시 참조 금지).
+            or_minutes = 15 if market_key == "US" else 10
+            or_highs: list[float] = []
+            or_lows: list[float] = []
             for _, row in df.iterrows():
                 close = self._positive_float_or_none(row.get("close"))
                 ts = row.get("datetime") or row.get("date") or row.get("time")
@@ -14859,10 +14865,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if first_open is None:
                     first_open = self._positive_float_or_none(row.get("open")) or close
                     first_ts = ts_text
+                if len(or_highs) < or_minutes:
+                    bar_high = self._positive_float_or_none(row.get("high")) or close
+                    bar_low = self._positive_float_or_none(row.get("low")) or close
+                    or_highs.append(float(bar_high))
+                    or_lows.append(float(bar_low))
                 history.append({"ts": ts_text, "price": float(close), "source": "minute_backfill"})
                 seeded += 1
             if seeded == 0:
                 return False
+            # 개장 구간 봉이 or_minutes개 미만이면 OR을 만들지 않는다(부분 레인지로 오판 금지).
+            backfilled_or_high: Optional[float] = None
+            backfilled_or_low: Optional[float] = None
+            if len(or_highs) >= or_minutes and max(or_highs) > min(or_lows):
+                backfilled_or_high = max(or_highs)
+                backfilled_or_low = min(or_lows)
             dedup: dict[str, dict] = {}
             for item in history:
                 ts = str((item or {}).get("ts") or "").strip()
@@ -14896,12 +14913,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 current_price=current,
                 returns=po_returns,
                 open_high=high,
-                opening_range_high=self._positive_float_or_none((getattr(self, "_or_high", {}) or {}).get(str(ticker))),
+                opening_range_high=(
+                    backfilled_or_high
+                    or self._positive_float_or_none((getattr(self, "_or_high", {}) or {}).get(key))
+                ),
+                opening_range_low=(
+                    backfilled_or_low
+                    or self._positive_float_or_none((getattr(self, "_or_low", {}) or {}).get(key))
+                ),
                 data_quality="minute_backfill",
                 market_session_date=session_date,
             ).to_dict()
             self._merge_last_post_open_features(market_key, {ticker: snapshot})
-            log.info(f"[분봉 백필] {market_key} {ticker} {seeded}봉 시딩 (사유: {reason or 'feature_sparse'})")
+            # 스냅샷이 OR을 실었으면 캐시도 채워 전략(opening_range_pullback)이 즉시 쓸 수 있게 한다.
+            self._maybe_update_or_cache_from_post_open_feature(market_key, ticker, snapshot)
+            log.info(
+                f"[분봉 백필] {market_key} {ticker} {seeded}봉 시딩 "
+                f"(OR {'복구' if backfilled_or_high else '미형성'}, 사유: {reason or 'feature_sparse'})"
+            )
             return True
         except Exception as exc:
             log.debug(f"[분봉 백필 실패] {market} {ticker}: {exc}")

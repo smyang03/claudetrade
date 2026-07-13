@@ -40,6 +40,12 @@ class PostOpenFeatureSnapshot:
     ret_30m_pct: float | None = None
     from_open_high_pct: float | None = None
     pullback_from_high_pct: float | None = None
+    # ★2026-07-13 누수 봉합: opening_range_high/low를 저장하지 않아 스냅샷 소비자가 OR을 복원할 수
+    # 없었다. trading_bot._maybe_update_or_cache_from_post_open_feature는 high/low 둘 다 있어야
+    # _or_formed=True로 만드는데, 이 필드가 없어 항상 False였다 → opening_range_pullback 전략이
+    # 영구 orp_not_formed(range=0.00%). Path A 5개 전략이 682/682 신호 0이었던 뿌리.
+    opening_range_high: float | None = None
+    opening_range_low: float | None = None
     opening_range_break: bool | None = None
     volume_ratio_open: float | None = None
     spread_bps: float | None = None
@@ -64,6 +70,8 @@ class PostOpenFeatureSnapshot:
             "ret_30m_pct": self.ret_30m_pct,
             "from_open_high_pct": self.from_open_high_pct,
             "pullback_from_high_pct": self.pullback_from_high_pct,
+            "opening_range_high": self.opening_range_high,
+            "opening_range_low": self.opening_range_low,
             "opening_range_break": self.opening_range_break,
             "volume_ratio_open": self.volume_ratio_open,
             "spread_bps": self.spread_bps,
@@ -199,6 +207,7 @@ def build_post_open_snapshot(
     returns: dict[str, Any] | None = None,
     open_high: float | None = None,
     opening_range_high: float | None = None,
+    opening_range_low: float | None = None,
     volume_ratio_open: float | None = None,
     bid: float | None = None,
     ask: float | None = None,
@@ -246,6 +255,8 @@ def build_post_open_snapshot(
         ret_30m_pct=filtered_returns["ret_30m_pct"],
         from_open_high_pct=from_open_high,
         pullback_from_high_pct=from_high,
+        opening_range_high=float(opening_range_high) if opening_range_high else None,
+        opening_range_low=float(opening_range_low) if opening_range_low else None,
         opening_range_break=opening_range_break,
         volume_ratio_open=volume_ratio_open,
         spread_bps=spread_bps,
