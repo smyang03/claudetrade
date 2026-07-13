@@ -71,8 +71,18 @@ class ClaudePriceAdapter:
         brain_snapshot_id: str,
         initial_status: str = "WAITING",
         plan_overrides: dict[str, Any] | None = None,
+        min_reward_risk: float | None = None,
     ) -> str:
-        errors = plan.validate(min_confidence=self.config.pathb_min_confidence)
+        # ★2026-07-13: min_reward_risk를 안 넘기면 PricePlan.validate의 기본값 1.2가 쓰여,
+        # env의 PATHB_MIN_REWARD_RISK_KR=1.1이 등록 단계에서 실효 1.2로 절상됐다.
+        # 호출부가 시장별 임계를 넘기면 그걸 쓰고, 안 넘기면 기존 동작(1.2)을 유지한다.
+        if min_reward_risk is None:
+            errors = plan.validate(min_confidence=self.config.pathb_min_confidence)
+        else:
+            errors = plan.validate(
+                min_confidence=self.config.pathb_min_confidence,
+                min_reward_risk=float(min_reward_risk),
+            )
         if errors:
             raise ValueError(f"invalid Claude price plan: {errors}")
         path_status = str(initial_status or "WAITING").upper()

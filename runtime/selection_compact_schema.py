@@ -19,11 +19,20 @@ PRICE_TARGET_KEY_MAP = {
     "d": "hold_days",
     "conf": "confidence",
     "cf": "confidence",
+    # ★2026-07-13 복원: compact schema 도입(7b3a363, 2026-05-12) 이후 서술 필드가 화이트리스트 밖이라
+    # 통째로 폐기됐다. plan_json 실측: 4월 152건 → 6·7월 0건.
+    # target_basis는 목표 캘리브레이션 레버(우리가 검증한 최강 net 레버)의 진단 입력이라
+    # 이것만 되살린다. rationale/basis_tags 등 나머지 서술 필드는 토큰 비용이 커서 제외한다.
+    "tb": "target_basis",
+    "target_basis": "target_basis",
 }
 REQUIRED_PRICE_TARGET_KEYS = ("buy_zone_low", "buy_zone_high", "sell_target", "stop_loss", "hold_days", "confidence")
 ALLOWED_TOP_KEYS = {"wl", "tr", "ca"}
 ALLOWED_ACTION_KEYS = {"t", "a", "s", "c", "fr", "mat", "ceil", "rc", "blk", "inv", "pt"}
-ALLOWED_PT_KEYS = {"ref", "lo", "hi", "tgt", "stp", "days", "conf", "d", "cf"}
+ALLOWED_PT_KEYS = {"ref", "lo", "hi", "tgt", "stp", "days", "conf", "d", "cf", "tb", "target_basis"}
+# 서술 필드(숫자 파서로 처리하면 조용히 버려진다). 토큰 폭주 방지를 위해 길이를 자른다.
+TEXT_PRICE_TARGET_KEYS = {"target_basis"}
+MAX_TARGET_BASIS_CHARS = 120
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -211,6 +220,11 @@ def _compact_price_targets(
                 target[full_key] = parsed
             else:
                 warnings.append("price_target_confidence_non_numeric")
+        elif full_key in TEXT_PRICE_TARGET_KEYS:
+            # target_basis는 서술 필드다. _to_float로 파싱하면 None이 되어 조용히 버려진다.
+            text = str(raw.get(short_key) or "").strip()
+            if text:
+                target[full_key] = text[:MAX_TARGET_BASIS_CHARS]
         else:
             parsed = _to_float(raw.get(short_key))
             if parsed is not None:

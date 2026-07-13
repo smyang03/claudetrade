@@ -934,7 +934,8 @@ class PathBRuntime:
             self.adapter.register_plan(
                 new_plan, runtime_mode=self.mode, brain_snapshot_id=self._brain_snapshot_id(market),
                 initial_status="WAITING",
-                plan_overrides={"fast_fill_requote_origin": plan.path_run_id})
+                plan_overrides={"fast_fill_requote_origin": plan.path_run_id},
+                min_reward_risk=self._pathb_min_reward_risk(market))
             log.warning(f"[PathB fast_fill REQUOTE] {market} {plan.ticker} "
                         f"zone_high {float(plan.buy_zone_high):g}->{new_high:g} new_run={new_run_id}")
             return "filled"
@@ -2189,7 +2190,13 @@ class PathBRuntime:
         except Exception as exc:
             log.debug(f"[PathB zone update skipped] {market} {existing_plan.ticker} rebuild failed: {exc}")
             return False
-        validation_errors = candidate_plan.validate(min_confidence=0.0)
+        # ★2026-07-13: min_reward_risk를 안 넘기면 PricePlan.validate의 기본값 1.2가 쓰인다.
+        # env의 PATHB_MIN_REWARD_RISK_KR=1.1 / PATHB_MIN_REWARD_RISK=1.5가 이 경로에 도달하지 못해
+        # zone update 스킵 25건 중 23건(92%)이 reward_risk_below_minimum이었다.
+        validation_errors = candidate_plan.validate(
+            min_confidence=0.0,
+            min_reward_risk=self._pathb_min_reward_risk(market),
+        )
         if validation_errors:
             log.info(
                 f"[PathB zone update skipped] {market} {existing_plan.ticker} validation={validation_errors}"
@@ -2580,6 +2587,8 @@ class PathBRuntime:
                     brain_snapshot_id=self._brain_snapshot_id(market),
                     initial_status="SHADOW_WAITING" if shadow_registration else "WAITING",
                     plan_overrides=plan_overrides or None,
+                    # 등록 단계가 기본값 1.2를 쓰면 KR env 1.1이 실효 1.2로 절상된다.
+                    min_reward_risk=self._pathb_min_reward_risk(market),
                 )
                 registered.append(path_run_id)
                 if risk_off_cap_enforced and not shadow_registration:
@@ -11518,6 +11527,10 @@ class PathBRuntime:
         raw_plan = run.get("plan") or run.get("plan_json") or {}
         if not isinstance(raw_plan, dict):
             return None
+        # ★2026-07-13: 재적재는 RR 임계를 시장별로 올리지 않는다(기본 1.2 유지).
+        # 이미 등록된 플랜을 더 엄격한 임계(US 1.5)로 재검증하면 정상 등록된 플랜이 재적재에서
+        # 무효가 되어 라이브 포지션이 고아가 된다(회귀 실측: pathb_sell_reconcile 16건 실패).
+        # 진입 게이트는 생성·zone update 시점에서만 적용한다.
         try:
             plan = PricePlan(**{k: raw_plan.get(k) for k in PricePlan.__dataclass_fields__.keys()})
             errors = plan.validate(min_confidence=0.0)

@@ -190,6 +190,21 @@ def _pullback_wait_late_mover_block(features: dict[str, Any] | None, result: dic
     return ""
 
 
+def judge_min_reward_risk(market: str) -> float:
+    """judge의 RR 임계 — 시장별 override → 글로벌 → 기본값 1.1.
+
+    ★2026-07-13: 운영자가 PATHB_MIN_REWARD_RISK_KR=1.1로 KR 밴드를 열었는데, 상류 judge가
+    시장 무관 단일값(env 1.5)으로 먼저 잘라 7월 KR 플랜 RR 최소가 1.642였다 —
+    1.1~1.5 밴드 플랜이 한 건도 생성되지 않았다(통과율 0%). 운영자 설정이 실제로 먹게 한다.
+    완화가 아니라 "설정대로 동작"이다.
+    """
+    market_key = _market_key(market)
+    raw = os.getenv(f"SINGLE_SYMBOL_JUDGE_MIN_REWARD_RISK_{market_key}")
+    if raw not in (None, ""):
+        return _num(raw, 1.1)
+    return _num(os.getenv("SINGLE_SYMBOL_JUDGE_MIN_REWARD_RISK", "1.1"), 1.1)
+
+
 def validate_pathb_price_plan(
     result: dict[str, Any],
     *,
@@ -207,7 +222,9 @@ def validate_pathb_price_plan(
     feature_pack = dict(features or {})
     current = _num(feature_pack.get("current_price"), 0.0)
     strict_features = bool(features) or bool((risk_context or {}).get("pathb_plan_before_registration_only"))
-    min_reward_risk = _num(os.getenv("SINGLE_SYMBOL_JUDGE_MIN_REWARD_RISK", "1.1"), 1.1)
+    min_reward_risk = judge_min_reward_risk(
+        result.get("market") or (risk_context or {}).get("market") or ""
+    )
     max_zone_width_pct = _num(os.getenv("SINGLE_SYMBOL_JUDGE_MAX_ZONE_WIDTH_PCT", "2.5"), 2.5)
     max_zone_above_current_pct = _num(os.getenv("SINGLE_SYMBOL_JUDGE_MAX_ZONE_ABOVE_CURRENT_PCT", "0.35"), 0.35)
     max_zone_support_distance_pct = _num(os.getenv("SINGLE_SYMBOL_JUDGE_MAX_SUPPORT_DISTANCE_PCT", "1.8"), 1.8)
