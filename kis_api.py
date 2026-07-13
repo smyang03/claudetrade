@@ -21,7 +21,13 @@ from dotenv import load_dotenv
 from runtime_paths import get_runtime_path
 
 load_dotenv()
-log = logging.getLogger("trading")
+# ★2026-07-13: logging.getLogger("trading")은 핸들러가 없어 log.info/debug가 전부 no-op였다.
+# 구 logger.py의 cache_key가 f"{name}_{log_type}"이라 "trading_system"과 우연히 일치해 동작했는데,
+# 커밋 27aeaef(2026-04-13)가 cache_key에 날짜를 추가하면서 일치가 깨졌고 KIS 로그가 그날 이후 0건이다.
+# 그 결과 주문 에러·HTTP 500 재시도·가격 벤더 폴백이 아무 흔적도 남기지 않아 감사가 불가능했다.
+from logger import get_trading_logger  # noqa: E402
+
+log = get_trading_logger()
 
 APP_KEY = os.getenv("KIS_APP_KEY", "")
 APP_SECRET = os.getenv("KIS_APP_SECRET", "")

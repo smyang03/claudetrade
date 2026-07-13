@@ -47,6 +47,11 @@ class PostOpenFeatureSnapshot:
     opening_range_high: float | None = None
     opening_range_low: float | None = None
     opening_range_break: bool | None = None
+    # ★2026-07-13 train/serve skew 봉합: profit_path 모델은 market_open_elapsed_min을 numeric 피처로
+    # 학습했고(학습 소스 candidate_counterfactual_paths.metadata_json $.context 335,739/335,739 = 100%),
+    # 추론측(profit_path_predictor.py:137)은 post_open에서만 읽는데 이 키가 스냅샷에 아예 없었다
+    # (post_open jsonl 0/10,538 = 0%). 학습엔 있고 추론엔 영원히 없는 피처 = 상시 OOD 기여.
+    market_open_elapsed_min: float | None = None
     volume_ratio_open: float | None = None
     spread_bps: float | None = None
     vwap_distance_pct: float | None = None
@@ -73,6 +78,7 @@ class PostOpenFeatureSnapshot:
             "opening_range_high": self.opening_range_high,
             "opening_range_low": self.opening_range_low,
             "opening_range_break": self.opening_range_break,
+            "market_open_elapsed_min": self.market_open_elapsed_min,
             "volume_ratio_open": self.volume_ratio_open,
             "spread_bps": self.spread_bps,
             "vwap_distance_pct": self.vwap_distance_pct,
@@ -208,6 +214,7 @@ def build_post_open_snapshot(
     open_high: float | None = None,
     opening_range_high: float | None = None,
     opening_range_low: float | None = None,
+    market_open_elapsed_min: float | None = None,
     volume_ratio_open: float | None = None,
     bid: float | None = None,
     ask: float | None = None,
@@ -258,6 +265,9 @@ def build_post_open_snapshot(
         opening_range_high=float(opening_range_high) if opening_range_high else None,
         opening_range_low=float(opening_range_low) if opening_range_low else None,
         opening_range_break=opening_range_break,
+        market_open_elapsed_min=(
+            float(market_open_elapsed_min) if market_open_elapsed_min is not None else None
+        ),
         volume_ratio_open=volume_ratio_open,
         spread_bps=spread_bps,
         vwap_distance_pct=vwap_distance_pct,

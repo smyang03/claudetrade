@@ -20,7 +20,12 @@ from runtime_paths import get_runtime_path
 
 KST = ZoneInfo("Asia/Seoul") if ZoneInfo is not None else None
 MARKETS = ("KR", "US")
-log = logging.getLogger("trading")
+# ★2026-07-13: getLogger("trading")은 핸들러가 없어 브로커 truth 무결성 경고(스냅샷 write 실패,
+# last_good write 실패, 미체결 identity 경고)가 로그에 0건 남았다. 브로커 상태를 1차 truth로
+# 선언한 계약인데 그 실패가 감사 불가였다. 프로젝트 표준 로거로 교체한다.
+from logger import get_trading_logger  # noqa: E402
+
+log = get_trading_logger()
 
 
 def utc_now_iso() -> str:

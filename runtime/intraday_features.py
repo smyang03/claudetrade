@@ -252,6 +252,11 @@ def compute_intraday_features(
         returns=returns,
         open_high=open_high,
         opening_range_high=opening_high,
+        # 그동안 low는 파라미터로 안 넘기고 아래 snapshot.update()로 재주입해 누수를 우회했다.
+        # 이제 스냅샷이 OR을 저장하므로 정식 경로로 넘긴다(update는 하위호환으로 남긴다).
+        opening_range_low=opening_low,
+        # ★train/serve skew 봉합: profit_path 모델이 학습한 피처인데 추론측 post_open에 없었다.
+        market_open_elapsed_min=max(0.0, (known_dt - open_dt).total_seconds() / 60.0),
         volume_ratio_open=volume_ratio,
         vwap_distance_pct=vwap_distance,
         data_quality="minute_partial",

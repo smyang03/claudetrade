@@ -544,6 +544,28 @@ def _row_to_dict(row: sqlite3.Row | None, payload_key: str = "payload_json") -> 
     return data
 
 
+SHADOW_REGISTRATION_SOURCES = {"profit_evidence_shadow"}
+
+
+def _is_shadow_decision(row: sqlite3.Row | dict[str, Any] | None) -> bool:
+    """이 v2_decisions 행이 shadow 관측(실제 매수 결정이 아님)인가.
+
+    profit_evidence shadow가 registry.register_trade_ready()를 타고 실제 결정으로 등록되므로
+    (trading_bot.py:10534), payload의 shadow_only / registration_source로만 구분할 수 있다.
+    하류 테이블(v2_learning_performance / v2_canonical_performance)에는 이 표식이 전파되지 않는다.
+    """
+    if row is None:
+        return False
+    data = dict(row)
+    payload = _json_loads(data.get("payload_json")) if "payload_json" in data else data.get("payload")
+    if not isinstance(payload, dict):
+        return False
+    if bool(payload.get("shadow_only")):
+        return True
+    source = str(payload.get("registration_source") or "").strip().lower()
+    return source in SHADOW_REGISTRATION_SOURCES
+
+
 def _num(payload: dict[str, Any], *keys: str) -> float | None:
     for key in keys:
         value = payload.get(key)
@@ -678,6 +700,13 @@ def _load_decisions(
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY session_date, market, ticker, decision_id"
     rows = conn.execute(sql, params).fetchall()
+    # ★2026-07-13 계측 오염 차단: profit_evidence shadow 관측이 registry.register_trade_ready()를 타고
+    # v2_decisions에 실제 결정으로 등록된다(trading_bot.py:10534). 그런데 v2_learning_performance /
+    # v2_canonical_performance에는 shadow 구분 컬럼도 payload도 없어서, sync를 넘는 순간 하류는
+    # 실제 매수 결정과 구분할 방법이 사라진다(실측: shadow 4건이 양 테이블에 유입).
+    # "미체결이라 안전"은 거짓이다 — filled=0인데 learning_allowed=1인 행이 이미 146건 있다.
+    # 학습셋 오염은 되돌리기 어려우므로 원천에서 막는다.
+    rows = [row for row in rows if not _is_shadow_decision(row)]
     by_decision = {str(row["decision_id"]): _row_to_dict(row) for row in rows}
 
     event_where: list[str] = []

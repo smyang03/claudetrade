@@ -14928,6 +14928,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     backfilled_or_low
                     or self._positive_float_or_none((getattr(self, "_or_low", {}) or {}).get(str(ticker)))
                 ),
+                market_open_elapsed_min=self._market_elapsed_min(market_key),
                 data_quality="minute_backfill",
                 market_session_date=session_date,
             ).to_dict()
@@ -16441,6 +16442,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 # high/low 둘 다 요구하므로 캐시 시딩이 영영 실패한다(2026-07-13 누수 봉합).
                                 opening_range_high=self._positive_float_or_none((getattr(self, "_or_high", {}) or {}).get(ticker)),
                                 opening_range_low=self._positive_float_or_none((getattr(self, "_or_low", {}) or {}).get(ticker)),
+                                market_open_elapsed_min=self._market_elapsed_min(market_key),
                                 data_quality=str(anchor.get("anchor_source") or "partial"),
                                 market_session_date=session_date_for_features,
                             ).to_dict()
@@ -18383,6 +18385,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             # ★JSONL에 쓰는 유일 경로. low를 빠뜨리면 재시작 복구(JSONL 시딩)에서도 OR이 살아나지 않는다.
             opening_range_high=self._positive_float_or_none((getattr(self, "_or_high", {}) or {}).get(str(ticker))),
             opening_range_low=self._positive_float_or_none((getattr(self, "_or_low", {}) or {}).get(str(ticker))),
+            market_open_elapsed_min=self._market_elapsed_min(market_key),
             volume_ratio_open=self._positive_float_or_none(price_info.get("volume_ratio_open")),
             bid=self._positive_float_or_none(price_info.get("bid") or price_info.get("bid_price")),
             ask=self._positive_float_or_none(price_info.get("ask") or price_info.get("ask_price")),

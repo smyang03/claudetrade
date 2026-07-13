@@ -176,7 +176,19 @@ def _decisions_for_session(
     params: list[Any] = [session_date, runtime_mode, *markets]
     with store.connect() as conn:
         rows = conn.execute(sql, params).fetchall()
-    return [_row_to_dict(row) for row in rows]
+    # ★2026-07-13: profit_evidence shadow 관측이 v2_decisions에 실제 결정으로 등록된다
+    # (trading_bot.py:10534 → registry.register_trade_ready). 이걸 안 거르면 forward-return
+    # 측정 모집단이 오염된다(실측: FORWARD_PENDING_DATA 이벤트 4건이 shadow 종목에서 발행됨).
+    return [item for item in (_row_to_dict(row) for row in rows) if not _is_shadow_decision(item)]
+
+
+def _is_shadow_decision(item: dict[str, Any]) -> bool:
+    payload = item.get("payload")
+    if not isinstance(payload, dict):
+        return False
+    if bool(payload.get("shadow_only")):
+        return True
+    return str(payload.get("registration_source") or "").strip().lower() == "profit_evidence_shadow"
 
 
 def _row_to_dict(row: Any) -> dict[str, Any]:
