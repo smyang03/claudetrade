@@ -14918,13 +14918,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 current_price=current,
                 returns=po_returns,
                 open_high=high,
+                # ★캐시 키 주의: `key`는 _post_open_key("US:AAPL" 형식)다. _or_high/_or_low는
+                # raw ticker로 키된다(틱 누적 경로 30737/33308). 여기서 key로 읽으면 100% None이다.
                 opening_range_high=(
                     backfilled_or_high
-                    or self._positive_float_or_none((getattr(self, "_or_high", {}) or {}).get(key))
+                    or self._positive_float_or_none((getattr(self, "_or_high", {}) or {}).get(str(ticker)))
                 ),
                 opening_range_low=(
                     backfilled_or_low
-                    or self._positive_float_or_none((getattr(self, "_or_low", {}) or {}).get(key))
+                    or self._positive_float_or_none((getattr(self, "_or_low", {}) or {}).get(str(ticker)))
                 ),
                 data_quality="minute_backfill",
                 market_session_date=session_date,
@@ -16435,7 +16437,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 current_price=float(raw_px),
                                 returns=po_returns,
                                 open_high=high,
+                                # opening_range_low를 빠뜨리면 _maybe_update_or_cache_from_post_open_feature가
+                                # high/low 둘 다 요구하므로 캐시 시딩이 영영 실패한다(2026-07-13 누수 봉합).
                                 opening_range_high=self._positive_float_or_none((getattr(self, "_or_high", {}) or {}).get(ticker)),
+                                opening_range_low=self._positive_float_or_none((getattr(self, "_or_low", {}) or {}).get(ticker)),
                                 data_quality=str(anchor.get("anchor_source") or "partial"),
                                 market_session_date=session_date_for_features,
                             ).to_dict()
@@ -18375,7 +18380,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             current_price=float(raw_price),
             returns=returns,
             open_high=high,
+            # ★JSONL에 쓰는 유일 경로. low를 빠뜨리면 재시작 복구(JSONL 시딩)에서도 OR이 살아나지 않는다.
             opening_range_high=self._positive_float_or_none((getattr(self, "_or_high", {}) or {}).get(str(ticker))),
+            opening_range_low=self._positive_float_or_none((getattr(self, "_or_low", {}) or {}).get(str(ticker))),
             volume_ratio_open=self._positive_float_or_none(price_info.get("volume_ratio_open")),
             bid=self._positive_float_or_none(price_info.get("bid") or price_info.get("bid_price")),
             ask=self._positive_float_or_none(price_info.get("ask") or price_info.get("ask_price")),
