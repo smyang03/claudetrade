@@ -10582,6 +10582,36 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as exc:
             log.debug(f"[profit evidence shadow event failed] {market} {ticker}: {exc}")
 
+    def _profit_feature_candidate_row(self, market: str, ticker: str) -> dict:
+        """profit_path 모델이 학습한 종목별 피처(change_pct·volume_ratio·raw_score·bucket 등)의 출처.
+
+        게이트 호출부가 넘기는 context는 sector play·signal row라 이 피처들이 없다.
+        그래서 스크리너 후보 행을 직접 찾아 넘긴다. 없으면 모델이 상수 예측(ood)을 낸다.
+        """
+        market_key = str(market or "").upper()
+        lookup = self._selection_ticker_key(market_key, ticker)
+        if not lookup:
+            return {}
+        row: dict = {}
+        for candidate in list((getattr(self, "_last_screen_candidates", {}) or {}).get(market_key) or []):
+            if not isinstance(candidate, dict):
+                continue
+            if self._selection_ticker_key(market_key, candidate.get("ticker", "")) == lookup:
+                row = dict(candidate)
+                break
+        meta = (getattr(self, "selection_meta", {}) or {}).get(market_key) or {}
+        for pool_key in ("candidate_actions", "_final_prompt_pool", "final_prompt_pool", "watchlist_candidates", "candidates"):
+            for candidate in list((meta or {}).get(pool_key) or []):
+                if not isinstance(candidate, dict):
+                    continue
+                if self._selection_ticker_key(market_key, candidate.get("ticker", "")) != lookup:
+                    continue
+                for key, value in candidate.items():
+                    if key not in row and value not in (None, ""):
+                        row[key] = value
+                break
+        return row
+
     def _profit_evidence_gate_state(
         self,
         market: str,
@@ -10617,12 +10647,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     (getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key) or {}
                 )
                 runtime_source = {"_post_open_features_by_ticker": post_open_by_ticker}
+                candidate_row = self._profit_feature_candidate_row(market_key, ticker_key)
                 evidence = predict_profit_path_evidence(
                     market=market_key,
                     ticker=ticker_key,
                     strategy=strategy,
                     context=explicit,
-                    sources=(selection_meta, today_selection_meta, today, runtime_source),
+                    sources=(selection_meta, today_selection_meta, today, candidate_row, runtime_source),
                 )
                 if evidence:
                     evidence_source = "profit_path_shadow_model"
