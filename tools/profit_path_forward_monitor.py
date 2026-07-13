@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 import math
+import os
 from pathlib import Path
 import sqlite3
 from typing import Any
@@ -55,6 +56,46 @@ def _observed_feature_n(feature_snapshot: Any) -> int:
         if math.isfinite(parsed):
             observed += 1
     return observed
+
+
+def promotion_blockers(market: str, models_dir: Path | None = None) -> dict[str, Any]:
+    """표본과 무관하게 승격을 막고 있는 구조적 사유.
+
+    확률 캘리브레이터가 clip이라 보정확률 상한 = 학습 y 최댓값이다. 그 상한이 게이트 임계보다
+    낮으면 evaluable 표본을 아무리 모아도 승격되지 않는다. evaluable_n 증가를 "진행률"로
+    오독하지 않도록 여기서 못박는다. (2026-07-13: KR 0.4917 / US 0.2975 < 0.55)
+    """
+    directory = models_dir or (ROOT / "state" / "models")
+    path = directory / f"profit_path_{str(market).upper()}.json"
+    if not path.exists():
+        return {"promotion_blocked": True, "reasons": ["model_artifact_missing"]}
+    try:
+        artifact = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"promotion_blocked": True, "reasons": ["model_artifact_unreadable"]}
+    metadata = dict(artifact.get("metadata") or {})
+    hurdle = float(
+        os.getenv(
+            f"PROFIT_EVIDENCE_MIN_PROB_{str(market).upper()}",
+            os.getenv("PROFIT_EVIDENCE_MIN_PROB", "0.55"),
+        )
+    )
+    y_values = list((artifact.get("probability_calibrator") or {}).get("y") or [])
+    ceiling = float(max(y_values)) if y_values else 0.0
+    reasons: list[str] = []
+    if ceiling < hurdle:
+        reasons.append("calibrated_probability_ceiling_below_hurdle")
+    if int(metadata.get("validation_selected_n") or 0) <= 0:
+        reasons.append("validation_policy_selects_nothing")
+    if not bool(metadata.get("promotion_eligible_backtest")):
+        reasons.append("promotion_eligible_backtest_false")
+    return {
+        "promotion_blocked": bool(reasons),
+        "reasons": reasons,
+        "calibrated_probability_ceiling": ceiling,
+        "probability_hurdle": hurdle,
+        "model_version": str(metadata.get("model_version") or ""),
+    }
 
 
 def classify_prediction(*, ood: Any, observed_feature_n: int) -> tuple[bool, str]:
@@ -281,6 +322,7 @@ def build_report(
     min_matched: int = 60,
     min_sessions: int = 20,
     now: pd.Timestamp | None = None,
+    models_dir: Path | None = None,
 ) -> dict[str, Any]:
     now = now if now is not None else pd.Timestamp(datetime.now(timezone.utc))
     if predictions.empty:
@@ -328,6 +370,9 @@ def build_report(
         "matured_observed_n": int(len(matured_observed)),
         "matured_evaluable_n": int(len(matured_evaluable)),
         "unmatched_matured_n": max(0, int(len(matured_evaluable) - len(matched))),
+        # 표본과 무관하게 승격을 막는 구조적 사유. 비어 있지 않으면 evaluable_n 증가는
+        # 승격 진행률이 아니다(모아도 안 열린다).
+        "promotion_blockers": promotion_blockers(market, models_dir=models_dir),
         # 하위호환: prediction_n은 관측 전체를 뜻한다(승격 표본이 아니다).
         "prediction_n": int(len(predictions)),
         **summarize(matched, min_matched=min_matched, min_sessions=min_sessions),

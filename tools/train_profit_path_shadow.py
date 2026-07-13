@@ -224,6 +224,37 @@ def _portable_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def policy_viability(portable: dict[str, Any], *, market: str) -> dict[str, Any]:
+    """이 아티팩트의 정책이 실전에서 발화할 수 있는가.
+
+    확률 캘리브레이터는 IsotonicRegression(out_of_bounds="clip")이라 출력이 학습 y의 최댓값으로
+    클립된다. 그 상한이 게이트 임계(PROFIT_EVIDENCE_MIN_PROB)보다 낮으면 어떤 입력에도
+    p >= 임계가 성립하지 않는다 → selection 0건 → validation_net_lcb 계산 불가 →
+    promotion_eligible_backtest 영구 False. 즉 배포해도 "죽은 모델"이다.
+    (2026-07-13 실측: KR 상한 0.4917 / US 0.2975 < 임계 0.55 → selected_n=0인 채 조용히 배포됐다.)
+    """
+    metadata = dict(portable.get("metadata") or {})
+    hurdle = float(
+        os.getenv(f"PROFIT_EVIDENCE_MIN_PROB_{market}", os.getenv("PROFIT_EVIDENCE_MIN_PROB", "0.55"))
+    )
+    y_values = list((portable.get("probability_calibrator") or {}).get("y") or [])
+    ceiling = float(max(y_values)) if y_values else 0.0
+    selected_n = int(metadata.get("validation_selected_n") or 0)
+    blockers: list[str] = []
+    if ceiling < hurdle:
+        blockers.append("calibrated_probability_ceiling_below_hurdle")
+    if selected_n <= 0:
+        blockers.append("validation_policy_selects_nothing")
+    return {
+        "market": market,
+        "probability_hurdle": hurdle,
+        "calibrated_probability_ceiling": ceiling,
+        "validation_selected_n": selected_n,
+        "policy_can_fire": not blockers,
+        "blockers": blockers,
+    }
+
+
 def _atomic_json_dump(payload: dict[str, Any], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -238,6 +269,11 @@ def main() -> int:
     parser.add_argument("--markets", default="KR")
     parser.add_argument("--output-dir", default=str(ROOT / "state" / "models"))
     parser.add_argument("--seed", type=int, default=20260710)
+    parser.add_argument(
+        "--allow-dead-policy",
+        action="store_true",
+        help="정책이 발화 불가(selected_n=0 또는 확률 상한<임계)여도 아티팩트를 기록한다. 연구용.",
+    )
     args = parser.parse_args()
     for key, value in _load_start_env(Path(args.config)).items():
         os.environ.setdefault(key, value)
@@ -249,20 +285,48 @@ def main() -> int:
         con.close()
     summaries: dict[str, Any] = {}
     output_dir = Path(args.output_dir)
+    dead_markets: list[str] = []
     for market, frame in datasets.items():
         artifact, metadata = train_market(frame, market=market, seed=args.seed)
         research_output = output_dir / f"profit_path_{market}.joblib"
         runtime_output = output_dir / f"profit_path_{market}.json"
-        _atomic_dump(artifact, research_output)
         portable = _portable_artifact(artifact)
-        _atomic_json_dump(portable, runtime_output)
+        viability = policy_viability(portable, market=market)
         summaries[market] = {
             "artifact": str(runtime_output),
             "research_artifact": str(research_output),
             "runtime_format": "portable_linear_v1",
+            "policy_viability": viability,
             **metadata,
         }
+        # fail-fast: 발화 불가 정책을 런타임에 배포하지 않는다. 조용히 배포되면
+        # 게이트가 영구 abstain하고, enforce로 켜는 순간 매수가 100% 차단된다.
+        if not viability["policy_can_fire"] and not args.allow_dead_policy:
+            dead_markets.append(market)
+            summaries[market]["deployed"] = False
+            summaries[market]["skip_reason"] = "dead_policy_not_deployed"
+            continue
+        _atomic_dump(artifact, research_output)
+        _atomic_json_dump(portable, runtime_output)
+        summaries[market]["deployed"] = True
     print(json.dumps(summaries, ensure_ascii=False, indent=2, sort_keys=True))
+    if dead_markets:
+        print(
+            "[FAIL] 정책 발화 불가로 배포 중단: "
+            + ", ".join(
+                f"{market}(blockers={summaries[market]['policy_viability']['blockers']}, "
+                f"ceiling={summaries[market]['policy_viability']['calibrated_probability_ceiling']:.4f} < "
+                f"hurdle={summaries[market]['policy_viability']['probability_hurdle']:.2f})"
+                for market in dead_markets
+            ),
+            file=sys.stderr,
+        )
+        print(
+            "[HINT] 라벨/임계 재설계 없이 재학습해도 같은 결과가 나온다. "
+            "연구용으로 강제 기록하려면 --allow-dead-policy.",
+            file=sys.stderr,
+        )
+        return 3
     return 0
 
 
