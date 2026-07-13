@@ -16439,8 +16439,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     )
                     if feasibility_pack:
                         row["strategy_feasibility"] = feasibility_pack
-            except Exception:
-                pass
+            except Exception as _feasibility_e:
+                # 조용히 삼키면 후보가 희소 피처로 judge에 도달해 strict-feature 거부로 이어진다
+                log.warning(
+                    f"[strategy feasibility] {market_key} {ticker} 후보 주석 실패: {_feasibility_e}"
+                )
             try:
                 runtime_cfg = getattr(self, "runtime_config", None)
                 post_open_enabled = True

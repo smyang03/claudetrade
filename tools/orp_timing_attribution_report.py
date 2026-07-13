@@ -251,6 +251,133 @@ def _is_orp_expired(row: dict[str, Any], *, entry_window_min: float) -> bool:
     return elapsed is not None and elapsed > float(entry_window_min)
 
 
+# 최초 실패 사유의 상호배타 분류 — raw probe 행 비율은 병목률로 쓰지 않는다(리포트 2026-07-14 §4).
+_FIRST_FAILURE_REASON_MAP = {
+    "orp_not_formed": "not_formed",
+    "orp_forming": "forming",
+    "orp_range_too_high": "range",
+    "orp_range_too_low": "range",
+    "orp_bad_or_range": "range",
+    "orp_pullback_too_shallow": "pullback",
+    "orp_pullback_too_deep": "pullback",
+    "orp_volume_low": "volume",
+    "orp_entry_window_expired": "expired",
+    "orp_disabled": "disabled",
+}
+
+
+def _classify_first_failure(row: dict[str, Any]) -> str:
+    if int(row.get("signal_fired") or 0):
+        return "signal"
+    reason = str(row.get("blocked_reason") or "").strip().lower()
+    if reason in _FIRST_FAILURE_REASON_MAP:
+        return _FIRST_FAILURE_REASON_MAP[reason]
+    for key, label in _FIRST_FAILURE_REASON_MAP.items():
+        if key in reason:
+            return label
+    return "other"
+
+
+def _build_candidate_attribution(
+    selection_rows: list[dict[str, Any]],
+    intraday_by_ticker: dict[tuple[str, str], list[dict[str, Any]]],
+    *,
+    market_key: str,
+    session_date: str,
+    entry_window_min: float,
+    limit: int,
+) -> dict[str, Any]:
+    """후보(선정 이벤트) 단위 attribution — session+ticker+selection_id 키.
+
+    각 후보에 대해 선정 시각, 첫 ORP 평가 시각/사유, 첫 신호 시각만 대표값으로 쓰고
+    반복 probe 행 수는 관측용 보조 지표로 분리한다.
+    """
+    all_rows_by_session: dict[str, list[dict[str, Any]]] = {}
+    for (row_session, _ticker), rows in intraday_by_ticker.items():
+        all_rows_by_session.setdefault(row_session, []).extend(rows)
+
+    candidates: list[dict[str, Any]] = []
+    first_failure_counts: dict[str, int] = {}
+    delay_buckets = {"0_2min": 0, "over_2min": 0, "no_evaluation": 0}
+    no_eval_causes: dict[str, int] = {}
+
+    for row in selection_rows:
+        ticker = _ticker_key(market_key, row.get("ticker"))
+        row_session = str(row.get("date") or session_date or "").strip()
+        selected_at = row.get("selected_at") or row.get("created_at")
+        selected_dt = _parse_dt(selected_at)
+        probe_rows = intraday_by_ticker.get((row_session, ticker), [])
+        eval_rows = [
+            r
+            for r in probe_rows
+            if _is_after_or_equal(selected_dt, _parse_dt(r.get("ts") or r.get("created_at")))
+        ]
+        eval_rows.sort(key=lambda r: str(r.get("ts") or r.get("created_at") or ""))
+        first_eval = eval_rows[0] if eval_rows else None
+        first_eval_at = (first_eval.get("ts") or first_eval.get("created_at")) if first_eval else ""
+        first_eval_delay = _minutes_between(selected_at, first_eval_at) if first_eval else None
+        signal_rows = [r for r in eval_rows if int(r.get("signal_fired") or 0)]
+        first_signal_at = (
+            (signal_rows[0].get("ts") or signal_rows[0].get("created_at"))
+            if signal_rows
+            else row.get("signal_at") or ""
+        )
+
+        if first_eval is not None:
+            failure = _classify_first_failure(first_eval)
+            if first_eval_delay is not None and first_eval_delay <= 2.0:
+                delay_buckets["0_2min"] += 1
+            else:
+                delay_buckets["over_2min"] += 1
+        else:
+            failure = "no_evaluation"
+            delay_buckets["no_evaluation"] += 1
+            session_rows = all_rows_by_session.get(row_session, [])
+            if not session_rows:
+                cause = "no_orp_rows_in_session"
+            else:
+                last_probe_at = max(
+                    (str(r.get("ts") or r.get("created_at") or "") for r in session_rows),
+                    default="",
+                )
+                last_probe_dt = _parse_dt(last_probe_at)
+                if selected_dt is not None and last_probe_dt is not None and not _is_after_or_equal(
+                    selected_dt, last_probe_dt
+                ):
+                    cause = "selected_after_last_orp_probe"
+                else:
+                    cause = "ticker_never_evaluated"
+            no_eval_causes[cause] = no_eval_causes.get(cause, 0) + 1
+        first_failure_counts[failure] = first_failure_counts.get(failure, 0) + 1
+
+        expired_probe_count = sum(
+            1 for r in probe_rows if _is_orp_expired(r, entry_window_min=entry_window_min)
+        )
+        candidates.append(
+            {
+                "session_date": row_session,
+                "ticker": ticker,
+                "selection_id": row.get("id"),
+                "selected_at": selected_at,
+                "first_orp_eval_at": first_eval_at,
+                "selected_to_first_eval_min": first_eval_delay,
+                "first_failure_reason": failure,
+                "first_signal_at": first_signal_at,
+                "probe_rows_total": len(probe_rows),
+                "probe_rows_after_selected": len(eval_rows),
+                "expired_probe_rows": expired_probe_count,
+            }
+        )
+
+    return {
+        "candidate_count": len(candidates),
+        "first_failure_baseline": dict(sorted(first_failure_counts.items())),
+        "first_eval_delay_buckets": delay_buckets,
+        "no_evaluation_causes": dict(sorted(no_eval_causes.items())),
+        "candidates": candidates[: max(0, int(limit or 0))],
+    }
+
+
 def build_report(
     *,
     selection_db: str | Path = DEFAULT_SELECTION_DB,
@@ -358,8 +485,18 @@ def build_report(
             }
         )
 
+    candidate_attribution = _build_candidate_attribution(
+        selection_rows,
+        intraday_by_ticker,
+        market_key=market_key,
+        session_date=session_date,
+        entry_window_min=entry_window,
+        limit=limit,
+    )
+
     return {
-        "schema": "orp_timing_attribution.v1",
+        "schema": "orp_timing_attribution.v2",
+        "candidate_attribution": candidate_attribution,
         "selection_db": str(selection_db),
         "intraday_db": str(intraday_db),
         "session_date": session_date,

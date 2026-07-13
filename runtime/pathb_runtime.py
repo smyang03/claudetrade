@@ -2186,9 +2186,10 @@ class PathBRuntime:
         except Exception as exc:
             log.debug(f"[PathB zone update skipped] {market} {existing_plan.ticker} rebuild failed: {exc}")
             return False
-        # ★2026-07-13: min_reward_risk를 안 넘기면 PricePlan.validate의 기본값 1.2가 쓰인다.
-        # env의 PATHB_MIN_REWARD_RISK_KR=1.1 / PATHB_MIN_REWARD_RISK=1.5가 이 경로에 도달하지 못해
-        # zone update 스킵 25건 중 23건(92%)이 reward_risk_below_minimum이었다.
+        # ★2026-07-13: min_reward_risk를 명시해 시장별 단일 소스(resolve_min_reward_risk)를 강제한다.
+        # (과거 회귀: 인자 생략 시 하드코딩 1.2 기본값이 쓰여 KR env 1.1이 미도달 —
+        #  zone update 스킵 25건 중 23건(92%)이 reward_risk_below_minimum. 현재 validate의
+        #  기본값도 resolver라 이중 안전이지만 명시 전달을 유지한다.)
         validation_errors = candidate_plan.validate(
             min_confidence=0.0,
             min_reward_risk=self._pathb_min_reward_risk(market),
@@ -2583,7 +2584,7 @@ class PathBRuntime:
                     brain_snapshot_id=self._brain_snapshot_id(market),
                     initial_status="SHADOW_WAITING" if shadow_registration else "WAITING",
                     plan_overrides=plan_overrides or None,
-                    # 등록 단계가 기본값 1.2를 쓰면 KR env 1.1이 실효 1.2로 절상된다.
+                    # 등록 단계도 시장별 단일 소스 RR을 명시한다(과거 하드코딩 기본값이 KR 1.1을 절상하던 회귀 방지).
                     min_reward_risk=self._pathb_min_reward_risk(market),
                 )
                 registered.append(path_run_id)
@@ -3258,6 +3259,18 @@ class PathBRuntime:
         for _, run, plan in waiting_items:
             current = self._current_native_price(market, plan.ticker)
             if current <= 0:
+                # 가격 피드 열화 시 존 히트 감시가 조용히 죽는 것을 막는 관측 경고(세션·종목당 1회)
+                _price_warn_seen = getattr(self, "_waiting_scan_price_missing_warned", None)
+                if _price_warn_seen is None:
+                    _price_warn_seen = set()
+                    self._waiting_scan_price_missing_warned = _price_warn_seen
+                _price_warn_key = (market, plan.ticker, self._session_date(market))
+                if _price_warn_key not in _price_warn_seen:
+                    _price_warn_seen.add(_price_warn_key)
+                    log.warning(
+                        f"[PathB waiting scan] {market} {plan.ticker} 현재가 조회 불가(<=0) — "
+                        f"이 플랜의 존 히트 감시가 건너뛰어짐"
+                    )
                 continue
             self._audit_pathb_price_seen(plan, current, source="pathb:waiting_scan")
             signal = self.adapter.check_entry(plan.path_run_id, current)
@@ -11527,7 +11540,7 @@ class PathBRuntime:
         raw_plan = run.get("plan") or run.get("plan_json") or {}
         if not isinstance(raw_plan, dict):
             return None
-        # ★2026-07-13: 재적재는 RR 임계를 시장별로 올리지 않는다(기본 1.2 유지).
+        # ★2026-07-13: 재적재는 RR 임계를 재검증하지 않는다(min_reward_risk=0.0 전달).
         # 이미 등록된 플랜을 더 엄격한 임계(US 1.5)로 재검증하면 정상 등록된 플랜이 재적재에서
         # 무효가 되어 라이브 포지션이 고아가 된다(회귀 실측: pathb_sell_reconcile 16건 실패).
         # 진입 게이트는 생성·zone update 시점에서만 적용한다.
