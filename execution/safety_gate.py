@@ -167,6 +167,7 @@ class PathBSafetyGate:
         pathb_daily_count: int = 0,
         manually_disabled: bool = False,
         order_unknown_blocked: bool = False,
+        min_reward_risk: float | None = None,
     ) -> SafetyDecision:
         details = {
             "market": str(ctx.market or "").upper(),
@@ -191,7 +192,11 @@ class PathBSafetyGate:
                 {**details, "reason_detail": "plan_missing"},
             )
         try:
-            plan_errors = plan.validate(min_confidence=self.config.pathb_min_confidence)
+            accepted_min_rr = getattr(plan, "validated_min_reward_risk", None)
+            plan_errors = plan.validate(
+                min_confidence=self.config.pathb_min_confidence,
+                min_reward_risk=(accepted_min_rr if accepted_min_rr is not None else min_reward_risk),
+            )
         except Exception as exc:
             plan_errors = [f"plan_validate_error:{exc}"]
         if plan_errors:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import types
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -53,11 +54,12 @@ class MinRewardRiskGateTests(unittest.TestCase):
         self.assertIsNotNone(plan)
         self.assertEqual(errors, [])
 
-    def test_default_threshold_unchanged_for_reload_paths(self):
-        # min_reward_risk 미지정(기존 호출처) → 기본 1.2 유지, rr=1.3 통과
-        plan, errors = _parse(_raw_plan(target=102.6))
-        self.assertIsNotNone(plan)
-        self.assertEqual(errors, [])
+    def test_default_threshold_uses_single_source_policy(self):
+        # No hidden 1.2 default: parsing uses the effective PATHB policy.
+        with patch.dict("os.environ", {"PATHB_MIN_REWARD_RISK": "1.5"}, clear=False):
+            plan, errors = _parse(_raw_plan(target=102.6))
+        self.assertIsNone(plan)
+        self.assertIn("reward_risk_below_minimum", errors)
 
     def test_declared_reward_risk_also_checked(self):
         raw = _raw_plan(target=104.0)

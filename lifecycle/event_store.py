@@ -7,7 +7,7 @@ import json
 import sqlite3
 
 from runtime_paths import get_runtime_path
-from lifecycle.models import LifecycleEvent, normalize_event_type, utc_now_iso
+from lifecycle.models import LifecycleEvent, make_id, normalize_event_type, utc_now_iso
 
 
 NON_STATUS_EVENT_TYPES = {
@@ -86,6 +86,24 @@ class EventStore:
                     ON lifecycle_events(execution_id);
                 CREATE INDEX IF NOT EXISTS idx_lifecycle_position
                     ON lifecycle_events(position_id);
+
+                CREATE TABLE IF NOT EXISTS profit_evidence_shadow_events (
+                    observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    observation_uuid TEXT NOT NULL UNIQUE,
+                    market TEXT NOT NULL,
+                    runtime_mode TEXT NOT NULL,
+                    session_date TEXT NOT NULL,
+                    ticker TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    reason_code TEXT,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_profit_shadow_market_session
+                    ON profit_evidence_shadow_events(market, session_date, observation_id);
+                CREATE INDEX IF NOT EXISTS idx_profit_shadow_ticker
+                    ON profit_evidence_shadow_events(market, ticker, session_date, observation_id);
 
                 CREATE TABLE IF NOT EXISTS v2_decisions (
                     decision_id TEXT PRIMARY KEY,
@@ -180,6 +198,46 @@ class EventStore:
                     ON pathb_miss_quality(market, session_date);
                 """
             )
+
+    def append_profit_evidence_shadow(
+        self,
+        *,
+        market: str,
+        runtime_mode: str,
+        session_date: str,
+        ticker: str,
+        payload: dict[str, Any] | None = None,
+        reason_code: str = "PROFIT_EVIDENCE_ABSTAIN",
+        occurred_at: str | None = None,
+    ) -> int:
+        """Persist a prediction observation without creating/reusing a trade decision."""
+
+        market_key = str(market or "").upper()
+        ticker_key = str(ticker or "").strip().upper() if market_key == "US" else str(ticker or "").strip()
+        if market_key not in {"KR", "US"} or not ticker_key:
+            raise ValueError("valid market and ticker are required for profit shadow observations")
+        now = utc_now_iso()
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO profit_evidence_shadow_events (
+                    observation_uuid, market, runtime_mode, session_date, ticker,
+                    occurred_at, reason_code, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    make_id("profit_obs"),
+                    market_key,
+                    str(runtime_mode or "live").lower(),
+                    str(session_date or "")[:10],
+                    ticker_key,
+                    str(occurred_at or now),
+                    str(reason_code or ""),
+                    json.dumps(payload or {}, ensure_ascii=False, sort_keys=True),
+                    now,
+                ),
+            )
+            return int(cur.lastrowid)
 
     def append(self, event: LifecycleEvent) -> int:
         evt = event.normalized()

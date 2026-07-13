@@ -5,6 +5,7 @@ import os
 from typing import Any
 
 from config.v2 import DEFAULT_V2_CONFIG
+from execution.reward_risk_policy import REWARD_RISK_POLICY_VERSION, resolve_min_reward_risk
 from lifecycle.models import PathType, make_path_run_id, utc_now_iso
 
 
@@ -147,9 +148,11 @@ class PricePlan:
     not_patha_trade_ready: bool = False
     origin_reason: str = ""
     profit_evidence: dict[str, Any] = field(default_factory=dict)
+    validated_min_reward_risk: float | None = None
+    reward_risk_policy_version: str = ""
     created_at: str = field(default_factory=utc_now_iso)
 
-    def validate(self, *, min_confidence: float | None = None, min_reward_risk: float = 1.2) -> list[str]:
+    def validate(self, *, min_confidence: float | None = None, min_reward_risk: float | None = None) -> list[str]:
         errors: list[str] = []
         if self.market not in {"KR", "US"}:
             errors.append("invalid_market")
@@ -176,6 +179,13 @@ class PricePlan:
             errors.append("confidence_below_minimum")
         if self.prompt_stage not in VALID_PROMPT_STAGES:
             errors.append("invalid_prompt_stage")
+        rr_threshold = (
+            float(min_reward_risk)
+            if min_reward_risk is not None
+            else float(self.validated_min_reward_risk)
+            if self.validated_min_reward_risk is not None
+            else resolve_min_reward_risk(self.market)
+        )
         if _consistent_reward_risk_enabled():
             risk = self.buy_zone_high - self.stop_loss
         else:
@@ -183,12 +193,12 @@ class PricePlan:
         reward = self.sell_target - self.buy_zone_high
         if risk <= 0:
             errors.append("risk_nonpositive")
-        elif reward / risk < min_reward_risk:
+        elif reward / risk < rr_threshold:
             errors.append("reward_risk_below_minimum")
         if self.reward_risk is not None:
             if self.reward_risk <= 0:
                 errors.append("reward_risk_nonpositive")
-            elif self.reward_risk < min_reward_risk:
+            elif self.reward_risk < rr_threshold:
                 errors.append("declared_reward_risk_below_minimum")
         if self.risk_pct is not None and self.risk_pct <= 0:
             errors.append("risk_pct_nonpositive")
@@ -234,6 +244,8 @@ class PricePlan:
             "not_patha_trade_ready": bool(self.not_patha_trade_ready),
             "origin_reason": self.origin_reason,
             "profit_evidence": dict(self.profit_evidence or {}),
+            "validated_min_reward_risk": self.validated_min_reward_risk,
+            "reward_risk_policy_version": self.reward_risk_policy_version,
             "created_at": self.created_at,
         }
 
@@ -271,6 +283,8 @@ def make_price_plan(
     not_patha_trade_ready: bool = False,
     origin_reason: str = "",
     profit_evidence: dict[str, Any] | None = None,
+    validated_min_reward_risk: float | None = None,
+    reward_risk_policy_version: str = "",
 ) -> PricePlan:
     market_value = str(market or "").upper()
     ticker_value = str(ticker or "").strip().upper() if market_value == "US" else str(ticker or "").strip()
@@ -307,6 +321,10 @@ def make_price_plan(
         not_patha_trade_ready=bool(not_patha_trade_ready),
         origin_reason=str(origin_reason or "")[:240],
         profit_evidence=dict(profit_evidence or {}),
+        validated_min_reward_risk=(
+            float(validated_min_reward_risk) if validated_min_reward_risk is not None else None
+        ),
+        reward_risk_policy_version=str(reward_risk_policy_version or ""),
     )
 
 
@@ -369,13 +387,16 @@ def parse_plan_from_claude(
                 if isinstance(raw.get("profit_evidence"), dict)
                 else {}
             ),
+            validated_min_reward_risk=(
+                float(min_reward_risk)
+                if min_reward_risk is not None
+                else resolve_min_reward_risk(market)
+            ),
+            reward_risk_policy_version=REWARD_RISK_POLICY_VERSION,
         )
     except Exception as exc:
         return None, [f"parse_error:{exc}"]
-    if min_reward_risk is not None:
-        errors = plan.validate(min_confidence=min_confidence, min_reward_risk=min_reward_risk)
-    else:
-        errors = plan.validate(min_confidence=min_confidence)
+    errors = plan.validate(min_confidence=min_confidence)
     if errors:
         return None, errors
     return plan, []

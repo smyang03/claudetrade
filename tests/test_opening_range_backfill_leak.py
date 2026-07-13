@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
+
+import pandas as pd
 
 from runtime.post_open_features import build_post_open_snapshot
 from strategy.opening_range_pullback import diagnostics as orp_diagnostics
@@ -109,6 +112,68 @@ class OrpEvaluableAfterFixTests(unittest.TestCase):
         )
         # 발화 여부는 조건에 달렸지만, 더 이상 "레인지가 없어서" 탈락하지는 않아야 한다.
         self.assertNotEqual(result["reason"], "orp_not_formed")
+
+
+class _BackfillStub:
+    """Exercise the real backfill method, including the KIS adapter call contract."""
+
+    _backfill_post_open_minutes = TradingBot._backfill_post_open_minutes
+    _positive_float_or_none = staticmethod(TradingBot._positive_float_or_none)
+    _selection_ticker_key = TradingBot._selection_ticker_key
+    _maybe_update_or_cache_from_post_open_feature = TradingBot._maybe_update_or_cache_from_post_open_feature
+    _post_open_feature_should_replace = TradingBot._post_open_feature_should_replace
+    _merge_last_post_open_features = TradingBot._merge_last_post_open_features
+
+    def __init__(self) -> None:
+        self._minute_backfill_attempt_at = {}
+        self._post_open_price_history = {}
+        self._post_open_anchor = {}
+        self._last_post_open_features_by_ticker = {"KR": {}, "US": {}}
+        self._or_high = {}
+        self._or_low = {}
+        self._or_formed = {}
+
+    def _runtime_bool(self, _key: str, default: bool) -> bool:
+        return default
+
+    def _runtime_float(self, _key: str, default: float) -> float:
+        return default
+
+    def _post_open_key(self, market: str, ticker: str) -> str:
+        return f"{market}:{ticker}"
+
+    def _current_session_date_str(self, _market: str) -> str:
+        return "2026-07-13"
+
+    def _market_elapsed_min(self, _market: str) -> float:
+        return 20.0
+
+
+class MinuteBackfillAdapterTests(unittest.TestCase):
+    def test_backfill_calls_existing_intraday_adapter_with_named_market(self) -> None:
+        rows = []
+        for minute in range(15):
+            rows.append(
+                {
+                    "datetime": f"2026-07-13 22:{30 + minute:02d}:00",
+                    "open": 100.0,
+                    "high": 101.0 + minute / 10,
+                    "low": 99.0 - minute / 20,
+                    "close": 100.0 + minute / 20,
+                }
+            )
+        frame = pd.DataFrame(rows)
+        bot = _BackfillStub()
+
+        with patch("kis_api.get_intraday_candles", return_value=frame) as fetch:
+            self.assertTrue(bot._backfill_post_open_minutes("US", "NVDA", reason="test"))
+
+        _, kwargs = fetch.call_args
+        self.assertEqual(fetch.call_args.args, ("NVDA",))
+        self.assertEqual(kwargs["market"], "US")
+        self.assertEqual(kwargs["session_date"], "2026-07-13")
+        self.assertTrue(bot._or_formed["NVDA"])
+        self.assertEqual(bot._last_post_open_features_by_ticker["US"]["NVDA"]["data_quality"], "minute_backfill")
 
 
 if __name__ == "__main__":

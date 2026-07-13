@@ -53,8 +53,11 @@ class SingleSymbolJudgeIntegrationTests(unittest.TestCase):
             "reason": "fresh pullback setup",
             "invalid_if": "breaks opening range low",
             "buy_zone_low": 100.0,
+            # ★2026-07-14: judge RR 임계가 시장별 단일소스가 되어 US는 1.5다.
+            # 기존 target 109는 RR=(109-102)/(102-97)=1.40으로 US 정책 미달이라
+            # judge가 PULLBACK_WAIT로 승격시키지 않는다(WAIT_RECHECK로 강등). RR=1.6으로 맞춘다.
             "buy_zone_high": 102.0,
-            "sell_target": 109.0,
+            "sell_target": 110.0,
             "stop_loss": 97.0,
             "hold_days": 2,
             "structural_basis": "VWAP retest",

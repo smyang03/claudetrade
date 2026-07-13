@@ -62,6 +62,26 @@ def _guardian_heartbeat_path(mode: str) -> Path:
     return get_runtime_path("state", name)
 
 
+def _guardian_market_gate_path(mode: str) -> Path:
+    runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+    return get_runtime_path("state", f"{runtime_mode}_guardian_market_gates.json")
+
+
+def _write_market_gate_state(mode: str, market_gates: dict[str, dict[str, Any]]) -> Path:
+    path = _guardian_market_gate_path(mode)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": "guardian_market_gates_v1",
+        "mode": str(mode or "live").lower(),
+        "generated_at": _now_kst().isoformat(timespec="seconds"),
+        "markets": market_gates,
+    }
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.replace(path)
+    return path
+
+
 def _write_guardian_heartbeat(
     mode: str,
     *,
@@ -709,6 +729,14 @@ def run_guardian_once(
     auto_fixable = [finding for finding in findings if finding.classification == "auto_fixable"]
     action_fail = [action for action in actions if action.status == "FAIL"]
     allow_start = not hard_fail and not action_fail
+    market_gates = _build_market_gates(markets, hard_fail, action_fail)
+    market_gate_path = _write_market_gate_state(mode, market_gates)
+    # A single bot process serves both markets. It may start when at least one
+    # market is healthy; the bot consumes this same state and blocks entries in
+    # markets whose gate is closed.
+    bot_launch_allowed = not action_fail and any(
+        bool((market_gates.get(market) or {}).get("ok")) for market in markets
+    )
     active_bot_lock = _active_bot_lock(preflight, mode) if ensure_bot else {}
     current_blockers = [asdict(finding) for finding in hard_fail]
     historical_remediation_items = [
@@ -718,7 +746,7 @@ def run_guardian_once(
         and bool((finding.data or {}).get("remediation_commands"))
     ]
 
-    if allow_start and bot_start_requested and (active_bot_lock or active_bot_process):
+    if bot_start_requested and (active_bot_lock or active_bot_process):
         actions.append(
             GuardianAction(
                 "start_bot",
@@ -727,7 +755,7 @@ def run_guardian_once(
                 active_bot_lock or active_bot_process,
             )
         )
-    elif allow_start and bot_start_requested and not bot_start_allowed:
+    elif bot_launch_allowed and bot_start_requested and not bot_start_allowed:
         actions.append(
             GuardianAction(
                 "start_bot",
@@ -736,7 +764,7 @@ def run_guardian_once(
                 {"restart_guard": True},
             )
         )
-    elif allow_start and bot_start_requested:
+    elif bot_launch_allowed and bot_start_requested:
         if dry_run_start:
             action = GuardianAction(
                 "start_bot",
@@ -751,7 +779,10 @@ def run_guardian_once(
             allow_start = False
             action_fail.append(action)
 
+    # Reflect a start action failure in every market gate as well as the
+    # top-level report, and persist the final state for runtime entry checks.
     market_gates = _build_market_gates(markets, hard_fail, action_fail)
+    market_gate_path = _write_market_gate_state(mode, market_gates)
     report = {
         "ok": allow_start,
         "mode": mode,
@@ -771,6 +802,7 @@ def run_guardian_once(
         },
         "current_blockers": current_blockers,
         "market_gates": market_gates,
+        "market_gate_state_path": str(market_gate_path),
         "historical_remediation_items": historical_remediation_items,
         "findings": [asdict(finding) for finding in findings],
         "actions": [asdict(action) for action in actions],

@@ -62,8 +62,12 @@ class SoftExitArbitrationTests(unittest.TestCase):
                 ticker="STX",
                 market="US",
                 session_date="2026-04-30",
-                buy_zone_low=650.0,
-                buy_zone_high=652.0,
+                # ★2026-07-14: RR 정책 단일소스화로 등록 단계가 시장별 임계(US 1.5)를 강제한다.
+                # 기존 존(650/652)은 RR=(665-652)/(652-640)=1.08로 US 정책상 등록될 수 없는
+                # 비현실적 플랜이었다(구 하드코딩 1.2에도 미달). sell_target·stop_loss는 단언에
+                # 쓰이므로 그대로 두고 존만 낮춰 정책을 만족시킨다: RR=(665-648)/(648-640)=2.13.
+                buy_zone_low=645.0,
+                buy_zone_high=648.0,
                 sell_target=665.0,
                 stop_loss=640.0,
                 hold_days=1,

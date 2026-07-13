@@ -15,6 +15,7 @@ from tools.live_guardian import (
     _guardian_heartbeat_path,
     _maybe_send_telegram_alert,
     _write_guardian_heartbeat,
+    _write_market_gate_state,
     _write_guardian_report,
     classify_preflight_check,
     run_guardian_once,
@@ -27,8 +28,14 @@ class LiveGuardianTests(unittest.TestCase):
         # 테스트 프로세스 env에 운영 설정이 누수돼 이후 테스트(프롬프트 내용 검증 등)를
         # 오염시킨다. 테스트마다 os.environ을 스냅샷/복원한다.
         self._environ_backup = dict(os.environ)
+        self._market_gate_writer_patch = patch(
+            "tools.live_guardian._write_market_gate_state",
+            return_value=Path("state/test_guardian_market_gates.json"),
+        )
+        self._market_gate_writer_patch.start()
 
     def tearDown(self) -> None:
+        self._market_gate_writer_patch.stop()
         os.environ.clear()
         os.environ.update(self._environ_backup)
 
@@ -64,6 +71,12 @@ class LiveGuardianTests(unittest.TestCase):
             self.assertEqual(md_path.parent, runtime_root / "data" / "v2_reports")
             self.assertTrue(json_path.exists())
             self.assertTrue(md_path.exists())
+
+            gate_path = _write_market_gate_state(
+                "live", {"KR": {"ok": True, "gate": "ALLOW_START", "blockers": []}}
+            )
+            self.assertEqual(gate_path, runtime_root / "state" / "live_guardian_market_gates.json")
+            self.assertTrue(gate_path.exists())
 
     def test_guardian_run_once_loads_env_before_runtime_paths(self) -> None:
         preflight = {

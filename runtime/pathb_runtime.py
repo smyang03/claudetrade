@@ -28,6 +28,7 @@ from runtime import tail_capture
 from runtime import fast_fill
 from execution.path_arbiter import SameDayReentryGuard
 from execution.safety_gate import PathBSafetyGate, SafetyContext
+from execution.reward_risk_policy import resolve_min_reward_risk
 from kis_api import cancel_order, get_balance, get_price, place_order, precheck_order
 from lifecycle.event_store import EventStore
 from lifecycle.models import LifecycleEvent, LifecycleEventType
@@ -1080,15 +1081,10 @@ class PathBRuntime:
         # 시장별 override(PATHB_MIN_REWARD_RISK_KR/_US, 미설정=글로벌과 동일):
         # RR 3중조합(일관앵커×목표캡4%×min1.5)이 stop<=2.67%를 강제해 KR 통상 stop 폭(2~3.6%)과
         # 충돌 → KR fill 반사망(2026-07-07 실측). US 스로틀은 유지한 채 KR만 완화하기 위한 키.
-        market_key = str(market or "").upper()
-        if market_key:
-            raw = self._runtime_value(f"PATHB_MIN_REWARD_RISK_{market_key}", None)
-            if raw is not None and str(raw).strip() != "":
-                try:
-                    return float(str(raw).replace(",", "").strip())
-                except Exception:
-                    pass
-        return self._runtime_float("PATHB_MIN_REWARD_RISK", 1.5)
+        value_getter = getattr(self, "_runtime_value", None)
+        if not callable(value_getter):
+            value_getter = lambda key, default=None: self._runtime_float(key, default)
+        return resolve_min_reward_risk(market, value_getter=value_getter)
 
     def _pathb_us_midday_entry_block_state(self, market: str) -> dict[str, Any]:
         """미 동부 정오(기본 16시 UTC) US 신규 진입 제출 차단 상태.
@@ -4735,6 +4731,10 @@ class PathBRuntime:
             pathb_daily_count=self._pathb_daily_count(market),
             manually_disabled=not self.control_store.load().enabled,
             order_unknown_blocked=self._order_unknown_blocked(market),
+            # ★min_reward_risk는 SafetyContext 필드가 아니라 게이트 메서드 인자다.
+            # 다만 플랜이 등록 시 승인받은 임계(validated_min_reward_risk)가 있으면 게이트가 그걸
+            # 우선한다 — 등록 후 정책이 바뀌어도 이미 승인된 플랜이 주문 직전에 소급 취소되지 않는다.
+            min_reward_risk=self._pathb_min_reward_risk(market),
         )
         if not decision.passed:
             keep_waiting = self._pathb_submit_safety_block_keeps_waiting(plan, decision)
@@ -11533,7 +11533,9 @@ class PathBRuntime:
         # 진입 게이트는 생성·zone update 시점에서만 적용한다.
         try:
             plan = PricePlan(**{k: raw_plan.get(k) for k in PricePlan.__dataclass_fields__.keys()})
-            errors = plan.validate(min_confidence=0.0)
+            # Reload must not orphan an existing position because policy changed
+            # after registration. Submit rechecks the persisted acceptance RR.
+            errors = plan.validate(min_confidence=0.0, min_reward_risk=0.0)
             if errors:
                 log.warning(
                     f"[PathB plan reload invalid] {run.get('market', '')} "
@@ -11551,9 +11553,10 @@ class PathBRuntime:
                 prompt_stage=str(raw_plan.get("prompt_stage", "PRE_SESSION") or "PRE_SESSION"),
                 prompt_version=str(raw_plan.get("prompt_version", "pathb_price_v1.0") or "pathb_price_v1.0"),
                 min_confidence=0.0,
+                min_reward_risk=0.0,
             )
             if plan is not None:
-                errors = plan.validate(min_confidence=0.0)
+                errors = plan.validate(min_confidence=0.0, min_reward_risk=0.0)
                 if errors:
                     log.warning(
                         f"[PathB plan reload invalid] {run.get('market', '')} "

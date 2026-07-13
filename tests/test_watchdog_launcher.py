@@ -65,9 +65,19 @@ def test_guardian_starts_headless_without_console_input() -> None:
     assert "live_guardian.py" in ps1
     assert "-WindowStyle Hidden" in ps1
     assert "--watch" in ps1
+    assert "--ensure-bot" in ps1
     # 콘솔 입력을 요구하는 대기(ping 지연 해킹·nobreak 없는 timeout)가 없어야 한다
     assert "ping 127.0.0.1" not in ps1
     assert "Read-Host" not in ps1
+
+
+def test_headless_launcher_never_starts_bot_without_guardian_preflight() -> None:
+    text = (ROOT / "tools" / "start_live_stack_headless.ps1").read_text(encoding="utf-8")
+
+    assert 'if ($role.Name -eq "trading_bot")' in text
+    # 런처는 봇을 직접 띄우지 않고 guardian에 위임한다 — guardian이 preflight를 돌려
+    # BLOCK_START면 기동하지 않는다. (경로는 "tools\live_guardian.py" 형태다.)
+    assert 'live_guardian.py" "--mode" "live" "--ensure-bot"' in text
 
 
 def test_headless_live_stack_launcher_covers_all_runtime_roles() -> None:

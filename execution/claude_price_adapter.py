@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 from typing import Any
+from dataclasses import replace
 
 from config.v2 import DEFAULT_V2_CONFIG, V2Config
 from decision.claude_price_plan import PricePlan
@@ -76,13 +77,15 @@ class ClaudePriceAdapter:
         # ★2026-07-13: min_reward_risk를 안 넘기면 PricePlan.validate의 기본값 1.2가 쓰여,
         # env의 PATHB_MIN_REWARD_RISK_KR=1.1이 등록 단계에서 실효 1.2로 절상됐다.
         # 호출부가 시장별 임계를 넘기면 그걸 쓰고, 안 넘기면 기존 동작(1.2)을 유지한다.
-        if min_reward_risk is None:
-            errors = plan.validate(min_confidence=self.config.pathb_min_confidence)
-        else:
-            errors = plan.validate(
-                min_confidence=self.config.pathb_min_confidence,
-                min_reward_risk=float(min_reward_risk),
-            )
+        accepted_min_rr = float(
+            min_reward_risk if min_reward_risk is not None else resolve_min_reward_risk(plan.market)
+        )
+        plan = replace(
+            plan,
+            validated_min_reward_risk=accepted_min_rr,
+            reward_risk_policy_version=REWARD_RISK_POLICY_VERSION,
+        )
+        errors = plan.validate(min_confidence=self.config.pathb_min_confidence)
         if errors:
             raise ValueError(f"invalid Claude price plan: {errors}")
         path_status = str(initial_status or "WAITING").upper()
@@ -473,3 +476,4 @@ class ClaudePriceAdapter:
             )
         except Exception:
             return
+from execution.reward_risk_policy import REWARD_RISK_POLICY_VERSION, resolve_min_reward_risk

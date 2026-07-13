@@ -4,6 +4,7 @@ schtasks /delete /tn "claudetrade_us" /f 2>nul
 schtasks /delete /tn "claudetrade_token_am" /f 2>nul
 schtasks /delete /tn "claudetrade_token_pm" /f 2>nul
 schtasks /delete /tn "claudetrade_kr_update" /f 2>nul
+schtasks /delete /tn "claudetrade_us_update" /f 2>nul
 schtasks /delete /tn "claudetrade_live_stack_watchdog" /f 2>nul
 
 rem === 토큰 사전 갱신 (한국장/미국장 시작 10분 전) ===

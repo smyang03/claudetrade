@@ -38,15 +38,47 @@ from tools.profit_evidence_walkforward import (  # noqa: E402
     _ece,
     _psi,
 )
+from runtime.profit_evidence_gate import _config_float, _path_key  # noqa: E402
 
 
 def _cost(market: str) -> float:
     return float(os.getenv(f"PROFIT_EVIDENCE_MIN_COST_PCT_{market}", "0.50" if market == "US" else "0.21"))
 
 
+def policy_thresholds(market: str) -> dict[str, dict[str, float]]:
+    """런타임 게이트와 같은 우선순위(PATH/시장/전역)로 학습 정책 임계값을 해석한다."""
+    market_key = str(market).upper()
+    return {
+        path_name: {
+            "min_probability": _config_float("PROFIT_EVIDENCE_MIN_PROB", market_key, path_name, 0.55),
+            "min_expected_net_pct": _config_float(
+                "PROFIT_EVIDENCE_MIN_EXPECTED_NET_PCT", market_key, path_name, 0.25
+            ),
+            "max_uncertainty": _config_float("PROFIT_EVIDENCE_MAX_UNCERTAINTY", market_key, path_name, 0.25),
+        }
+        for path_name in ("PATH_A", "PATH_B")
+    }
+
+
+def _policy_paths(frame: pd.DataFrame) -> pd.Series:
+    strategies = frame.get("recommended_strategy", pd.Series("", index=frame.index)).fillna("").astype(str)
+    return strategies.map(_path_key)
+
+
+def _threshold_array(
+    frame: pd.DataFrame,
+    *,
+    thresholds: dict[str, dict[str, float]],
+    key: str,
+) -> np.ndarray:
+    paths = _policy_paths(frame)
+    return paths.map(lambda path: thresholds[str(path)][key]).to_numpy(dtype=float)
+
+
 def _labels(frame: pd.DataFrame, market: str) -> np.ndarray:
     cost = _cost(market)
-    min_net = float(os.getenv("PROFIT_EVIDENCE_MIN_EXPECTED_NET_PCT", "0.25") or 0.25)
+    thresholds = policy_thresholds(market)
+    min_net = _threshold_array(frame, thresholds=thresholds, key="min_expected_net_pct")
     max_stop = float(os.getenv(f"PROFIT_PATH_LABEL_MAX_MAE_PCT_{market}", "2.5") or 2.5)
     net = frame["outcome_60m_pct"].to_numpy(dtype=float) - cost
     mae_ok = frame["max_drawdown_60m_pct"].to_numpy(dtype=float) > -max_stop
@@ -111,10 +143,18 @@ def train_market(frame: pd.DataFrame, *, market: str, seed: int) -> tuple[dict[s
     prob_val = probability_calibrator.transform(raw_val)
     gross_val = return_calibrator.transform(raw_val)
     cost = _cost(market)
-    min_net = float(os.getenv("PROFIT_EVIDENCE_MIN_EXPECTED_NET_PCT", "0.25") or 0.25)
+    thresholds = policy_thresholds(market)
+    probability_hurdle = _threshold_array(validation, thresholds=thresholds, key="min_probability")
+    min_net = _threshold_array(validation, thresholds=thresholds, key="min_expected_net_pct")
+    max_uncertainty = _threshold_array(validation, thresholds=thresholds, key="max_uncertainty")
     uncertainty_val = _calibration_uncertainty(y_cal, prob_cal, prob_val)
     ood_val = _ood_mask(train, validation)
-    selection = (prob_val >= 0.55) & ((gross_val - cost) >= min_net) & (uncertainty_val <= 0.25) & ~ood_val
+    selection = (
+        (prob_val >= probability_hurdle)
+        & ((gross_val - cost) >= min_net)
+        & (uncertainty_val <= max_uncertainty)
+        & ~ood_val
+    )
     validation_policy = _policy_first(validation.assign(_pred_net=gross_val - cost), selection)
     validation_net = validation_policy["outcome_60m_pct"].to_numpy(dtype=float) - cost
     net_lcb = _bootstrap_lcb(validation_net, seed=seed + 1)
@@ -157,7 +197,8 @@ def train_market(frame: pd.DataFrame, *, market: str, seed: int) -> tuple[dict[s
         "drift_state": "healthy" if max_psi <= 0.25 else "degraded",
         "promotion_eligible_backtest": promotion_eligible,
         "cost_pct": cost,
-        "min_expected_net_pct": min_net,
+        "min_expected_net_pct": float(min(min_net)) if len(min_net) else None,
+        "policy_thresholds": thresholds,
         "features": features,
     }
     artifact = {
@@ -234,9 +275,9 @@ def policy_viability(portable: dict[str, Any], *, market: str) -> dict[str, Any]
     (2026-07-13 실측: KR 상한 0.4917 / US 0.2975 < 임계 0.55 → selected_n=0인 채 조용히 배포됐다.)
     """
     metadata = dict(portable.get("metadata") or {})
-    hurdle = float(
-        os.getenv(f"PROFIT_EVIDENCE_MIN_PROB_{market}", os.getenv("PROFIT_EVIDENCE_MIN_PROB", "0.55"))
-    )
+    thresholds = policy_thresholds(market)
+    hurdles = {path_name: values["min_probability"] for path_name, values in thresholds.items()}
+    hurdle = min(hurdles.values())
     y_values = list((portable.get("probability_calibrator") or {}).get("y") or [])
     ceiling = float(max(y_values)) if y_values else 0.0
     selected_n = int(metadata.get("validation_selected_n") or 0)
@@ -245,9 +286,15 @@ def policy_viability(portable: dict[str, Any], *, market: str) -> dict[str, Any]
         blockers.append("calibrated_probability_ceiling_below_hurdle")
     if selected_n <= 0:
         blockers.append("validation_policy_selects_nothing")
+    trained_thresholds = metadata.get("policy_thresholds")
+    if isinstance(trained_thresholds, dict) and trained_thresholds != thresholds:
+        blockers.append("runtime_policy_thresholds_changed_since_training")
     return {
         "market": market,
         "probability_hurdle": hurdle,
+        "probability_hurdles_by_path": hurdles,
+        "runtime_policy_thresholds": thresholds,
+        "trained_policy_thresholds": trained_thresholds if isinstance(trained_thresholds, dict) else None,
         "calibrated_probability_ceiling": ceiling,
         "validation_selected_n": selected_n,
         "policy_can_fire": not blockers,

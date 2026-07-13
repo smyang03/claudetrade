@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from tools.profit_path_forward_monitor import match_predictions, summarize
+from tools.profit_path_forward_monitor import _roc_auc, match_predictions, summarize
 
 
 def test_forward_match_uses_same_path_and_nearest_timestamp() -> None:
@@ -69,3 +69,9 @@ def test_forward_promotion_is_false_before_minimum_sessions() -> None:
         ]
     )
     assert summarize(frame, min_matched=2, min_sessions=20)["promotion_eligible_forward"] is False
+
+
+def test_local_roc_auc_matches_rank_definition_with_ties() -> None:
+    labels = pd.Series([0, 1, 0, 1]).to_numpy()
+    probability = pd.Series([0.1, 0.8, 0.8, 0.9]).to_numpy()
+    assert _roc_auc(labels, probability) == 0.875

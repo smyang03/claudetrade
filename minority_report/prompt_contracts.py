@@ -4,6 +4,8 @@ These strings intentionally stay plain ASCII so they can be safely embedded in
 existing prompts that already mix Korean and English text.
 """
 
+from execution.reward_risk_policy import resolve_min_reward_risk
+
 COMMON_DECISION_CONTRACT = """Decision contract:
 - You are a decision-support model for an automated trading system.
 - You do not execute orders and you do not decide final order quantity.
@@ -36,15 +38,22 @@ PULLBACK_ZONE_RULE = (
     "A zone that fills immediately at the current price is a chase entry, not a pullback plan."
 )
 
-PRICE_PLAN_CONTRACT = f"""Price-plan contract:
+def price_plan_contract(market: str) -> str:
+    min_reward_risk = resolve_min_reward_risk(market)
+    return f"""Price-plan contract:
 - Use native market prices: KR=KRW, US=USD.
 - Do not fabricate support/resistance, VWAP, opening range, or ATR-derived levels when the input does not contain enough evidence.
 - Required long setup order: stop_loss < buy_zone_low <= buy_zone_high < sell_target.
-- Hard minimum reward/risk is 1.5; the system rejects plans below 1.5.
+- Hard minimum reward/risk for {str(market or '').upper() or 'KR'} is {min_reward_risk:g}; the system rejects plans below {min_reward_risk:g}.
 - {PULLBACK_ZONE_RULE}
   Anchor the zone to real support evidence (VWAP, open anchor, opening-range retest), not to the live price.
 - cancel_if_open_above is a chase-prevention price.
 - target_basis must identify the evidence used; invalid_if must state the setup failure condition."""
+
+
+# Backward-compatible constant for non-market-specific imports. Runtime prompts
+# must call price_plan_contract(market).
+PRICE_PLAN_CONTRACT = price_plan_contract("US")
 
 HARD_SOFT_RULE_CONTRACT = """Hard/soft rule boundary:
 - Hard rules owned by the system: daily loss limit, broker-truth distrust, unconfirmed orders, market-close forced liquidation, max position limits, cash shortage, minimum order, and bad data quality.

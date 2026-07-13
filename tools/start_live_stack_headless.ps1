@@ -29,7 +29,7 @@ if (-not $DryRun) {
 $roles = @(
     @{ Name = "trading_bot"; PidFile = "state\live_trading_bot.pid"; Args = @("trading_bot.py", "--live") },
     @{ Name = "dashboard"; PidFile = "state\dashboard_server.pid"; Args = @("dashboard\dashboard_server.py") },
-    @{ Name = "live_guardian"; PidFile = "state\live_guardian_heartbeat.json"; Args = @("tools\live_guardian.py", "--mode", "live", "--watch", "--interval-sec", "300", "--telegram-alert") },
+    @{ Name = "live_guardian"; PidFile = "state\live_guardian_heartbeat.json"; Args = @("tools\live_guardian.py", "--mode", "live", "--watch", "--ensure-bot", "--interval-sec", "300", "--telegram-alert") },
     @{ Name = "broker_truth_scheduler"; PidFile = "state\broker_truth_scheduler.lock.json"; Args = @("tools\broker_truth_scheduler.py", "--mode", "live", "--markets", "KR,US", "--loop", "--interval-sec", "30", "--refresh-interval-min", "2", "--failure-retry-min", "2", "--preopen-min", "20", "--postclose-min", "15", "--ttl-sec", "180", "--no-refresh-on-start") },
     @{ Name = "preopen_scheduler"; PidFile = "state\preopen_scheduler.lock.json"; Args = @("tools\preopen_scheduler.py", "--mode", "live", "--markets", "KR,US", "--loop", "--interval-sec", "60") },
     @{ Name = "counterfactual_pipeline"; PidFile = ""; Args = @("tools\run_counterfactual_pipeline.py", "--phase", "due", "--market", "KR,US", "--loop", "--interval-sec", "300", "--json") },
@@ -88,8 +88,31 @@ foreach ($role in $roles) {
     }
 
     if ($DryRun) {
-        Write-Output "[DRY-RUN] would start $($role.Name): $PythonExe $($role.Args -join ' ')"
+        if ($role.Name -eq "trading_bot") {
+            Write-Output "[DRY-RUN] guardian would preflight and ensure trading_bot"
+        } else {
+            Write-Output "[DRY-RUN] would start $($role.Name): $PythonExe $($role.Args -join ' ')"
+        }
         continue
+    }
+
+    if ($role.Name -eq "trading_bot") {
+        # The guardian owns bot creation. It writes market-scoped gates before
+        # launching, so a failed KR preflight cannot silently start KR entries
+        # and cannot unnecessarily suppress a healthy US market.
+        & $PythonExe "tools\live_guardian.py" "--mode" "live" "--ensure-bot" "--skip-dashboard"
+        $statePid = 0
+        for ($attempt = 0; $attempt -lt 20; $attempt++) {
+            $statePid = Read-PidFromJson $role.PidFile
+            if ($statePid -gt 0 -and (Test-ClaudeTradePythonPid $statePid)) { break }
+            Start-Sleep -Milliseconds 500
+        }
+        if ($statePid -gt 0 -and (Test-ClaudeTradePythonPid $statePid)) {
+            $manifest[$role.Name] = [int]$statePid
+            Write-Output "[START] trading_bot started by guardian pid=$statePid"
+            continue
+        }
+        throw "Guardian did not start trading_bot; inspect the latest live_guardian report."
     }
 
     $process = Start-Process `

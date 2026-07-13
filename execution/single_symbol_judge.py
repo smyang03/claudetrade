@@ -191,18 +191,9 @@ def _pullback_wait_late_mover_block(features: dict[str, Any] | None, result: dic
 
 
 def judge_min_reward_risk(market: str) -> float:
-    """judge의 RR 임계 — 시장별 override → 글로벌 → 기본값 1.1.
+    """Use the same PATHB policy as plan creation, submit, and reload."""
 
-    ★2026-07-13: 운영자가 PATHB_MIN_REWARD_RISK_KR=1.1로 KR 밴드를 열었는데, 상류 judge가
-    시장 무관 단일값(env 1.5)으로 먼저 잘라 7월 KR 플랜 RR 최소가 1.642였다 —
-    1.1~1.5 밴드 플랜이 한 건도 생성되지 않았다(통과율 0%). 운영자 설정이 실제로 먹게 한다.
-    완화가 아니라 "설정대로 동작"이다.
-    """
-    market_key = _market_key(market)
-    raw = os.getenv(f"SINGLE_SYMBOL_JUDGE_MIN_REWARD_RISK_{market_key}")
-    if raw not in (None, ""):
-        return _num(raw, 1.1)
-    return _num(os.getenv("SINGLE_SYMBOL_JUDGE_MIN_REWARD_RISK", "1.1"), 1.1)
+    return resolve_min_reward_risk(market)
 
 
 def validate_pathb_price_plan(
@@ -449,3 +440,4 @@ def call_single_symbol_judge(
     except Exception:
         pass
     return normalized
+from execution.reward_risk_policy import resolve_min_reward_risk

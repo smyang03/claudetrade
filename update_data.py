@@ -9,15 +9,84 @@ Recommended schedule:
 """
 
 import argparse
+from contextlib import contextmanager
+import json
+import os
 import sys
+import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from logger import get_trading_logger
+from runtime_paths import get_runtime_path
 
 log = get_trading_logger()
+
+
+class UpdateAlreadyRunning(RuntimeError):
+    pass
+
+
+def _pid_alive(pid: int) -> bool:
+    if int(pid or 0) <= 0:
+        return False
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except OSError:
+        return False
+
+
+@contextmanager
+def update_market_lock(market: str):
+    """Cross-task singleton lock; clashing schedules exit without touching data."""
+
+    market_key = str(market or "").upper()
+    lock_path = get_runtime_path("state", f"update_data_{market_key}.lock.json")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex
+    payload = {
+        "pid": os.getpid(),
+        "market": market_key,
+        "token": token,
+        "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    for attempt in range(2):
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False)
+            break
+        except FileExistsError:
+            try:
+                existing = json.loads(lock_path.read_text(encoding="utf-8-sig"))
+            except Exception:
+                existing = {}
+            owner_pid = int(existing.get("pid") or 0)
+            if _pid_alive(owner_pid):
+                raise UpdateAlreadyRunning(
+                    f"{market_key} update already running pid={owner_pid}"
+                )
+            if attempt == 0:
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    pass
+                continue
+            raise UpdateAlreadyRunning(f"{market_key} update lock could not be acquired")
+    try:
+        yield lock_path
+    finally:
+        try:
+            existing = json.loads(lock_path.read_text(encoding="utf-8-sig"))
+            if existing.get("token") == token:
+                lock_path.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            log.warning(f"{market_key} update lock cleanup failed: {exc}")
 
 
 def run_kr_update():
@@ -146,11 +215,13 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.market in ("KR", "ALL"):
-        run_kr_update()
-
-    if args.market in ("US", "ALL"):
-        run_us_update()
+    targets = ["KR", "US"] if args.market == "ALL" else [args.market]
+    for market in targets:
+        try:
+            with update_market_lock(market):
+                run_kr_update() if market == "KR" else run_us_update()
+        except UpdateAlreadyRunning as exc:
+            log.warning(f"[update_data singleton] {exc}; duplicate invocation skipped")
 
 
 if __name__ == "__main__":

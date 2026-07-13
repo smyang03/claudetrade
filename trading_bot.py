@@ -9331,6 +9331,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 reason_code=reason_code,
                 payload=payload,
             )
+    def _v2_record_profit_evidence_shadow(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        reason_code: str = "PROFIT_EVIDENCE_ABSTAIN",
+        payload: Optional[dict] = None,
+    ) -> int:
+        runtime = getattr(self, "v2", None)
+        if runtime is None or not hasattr(runtime, "record_profit_evidence_shadow"):
+            return 0
+        return int(
+            runtime.record_profit_evidence_shadow(
+                market,
+                ticker,
+                reason_code=reason_code,
+                payload=payload or {},
+            )
+            or 0
+        )
 
     @staticmethod
     def _trade_ready_no_submit_reason_code(reason: str) -> str:
@@ -10558,24 +10578,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             f"would_block={','.join(reasons) or 'unknown'}"
         )
         try:
-            decision_id = self._v2_decision_id_for_ticker(market, ticker)
-            if not decision_id:
-                decision_id = self._v2_ensure_execution_decision_id(
-                    market,
-                    ticker,
-                    strategy_hint=strategy,
-                    payload={
-                        "registration_source": "profit_evidence_shadow",
-                        "shadow_only": True,
-                        "model_version": model_version,
-                        "path_name": path_name,
-                    },
-                )
-            self._v2_record_lifecycle_event(
-                "PROFIT_EVIDENCE_SHADOW",
+            self._v2_record_profit_evidence_shadow(
                 market,
                 ticker,
-                decision_id=decision_id,
                 reason_code="PROFIT_EVIDENCE_ABSTAIN",
                 payload=dict(decision or {}),
             )
@@ -10700,6 +10705,36 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "scope": "",
             "details": {"profit_evidence_gate": decision},
         }
+    def _guardian_market_entry_gate(self, market: str) -> dict:
+        """Consume the market-scoped preflight state written before bot start."""
+
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if str(getattr(self, "_mode", "") or "").lower() != "live":
+            return {"allowed": True, "reason": "not_live"}
+        if not self._runtime_bool("GUARDIAN_MARKET_GATE_REQUIRED", False):
+            return {"allowed": True, "reason": "gate_not_required"}
+        path = get_runtime_path("state", "live_guardian_market_gates.json")
+        try:
+            max_age = max(30.0, self._runtime_float("GUARDIAN_MARKET_GATE_MAX_AGE_SEC", 900.0))
+            age_sec = max(0.0, time.time() - path.stat().st_mtime)
+            if age_sec > max_age:
+                return {"allowed": False, "reason": "GUARDIAN_MARKET_GATE_STALE", "age_sec": age_sec}
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+            state = ((payload.get("markets") or {}).get(market_key) or {})
+            if not state:
+                return {"allowed": False, "reason": "GUARDIAN_MARKET_GATE_MISSING"}
+            return {
+                "allowed": bool(state.get("ok")),
+                "reason": "" if state.get("ok") else "GUARDIAN_MARKET_BLOCK",
+                "gate": state.get("gate"),
+                "blockers": list(state.get("blockers") or []),
+                "generated_at": payload.get("generated_at"),
+                "age_sec": age_sec,
+            }
+        except FileNotFoundError:
+            return {"allowed": False, "reason": "GUARDIAN_MARKET_GATE_MISSING"}
+        except Exception as exc:
+            return {"allowed": False, "reason": "GUARDIAN_MARKET_GATE_INVALID", "error": str(exc)[:200]}
 
     def _new_buy_block_state(
         self,
@@ -10732,6 +10767,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "reason": "ENTRY_BLACKOUT",
                 "scope": "market",
                 "details": details,
+            }
+        guardian_gate = self._guardian_market_entry_gate(market_key)
+        if not bool(guardian_gate.get("allowed", True)):
+            return {
+                "allowed": False,
+                "blocked": True,
+                "reason": str(guardian_gate.get("reason") or "GUARDIAN_MARKET_BLOCK"),
+                "scope": "market",
+                "details": {**details, "guardian_market_gate": guardian_gate},
             }
         stop_cluster = self._daily_stop_cluster_state(market_key, ticker_key)
         if bool((stop_cluster or {}).get("blocked")):
@@ -14840,12 +14884,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         guard[key] = now
         try:
             import time as _time
-            from kis_api import get_intraday_ohlcv
+            from kis_api import get_intraday_candles
 
             session_date = self._current_session_date_str(market_key)
-            df = get_intraday_ohlcv(
-                market_key,
+            df = get_intraday_candles(
                 ticker,
+                market=market_key,
                 session_date=session_date,
                 deadline=_time.monotonic() + max(2.0, self._runtime_float("POST_OPEN_MINUTE_BACKFILL_DEADLINE_SEC", 5.0)),
             )
@@ -33644,9 +33688,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         }},
                     )
                     if reason == "already_holding":
+                        # ★2026-07-14: strategy_name은 아래 신호 루프에서야 정의된다(33811 근처).
+                        # 여기서 참조하면 UnboundLocalError로 사이클이 죽는다. 아직 안 터진 이유는
+                        # 최근 보유 포지션이 0이었기 때문 — 진입이 복구되면 반드시 발화하는 지뢰다.
+                        # 스킵 시점엔 발화 전략이 없으므로 배정된(추천) 전략을 쓴다.
                         self._notify_signal_state_change(
                             "entry_skip", market, ticker,
-                            strategy=strategy_name,
+                            strategy=self._recommended_strategy_for_ticker(market, ticker) or "",
                             price=float(price),
                             reason=reason,
                             mode=mode,
@@ -38884,8 +38932,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "pnl_pct": self._daily_pnl_pct(market),
             "pnl_krw": int(self.risk.daily_pnl),
             "win": self.risk.daily_pnl > 0,
-            "trades": len(_sell_log),   # 청산(매도) 건수만
-            "cumulative": cumulative_equity,
             "execution_contaminated": execution_health["contaminated"],
             "execution_issues": execution_health["reasons"],
             "execution_learning_excluded": execution_health.get("learning_excluded", execution_health["contaminated"]),

@@ -59,6 +59,16 @@ class ClassifyPredictionTests(unittest.TestCase):
         self.assertFalse(evaluable)
         self.assertEqual(reason, monitor.ABSTAIN_FEATURE_COVERAGE)
 
+    def test_missing_ood_is_fail_closed(self) -> None:
+        evaluable, reason = monitor.classify_prediction(ood=None, observed_feature_n=11)
+        self.assertFalse(evaluable)
+        self.assertEqual(reason, monitor.ABSTAIN_FEATURE_COVERAGE)
+
+    def test_string_false_is_not_accepted_as_runtime_boolean(self) -> None:
+        evaluable, reason = monitor.classify_prediction(ood="false", observed_feature_n=11)
+        self.assertFalse(evaluable)
+        self.assertEqual(reason, monitor.ABSTAIN_FEATURE_COVERAGE)
+
     def test_too_few_observed_features_is_coverage_insufficient(self) -> None:
         evaluable, reason = monitor.classify_prediction(ood=False, observed_feature_n=3)
         self.assertFalse(evaluable)

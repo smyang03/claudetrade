@@ -69,6 +69,11 @@ class _Control:
 
 
 def _plan(ticker: str = "SNAP", session_date: str = "2026-04-27"):
+    # ★2026-07-14: RR 정책이 단일 소스(execution/reward_risk_policy)로 통합되면서 등록 단계가
+    # 시장별 임계(US 1.5)를 강제한다. 기존 픽스처는 RR≈1.33이라 US 정책상 애초에 등록될 수 없는
+    # 비현실적 플랜이었다(구 하드코딩 기본값 1.2에만 통과). 매도 reconcile을 검증하는 테스트이므로
+    # 게이트를 무력화하지 않고, US 정책을 만족하는 현실적 RR로 픽스처를 맞춘다.
+    # RR(존 상단) = (7.0-6.2)/(6.2-5.7) = 1.60, RR(존 하단) = (7.0-6.2)/(6.0-5.7) = 2.67 — 두 정의 모두 통과.
     return make_price_plan(
         decision_id=f"dec_{ticker}",
         ticker=ticker,
@@ -76,7 +81,7 @@ def _plan(ticker: str = "SNAP", session_date: str = "2026-04-27"):
         session_date=session_date,
         buy_zone_low=6,
         buy_zone_high=6.2,
-        sell_target=6.6,
+        sell_target=7.0,
         stop_loss=5.7,
         hold_days=1,
         confidence=0.7,

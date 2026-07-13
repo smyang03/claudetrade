@@ -22,9 +22,9 @@ from bot.candidate_policy import normalize_selection_result, selection_limits
 from minority_report.prompt_contracts import (
     COMMON_DECISION_CONTRACT,
     HARD_SOFT_RULE_CONTRACT,
-    PRICE_PLAN_CONTRACT,
     SELECTION_EXECUTION_PHASE_CONTRACT,
     SIZING_DECISION_CONTRACT,
+    price_plan_contract,
 )
 from runtime.candidate_actions import candidate_action_prompt_contract
 from runtime.selection_compact_schema import (
@@ -2900,7 +2900,7 @@ execution_phase: {execution_phase or 'unspecified'}
 {COMMON_DECISION_CONTRACT}
 {SELECTION_EXECUTION_PHASE_CONTRACT}
 {SIZING_DECISION_CONTRACT}
-{PRICE_PLAN_CONTRACT}
+{price_plan_contract(market)}
 {HARD_SOFT_RULE_CONTRACT}
 {candidate_action_section}
 규칙:

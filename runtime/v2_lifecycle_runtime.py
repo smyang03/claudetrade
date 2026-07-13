@@ -379,6 +379,31 @@ class V2LifecycleRuntime:
         except Exception as exc:
             log.warning(f"[V2 lifecycle] append failed {event_type} {market} {ticker}: {exc}")
 
+    def record_profit_evidence_shadow(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        reason_code: str = "PROFIT_EVIDENCE_ABSTAIN",
+        payload: dict | None = None,
+    ) -> int:
+        """Record model shadow evidence outside the canonical trade-decision registry."""
+
+        if not self.enabled or self.registry is None:
+            return 0
+        try:
+            return self.registry.store.append_profit_evidence_shadow(
+                market=market,
+                runtime_mode=self.bot._mode,
+                session_date=self.bot._current_session_date_str(market),
+                ticker=ticker,
+                reason_code=reason_code,
+                payload=payload or {},
+            )
+        except Exception as exc:
+            log.warning(f"[V2 profit shadow] append failed {market} {ticker}: {exc}")
+            return 0
+
     def _selection_snapshot_ts(self, market: str) -> str:
         try:
             meta = getattr(self.bot, "selection_meta", {}).get(market, {}) or {}

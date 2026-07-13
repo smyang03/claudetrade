@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import pandas as pd
+
 from tools import profit_path_forward_monitor as monitor
 from tools import train_profit_path_shadow as trainer
 
@@ -51,6 +53,29 @@ class PolicyViabilityTests(unittest.TestCase):
             result = trainer.policy_viability(_portable(ceiling=0.2975, selected_n=30), market="US")
         self.assertTrue(result["policy_can_fire"])
 
+    def test_path_specific_hurdles_are_honored(self) -> None:
+        env = {
+            "PROFIT_EVIDENCE_MIN_PROB": "0.55",
+            "PROFIT_EVIDENCE_MIN_PROB_US_PATH_A": "0.60",
+            "PROFIT_EVIDENCE_MIN_PROB_US_PATH_B": "0.25",
+        }
+        with patch.dict("os.environ", env, clear=False):
+            result = trainer.policy_viability(_portable(ceiling=0.30, selected_n=3), market="US")
+        self.assertTrue(result["policy_can_fire"])
+        self.assertEqual(result["probability_hurdles_by_path"], {"PATH_A": 0.60, "PATH_B": 0.25})
+
+    def test_validation_rows_use_the_same_path_specific_thresholds_as_runtime(self) -> None:
+        env = {
+            "PROFIT_EVIDENCE_MIN_PROB": "0.55",
+            "PROFIT_EVIDENCE_MIN_PROB_KR_PATH_A": "0.65",
+            "PROFIT_EVIDENCE_MIN_PROB_KR_PATH_B": "0.35",
+        }
+        frame = pd.DataFrame({"recommended_strategy": ["momentum", "claude_price"]})
+        with patch.dict("os.environ", env, clear=False):
+            thresholds = trainer.policy_thresholds("KR")
+            values = trainer._threshold_array(frame, thresholds=thresholds, key="min_probability")
+        self.assertEqual(values.tolist(), [0.65, 0.35])
+
     def test_shipped_artifacts_are_currently_dead(self) -> None:
         # 회귀 고정: 현재 배포된 KR/US 아티팩트는 발화 불가다(2026-07-13 실측).
         # 이 테스트가 깨지면 모델이 재설계된 것 — 그때 승격 논의를 재개한다.
@@ -93,6 +118,79 @@ class PromotionBlockersTests(unittest.TestCase):
                 result = monitor.promotion_blockers("KR", models_dir=Path(tmp))
         self.assertFalse(result["promotion_blocked"])
         self.assertEqual(result["reasons"], [])
+
+    def test_threshold_change_after_training_blocks_promotion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "profit_path_KR.json"
+            portable = _portable(ceiling=0.72, selected_n=45, promotion=True)
+            portable["metadata"]["policy_thresholds"] = {
+                "PATH_A": {"min_probability": 0.55, "min_expected_net_pct": 0.25, "max_uncertainty": 0.25},
+                "PATH_B": {"min_probability": 0.55, "min_expected_net_pct": 0.25, "max_uncertainty": 0.25},
+            }
+            path.write_text(json.dumps(portable), encoding="utf-8")
+            with patch.dict("os.environ", {"PROFIT_EVIDENCE_MIN_PROB_KR_PATH_B": "0.40"}, clear=False):
+                result = monitor.promotion_blockers("KR", models_dir=Path(tmp))
+        self.assertTrue(result["promotion_blocked"])
+        self.assertIn("runtime_policy_thresholds_changed_since_training", result["reasons"])
+
+    def test_combined_promotion_ready_cannot_bypass_artifact_blocker(self) -> None:
+        predictions = pd.DataFrame(
+            [
+                {
+                    "event_id": 1,
+                    "market": "KR",
+                    "session_date": "2026-07-13",
+                    "ticker": "000100",
+                    "prediction_ts": pd.Timestamp("2026-07-13T00:10:00Z"),
+                    "path_name": "immediate",
+                    "model_version": "v1",
+                    "probability": 0.9,
+                    "evaluable": True,
+                    "abstain_reason": "",
+                    "strategy": "path_a",
+                },
+                {
+                    "event_id": 2,
+                    "market": "KR",
+                    "session_date": "2026-07-14",
+                    "ticker": "000200",
+                    "prediction_ts": pd.Timestamp("2026-07-14T00:10:00Z"),
+                    "path_name": "immediate",
+                    "model_version": "v1",
+                    "probability": 0.1,
+                    "evaluable": True,
+                    "abstain_reason": "",
+                    "strategy": "path_a",
+                },
+            ]
+        )
+        outcomes = pd.DataFrame(
+            [
+                {
+                    "path_id": 1, "market": "KR", "session_date": "2026-07-13", "ticker_key": "000100",
+                    "path_name": "immediate", "outcome_ts": pd.Timestamp("2026-07-13T00:10:00Z"),
+                    "outcome_60m_pct": 1.0, "max_drawdown_60m_pct": -0.1,
+                },
+                {
+                    "path_id": 2, "market": "KR", "session_date": "2026-07-14", "ticker_key": "000200",
+                    "path_name": "immediate", "outcome_ts": pd.Timestamp("2026-07-14T00:10:00Z"),
+                    "outcome_60m_pct": 0.31, "max_drawdown_60m_pct": -0.1,
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            report = monitor.build_report(
+                predictions,
+                outcomes,
+                market="KR",
+                min_matched=2,
+                min_sessions=2,
+                now=pd.Timestamp("2026-07-15T05:00:00Z"),
+                models_dir=Path(tmp),
+            )
+        self.assertTrue(report["promotion_eligible_forward"])
+        self.assertTrue(report["promotion_blockers"]["promotion_blocked"])
+        self.assertFalse(report["promotion_ready"])
 
 
 if __name__ == "__main__":

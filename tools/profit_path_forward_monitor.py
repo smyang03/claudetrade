@@ -4,17 +4,19 @@ import argparse
 from datetime import datetime, timezone
 import json
 import math
-import os
 from pathlib import Path
 import sqlite3
+import sys
 from typing import Any
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import roc_auc_score
-
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from runtime.profit_evidence_gate import _config_float  # noqa: E402
 
 # runtime/profit_path_predictor.build_runtime_feature_row가 만드는 numeric 피처.
 # _ood()가 "관측 numeric < 5"를 OOD로 보므로 같은 기준을 여기서도 쓴다.
@@ -39,6 +41,20 @@ MIN_OBSERVED_FEATURES = 5
 
 ABSTAIN_UNSUPPORTED_COHORT = "unsupported_cohort"
 ABSTAIN_FEATURE_COVERAGE = "feature_coverage_insufficient"
+
+
+def _runtime_policy_thresholds(market: str) -> dict[str, dict[str, float]]:
+    market_key = str(market).upper()
+    return {
+        path_name: {
+            "min_probability": _config_float("PROFIT_EVIDENCE_MIN_PROB", market_key, path_name, 0.55),
+            "min_expected_net_pct": _config_float(
+                "PROFIT_EVIDENCE_MIN_EXPECTED_NET_PCT", market_key, path_name, 0.25
+            ),
+            "max_uncertainty": _config_float("PROFIT_EVIDENCE_MAX_UNCERTAINTY", market_key, path_name, 0.25),
+        }
+        for path_name in ("PATH_A", "PATH_B")
+    }
 
 
 def _observed_feature_n(feature_snapshot: Any) -> int:
@@ -74,12 +90,10 @@ def promotion_blockers(market: str, models_dir: Path | None = None) -> dict[str,
     except (OSError, ValueError):
         return {"promotion_blocked": True, "reasons": ["model_artifact_unreadable"]}
     metadata = dict(artifact.get("metadata") or {})
-    hurdle = float(
-        os.getenv(
-            f"PROFIT_EVIDENCE_MIN_PROB_{str(market).upper()}",
-            os.getenv("PROFIT_EVIDENCE_MIN_PROB", "0.55"),
-        )
-    )
+    market_key = str(market).upper()
+    runtime_thresholds = _runtime_policy_thresholds(market_key)
+    hurdles = {path_name: values["min_probability"] for path_name, values in runtime_thresholds.items()}
+    hurdle = min(hurdles.values())
     y_values = list((artifact.get("probability_calibrator") or {}).get("y") or [])
     ceiling = float(max(y_values)) if y_values else 0.0
     reasons: list[str] = []
@@ -89,11 +103,17 @@ def promotion_blockers(market: str, models_dir: Path | None = None) -> dict[str,
         reasons.append("validation_policy_selects_nothing")
     if not bool(metadata.get("promotion_eligible_backtest")):
         reasons.append("promotion_eligible_backtest_false")
+    trained_thresholds = metadata.get("policy_thresholds")
+    if isinstance(trained_thresholds, dict) and trained_thresholds != runtime_thresholds:
+        reasons.append("runtime_policy_thresholds_changed_since_training")
     return {
         "promotion_blocked": bool(reasons),
         "reasons": reasons,
         "calibrated_probability_ceiling": ceiling,
         "probability_hurdle": hurdle,
+        "probability_hurdles_by_path": hurdles,
+        "runtime_policy_thresholds": runtime_thresholds,
+        "trained_policy_thresholds": trained_thresholds if isinstance(trained_thresholds, dict) else None,
         "model_version": str(metadata.get("model_version") or ""),
     }
 
@@ -108,7 +128,9 @@ def classify_prediction(*, ood: Any, observed_feature_n: int) -> tuple[bool, str
     """
     if observed_feature_n <= 0:
         return False, ABSTAIN_UNSUPPORTED_COHORT
-    if bool(ood) or observed_feature_n < MIN_OBSERVED_FEATURES:
+    # 런타임 게이트와 동일하게 OOD가 명시적으로 False인 경우만 평가 가능하다.
+    # None/누락/문자열은 손상·구버전 이벤트일 수 있으므로 fail-closed 한다.
+    if ood is not False or observed_feature_n < MIN_OBSERVED_FEATURES:
         return False, ABSTAIN_FEATURE_COVERAGE
     return True, ""
 
@@ -119,13 +141,39 @@ def _load_predictions(con: sqlite3.Connection, market: str = "") -> pd.DataFrame
     if market:
         where += " AND market=?"
         params.append(market.upper())
-    rows = con.execute(
+    legacy_rows = con.execute(
         f"""
         SELECT event_id, market, session_date, ticker, occurred_at, payload_json
         FROM lifecycle_events WHERE {where} ORDER BY event_id
         """,
         params,
     ).fetchall()
+    rows = [
+        (int(event_id), event_market, session_date, ticker, occurred_at, raw_payload)
+        for event_id, event_market, session_date, ticker, occurred_at, raw_payload in legacy_rows
+    ]
+    has_isolated_table = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='profit_evidence_shadow_events'"
+    ).fetchone()
+    if has_isolated_table:
+        shadow_where = "1=1"
+        shadow_params: list[Any] = []
+        if market:
+            shadow_where += " AND market=?"
+            shadow_params.append(market.upper())
+        shadow_rows = con.execute(
+            f"""
+            SELECT observation_id, market, session_date, ticker, occurred_at, payload_json
+            FROM profit_evidence_shadow_events WHERE {shadow_where} ORDER BY observation_id
+            """,
+            shadow_params,
+        ).fetchall()
+        # Negative IDs keep the existing numeric matching contract while making
+        # the isolated namespace collision-free with lifecycle event IDs.
+        rows.extend(
+            (-int(observation_id), event_market, session_date, ticker, occurred_at, raw_payload)
+            for observation_id, event_market, session_date, ticker, occurred_at, raw_payload in shadow_rows
+        )
     output: list[dict[str, Any]] = []
     for event_id, event_market, session_date, ticker, occurred_at, raw_payload in rows:
         try:
@@ -231,6 +279,19 @@ def _ece(labels: np.ndarray, probability: np.ndarray, bins: int = 10) -> float |
     return total
 
 
+def _roc_auc(labels: np.ndarray, probability: np.ndarray) -> float | None:
+    """Mann-Whitney U 기반 ROC AUC. 운영 모니터의 scikit-learn 의존을 제거한다."""
+    labels = np.asarray(labels, dtype=int)
+    probability = np.asarray(probability, dtype=float)
+    positive_n = int((labels == 1).sum())
+    negative_n = int((labels == 0).sum())
+    if positive_n <= 0 or negative_n <= 0:
+        return None
+    ranks = pd.Series(probability).rank(method="average").to_numpy(dtype=float)
+    positive_rank_sum = float(ranks[labels == 1].sum())
+    return float((positive_rank_sum - positive_n * (positive_n + 1) / 2.0) / (positive_n * negative_n))
+
+
 def _bootstrap_lcb(values: np.ndarray, seed: int = 20260710) -> float | None:
     values = values[np.isfinite(values)]
     if len(values) < 2:
@@ -251,7 +312,7 @@ def summarize(matched: pd.DataFrame, *, min_matched: int = 60, min_sessions: int
     max_mae = np.where(frame["market"].eq("US"), 2.5, 2.5)
     labels = ((frame["net_pct"] >= 0.25) & (frame["max_drawdown_60m_pct"] > -max_mae)).astype(int).to_numpy()
     probability = frame["probability"].clip(0, 1).to_numpy(dtype=float)
-    auc = float(roc_auc_score(labels, probability)) if len(np.unique(labels)) > 1 else None
+    auc = _roc_auc(labels, probability)
     ece = _ece(labels, probability)
     lcb = _bootstrap_lcb(frame["net_pct"].to_numpy(dtype=float))
     positive = frame.loc[frame["net_pct"] > 0, "net_pct"].sum()
@@ -347,6 +408,8 @@ def build_report(
     # 필터가 없었다면 승격 통계에 섞였을 abstain 관측 = 오염 부채의 실제 크기.
     abstain_matchable = match_predictions(abstained, outcomes, tolerance_min=tolerance_min)
 
+    blockers = promotion_blockers(market, models_dir=models_dir)
+    forward_summary = summarize(matched, min_matched=min_matched, min_sessions=min_sessions)
     report = {
         "ok": True,
         "market": str(market).upper(),
@@ -372,10 +435,14 @@ def build_report(
         "unmatched_matured_n": max(0, int(len(matured_evaluable) - len(matched))),
         # 표본과 무관하게 승격을 막는 구조적 사유. 비어 있지 않으면 evaluable_n 증가는
         # 승격 진행률이 아니다(모아도 안 열린다).
-        "promotion_blockers": promotion_blockers(market, models_dir=models_dir),
+        "promotion_blockers": blockers,
         # 하위호환: prediction_n은 관측 전체를 뜻한다(승격 표본이 아니다).
         "prediction_n": int(len(predictions)),
-        **summarize(matched, min_matched=min_matched, min_sessions=min_sessions),
+        **forward_summary,
+        # 운영자·자동화가 단일 값만 읽어도 구조적 차단을 우회하지 않게 한다.
+        "promotion_ready": bool(
+            forward_summary.get("promotion_eligible_forward") and not blockers.get("promotion_blocked", True)
+        ),
     }
     return report
 
