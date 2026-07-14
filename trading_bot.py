@@ -6,6 +6,31 @@ from __future__ import annotations
 
 import os
 import sys
+
+# ── 크래시 계측(2026-07-14) ────────────────────────────────────────────────
+# 이 호스트에서 봇이 트레이스백/이벤트로그 없이 간헐 사망한다(네이티브 NumPy/BLAS
+# access violation 추정). faulthandler는 치명 시그널·Windows access violation을
+# 가로채 죽는 순간의 Python 스택을 파일로 덤프하므로, 다음 크래시의 발생 지점을 남긴다.
+# 진단 전용 — 동작 변경 없음. 실패해도 봇 기동을 막지 않는다.
+try:
+    import faulthandler as _faulthandler
+
+    _crash_log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "system")
+    os.makedirs(_crash_log_dir, exist_ok=True)
+    _crash_mode = "live" if "--live" in sys.argv else "paper"
+    # 프로세스 수명 동안 열어둔다(핸들이 닫히면 덤프가 안 써진다). append 모드로 이력 보존.
+    _crash_log_file = open(
+        os.path.join(_crash_log_dir, f"faulthandler_crash_{_crash_mode}.log"),
+        "a",
+        buffering=1,
+        encoding="utf-8",
+    )
+    _crash_log_file.write(f"[faulthandler armed] pid={os.getpid()} argv={' '.join(sys.argv)}\n")
+    _faulthandler.enable(file=_crash_log_file, all_threads=True)
+except Exception:
+    # 계측 실패가 라이브 봇 기동을 막아선 안 된다.
+    pass
+
 import json
 import time
 import math
