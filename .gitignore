@@ -142,3 +142,6 @@ tmp_dashboard_*.png
 
 # 시뮬레이션 리포트 JSON (재생성 가능, MD만 유지)
 docs/reports/*.json
+
+# 유지보수 DB 백업(로컬 전용, 커밋 금지)
+data/*.db.bak_*
