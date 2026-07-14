@@ -6880,9 +6880,12 @@ class PathBRuntime:
         if mfe_pct <= 0 or peak_price <= 0:
             return {}
 
-        # ★2026-07-14 조기익절 tier (운영자 승인 A안): sell_target이 도달가능 MFE 대비 2.3배 과대라
-        # 원목표 대기 중 이익 왕복이 US 적자 핵심. MFE가 목표거리×fraction(기본 0.4)에 도달하면
-        # peak-giveback으로 floor를 잠근다. 러너는 원목표 유지(floor는 눌림에만 발동 = 러너 uncapped).
+        # ★2026-07-14 조기익절 tier (운영자 승인 A안, 7/14 B수정): sell_target이 도달가능 MFE 대비
+        # 2.3배 과대라 원목표 대기 중 이익 왕복이 US 적자 핵심. MFE가 목표거리×fraction(기본 0.4)에
+        # 도달하면 peak-giveback으로 floor를 잠근다. sell_target(상방 캡)은 유지.
+        # ★러너 보존(B): early는 entry-anchored tier(tier1/tier2)와 tier-없음 구간만 이긴다.
+        #   peak-anchored 상위 tier(tier3/tier4/AB peak-trail)는 증명된 러너의 느슨한 트레일을
+        #   소유하므로 early가 조이지 않는다(그 트레일이 곧 러너 보존 장치).
         # 근거: DB n=291 시뮬 KR -0.22→+2.15/US -0.18→+0.48, 7월 KR 1.1밴드 리플레이 승률 27%→64%.
         early_info = self._pathb_early_tier_floor(plan, entry, peak_price, mfe_pct, market)
 
@@ -6896,7 +6899,8 @@ class PathBRuntime:
                 ab_floor = peak_price * (1.0 - max(0.0, ab_give) / 100.0)
                 ab_floor = self._round_policy_price(ab_floor, str(market or plan.market or "").upper(), direction="down")
                 if ab_floor > 0:
-                    ab_info = {
+                    # AB peak-trail은 peak-anchored 러너 트레일 — early가 조이지 않는다(러너 보존).
+                    return {
                         "tier": "ab_peak_trail",
                         "floor": ab_floor,
                         "entry": entry,
@@ -6906,10 +6910,7 @@ class PathBRuntime:
                         "ab_act_pct": ab_act,
                         "ab_give_pct": ab_give,
                     }
-                    # 조기익절 tier가 더 높은 floor를 제시하면 그것이 이긴다(이익 잠금 우선).
-                    if early_info and float(early_info.get("floor") or 0) > ab_floor:
-                        return early_info
-                    return ab_info
+            # AB 미발동(act% 미만) → early가 entry측 공백을 메운다.
             return early_info or {}
 
         tier1 = _env_float("PATHB_LADDER_TIER1_PCT", 1.2)
@@ -6918,12 +6919,15 @@ class PathBRuntime:
         tier4 = _env_float("PATHB_LADDER_TIER4_PCT", 4.0)
         tier = ""
         floor = 0.0
+        peak_anchored = False  # tier3/tier4는 peak-trail(러너 보존) → early가 조이지 않는다
         if mfe_pct >= tier4 > 0:
             tier = "tier4"
             floor = peak_price * (1.0 - max(0.0, _env_float("PATHB_LADDER_TIER4_PEAK_GIVEBACK_PCT", 0.012)))
+            peak_anchored = True
         elif mfe_pct >= tier3 > 0:
             tier = "tier3"
             floor = peak_price * (1.0 - max(0.0, _env_float("PATHB_LADDER_TIER3_PEAK_GIVEBACK_PCT", 0.010)))
+            peak_anchored = True
         elif mfe_pct >= tier2 > 0:
             tier = "tier2"
             # floor 상향(0.010) 검토했으나 2026-06-14 yfinance 경로 시뮬에서 평균 +0.02%p(무차익)
@@ -6937,8 +6941,9 @@ class PathBRuntime:
             return early_info or {}
         market_key = str(market or plan.market or "").upper()
         floor = self._round_policy_price(floor, market_key, direction="down")
-        # 조기익절 tier가 더 높은 floor를 제시하면 그것이 이긴다(이익 잠금 우선).
-        if early_info and float(early_info.get("floor") or 0) > floor:
+        # ★러너 보존(B): early는 entry-anchored tier(tier1/tier2)만 이긴다. peak-anchored
+        #   tier3/tier4의 느슨한 트레일이 증명된 러너를 소유하므로 early가 조이지 않는다.
+        if not peak_anchored and early_info and float(early_info.get("floor") or 0) > floor:
             return early_info
         return {
             "tier": tier,
