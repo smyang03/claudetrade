@@ -36,6 +36,22 @@ def _runtime_path(root: Path):
 
 
 class PreopenShadowTests(unittest.TestCase):
+    def test_kr_outcome_sampling_requires_provider_fresh_kis_quote(self) -> None:
+        from tools.preopen_outcome_updater import _fetch_price_snapshot
+
+        with patch("kis_api.get_price", return_value={
+            "ticker": "005930",
+            "price": 1000,
+            "open": 990,
+            "high": 1010,
+            "low": 980,
+            "volume": 123,
+        }) as get_price:
+            snapshot = _fetch_price_snapshot("KR", "005930", "token")
+
+        get_price.assert_called_once_with("005930", "token", market="KR", allow_fallback=False)
+        self.assertEqual(snapshot["price_source"], "kis_api.get_price.provider_fresh")
+
     def test_us_session_date_uses_previous_date_before_5am_kst(self) -> None:
         now = datetime(2026, 5, 2, 4, 59, tzinfo=KST)
 

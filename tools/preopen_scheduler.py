@@ -246,6 +246,8 @@ def _job_timeout_sec(job: PreopenJob, default_timeout_sec: int) -> int:
     timeout = max(10, int(default_timeout_sec))
     if job.kind == "swing_shadow":
         return max(timeout, 600)
+    if job.kind == "yfinance_shadow":
+        return max(timeout, 180)
     if job.kind != "news":
         return timeout
     try:

@@ -185,7 +185,11 @@ def _load_audit_outcome_candidates(
 def _fetch_price_snapshot(market: str, ticker: str, token: str) -> dict:
     from kis_api import get_price
 
-    info = get_price(ticker, token, market=market)
+    # Candidate labels must be built from provider-fresh KIS prices.  Yahoo is
+    # monitored separately by kr_yfinance_shadow and must never silently enter
+    # the authoritative outcome series through get_price's legacy fallback.
+    is_kr = str(market or "").upper() == "KR"
+    info = get_price(ticker, token, market=market, **({"allow_fallback": False} if is_kr else {}))
     current = _num(info.get("price"))
     opened = _num(info.get("open"))
     high = _num(info.get("high"))
@@ -200,7 +204,7 @@ def _fetch_price_snapshot(market: str, ticker: str, token: str) -> dict:
         "low": low,
         "volume": volume,
         "name": info.get("name", ""),
-        "price_source": "kis_api.get_price",
+        "price_source": "kis_api.get_price.provider_fresh" if is_kr else "kis_api.get_price",
     }
 
 

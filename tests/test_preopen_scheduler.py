@@ -149,6 +149,22 @@ class PreopenSchedulerTests(unittest.TestCase):
         self.assertEqual(swing[0].due_at, "2026-05-04T22:20:00+09:00")
         self.assertEqual(swing[0].script, "tools/us_swing_shadow_runner.py")
 
+    def test_kr_yfinance_shadow_is_bounded_and_opt_in(self) -> None:
+        now = datetime(2026, 5, 4, 9, 21, tzinfo=KST)
+        with patch.dict("os.environ", {
+            "KR_YFINANCE_SHADOW_ENABLED": "true",
+            "KR_YFINANCE_SHADOW_INTERVAL_MIN": "15",
+            "KR_YFINANCE_SHADOW_MAX_TICKERS": "12",
+        }), patch("preopen.scheduler.is_trading_day", return_value=True):
+            jobs = due_jobs(now_dt=now, markets=["KR"], mode="live")
+
+        shadow = [job for job in jobs if job.kind == "yfinance_shadow"]
+        self.assertEqual(len(shadow), 1)
+        self.assertEqual(shadow[0].job_id, "live:2026-05-04:KR:yfinance_shadow:001")
+        self.assertEqual(shadow[0].script, "tools/kr_yfinance_shadow.py")
+        self.assertIn("--max-tickers", shadow[0].args)
+        self.assertIn("12", shadow[0].args)
+
     def test_us_outcome_catchup_after_kst_midnight_keeps_us_session_date(self) -> None:
         now = datetime(2026, 5, 5, 1, 0, tzinfo=KST)
 

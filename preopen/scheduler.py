@@ -316,6 +316,33 @@ def due_jobs(
                     args=("--session-date", session_date),
                 ))
 
+        # Yahoo Finance is a bounded, observational secondary feed for KR.
+        # It never supplies a trading price or changes candidate selection.
+        if mkt == "KR" and _env_bool("KR_YFINANCE_SHADOW_ENABLED", False):
+            shadow_start_dt = open_dt + timedelta(minutes=5)
+            shadow_end_dt = regular_close_dt(mkt, session_date)
+            if shadow_start_dt <= now_dt <= shadow_end_dt:
+                shadow_interval = max(5, _market_env_int(mkt, "YFINANCE_SHADOW_INTERVAL_MIN", 15))
+                shadow_elapsed = max(0, int((now_dt - shadow_start_dt).total_seconds() // 60))
+                shadow_bucket = shadow_elapsed // shadow_interval
+                shadow_due_dt = shadow_start_dt + timedelta(minutes=shadow_bucket * shadow_interval)
+                job_id = f"{runtime_mode}:{session_date}:{mkt}:yfinance_shadow:{shadow_bucket:03d}"
+                if force or job_id not in completed:
+                    jobs.append(PreopenJob(
+                        market=mkt,
+                        session_date=session_date,
+                        kind="yfinance_shadow",
+                        job_id=job_id,
+                        due_at=shadow_due_dt.isoformat(timespec="seconds"),
+                        script="tools/kr_yfinance_shadow.py",
+                        args=(
+                            "--mode", runtime_mode,
+                            "--session-date", session_date,
+                            "--max-tickers", str(max(0, _market_env_int(mkt, "YFINANCE_SHADOW_MAX_TICKERS", 12))),
+                            "--once",
+                        ),
+                    ))
+
         offsets = (
             outcome_offsets_min
             if outcome_offsets_min is not None
