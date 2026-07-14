@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -5888,6 +5889,19 @@ class EntryScanBrokerTruthRetryTests(unittest.TestCase):
             self.assertTrue(gate["blocked"])
             self.assertEqual(gate["reason"], "BLOCKED_BROKER_TRUTH")
             self.assertEqual(gate["details"].get("broker_truth_refresh_retry_used"), 2)
+
+    def test_entry_scan_keeps_short_freshness_without_shortening_shared_snapshot_ttl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime, _ = self._runtime_with_flaky_provider(tmp, fail_times=0)
+
+            gate = runtime._entry_scan_broker_truth_gate("KR")
+
+            self.assertTrue(gate["allowed"])
+            # Path B continues to evaluate entry truth with its 30-second
+            # horizon, independently from the TTL stored for the guardian.
+            self.assertEqual(gate["details"]["broker_truth_ttl_sec"], 30)
+            stored = json.loads((Path(tmp) / "broker_truth.json").read_text(encoding="utf-8"))
+            self.assertEqual(stored["markets"]["KR"]["ttl_sec"], 180)
 
 
 if __name__ == "__main__":

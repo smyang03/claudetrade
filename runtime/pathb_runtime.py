@@ -8539,8 +8539,24 @@ class PathBRuntime:
 
     def refresh_broker_truth(self, market: str, *, force: bool = False, ttl_sec: int | None = None) -> dict[str, Any]:
         market_key = str(market or "").upper()
-        ttl = int(ttl_sec if ttl_sec is not None else (30 if self._session_active_for_market(market_key) else 60))
-        return self.broker_truth.refresh_market(market_key, force=bool(force), ttl_sec=ttl)
+        freshness_ttl = int(ttl_sec if ttl_sec is not None else (30 if self._session_active_for_market(market_key) else 60))
+        # Entry scans need a short, local freshness horizon, but persisting that
+        # horizon on the shared snapshot makes the guardian mark a healthy
+        # two-minute scheduler stale between refreshes.  Keep the caller's
+        # freshness contract while preserving a scheduler-compatible TTL for
+        # shared consumers (guardian/dashboard/Telegram).
+        snapshot_ttl = max(
+            freshness_ttl,
+            self._runtime_int("BROKER_TRUTH_SNAPSHOT_TTL_SEC", 180),
+        )
+        refresh_force = bool(force)
+        if not refresh_force:
+            try:
+                current = self.broker_truth.market_snapshot(market_key, ttl_sec=freshness_ttl)
+                refresh_force = bool(current.get("missing")) or bool(current.get("stale"))
+            except Exception:
+                refresh_force = True
+        return self.broker_truth.refresh_market(market_key, force=refresh_force, ttl_sec=snapshot_ttl)
 
     def reconcile_sell_pending(self, market: str, *, force: bool = False, session_end: bool = False) -> dict[str, Any]:
         market_key = str(market or "").upper()

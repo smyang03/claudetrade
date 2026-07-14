@@ -22,6 +22,9 @@ MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
 _OVERLOAD_RETRY_SEC = 10
 _OVERLOAD_MAX_SEC = 600
+_JSON_RETRY_MAX = 1
+_JSON_RETRY_BACKOFF_SEC = 1.0
+_MAX_TOKENS = 700
 _VALID_MODES = {
     "AGGRESSIVE",
     "MODERATE_BULL",
@@ -230,23 +233,77 @@ JSON으로만 응답:
 
     started = time.monotonic()
     attempt = 0
+    json_retry_used = 0
     while True:
         attempt += 1
         try:
             resp = client.messages.create(
                 model=MODEL,
-                max_tokens=500,
+                max_tokens=_MAX_TOKENS,
                 messages=[{"role": "user", "content": prompt}],
                 extra_body=thinking_extra_body("tuner"),
             )
             raw = response_text(resp)
-            result = _coerce_runtime_adjustments(extract_json(raw))
+            input_tokens = resp.usage.input_tokens
+            output_tokens = resp.usage.output_tokens
+            try:
+                result = _coerce_runtime_adjustments(extract_json(raw))
+            except (TypeError, ValueError) as exc:
+                # A malformed/empty model response must not change any runtime
+                # override. Persist it for diagnosis, then make one bounded
+                # retry before retaining the prior mode.
+                fallback = _default_result(
+                    prev_mode,
+                    f"json_parse_error:{exc}",
+                    warning="JSON_PARSE_FAILED",
+                )
+                credit_record(
+                    input_tokens,
+                    output_tokens,
+                    f"tune_{elapsed_min}min",
+                    model=MODEL,
+                    cache_creation_input_tokens=getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
+                    cache_read_input_tokens=getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
+                )
+                save_raw_call(
+                    label=f"tune_{elapsed_min}min_parse_error",
+                    prompt=prompt,
+                    raw_response=raw,
+                    parsed=fallback,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    market=market,
+                    model=MODEL,
+                    prompt_mode="intraday_tune",
+                )
+                try:
+                    retry_max = max(0, int(os.getenv("TUNER_JSON_RETRY_MAX", str(_JSON_RETRY_MAX))))
+                except Exception:
+                    retry_max = _JSON_RETRY_MAX
+                if json_retry_used < retry_max:
+                    json_retry_used += 1
+                    try:
+                        backoff_sec = max(0.0, float(os.getenv("TUNER_JSON_RETRY_BACKOFF_SEC", str(_JSON_RETRY_BACKOFF_SEC))))
+                    except Exception:
+                        backoff_sec = _JSON_RETRY_BACKOFF_SEC
+                    log.warning(
+                        f"[tuning parse] {market} {elapsed_min}m malformed response; "
+                        f"retry {json_retry_used}/{retry_max}"
+                    )
+                    if backoff_sec:
+                        time.sleep(min(5.0, backoff_sec))
+                    continue
+                log.warning(
+                    f"[tuning parse] {market} {elapsed_min}m malformed response after "
+                    f"{json_retry_used} retries; retain previous mode"
+                )
+                return fallback
             if result.get("mode") not in _VALID_MODES:
                 result["mode"] = prev_mode
 
             credit_record(
-                resp.usage.input_tokens,
-                resp.usage.output_tokens,
+                input_tokens,
+                output_tokens,
                 f"tune_{elapsed_min}min",
                 model=MODEL,
                 cache_creation_input_tokens=getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
@@ -257,8 +314,8 @@ JSON으로만 응답:
                 prompt=prompt,
                 raw_response=raw,
                 parsed=result,
-                input_tokens=resp.usage.input_tokens,
-                output_tokens=resp.usage.output_tokens,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 market=market,
                 model=MODEL,
                 prompt_mode="intraday_tune",
