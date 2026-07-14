@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from bot.session_date import KST, resolve_session_date
+from audit.candidate_audit_store import CandidateAuditStore
 from preopen.models import normalize_candidate
 from preopen.scorer import score_candidates
 from preopen.storage import (
@@ -248,6 +249,57 @@ class PreopenShadowTests(unittest.TestCase):
         self.assertEqual(candidate["outcome_samples"][0]["offset_min"], 90)
         self.assertEqual(candidate["outcome_samples"][0]["return_basis"], "anchor_price")
         self.assertEqual(outcome[-1]["post_open_90m_return_pct"], 10.0)
+
+    def test_outcome_updater_captures_current_audit_tickers_without_mutating_preopen_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)), patch(
+                "tools.preopen_collector.get_runtime_path",
+                side_effect=_runtime_path(root),
+            ):
+                save_preopen_state("US", {
+                    "market": "US",
+                    "session_date": "2026-05-04",
+                    "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "collector_status": "ok",
+                    "candidates": [{"ticker": "AAA", "price": 100.0}],
+                }, session_date="2026-05-04")
+                audit_db = root / "data" / "audit" / "candidate_audit.db"
+                CandidateAuditStore(audit_db).upsert_candidate(
+                    {
+                        "call_id": "current_decision",
+                        "runtime_mode": "live",
+                        "market": "US",
+                        "session_date": "2026-05-04",
+                        "known_at": "2026-05-04T09:00:00+09:00",
+                        "ticker": "BBB",
+                        "price": 200.0,
+                    }
+                )
+                with patch("tools.preopen_outcome_updater.resolve_session_date_str", return_value="2026-05-04"), patch(
+                    "kis_api.get_price",
+                    side_effect=lambda ticker, *args, **kwargs: {
+                        "ticker": ticker,
+                        "price": 110.0 if ticker == "AAA" else 210.0,
+                        "open": 100.0 if ticker == "AAA" else 200.0,
+                        "high": 112.0 if ticker == "AAA" else 212.0,
+                        "low": 98.0 if ticker == "AAA" else 198.0,
+                        "volume": 12345,
+                    },
+                ):
+                    result = update_once("US", mode="live", offset_min=30)
+                state = load_preopen_state("US", session_date="2026-05-04", max_age_min=24 * 60)
+                outcome_path = root / "logs" / "preopen" / "20260504_US_outcome.jsonl"
+                records = [json.loads(line) for line in outcome_path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(result["state_candidate_count"], 1)
+        self.assertEqual(result["audit_candidate_count"], 1)
+        self.assertEqual(result["outcome_candidate_count"], 2)
+        self.assertEqual(result["sampled"], 2)
+        self.assertEqual([row["ticker"] for row in state["candidates"]], ["AAA"])
+        audit_record = next(row for row in records if row["ticker"] == "BBB")
+        self.assertEqual(audit_record["outcome_capture_source"], "audit_candidate_rows")
+        self.assertEqual(audit_record["price"], 210.0)
 
     def test_paper_preopen_state_and_logs_are_separated_from_live(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

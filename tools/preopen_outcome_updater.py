@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +18,7 @@ from preopen.storage import (
     load_preopen_state,
     save_outcome_record,
     save_preopen_state,
+    state_path,
 )
 from tools.preopen_collector import _read_kis_token_state
 
@@ -113,6 +116,70 @@ def _should_fetch_price(candidate: dict, state: dict) -> bool:
     if provider == "seed_watchlist" or "seed_only" in data_quality:
         return False
     return bool(str(candidate.get("ticker", "") or "").strip())
+
+
+def _load_audit_outcome_candidates(
+    market: str,
+    session_date: str,
+    runtime_mode: str,
+) -> tuple[list[dict], dict]:
+    """Return current-session decision tickers for outcome-only price capture.
+
+    These rows are intentionally read-only and are not added to the mutable
+    preopen state.  The append-only outcome log then gives the audit labeler a
+    regular price cadence for candidates introduced after the preopen top-N.
+    """
+    try:
+        cap = max(0, int(os.getenv("PREOPEN_OUTCOME_AUDIT_TICKER_CAP", "120") or 120))
+    except ValueError:
+        cap = 120
+    db_path = state_path(market, session_date, mode=runtime_mode).parent.parent / "data" / "audit" / "candidate_audit.db"
+    summary = {
+        "db_path": str(db_path),
+        "cap": cap,
+        "selected": 0,
+        "status": "ok",
+        "reason": "",
+    }
+    if cap <= 0:
+        summary.update({"status": "disabled", "reason": "cap_zero"})
+        return [], summary
+    if not db_path.exists():
+        summary.update({"status": "missing", "reason": "candidate_audit_db_not_found"})
+        return [], summary
+
+    try:
+        conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=1.0)
+        try:
+            rows = conn.execute(
+                """
+                SELECT ticker, MAX(known_at) AS last_seen_at
+                FROM audit_candidate_rows
+                WHERE runtime_mode=? AND market=? AND session_date=?
+                  AND ticker IS NOT NULL AND ticker!=''
+                GROUP BY ticker
+                ORDER BY last_seen_at DESC, ticker ASC
+                LIMIT ?
+                """,
+                (runtime_mode, market, session_date, cap),
+            ).fetchall()
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as exc:
+        summary.update({"status": "unavailable", "reason": str(exc)[:160]})
+        return [], summary
+
+    candidates = [
+        {
+            "ticker": str(row[0] or "").upper(),
+            "outcome_capture_source": "audit_candidate_rows",
+            "outcome_capture_last_seen_at": str(row[1] or ""),
+        }
+        for row in rows
+        if str(row[0] or "").strip()
+    ]
+    summary["selected"] = len(candidates)
+    return candidates, summary
 
 
 def _fetch_price_snapshot(market: str, ticker: str, token: str) -> dict:
@@ -253,16 +320,38 @@ def update_once(market: str, *, offset_min: int, mode: str = "live") -> dict:
             state["data_quality"] = "screen_cache_display"
             state["outcome_source_candidates"] = "screen_cache_fallback"
             state["outcome_fallback_candidate_count"] = len(fallback_candidates)
+    state_tickers = {
+        str(candidate.get("ticker") or "").upper()
+        for candidate in (state.get("candidates", []) or [])
+        if str(candidate.get("ticker") or "").strip()
+    }
+    audit_candidates, audit_capture_summary = _load_audit_outcome_candidates(
+        market,
+        session_date,
+        runtime_mode,
+    )
+    extra_audit_candidates = [
+        candidate for candidate in audit_candidates
+        if str(candidate.get("ticker") or "").upper() not in state_tickers
+    ]
+    outcome_candidates = [
+        (candidate, True) for candidate in (state.get("candidates", []) or [])
+    ] + [(candidate, False) for candidate in extra_audit_candidates]
     updated = 0
     sampled = 0
     token_state = _read_kis_token_state(runtime_mode, market)
     token = str(token_state.get("access_token", "") or "")
-    for candidate in state.get("candidates", []) or []:
+    for candidate, is_state_candidate in outcome_candidates:
+        # Extra audit candidates must not become future preopen candidates when
+        # the mutable state is saved below.
+        if not is_state_candidate:
+            candidate = dict(candidate)
         record = {
             "market": market,
             "session_date": session_date,
             "ticker": candidate.get("ticker", ""),
             "name": candidate.get("name", ""),
+            "outcome_capture_source": candidate.get("outcome_capture_source", "preopen_state"),
             "offset_min": int(offset_min),
             "captured_at": captured_at,
             "outcome_status": "pending_price_provider",
@@ -302,6 +391,11 @@ def update_once(market: str, *, offset_min: int, mode: str = "live") -> dict:
     state["last_outcome_update_at"] = captured_at
     state["last_outcome_offset_min"] = int(offset_min)
     state["last_outcome_sampled_count"] = sampled
+    state["last_outcome_audit_capture"] = {
+        **audit_capture_summary,
+        "extra_selected": len(extra_audit_candidates),
+        "total_candidates": len(outcome_candidates),
+    }
     save_preopen_state(market, state, session_date=session_date, mode=runtime_mode)
     return {
         "market": market,
@@ -310,6 +404,9 @@ def update_once(market: str, *, offset_min: int, mode: str = "live") -> dict:
         "updated": updated,
         "sampled": sampled,
         "offset_min": int(offset_min),
+        "state_candidate_count": len(state.get("candidates", []) or []),
+        "audit_candidate_count": len(extra_audit_candidates),
+        "outcome_candidate_count": len(outcome_candidates),
     }
 
 

@@ -239,6 +239,100 @@ def _load_price_observations(
     return observations
 
 
+def _preopen_outcome_log_path(*, session_date: str, market: str, runtime_mode: str) -> Path:
+    compact_date = str(session_date or "").replace("-", "")
+    market_key = str(market or "").upper()
+    mode_suffix = "" if str(runtime_mode or "live").lower() == "live" else f"_{runtime_mode}"
+    return get_runtime_path(
+        "logs",
+        "preopen",
+        f"{compact_date}_{market_key}_outcome{mode_suffix}.jsonl",
+        make_parents=False,
+    )
+
+
+def _load_preopen_outcome_observations(
+    *,
+    session_date: str = "",
+    market: str = "",
+    runtime_mode: str = "live",
+    outcome_path: str | Path | None = None,
+) -> tuple[dict[tuple[str, str, str, str], list[tuple[datetime, float]]], dict[str, Any]]:
+    """Load append-only post-open price samples without reading mutable state.
+
+    The preopen outcome updater writes one price record per ticker and cadence to
+    JSONL.  Candidate-audit labels must prefer those observations over the much
+    sparser candidate-decision timestamps.  Keeping the reader here append-only
+    also preserves the decision-time boundary for replay.
+    """
+    path = Path(outcome_path) if outcome_path else _preopen_outcome_log_path(
+        session_date=session_date,
+        market=market,
+        runtime_mode=runtime_mode,
+    )
+    summary: dict[str, Any] = {
+        "path": str(path),
+        "exists": path.exists(),
+        "rows": 0,
+        "valid_rows": 0,
+        "invalid_json_rows": 0,
+        "rejected_rows": 0,
+        "ticker_count": 0,
+    }
+    if not path.exists():
+        return {}, summary
+
+    expected_market = str(market or "").upper()
+    expected_mode = str(runtime_mode or "live").lower()
+    expected_date = str(session_date or "")
+    collected: dict[tuple[str, str, str, str], dict[datetime, float]] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}, summary
+
+    for line in lines:
+        if not line.strip():
+            continue
+        summary["rows"] += 1
+        try:
+            row = json.loads(line)
+        except (TypeError, ValueError):
+            summary["invalid_json_rows"] += 1
+            continue
+        if not isinstance(row, dict):
+            summary["rejected_rows"] += 1
+            continue
+        row_market = str(row.get("market") or "").upper()
+        row_mode = str(row.get("mode") or expected_mode).lower()
+        row_date = str(row.get("session_date") or expected_date)
+        ticker = str(row.get("ticker") or "").upper()
+        captured_at = _parse_dt(row.get("captured_at") or row.get("ts"))
+        price = _to_float(row.get("price"))
+        status = str(row.get("outcome_status") or "").lower()
+        if (
+            not ticker
+            or captured_at is None
+            or price is None
+            or (expected_market and row_market != expected_market)
+            or (expected_date and row_date != expected_date)
+            or row_mode != expected_mode
+            or status == "price_provider_error"
+        ):
+            summary["rejected_rows"] += 1
+            continue
+        key = (expected_mode, row_market, row_date, ticker)
+        collected.setdefault(key, {})[captured_at] = price
+        summary["valid_rows"] += 1
+
+    observations = {
+        key: sorted(values.items(), key=lambda item: item[0])
+        for key, values in collected.items()
+    }
+    summary["ticker_count"] = len(observations)
+    return observations, summary
+
+
 def _load_existing_outcomes(
     conn: sqlite3.Connection,
     *,
@@ -359,6 +453,7 @@ def _build_outcome_row(
     observations: list[tuple[datetime, float]],
     label_generated_at: str,
     min_samples: int,
+    observation_source: str = "audit_candidate_rows",
 ) -> dict[str, Any]:
     if int(horizon_min) in DAILY_FORWARD_HORIZONS:
         raise ValueError("daily forward horizons must use _build_daily_forward_outcome_row")
@@ -371,6 +466,7 @@ def _build_outcome_row(
         "known_at": _iso(target_at),
         "sample_count": 0,
         "outcome_quality": "insufficient_samples",
+        "observation_source": observation_source,
     }
     base = {
         "candidate_key": candidate.get("candidate_key"),
@@ -382,7 +478,7 @@ def _build_outcome_row(
         "max_runup_pct": None,
         "max_drawdown_pct": None,
         "status": "insufficient_samples",
-        "source": "audit_candidate_rows",
+        "source": observation_source,
         "label_generated_at": label_generated_at,
         "payload": payload,
     }
@@ -599,6 +695,7 @@ def update_candidate_audit_outcomes(
     write_report: bool = False,
     report_dir: str | Path | None = None,
     force_recompute: bool = False,
+    preopen_outcome_path: str | Path | None = None,
 ) -> dict[str, Any]:
     target = Path(db_path) if db_path else get_runtime_path("data", "audit", "candidate_audit.db")
     label_generated_at = _utc_now()
@@ -678,6 +775,25 @@ def update_candidate_audit_outcomes(
     finally:
         conn.close()
 
+    preopen_observations, preopen_observation_summary = _load_preopen_outcome_observations(
+        session_date=session_date,
+        market=market,
+        runtime_mode=runtime_mode,
+        outcome_path=preopen_outcome_path,
+    )
+    candidate_tickers = {
+        str(row.get("ticker") or "").upper()
+        for row in candidates
+        if str(row.get("ticker") or "").strip()
+    }
+    preopen_tickers = {
+        key[3]
+        for key in preopen_observations
+        if key[0] == str(runtime_mode or "live").lower()
+        and key[1] == str(market or "").upper()
+        and key[2] == str(session_date or "")
+    }
+
     outcome_rows: list[dict[str, Any]] = []
     status_counts: dict[str, int] = {}
     for candidate in candidates:
@@ -687,7 +803,11 @@ def update_candidate_audit_outcomes(
             str(candidate.get("session_date") or ""),
             str(candidate.get("ticker") or "").upper(),
         )
-        ticker_observations = observations.get(key, [])
+        ticker_observations = preopen_observations.get(key, [])
+        observation_source = "preopen_outcome_jsonl"
+        if not ticker_observations:
+            ticker_observations = observations.get(key, [])
+            observation_source = "audit_candidate_rows"
         for horizon in horizons:
             horizon_key = int(horizon)
             if horizon_key in DAILY_FORWARD_HORIZONS:
@@ -703,6 +823,7 @@ def update_candidate_audit_outcomes(
                     observations=ticker_observations,
                     label_generated_at=label_generated_at,
                     min_samples=int(min_samples.get(horizon_key, 1)),
+                    observation_source=observation_source,
                 )
             outcome_rows.append(row)
             status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
@@ -778,6 +899,12 @@ def update_candidate_audit_outcomes(
         "last_success_at": label_generated_at if written or not candidates else "",
         "next_due_at": next_due_at,
         "outcome_health": "ok" if written or dry_run or not candidates else "no_outcomes_written",
+        "preopen_observations": {
+            **preopen_observation_summary,
+            "candidate_ticker_count": len(candidate_tickers),
+            "covered_candidate_ticker_count": len(candidate_tickers & preopen_tickers),
+            "uncovered_candidate_ticker_count": len(candidate_tickers - preopen_tickers),
+        },
     }
     if write_report:
         summary["report_paths"] = _write_outcome_report(summary, report_dir=report_dir)

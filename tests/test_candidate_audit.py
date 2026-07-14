@@ -1600,6 +1600,100 @@ class CandidateAuditBackfillTests(unittest.TestCase):
             self.assertAlmostEqual(base_30["max_runup_pct"], 3.0)
             self.assertEqual(late_30["status"], "insufficient_samples")
 
+    def test_outcome_labeler_prefers_append_only_preopen_price_samples(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "candidate_audit.db"
+            outcome_path = root / "20260508_KR_outcome.jsonl"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "call_id": "raw_outcome",
+                    "runtime_mode": "live",
+                    "market": "KR",
+                    "session_date": "2026-05-08",
+                    "known_at": "2026-05-08T09:00:00+09:00",
+                    "ticker": "AAA",
+                    "price": 100.0,
+                }
+            )
+            samples = [
+                ("2026-05-08T09:05:00+09:00", 101.0),
+                ("2026-05-08T09:10:00+09:00", 102.0),
+                ("2026-05-08T09:15:00+09:00", 103.0),
+                ("2026-05-08T09:20:00+09:00", 104.0),
+                ("2026-05-08T09:25:00+09:00", 103.0),
+                ("2026-05-08T09:30:00+09:00", 105.0),
+            ]
+            records = [
+                {
+                    "market": "KR",
+                    "mode": "live",
+                    "session_date": "2026-05-08",
+                    "ticker": "AAA",
+                    "captured_at": captured_at,
+                    "price": price,
+                    "outcome_status": "WIN",
+                }
+                for captured_at, price in samples
+            ]
+            records.append(
+                {
+                    "market": "KR",
+                    "mode": "live",
+                    "session_date": "2026-05-08",
+                    "ticker": "AAA",
+                    "captured_at": "2026-05-08T09:35:00+09:00",
+                    "price": 999.0,
+                    "outcome_status": "price_provider_error",
+                }
+            )
+            outcome_path.write_text(
+                "\n".join(json.dumps(row) for row in records) + "\n",
+                encoding="utf-8",
+            )
+
+            summary = update_candidate_audit_outcomes(
+                db_path=db_path,
+                session_date="2026-05-08",
+                market="KR",
+                horizons=(30,),
+                min_samples_by_horizon={30: 2},
+                preopen_outcome_path=outcome_path,
+            )
+
+            candidate_key_value = candidate_key(
+                session_date="2026-05-08",
+                market="KR",
+                call_id="raw_outcome",
+                ticker="AAA",
+            )
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                row = dict(
+                    conn.execute(
+                        """
+                        SELECT observed_at, observed_price, return_pct, status, source, payload_json
+                        FROM audit_candidate_outcomes
+                        WHERE candidate_key=? AND horizon_min=30
+                        """,
+                        (candidate_key_value,),
+                    ).fetchone()
+                )
+            finally:
+                conn.close()
+
+            self.assertEqual(summary["preopen_observations"]["valid_rows"], 6)
+            self.assertEqual(summary["preopen_observations"]["covered_candidate_ticker_count"], 1)
+            self.assertEqual(summary["preopen_observations"]["uncovered_candidate_ticker_count"], 0)
+            self.assertEqual(row["source"], "preopen_outcome_jsonl")
+            self.assertEqual(row["status"], "audit_sparse")
+            self.assertEqual(row["observed_at"], "2026-05-08T00:30:00")
+            self.assertAlmostEqual(row["observed_price"], 105.0)
+            self.assertAlmostEqual(row["return_pct"], 5.0)
+            self.assertEqual(json.loads(row["payload_json"])["observation_source"], "preopen_outcome_jsonl")
+
     def test_outcome_labeler_adds_daily_forward_horizons(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

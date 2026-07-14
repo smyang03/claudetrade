@@ -30972,7 +30972,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         elapsed_min = self._market_open_elapsed_min(market_key)
-        if elapsed_min is None or float(elapsed_min) < 60.0:
+        min_elapsed_min = max(1, self._runtime_int("CANDIDATE_AUDIT_INTRADAY_OUTCOME_MIN_ELAPSED_MIN", 30))
+        interval_min = max(1, self._runtime_int("CANDIDATE_AUDIT_INTRADAY_OUTCOME_INTERVAL_MIN", 5))
+        if elapsed_min is None or float(elapsed_min) < float(min_elapsed_min):
             return
         try:
             session_date = self._current_session_date_str(market_key)
@@ -30982,7 +30984,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not isinstance(done, set):
             done = set()
             self._candidate_audit_outcome_intraday_done = done
-        run_key = (getattr(self, "_mode", "live"), market_key, session_date, 60)
+        run_bucket = int(float(elapsed_min) // float(interval_min))
+        run_key = (getattr(self, "_mode", "live"), market_key, session_date, run_bucket)
         if run_key in done:
             return
         try:
@@ -31008,6 +31011,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "session_date": session_date,
                         "runtime_mode": getattr(self, "_mode", "live"),
                         "elapsed_min": round(float(elapsed_min), 2),
+                        "run_bucket": run_bucket,
+                        "interval_min": interval_min,
                         "candidate_rows": int(summary.get("candidate_rows") or 0),
                         "outcome_rows": int(summary.get("outcome_rows") or 0),
                         "status_counts": summary.get("status_counts") or {},
@@ -31032,6 +31037,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "session_date": session_date if "session_date" in locals() else "",
                         "runtime_mode": getattr(self, "_mode", "live"),
                         "elapsed_min": round(float(elapsed_min or 0.0), 2),
+                        "run_bucket": run_bucket if "run_bucket" in locals() else -1,
+                        "interval_min": interval_min if "interval_min" in locals() else 0,
                         "outcome_health": "failed",
                         "error": str(exc)[:240],
                     },
