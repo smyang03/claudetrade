@@ -78,11 +78,14 @@ def test_summary_gross_cap_setting_prefers_market_manual() -> None:
 
 
 def test_order_size_config_keys_are_common_scoped() -> None:
+    # 2026-07-09 예산값 단일화: 수량 계산이 소비하는 시장별 실효 키(_KR/_US)가 추가됐다.
     expected = [
         "MAX_ORDER_KRW",
         "KR_FIXED_ORDER_KRW",
         "US_FIXED_ORDER_KRW",
         "PATHB_FIXED_ORDER_KRW",
+        "PATHB_FIXED_ORDER_KRW_KR",
+        "PATHB_FIXED_ORDER_KRW_US",
     ]
     assert dashboard_server._order_size_config_keys("US") == expected
     assert dashboard_server._order_size_config_keys("KR") == expected
@@ -127,12 +130,16 @@ def test_update_start_config_order_size_writes_common_keys_from_us_control(tmp_p
         "KR_FIXED_ORDER_KRW",
         "US_FIXED_ORDER_KRW",
         "PATHB_FIXED_ORDER_KRW",
+        "PATHB_FIXED_ORDER_KRW_KR",
+        "PATHB_FIXED_ORDER_KRW_US",
     ]
     assert data["US_FIXED_ORDER_KRW"] == 650000
     assert data["env_overrides"]["MAX_ORDER_KRW"] == "650000"
     assert data["env_overrides"]["KR_FIXED_ORDER_KRW"] == "650000"
     assert data["env_overrides"]["US_FIXED_ORDER_KRW"] == "650000"
     assert data["env_overrides"]["PATHB_FIXED_ORDER_KRW"] == "650000"
+    assert data["env_overrides"]["PATHB_FIXED_ORDER_KRW_KR"] == "650000"
+    assert data["env_overrides"]["PATHB_FIXED_ORDER_KRW_US"] == "650000"
     assert "MAX_ORDER_KRW=650000" in env_text
     assert "KR_FIXED_ORDER_KRW=650000" in env_text
     assert "US_FIXED_ORDER_KRW=650000" in env_text
@@ -168,6 +175,8 @@ def test_update_start_config_order_size_writes_common_keys_from_kr_control(tmp_p
         "KR_FIXED_ORDER_KRW",
         "US_FIXED_ORDER_KRW",
         "PATHB_FIXED_ORDER_KRW",
+        "PATHB_FIXED_ORDER_KRW_KR",
+        "PATHB_FIXED_ORDER_KRW_US",
     ]
     assert data["KR_FIXED_ORDER_KRW"] == 550000
     assert data["US_FIXED_ORDER_KRW"] == 550000
@@ -175,6 +184,8 @@ def test_update_start_config_order_size_writes_common_keys_from_kr_control(tmp_p
     assert data["env_overrides"]["KR_FIXED_ORDER_KRW"] == "550000"
     assert data["env_overrides"]["US_FIXED_ORDER_KRW"] == "550000"
     assert data["env_overrides"]["PATHB_FIXED_ORDER_KRW"] == "550000"
+    assert data["env_overrides"]["PATHB_FIXED_ORDER_KRW_KR"] == "550000"
+    assert data["env_overrides"]["PATHB_FIXED_ORDER_KRW_US"] == "550000"
 
 
 def test_update_start_config_gross_cap_writes_market_specific_keys(tmp_path) -> None:

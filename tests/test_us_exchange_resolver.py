@@ -13,10 +13,11 @@ class UsExchangeResolverTests(unittest.TestCase):
             kis_api, "_save_exchange_cache"
         ) as save_mock:
             code = kis_api._get_ovrs_excg_cd("ORCL", token=None)
-
-        self.assertEqual(code, "NYSE")
-        self.assertEqual(kis_api._US_EXCHANGE_CACHE["ORCL"], "NYSE")
-        save_mock.assert_called_once()
+            # 검증은 patch.dict가 원본 캐시를 복원하기 전(with 블록 안)에 해야 한다.
+            # 밖에서 하면 전체 스위트 실행 순서에 따라 _US_EXCHANGE_CACHE에 ORCL이 없어 KeyError.
+            self.assertEqual(code, "NYSE")
+            self.assertEqual(kis_api._US_EXCHANGE_CACHE["ORCL"], "NYSE")
+            save_mock.assert_called_once()
 
     def test_hardcoded_exchange_overrides_stale_cache_and_saves(self) -> None:
         with patch.dict(kis_api._US_EXCHANGE_CACHE, {"NOK": "NASD"}, clear=True), patch.object(
