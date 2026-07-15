@@ -27,12 +27,13 @@ if (-not $DryRun) {
 }
 
 $roles = @(
+    # The core source must be stable and promoted before the live bot can read it.
+    @{ Name = "core_shadow_tracker"; PidFile = "state\core_shadow_tracker_heartbeat.json"; Args = @("tools\core_shadow_tracker.py", "--loop", "--interval-sec", "21600") },
     @{ Name = "trading_bot"; PidFile = "state\live_trading_bot.pid"; Args = @("trading_bot.py", "--live") },
     @{ Name = "dashboard"; PidFile = "state\dashboard_server.pid"; Args = @("dashboard\dashboard_server.py") },
     @{ Name = "live_guardian"; PidFile = "state\live_guardian_heartbeat.json"; Args = @("tools\live_guardian.py", "--mode", "live", "--watch", "--ensure-bot", "--interval-sec", "300", "--telegram-alert") },
     @{ Name = "broker_truth_scheduler"; PidFile = "state\broker_truth_scheduler.lock.json"; Args = @("tools\broker_truth_scheduler.py", "--mode", "live", "--markets", "KR,US", "--loop", "--interval-sec", "30", "--refresh-interval-min", "2", "--failure-retry-min", "2", "--preopen-min", "20", "--postclose-min", "15", "--ttl-sec", "180", "--no-refresh-on-start") },
     @{ Name = "preopen_scheduler"; PidFile = "state\preopen_scheduler.lock.json"; Args = @("tools\preopen_scheduler.py", "--mode", "live", "--markets", "KR,US", "--loop", "--interval-sec", "60") },
-    @{ Name = "core_shadow_tracker"; PidFile = "state\core_shadow_tracker_heartbeat.json"; Args = @("tools\core_shadow_tracker.py", "--loop", "--interval-sec", "21600") },
     @{ Name = "counterfactual_pipeline"; PidFile = ""; Args = @("tools\run_counterfactual_pipeline.py", "--phase", "due", "--market", "KR,US", "--loop", "--interval-sec", "300", "--json") },
     @{ Name = "integrity_check"; PidFile = ""; Args = @("tools\integrity_check.py", "--watch", "--interval-sec", "600", "--telegram-alert") }
 )
@@ -100,6 +101,36 @@ function Test-ClaudeTradePythonPid([int]$ProcessId) {
     }
 }
 
+function Sync-CoreLiveManifests {
+    if ($DryRun) {
+        Write-Output "[DRY-RUN] would wait for core_shadow_tracker and refresh current KR/US core live manifests"
+        return
+    }
+    $heartbeatPath = Join-Path $Root "state\core_shadow_tracker_heartbeat.json"
+    $healthy = $false
+    for ($attempt = 0; $attempt -lt 120; $attempt++) {
+        try {
+            $heartbeat = Get-Content -LiteralPath $heartbeatPath -Raw | ConvertFrom-Json
+            $trackerPid = [int]$heartbeat.pid
+            if ($heartbeat.status -eq "healthy" -and (Test-ClaudeTradePythonPid $trackerPid)) {
+                $healthy = $true
+                break
+            }
+        } catch {
+            # The tracker writes its heartbeat atomically; retry while it starts.
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $healthy) {
+        throw "core_shadow_tracker did not become healthy; live core manifests were not refreshed"
+    }
+    & $PythonExe "tools\profit_strategy_materializer.py" "--core-current-sessions"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Current-session core live manifest refresh failed"
+    }
+    Write-Output "[CORE AUTHORITY] current KR/US manifests refreshed after tracker"
+}
+
 foreach ($role in $roles) {
     $candidatePids = @()
     if ($manifest.ContainsKey($role.Name)) {
@@ -113,6 +144,9 @@ foreach ($role in $roles) {
     if ($runningPid.Count -gt 0) {
         $manifest[$role.Name] = [int]$runningPid[0]
         Write-Output "[OK] $($role.Name) already running pid=$($runningPid[0])"
+        if ($role.Name -eq "core_shadow_tracker") {
+            Sync-CoreLiveManifests
+        }
         continue
     }
 
@@ -154,6 +188,9 @@ foreach ($role in $roles) {
         -PassThru
     $manifest[$role.Name] = [int]$process.Id
     Write-Output "[START] $($role.Name) pid=$($process.Id)"
+    if ($role.Name -eq "core_shadow_tracker") {
+        Sync-CoreLiveManifests
+    }
 }
 
 if (-not $DryRun) {

@@ -14,12 +14,15 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import sys
 from typing import Any, Callable
 
 import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 SELECTION_DB = ROOT / "data" / "ticker_selection_log.db"
 SECTOR_PAIRS = {
     "SOXX": "091160",
@@ -368,12 +371,62 @@ def materialize(*, market: str, session_date: str, output_path: Path) -> dict[st
     return payload
 
 
+def _load_live_operator_env() -> None:
+    """Make direct/restart invocations obey the same two-source live config."""
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(ROOT / ".env.live", override=True)
+    except Exception:
+        pass
+    config_path = Path(os.getenv("V2_START_CONFIG_PATH", "config/v2_start_config.json"))
+    if not config_path.is_absolute():
+        config_path = ROOT / config_path
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        payload = {}
+    overrides = payload.get("env_overrides") if isinstance(payload, dict) else {}
+    if isinstance(overrides, dict):
+        for key, value in overrides.items():
+            if key:
+                os.environ[str(key)] = str(value)
+
+
+def materialize_current_core_manifests() -> dict[str, dict[str, Any]]:
+    """Refresh both market manifests after a core tracker/restart rewrite."""
+    from bot.session_date import KST, resolve_session_date_str
+
+    now = datetime.now(KST)
+    output: dict[str, dict[str, Any]] = {}
+    for market in ("KR", "US"):
+        session_date = resolve_session_date_str(market, now)
+        output[market] = materialize_core_live_manifest(
+            market=market,
+            session_date=session_date,
+            output_path=ROOT / "state" / f"profit_strategy_core_live_manifest_{market}.json",
+        )
+    return output
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--market", required=True, choices=("KR", "US"))
+    parser.add_argument("--market", choices=("KR", "US"))
     parser.add_argument("--session-date", default=str(date.today()))
     parser.add_argument("--output", default="")
+    parser.add_argument(
+        "--core-current-sessions",
+        action="store_true",
+        help="refresh validated KR/US live core manifests for their current session dates",
+    )
     args = parser.parse_args()
+    _load_live_operator_env()
+    if args.core_current_sessions:
+        manifests = materialize_current_core_manifests()
+        print(json.dumps({"core_live_manifests": manifests}, ensure_ascii=False))
+        return 0 if all(item.get("status") == "healthy" for item in manifests.values()) else 1
+    if not args.market:
+        parser.error("--market is required unless --core-current-sessions is used")
     output = Path(args.output) if args.output else ROOT / "state" / f"profit_strategy_signals_{args.market}.json"
     payload = materialize(market=args.market, session_date=args.session_date, output_path=output)
     manifest_path = ROOT / "state" / f"profit_strategy_core_live_manifest_{args.market}.json"

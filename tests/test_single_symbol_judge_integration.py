@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta
+from pathlib import Path
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -41,6 +44,284 @@ def _base_bot() -> TradingBot:
 
 
 class SingleSymbolJudgeIntegrationTests(unittest.TestCase):
+    def test_entry_blackout_candidate_is_queued_then_replayed_with_fresh_evidence(self) -> None:
+        bot = _base_bot()
+        bot.session_active = True
+        bot.current_market = "US"
+        bot._last_post_open_features_by_ticker["US"]["PYPL"] = {
+            "current_price": 53.92,
+            "opening_range_break": True,
+            "volume_ratio_open": 2.2,
+            "vwap_distance_pct": 0.8,
+            "data_quality": "minute_complete",
+        }
+        blackout = {"active": True}
+        bot._in_entry_blackout = lambda market: blackout["active"]
+        calls: list[str] = []
+        bot._single_symbol_judge_client = lambda **kwargs: calls.append(kwargs["ticker"]) or {
+            "ticker": kwargs["ticker"],
+            "market": kwargs["market"],
+            "action": "PULLBACK_WAIT",
+            "route": "path_b",
+            "confidence": 0.72,
+            "reason": "fresh event pullback",
+            "buy_zone_low": 53.0,
+            "buy_zone_high": 53.8,
+            "sell_target": 57.0,
+            "stop_loss": 51.5,
+            "hold_days": 1,
+            "invalid_if": "breaks event low",
+            "structural_basis": "VWAP retest",
+        }
+        bot._apply_selection_meta = lambda *args, **kwargs: kwargs.get("meta_override")
+        row = {
+            "ticker": "PYPL",
+            "trainer_candidate_state": "PLAN_B",
+            "trainer_prompt_score": 80.0,
+            "post_open_features": bot._last_post_open_features_by_ticker["US"]["PYPL"],
+        }
+        env = {
+            "EARLY_JUDGE_TRIGGER_ENABLED": "true",
+            "US_EARLY_JUDGE_TRIGGER_ENABLED": "true",
+            "EARLY_JUDGE_RECHECK_CONSUMER_ENABLED": "true",
+            "ADAPTIVE_REASK_CLAUDE_BRIDGE_ENABLED": "false",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            first = TradingBot.maybe_run_early_judge_triggers(bot, "US", source="sub_screener", rows=[row])
+            self.assertEqual(first, [])
+            self.assertEqual(calls, [])
+            self.assertEqual(bot._early_judge_recheck_queue["US"][0]["reason"], "entry_blackout")
+            bot._early_judge_recheck_queue["US"][0]["due_at"] = (
+                datetime.now() - timedelta(seconds=1)
+            ).isoformat(timespec="seconds")
+            blackout["active"] = False
+            consumed = TradingBot.run_early_judge_rechecks(bot, "US")
+
+        self.assertEqual(consumed["status"], "processed")
+        self.assertEqual(consumed["called"], ["PYPL"])
+        self.assertEqual(calls, ["PYPL"])
+
+    def test_wait_recheck_queue_is_consumed_instead_of_becoming_write_only(self) -> None:
+        bot = _base_bot()
+        bot.session_active = True
+        bot.current_market = "US"
+        calls: list[str] = []
+
+        def judge(**kwargs):
+            calls.append(kwargs["ticker"])
+            if len(calls) == 1:
+                return {
+                    "ticker": kwargs["ticker"],
+                    "market": kwargs["market"],
+                    "action": "WAIT_RECHECK",
+                    "route": "wait",
+                    "reason": "wait for confirmation",
+                    "recheck_after_min": 5,
+                }
+            return {
+                "ticker": kwargs["ticker"],
+                "market": kwargs["market"],
+                "action": "PULLBACK_WAIT",
+                "route": "path_b",
+                "confidence": 0.75,
+                "reason": "confirmed pullback",
+                "buy_zone_low": 100.0,
+                "buy_zone_high": 101.0,
+                "sell_target": 106.0,
+                "stop_loss": 98.0,
+                "hold_days": 1,
+                "invalid_if": "breaks support",
+                "structural_basis": "VWAP retest",
+            }
+
+        bot._single_symbol_judge_client = judge
+        bot._apply_selection_meta = lambda *args, **kwargs: kwargs.get("meta_override")
+        row = {
+            "ticker": "AVGO",
+            "trainer_candidate_state": "PLAN_B",
+            "trainer_prompt_score": 80.0,
+            "post_open_features": bot._last_post_open_features_by_ticker["US"]["AVGO"],
+        }
+        env = {
+            "EARLY_JUDGE_TRIGGER_ENABLED": "true",
+            "US_EARLY_JUDGE_TRIGGER_ENABLED": "true",
+            "EARLY_JUDGE_RECHECK_CONSUMER_ENABLED": "true",
+            "ADAPTIVE_REASK_CLAUDE_BRIDGE_ENABLED": "false",
+            "EARLY_JUDGE_COOLDOWN_MIN": "0",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            first = TradingBot.maybe_run_early_judge_triggers(bot, "US", source="sub_screener", rows=[row])
+            self.assertEqual(first[0]["action"], "WAIT_RECHECK")
+            self.assertEqual(bot._early_judge_recheck_queue["US"][0]["attempts"], 1)
+            bot._early_judge_recheck_queue["US"][0]["due_at"] = (
+                datetime.now() - timedelta(seconds=1)
+            ).isoformat(timespec="seconds")
+            consumed = TradingBot.run_early_judge_rechecks(bot, "US")
+
+        self.assertEqual(calls, ["AVGO", "AVGO"])
+        self.assertEqual(consumed["called"], ["AVGO"])
+        self.assertEqual(bot._early_judge_recheck_queue["US"], [])
+
+    def test_restart_budget_ledger_preserves_same_session_and_resets_new_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "early_judge_budget.json"
+            source = _base_bot()
+            source.is_paper = False
+            source._early_judge_budget_state_loaded = True
+            source._early_judge_budget_state_path = lambda: path
+            source._early_judge_budget_marker = {"market": "US", "session_date": "2026-07-15"}
+            source._early_judge_session_call_count = {"KR": 0, "US": 7}
+            source._early_judge_ticker_session_call_count = {"KR": {}, "US": {"PYPL": 1, "BLK": 2}}
+            source._early_judge_call_times = [datetime.now().isoformat(timespec="seconds")]
+            TradingBot._save_early_judge_budget_state(source)
+
+            restored = _base_bot()
+            restored.is_paper = False
+            restored._early_judge_budget_state_path = lambda: path
+            TradingBot._load_early_judge_budget_state(restored)
+            TradingBot._sync_early_judge_budget_session(
+                restored, "US", "2026-07-15", trigger="startup_mid_session"
+            )
+            self.assertEqual(restored._early_judge_session_call_count["US"], 7)
+            self.assertEqual(restored._early_judge_ticker_session_call_count["US"]["BLK"], 2)
+
+            TradingBot._sync_early_judge_budget_session(restored, "KR", "2026-07-16", trigger="schedule")
+            self.assertEqual(restored._early_judge_session_call_count, {"KR": 0, "US": 0})
+            self.assertEqual(restored._early_judge_recheck_queue, {"KR": [], "US": []})
+
+    def test_per_ticker_call_cap_prevents_one_symbol_from_hogging_budget(self) -> None:
+        bot = _base_bot()
+        bot._early_judge_ticker_session_call_count = {"KR": {}, "US": {"BLK": 2}}
+        calls: list[str] = []
+        bot._single_symbol_judge_client = lambda **kwargs: calls.append(kwargs["ticker"]) or {}
+        row = {
+            "ticker": "BLK",
+            "trainer_candidate_state": "PLAN_B",
+            "trainer_prompt_score": 99.0,
+            "post_open_features": {"current_price": 1000.0, "data_quality": "minute_complete"},
+        }
+        with patch.dict(
+            os.environ,
+            {
+                "EARLY_JUDGE_TRIGGER_ENABLED": "true",
+                "US_EARLY_JUDGE_TRIGGER_ENABLED": "true",
+                "EARLY_JUDGE_MAX_CALLS_PER_TICKER_PER_SESSION": "2",
+            },
+            clear=False,
+        ):
+            result = TradingBot.maybe_run_early_judge_triggers(bot, "US", source="sub_screener", rows=[row])
+
+        self.assertEqual(result, [])
+        self.assertEqual(calls, [])
+
+    def test_watch_signal_bridge_queues_claude_rejudge_without_local_promotion(self) -> None:
+        bot = _base_bot()
+        bot._last_post_open_features_by_ticker["US"]["PYPL"] = {
+            "current_price": 54.0,
+            "data_quality": "minute_complete",
+        }
+        events: list[tuple[str, dict]] = []
+        bot._write_funnel_event = lambda event, market, payload: events.append((event, dict(payload)))
+        with patch.dict(
+            os.environ,
+            {"WATCH_TRIGGER_REASK_CLAUDE_ENABLED": "true"},
+            clear=False,
+        ):
+            TradingBot._log_watch_trigger_shadow(
+                bot,
+                "US",
+                "PYPL",
+                price=54.0,
+                mode="MILD_BULL",
+                strategy="momentum",
+                signal_fired=True,
+                result="would_promote",
+            )
+
+        self.assertEqual(bot.trade_ready_tickers["US"], [])
+        self.assertEqual(bot._early_judge_recheck_queue["US"][0]["ticker"], "PYPL")
+        self.assertEqual(bot._early_judge_recheck_queue["US"][0]["source"], "watch_trigger_signal_reask")
+        shadow_event = [payload for event, payload in events if event == "watch_trigger_shadow"][-1]
+        self.assertTrue(shadow_event["claude_reask_queued"])
+
+    def test_obviously_unaffordable_candidate_is_skipped_before_claude_call(self) -> None:
+        bot = _base_bot()
+        bot.pathb = SimpleNamespace(_pathb_registration_max_entry_krw=lambda market: 1_000_000)
+        bot._price_to_krw = lambda price, market: float(price) * 1_500.0
+        calls: list[str] = []
+        events: list[dict[str, object]] = []
+        bot._single_symbol_judge_client = lambda **kwargs: calls.append(kwargs["ticker"]) or {
+            "ticker": kwargs["ticker"],
+            "market": kwargs["market"],
+            "action": "WAIT_RECHECK",
+            "route": "wait",
+            "reason": "should not be called",
+        }
+        bot._write_funnel_event = lambda event, market, payload: events.append(dict(payload))
+        rows = [
+            {
+                "ticker": "BLK",
+                "trainer_candidate_state": "PLAN_B",
+                "trainer_prompt_score": 80.0,
+                "post_open_features": {"current_price": 1_100.0, "data_quality": "minute_complete"},
+            }
+        ]
+
+        with patch.dict(
+            os.environ,
+            {
+                "EARLY_JUDGE_TRIGGER_ENABLED": "true",
+                "US_EARLY_JUDGE_TRIGGER_ENABLED": "true",
+                "PATHB_EARLY_JUDGE_AFFORDABILITY_PREFILTER_ENABLED": "true",
+                "PATHB_EARLY_JUDGE_AFFORDABILITY_PULLBACK_BUFFER_PCT": "15",
+            },
+            clear=False,
+        ):
+            results = TradingBot.maybe_run_early_judge_triggers(bot, "US", source="sub_screener", rows=rows)
+
+        self.assertEqual(results, [])
+        self.assertEqual(calls, [])
+        self.assertEqual(events[-1]["hard_skip_reason"], "high_price_unaffordable_before_judge")
+        gate = events[-1]["affordability_prefilter"]
+        self.assertFalse(gate["allowed"])
+        self.assertEqual(gate["max_entry_krw"], 1_000_000.0)
+        self.assertEqual(gate["buffered_entry_krw"], 1_402_500.0)
+
+    def test_near_cap_candidate_remains_eligible_for_pullback_judge(self) -> None:
+        bot = _base_bot()
+        bot.pathb = SimpleNamespace(_pathb_registration_max_entry_krw=lambda market: 1_000_000)
+        bot._price_to_krw = lambda price, market: float(price) * 1_500.0
+        bot._single_symbol_judge_client = lambda **kwargs: {
+            "ticker": kwargs["ticker"],
+            "market": kwargs["market"],
+            "action": "WAIT_RECHECK",
+            "route": "wait",
+            "reason": "wait for a lower entry",
+        }
+        rows = [
+            {
+                "ticker": "AVGO",
+                "trainer_candidate_state": "PLAN_B",
+                "trainer_prompt_score": 80.0,
+                "post_open_features": {"current_price": 700.0, "data_quality": "minute_complete"},
+            }
+        ]
+
+        with patch.dict(
+            os.environ,
+            {
+                "EARLY_JUDGE_TRIGGER_ENABLED": "true",
+                "US_EARLY_JUDGE_TRIGGER_ENABLED": "true",
+                "PATHB_EARLY_JUDGE_AFFORDABILITY_PREFILTER_ENABLED": "true",
+                "PATHB_EARLY_JUDGE_AFFORDABILITY_PULLBACK_BUFFER_PCT": "15",
+            },
+            clear=False,
+        ):
+            results = TradingBot.maybe_run_early_judge_triggers(bot, "US", source="sub_screener", rows=rows)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["ticker"], "AVGO")
+
     def test_triggered_pathb_judge_merges_candidate_action_overlay_only(self) -> None:
         bot = _base_bot()
         captured: dict[str, object] = {}

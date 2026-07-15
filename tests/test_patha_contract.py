@@ -188,6 +188,7 @@ class PathAContractTests(unittest.TestCase):
         bot._last_screen_candidates = {"KR": [], "US": []}
         bot._watch_only_bucket = lambda market, ticker: "SOFT"
         bot._is_trade_ready_ticker = lambda market, ticker: False
+        bot._in_entry_blackout = lambda market: False
 
         allowed = TradingBot._watch_trigger_shadow_rank_candidates(
             bot,
@@ -198,6 +199,41 @@ class PathAContractTests(unittest.TestCase):
         )
 
         self.assertEqual(allowed, {"HIGH"})
+
+    def test_watch_trigger_shadow_round_robin_prevents_priority_starvation(self) -> None:
+        bot = TradingBot.__new__(TradingBot)
+        bot.runtime_config = None
+        bot.selection_meta = {
+            "KR": {},
+            "US": {
+                "candidate_actions": [
+                    {"ticker": "PYPL", "strategy": "momentum", "trainer_prompt_score": 40.0},
+                    {"ticker": "BLK", "strategy": "momentum", "trainer_prompt_score": 99.0},
+                ],
+            },
+        }
+        bot._last_screen_candidates = {"KR": [], "US": []}
+        bot._watch_only_bucket = lambda market, ticker: "SOFT"
+        bot._is_trade_ready_ticker = lambda market, ticker: False
+        bot._in_entry_blackout = lambda market: False
+        bot._watch_trigger_shadow_eval_counts = {"KR": {}, "US": {"BLK": 1}}
+
+        with patch.dict(
+            "os.environ",
+            {"WATCH_TRIGGER_SHADOW_MAX_EVALS_PER_TICKER_PER_ROUND": "1"},
+            clear=False,
+        ):
+            first = TradingBot._watch_trigger_shadow_rank_candidates(
+                bot, "US", ["BLK", "PYPL"], "BALANCED", 1
+            )
+            self.assertEqual(first, {"PYPL"})
+            bot._watch_trigger_shadow_eval_counts["US"]["PYPL"] = 1
+            second = TradingBot._watch_trigger_shadow_rank_candidates(
+                bot, "US", ["BLK", "PYPL"], "BALANCED", 1
+            )
+
+        self.assertEqual(second, {"BLK"})
+        self.assertEqual(bot._watch_trigger_shadow_eval_counts["US"], {"BLK": 0, "PYPL": 0})
 
     def test_candidate_entry_timing_context_builds_fallback_snapshot(self) -> None:
         bot = TradingBot.__new__(TradingBot)

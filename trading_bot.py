@@ -1075,7 +1075,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._early_judge_reject_until: dict[str, dict[str, str]] = {"KR": {}, "US": {}}
         self._early_judge_recheck_queue: dict[str, list[dict[str, Any]]] = {"KR": [], "US": []}
         self._early_judge_session_call_count: dict[str, int] = {"KR": 0, "US": 0}
+        self._early_judge_ticker_session_call_count: dict[str, dict[str, int]] = {"KR": {}, "US": {}}
         self._early_judge_call_times: list[datetime] = []
+        self._early_judge_budget_marker: dict[str, str] = {"market": "", "session_date": ""}
+        self._early_judge_budget_state_loaded = False
+        self._watch_trigger_shadow_eval_counts: dict[str, dict[str, int]] = {"KR": {}, "US": {}}
         # preopen PlanB bridge: 장전 PULLBACK_WAIT seed → 장중 live evidence → PathB 등록
         self._planb_bridge_seed_tickers: dict[str, list[str]] = {"KR": [], "US": []}
         self._planb_bridge_seed_meta: dict[str, dict[str, Any]] = {"KR": {}, "US": {}}
@@ -1128,6 +1132,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._or_low: dict[str, float] = {}
         self._or_formed: dict[str, bool] = {}
         self._restore_runtime_handoff_snapshot()
+        self._load_early_judge_budget_state()
         self._restore_post_open_features_from_jsonl()
         self._intraday_recheck_stale_alert_keys: set[str] = set()
         # KIS 지수 스냅샷 캐시 — API 일시 실패 시 TTL 내 이전 성공 값 재사용
@@ -12428,6 +12433,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if cap <= 0 or str(mode or "").upper() in {"DEFENSIVE", "HALT"}:
             return set()
         market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            if self._in_entry_blackout(market_key):
+                return set()
+        except Exception:
+            pass
+        self._ensure_early_judge_state()
+        max_per_ticker = max(
+            1,
+            self._runtime_int("WATCH_TRIGGER_SHADOW_MAX_EVALS_PER_TICKER_PER_ROUND", 1),
+        )
+        eval_counts = self._watch_trigger_shadow_eval_counts.get(market_key) or {}
         scored: list[tuple[float, int, str]] = []
         for idx, ticker in enumerate(list(tickers or [])):
             key = self._selection_ticker_key(market_key, ticker)
@@ -12439,8 +12455,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if not strategy:
                 continue
             scored.append((self._watch_trigger_shadow_candidate_score(market_key, key), idx, key))
+        under_round_cap = [
+            item for item in scored if int(eval_counts.get(item[2], 0) or 0) < max_per_ticker
+        ]
+        if not under_round_cap and scored:
+            # Every executable watch candidate received its bounded turn. Start a
+            # fresh round instead of permanently starving later breakouts.
+            for _score, _idx, key in scored:
+                eval_counts[key] = 0
+            self._watch_trigger_shadow_eval_counts[market_key] = eval_counts
+            self._save_early_judge_budget_state()
+            under_round_cap = list(scored)
+        scored = under_round_cap
         scored.sort(key=lambda item: (-item[0], item[1], item[2]))
         return {key for _score, _idx, key in scored[:cap]}
+
+    def _record_watch_trigger_shadow_evaluation(self, market: str, ticker: str) -> None:
+        self._ensure_early_judge_state()
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = self._selection_ticker_key(market_key, ticker)
+        if not ticker_key:
+            return
+        counts = self._watch_trigger_shadow_eval_counts.setdefault(market_key, {})
+        counts[ticker_key] = int(counts.get(ticker_key, 0) or 0) + 1
+        self._save_early_judge_budget_state()
 
     def _log_watch_trigger_not_evaluated(
         self,
@@ -12529,6 +12567,39 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "detail": detail,
             "skipped_cycles_before_eval": skipped_cycles,
         }
+        resolved_result = str(payload.get("result") or "").lower()
+        if (
+            resolved_result == "would_promote"
+            and bool(signal_fired)
+            and self._runtime_bool("WATCH_TRIGGER_REASK_CLAUDE_ENABLED", False)
+        ):
+            features = self._early_judge_feature_for_ticker(
+                market_key,
+                ticker_key,
+                (getattr(self, "selection_meta", {}) or {}).get(market_key) or {},
+            )
+            if not features and float(price or 0.0) > 0:
+                features = {"current_price": float(price), "data_quality": "runtime_signal_observed"}
+            queued = self._queue_early_judge_recheck(
+                market_key,
+                ticker_key,
+                source="watch_trigger_signal_reask",
+                reason="watch_trigger_signal_fired",
+                row={
+                    "ticker": ticker_key,
+                    "market": market_key,
+                    "source": "watch_trigger_signal_reask",
+                    "early_judge_source": "watch_trigger_signal_reask",
+                    "trainer_candidate_state": "PLAN_B",
+                    "strategy": strategy,
+                    "reason": watch_only_reason or "local_strategy_signal_requires_claude_rejudge",
+                    "post_open_features": features,
+                },
+                delay_min=0.0,
+                attempts=0,
+            )
+            payload["claude_reask_queued"] = bool(queued)
+            payload["execution_authority"] = "claude_single_symbol_judge_only"
         analysis_log.info(
             f"[watch_trigger_shadow {market_key}] {ticker_key} {payload['result']}",
             extra={"extra": payload},
@@ -29820,7 +29891,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         if isinstance(getattr(self, "_buy_time_confirm_call_counts", None), dict):
             self._buy_time_confirm_call_counts[market_key] = 0
-        self._early_judge_session_call_count = {"KR": 0, "US": 0}
+        self._sync_early_judge_budget_session(
+            market_key,
+            session_date_obj.isoformat(),
+            trigger=trigger,
+        )
         self._backfill_missed_postmortem(market)
         if market == "US":
             try:
@@ -31289,13 +31364,482 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._early_judge_recheck_queue = {"KR": [], "US": []}
         if not isinstance(getattr(self, "_early_judge_session_call_count", None), dict):
             self._early_judge_session_call_count = {"KR": 0, "US": 0}
+        if not isinstance(getattr(self, "_early_judge_ticker_session_call_count", None), dict):
+            self._early_judge_ticker_session_call_count = {"KR": {}, "US": {}}
         if not isinstance(getattr(self, "_early_judge_call_times", None), list):
             self._early_judge_call_times = []
+        if not isinstance(getattr(self, "_early_judge_budget_marker", None), dict):
+            self._early_judge_budget_marker = {"market": "", "session_date": ""}
+        if not isinstance(getattr(self, "_watch_trigger_shadow_eval_counts", None), dict):
+            self._watch_trigger_shadow_eval_counts = {"KR": {}, "US": {}}
         for market_key in ("KR", "US"):
             self._early_judge_last_called_at.setdefault(market_key, {})
             self._early_judge_reject_until.setdefault(market_key, {})
             self._early_judge_recheck_queue.setdefault(market_key, [])
             self._early_judge_session_call_count.setdefault(market_key, 0)
+            if not isinstance(self._early_judge_ticker_session_call_count.get(market_key), dict):
+                self._early_judge_ticker_session_call_count[market_key] = {}
+            if not isinstance(self._watch_trigger_shadow_eval_counts.get(market_key), dict):
+                self._watch_trigger_shadow_eval_counts[market_key] = {}
+
+    def _early_judge_budget_state_path(self) -> Path:
+        return get_runtime_path("state", f"{getattr(self, '_mode', 'live')}_early_judge_budget.json")
+
+    def _load_early_judge_budget_state(self) -> None:
+        """Restore the exact per-session Claude budget and retry queue after a restart."""
+        self._ensure_early_judge_state()
+        self._early_judge_budget_state_loaded = True
+        path = self._early_judge_budget_state_path()
+        if not path.exists():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            log.warning(f"[early judge budget] restore failed: {exc}")
+            return
+        if str(payload.get("mode") or "") != str(getattr(self, "_mode", "live")):
+            return
+        marker = payload.get("budget_marker")
+        if isinstance(marker, dict):
+            self._early_judge_budget_marker = {
+                "market": str(marker.get("market") or "").upper(),
+                "session_date": str(marker.get("session_date") or ""),
+            }
+        for attr in (
+            "_early_judge_last_called_at",
+            "_early_judge_reject_until",
+            "_early_judge_recheck_queue",
+            "_early_judge_session_call_count",
+            "_early_judge_ticker_session_call_count",
+            "_watch_trigger_shadow_eval_counts",
+        ):
+            value = payload.get(attr)
+            if isinstance(value, dict):
+                setattr(self, attr, value)
+        raw_times = payload.get("_early_judge_call_times")
+        if isinstance(raw_times, list):
+            self._early_judge_call_times = list(raw_times)
+        self._ensure_early_judge_state()
+        log.info(
+            "[early judge budget] restored "
+            f"marker={self._early_judge_budget_marker} calls={self._early_judge_session_call_count} "
+            f"queued={{'KR': {len(self._early_judge_recheck_queue['KR'])}, "
+            f"'US': {len(self._early_judge_recheck_queue['US'])}}}"
+        )
+
+    def _save_early_judge_budget_state(self) -> None:
+        if not bool(getattr(self, "_early_judge_budget_state_loaded", False)):
+            return
+        self._ensure_early_judge_state()
+        payload = {
+            "schema_version": 1,
+            "mode": str(getattr(self, "_mode", "live")),
+            "written_at": datetime.now(KST).isoformat(timespec="seconds"),
+            "budget_marker": dict(self._early_judge_budget_marker),
+            "_early_judge_last_called_at": self._early_judge_last_called_at,
+            "_early_judge_reject_until": self._early_judge_reject_until,
+            "_early_judge_recheck_queue": self._early_judge_recheck_queue,
+            "_early_judge_session_call_count": self._early_judge_session_call_count,
+            "_early_judge_ticker_session_call_count": self._early_judge_ticker_session_call_count,
+            "_early_judge_call_times": [
+                value.isoformat(timespec="seconds") if isinstance(value, datetime) else str(value)
+                for value in list(self._early_judge_call_times or [])
+            ],
+            "_watch_trigger_shadow_eval_counts": self._watch_trigger_shadow_eval_counts,
+        }
+        try:
+            _atomic_json_dump_with_retry(self._early_judge_budget_state_path(), payload, indent=2, default=str)
+        except Exception as exc:
+            log.warning(f"[early judge budget] save failed: {exc}")
+
+    def _sync_early_judge_budget_session(self, market: str, session_date: str, *, trigger: str = "") -> None:
+        """Reset once at a genuinely new market session, never on a mid-session restart."""
+        self._ensure_early_judge_state()
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        wanted = {"market": market_key, "session_date": str(session_date or "")}
+        current = {
+            "market": str(self._early_judge_budget_marker.get("market") or "").upper(),
+            "session_date": str(self._early_judge_budget_marker.get("session_date") or ""),
+        }
+        if current == wanted:
+            return
+        self._early_judge_last_called_at = {"KR": {}, "US": {}}
+        self._early_judge_reject_until = {"KR": {}, "US": {}}
+        self._early_judge_recheck_queue = {"KR": [], "US": []}
+        self._early_judge_session_call_count = {"KR": 0, "US": 0}
+        self._early_judge_ticker_session_call_count = {"KR": {}, "US": {}}
+        self._early_judge_call_times = []
+        self._watch_trigger_shadow_eval_counts = {"KR": {}, "US": {}}
+        self._early_judge_budget_marker = wanted
+        self._save_early_judge_budget_state()
+        log.info(f"[early judge budget] new session marker={wanted} trigger={trigger or 'unknown'}")
+
+    @staticmethod
+    def _early_judge_compact_candidate_row(row: dict[str, Any] | None) -> dict[str, Any]:
+        source = dict(row or {})
+        allowed = (
+            "ticker", "market", "source", "early_judge_source", "trainer_candidate_state",
+            "trainer_prompt_score", "trainer_plan_a_score", "trainer_risk_score",
+            "recommended_strategy", "strategy", "original_action", "original_route",
+            "confidence", "reason", "reason_code", "previous_blocker", "risk_tags",
+            "blocking_factors", "required_confirmations", "invalidation_condition",
+            "max_entry_price", "max_chase_pct", "reference_price", "current_price",
+            "price", "rel_vol_shadow", "change_pct", "change_rate", "primary_bucket",
+            "category", "adaptive_reask", "adaptive_suggested_action", "adaptive_score",
+            "adaptive_action_ceiling", "_early_judge_recheck_attempt",
+            "recheck_errors",
+        )
+        compact = {key: source.get(key) for key in allowed if key in source}
+        features = source.get("post_open_features")
+        if isinstance(features, dict):
+            compact["post_open_features"] = dict(features)
+        strategy_feasibility = source.get("strategy_feasibility")
+        if isinstance(strategy_feasibility, dict):
+            compact["strategy_feasibility"] = dict(strategy_feasibility)
+        return compact
+
+    @staticmethod
+    def _early_judge_queueable_skip(reason: str) -> bool:
+        return str(reason or "") in {
+            "entry_blackout",
+            "cooldown_active",
+            "data_quality_fail_closed",
+            "broker_truth_untrusted",
+            "broker_quarantine",
+            "run_cap_reached",
+            "capacity_exhausted",
+        }
+
+    def _queue_early_judge_recheck(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        source: str,
+        reason: str,
+        row: dict[str, Any] | None = None,
+        delay_min: float | None = None,
+        attempts: int = 0,
+        now: datetime | None = None,
+    ) -> bool:
+        """Upsert one bounded retry; queue ownership never promotes or submits an order."""
+        self._ensure_early_judge_state()
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = self._selection_ticker_key(market_key, ticker)
+        if not ticker_key:
+            return False
+        per_ticker_cap = max(1, self._runtime_int("EARLY_JUDGE_MAX_CALLS_PER_TICKER_PER_SESSION", 2))
+        ticker_used = int((self._early_judge_ticker_session_call_count.get(market_key) or {}).get(ticker_key, 0) or 0)
+        if ticker_used >= per_ticker_cap:
+            return False
+        max_attempts = max(1, self._runtime_int("EARLY_JUDGE_RECHECK_MAX_ATTEMPTS", 3))
+        attempt_count = max(0, int(attempts or 0))
+        if attempt_count >= max_attempts:
+            try:
+                self._write_funnel_event(
+                    "early_judge_recheck_dropped",
+                    market_key,
+                    {"ticker": ticker_key, "reason": "max_attempts", "attempts": attempt_count, "source": source},
+                )
+            except Exception:
+                pass
+            return False
+        stamp = now or datetime.now(KST).replace(tzinfo=None)
+        default_delay = max(0.0, self._runtime_float("EARLY_JUDGE_RECHECK_DEFAULT_MIN", 5.0))
+        resolved_delay = default_delay if delay_min is None else max(0.0, float(delay_min or 0.0))
+        due_at = stamp + timedelta(minutes=resolved_delay)
+        max_age_min = max(5.0, self._runtime_float("EARLY_JUDGE_RECHECK_MAX_AGE_MIN", 60.0))
+        queue = list(self._early_judge_recheck_queue.get(market_key) or [])
+        existing = next(
+            (item for item in queue if self._selection_ticker_key(market_key, (item or {}).get("ticker") or "") == ticker_key),
+            None,
+        )
+        created_at = str((existing or {}).get("created_at") or stamp.isoformat(timespec="seconds"))
+        if existing is not None:
+            try:
+                existing_due = datetime.fromisoformat(str(existing.get("due_at") or "").replace("Z", "+00:00")).replace(tzinfo=None)
+                # Do not let a repeated adaptive/shadow observation accelerate a
+                # WAIT_RECHECK delay that Claude explicitly requested.
+                due_at = existing_due
+            except Exception:
+                pass
+            queue = [item for item in queue if item is not existing]
+            attempt_count = max(attempt_count, int(existing.get("attempts") or 0))
+        compact_row = self._early_judge_compact_candidate_row(row)
+        if existing is not None and int(existing.get("attempts") or 0) > 0:
+            # A later adaptive observation must not overwrite Claude's explicit
+            # WAIT reason/source. It may only refresh the point-in-time features.
+            source = str(existing.get("source") or source)
+            reason = str(existing.get("reason") or reason)
+            preserved_row = dict(existing.get("candidate_row") or {})
+            if isinstance(compact_row.get("post_open_features"), dict):
+                preserved_row["post_open_features"] = dict(compact_row["post_open_features"])
+            compact_row = preserved_row
+        compact_row["ticker"] = ticker_key
+        compact_row["market"] = market_key
+        compact_row["_early_judge_recheck_attempt"] = attempt_count
+        try:
+            created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception:
+            created_dt = stamp
+        item = {
+            "ticker": ticker_key,
+            "market": market_key,
+            "source": str(source or ""),
+            "reason": str(reason or ""),
+            "created_at": created_at,
+            "queued_at": stamp.isoformat(timespec="seconds"),
+            "due_at": due_at.isoformat(timespec="seconds"),
+            "expires_at": (created_dt + timedelta(minutes=max_age_min)).isoformat(timespec="seconds"),
+            "attempts": attempt_count,
+            "errors": list(compact_row.get("recheck_errors") or []),
+            "candidate_row": compact_row,
+        }
+        queue.append(item)
+        queue.sort(key=lambda value: str((value or {}).get("due_at") or ""))
+        # Keep the earliest due work if the safety bound is hit; retaining the
+        # newest 100 would silently discard the candidates that should run first.
+        bounded_queue = queue[:100]
+        accepted = item in bounded_queue
+        self._early_judge_recheck_queue[market_key] = bounded_queue
+        self._save_early_judge_budget_state()
+        if not accepted:
+            try:
+                self._write_funnel_event(
+                    "early_judge_recheck_dropped",
+                    market_key,
+                    {"ticker": ticker_key, "reason": "queue_bound", "source": source, "queue_size": 100},
+                )
+            except Exception:
+                pass
+            return False
+        try:
+            self._write_funnel_event(
+                "early_judge_recheck_queued",
+                market_key,
+                {
+                    "ticker": ticker_key,
+                    "source": source,
+                    "reason": reason,
+                    "due_at": item["due_at"],
+                    "attempts": attempt_count,
+                    "queue_size": len(self._early_judge_recheck_queue[market_key]),
+                    "execution_authority": "claude_single_symbol_judge_only",
+                },
+            )
+        except Exception:
+            pass
+        return True
+
+    def _early_judge_recheck_status(self, market: str) -> dict[str, Any]:
+        self._ensure_early_judge_state()
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        now = datetime.now(KST).replace(tzinfo=None)
+        queue = list(self._early_judge_recheck_queue.get(market_key) or [])
+        due = 0
+        oldest_age_min = 0.0
+        reasons: dict[str, int] = {}
+        for item in queue:
+            reasons[str((item or {}).get("reason") or "unknown")] = reasons.get(str((item or {}).get("reason") or "unknown"), 0) + 1
+            try:
+                due_at = datetime.fromisoformat(str((item or {}).get("due_at") or "").replace("Z", "+00:00")).replace(tzinfo=None)
+                if due_at <= now:
+                    due += 1
+            except Exception:
+                due += 1
+            try:
+                created = datetime.fromisoformat(str((item or {}).get("created_at") or "").replace("Z", "+00:00")).replace(tzinfo=None)
+                oldest_age_min = max(oldest_age_min, (now - created).total_seconds() / 60.0)
+            except Exception:
+                pass
+        ticker_counts = self._early_judge_ticker_session_call_count.get(market_key) or {}
+        return {
+            "budget_marker": dict(self._early_judge_budget_marker),
+            "session_calls": int(self._early_judge_session_call_count.get(market_key, 0) or 0),
+            "unique_tickers_called": len([key for key, value in ticker_counts.items() if int(value or 0) > 0]),
+            "queue_size": len(queue),
+            "due_count": due,
+            "oldest_age_min": round(max(0.0, oldest_age_min), 1),
+            "queue_reasons": reasons,
+            "watch_shadow_unique_evaluated": len(self._watch_trigger_shadow_eval_counts.get(market_key) or {}),
+            "direct_local_promotion": False,
+            "execution_authority": "claude_single_symbol_judge_then_existing_runtime_gates",
+        }
+
+    def _early_judge_rows_from_adaptive_reask(self, market: str) -> list[dict[str, Any]]:
+        """Translate non-executable adaptive suggestions into Claude-review rows only."""
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not self._runtime_bool("ADAPTIVE_REASK_CLAUDE_BRIDGE_ENABLED", False):
+            return []
+        meta = copy.deepcopy((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+        watchlist = list(meta.get("watchlist") or (getattr(self, "today_tickers", {}) or {}).get(market_key, []) or [])
+        if not watchlist:
+            return []
+        latest = dict((getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key) or {})
+        feature_map = dict(meta.get("_post_open_features_by_ticker") or {})
+        feature_map.update(latest)
+        meta["_post_open_features_by_ticker"] = feature_map
+        mode = str((getattr(self, "today_judgment", {}) or {}).get("consensus", {}).get("mode", "") or "")
+        refreshed = attach_adaptive_live_condition_shadow(
+            market=market_key,
+            selection_meta=meta,
+            consensus_mode=mode,
+            market_context=self._adaptive_live_market_context(market_key, consensus_mode=mode),
+            enabled=True,
+        )
+        adaptive = dict(refreshed.get("_adaptive_live_condition") or {})
+        decisions = adaptive.get("decisions") if isinstance(adaptive.get("decisions"), dict) else {}
+        base_rows: dict[str, dict[str, Any]] = {}
+        for pool_key in ("_final_prompt_pool", "watchlist_candidates", "candidates", "candidate_actions"):
+            for raw in list(meta.get(pool_key) or []):
+                if not isinstance(raw, dict):
+                    continue
+                key = self._selection_ticker_key(market_key, raw.get("ticker") or "")
+                if key and key not in base_rows:
+                    base_rows[key] = dict(raw)
+        rows: list[dict[str, Any]] = []
+        for ticker, raw_decision in decisions.items():
+            decision = dict(raw_decision or {})
+            if str(decision.get("action") or "").upper() != "REASK_CLAUDE":
+                continue
+            key = self._selection_ticker_key(market_key, ticker)
+            if not key or self._is_trade_ready_ticker(market_key, key):
+                continue
+            row = dict(base_rows.get(key) or {})
+            row.update(
+                {
+                    "ticker": key,
+                    "market": market_key,
+                    "source": "adaptive_live_reask_bridge",
+                    "early_judge_source": "adaptive_live_reask_bridge",
+                    "trainer_candidate_state": str(row.get("trainer_candidate_state") or "PLAN_B"),
+                    "reason": str(decision.get("reask_reason") or "live_evidence_changed"),
+                    "adaptive_reask": True,
+                    "adaptive_suggested_action": str(decision.get("suggested_claude_action") or ""),
+                    "adaptive_score": float(decision.get("score") or 0.0),
+                    "adaptive_action_ceiling": str(decision.get("action_ceiling") or "WATCH"),
+                    "blocking_factors": list(decision.get("blockers") or []),
+                    "post_open_features": self._early_judge_feature_for_ticker(market_key, key, refreshed),
+                }
+            )
+            rows.append(row)
+        rows.sort(key=lambda row: (-float(row.get("adaptive_score") or 0.0), str(row.get("ticker") or "")))
+        max_rows = max(0, self._runtime_int("ADAPTIVE_REASK_CLAUDE_MAX_PER_CYCLE", 2))
+        return rows[:max_rows] if max_rows else []
+
+    def run_early_judge_rechecks(self, market: str) -> dict[str, Any]:
+        """Consume bounded retries with fresh evidence and the normal Claude/runtime gates."""
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        self._ensure_early_judge_state()
+        if not self._runtime_bool("EARLY_JUDGE_RECHECK_CONSUMER_ENABLED", False):
+            return {"market": market_key, "status": "disabled", **self._early_judge_recheck_status(market_key)}
+        if not bool(getattr(self, "session_active", False)) or str(getattr(self, "current_market", "") or "").upper() != market_key:
+            return {"market": market_key, "status": "inactive", **self._early_judge_recheck_status(market_key)}
+
+        for row in self._early_judge_rows_from_adaptive_reask(market_key):
+            self._queue_early_judge_recheck(
+                market_key,
+                str(row.get("ticker") or ""),
+                source="adaptive_live_reask_bridge",
+                reason="adaptive_live_reask",
+                row=row,
+                delay_min=0.0,
+                attempts=0,
+            )
+
+        now = datetime.now(KST).replace(tzinfo=None)
+        queue = list(self._early_judge_recheck_queue.get(market_key) or [])
+        active_queue: list[dict[str, Any]] = []
+        expired: list[dict[str, Any]] = []
+        for item in queue:
+            try:
+                expires_at = datetime.fromisoformat(str((item or {}).get("expires_at") or "").replace("Z", "+00:00")).replace(tzinfo=None)
+            except Exception:
+                expires_at = now + timedelta(minutes=1)
+            if expires_at < now:
+                expired.append(item)
+            else:
+                active_queue.append(item)
+        if expired:
+            for item in expired:
+                try:
+                    self._write_funnel_event(
+                        "early_judge_recheck_dropped",
+                        market_key,
+                        {
+                            "ticker": str((item or {}).get("ticker") or ""),
+                            "reason": "expired",
+                            "source": str((item or {}).get("source") or ""),
+                            "created_at": str((item or {}).get("created_at") or ""),
+                        },
+                    )
+                except Exception:
+                    pass
+        self._early_judge_recheck_queue[market_key] = active_queue
+        if self._in_entry_blackout(market_key):
+            self._save_early_judge_budget_state()
+            return {"market": market_key, "status": "entry_blackout", **self._early_judge_recheck_status(market_key)}
+
+        capacity = self._early_judge_capacity_remaining(market_key)
+        max_per_run = max(0, min(capacity, self._early_judge_max_calls_per_run(market_key)))
+        if max_per_run <= 0:
+            self._save_early_judge_budget_state()
+            return {"market": market_key, "status": "capacity_exhausted", **self._early_judge_recheck_status(market_key)}
+        due: list[dict[str, Any]] = []
+        pending: list[dict[str, Any]] = []
+        for item in active_queue:
+            try:
+                due_at = datetime.fromisoformat(str((item or {}).get("due_at") or "").replace("Z", "+00:00")).replace(tzinfo=None)
+            except Exception:
+                due_at = now
+            (due if due_at <= now else pending).append(item)
+        selected_items = due[:max_per_run]
+        self._early_judge_recheck_queue[market_key] = due[max_per_run:] + pending
+        if not selected_items:
+            self._save_early_judge_budget_state()
+            return {"market": market_key, "status": "nothing_due", **self._early_judge_recheck_status(market_key)}
+
+        meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+        rows: list[dict[str, Any]] = []
+        for item in selected_items:
+            ticker = self._selection_ticker_key(market_key, (item or {}).get("ticker") or "")
+            row = dict((item or {}).get("candidate_row") or {})
+            row.update(
+                {
+                    "ticker": ticker,
+                    "market": market_key,
+                    "source": str((item or {}).get("source") or "scheduled_recheck"),
+                    "early_judge_source": "scheduled_recheck",
+                    "previous_blocker": str((item or {}).get("reason") or ""),
+                    "_early_judge_recheck_attempt": int((item or {}).get("attempts") or 0),
+                }
+            )
+            fresh = self._early_judge_feature_for_ticker(market_key, ticker, meta)
+            if fresh:
+                row["post_open_features"] = fresh
+            route_state = self._pathb_route_state_for_ticker(market_key, ticker)
+            row["pathb_waiting"] = bool(route_state.get("waiting"))
+            row["pathb_active_order"] = bool(route_state.get("active_order"))
+            rows.append(row)
+        self._save_early_judge_budget_state()
+        results = self.maybe_run_early_judge_triggers(
+            market_key,
+            source="scheduled_recheck",
+            rows=rows,
+        )
+        payload = {
+            "market": market_key,
+            "status": "processed",
+            "selected": [str((item or {}).get("ticker") or "") for item in selected_items],
+            "called": [str((item or {}).get("ticker") or "") for item in results],
+            **self._early_judge_recheck_status(market_key),
+        }
+        try:
+            self._write_funnel_event("early_judge_recheck_consume", market_key, payload)
+        except Exception:
+            pass
+        self._save_early_judge_budget_state()
+        return payload
 
     def _early_judge_enabled(self, market: str) -> bool:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
@@ -31724,6 +32268,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 row["has_position"] = bool(key in held)
                 row["pending_order"] = bool(key in pending)
                 row["same_day_stopped"] = bool(key in stopped)
+                route_state = self._pathb_route_state_for_ticker(market_key, key)
+                row["pathb_waiting"] = bool(row.get("pathb_waiting") or route_state.get("waiting"))
+                row["pathb_active_order"] = bool(row.get("pathb_active_order") or route_state.get("active_order"))
             row["entry_blackout"] = bool(row.get("entry_blackout") or entry_blackout)
             guarded.append(row)
         return guarded
@@ -31752,6 +32299,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if quality in {"minute_missing", "missing", "bad", "stale", "invalid", "fail_closed"}:
             return "data_quality_fail_closed"
         if ticker:
+            per_ticker_cap = max(1, self._runtime_int("EARLY_JUDGE_MAX_CALLS_PER_TICKER_PER_SESSION", 2))
+            ticker_used = int((self._early_judge_ticker_session_call_count.get(market_key) or {}).get(ticker, 0) or 0)
+            if ticker_used >= per_ticker_cap:
+                return "ticker_session_call_cap"
             reject_until = str((self._early_judge_reject_until.get(market_key) or {}).get(ticker) or "")
             if reject_until:
                 try:
@@ -31769,6 +32320,79 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 except Exception:
                     pass
         return ""
+
+    def _early_judge_affordability_prefilter(self, market: str, row: dict[str, Any]) -> dict[str, Any]:
+        """Skip only obviously unaffordable whole-share candidates before a Claude call.
+
+        A near-cap ticker can still become executable after a normal pullback, so the
+        current one-share notional is reduced by a configurable pullback buffer before
+        it is compared with the same PathB registration cap used at execution time.
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker = self._selection_ticker_key(market_key, (row or {}).get("ticker") or "")
+        payload: dict[str, Any] = {
+            "allowed": True,
+            "reason": "disabled",
+            "stage": "early_judge_affordability_prefilter",
+            "market": market_key,
+            "ticker": ticker,
+        }
+        if not self._runtime_bool("PATHB_EARLY_JUDGE_AFFORDABILITY_PREFILTER_ENABLED", False):
+            return payload
+
+        features = (row or {}).get("post_open_features")
+        features = features if isinstance(features, dict) else {}
+        current_price = 0.0
+        for raw in (
+            features.get("current_price"),
+            features.get("price"),
+            (row or {}).get("current_price"),
+            (row or {}).get("price"),
+            (row or {}).get("reference_price"),
+        ):
+            try:
+                current_price = float(raw or 0.0)
+            except (TypeError, ValueError):
+                current_price = 0.0
+            if current_price > 0:
+                break
+        if current_price <= 0:
+            payload["reason"] = "price_unavailable"
+            return payload
+
+        try:
+            current_price_krw = float(self._price_to_krw(current_price, market_key) or 0.0)
+        except Exception:
+            try:
+                fx = float(getattr(self, "usd_krw_rate", 0) or os.getenv("USD_KRW_RATE", "1350") or 1350)
+            except (TypeError, ValueError):
+                fx = 1350.0
+            current_price_krw = current_price if market_key == "KR" else current_price * fx
+        max_entry_krw = float(self._pathb_selection_max_entry_krw(market_key) or 0.0)
+        buffer_pct = min(
+            50.0,
+            max(0.0, self._runtime_float("PATHB_EARLY_JUDGE_AFFORDABILITY_PULLBACK_BUFFER_PCT", 15.0)),
+        )
+        buffered_entry_krw = current_price_krw * (1.0 - buffer_pct / 100.0)
+        payload.update(
+            {
+                "reason": "within_budget_after_pullback_buffer",
+                "current_price": current_price,
+                "current_price_krw": round(current_price_krw, 2),
+                "pullback_buffer_pct": buffer_pct,
+                "buffered_entry_krw": round(buffered_entry_krw, 2),
+                "max_entry_krw": round(max_entry_krw, 2),
+            }
+        )
+        if max_entry_krw > 0 and buffered_entry_krw > max_entry_krw:
+            payload.update(
+                {
+                    "allowed": False,
+                    "reason": "high_price_unaffordable_before_judge",
+                    "blocker": "pathb_one_share_above_budget_after_pullback_buffer",
+                }
+            )
+        return payload
 
     def _single_symbol_judge_call(self, market: str, candidate: Any) -> dict[str, Any]:
         if isinstance(candidate, dict):
@@ -31963,19 +32587,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             ttl_min = self._runtime_float("EARLY_JUDGE_REJECT_TTL_MIN", 180.0)
             self._early_judge_reject_until[market_key][ticker] = (now + timedelta(minutes=ttl_min)).isoformat(timespec="seconds")
         if action_name == "WAIT_RECHECK" or not bool(normalized.get("valid", True)):
-            queue = list(self._early_judge_recheck_queue.get(market_key) or [])
-            queue.append(
-                {
-                    "ticker": ticker,
-                    "market": market_key,
-                    "source": str(source or ""),
-                    "reason": str(normalized.get("audit_reason") or normalized.get("reason") or ""),
-                    "errors": list(normalized.get("errors") or []),
-                    "created_at": now.isoformat(timespec="seconds"),
-                    "recheck_after_min": float(normalized.get("recheck_after_min") or 0.0),
-                }
+            candidate_row = dict((candidate or {}).get("row") or {}) if isinstance(candidate, dict) else {}
+            previous_attempts = int(candidate_row.get("_early_judge_recheck_attempt") or 0)
+            candidate_row["recheck_errors"] = list(normalized.get("errors") or [])
+            self._queue_early_judge_recheck(
+                market_key,
+                ticker,
+                source=str(source or ""),
+                reason=str(normalized.get("audit_reason") or normalized.get("reason") or "wait_recheck"),
+                row=candidate_row,
+                delay_min=(
+                    float(normalized.get("recheck_after_min") or 0.0)
+                    if float(normalized.get("recheck_after_min") or 0.0) > 0
+                    else None
+                ),
+                attempts=previous_attempts + 1,
+                now=now,
             )
-            self._early_judge_recheck_queue[market_key] = queue[-100:]
         applied = False
         if action_name in {"BUY_READY", "PROBE_READY", "PULLBACK_WAIT"} and bool(normalized.get("valid", True)):
             # judge가 reference_price를 생략하면 judge 입력의 현재가로 백필 — ref 결측 플랜은
@@ -32019,6 +32647,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             pass
         normalized["applied"] = applied
+        self._save_early_judge_budget_state()
         try:
             self._record_intraday_entry_shadow(
                 market_key, ticker, normalized, candidate, source=source, applied=applied
@@ -32153,6 +32782,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         capacity = self._early_judge_capacity_remaining(market_key)
         if capacity <= 0:
             log.info(f"[early judge] {market_key} capacity exhausted source={source}")
+            for raw in list(rows or [])[:100]:
+                if not isinstance(raw, dict):
+                    continue
+                ticker = self._selection_ticker_key(market_key, raw.get("ticker") or "")
+                if ticker:
+                    self._queue_early_judge_recheck(
+                        market_key,
+                        ticker,
+                        source=str(source or ""),
+                        reason="capacity_exhausted",
+                        row=raw,
+                        delay_min=1.0,
+                        attempts=int(raw.get("_early_judge_recheck_attempt") or 0),
+                    )
             # green-tape 계측(2026-07-09 설계 v0): 캡이 버린 후보를 기록 — "어떤 상태에서
             # 용량이 돈을 버리는가"의 판독 원료. 임계는 사후 판독으로 결정(창구일 실시간
             # 단일신호 확립 실패 — 지수tape는 6/17만, hot비율은 4/28·5/7만 분리).
@@ -32180,10 +32823,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return []
         meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
         guarded_rows = self._early_judge_rows_with_runtime_guards(market_key, list(rows or []))
-        soft_block_rows = self._early_judge_rows_with_runtime_guards(
-            market_key,
-            self._early_judge_rows_from_soft_blocks(market_key, meta),
-        )
+        soft_block_rows = []
+        if str(source or "") != "scheduled_recheck":
+            soft_block_rows = self._early_judge_rows_with_runtime_guards(
+                market_key,
+                self._early_judge_rows_from_soft_blocks(market_key, meta),
+            )
         candidate_rows: list[dict[str, Any]] = []
         seen: set[str] = set()
         for raw in list(guarded_rows or []) + list(soft_block_rows or []):
@@ -32207,7 +32852,33 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         for row in candidate_rows:
             ticker = self._selection_ticker_key(market_key, row.get("ticker") or "")
             hard_skip = self._early_judge_hard_skip_reason(market_key, row, now)
+            affordability_prefilter = self._early_judge_affordability_prefilter(market_key, row)
+            row["early_judge_affordability_prefilter"] = affordability_prefilter
+            if not hard_skip and not bool(affordability_prefilter.get("allowed", True)):
+                hard_skip = str(affordability_prefilter.get("reason") or "high_price_unaffordable_before_judge")
             should_call = not hard_skip and len(selected_rows) < max_calls
+            if hard_skip and self._early_judge_queueable_skip(hard_skip):
+                self._queue_early_judge_recheck(
+                    market_key,
+                    ticker,
+                    source=str(source or ""),
+                    reason=hard_skip,
+                    row=row,
+                    delay_min=1.0 if hard_skip == "entry_blackout" else None,
+                    attempts=int(row.get("_early_judge_recheck_attempt") or 0),
+                    now=now,
+                )
+            elif not hard_skip and not should_call:
+                self._queue_early_judge_recheck(
+                    market_key,
+                    ticker,
+                    source=str(source or ""),
+                    reason="run_cap_reached",
+                    row=row,
+                    delay_min=1.0,
+                    attempts=int(row.get("_early_judge_recheck_attempt") or 0),
+                    now=now,
+                )
             try:
                 self._write_funnel_event(
                     "early_judge_trigger_eval",
@@ -32220,6 +32891,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "hard_skip": bool(hard_skip),
                         "hard_skip_reason": hard_skip,
                         "soft_block_reason": str(row.get("previous_blocker") or row.get("reason") or ""),
+                        "affordability_prefilter": affordability_prefilter,
                     },
                 )
             except Exception:
@@ -32234,7 +32906,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             call_started = datetime.now(KST).replace(tzinfo=None)
             self._early_judge_last_called_at[market_key][ticker] = call_started.isoformat(timespec="seconds")
             self._early_judge_session_call_count[market_key] = int(self._early_judge_session_call_count.get(market_key, 0) or 0) + 1
+            ticker_counts = self._early_judge_ticker_session_call_count.setdefault(market_key, {})
+            ticker_counts[ticker] = int(ticker_counts.get(ticker, 0) or 0) + 1
             self._early_judge_call_times.append(call_started)
+            self._save_early_judge_budget_state()
             candidate = {
                 "market": market_key,
                 "ticker": ticker,
@@ -32738,6 +33413,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self.maybe_run_sub_screener(market)
         except Exception as _sub_e:
             log.warning(f"[sub_screener 오류] {market}: {_sub_e}", exc_info=True)
+        try:
+            self.run_early_judge_rechecks(market)
+        except Exception as _recheck_e:
+            log.error(f"[early_judge_recheck 오류] {market}: {_recheck_e}", exc_info=True)
         try:
             self._run_preopen_planb_bridge(market)
         except Exception as _bridge_e:
@@ -33681,6 +34360,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             else:
                                 _watch_trigger_shadow_candidate = True
                                 _watch_trigger_shadow_evaluated_this_cycle += 1
+                                self._record_watch_trigger_shadow_evaluation(market, ticker)
                         elif _watch_bucket == "RECOVERY":
                             _skip_reason = "recovery_bucket_deferred"
                         elif str(mode or "").upper() in {"DEFENSIVE", "HALT"}:
@@ -38718,6 +39398,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "enabled": False,
                         "runtime_available": False,
                     },
+                    "early_judge_recheck": self._early_judge_recheck_status(market),
                     "claude": {
                         "enabled": bool(self.claude_control.get("enabled", True)),
                         "last_trigger_at": self.claude_control.get("last_trigger_at", ""),
