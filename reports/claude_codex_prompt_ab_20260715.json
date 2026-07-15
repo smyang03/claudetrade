@@ -1,0 +1,113 @@
+{
+  "as_of": "2026-07-15",
+  "authority": "RESEARCH_ONLY_NO_LIVE_EFFECT",
+  "contract": {
+    "prompt_source": "exact prompt field from stored live single_symbol_judge_v1 raw calls",
+    "claude_model": "claude-opus-4-8",
+    "claude_thinking": "off by live configuration",
+    "codex_surface": "codex-cli 0.144.3, ephemeral, read-only, ignore-rules",
+    "codex_model_observed": "gpt-5.6-sol",
+    "codex_reasoning_effort_observed": "xhigh",
+    "warning": "same user prompt, but provider system prompts and reasoning settings are not identical"
+  },
+  "summary": {
+    "n": 4,
+    "strict_json_claude": 4,
+    "strict_json_codex": 4,
+    "action_agreement_n": 2,
+    "action_agreement_rate": 0.5,
+    "claude_mean_confidence": 0.5325,
+    "codex_mean_confidence": 0.84,
+    "claude_mean_latency_seconds": 4.759,
+    "codex_cli_mean_wall_seconds": 22.925
+  },
+  "cases": [
+    {
+      "ticker": "AAPL",
+      "market": "US",
+      "prompt_file": "logs/raw_calls/20260714_US_single_symbol_judge_235419777624_1212da8223.json",
+      "prompt_sha256": "5378dc92c4defbd689e62448aec882e5cc74d4ad8aeb29ff8bb54d095ea44155",
+      "claude": {
+        "action": "PULLBACK_WAIT",
+        "route": "path_b",
+        "confidence": 0.6,
+        "buy_zone_low": 312.5,
+        "buy_zone_high": 313.1,
+        "sell_target": 318.5,
+        "stop_loss": 310.9,
+        "recheck_after_min": 10
+      },
+      "codex": {
+        "action": "WAIT_RECHECK",
+        "route": "wait",
+        "confidence": 0.78,
+        "recheck_after_min": 5
+      },
+      "agreement": false,
+      "interpretation": "Claude accepted a zone 0.546% below current price; Codex treated nearby VWAP/open anchor as insufficiently separated and waited."
+    },
+    {
+      "ticker": "263800",
+      "market": "KR",
+      "prompt_file": "logs/raw_calls/20260715_KR_single_symbol_judge_112925477149_3f7e47082a.json",
+      "prompt_sha256": "d8667604e5aa4ce8bc1ed34943c2ab6972add794231fc3d541753918e3c70a18",
+      "claude": {
+        "action": "WAIT_RECHECK",
+        "route": "wait",
+        "confidence": 0.45,
+        "recheck_after_min": 15
+      },
+      "codex": {
+        "action": "PULLBACK_WAIT",
+        "route": "path_b",
+        "confidence": 0.68,
+        "buy_zone_low": 5900,
+        "buy_zone_high": 5980,
+        "sell_target": 6320,
+        "stop_loss": 5840,
+        "recheck_after_min": 5
+      },
+      "agreement": false,
+      "interpretation": "Claude weighted fade/below-VWAP evidence more heavily; Codex accepted the open-anchor/opening-range-low cluster as a distant waiting zone."
+    },
+    {
+      "ticker": "SKHY",
+      "market": "US",
+      "prompt_file": "logs/raw_calls/20260714_US_single_symbol_judge_232156633019_2fca7db55a.json",
+      "prompt_sha256": "2959e2c483758c646c1c631a105bedefdef7ae671046681949db0c9081984cd2",
+      "claude": {
+        "action": "WAIT_RECHECK",
+        "route": "wait",
+        "confidence": 0.4,
+        "recheck_after_min": 10
+      },
+      "codex": {
+        "action": "WAIT_RECHECK",
+        "route": "wait",
+        "confidence": 0.96,
+        "recheck_after_min": 5
+      },
+      "agreement": true,
+      "interpretation": "Both detected the stale feature/live-price conflict, but confidence calibration differed sharply."
+    },
+    {
+      "ticker": "001210",
+      "market": "KR",
+      "prompt_file": "logs/raw_calls/20260714_KR_single_symbol_judge_095912924906_3f6ce88f61.json",
+      "prompt_sha256": "e4d7a85225919910b8fba9d1cae5dc3acc4f596e05cc9e16339d42ca4d1057a7",
+      "claude": {
+        "action": "REJECT",
+        "route": "reject",
+        "confidence": 0.68,
+        "recheck_after_min": 30
+      },
+      "codex": {
+        "action": "REJECT",
+        "route": "reject",
+        "confidence": 0.94
+      },
+      "agreement": true,
+      "interpretation": "Both rejected the faded setup with negative order-book imbalance and unreliable support evidence."
+    }
+  ]
+}

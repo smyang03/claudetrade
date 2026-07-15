@@ -218,6 +218,40 @@ def _completed_job_ids(state: dict[str, Any]) -> set[str]:
     }
 
 
+def _scheduler_skip_job_ids(
+    state: dict[str, Any],
+    *,
+    now_dt: datetime | None = None,
+    failure_retry_min: int = 15,
+) -> set[str]:
+    """Return completed jobs plus failures still inside their retry backoff.
+
+    A failed job used to be emitted every scheduler tick for the entire catch-up
+    window.  Apart from log/CPU churn, the next idle tick also made the scheduler
+    look healthy again.  Keep success idempotency and bound failed retries.
+    """
+    skipped = _completed_job_ids(state)
+    runs = state.get("runs") if isinstance(state, dict) else {}
+    if not isinstance(runs, dict) or failure_retry_min <= 0:
+        return skipped
+    now_value = now_dt or datetime.now(KST)
+    if now_value.tzinfo is None:
+        now_value = now_value.replace(tzinfo=KST)
+    for job_id, run in runs.items():
+        if not isinstance(run, dict) or str(run.get("status") or "") in {"success", "dry_run"}:
+            continue
+        try:
+            finished = datetime.fromisoformat(str(run.get("finished_at") or "").replace("Z", "+00:00"))
+            if finished.tzinfo is None:
+                finished = finished.replace(tzinfo=KST)
+            age_min = (now_value.astimezone(KST) - finished.astimezone(KST)).total_seconds() / 60.0
+        except Exception:
+            continue
+        if 0 <= age_min < int(failure_retry_min):
+            skipped.add(str(job_id))
+    return skipped
+
+
 def _trim_state(state: dict[str, Any], *, max_runs: int = 500, max_events: int = 100) -> dict[str, Any]:
     runs = state.get("runs")
     if isinstance(runs, dict) and len(runs) > max_runs:
@@ -238,14 +272,31 @@ def _record_event(mode: str, state: dict[str, Any], event: dict[str, Any]) -> No
     save_preopen_scheduler_event(mode, payload)
 
 
+def _python_for_job(job: PreopenJob) -> str:
+    if job.kind == "swing_shadow":
+        configured = str(os.getenv("US_SWING_PYTHON_EXECUTABLE", "") or "").strip().strip('"')
+        if configured:
+            path = Path(configured).expanduser()
+            if not path.is_absolute():
+                path = ROOT / path
+            return str(path)
+    return sys.executable
+
+
 def _command_for_job(job: PreopenJob) -> list[str]:
-    return [sys.executable, str(ROOT / job.script), *job.args]
+    return [_python_for_job(job), str(ROOT / job.script), *job.args]
+
+
+def _lane_key(job: PreopenJob) -> str:
+    return f"{job.market}:{job.kind}"
 
 
 def _job_timeout_sec(job: PreopenJob, default_timeout_sec: int) -> int:
     timeout = max(10, int(default_timeout_sec))
     if job.kind == "swing_shadow":
         return max(timeout, 600)
+    if job.kind == "profit_strategy_materializer":
+        return max(timeout, 240)
     if job.kind == "yfinance_shadow":
         return max(timeout, 180)
     if job.kind != "news":
@@ -316,6 +367,7 @@ def run_scheduler_once(
     collector_interval_min: int | None = None,
     outcome_interval_min: int = 5,
     outcome_catchup_min: int = 180,
+    failure_retry_min: int = 15,
     now_dt: datetime | None = None,
 ) -> dict[str, Any]:
     runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
@@ -328,6 +380,9 @@ def run_scheduler_once(
     state["markets"] = markets
     state["dry_run"] = bool(dry_run)
     state.setdefault("runs", {})
+    state.setdefault("lane_failures", {})
+    if not isinstance(state.get("lane_failures"), dict):
+        state["lane_failures"] = {}
 
     jobs = due_jobs(
         now_dt=now_dt,
@@ -337,7 +392,11 @@ def run_scheduler_once(
         outcome_interval_min=outcome_interval_min,
         outcome_catchup_min=outcome_catchup_min,
         force=force,
-        completed_job_ids=_completed_job_ids(state),
+        completed_job_ids=_scheduler_skip_job_ids(
+            state,
+            now_dt=now_dt,
+            failure_retry_min=failure_retry_min,
+        ),
     )
     summary = {
         "mode": runtime_mode,
@@ -354,11 +413,20 @@ def run_scheduler_once(
             "dry_run": bool(dry_run),
         })
         save_preopen_scheduler_state(runtime_mode, _trim_state(state))
+        lane_failures = state.get("lane_failures") if isinstance(state.get("lane_failures"), dict) else {}
+        persistent_error = ""
+        if lane_failures:
+            latest = max(
+                lane_failures.values(),
+                key=lambda item: str((item or {}).get("failed_at", "")),
+            )
+            persistent_error = str((latest or {}).get("error") or "")
         _write_scheduler_heartbeat(
             runtime_mode,
             interval_sec=interval_sec,
-            status="idle",
-            last_success_at=_now_iso(),
+            status="degraded" if persistent_error else "idle",
+            last_success_at="" if persistent_error else _now_iso(),
+            last_error=persistent_error,
         )
         return summary
 
@@ -389,8 +457,21 @@ def run_scheduler_once(
         }
         state["runs"][job.job_id] = run_record
         last_job_record = run_record
+        lane_key = _lane_key(job)
         if str(result["status"]) not in {"success", "dry_run"}:
             last_error = str(result.get("stderr") or result.get("status") or "job_failed")
+            state["lane_failures"][lane_key] = {
+                "job_id": job.job_id,
+                "market": job.market,
+                "kind": job.kind,
+                "session_date": job.session_date,
+                "failed_at": finished_at,
+                "retry_after_min": int(failure_retry_min),
+                "error": last_error,
+                "command": result.get("command") or [],
+            }
+        else:
+            state["lane_failures"].pop(lane_key, None)
         event_name = {
             "success": "job_success",
             "dry_run": "job_dry_run",
@@ -410,12 +491,20 @@ def run_scheduler_once(
         summary["ran"] += 1
 
     save_preopen_scheduler_state(runtime_mode, _trim_state(state))
+    lane_failures = state.get("lane_failures") if isinstance(state.get("lane_failures"), dict) else {}
+    persistent_error = last_error
+    if not persistent_error and lane_failures:
+        latest = max(
+            lane_failures.values(),
+            key=lambda item: str((item or {}).get("failed_at", "")),
+        )
+        persistent_error = str((latest or {}).get("error") or "")
     _write_scheduler_heartbeat(
         runtime_mode,
         interval_sec=interval_sec,
-        status="success" if not last_error else "error",
-        last_success_at=_now_iso() if not last_error else "",
-        last_error=last_error,
+        status="success" if not persistent_error else "degraded",
+        last_success_at=_now_iso() if not persistent_error else "",
+        last_error=persistent_error,
         last_job=last_job_record,
     )
     return summary
@@ -433,6 +522,7 @@ def main() -> int:
     parser.add_argument("--collector-interval-min", type=int, default=0)
     parser.add_argument("--outcome-interval-min", type=int, default=5)
     parser.add_argument("--outcome-catchup-min", type=int, default=180)
+    parser.add_argument("--failure-retry-min", type=int, default=15)
     parser.add_argument("--timeout-sec", type=int, default=120)
     args = parser.parse_args()
 
@@ -461,6 +551,7 @@ def main() -> int:
                 collector_interval_min=collector_interval,
                 outcome_interval_min=args.outcome_interval_min,
                 outcome_catchup_min=args.outcome_catchup_min,
+                failure_retry_min=args.failure_retry_min,
             )
             print(
                 f"[preopen scheduler] mode={summary['mode']} markets={','.join(summary['markets'])} "

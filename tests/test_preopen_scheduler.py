@@ -17,7 +17,13 @@ from preopen.scheduler import (
     regular_open_dt,
 )
 from preopen.storage import load_preopen_dashboard, load_preopen_scheduler_state
-from tools.preopen_scheduler import _run_job, _scheduler_heartbeat_path, run_scheduler_once
+from tools.preopen_scheduler import (
+    _command_for_job,
+    _run_job,
+    _scheduler_heartbeat_path,
+    _scheduler_skip_job_ids,
+    run_scheduler_once,
+)
 
 
 def _runtime_path(root: Path):
@@ -31,6 +37,50 @@ def _runtime_path(root: Path):
 
 
 class PreopenSchedulerTests(unittest.TestCase):
+    def test_swing_shadow_uses_declared_research_python(self) -> None:
+        job = PreopenJob(
+            market="US",
+            session_date="2026-07-15",
+            kind="swing_shadow",
+            job_id="live:2026-07-15:US:swing_shadow",
+            due_at="2026-07-15T22:20:00+09:00",
+            script="tools/us_swing_shadow_runner.py",
+            args=("--session-date", "2026-07-15"),
+        )
+        with patch.dict("os.environ", {"US_SWING_PYTHON_EXECUTABLE": "C:/research/python.exe"}):
+            command = _command_for_job(job)
+
+        self.assertEqual(command[0], str(Path("C:/research/python.exe")))
+        self.assertTrue(command[1].endswith("tools\\us_swing_shadow_runner.py"))
+
+    def test_failed_job_is_backed_off_but_success_remains_idempotent(self) -> None:
+        state = {
+            "runs": {
+                "failed_recent": {
+                    "status": "failed",
+                    "finished_at": "2026-07-15T22:15:00+09:00",
+                },
+                "failed_old": {
+                    "status": "failed",
+                    "finished_at": "2026-07-15T21:00:00+09:00",
+                },
+                "success": {
+                    "status": "success",
+                    "finished_at": "2026-07-15T21:00:00+09:00",
+                },
+            }
+        }
+
+        skipped = _scheduler_skip_job_ids(
+            state,
+            now_dt=datetime(2026, 7, 15, 22, 20, tzinfo=KST),
+            failure_retry_min=15,
+        )
+
+        self.assertIn("failed_recent", skipped)
+        self.assertIn("success", skipped)
+        self.assertNotIn("failed_old", skipped)
+
     def test_us_collector_due_uses_bucketed_job_id(self) -> None:
         now = datetime(2026, 5, 4, 17, 5, tzinfo=KST)
 

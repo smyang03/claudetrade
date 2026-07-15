@@ -43,6 +43,7 @@ from runtime.pathb_reasons import (
     normalize_pathb_decision_exit_reason,
 )
 from runtime.profit_evidence_gate import resolve_profit_evidence
+from runtime.pathb_paired_exit_shadow import DEFAULT_POLICY, get_paired_exit_observer
 from runtime.sizing_contract import calculate_order_quantity
 from runtime_paths import get_runtime_path
 from telegram_reporter import buy_order_alert, send as tg_send
@@ -3711,6 +3712,7 @@ class PathBRuntime:
                 run = recovered_run
             if str(run.get("status", "")) not in {"FILLED", "PARTIAL_FILLED"}:
                 continue
+            self._register_pathb_paired_exit_shadow(run, plan, pos)
             self._clear_stale_pathb_closing_lock(pos, market, plan.path_run_id)
             if self._pathb_sell_in_flight(run, pos):
                 self._log_unfilled_sell_shadow(pos, market, plan)
@@ -3720,6 +3722,8 @@ class PathBRuntime:
                 continue
             self._audit_pathb_price_seen(plan, current, source="pathb:exit_scan")
             self._update_position_excursion(pos, current, market)
+            split_runner_state = self._maybe_submit_kr_split_runner_partial(plan, pos, current)
+            split_runner_owns_profit = bool(split_runner_state.get("owns_profit"))
             # 꼬리-capture 엔진 (shadow 로깅 / enforce trail). 하방은 loss_cap/hard_stop에 위임(아래 우선).
             tail_capture_signal = None
             tail_capture_owns_profit = False  # enforce+active: 엔진이 profit-side 소유(ladder/target 억제)
@@ -3749,16 +3753,20 @@ class PathBRuntime:
             if policy_stop_action in {"sell", "recheck"} and isinstance(policy_stop_eval.get("signal"), ExitSignal):
                 exit_signal = policy_stop_eval["signal"]
             else:
-                mfe_signal = self._pathb_mfe_breakeven_signal(
-                    plan,
-                    pos,
-                    current,
-                    hard_stop_price=hard_stop_price,
-                    loss_cap_price=loss_cap_price,
+                mfe_signal = (
+                    None
+                    if split_runner_owns_profit
+                    else self._pathb_mfe_breakeven_signal(
+                        plan,
+                        pos,
+                        current,
+                        hard_stop_price=hard_stop_price,
+                        loss_cap_price=loss_cap_price,
+                    )
                 )
                 weak_mfe_signal = (
                     None
-                    if mfe_signal is not None
+                    if mfe_signal is not None or split_runner_owns_profit
                     else self._pathb_weak_mfe_cut_signal(
                         plan,
                         pos,
@@ -3785,6 +3793,8 @@ class PathBRuntime:
                 elif hard_stop_price is not None and hard_stop_price > 0 and current <= hard_stop_price:
                     exit_signal = ExitSignal(True, "hard_stop", "CLOSED_HARD_STOP", current, plan.path_run_id)
                     self._record_stop_trigger_price(plan.path_run_id, "hard_stop", hard_stop_price)
+                elif split_runner_owns_profit:
+                    exit_signal = ExitSignal(False, "split_runner_profit_owner", "", current, plan.path_run_id)
                 elif tail_capture_signal is not None:
                     # 꼬리-capture enforce: 하방(loss_cap/hard_stop) 통과 후 trailing이 profit-side 청산.
                     exit_signal = tail_capture_signal
@@ -3865,6 +3875,246 @@ class PathBRuntime:
         )
         self._audit_pathb_buy_fill(run, order, price=price, qty=qty, partial=False)
         self._record_pathb_buy_decision_event(run, order, price=price, qty=qty, partial=False)
+        refreshed_run = self.store.find_path_run(path_run_id) or run
+        plan = self._plan_from_run(refreshed_run)
+        if plan is not None:
+            self._register_pathb_paired_exit_shadow(refreshed_run, plan, position or {}, fill_price=price, fill_qty=qty)
+
+    def _register_pathb_paired_exit_shadow(
+        self,
+        run: dict[str, Any],
+        plan: PricePlan,
+        pos: dict[str, Any],
+        *,
+        fill_price: float = 0.0,
+        fill_qty: int = 0,
+    ) -> None:
+        """Pin the policy and register a shadow observer without affecting exits."""
+
+        if str(plan.market or run.get("market") or "").upper() != "KR":
+            return
+        try:
+            observer = get_paired_exit_observer()
+            run_plan = dict(run.get("plan") or {})
+            policy = str(run_plan.get("exit_policy_version") or os.getenv("PATHB_KR_EXIT_POLICY") or DEFAULT_POLICY).strip().upper()
+            if policy not in {"EARLY_FULL_V1", "SPLIT_RUNNER_V1"}:
+                policy = DEFAULT_POLICY
+            if not run_plan.get("exit_policy_version"):
+                self.store.update_path_run(
+                    plan.path_run_id,
+                    plan={
+                        "exit_policy_version": policy,
+                        "exit_policy_pinned_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    },
+                    merge_plan=True,
+                )
+            if isinstance(pos, dict):
+                pos.setdefault("exit_policy_version", policy)
+            if not observer.enabled():
+                return
+            entry = float(
+                fill_price
+                or self._position_entry_native(pos, "KR")
+                or run_plan.get("actual_entry_price", 0)
+                or run_plan.get("hit_price", 0)
+                or 0
+            )
+            qty = int(fill_qty or pos.get("qty", 0) or run_plan.get("filled_qty", 0) or run_plan.get("entry_qty", 0) or 0)
+            if entry <= 0 or qty <= 0:
+                return
+            hard_stop = float(self._native_hard_stop(pos, "KR") or plan.stop_loss or 0)
+            loss_cap = float(self._native_loss_cap_stop(pos, "KR") or 0)
+            observer.register_position(
+                path_run_id=plan.path_run_id,
+                position_id=str(pos.get("position_id") or plan.path_run_id),
+                ticker=plan.ticker,
+                session_date=str(plan.session_date or self._session_date("KR")),
+                entry_price=entry,
+                qty=qty,
+                target_price=float(plan.sell_target or 0),
+                hard_stop=hard_stop,
+                loss_cap=loss_cap,
+                filled_at=str(run_plan.get("filled_at") or pos.get("entry_time") or datetime.now(KST).isoformat(timespec="seconds")),
+                exit_policy_version=policy,
+            )
+        except Exception as exc:
+            log.warning(f"[paired exit shadow] register failed KR {plan.ticker}: {exc}")
+
+    def _pathb_kr_exit_policy(self, plan: PricePlan, pos: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
+        if str(plan.market or "").upper() != "KR":
+            return DEFAULT_POLICY, {}
+        try:
+            run = self.store.find_path_run(plan.path_run_id) or {}
+            run_plan = dict(run.get("plan") or {})
+        except Exception:
+            run_plan = {}
+        policy = str(
+            run_plan.get("exit_policy_version")
+            or (pos or {}).get("exit_policy_version")
+            or os.getenv("PATHB_KR_EXIT_POLICY")
+            or DEFAULT_POLICY
+        ).strip().upper()
+        if policy not in {"EARLY_FULL_V1", "SPLIT_RUNNER_V1"}:
+            policy = DEFAULT_POLICY
+        if policy == "SPLIT_RUNNER_V1" and self.mode == "live":
+            live_enabled = self._runtime_bool("PATHB_KR_SPLIT_RUNNER_LIVE_ENABLED", False)
+            live_ack = str(self._runtime_value("PATHB_KR_SPLIT_RUNNER_LIVE_ACK", "") or "")
+            if not live_enabled or live_ack != "I_ACCEPT_LIVE_KR_SPLIT_RUNNER":
+                log.error("[KR split-runner] live ACK missing; fail closed to EARLY_FULL_V1")
+                policy = DEFAULT_POLICY
+        return policy, run_plan
+
+    def _maybe_submit_kr_split_runner_partial(
+        self,
+        plan: PricePlan,
+        pos: dict[str, Any],
+        current: float,
+    ) -> dict[str, Any]:
+        """Own KR profit-side until a broker-confirmed 50% split is complete."""
+
+        policy, run_plan = self._pathb_kr_exit_policy(plan, pos)
+        if policy != "SPLIT_RUNNER_V1":
+            return {"owns_profit": False, "policy": policy}
+        entry = self._position_entry_native(pos, "KR")
+        qty = max(0, int(pos.get("qty", 0) or 0))
+        original_qty = max(qty, int(run_plan.get("split_runner_original_qty", 0) or 0))
+        status = str(run_plan.get("split_runner_status") or "PRE_SPLIT").upper()
+
+        if qty <= 1 and status != "FILLED":
+            payload = {
+                "split_runner_status": "A_FALLBACK_QTY1",
+                "split_runner_fallback_reason": "NOT_INTEGER_EXECUTABLE",
+                "split_runner_fallback_at": datetime.now(KST).isoformat(timespec="seconds"),
+            }
+            self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)
+            pos.update(payload)
+            return {"owns_profit": False, "policy": policy, "status": "A_FALLBACK_QTY1"}
+
+        pending_status = str(pos.get("pending_sell_status") or "").strip().lower()
+        pending = bool(pos.get("sell_confirmation_pending")) or bool(
+            str(pos.get("pending_sell_order_no") or "").strip()
+            and pending_status not in {"resolved", "cleared"}
+        )
+        if status == "PENDING":
+            if pending:
+                return {"owns_profit": True, "policy": policy, "status": status}
+            if original_qty > 0 and 0 < qty < original_qty:
+                payload = {
+                    "split_runner_status": "FILLED",
+                    "split_runner_filled_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "split_runner_remaining_qty": qty,
+                }
+                self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)
+                pos.update(payload)
+                try:
+                    self._save_positions_if_possible()
+                except Exception:
+                    pass
+                return {"owns_profit": False, "policy": policy, "status": "FILLED"}
+            # A broker rejection or cleared no-fill may retry on a later scan.
+            self.store.update_path_run(
+                plan.path_run_id,
+                plan={"split_runner_status": "PRE_SPLIT", "split_runner_retry_after_no_fill": True},
+                merge_plan=True,
+            )
+            status = "PRE_SPLIT"
+
+        if status in {"FILLED", "A_FALLBACK_QTY1", "A_FALLBACK_TARGET_BELOW_TRIGGER"}:
+            return {"owns_profit": False, "policy": policy, "status": status}
+        if entry <= 0 or current <= 0 or qty < 2:
+            return {"owns_profit": True, "policy": policy, "status": "PRE_SPLIT", "reason": "entry_or_qty_unavailable"}
+
+        trigger_pct = max(0.0, _env_float("PATHB_KR_SPLIT_RUNNER_TRIGGER_PCT", 3.6))
+        trigger_price = self._round_policy_price(entry * (1.0 + trigger_pct / 100.0), "KR", direction="up")
+        plan_target = float(getattr(plan, "sell_target", 0.0) or 0.0)
+        if plan_target > 0 and trigger_price > 0 and plan_target < trigger_price:
+            payload = {
+                "split_runner_status": "A_FALLBACK_TARGET_BELOW_TRIGGER",
+                "split_runner_fallback_reason": "PLAN_TARGET_BELOW_SPLIT_TRIGGER",
+                "split_runner_fallback_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "split_runner_trigger_price": trigger_price,
+                "split_runner_plan_target": plan_target,
+            }
+            self.store.update_path_run(plan.path_run_id, plan=payload, merge_plan=True)
+            pos.update(payload)
+            return {
+                "owns_profit": False,
+                "policy": policy,
+                "status": "A_FALLBACK_TARGET_BELOW_TRIGGER",
+                "trigger_price": trigger_price,
+            }
+        if trigger_price <= 0 or current < trigger_price:
+            return {
+                "owns_profit": True,
+                "policy": policy,
+                "status": "PRE_SPLIT",
+                "trigger_price": trigger_price,
+            }
+
+        fraction = min(0.9, max(0.1, _env_float("PATHB_KR_SPLIT_RUNNER_FRACTION", 0.5)))
+        sell_qty = int(math.floor(original_qty * fraction))
+        sell_qty = min(sell_qty, max(0, qty - 1))
+        if sell_qty <= 0:
+            return {"owns_profit": False, "policy": policy, "status": "A_FALLBACK_QTY1"}
+        order_price = self._compute_sell_order_price("KR", current)
+        try:
+            pre = precheck_order(plan.ticker, sell_qty, order_price, "sell", _bot_token(self.bot, "KR"), market="KR")
+        except Exception as exc:
+            log.error(f"[KR split-runner precheck exception] {plan.ticker}: {exc}")
+            return {"owns_profit": True, "policy": policy, "status": "PRE_SPLIT", "reason": "precheck_exception"}
+        if not pre.get("ok"):
+            log.error(f"[KR split-runner precheck blocked] {plan.ticker}: {pre.get('reason') or pre.get('msg')}")
+            return {"owns_profit": True, "policy": policy, "status": "PRE_SPLIT", "reason": "precheck_blocked"}
+        try:
+            result = place_order(plan.ticker, sell_qty, order_price, "sell", _bot_token(self.bot, "KR"), market="KR")
+        except Exception as exc:
+            log.error(f"[KR split-runner order unknown] {plan.ticker}: {exc}")
+            self.adapter.mark_order_unknown(
+                plan.path_run_id,
+                detail=f"split_runner_sell_order_exception:{exc}",
+                runtime_mode=self.mode,
+                brain_snapshot_id=self._brain_snapshot_id("KR"),
+            )
+            return {"owns_profit": True, "policy": policy, "status": "ORDER_UNKNOWN"}
+        if not result.get("success"):
+            log.error(f"[KR split-runner order rejected] {plan.ticker}: {result.get('msg', '')}")
+            return {"owns_profit": True, "policy": policy, "status": "PRE_SPLIT", "reason": "broker_reject"}
+
+        order_no = str(result.get("order_no") or f"split_{plan.ticker}_{int(time.time())}")
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        pos.update({
+            "sell_confirmation_pending": True,
+            "pending_sell_status": "submitted",
+            "pending_sell_order_no": order_no,
+            "pending_sell_qty": sell_qty,
+            "pending_sell_reason": "pathb_split_runner_partial",
+            "pending_sell_created_at": now_iso,
+            "split_runner_original_qty": original_qty,
+            "split_runner_status": "PENDING",
+        })
+        self.store.update_path_run(
+            plan.path_run_id,
+            plan={
+                "split_runner_status": "PENDING",
+                "split_runner_original_qty": original_qty,
+                "split_runner_requested_qty": sell_qty,
+                "split_runner_order_no": order_no,
+                "split_runner_order_price": order_price,
+                "split_runner_trigger_price": trigger_price,
+                "split_runner_submitted_at": now_iso,
+                "split_runner_exit_owner": "split_runner_partial",
+            },
+            merge_plan=True,
+        )
+        try:
+            self._save_positions_if_possible()
+        except Exception:
+            pass
+        log.warning(
+            f"[KR SPLIT-RUNNER SELL SENT] {plan.ticker} qty={sell_qty}/{original_qty} "
+            f"order={order_no} trigger={trigger_price:g}"
+        )
+        return {"owns_profit": True, "policy": policy, "status": "PENDING", "order_no": order_no}
 
     def _record_pathb_buy_decision_event(
         self,
@@ -3993,6 +4243,17 @@ class PathBRuntime:
             },
             merge_plan=True,
         )
+        if market_key == "KR" and price_native > 0:
+            try:
+                get_paired_exit_observer().record_live_exit(
+                    path_run_id=path_run_id,
+                    price=price_native,
+                    close_reason=close_reason,
+                    filled_at=datetime.now(KST).isoformat(timespec="seconds"),
+                    execution_id=execution_id,
+                )
+            except Exception as exc:
+                log.warning(f"[paired exit shadow] external baseline record failed KR {run.get('ticker', '')}: {exc}")
         return True
 
     def cancel_waiting(self, market: str, *, reason: str, include_shadow: bool = True) -> int:
@@ -6880,6 +7141,13 @@ class PathBRuntime:
         if mfe_pct <= 0 or peak_price <= 0:
             return {}
 
+        kr_exit_policy, kr_run_plan = self._pathb_kr_exit_policy(plan, pos)
+        split_runner_mode = (
+            str(market or plan.market or "").upper() == "KR"
+            and kr_exit_policy == "SPLIT_RUNNER_V1"
+            and str(kr_run_plan.get("split_runner_status") or "").upper() == "FILLED"
+        )
+
         # ★2026-07-14 조기익절 tier (운영자 승인 A안, 7/14 B수정): sell_target이 도달가능 MFE 대비
         # 2.3배 과대라 원목표 대기 중 이익 왕복이 US 적자 핵심. MFE가 목표거리×fraction(기본 0.4)에
         # 도달하면 peak-giveback으로 floor를 잠근다. sell_target(상방 캡)은 유지.
@@ -6887,7 +7155,11 @@ class PathBRuntime:
         #   peak-anchored 상위 tier(tier3/tier4/AB peak-trail)는 증명된 러너의 느슨한 트레일을
         #   소유하므로 early가 조이지 않는다(그 트레일이 곧 러너 보존 장치).
         # 근거: DB n=291 시뮬 KR -0.22→+2.15/US -0.18→+0.48, 7월 KR 1.1밴드 리플레이 승률 27%→64%.
-        early_info = self._pathb_early_tier_floor(plan, entry, peak_price, mfe_pct, market)
+        early_info = (
+            {}
+            if split_runner_mode
+            else self._pathb_early_tier_floor(plan, entry, peak_price, mfe_pct, market)
+        )
 
         # Phase B A/B(2026-06-27): enforce-B 그룹은 현행 tier 사다리 대신 단일 peak-trail로 대체.
         # sweep(ladder_capture_sweep US n=32) act=4·give=2 → Δ+13%p·개선19/악화12·악화반납 통제.
@@ -6928,13 +7200,13 @@ class PathBRuntime:
             tier = "tier3"
             floor = peak_price * (1.0 - max(0.0, _env_float("PATHB_LADDER_TIER3_PEAK_GIVEBACK_PCT", 0.010)))
             peak_anchored = True
-        elif mfe_pct >= tier2 > 0:
+        elif not split_runner_mode and mfe_pct >= tier2 > 0:
             tier = "tier2"
             # floor 상향(0.010) 검토했으나 2026-06-14 yfinance 경로 시뮬에서 평균 +0.02%p(무차익)
             # + 큰 러너 6건 희생(FIG +2.31→+0.10 등, floor↑가 조기청산 유발)으로 롤백. 현행 0.005 유지.
             # 본전청산=수수료손실 문제는 Phase 1c 실측 MFE 1~2주 수집 후 tier 임계/giveback으로 재설계.
             floor = entry * (1.0 + max(0.0, _env_float("PATHB_LADDER_TIER2_FLOOR_BUFFER_PCT", 0.005)))
-        elif mfe_pct >= tier1 > 0:
+        elif not split_runner_mode and mfe_pct >= tier1 > 0:
             tier = "tier1"
             floor = entry * (1.0 + max(0.0, _env_float("PATHB_LADDER_TIER1_FLOOR_BUFFER_PCT", 0.0)))
         if floor <= 0:
@@ -10150,6 +10422,17 @@ class PathBRuntime:
             },
             merge_plan=True,
         )
+        if market == "KR":
+            try:
+                get_paired_exit_observer().record_live_exit(
+                    path_run_id=plan.path_run_id,
+                    price=float(price_native or 0),
+                    close_reason=str(close_reason or "CLOSED_UNKNOWN"),
+                    filled_at=datetime.now(KST).isoformat(timespec="seconds"),
+                    execution_id=str(execution_id or ""),
+                )
+            except Exception as exc:
+                log.warning(f"[paired exit shadow] live baseline record failed KR {plan.ticker}: {exc}")
         try:
             price_sample = getattr(self.bot, "_audit_emit_price_sample", None)
             audit_emit = getattr(self.bot, "_audit_try_emit", None)
@@ -11810,6 +12093,14 @@ class PathBRuntime:
         if str(pos.get("pathb_closing", "") or "").strip():
             return True
         if str(pos.get("pathb_pending_sell_order_no", "") or "").strip():
+            return True
+        if bool(pos.get("sell_confirmation_pending")):
+            return True
+        pending_status = str(pos.get("pending_sell_status", "") or "").strip().lower()
+        if (
+            str(pos.get("pending_sell_order_no", "") or "").strip()
+            and pending_status not in {"resolved", "cleared"}
+        ):
             return True
         return False
 

@@ -6,7 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from typing import Any, Callable
 
-from runtime.intraday_features import compute_intraday_features
+from runtime.intraday_features import compute_intraday_features, normalize_intraday_candles
 
 
 Provider = Callable[..., Any]
@@ -65,6 +65,9 @@ class IntradayMinuteCache:
         )
         self._now = now_func or time.time
         self._cache: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        # Raw normalized bars are retained only for read-only observers.  The
+        # public snapshot API below never calls the provider or mutates cache.
+        self._bar_cache: dict[tuple[str, str, str, str], dict[str, Any]] = {}
         self._lock = threading.Lock()
         self._call_lock = threading.Lock()
         self._last_call_ts = 0.0
@@ -92,6 +95,7 @@ class IntradayMinuteCache:
                 if ticker_set is not None and key_ticker not in ticker_set:
                     continue
                 self._cache.pop(key, None)
+                self._bar_cache.pop(key, None)
 
     def _cache_key(self, market: str, session_date: str, ticker: str, provider_name: str) -> tuple[str, str, str, str]:
         return (_market_key(market), str(session_date), _ticker_key(market, ticker), str(provider_name or self.provider_name))
@@ -108,7 +112,13 @@ class IntradayMinuteCache:
                 return None
             return dict(item.get("features") or {})
 
-    def _store(self, key: tuple[str, str, str, str], features: dict[str, Any]) -> None:
+    def _store(
+        self,
+        key: tuple[str, str, str, str],
+        features: dict[str, Any],
+        *,
+        bars: list[dict[str, Any]] | None = None,
+    ) -> None:
         quality = str((features or {}).get("data_quality") or "").strip().lower()
         if quality == "minute_missing":
             try:
@@ -127,7 +137,62 @@ class IntradayMinuteCache:
         else:
             ttl_sec = float(self.ttl_sec)
         with self._lock:
-            self._cache[key] = {"cached_at": self._now(), "ttl_sec": ttl_sec, "features": dict(features)}
+            cached_at = self._now()
+            self._cache[key] = {"cached_at": cached_at, "ttl_sec": ttl_sec, "features": dict(features)}
+            if bars is not None:
+                immutable_rows = tuple(tuple(sorted(dict(row).items())) for row in bars)
+                watermark = str((bars[-1] or {}).get("ts") or "") if bars else ""
+                self._bar_cache[key] = {
+                    "cached_at": cached_at,
+                    "ttl_sec": ttl_sec,
+                    "watermark": watermark,
+                    "bars": immutable_rows,
+                }
+
+    def snapshot_bars(
+        self,
+        *,
+        market: str,
+        ticker: str,
+        session_date: str,
+        provider_name: str = "",
+    ) -> dict[str, Any]:
+        """Return a defensive bar copy without fetching, refreshing or deleting."""
+
+        provider_label = str(provider_name or self.provider_name or "auto")
+        key = self._cache_key(market, session_date, ticker, provider_label)
+        now = self._now()
+        with self._lock:
+            item = self._bar_cache.get(key)
+            if not item:
+                return {
+                    "market": key[0],
+                    "session_date": key[1],
+                    "ticker": key[2],
+                    "provider": key[3],
+                    "bars": [],
+                    "watermark": "",
+                    "cached_at": 0.0,
+                    "age_sec": None,
+                    "stale": True,
+                    "reason": "cache_miss",
+                }
+            cached_at = float(item.get("cached_at", 0.0) or 0.0)
+            ttl_sec = float(item.get("ttl_sec", self.ttl_sec) or self.ttl_sec)
+            age_sec = max(0.0, now - cached_at)
+            rows = [dict(pairs) for pairs in tuple(item.get("bars") or ())]
+            return {
+                "market": key[0],
+                "session_date": key[1],
+                "ticker": key[2],
+                "provider": key[3],
+                "bars": rows,
+                "watermark": str(item.get("watermark") or ""),
+                "cached_at": cached_at,
+                "age_sec": age_sec,
+                "stale": age_sec > ttl_sec,
+                "reason": "cache_stale" if age_sec > ttl_sec else "",
+            }
 
     def _shutdown_executor(self, executor: ThreadPoolExecutor, *, wait: bool) -> None:
         try:
@@ -221,8 +286,14 @@ class IntradayMinuteCache:
                 timeout_sec=remaining,
                 deadline=deadline,
             )
-            features = compute_intraday_features(
+            normalized_bars = normalize_intraday_candles(
                 candles,
+                market=key[0],
+                ticker=key[2],
+                source=provider_name,
+            )
+            features = compute_intraday_features(
+                normalized_bars,
                 market=key[0],
                 ticker=key[2],
                 regular_open=regular_open,
@@ -231,7 +302,7 @@ class IntradayMinuteCache:
                 opening_range_min=opening_range_min,
                 source=provider_name,
             )
-            self._store(key, features)
+            self._store(key, features, bars=normalized_bars)
             return key[2], features, False, ""
         except TimeoutError as exc:
             return key[2], None, False, str(exc)[:240] or "provider_timeout"

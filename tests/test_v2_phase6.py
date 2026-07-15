@@ -54,7 +54,7 @@ class V2Phase6Tests(unittest.TestCase):
             ],
         )
         for command in (
-            "/status", "/health", "/picks", "/positions", "/errors", "/halt", "/resume", "/panic",
+            "/status", "/health", "/monitor", "/picks", "/positions", "/errors", "/halt", "/resume", "/panic",
             "/brain_pending", "/buy_capacity", "/capacity", "/pathb_status", "/pathb_on", "/pathb_off", "/pathb_kill",
             "/pathb_closeall",
         ):

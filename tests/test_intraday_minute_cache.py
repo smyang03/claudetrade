@@ -305,6 +305,73 @@ class IntradayMinuteCacheTests(unittest.TestCase):
         self.assertNotIn("SLOW", result["features_by_ticker"])
         self.assertIn("SLOW", result["errors_by_ticker"])
 
+    def test_snapshot_bars_is_read_only_and_does_not_refetch(self) -> None:
+        calls = 0
+
+        def provider(**kwargs):
+            nonlocal calls
+            calls += 1
+            return _candles()
+
+        now = [100.0]
+        cache = IntradayMinuteCache(
+            provider=provider,
+            provider_name="fake",
+            ttl_sec=30,
+            now_func=lambda: now[0],
+        )
+        cache.get_many(
+            market="KR",
+            tickers=["AAA"],
+            session_date="2026-05-13",
+            token=None,
+            regular_open="2026-05-13T09:00:00",
+            known_at="2026-05-13T09:06:00",
+            provider_name="fake",
+        )
+
+        first = cache.snapshot_bars(
+            market="KR", ticker="AAA", session_date="2026-05-13", provider_name="fake"
+        )
+        first["bars"][0]["close"] = 1.0
+        second = cache.snapshot_bars(
+            market="KR", ticker="AAA", session_date="2026-05-13", provider_name="fake"
+        )
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(second["bars"][0]["close"], 100.0)
+        self.assertEqual(second["watermark"], "2026-05-13T09:06:00")
+        self.assertFalse(second["stale"])
+
+    def test_snapshot_bars_reports_stale_without_deleting(self) -> None:
+        now = [100.0]
+        cache = IntradayMinuteCache(
+            provider=lambda **kwargs: _candles(),
+            provider_name="fake",
+            ttl_sec=5,
+            now_func=lambda: now[0],
+        )
+        cache.get_many(
+            market="KR",
+            tickers=["AAA"],
+            session_date="2026-05-13",
+            token=None,
+            regular_open="2026-05-13T09:00:00",
+            known_at="2026-05-13T09:06:00",
+            provider_name="fake",
+        )
+        now[0] = 106.0
+        stale = cache.snapshot_bars(
+            market="KR", ticker="AAA", session_date="2026-05-13", provider_name="fake"
+        )
+        again = cache.snapshot_bars(
+            market="KR", ticker="AAA", session_date="2026-05-13", provider_name="fake"
+        )
+
+        self.assertTrue(stale["stale"])
+        self.assertEqual(stale["reason"], "cache_stale")
+        self.assertEqual(len(again["bars"]), len(_candles()))
+
 
 if __name__ == "__main__":
     unittest.main()

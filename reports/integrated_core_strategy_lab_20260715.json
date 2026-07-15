@@ -1,0 +1,119 @@
+{
+  "as_of": "2026-07-15",
+  "authority": "SHADOW_ONLY",
+  "source": "cache",
+  "contract": {
+    "signal_lag": "month t signal -> month t+1 return",
+    "weights": {
+      "US_QUAL_MOM": 0.32,
+      "US_MULTI_TREND": 0.32,
+      "US_QQQ": 0.16,
+      "KR_FACTOR_TREND": 0.2
+    },
+    "base_one_way_cost_pct": {
+      "US": 0.25,
+      "KR": 0.105
+    },
+    "stress": "US/KR one-way 0.50/0.25% plus 0.50% annual tax/slippage drag"
+  },
+  "base": {
+    "discovery_2018_2021": {
+      "months": 41,
+      "total_return_pct": 69.43558241622394,
+      "cagr_pct": 16.68787806353873,
+      "sharpe_rf0": 1.4820292430535815,
+      "max_drawdown_pct": -10.806780094990543,
+      "worst_rolling_12m_pct": 7.5001203525354,
+      "annual_mean_ex_top3_pct": 11.868761399848408,
+      "annual_mean_block_lcb_5pct": 9.801886486101639,
+      "annual_us_turnover": 1.5238641661114594,
+      "annual_kr_turnover": 0.5148956163831568
+    },
+    "oos_2022_2025": {
+      "months": 48,
+      "total_return_pct": 68.99270990566488,
+      "cagr_pct": 14.01631290623515,
+      "sharpe_rf0": 1.318537070046408,
+      "max_drawdown_pct": -9.801007629237347,
+      "worst_rolling_12m_pct": -9.801007629237347,
+      "annual_mean_ex_top3_pct": 9.630905358495683,
+      "annual_mean_block_lcb_5pct": 6.286645692666898,
+      "annual_us_turnover": 1.857798580042034,
+      "annual_kr_turnover": 0.6493092284959092
+    },
+    "forward_2026_ytd": {
+      "months": 6,
+      "total_return_pct": 44.43331711164693,
+      "cagr_pct": null,
+      "sharpe_rf0": 3.878167075314554,
+      "max_drawdown_pct": -3.4613430797847067,
+      "worst_rolling_12m_pct": null,
+      "annual_mean_ex_top3_pct": 20.776873744199133,
+      "annual_mean_block_lcb_5pct": null,
+      "annual_us_turnover": 1.3785495464838593,
+      "annual_kr_turnover": 0.4044721110706896
+    },
+    "all_2018_plus": {
+      "months": 95,
+      "total_return_pct": 313.5613797432578,
+      "cagr_pct": 19.640641706991314,
+      "sharpe_rf0": 1.531045927162956,
+      "max_drawdown_pct": -10.806780094990543,
+      "worst_rolling_12m_pct": -9.801007629237347,
+      "annual_mean_ex_top3_pct": 15.026569622220274,
+      "annual_mean_block_lcb_5pct": 10.603465995303281,
+      "annual_us_turnover": 1.6834111571735857,
+      "annual_kr_turnover": 0.5758357463782864
+    }
+  },
+  "stress": {
+    "discovery_2018_2021": {
+      "months": 41,
+      "total_return_pct": 64.06108160128325,
+      "cagr_pct": 15.592181405036975,
+      "sharpe_rf0": 1.3951754090658397,
+      "max_drawdown_pct": -11.12483849136371,
+      "worst_rolling_12m_pct": 6.374736393599467,
+      "annual_mean_ex_top3_pct": 10.924049982509793,
+      "annual_mean_block_lcb_5pct": 8.81516692475859,
+      "annual_us_turnover": 1.5238641661114594,
+      "annual_kr_turnover": 0.5148956163831568
+    },
+    "oos_2022_2025": {
+      "months": 48,
+      "total_return_pct": 62.04452883936706,
+      "cagr_pct": 12.825844553387999,
+      "sharpe_rf0": 1.214954938847392,
+      "max_drawdown_pct": -10.718770184191884,
+      "worst_rolling_12m_pct": -10.718770184191884,
+      "annual_mean_ex_top3_pct": 8.557522459701005,
+      "annual_mean_block_lcb_5pct": 4.952451569580715,
+      "annual_us_turnover": 1.857798580042034,
+      "annual_kr_turnover": 0.6493092284959092
+    },
+    "forward_2026_ytd": {
+      "months": 6,
+      "total_return_pct": 43.824042575120316,
+      "cagr_pct": null,
+      "sharpe_rf0": 3.839150718672627,
+      "max_drawdown_pct": -3.5166847795341183,
+      "worst_rolling_12m_pct": null,
+      "annual_mean_ex_top3_pct": 19.88088291113256,
+      "annual_mean_block_lcb_5pct": null,
+      "annual_us_turnover": 1.3785495464838593,
+      "annual_kr_turnover": 0.4044721110706896
+    },
+    "all_2018_plus": {
+      "months": 95,
+      "total_return_pct": 282.359103288017,
+      "cagr_pct": 18.460984895804856,
+      "sharpe_rf0": 1.4488087163034633,
+      "max_drawdown_pct": -11.12483849136371,
+      "worst_rolling_12m_pct": -10.718770184191884,
+      "annual_mean_ex_top3_pct": 14.019162993610754,
+      "annual_mean_block_lcb_5pct": 9.63812541413086,
+      "annual_us_turnover": 1.6834111571735857,
+      "annual_kr_turnover": 0.5758357463782864
+    }
+  }
+}

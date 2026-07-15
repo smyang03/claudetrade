@@ -19,6 +19,43 @@ from runtime.us_swing_order_handoff import (
 
 
 log = get_trading_logger()
+OPERATOR_MICRO_OVERRIDE_ACK = "I_ACCEPT_MICRO_WITHOUT_FORWARD"
+
+
+def _operator_micro_override(bot: Any, authority: dict[str, Any], configured_mode: str) -> dict[str, Any]:
+    """Permit a one-slot MICRO trial while preserving every non-forward block.
+
+    The tracker was silent before its scheduler repair, so an operator may
+    explicitly accept missing forward maturity.  Historical, sealed execution,
+    quote, cash, slot, common-buy and live-ACK guards remain mandatory.
+    """
+
+    if str(configured_mode or "").lower() != "micro":
+        return authority
+    ack = str(bot._runtime_value("US_SWING_OPERATOR_MICRO_OVERRIDE_ACK", "") or "")
+    blockers = [str(item) for item in authority.get("blockers") or []]
+    if ack != OPERATOR_MICRO_OVERRIDE_ACK or not blockers:
+        return authority
+    allowed = {
+        "forward_sessions_insufficient",
+        "forward_matured_insufficient",
+        "forward_mean_below_hurdle",
+        "forward_profit_factor_below_hurdle",
+    }
+    if any(blocker not in allowed for blocker in blockers):
+        return authority
+    return {
+        **authority,
+        "eligible_mode": "micro_operator_trial",
+        "effective_mode": "micro",
+        "allowed_to_emit_orders": True,
+        "size_multiplier": 0.10,
+        "max_new_per_day": 1,
+        "max_open_slots": 1,
+        "operator_forward_override": True,
+        "operator_forward_override_blockers": blockers,
+        "warnings": [*(authority.get("warnings") or []), "operator_micro_forward_override_active"],
+    }
 
 
 def _current_us_swing_open_slots(bot: Any) -> int:
@@ -69,6 +106,7 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
             historical_path=historical_path,
             execution_path=execution_path,
         )
+        authority = _operator_micro_override(bot, authority, configured_mode)
         session_date = bot._current_session_date_str("US")
         signals = load_handoff_signals(
             con,

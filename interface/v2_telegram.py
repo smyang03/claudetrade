@@ -89,7 +89,7 @@ def _ko_control_reason(value: Any) -> str:
 def handle_v2_command(text: str, bot: Any, *, market_override: str | None = None) -> str:
     cmd = str(text or "").strip().split()[0].lower()
     summary = build_v2_ops_summary(bot=bot)
-    if cmd == "/health":
+    if cmd in {"/health", "/monitor"}:
         return _format_health(summary)
     if cmd == "/picks":
         return _format_picks(summary)
@@ -143,6 +143,52 @@ def _format_health(summary: dict[str, Any]) -> str:
         )
         if data.get("error"):
             lines.append(f"계좌 조회 {market} 오류: {data.get('error')}")
+    trackers = health.get("strategy_trackers") or {}
+    core = trackers.get("core_shadow") or {}
+    paired = trackers.get("paired_exit") or {}
+    swing = trackers.get("us_swing") or {}
+    profit = trackers.get("profit_strategies") or {}
+    policy = trackers.get("kr_exit_policy") or {}
+    lines.extend(
+        [
+            "",
+            "<b>전략 트래커</b>",
+            (
+                f"코어: status={core.get('status') or 'missing'} stale={_ko_bool(core.get('stale', True))} "
+                f"last={core.get('last_success_at') or core.get('last_tick_at') or '-'} "
+                f"data={core.get('price_data_as_of') or '-'}"
+            ),
+            (
+                f"KR paired: clock={paired.get('clock_status') or 'STARVED'} "
+                f"gate_n={paired.get('gate_sample_total', 0)}/15 "
+                f"intake={paired.get('paired_eligible_total', 0)}(+{paired.get('paired_eligible_7d', 0)}/7d) "
+                f"completed={paired.get('paired_completed_eligible_7d', 0)}/7d "
+                f"split={paired.get('paired_triggered_total', 0)} "
+                f"delta={paired.get('paired_mean_delta_pct') if paired.get('paired_mean_delta_pct') is not None else '-'} "
+                f"gate={_ko_bool(paired.get('statistical_gate_pass'))} "
+                f"ETA={paired.get('n15_eta_days') if paired.get('n15_eta_days') is not None else '-'}일"
+            ),
+            (
+                f"US swing: stale={_ko_bool(swing.get('stale', True))} "
+                f"last={swing.get('updated_at') or swing.get('last_success_at') or swing.get('generated_at') or '-'} "
+                f"failure={swing.get('failed_session_date') or '-'}"
+            ),
+            (
+                f"MICRO strategies: mode={profit.get('authority_mode') or '-'} "
+                f"kill={profit.get('kill_switch') or '-'} runtime_match={_ko_bool(profit.get('config_matches_runtime'))} "
+                f"US_n={(profit.get('US') or {}).get('signal_count', 0)} "
+                f"KR_n={(profit.get('KR') or {}).get('signal_count', 0)} "
+                f"last={(profit.get('last_handoff') or {}).get('status') or '-'}"
+            ),
+            (
+                f"KR exit policy: env={policy.get('env_live') or '-'} config={policy.get('start_config') or '-'} "
+                f"runtime={policy.get('runtime_snapshot') or '-'} 일치={_ko_bool(policy.get('ok'))}"
+            ),
+        ]
+    )
+    if swing.get("last_error"):
+        error_tail = str(swing.get("last_error") or "").splitlines()[-1][-220:]
+        lines.append(f"US swing error: {error_tail}")
     return "\n".join(lines)
 
 

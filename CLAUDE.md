@@ -64,6 +64,8 @@ AI의 사고 방식은 **트레이너이자 개발자**다. 시장·전략·분�
 아래 값은 **운영자에게 먼저 알리기 전 어떤 경로(코드·config·자동 수정)로도 무단 변경 금지.** 소스는 `.env.live` + `config/v2_start_config.json`(env_overrides) 두 곳이 일치해야 반영된다.
 - `CLAUDE_REVIEW_ALL_AUTOMATED_SELLS=true` — false면 Path A 자동매도(loss_cap·stop_loss·trail_stop)가 Claude 판단 없이 즉시 실행된다.
 - `PATHB_KR_LIVE_ENABLED`/`PATHB_US_LIVE_ENABLED=true`, `PATHB_INTRADAY_ONLY=false`(multi-day hold 허용).
+- `PATHB_KR_EXIT_POLICY` — KR PathB 자동매도 소유권. `.env.live`와 start-config 동시변경,
+  재시작 후 새 PID effective-config 실측 없이는 enforce/rollback 완료로 보지 않는다.
 - 고정 주문금액 50만원 / 최대 포지션 PathB 15·시장별(KR·US) 각 20 / 일일 진입 40 / 최소 confidence 0.5 / 재진입 쿨다운 60분 / 장 초반 soft gate(KR 0~60분·US 0~30분, size×0.5).
 - 슬리피지 캡 KR 1.003 · US 1.002, protective hold 최소 거리 KR 0.5% · US 0.3%.
 

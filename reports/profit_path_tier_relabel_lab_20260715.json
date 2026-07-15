@@ -1,0 +1,350 @@
+{
+  "as_of": "2026-07-15",
+  "authority": "SHADOW_ONLY",
+  "markets": {
+    "US": {
+      "market": "US",
+      "pre_hygiene_n": 65070,
+      "dataset_n": 43806,
+      "date_n": 34,
+      "tier_pct": 2.3,
+      "folds": [
+        {
+          "fold": 1,
+          "train_dates": [
+            "2026-05-26",
+            "2026-06-12"
+          ],
+          "purge_date": "2026-06-15",
+          "test_dates": [
+            "2026-06-16",
+            "2026-06-24"
+          ],
+          "train_n": 9855,
+          "test_n": 8576,
+          "train_base_rate": 0.1134,
+          "test_base_rate": 0.05
+        },
+        {
+          "fold": 2,
+          "train_dates": [
+            "2026-05-26",
+            "2026-06-23"
+          ],
+          "purge_date": "2026-06-24",
+          "test_dates": [
+            "2026-06-25",
+            "2026-07-02"
+          ],
+          "train_n": 19476,
+          "test_n": 10296,
+          "train_base_rate": 0.0856,
+          "test_base_rate": 0.0851
+        },
+        {
+          "fold": 3,
+          "train_dates": [
+            "2026-05-26",
+            "2026-07-01"
+          ],
+          "purge_date": "2026-07-02",
+          "test_dates": [
+            "2026-07-06",
+            "2026-07-13"
+          ],
+          "train_n": 29614,
+          "test_n": 10287,
+          "train_base_rate": 0.0862,
+          "test_base_rate": 0.0363
+        },
+        {
+          "fold": 4,
+          "train_dates": [
+            "2026-05-26",
+            "2026-07-10"
+          ],
+          "purge_date": "2026-07-13",
+          "test_dates": [
+            "2026-07-14",
+            "2026-07-14"
+          ],
+          "train_n": 39570,
+          "test_n": 2728,
+          "train_base_rate": 0.0735,
+          "test_base_rate": 0.0506
+        }
+      ],
+      "oos_all_paths": {
+        "n": 31887,
+        "days": 19,
+        "tier_success_rate": 0.057,
+        "raw_60m_net_mean": -0.5255,
+        "raw_60m_net_sum": -16757.844,
+        "tier_cf_net_mean": -0.5617,
+        "tier_cf_net_sum": -17910.274,
+        "raw_ex_top3_sum": -16779.137,
+        "positive_day_rate": 0.0,
+        "worst_day_mean": -1.0207
+      },
+      "arms": {
+        "top1_per_day_upper_bound": {
+          "n": 19,
+          "days": 19,
+          "tier_success_rate": 0.2105,
+          "raw_60m_net_mean": -1.474,
+          "raw_60m_net_sum": -28.006,
+          "tier_cf_net_mean": -1.1955,
+          "tier_cf_net_sum": -22.714,
+          "raw_ex_top3_sum": -32.575,
+          "positive_day_rate": 0.2105,
+          "worst_day_mean": -8.8619
+        },
+        "top3_per_day_upper_bound": {
+          "n": 57,
+          "days": 19,
+          "tier_success_rate": 0.2105,
+          "raw_60m_net_mean": -0.8327,
+          "raw_60m_net_sum": -47.462,
+          "tier_cf_net_mean": -0.943,
+          "tier_cf_net_sum": -53.749,
+          "raw_ex_top3_sum": -57.635,
+          "positive_day_rate": 0.2632,
+          "worst_day_mean": -4.443
+        },
+        "top5_per_day_upper_bound": {
+          "n": 95,
+          "days": 19,
+          "tier_success_rate": 0.2211,
+          "raw_60m_net_mean": -0.786,
+          "raw_60m_net_sum": -74.675,
+          "tier_cf_net_mean": -0.8658,
+          "tier_cf_net_sum": -82.247,
+          "raw_ex_top3_sum": -84.848,
+          "positive_day_rate": 0.2632,
+          "worst_day_mean": -3.1249
+        },
+        "sequential_p70_cap3": {
+          "n": 57,
+          "days": 19,
+          "tier_success_rate": 0.2807,
+          "raw_60m_net_mean": -0.5906,
+          "raw_60m_net_sum": -33.663,
+          "tier_cf_net_mean": -0.7034,
+          "tier_cf_net_sum": -40.095,
+          "raw_ex_top3_sum": -48.739,
+          "positive_day_rate": 0.4211,
+          "worst_day_mean": -3.8662
+        },
+        "sequential_p80_cap3": {
+          "n": 55,
+          "days": 19,
+          "tier_success_rate": 0.2909,
+          "raw_60m_net_mean": -0.5369,
+          "raw_60m_net_sum": -29.53,
+          "tier_cf_net_mean": -0.6588,
+          "tier_cf_net_sum": -36.233,
+          "raw_ex_top3_sum": -41.736,
+          "positive_day_rate": 0.4211,
+          "worst_day_mean": -3.0206
+        },
+        "sequential_p90_cap3": {
+          "n": 42,
+          "days": 18,
+          "tier_success_rate": 0.2857,
+          "raw_60m_net_mean": -0.9963,
+          "raw_60m_net_sum": -41.843,
+          "tier_cf_net_mean": -1.0395,
+          "tier_cf_net_sum": -43.659,
+          "raw_ex_top3_sum": -51.437,
+          "positive_day_rate": 0.2778,
+          "worst_day_mean": -5.1677
+        }
+      },
+      "join_diagnostics": {
+        "path_rows": 79619,
+        "backward_matched_rows": 65156,
+        "prompt_matched_rows": 65070,
+        "usable_rows": 65070,
+        "backward_match_rate": 0.818347,
+        "prompt_match_rate": 0.817267,
+        "join_delta_sec": {
+          "median": 0.0,
+          "p95": 15.0,
+          "max": 117.0
+        }
+      }
+    },
+    "KR": {
+      "market": "KR",
+      "pre_hygiene_n": 39547,
+      "dataset_n": 18824,
+      "date_n": 36,
+      "tier_pct": 3.6,
+      "folds": [
+        {
+          "fold": 1,
+          "train_dates": [
+            "2026-05-26",
+            "2026-06-15"
+          ],
+          "purge_date": "2026-06-16",
+          "test_dates": [
+            "2026-06-17",
+            "2026-06-24"
+          ],
+          "train_n": 5320,
+          "test_n": 3797,
+          "train_base_rate": 0.113,
+          "test_base_rate": 0.1493
+        },
+        {
+          "fold": 2,
+          "train_dates": [
+            "2026-05-26",
+            "2026-06-23"
+          ],
+          "purge_date": "2026-06-24",
+          "test_dates": [
+            "2026-06-25",
+            "2026-07-02"
+          ],
+          "train_n": 8905,
+          "test_n": 3202,
+          "train_base_rate": 0.1225,
+          "test_base_rate": 0.1462
+        },
+        {
+          "fold": 3,
+          "train_dates": [
+            "2026-05-26",
+            "2026-07-01"
+          ],
+          "purge_date": "2026-07-02",
+          "test_dates": [
+            "2026-07-03",
+            "2026-07-10"
+          ],
+          "train_n": 12173,
+          "test_n": 3901,
+          "train_base_rate": 0.1316,
+          "test_base_rate": 0.1564
+        },
+        {
+          "fold": 4,
+          "train_dates": [
+            "2026-05-26",
+            "2026-07-09"
+          ],
+          "purge_date": "2026-07-10",
+          "test_dates": [
+            "2026-07-13",
+            "2026-07-15"
+          ],
+          "train_n": 16107,
+          "test_n": 2110,
+          "train_base_rate": 0.136,
+          "test_base_rate": 0.1294
+        }
+      ],
+      "oos_all_paths": {
+        "n": 13010,
+        "days": 21,
+        "tier_success_rate": 0.1474,
+        "raw_60m_net_mean": -0.6423,
+        "raw_60m_net_sum": -8356.2,
+        "tier_cf_net_mean": -0.7332,
+        "tier_cf_net_sum": -9538.742,
+        "raw_ex_top3_sum": -8485.72,
+        "positive_day_rate": 0.2857,
+        "worst_day_mean": -1.8881
+      },
+      "arms": {
+        "top1_per_day_upper_bound": {
+          "n": 21,
+          "days": 21,
+          "tier_success_rate": 0.2381,
+          "raw_60m_net_mean": 0.3521,
+          "raw_60m_net_sum": 7.394,
+          "tier_cf_net_mean": -0.9522,
+          "tier_cf_net_sum": -19.996,
+          "raw_ex_top3_sum": -24.294,
+          "positive_day_rate": 0.4762,
+          "worst_day_mean": -6.5391
+        },
+        "top3_per_day_upper_bound": {
+          "n": 63,
+          "days": 21,
+          "tier_success_rate": 0.254,
+          "raw_60m_net_mean": 0.2766,
+          "raw_60m_net_sum": 17.427,
+          "tier_cf_net_mean": -0.944,
+          "tier_cf_net_sum": -59.47,
+          "raw_ex_top3_sum": -40.534,
+          "positive_day_rate": 0.4286,
+          "worst_day_mean": -5.4898
+        },
+        "top5_per_day_upper_bound": {
+          "n": 105,
+          "days": 21,
+          "tier_success_rate": 0.2571,
+          "raw_60m_net_mean": -0.076,
+          "raw_60m_net_sum": -7.985,
+          "tier_cf_net_mean": -0.9906,
+          "tier_cf_net_sum": -104.009,
+          "raw_ex_top3_sum": -72.939,
+          "positive_day_rate": 0.4762,
+          "worst_day_mean": -5.0148
+        },
+        "sequential_p70_cap3": {
+          "n": 57,
+          "days": 19,
+          "tier_success_rate": 0.2105,
+          "raw_60m_net_mean": -0.5724,
+          "raw_60m_net_sum": -32.628,
+          "tier_cf_net_mean": -1.1686,
+          "tier_cf_net_sum": -66.611,
+          "raw_ex_top3_sum": -73.818,
+          "positive_day_rate": 0.3684,
+          "worst_day_mean": -4.5626
+        },
+        "sequential_p80_cap3": {
+          "n": 55,
+          "days": 19,
+          "tier_success_rate": 0.3091,
+          "raw_60m_net_mean": 0.2527,
+          "raw_60m_net_sum": 13.896,
+          "tier_cf_net_mean": -0.8041,
+          "tier_cf_net_sum": -44.228,
+          "raw_ex_top3_sum": -40.265,
+          "positive_day_rate": 0.3684,
+          "worst_day_mean": -3.554
+        },
+        "sequential_p90_cap3": {
+          "n": 22,
+          "days": 11,
+          "tier_success_rate": 0.2273,
+          "raw_60m_net_mean": -0.0923,
+          "raw_60m_net_sum": -2.03,
+          "tier_cf_net_mean": -0.9276,
+          "tier_cf_net_sum": -20.408,
+          "raw_ex_top3_sum": -41.815,
+          "positive_day_rate": 0.5455,
+          "worst_day_mean": -8.0562
+        }
+      },
+      "join_diagnostics": {
+        "path_rows": 49307,
+        "backward_matched_rows": 39611,
+        "prompt_matched_rows": 39547,
+        "usable_rows": 39547,
+        "backward_match_rate": 0.803354,
+        "prompt_match_rate": 0.802057,
+        "join_delta_sec": {
+          "median": 0.0,
+          "p95": 7.0,
+          "max": 113.0
+        }
+      }
+    }
+  }
+}

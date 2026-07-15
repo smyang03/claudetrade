@@ -32,9 +32,23 @@ $roles = @(
     @{ Name = "live_guardian"; PidFile = "state\live_guardian_heartbeat.json"; Args = @("tools\live_guardian.py", "--mode", "live", "--watch", "--ensure-bot", "--interval-sec", "300", "--telegram-alert") },
     @{ Name = "broker_truth_scheduler"; PidFile = "state\broker_truth_scheduler.lock.json"; Args = @("tools\broker_truth_scheduler.py", "--mode", "live", "--markets", "KR,US", "--loop", "--interval-sec", "30", "--refresh-interval-min", "2", "--failure-retry-min", "2", "--preopen-min", "20", "--postclose-min", "15", "--ttl-sec", "180", "--no-refresh-on-start") },
     @{ Name = "preopen_scheduler"; PidFile = "state\preopen_scheduler.lock.json"; Args = @("tools\preopen_scheduler.py", "--mode", "live", "--markets", "KR,US", "--loop", "--interval-sec", "60") },
+    @{ Name = "core_shadow_tracker"; PidFile = "state\core_shadow_tracker_heartbeat.json"; Args = @("tools\core_shadow_tracker.py", "--loop", "--interval-sec", "21600") },
     @{ Name = "counterfactual_pipeline"; PidFile = ""; Args = @("tools\run_counterfactual_pipeline.py", "--phase", "due", "--market", "KR,US", "--loop", "--interval-sec", "300", "--json") },
     @{ Name = "integrity_check"; PidFile = ""; Args = @("tools\integrity_check.py", "--watch", "--interval-sec", "600", "--telegram-alert") }
 )
+
+# Break the cold-start dependency cycle: live guardian requires fresh broker
+# truth before it may launch the bot, while the long-running scheduler is
+# normally started later in this script.  A forced read-only refresh provides
+# that evidence without creating or changing orders.
+if (-not $DryRun) {
+    & $PythonExe "tools\broker_truth_scheduler.py" "--mode" "live" "--markets" "KR,US" "--once" "--force" "--json"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Initial broker-truth refresh failed; trading_bot was not started."
+    }
+} else {
+    Write-Output "[DRY-RUN] would force one read-only broker-truth refresh before guardian startup"
+}
 
 $manifestPath = Join-Path $Root "state\headless_live_stack_pids.json"
 $manifest = @{}

@@ -1,0 +1,435 @@
+{
+  "as_of": "2026-07-15",
+  "contract": {
+    "KR": "latest US session strictly before KR date; enter KR open",
+    "US": "latest KR session on/before US date; enter US open",
+    "cost_pct": {
+      "KR": 0.21,
+      "US": 0.5
+    },
+    "discovery_end": "2019-12-31",
+    "oos_start": "2020-01-01"
+  },
+  "strategies": {
+    "KR200_CONT_AFTER_QQQ_UP1": {
+      "all": {
+        "n": 758,
+        "mean_net_pct": -0.28920579844211974,
+        "median_net_pct": -0.2649354440342542,
+        "win_rate": 0.3403693931398417,
+        "profit_factor": 0.43491958045133217,
+        "sum_net_pct": -219.21799521912675,
+        "mean_ex_top3_pct": -0.30625696065827845,
+        "block_mean_lcb_5pct": -0.3423684756820221
+      },
+      "discovery": {
+        "n": 399,
+        "mean_net_pct": -0.2875030597198297,
+        "median_net_pct": -0.27270903010033853,
+        "win_rate": 0.3208020050125313,
+        "profit_factor": 0.38886318253396307,
+        "sum_net_pct": -114.71372082821205,
+        "mean_ex_top3_pct": -0.30586895830268973,
+        "block_mean_lcb_5pct": -0.3509867760257283
+      },
+      "oos": {
+        "n": 359,
+        "mean_net_pct": -0.29109825735630834,
+        "median_net_pct": -0.25910787362907284,
+        "win_rate": 0.362116991643454,
+        "profit_factor": 0.4780938728469867,
+        "sum_net_pct": -104.50427439091469,
+        "mean_ex_top3_pct": -0.3272760799685063,
+        "block_mean_lcb_5pct": -0.37909676458797986
+      },
+      "recent_2024_plus": {
+        "n": 121,
+        "mean_net_pct": -0.23599500989702255,
+        "median_net_pct": -0.29116883116883185,
+        "win_rate": 0.35537190082644626,
+        "profit_factor": 0.5943873879574336,
+        "sum_net_pct": -28.55539619753973,
+        "mean_ex_top3_pct": -0.34374073114757003,
+        "block_mean_lcb_5pct": -0.3788437869537892
+      }
+    },
+    "KR200_REBOUND_AFTER_QQQ_DOWN1": {
+      "all": {
+        "n": 627,
+        "mean_net_pct": -0.10917696293620936,
+        "median_net_pct": -0.07064659977702539,
+        "win_rate": 0.4625199362041467,
+        "profit_factor": 0.7665128976684045,
+        "sum_net_pct": -68.45395576100327,
+        "mean_ex_top3_pct": -0.132561018484393,
+        "block_mean_lcb_5pct": -0.17618662947851926
+      },
+      "discovery": {
+        "n": 322,
+        "mean_net_pct": -0.16072858962987113,
+        "median_net_pct": -0.08389683334810807,
+        "win_rate": 0.4409937888198758,
+        "profit_factor": 0.6262031827992935,
+        "sum_net_pct": -51.75460586081851,
+        "mean_ex_top3_pct": -0.19104104080769876,
+        "block_mean_lcb_5pct": -0.2299613724087084
+      },
+      "oos": {
+        "n": 305,
+        "mean_net_pct": -0.05475196688585166,
+        "median_net_pct": -0.04466105516307642,
+        "win_rate": 0.4852459016393443,
+        "profit_factor": 0.8920703309888818,
+        "sum_net_pct": -16.699349900184757,
+        "mean_ex_top3_pct": -0.1025280452763002,
+        "block_mean_lcb_5pct": -0.1674457373848021
+      },
+      "recent_2024_plus": {
+        "n": 101,
+        "mean_net_pct": -0.004692368426683438,
+        "median_net_pct": 0.10589067435791041,
+        "win_rate": 0.5742574257425742,
+        "profit_factor": 0.9922118868624451,
+        "sum_net_pct": -0.4739292110950273,
+        "mean_ex_top3_pct": -0.1263235317316546,
+        "block_mean_lcb_5pct": -0.251798033094071
+      }
+    },
+    "KR_INVERSE_FADE_AFTER_QQQ_UP1": {
+      "all": {
+        "n": 731,
+        "mean_net_pct": -0.08673580958005508,
+        "median_net_pct": -0.10764585465712442,
+        "win_rate": 0.4363885088919289,
+        "profit_factor": 0.7906700342054479,
+        "sum_net_pct": -63.40387680302027,
+        "mean_ex_top3_pct": -0.11160126113108824,
+        "block_mean_lcb_5pct": -0.15724355087812403
+      },
+      "discovery": {
+        "n": 372,
+        "mean_net_pct": -0.07052302107834099,
+        "median_net_pct": -0.11258263230118451,
+        "win_rate": 0.43548387096774194,
+        "profit_factor": 0.8023284776337302,
+        "sum_net_pct": -26.23456384114285,
+        "mean_ex_top3_pct": -0.10672057711795781,
+        "block_mean_lcb_5pct": -0.14065704653005784
+      },
+      "oos": {
+        "n": 359,
+        "mean_net_pct": -0.1035356907016084,
+        "median_net_pct": -0.10764585465712442,
+        "win_rate": 0.4373259052924791,
+        "profit_factor": 0.7815775391607754,
+        "sum_net_pct": -37.16931296187742,
+        "mean_ex_top3_pct": -0.14927006718174923,
+        "block_mean_lcb_5pct": -0.21865948030174023
+      },
+      "recent_2024_plus": {
+        "n": 121,
+        "mean_net_pct": -0.11244082739052297,
+        "median_net_pct": -0.09662131519274733,
+        "win_rate": 0.47107438016528924,
+        "profit_factor": 0.7966632076377039,
+        "sum_net_pct": -13.605340114253279,
+        "mean_ex_top3_pct": -0.22092774066868268,
+        "block_mean_lcb_5pct": -0.36254882630533114
+      }
+    },
+    "KR_SEMI_CONT_AFTER_SMH_UP1": {
+      "all": {
+        "n": 1135,
+        "mean_net_pct": -0.3617672489714627,
+        "median_net_pct": -0.3586578321440723,
+        "win_rate": 0.39383259911894275,
+        "profit_factor": 0.5459027534203573,
+        "sum_net_pct": -410.6058275826101,
+        "mean_ex_top3_pct": -0.38041461214015476,
+        "block_mean_lcb_5pct": -0.4270255129272938
+      },
+      "discovery": {
+        "n": 608,
+        "mean_net_pct": -0.3180580116757536,
+        "median_net_pct": -0.2672420439291343,
+        "win_rate": 0.3963815789473684,
+        "profit_factor": 0.5260516620184574,
+        "sum_net_pct": -193.3792710988582,
+        "mean_ex_top3_pct": -0.3367197833019859,
+        "block_mean_lcb_5pct": -0.39836501823206516
+      },
+      "oos": {
+        "n": 527,
+        "mean_net_pct": -0.41219460433349503,
+        "median_net_pct": -0.4265841584158556,
+        "win_rate": 0.3908918406072106,
+        "profit_factor": 0.5622257756756259,
+        "sum_net_pct": -217.2265564837519,
+        "mean_ex_top3_pct": -0.45276730886220784,
+        "block_mean_lcb_5pct": -0.5313326289330736
+      },
+      "recent_2024_plus": {
+        "n": 223,
+        "mean_net_pct": -0.42517312740223173,
+        "median_net_pct": -0.564511330460161,
+        "win_rate": 0.38565022421524664,
+        "profit_factor": 0.5974674958534826,
+        "sum_net_pct": -94.81360741069767,
+        "mean_ex_top3_pct": -0.5171986677427195,
+        "block_mean_lcb_5pct": -0.6128797355659206
+      }
+    },
+    "KR_SEMI_RESIDUAL_AFTER_SMH_MINUS_QQQ_UP1": {
+      "all": {
+        "n": 537,
+        "mean_net_pct": -0.26393368592793254,
+        "median_net_pct": -0.32108025548459684,
+        "win_rate": 0.4171322160148976,
+        "profit_factor": 0.6685527064415104,
+        "sum_net_pct": -141.73238934329976,
+        "mean_ex_top3_pct": -0.3007270638528864,
+        "block_mean_lcb_5pct": -0.3566984841172787
+      },
+      "discovery": {
+        "n": 246,
+        "mean_net_pct": -0.2852162049336909,
+        "median_net_pct": -0.24101159595359503,
+        "win_rate": 0.4105691056910569,
+        "profit_factor": 0.59264177580002,
+        "sum_net_pct": -70.16318641368795,
+        "mean_ex_top3_pct": -0.332154983073566,
+        "block_mean_lcb_5pct": -0.40249220085266
+      },
+      "oos": {
+        "n": 291,
+        "mean_net_pct": -0.2459422781086316,
+        "median_net_pct": -0.3883976646123952,
+        "win_rate": 0.422680412371134,
+        "profit_factor": 0.7197509537448387,
+        "sum_net_pct": -71.56920292961179,
+        "mean_ex_top3_pct": -0.3139759225130325,
+        "block_mean_lcb_5pct": -0.40049595453502185
+      },
+      "recent_2024_plus": {
+        "n": 141,
+        "mean_net_pct": -0.32596267054726535,
+        "median_net_pct": -0.587730333388071,
+        "win_rate": 0.3971631205673759,
+        "profit_factor": 0.6747497808841704,
+        "sum_net_pct": -45.960736547164416,
+        "mean_ex_top3_pct": -0.460080500762518,
+        "block_mean_lcb_5pct": -0.5682480886637308
+      }
+    },
+    "KR_SEMI_REBOUND_AFTER_SMH_DOWN1": {
+      "all": {
+        "n": 914,
+        "mean_net_pct": -0.20192377956874072,
+        "median_net_pct": -0.21,
+        "win_rate": 0.43982494529540483,
+        "profit_factor": 0.7378502122586897,
+        "sum_net_pct": -184.55833452582903,
+        "mean_ex_top3_pct": -0.22816112479678066,
+        "block_mean_lcb_5pct": -0.29726046960827207
+      },
+      "discovery": {
+        "n": 491,
+        "mean_net_pct": -0.3296376835343179,
+        "median_net_pct": -0.30594627008875364,
+        "win_rate": 0.39307535641547864,
+        "profit_factor": 0.5805994847273451,
+        "sum_net_pct": -161.85210261535008,
+        "mean_ex_top3_pct": -0.3655806302401098,
+        "block_mean_lcb_5pct": -0.46125794186958163
+      },
+      "oos": {
+        "n": 423,
+        "mean_net_pct": -0.053679035249359214,
+        "median_net_pct": -0.06300013363624937,
+        "win_rate": 0.4940898345153664,
+        "profit_factor": 0.9286204697283084,
+        "sum_net_pct": -22.706231910478948,
+        "mean_ex_top3_pct": -0.10528477452890854,
+        "block_mean_lcb_5pct": -0.19496027599499732
+      },
+      "recent_2024_plus": {
+        "n": 150,
+        "mean_net_pct": -0.08401323268185941,
+        "median_net_pct": 0.08492164486861761,
+        "win_rate": 0.5066666666666667,
+        "profit_factor": 0.9076494188095607,
+        "sum_net_pct": -12.601984902278911,
+        "mean_ex_top3_pct": -0.2307617563142154,
+        "block_mean_lcb_5pct": -0.3948269345049896
+      }
+    },
+    "KR_SEMI_RESIDUAL_3D": {
+      "all": {
+        "n": 537,
+        "mean_net_pct": -0.04046391572366803,
+        "median_net_pct": 0.03741891565571717,
+        "win_rate": 0.5102420856610801,
+        "profit_factor": 0.9687036370624149,
+        "sum_net_pct": -21.729122743609732,
+        "mean_ex_top3_pct": -0.11579336463443349,
+        "block_mean_lcb_5pct": -0.2590464961686668
+      },
+      "discovery": {
+        "n": 246,
+        "mean_net_pct": -0.1670990661604043,
+        "median_net_pct": -0.007825988641286613,
+        "win_rate": 0.5,
+        "profit_factor": 0.8475090601468798,
+        "sum_net_pct": -41.106370275459454,
+        "mean_ex_top3_pct": -0.2629251914155063,
+        "block_mean_lcb_5pct": -0.41511185710683723
+      },
+      "oos": {
+        "n": 291,
+        "mean_net_pct": 0.06658847949089258,
+        "median_net_pct": 0.08068938983727311,
+        "win_rate": 0.5189003436426117,
+        "profit_factor": 1.0456218770431633,
+        "sum_net_pct": 19.37724753184974,
+        "mean_ex_top3_pct": -0.0719697445810002,
+        "block_mean_lcb_5pct": -0.3310862896390241
+      },
+      "recent_2024_plus": {
+        "n": 141,
+        "mean_net_pct": -0.05627550797352691,
+        "median_net_pct": 0.1028176916240566,
+        "win_rate": 0.5319148936170213,
+        "profit_factor": 0.966808236877676,
+        "sum_net_pct": -7.934846624267294,
+        "mean_ex_top3_pct": -0.29351044984722885,
+        "block_mean_lcb_5pct": -0.7257558136733238
+      }
+    },
+    "US_QQQ_REBOUND_AFTER_KR200_DOWN1": {
+      "all": {
+        "n": 615,
+        "mean_net_pct": -0.3995863516775157,
+        "median_net_pct": -0.416376503222204,
+        "win_rate": 0.35609756097560974,
+        "profit_factor": 0.4560287003283153,
+        "sum_net_pct": -245.74560628167217,
+        "mean_ex_top3_pct": -0.4387655013360661,
+        "block_mean_lcb_5pct": -0.48767798030794957
+      },
+      "discovery": {
+        "n": 322,
+        "mean_net_pct": -0.46935905376898185,
+        "median_net_pct": -0.4919931665249062,
+        "win_rate": 0.32608695652173914,
+        "profit_factor": 0.3824125389188308,
+        "sum_net_pct": -151.13361531361215,
+        "mean_ex_top3_pct": -0.5136083401064273,
+        "block_mean_lcb_5pct": -0.5832616467068956
+      },
+      "oos": {
+        "n": 293,
+        "mean_net_pct": -0.3229078190036178,
+        "median_net_pct": -0.28923521737006475,
+        "win_rate": 0.3890784982935154,
+        "profit_factor": 0.5430386734431712,
+        "sum_net_pct": -94.61199096806001,
+        "mean_ex_top3_pct": -0.40479610863469073,
+        "block_mean_lcb_5pct": -0.4566232705410291
+      },
+      "recent_2024_plus": {
+        "n": 106,
+        "mean_net_pct": -0.3232124254445639,
+        "median_net_pct": -0.3162670009081765,
+        "win_rate": 0.3490566037735849,
+        "profit_factor": 0.5056121072698379,
+        "sum_net_pct": -34.260517097123774,
+        "mean_ex_top3_pct": -0.495956091081063,
+        "block_mean_lcb_5pct": -0.5539528327346994
+      }
+    },
+    "US_EWY_CONT_AFTER_KR200_UP1": {
+      "all": {
+        "n": 710,
+        "mean_net_pct": -0.4150934250854487,
+        "median_net_pct": -0.36275296434707904,
+        "win_rate": 0.3,
+        "profit_factor": 0.30065154308762476,
+        "sum_net_pct": -294.7163318106686,
+        "mean_ex_top3_pct": -0.4292476066887994,
+        "block_mean_lcb_5pct": -0.47725781231348824
+      },
+      "discovery": {
+        "n": 342,
+        "mean_net_pct": -0.3247740325833241,
+        "median_net_pct": -0.34344309230698267,
+        "win_rate": 0.2953216374269006,
+        "profit_factor": 0.34690136696472823,
+        "sum_net_pct": -111.07271914349684,
+        "mean_ex_top3_pct": -0.3514839014210156,
+        "block_mean_lcb_5pct": -0.39806119128158735
+      },
+      "oos": {
+        "n": 368,
+        "mean_net_pct": -0.4990315561607929,
+        "median_net_pct": -0.37550631418260494,
+        "win_rate": 0.30434782608695654,
+        "profit_factor": 0.26935703783520376,
+        "sum_net_pct": -183.6436126671718,
+        "mean_ex_top3_pct": -0.5245266983449897,
+        "block_mean_lcb_5pct": -0.5966588747277833
+      },
+      "recent_2024_plus": {
+        "n": 177,
+        "mean_net_pct": -0.5618238644547869,
+        "median_net_pct": -0.4035409037655642,
+        "win_rate": 0.3107344632768362,
+        "profit_factor": 0.2794235796605886,
+        "sum_net_pct": -99.44282400849728,
+        "mean_ex_top3_pct": -0.6163876795244064,
+        "block_mean_lcb_5pct": -0.7203990056838303
+      }
+    },
+    "US_EWY_REBOUND_AFTER_KR200_DOWN1": {
+      "all": {
+        "n": 615,
+        "mean_net_pct": -0.39227451732263224,
+        "median_net_pct": -0.4429464088014585,
+        "win_rate": 0.3073170731707317,
+        "profit_factor": 0.4289632497019708,
+        "sum_net_pct": -241.24882815341883,
+        "mean_ex_top3_pct": -0.43005421093774504,
+        "block_mean_lcb_5pct": -0.47429454335511156
+      },
+      "discovery": {
+        "n": 322,
+        "mean_net_pct": -0.4814067497718949,
+        "median_net_pct": -0.49223677699877744,
+        "win_rate": 0.2795031055900621,
+        "profit_factor": 0.31561944669816555,
+        "sum_net_pct": -155.01297342655016,
+        "mean_ex_top3_pct": -0.5172864800127422,
+        "block_mean_lcb_5pct": -0.5697061713673676
+      },
+      "oos": {
+        "n": 293,
+        "mean_net_pct": -0.2943203232998931,
+        "median_net_pct": -0.33456066493348047,
+        "win_rate": 0.3378839590443686,
+        "profit_factor": 0.5599627726251328,
+        "sum_net_pct": -86.23585472686868,
+        "mean_ex_top3_pct": -0.3730351850598272,
+        "block_mean_lcb_5pct": -0.4352406787965948
+      },
+      "recent_2024_plus": {
+        "n": 106,
+        "mean_net_pct": -0.0894263845691586,
+        "median_net_pct": -0.2950121931816758,
+        "win_rate": 0.36792452830188677,
+        "profit_factor": 0.8774949104128777,
+        "sum_net_pct": -9.479196764330812,
+        "mean_ex_top3_pct": -0.30508296800788354,
+        "block_mean_lcb_5pct": -0.44180123337225263
+      }
+    }
+  }
+}

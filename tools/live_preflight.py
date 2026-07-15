@@ -105,6 +105,10 @@ LIVE_CONFIG_KEYS = {
     "PATHB_SELL_PARTIAL_WAIT_SEC",
     "PATHB_PRE_CLOSE_MARKET_FALLBACK",
     "PATHB_PRE_CLOSE_TIMEOUT_MINUTES",
+    "PATHB_KR_EXIT_POLICY",
+    "PATHB_KR_PAIRED_EXIT_SHADOW_ENABLED",
+    "PATHB_KR_SPLIT_RUNNER_TRIGGER_PCT",
+    "PATHB_KR_SPLIT_RUNNER_FRACTION",
     "PATHB_EMERGENCY_DISABLE",
     "PATHB_PREOPEN_EXIT_POLICY_MODE",
     "US_PATHB_PREOPEN_EXIT_POLICY_MODE",
@@ -208,6 +212,34 @@ LIVE_CONFIG_KEYS = {
     "PROFIT_PATH_SHADOW_ENABLED_US",
     "PROFIT_PATH_MODEL_PATH_KR",
     "PROFIT_PATH_MODEL_PATH_US",
+    "US_SWING_SHADOW_SCHEDULER_ENABLED",
+    "US_SWING_PYTHON_EXECUTABLE",
+    "US_SWING_AUTHORITY_MODE",
+    "US_SWING_ORDER_HANDOFF_ENABLED",
+    "US_SWING_ORDER_SUBMIT_ENABLED",
+    "US_SWING_ORDER_LIVE_ACK",
+    "US_SWING_OPERATOR_MICRO_OVERRIDE_ACK",
+    "US_SWING_ORDER_MAX_KRW",
+    "PATHB_KR_EXIT_POLICY",
+    "PATHB_KR_SPLIT_RUNNER_LIVE_ENABLED",
+    "PATHB_KR_SPLIT_RUNNER_LIVE_ACK",
+    "PROFIT_STRATEGY_MATERIALIZER_ENABLED",
+    "PROFIT_STRATEGY_AUTHORITY_MODE",
+    "PROFIT_STRATEGY_ORDER_HANDOFF_ENABLED",
+    "PROFIT_STRATEGY_ORDER_SUBMIT_ENABLED",
+    "PROFIT_STRATEGY_ORDER_LIVE_ACK",
+    "PROFIT_STRATEGY_KILL_SWITCH",
+    "PROFIT_STRATEGY_ENABLED_IDS",
+    "PROFIT_STRATEGY_MAX_ORDER_KRW_KR",
+    "PROFIT_STRATEGY_MAX_ORDER_KRW_US",
+    "PROFIT_STRATEGY_MAX_NEW_PER_DAY_KR",
+    "PROFIT_STRATEGY_MAX_NEW_PER_DAY_US",
+    "PROFIT_STRATEGY_MAX_OPEN_SLOTS",
+    "PROFIT_STRATEGY_ORDER_MIN_OPEN_MIN",
+    "PROFIT_STRATEGY_ORDER_MAX_OPEN_MIN",
+    "PROFIT_STRATEGY_MAX_CHASE_PCT",
+    "PROFIT_STRATEGY_HORIZON_EXIT_ENABLED",
+    "PROFIT_STRATEGY_HORIZON_EXIT_WINDOW_MIN",
 }
 
 RUNTIME_CONFIG_DRIFT_KEYS = {
@@ -330,6 +362,36 @@ RUNTIME_CONFIG_DRIFT_KEYS = {
     "PROFIT_PATH_SHADOW_ENABLED_US",
     "PROFIT_PATH_MODEL_PATH_KR",
     "PROFIT_PATH_MODEL_PATH_US",
+    "PATHB_KR_EXIT_POLICY",
+    "PATHB_KR_SPLIT_RUNNER_LIVE_ENABLED",
+    "PATHB_KR_SPLIT_RUNNER_LIVE_ACK",
+    "TAIL_CAPTURE_MODE",
+    "TAIL_CAPTURE_CARRY_ENFORCE",
+    "HOLD_ADVISOR_CARRY_ALIGN_MODE",
+    "US_SWING_SHADOW_SCHEDULER_ENABLED",
+    "US_SWING_AUTHORITY_MODE",
+    "US_SWING_ORDER_HANDOFF_ENABLED",
+    "US_SWING_ORDER_SUBMIT_ENABLED",
+    "US_SWING_ORDER_LIVE_ACK",
+    "US_SWING_OPERATOR_MICRO_OVERRIDE_ACK",
+    "US_SWING_ORDER_MAX_KRW",
+    "PROFIT_STRATEGY_MATERIALIZER_ENABLED",
+    "PROFIT_STRATEGY_AUTHORITY_MODE",
+    "PROFIT_STRATEGY_ORDER_HANDOFF_ENABLED",
+    "PROFIT_STRATEGY_ORDER_SUBMIT_ENABLED",
+    "PROFIT_STRATEGY_ORDER_LIVE_ACK",
+    "PROFIT_STRATEGY_KILL_SWITCH",
+    "PROFIT_STRATEGY_ENABLED_IDS",
+    "PROFIT_STRATEGY_MAX_ORDER_KRW_KR",
+    "PROFIT_STRATEGY_MAX_ORDER_KRW_US",
+    "PROFIT_STRATEGY_MAX_NEW_PER_DAY_KR",
+    "PROFIT_STRATEGY_MAX_NEW_PER_DAY_US",
+    "PROFIT_STRATEGY_MAX_OPEN_SLOTS",
+    "PROFIT_STRATEGY_ORDER_MIN_OPEN_MIN",
+    "PROFIT_STRATEGY_ORDER_MAX_OPEN_MIN",
+    "PROFIT_STRATEGY_MAX_CHASE_PCT",
+    "PROFIT_STRATEGY_HORIZON_EXIT_ENABLED",
+    "PROFIT_STRATEGY_HORIZON_EXIT_WINDOW_MIN",
 }
 
 CRITICAL_RUNTIME_CONFIG_DRIFT_KEYS = {
@@ -349,6 +411,7 @@ CRITICAL_RUNTIME_CONFIG_DRIFT_KEYS = {
     "PATHB_MAX_POSITIONS",
     "PATHB_MAX_DAILY_ENTRIES",
     "PATHB_FIXED_ORDER_KRW",
+    "PATHB_KR_EXIT_POLICY",
     "US_PATHB_PREOPEN_EXIT_POLICY_MODE",
     "KR_PATHB_PREOPEN_EXIT_POLICY_MODE",
     "PATHB_SELECTION_RECONCILE_ENABLED",
@@ -1341,9 +1404,18 @@ def _runtime_config_drift_check(config: dict[str, Any], mode: str) -> CheckResul
         key: value for key, value in drift.items() if key in CRITICAL_RUNTIME_CONFIG_DRIFT_KEYS
     }
     if critical_drift:
-        status = "FAIL"
-        detail = "critical runtime config snapshot differs from files"
-        operator_action = "restart or reload the live bot so runtime effective config matches files"
+        if not pid_state.get("pid_alive"):
+            # A full-stack restart necessarily leaves the previous process's
+            # effective snapshot behind until the new bot is allowed to boot.
+            # Treat that stopped-process snapshot as startup evidence, not a
+            # circular hard blocker; the post-start check must still PASS.
+            status = "WARN"
+            detail = "last stopped runtime snapshot differs from files; post-start verification required"
+            operator_action = "start the bot, then require a fresh runtime snapshot matching files"
+        else:
+            status = "FAIL"
+            detail = "critical runtime config snapshot differs from files"
+            operator_action = "restart or reload the live bot so runtime effective config matches files"
     elif drift:
         status = "WARN"
         detail = "latest runtime config snapshot differs from files"
@@ -1557,6 +1629,10 @@ CONFIG_SOURCE_MEANING_KEYS: dict[str, dict[str, str]] = {
         "used_by": "PathB entry guard",
         "meaning": "PathB-specific maximum active positions",
     },
+    "PATHB_KR_EXIT_POLICY": {
+        "used_by": "KR PathB per-position exit-owner pin and paired A/B contract",
+        "meaning": "operator-controlled dual-source policy; SPLIT_RUNNER_V1 remains blocked until forward gate and live wiring",
+    },
     "PATHB_PREOPEN_EXIT_POLICY_MODE": {
         "used_by": "US fallback for PathB preopen shallow-stop defer policy",
         "meaning": "legacy/global policy mode; KR does not inherit this value",
@@ -1648,6 +1724,256 @@ def _config_source_meaning_check(config: dict[str, Any]) -> CheckResult:
         "PASS",
         "critical config sources and gate meanings captured",
         {"keys": rows, "config_change_allowed": False},
+    )
+
+
+def _pathb_kr_exit_policy_check(config: dict[str, Any], mode: str) -> CheckResult:
+    """Fail closed on a one-sided or prematurely enforced KR exit policy."""
+
+    effective = dict(config.get("effective") or {})
+    base_env = dict(config.get("base_env") or {})
+    overrides = dict(config.get("overrides") or {})
+    key = "PATHB_KR_EXIT_POLICY"
+    env_value = str(base_env.get(key) or "").strip().upper()
+    start_value = str(overrides.get(key) or "").strip().upper()
+    effective_value = str(effective.get(key) or "").strip().upper()
+    valid = {"EARLY_FULL_V1", "SPLIT_RUNNER_V1"}
+    data = {
+        "env_value": env_value,
+        "start_config_value": start_value,
+        "effective_value": effective_value,
+        "sources_match": bool(env_value and env_value == start_value),
+        "valid_values": sorted(valid),
+        "operator_confirmation_required": True,
+        "auto_apply_allowed": False,
+        "live_split_runner_wired": _truthy(effective.get("PATHB_KR_SPLIT_RUNNER_LIVE_ENABLED")),
+        "live_ack_present": bool(str(effective.get("PATHB_KR_SPLIT_RUNNER_LIVE_ACK") or "").strip()),
+    }
+    if str(mode or "").lower() != "live":
+        return CheckResult(
+            "config.pathb_kr_exit_policy",
+            "PASS",
+            "KR exit policy dual-source enforcement is live-only",
+            data,
+        )
+    if not env_value or not start_value or env_value != start_value:
+        return CheckResult(
+            "config.pathb_kr_exit_policy",
+            "FAIL",
+            "PATHB_KR_EXIT_POLICY must exist and match in .env.live and v2_start_config env_overrides",
+            data,
+        )
+    if effective_value not in valid:
+        return CheckResult(
+            "config.pathb_kr_exit_policy",
+            "FAIL",
+            f"invalid PATHB_KR_EXIT_POLICY={effective_value or 'missing'}",
+            data,
+        )
+    if effective_value == "SPLIT_RUNNER_V1":
+        wired = _truthy(effective.get("PATHB_KR_SPLIT_RUNNER_LIVE_ENABLED"))
+        ack = str(effective.get("PATHB_KR_SPLIT_RUNNER_LIVE_ACK") or "").strip()
+        if not wired or ack != "I_ACCEPT_LIVE_KR_SPLIT_RUNNER":
+            return CheckResult(
+                "config.pathb_kr_exit_policy",
+                "FAIL",
+                "SPLIT_RUNNER_V1 requires live partial-sell wiring and exact operator ACK",
+                data,
+            )
+        return CheckResult(
+            "config.pathb_kr_exit_policy",
+            "PASS",
+            "KR Split-Runner MICRO enforce is dual-source matched and explicitly acknowledged",
+            data,
+        )
+    return CheckResult(
+        "config.pathb_kr_exit_policy",
+        "PASS",
+        "KR live exit owner remains EARLY_FULL_V1; Split-Runner is isolated shadow only",
+        data,
+    )
+
+
+def _us_swing_shadow_runtime_check(effective: dict[str, Any]) -> CheckResult:
+    enabled = _truthy(effective.get("US_SWING_SHADOW_SCHEDULER_ENABLED"))
+    authority = str(effective.get("US_SWING_AUTHORITY_MODE") or "").strip().lower()
+    handoff_enabled = _truthy(effective.get("US_SWING_ORDER_HANDOFF_ENABLED"))
+    submit_enabled = _truthy(effective.get("US_SWING_ORDER_SUBMIT_ENABLED"))
+    live_ack = str(effective.get("US_SWING_ORDER_LIVE_ACK") or "").strip()
+    override_ack = str(effective.get("US_SWING_OPERATOR_MICRO_OVERRIDE_ACK") or "").strip()
+    raw_python = str(effective.get("US_SWING_PYTHON_EXECUTABLE") or sys.executable).strip().strip('"')
+    python_path = Path(raw_python).expanduser()
+    if not python_path.is_absolute():
+        python_path = ROOT / python_path
+    data: dict[str, Any] = {
+        "enabled": enabled,
+        "authority_mode": authority,
+        "order_handoff_enabled": handoff_enabled,
+        "order_submit_enabled": submit_enabled,
+        "live_ack_present": bool(live_ack),
+        "operator_micro_override_ack_present": bool(override_ack),
+        "python_executable": str(python_path),
+        "required_imports": ["sklearn", "pandas", "numpy", "yfinance"],
+    }
+    if not enabled:
+        return CheckResult(
+            "config.us_swing_shadow_runtime",
+            "PASS",
+            "US swing shadow scheduler is disabled",
+            data,
+        )
+    shadow_contract = authority == "shadow" and not handoff_enabled and not submit_enabled and not live_ack
+    micro_contract = (
+        authority == "micro"
+        and handoff_enabled
+        and submit_enabled
+        and live_ack == "I_ACCEPT_LIVE_US_SWING"
+        and override_ack == "I_ACCEPT_MICRO_WITHOUT_FORWARD"
+    )
+    if not (shadow_contract or micro_contract):
+        return CheckResult(
+            "config.us_swing_shadow_runtime",
+            "FAIL",
+            "US swing authority contract is internally inconsistent",
+            data,
+        )
+    if not python_path.is_file():
+        return CheckResult(
+            "config.us_swing_shadow_runtime",
+            "FAIL",
+            "US swing Python executable is missing",
+            data,
+        )
+    kwargs: dict[str, Any] = {
+        "cwd": str(ROOT),
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": 30,
+    }
+    if sys.platform.startswith("win"):
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        probe = subprocess.run(
+            [
+                str(python_path),
+                "-c",
+                (
+                    "import json,sklearn,pandas,numpy,yfinance;"
+                    "print(json.dumps({'sklearn':sklearn.__version__,"
+                    "'pandas':pandas.__version__,'numpy':numpy.__version__,"
+                    "'yfinance':yfinance.__version__}))"
+                ),
+            ],
+            **kwargs,
+        )
+    except Exception as exc:
+        data["probe_error"] = str(exc)
+        return CheckResult(
+            "config.us_swing_shadow_runtime",
+            "FAIL",
+            "US swing Python dependency probe failed",
+            data,
+        )
+    data["probe_returncode"] = int(probe.returncode)
+    data["versions"] = str(probe.stdout or "").strip()
+    data["probe_stderr"] = str(probe.stderr or "").strip()[-500:]
+    if probe.returncode != 0:
+        return CheckResult(
+            "config.us_swing_shadow_runtime",
+            "FAIL",
+            "US swing Python is missing required research dependencies",
+            data,
+        )
+    return CheckResult(
+        "config.us_swing_shadow_runtime",
+        "PASS",
+        "US swing interpreter and explicit authority contract are ready",
+        data,
+    )
+
+
+def _profit_strategy_micro_contract_check(effective: dict[str, Any], mode: str) -> CheckResult:
+    approved = {
+        "US_SCHG_BIL_TREND_V1",
+        "KR_FACTOR_TREND_V1",
+        "US_CONSENSUS_3D_V1",
+        "KR_US_SECTOR_PULSE_3D_V0",
+    }
+    enabled = _truthy(effective.get("PROFIT_STRATEGY_MATERIALIZER_ENABLED"))
+    authority = str(effective.get("PROFIT_STRATEGY_AUTHORITY_MODE") or "shadow").strip().lower()
+    handoff = _truthy(effective.get("PROFIT_STRATEGY_ORDER_HANDOFF_ENABLED"))
+    submit = _truthy(effective.get("PROFIT_STRATEGY_ORDER_SUBMIT_ENABLED"))
+    ack = str(effective.get("PROFIT_STRATEGY_ORDER_LIVE_ACK") or "").strip()
+    killed = _truthy(effective.get("PROFIT_STRATEGY_KILL_SWITCH"))
+    caps = {
+        market: _float_value(effective.get(f"PROFIT_STRATEGY_MAX_ORDER_KRW_{market}"), 0.0)
+        for market in ("KR", "US")
+    }
+    daily_caps = {
+        market: _int_value(effective.get(f"PROFIT_STRATEGY_MAX_NEW_PER_DAY_{market}"), 0)
+        for market in ("KR", "US")
+    }
+    slot_cap = _int_value(effective.get("PROFIT_STRATEGY_MAX_OPEN_SLOTS"), 0)
+    ids = {
+        item.strip().upper()
+        for item in str(effective.get("PROFIT_STRATEGY_ENABLED_IDS") or "").split(",")
+        if item.strip()
+    }
+    data = {
+        "materializer_enabled": enabled,
+        "authority_mode": authority,
+        "handoff_enabled": handoff,
+        "submit_enabled": submit,
+        "exact_live_ack": ack == "I_ACCEPT_LIVE_PROFIT_STRATEGIES",
+        "kill_switch": killed,
+        "enabled_ids": sorted(ids),
+        "approved_ids": sorted(approved),
+        "unapproved_ids": sorted(ids - approved),
+        "max_order_krw": caps,
+        "max_new_per_day": daily_caps,
+        "max_open_slots": slot_cap,
+    }
+    if not enabled:
+        return CheckResult("config.profit_strategy_micro_contract", "PASS", "profit strategy materializer disabled", data)
+    if ids - approved or not ids:
+        return CheckResult(
+            "config.profit_strategy_micro_contract",
+            "FAIL",
+            "profit strategy list contains an unapproved or empty arm set",
+            data,
+        )
+    if any(value <= 0 or value > 100000 for value in caps.values()) or any(
+        value <= 0 or value > 2 for value in daily_caps.values()
+    ) or slot_cap <= 0 or slot_cap > 4:
+        return CheckResult(
+            "config.profit_strategy_micro_contract",
+            "FAIL",
+            "profit strategy MICRO risk caps exceed the approved envelope",
+            data,
+        )
+    if str(mode or "").lower() != "live":
+        return CheckResult("config.profit_strategy_micro_contract", "PASS", "profit strategy live contract is live-only", data)
+    if authority != "micro" or not handoff or not submit or ack != "I_ACCEPT_LIVE_PROFIT_STRATEGIES":
+        return CheckResult(
+            "config.profit_strategy_micro_contract",
+            "FAIL",
+            "profit strategy MICRO contract is incomplete",
+            data,
+        )
+    if killed:
+        return CheckResult(
+            "config.profit_strategy_micro_contract",
+            "WARN",
+            "profit strategy MICRO contract is operator-killed",
+            data,
+        )
+    return CheckResult(
+        "config.profit_strategy_micro_contract",
+        "PASS",
+        "approved profit strategies have bounded MICRO authority and exact ACK",
+        data,
     )
 
 
@@ -2035,6 +2361,7 @@ def _repo_python_processes() -> tuple[list[dict[str, Any]], str, str]:
         "live_guardian.py",
         "preopen_scheduler.py",
         "broker_truth_scheduler.py",
+        "core_shadow_tracker.py",
         "run_counterfactual_pipeline.py",
     )
     rows: list[dict[str, Any]] = []
@@ -2092,6 +2419,8 @@ def _classify_repo_process_role(cmdline: list[str]) -> str:
         return "preopen_scheduler"
     if "tools/broker_truth_scheduler.py" in command or "broker_truth_scheduler.py" in command:
         return "broker_truth_scheduler"
+    if "tools/core_shadow_tracker.py" in command or "core_shadow_tracker.py" in command:
+        return "core_shadow_tracker"
     if "tools/run_counterfactual_pipeline.py" in command or "run_counterfactual_pipeline.py" in command:
         return "counterfactual_pipeline"
     return "repo_python"
@@ -2287,7 +2616,7 @@ def _heartbeat_checks(mode: str) -> list[CheckResult]:
         if runtime_mode == "live"
         else f"{runtime_mode}_broker_truth_scheduler"
     )
-    return [
+    checks = [
         _heartbeat_check(
             f"runtime.{runtime_mode}_guardian_heartbeat",
             get_runtime_path("state", guardian_name, make_parents=False),
@@ -2307,6 +2636,16 @@ def _heartbeat_checks(mode: str) -> list[CheckResult]:
             process=broker_truth_process,
         ),
     ]
+    if runtime_mode == "live":
+        checks.append(
+            _heartbeat_check(
+                "runtime.live_core_shadow_tracker_heartbeat",
+                get_runtime_path("state", "core_shadow_tracker_heartbeat.json", make_parents=False),
+                max_age_sec=108000,
+                process="core_shadow_tracker",
+            )
+        )
+    return checks
 
 
 def _default_kis_base_url(mode: str) -> str:
@@ -2426,6 +2765,9 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
     important = {key: effective.get(key, "") for key in sorted(LIVE_CONFIG_KEYS) if key in effective}
     checks.append(CheckResult("config.effective_values", "PASS", "effective live values captured", {"values": important}))
     checks.append(_config_source_meaning_check(config))
+    checks.append(_pathb_kr_exit_policy_check(config, mode))
+    checks.append(_us_swing_shadow_runtime_check(effective))
+    checks.append(_profit_strategy_micro_contract_check(effective, mode))
     checks.append(_pathb_preopen_exit_policy_check(config))
     checks.append(_pathb_selection_reconcile_check(config))
     checks.append(_kr_live_expansion_guard_check(effective))

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 import json
@@ -37,6 +37,7 @@ V2_DASHBOARD_TABS: tuple[str, ...] = (
 V2_TELEGRAM_COMMANDS: tuple[str, ...] = (
     "/status",
     "/health",
+    "/monitor",
     "/picks",
     "/positions",
     "/errors",
@@ -64,6 +65,7 @@ RUNTIME_DRIFT_KEYS: tuple[str, ...] = (
     "PATHB_MAX_POSITIONS",
     "PATHB_MAX_DAILY_ENTRIES",
     "PATHB_FIXED_ORDER_KRW",
+    "PATHB_KR_EXIT_POLICY",
 )
 
 PATHB_ACTIVE_STATUSES: set[str] = {
@@ -180,6 +182,7 @@ def build_v2_ops_summary(
                 "KR": bool(((broker_truth.get("markets") or {}).get("KR") or {}).get("stale")),
                 "US": bool(((broker_truth.get("markets") or {}).get("US") or {}).get("stale")),
             },
+            "strategy_trackers": _strategy_tracker_health(runtime_key or "live"),
         },
         "broker_truth": broker_truth,
         "live_truth_verdict": live_truth_verdict,
@@ -2880,6 +2883,7 @@ def _effective_runtime_env(runtime_mode: str | None) -> tuple[dict[str, str], di
         "US_DAILY_ENTRY_CAP",
         "KR_MAX_POSITIONS",
         "US_MAX_POSITIONS",
+        "PATHB_KR_EXIT_POLICY",
     ]
     conflicts = {
         key: {"runtime_env": base_env.get(key), "start_config": overrides.get(key)}
@@ -2894,6 +2898,190 @@ def _effective_runtime_env(runtime_mode: str | None) -> tuple[dict[str, str], di
         "conflicts": conflicts,
         "runtime_snapshot": runtime_snapshot,
         "runtime_drift": runtime_snapshot.get("drift", {}),
+    }
+
+
+def _read_json_payload(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _timestamp_age_sec(value: Any) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds())
+    except Exception:
+        return None
+
+
+def _timestamp_overdue(value: Any, *, grace_sec: float = 0.0) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) > parsed.astimezone(timezone.utc) + timedelta(seconds=max(0.0, grace_sec))
+    except Exception:
+        return False
+
+
+def _strategy_tracker_health(runtime_mode: str) -> dict[str, Any]:
+    core_path = get_runtime_path("state", "core_shadow_tracker_heartbeat.json", make_parents=False)
+    paired_path = get_runtime_path("state", "pathb_kr_paired_exit_heartbeat.json", make_parents=False)
+    swing_path = get_runtime_path("state", "us_swing_status.json", make_parents=False)
+    profit_us_path = get_runtime_path("state", "profit_strategy_signals_US.json", make_parents=False)
+    profit_kr_path = get_runtime_path("state", "profit_strategy_signals_KR.json", make_parents=False)
+    profit_ledger_path = get_runtime_path("state", "profit_strategy_handoff.jsonl", make_parents=False)
+    core = _read_json_payload(core_path)
+    paired = _read_json_payload(paired_path)
+    swing = _read_json_payload(swing_path)
+    profit_us = _read_json_payload(profit_us_path)
+    profit_kr = _read_json_payload(profit_kr_path)
+    scheduler_state_path = get_runtime_path(
+        "state", f"preopen_scheduler_{str(runtime_mode or 'live').lower()}.json", make_parents=False
+    )
+    scheduler_state = _read_json_payload(scheduler_state_path)
+    lane_failures = scheduler_state.get("lane_failures") if isinstance(scheduler_state.get("lane_failures"), dict) else {}
+    swing_failure = lane_failures.get("US:swing_shadow") if isinstance(lane_failures.get("US:swing_shadow"), dict) else {}
+    core_missing = not bool(core)
+    paired_missing = not bool(paired)
+    swing_missing = not bool(swing)
+
+    core_age = _timestamp_age_sec(core.get("last_success_at") or core.get("last_tick_at"))
+    paired_age = _timestamp_age_sec(paired.get("last_tick_at") or paired.get("generated_at"))
+    swing_age = _timestamp_age_sec(
+        swing.get("updated_at") or swing.get("last_success_at") or swing.get("generated_at")
+    )
+    core["heartbeat_path"] = str(core_path)
+    core["age_sec"] = core_age
+    core["next_expected_overdue"] = _timestamp_overdue(core.get("next_expected_at"), grace_sec=21600)
+    core["stale"] = bool(
+        core_missing
+        or str(core.get("status") or "").lower() in {"failed", "error"}
+        or core_age is None
+        or (not core.get("next_expected_at") and core_age > 108000)
+        or core.get("next_expected_overdue")
+        or core.get("stale")
+    )
+    paired["heartbeat_path"] = str(paired_path)
+    paired["age_sec"] = paired_age
+    paired_active = int(paired.get("positions_active") or 0) > 0
+    paired["stale"] = bool(
+        paired_missing
+        or str(paired.get("status") or "").lower() in {"failed", "error"}
+        or (paired_active and str(paired.get("status") or "").lower() == "stale")
+        or (paired_active and paired_age is not None and paired_age > 7200)
+    )
+    swing["status_path"] = str(swing_path)
+    swing["scheduler_state_path"] = str(scheduler_state_path)
+    swing["age_sec"] = swing_age
+    swing_success_at = swing.get("updated_at") or swing.get("last_success_at") or swing.get("generated_at")
+    swing_success_age = _timestamp_age_sec(swing_success_at)
+    failure_age = _timestamp_age_sec(swing_failure.get("failed_at"))
+    failure_is_newer = bool(
+        swing_failure
+        and (swing_success_age is None or failure_age is None or failure_age < swing_success_age)
+    )
+    swing["scheduler_failure_active"] = failure_is_newer
+    swing["last_failed_at"] = str(swing_failure.get("failed_at") or "")
+    swing["last_error"] = str(swing_failure.get("error") or "")[-900:] if failure_is_newer else ""
+    swing["failed_session_date"] = str(swing_failure.get("session_date") or "") if failure_is_newer else ""
+    swing["stale"] = bool(
+        swing_missing
+        or swing_age is None
+        or swing_age > 172800
+        or failure_is_newer
+    )
+
+    effective, source = _effective_runtime_env(runtime_mode)
+    env_path = Path(str(source.get("runtime_env") or ""))
+    start_path = Path(str(source.get("start_config") or ""))
+    env_values = _read_env_file(env_path) if env_path.exists() else {}
+    start_values: dict[str, Any] = {}
+    if start_path.exists():
+        raw_start = _read_json_payload(start_path).get("env_overrides") or {}
+        if isinstance(raw_start, dict):
+            start_values = raw_start
+    _snapshot_path, snapshot = _latest_runtime_config_snapshot(str(runtime_mode or "live"))
+    snapshot_effective = dict((snapshot or {}).get("effective") or {})
+    key = "PATHB_KR_EXIT_POLICY"
+    env_value = str(env_values.get(key) or "")
+    start_value = str(start_values.get(key) or "")
+    effective_value = str(effective.get(key) or "")
+    runtime_value = str(snapshot_effective.get(key) or "")
+    policy_config = {
+        "key": key,
+        "env_live": env_value,
+        "start_config": start_value,
+        "file_effective": effective_value,
+        "runtime_snapshot": runtime_value,
+        "runtime_snapshot_path": _snapshot_path,
+        "runtime_snapshot_written_at": str((snapshot or {}).get("written_at") or ""),
+        "sources_match": bool(env_value and env_value == start_value),
+        "runtime_matches": bool(runtime_value and runtime_value == effective_value),
+    }
+    policy_config["ok"] = bool(policy_config["sources_match"] and policy_config["runtime_matches"])
+
+    profit_last: dict[str, Any] = {}
+    if profit_ledger_path.exists():
+        try:
+            for raw_line in reversed(profit_ledger_path.read_text(encoding="utf-8", errors="ignore").splitlines()):
+                if raw_line.strip():
+                    parsed = json.loads(raw_line)
+                    if isinstance(parsed, dict):
+                        profit_last = parsed
+                    break
+        except Exception:
+            profit_last = {}
+    profit_config_keys = (
+        "PROFIT_STRATEGY_AUTHORITY_MODE",
+        "PROFIT_STRATEGY_ORDER_HANDOFF_ENABLED",
+        "PROFIT_STRATEGY_ORDER_SUBMIT_ENABLED",
+        "PROFIT_STRATEGY_KILL_SWITCH",
+        "PROFIT_STRATEGY_ENABLED_IDS",
+    )
+    profit_config = {key: str(effective.get(key) or "") for key in profit_config_keys}
+    profit_runtime = {key: str(snapshot_effective.get(key) or "") for key in profit_config_keys}
+    profit_signals = {
+        "US": {
+            "path": str(profit_us_path),
+            "session_date": str(profit_us.get("session_date") or ""),
+            "generated_at": str(profit_us.get("generated_at") or ""),
+            "signal_count": len(profit_us.get("signals") or []),
+            "status": str(profit_us.get("status") or "missing"),
+            "errors": list(profit_us.get("errors") or []),
+        },
+        "KR": {
+            "path": str(profit_kr_path),
+            "session_date": str(profit_kr.get("session_date") or ""),
+            "generated_at": str(profit_kr.get("generated_at") or ""),
+            "signal_count": len(profit_kr.get("signals") or []),
+            "status": str(profit_kr.get("status") or "missing"),
+            "errors": list(profit_kr.get("errors") or []),
+        },
+        "authority_mode": profit_config.get("PROFIT_STRATEGY_AUTHORITY_MODE"),
+        "kill_switch": profit_config.get("PROFIT_STRATEGY_KILL_SWITCH"),
+        "config_matches_runtime": all(profit_config.get(key) == profit_runtime.get(key) for key in profit_config_keys),
+        "last_handoff": profit_last,
+        "ledger_path": str(profit_ledger_path),
+    }
+
+    return {
+        "core_shadow": core,
+        "paired_exit": paired,
+        "us_swing": swing,
+        "profit_strategies": profit_signals,
+        "kr_exit_policy": policy_config,
     }
 
 

@@ -223,6 +223,7 @@ from runtime.exit_lifecycle import (
 from runtime.live_evidence_pack import attach_live_evidence_summary, build_live_evidence_pack
 from runtime.intraday_features import classify_intraday_feature_quality
 from runtime.intraday_minute_cache import IntradayMinuteCache
+from runtime.pathb_paired_exit_shadow import get_paired_exit_observer
 from runtime.post_open_features import (
     DEFAULT_OVEREXTENDED_5M_PCT,
     OVEREXTENDED_5M_PCT_BY_MARKET,
@@ -1116,6 +1117,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._post_open_feature_last_emit: dict[str, float] = {}
         self._last_post_open_features_by_ticker: dict[str, dict[str, dict]] = {"KR": {}, "US": {}}
         self._intraday_minute_cache = IntradayMinuteCache()
+        self._pathb_paired_exit_observer = get_paired_exit_observer()
+        self._pathb_paired_exit_cursor = 0
+        try:
+            self._pathb_paired_exit_observer.touch()
+        except Exception as exc:
+            log.warning(f"[paired exit shadow] startup heartbeat failed: {exc}")
         # OR(opening range) state used by KR OR pullback entry.
         self._or_high: dict[str, float] = {}
         self._or_low: dict[str, float] = {}
@@ -15296,6 +15303,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "entry_ready": 0,
             "pathb_wait": 0,
             "position": 0,
+            "paired_shadow": 0,
             "watch_strengthening": 0,
             "other": 0,
         }
@@ -15342,6 +15350,56 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
         ordered = [ticker for _score, ticker in sorted(rows, key=lambda item: item[0])]
         return ordered[: max(1, int(limit or 1))], counts
+
+    def _paired_exit_shadow_tickers(self, market: str) -> list[str]:
+        if str(market or "").upper() != "KR":
+            return []
+        observer = getattr(self, "_pathb_paired_exit_observer", None)
+        if observer is None:
+            return []
+        try:
+            if not observer.enabled():
+                return []
+            observer.touch()
+            limit = max(0, int(self._runtime_float("PATHB_KR_PAIRED_EXIT_MAX_TICKERS", 5)))
+            active = observer.active_tickers()
+            if not active or limit <= 0:
+                return []
+            start = int(getattr(self, "_pathb_paired_exit_cursor", 0) or 0) % len(active)
+            take = min(limit, len(active))
+            selected = [active[(start + offset) % len(active)] for offset in range(take)]
+            self._pathb_paired_exit_cursor = (start + take) % len(active)
+            return [self._selection_ticker_key("KR", ticker) for ticker in selected]
+        except Exception:
+            return []
+
+    def _consume_paired_exit_shadow_cache(
+        self,
+        *,
+        market: str,
+        session_date: str,
+        provider: str,
+        cache: IntradayMinuteCache,
+        tickers: list[str],
+    ) -> None:
+        """Observation-only: never returns or mutates a live exit decision."""
+
+        if str(market or "").upper() != "KR":
+            return
+        observer = getattr(self, "_pathb_paired_exit_observer", None)
+        if observer is None:
+            return
+        for ticker in tickers:
+            try:
+                snapshot = cache.snapshot_bars(
+                    market="KR",
+                    ticker=ticker,
+                    session_date=session_date,
+                    provider_name=provider,
+                )
+                observer.consume_snapshot(ticker, snapshot)
+            except Exception as exc:
+                log.warning(f"[paired exit shadow] cache observation failed KR {ticker}: {exc}")
     def _mark_intraday_evidence_metadata(
         self,
         features_by_ticker: dict[str, dict],
@@ -15406,6 +15464,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             candidates or [],
             limit=target_limit,
         )
+        # Keep the decision cohort immutable. Paired-shadow symbols may use
+        # spare producer capacity, but they must never alter entry coverage,
+        # fail-closed ratios, returned features, or live exit decisions.
+        selection_tickers = list(tickers)
+        paired_shadow_tickers = self._paired_exit_shadow_tickers(market_key)
+        if paired_shadow_tickers:
+            seen_tickers = set(tickers)
+            for ticker in paired_shadow_tickers:
+                if ticker and ticker not in seen_tickers:
+                    tickers.append(ticker)
+                    seen_tickers.add(ticker)
+            priority_counts["paired_shadow"] = len(paired_shadow_tickers)
         if not tickers:
             return {}
         phase_name = str((phase or {}).get("phase") or "")
@@ -15413,7 +15483,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             sentinel_map = (
                 self._intraday_fail_closed_feature_map(
                     market_key,
-                    tickers,
+                    selection_tickers,
                     known_at=datetime.now(KST).replace(tzinfo=None),
                     reason="provider_disabled",
                 )
@@ -15424,10 +15494,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 sentinel_map,
                 provider=provider,
                 phase_name=phase_name,
-                requested=len(tickers),
+                requested=len(selection_tickers),
                 complete=0,
                 partial=0,
-                missing=len(tickers),
+                missing=len(selection_tickers),
                 coverage_ratio=0.0,
                 fail_closed_reason="provider_disabled" if sentinel_map else "",
             )
@@ -15441,11 +15511,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "target_limit": int(target_limit),
                     "target_rule": target_rule,
                     "priority_counts": priority_counts,
-                    "requested": len(tickers),
+                    "requested": len(selection_tickers),
                     "fetched": 0,
                     "complete": 0,
                     "partial": 0,
-                    "missing": len(tickers),
+                    "missing": len(selection_tickers),
                     "complete_ratio": 0.0,
                     "errors_sample": ["provider_disabled"],
                     "fail_closed_enabled": bool(fail_closed),
@@ -15466,7 +15536,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             sentinel_map = (
                 self._intraday_fail_closed_feature_map(
                     market_key,
-                    tickers,
+                    selection_tickers,
                     known_at=datetime.now(KST).replace(tzinfo=None),
                     reason="session_open_resolve_failed",
                 )
@@ -15477,10 +15547,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 sentinel_map,
                 provider=provider,
                 phase_name=phase_name,
-                requested=len(tickers),
+                requested=len(selection_tickers),
                 complete=0,
                 partial=0,
-                missing=len(tickers),
+                missing=len(selection_tickers),
                 coverage_ratio=0.0,
                 fail_closed_reason="session_open_resolve_failed" if sentinel_map else "",
             )
@@ -15494,11 +15564,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "target_limit": int(target_limit),
                     "target_rule": target_rule,
                     "priority_counts": priority_counts,
-                    "requested": len(tickers),
+                    "requested": len(selection_tickers),
                     "fetched": 0,
                     "complete": 0,
                     "partial": 0,
-                    "missing": len(tickers),
+                    "missing": len(selection_tickers),
                     "complete_ratio": 0.0,
                     "errors_sample": [f"session_open_resolve_failed:{str(exc)[:160]}"],
                     "fail_closed_enabled": bool(fail_closed),
@@ -15554,23 +15624,43 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             opening_range_min=opening_range_min,
             provider_name=provider,
         )
+        self._consume_paired_exit_shadow_cache(
+            market=market_key,
+            session_date=session_date,
+            provider=provider,
+            cache=cache,
+            tickers=paired_shadow_tickers,
+        )
+        # From here on, all metrics and returned evidence are decision-cohort
+        # only. This is the behavioral firewall around the paired observer.
+        tickers = selection_tickers
         prefetch_elapsed_sec = max(0.0, time.perf_counter() - prefetch_started)
         ratio_fallback = self._intraday_candidate_volume_ratio_map(market_key, candidates)
-        features_by_ticker = dict(result.get("features_by_ticker") or {})
+        all_features_by_ticker = dict(result.get("features_by_ticker") or {})
+        features_by_ticker = {
+            ticker: dict(all_features_by_ticker[ticker])
+            for ticker in selection_tickers
+            if isinstance(all_features_by_ticker.get(ticker), dict)
+        }
         for ticker, features in list(features_by_ticker.items()):
             if not isinstance(features, dict):
                 continue
             if features.get("volume_ratio_open") in (None, "") and ratio_fallback.get(ticker):
                 features["volume_ratio_open"] = ratio_fallback[ticker]
                 features["data_quality"], features["missing_fields"] = classify_intraday_feature_quality(features)
-        requested = int(result.get("requested") or len(tickers))
+        requested = len(selection_tickers)
         complete = sum(1 for item in features_by_ticker.values() if str((item or {}).get("data_quality")) == "minute_complete")
         partial = sum(1 for item in features_by_ticker.values() if str((item or {}).get("data_quality")) == "minute_partial")
         missing = max(0, requested - complete - partial)
         complete_ratio = (complete / requested) if requested else 0.0
         partial_ratio = (partial / requested) if requested else 0.0
         coverage_ratio = ((complete + partial) / requested) if requested and warmup else complete_ratio
-        errors_by_ticker = dict(result.get("errors_by_ticker") or {})
+        all_errors_by_ticker = dict(result.get("errors_by_ticker") or {})
+        errors_by_ticker = {
+            ticker: str(all_errors_by_ticker[ticker])
+            for ticker in selection_tickers
+            if ticker in all_errors_by_ticker
+        }
 
         def _error_bucket_counts(errors: dict) -> dict[str, int]:
             counts = {
@@ -25162,6 +25252,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
         try:
             candidates = self.risk.get_exit_candidates()
+            candidates.extend(self._fixed_horizon_strategy_exit_candidates())
             reason_priority = {
                 "loss_cap": 0,
                 "soft_exit_floor_price": 1,
@@ -25169,6 +25260,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "profit_floor": 3,
                 "stop_loss": 4,
                 "trail_stop": 5,
+                "strategy_catastrophe_stop": 5,
+                "strategy_fixed_take_profit": 6,
+                "strategy_horizon_exit": 7,
                 "recovery_micro_time_stop": 6,
                 "pre_close": 7,
                 "tp_check": 8,
@@ -25240,6 +25334,49 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     self._block_entry(cand["ticker"], _STOP_COOLDOWN_MIN, cand["reason"])
         finally:
             self._exit_process_lock.release()
+
+    def _fixed_horizon_strategy_exit_candidates(self) -> list[dict]:
+        """Emit deterministic close-window exits for isolated strategy sleeves.
+
+        Entry day counts as session one, so a three-session arm exits near the
+        close when ``held_days == 2``.  The generic max-hold/Claude path is not
+        used because these strategies were validated with a fixed horizon.
+        """
+
+        if not self._runtime_bool("PROFIT_STRATEGY_HORIZON_EXIT_ENABLED", False):
+            return []
+        market = str(getattr(self, "current_market", "") or "").upper()
+        if market not in {"KR", "US"} or not self.session_active:
+            return []
+        minutes_to_close = self._minutes_to_close(market)
+        window = max(1, self._runtime_int("PROFIT_STRATEGY_HORIZON_EXIT_WINDOW_MIN", 15))
+        if minutes_to_close < 0 or minutes_to_close > window:
+            return []
+        fixed_sources = {"us_swing_5d", "us_consensus_3d", "kr_us_sector_pulse_3d"}
+        output: list[dict] = []
+        for pos in list(getattr(self.risk, "positions", []) or []):
+            source = str(pos.get("source_strategy") or "").strip().lower()
+            if source not in fixed_sources or self._ticker_market(str(pos.get("ticker") or "")) != market:
+                continue
+            if self._has_active_pending_sell_confirmation(pos) or pos.get("pathb_path_run_id"):
+                continue
+            max_hold = max(1, int(pos.get("max_hold", 1) or 1))
+            held_days = max(0, int(pos.get("held_days", 0) or 0))
+            if held_days < max_hold - 1:
+                continue
+            ticker = str(pos.get("ticker") or "")
+            current_krw = float(pos.get("current_price") or self.price_cache.get(ticker, 0) or 0)
+            if current_krw <= 0:
+                continue
+            output.append({
+                **pos,
+                "exit_price": current_krw,
+                "reason": "strategy_horizon_exit",
+                "exit_owner": source,
+                "fixed_horizon_sessions": max_hold,
+                "fixed_horizon_held_days": held_days,
+            })
+        return output
     def _pre_session_position_review(self, market: str):
         """장전 보유 포지션 점검.
 
@@ -32564,6 +32701,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
         return run_us_swing_handoff(self)
 
+    def _maybe_run_profit_strategy_order_handoff(self, market: str) -> dict:
+        """Run the explicitly acknowledged MICRO bridge for new strategy sleeves."""
+
+        if not self._runtime_bool("PROFIT_STRATEGY_ORDER_HANDOFF_ENABLED", False):
+            return {"status": "DISABLED", "reason": "handoff_disabled"}
+        from runtime.profit_strategy_order_bridge import run_profit_strategy_handoff
+
+        return run_profit_strategy_handoff(self, market)
+
     def run_entry_scan(self, market: str):
         if not self.session_active or self.current_market != market:
             return
@@ -32600,6 +32746,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._maybe_run_us_swing_order_handoff(market)
         except Exception as _swing_handoff_e:
             log.error(f"[us_swing_handoff error] {market}: {_swing_handoff_e}", exc_info=True)
+        try:
+            self._maybe_run_profit_strategy_order_handoff(market)
+        except Exception as _profit_handoff_e:
+            log.error(f"[profit_strategy_handoff error] {market}: {_profit_handoff_e}", exc_info=True)
         try:
             self.run_cycle(market)
         except Exception as _es_e:

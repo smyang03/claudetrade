@@ -1,0 +1,1177 @@
+{
+  "as_of": "2026-07-15",
+  "authority": "POST_SELECTION_SHADOW_ONLY",
+  "contract": {
+    "signal": "strongest of five fixed US sector ETFs at US close",
+    "entry": "mapped KR sector ETF at first KR open strictly after signal date",
+    "cost_pct": 0.21,
+    "matrix": {
+      "thresholds": [
+        1.0,
+        1.5,
+        2.0
+      ],
+      "hold_sessions": [
+        1,
+        3,
+        5
+      ]
+    },
+    "discovery_end": "2022-12-31",
+    "oos_start": "2023-01-01"
+  },
+  "cells": {
+    "threshold_1.0_hold_1": {
+      "all": {
+        "sector_net_pct": {
+          "n": 1147,
+          "mean_pct": -0.170038982522273,
+          "median_pct": -0.26096839959225493,
+          "win_rate": 0.4149956408020924,
+          "profit_factor": 0.7697006720774203,
+          "sum_pct_units": -195.03471295304715,
+          "sum_ex_top3_pct_units": -217.5485049940977,
+          "block_mean_lcb_5pct": -0.2491553193195816
+        },
+        "benchmark_net_pct": {
+          "n": 1147,
+          "mean_pct": -0.23744891639426738,
+          "median_pct": -0.22502629601803917,
+          "win_rate": 0.3905841325196164,
+          "profit_factor": 0.5400981902319755,
+          "sum_pct_units": -272.3539071042247,
+          "sum_ex_top3_pct_units": -288.6028555360491,
+          "block_mean_lcb_5pct": -0.2856801035907911
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 1147,
+          "mean_pct": 0.06740993387199441,
+          "median_pct": -0.05483552449998541,
+          "win_rate": 0.4847428073234525,
+          "profit_factor": 1.130071791925589,
+          "sum_pct_units": 77.31919415117758,
+          "sum_ex_top3_pct_units": 56.473295918166855,
+          "block_mean_lcb_5pct": -0.0037852195879028877
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 1147,
+          "mean_pct": -0.17793704815621114,
+          "median_pct": -0.2358233404515251,
+          "win_rate": 0.35222319093286836,
+          "profit_factor": 0.5357085636935458,
+          "sum_pct_units": -204.0937942351742,
+          "sum_ex_top3_pct_units": -213.97476104619528,
+          "block_mean_lcb_5pct": -0.21391950509278368
+        }
+      },
+      "discovery": {
+        "sector_net_pct": {
+          "n": 647,
+          "mean_pct": -0.217407522798524,
+          "median_pct": -0.26096839959225493,
+          "win_rate": 0.39258114374034003,
+          "profit_factor": 0.6717922545928179,
+          "sum_pct_units": -140.66266725064503,
+          "sum_ex_top3_pct_units": -160.48990907744098,
+          "block_mean_lcb_5pct": -0.3119803486331816
+        },
+        "benchmark_net_pct": {
+          "n": 647,
+          "mean_pct": -0.2697304969700846,
+          "median_pct": -0.263371286247994,
+          "win_rate": 0.37094281298299847,
+          "profit_factor": 0.4638495875806851,
+          "sum_pct_units": -174.51563153964474,
+          "sum_ex_top3_pct_units": -188.26783798658875,
+          "block_mean_lcb_5pct": -0.3356880012630783
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 647,
+          "mean_pct": 0.05232297417156064,
+          "median_pct": -0.06641325637822826,
+          "win_rate": 0.4806800618238022,
+          "profit_factor": 1.1206611711705212,
+          "sum_pct_units": 33.852964288999736,
+          "sum_ex_top3_pct_units": 21.375570215728374,
+          "block_mean_lcb_5pct": -0.023367489424184287
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 647,
+          "mean_pct": -0.19517508139548245,
+          "median_pct": -0.25436676330857866,
+          "win_rate": 0.33384853168469864,
+          "profit_factor": 0.4408123518612497,
+          "sum_pct_units": -126.27827766287714,
+          "sum_ex_top3_pct_units": -131.97453569456275,
+          "block_mean_lcb_5pct": -0.23399670016170343
+        }
+      },
+      "oos": {
+        "sector_net_pct": {
+          "n": 500,
+          "mean_pct": -0.10874409140480425,
+          "median_pct": -0.2604448519597744,
+          "win_rate": 0.444,
+          "profit_factor": 0.8700156063384701,
+          "sum_pct_units": -54.372045702402126,
+          "sum_ex_top3_pct_units": -74.91224134115174,
+          "block_mean_lcb_5pct": -0.24296801360622894
+        },
+        "benchmark_net_pct": {
+          "n": 500,
+          "mean_pct": -0.1956765511291599,
+          "median_pct": -0.15242990387587343,
+          "win_rate": 0.416,
+          "profit_factor": 0.6331558943848891,
+          "sum_pct_units": -97.83827556457996,
+          "sum_ex_top3_pct_units": -112.38969228086285,
+          "block_mean_lcb_5pct": -0.2772811190517248
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 500,
+          "mean_pct": 0.08693245972435566,
+          "median_pct": -0.03131435914756618,
+          "win_rate": 0.49,
+          "profit_factor": 1.1384836918880081,
+          "sum_pct_units": 43.46622986217783,
+          "sum_ex_top3_pct_units": 22.62033162916714,
+          "block_mean_lcb_5pct": -0.03780257118898428
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 500,
+          "mean_pct": -0.1556310331445941,
+          "median_pct": -0.20986184478099335,
+          "win_rate": 0.376,
+          "profit_factor": 0.6359622178493789,
+          "sum_pct_units": -77.81551657229704,
+          "sum_ex_top3_pct_units": -87.69648338331814,
+          "block_mean_lcb_5pct": -0.21939896927072688
+        }
+      }
+    },
+    "threshold_1.0_hold_3": {
+      "all": {
+        "sector_net_pct": {
+          "n": 1147,
+          "mean_pct": 0.01097299971846419,
+          "median_pct": -0.013995323538341459,
+          "win_rate": 0.4969485614646905,
+          "profit_factor": 1.0091888905809199,
+          "sum_pct_units": 12.586030677078426,
+          "sum_ex_top3_pct_units": -29.241536051514686,
+          "block_mean_lcb_5pct": -0.16879334631159199
+        },
+        "benchmark_net_pct": {
+          "n": 1147,
+          "mean_pct": -0.0181312230468359,
+          "median_pct": 0.04090375878320526,
+          "win_rate": 0.5100261551874455,
+          "profit_factor": 0.9780394895042842,
+          "sum_pct_units": -20.79651283472078,
+          "sum_ex_top3_pct_units": -54.41576958576695,
+          "block_mean_lcb_5pct": -0.16855791576962298
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 1147,
+          "mean_pct": 0.02910422276530011,
+          "median_pct": -0.07520693272029536,
+          "win_rate": 0.4873583260680035,
+          "profit_factor": 1.0296225548797517,
+          "sum_pct_units": 33.38254351179923,
+          "sum_ex_top3_pct_units": -2.311672130591205,
+          "block_mean_lcb_5pct": -0.11351168537148805
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 1147,
+          "mean_pct": -0.19565077892589988,
+          "median_pct": -0.2485278698877833,
+          "win_rate": 0.41935483870967744,
+          "profit_factor": 0.6777425241219879,
+          "sum_pct_units": -224.41144342800717,
+          "sum_ex_top3_pct_units": -241.7374985005721,
+          "block_mean_lcb_5pct": -0.26571168647601545
+        }
+      },
+      "discovery": {
+        "sector_net_pct": {
+          "n": 647,
+          "mean_pct": 0.07988600282271185,
+          "median_pct": -0.17145708897663517,
+          "win_rate": 0.482225656877898,
+          "profit_factor": 1.0793011603490659,
+          "sum_pct_units": 51.68624382629457,
+          "sum_ex_top3_pct_units": 18.276593574328103,
+          "block_mean_lcb_5pct": -0.14313933496571699
+        },
+        "benchmark_net_pct": {
+          "n": 647,
+          "mean_pct": -0.1405992874903507,
+          "median_pct": -0.14190831183746958,
+          "win_rate": 0.46986089644513135,
+          "profit_factor": 0.8173713583642614,
+          "sum_pct_units": -90.96773900625689,
+          "sum_ex_top3_pct_units": -114.72005218313723,
+          "block_mean_lcb_5pct": -0.30257306567596504
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 647,
+          "mean_pct": 0.22048529031306258,
+          "median_pct": 0.1107939417582138,
+          "win_rate": 0.5100463678516228,
+          "profit_factor": 1.288392953506773,
+          "sum_pct_units": 142.6539828325515,
+          "sum_ex_top3_pct_units": 119.27079121220027,
+          "block_mean_lcb_5pct": 0.0718773086058666
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 647,
+          "mean_pct": -0.11218206542838667,
+          "median_pct": -0.1908765339302796,
+          "win_rate": 0.44049459041731065,
+          "profit_factor": 0.774828649585555,
+          "sum_pct_units": -72.58179633216618,
+          "sum_ex_top3_pct_units": -83.61203918253813,
+          "block_mean_lcb_5pct": -0.18716388764691244
+        }
+      },
+      "oos": {
+        "sector_net_pct": {
+          "n": 500,
+          "mean_pct": -0.07820042629843225,
+          "median_pct": 0.09772382135398902,
+          "win_rate": 0.516,
+          "profit_factor": 0.9455375076997987,
+          "sum_pct_units": -39.100213149216124,
+          "sum_ex_top3_pct_units": -79.42285993646453,
+          "block_mean_lcb_5pct": -0.3898562410146663
+        },
+        "benchmark_net_pct": {
+          "n": 500,
+          "mean_pct": 0.1403424523430722,
+          "median_pct": 0.19666125450526947,
+          "win_rate": 0.562,
+          "profit_factor": 1.1563203927124088,
+          "sum_pct_units": 70.17122617153609,
+          "sum_ex_top3_pct_units": 37.52507832369918,
+          "block_mean_lcb_5pct": -0.13506344772537612
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 500,
+          "mean_pct": -0.21854287864150457,
+          "median_pct": -0.3055449259813603,
+          "win_rate": 0.458,
+          "profit_factor": 0.8271783114692777,
+          "sum_pct_units": -109.27143932075228,
+          "sum_ex_top3_pct_units": -144.9656549631428,
+          "block_mean_lcb_5pct": -0.49169774209581363
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 500,
+          "mean_pct": -0.30365929419168197,
+          "median_pct": -0.3287760984419139,
+          "win_rate": 0.392,
+          "profit_factor": 0.5940740175071416,
+          "sum_pct_units": -151.82964709584098,
+          "sum_ex_top3_pct_units": -169.15570216840592,
+          "block_mean_lcb_5pct": -0.4412535978061099
+        }
+      }
+    },
+    "threshold_1.0_hold_5": {
+      "all": {
+        "sector_net_pct": {
+          "n": 1146,
+          "mean_pct": 0.193084661110481,
+          "median_pct": 0.32033149252379456,
+          "win_rate": 0.5287958115183246,
+          "profit_factor": 1.1249212544552751,
+          "sum_pct_units": 221.27502163261124,
+          "sum_ex_top3_pct_units": 159.62721981630375,
+          "block_mean_lcb_5pct": -0.08567930911705025
+        },
+        "benchmark_net_pct": {
+          "n": 1146,
+          "mean_pct": 0.18112431517062294,
+          "median_pct": 0.15688936702332643,
+          "win_rate": 0.5279232111692844,
+          "profit_factor": 1.1760269795454368,
+          "sum_pct_units": 207.56846518553388,
+          "sum_ex_top3_pct_units": 161.81847907583892,
+          "block_mean_lcb_5pct": -0.053351562391549597
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 1146,
+          "mean_pct": 0.011960345939858156,
+          "median_pct": 0.022533413949732406,
+          "win_rate": 0.5008726003490401,
+          "profit_factor": 1.0093151976634922,
+          "sum_pct_units": 13.706556447077446,
+          "sum_ex_top3_pct_units": -32.65493225095247,
+          "block_mean_lcb_5pct": -0.19261423133912872
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 1146,
+          "mean_pct": -0.19637891855950684,
+          "median_pct": -0.20503444732624476,
+          "win_rate": 0.4432809773123909,
+          "profit_factor": 0.7370685552214801,
+          "sum_pct_units": -225.05024066919484,
+          "sum_ex_top3_pct_units": -247.84905356179695,
+          "block_mean_lcb_5pct": -0.2982093284890867
+        }
+      },
+      "discovery": {
+        "sector_net_pct": {
+          "n": 647,
+          "mean_pct": 0.1929672461604444,
+          "median_pct": 0.3045659456527563,
+          "win_rate": 0.5285935085007728,
+          "profit_factor": 1.147485716355138,
+          "sum_pct_units": 124.84980826580752,
+          "sum_ex_top3_pct_units": 73.7458908967767,
+          "block_mean_lcb_5pct": -0.13347408698532964
+        },
+        "benchmark_net_pct": {
+          "n": 647,
+          "mean_pct": -0.089708628261655,
+          "median_pct": -0.09627574705326583,
+          "win_rate": 0.4806800618238022,
+          "profit_factor": 0.9059051592973558,
+          "sum_pct_units": -58.041482485290786,
+          "sum_ex_top3_pct_units": -91.19234554516254,
+          "block_mean_lcb_5pct": -0.3482004219529789
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 647,
+          "mean_pct": 0.2826758744220994,
+          "median_pct": 0.21857352203236147,
+          "win_rate": 0.5301391035548686,
+          "profit_factor": 1.2982207103108572,
+          "sum_pct_units": 182.89129075109832,
+          "sum_ex_top3_pct_units": 148.93830641716147,
+          "block_mean_lcb_5pct": 0.09020125676384613
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 647,
+          "mean_pct": -0.07467511754545786,
+          "median_pct": -0.10006432470591275,
+          "win_rate": 0.46831530139103555,
+          "profit_factor": 0.8715580660040894,
+          "sum_pct_units": -48.31480105191124,
+          "sum_ex_top3_pct_units": -64.8670989437901,
+          "block_mean_lcb_5pct": -0.1722378662347757
+        }
+      },
+      "oos": {
+        "sector_net_pct": {
+          "n": 499,
+          "mean_pct": 0.1932369005346768,
+          "median_pct": 0.4039682337566344,
+          "win_rate": 0.5290581162324649,
+          "profit_factor": 1.1042666171205853,
+          "sum_pct_units": 96.42521336680372,
+          "sum_ex_top3_pct_units": 39.17360058409861,
+          "block_mean_lcb_5pct": -0.3260017689411194
+        },
+        "benchmark_net_pct": {
+          "n": 499,
+          "mean_pct": 0.5322844642701897,
+          "median_pct": 0.5516256528767851,
+          "win_rate": 0.5891783567134269,
+          "profit_factor": 1.4723253657550777,
+          "sum_pct_units": 265.6099476708247,
+          "sum_ex_top3_pct_units": 219.85996156113015,
+          "block_mean_lcb_5pct": 0.06805287600360806
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 499,
+          "mean_pct": -0.33904756373551287,
+          "median_pct": -0.29548689852278986,
+          "win_rate": 0.46292585170340683,
+          "profit_factor": 0.8028480364632877,
+          "sum_pct_units": -169.18473430402094,
+          "sum_ex_top3_pct_units": -215.5462230020505,
+          "block_mean_lcb_5pct": -0.7191335798752848
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 499,
+          "mean_pct": -0.35417923770998716,
+          "median_pct": -0.3776723234705579,
+          "win_rate": 0.41082164328657317,
+          "profit_factor": 0.6316221980804394,
+          "sum_pct_units": -176.7354396172836,
+          "sum_ex_top3_pct_units": -199.53425250988568,
+          "block_mean_lcb_5pct": -0.5411602199992903
+        }
+      }
+    },
+    "threshold_1.5_hold_1": {
+      "all": {
+        "sector_net_pct": {
+          "n": 835,
+          "mean_pct": -0.1538892546534582,
+          "median_pct": -0.26096839959225493,
+          "win_rate": 0.4239520958083832,
+          "profit_factor": 0.7946680697355094,
+          "sum_pct_units": -128.4975276356376,
+          "sum_ex_top3_pct_units": -151.0113196766883,
+          "block_mean_lcb_5pct": -0.255363114197792
+        },
+        "benchmark_net_pct": {
+          "n": 835,
+          "mean_pct": -0.24415860157593655,
+          "median_pct": -0.21,
+          "win_rate": 0.39520958083832336,
+          "profit_factor": 0.5479900620910146,
+          "sum_pct_units": -203.87243231590702,
+          "sum_ex_top3_pct_units": -220.12138074773145,
+          "block_mean_lcb_5pct": -0.3070972489222016
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 835,
+          "mean_pct": 0.09026934692247836,
+          "median_pct": -0.04573230495756864,
+          "win_rate": 0.48263473053892214,
+          "profit_factor": 1.1759671420565772,
+          "sum_pct_units": 75.37490468026942,
+          "sum_ex_top3_pct_units": 54.52900644725872,
+          "block_mean_lcb_5pct": 0.0007831648079297078
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 835,
+          "mean_pct": -0.16414974296566914,
+          "median_pct": -0.22801484074553935,
+          "win_rate": 0.3520958083832335,
+          "profit_factor": 0.567082116404411,
+          "sum_pct_units": -137.06503537633373,
+          "sum_ex_top3_pct_units": -146.9460021873548,
+          "block_mean_lcb_5pct": -0.20990543996024122
+        }
+      },
+      "discovery": {
+        "sector_net_pct": {
+          "n": 465,
+          "mean_pct": -0.2106401971334127,
+          "median_pct": -0.26096839959225493,
+          "win_rate": 0.4,
+          "profit_factor": 0.6893041472960554,
+          "sum_pct_units": -97.9476916670369,
+          "sum_ex_top3_pct_units": -117.7749334938328,
+          "block_mean_lcb_5pct": -0.32597914695960717
+        },
+        "benchmark_net_pct": {
+          "n": 465,
+          "mean_pct": -0.25827943759194205,
+          "median_pct": -0.25764930114358187,
+          "win_rate": 0.37849462365591396,
+          "profit_factor": 0.49946876809709567,
+          "sum_pct_units": -120.09993848025306,
+          "sum_ex_top3_pct_units": -133.46101304905665,
+          "block_mean_lcb_5pct": -0.3398633518345104
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 465,
+          "mean_pct": 0.04763924045852939,
+          "median_pct": -0.08561995198170802,
+          "win_rate": 0.46881720430107526,
+          "profit_factor": 1.1088031783617465,
+          "sum_pct_units": 22.152246813216166,
+          "sum_ex_top3_pct_units": 9.677374440638772,
+          "block_mean_lcb_5pct": -0.04087468390421297
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 465,
+          "mean_pct": -0.19421929416370515,
+          "median_pct": -0.2689622641509357,
+          "win_rate": 0.32903225806451614,
+          "profit_factor": 0.4465974532436589,
+          "sum_pct_units": -90.3119717861229,
+          "sum_ex_top3_pct_units": -96.0082298178085,
+          "block_mean_lcb_5pct": -0.23933460638009602
+        }
+      },
+      "oos": {
+        "sector_net_pct": {
+          "n": 370,
+          "mean_pct": -0.08256712423946136,
+          "median_pct": -0.21,
+          "win_rate": 0.4540540540540541,
+          "profit_factor": 0.901627078075191,
+          "sum_pct_units": -30.549835968600703,
+          "sum_ex_top3_pct_units": -51.09003160735023,
+          "block_mean_lcb_5pct": -0.26177904132616375
+        },
+        "benchmark_net_pct": {
+          "n": 370,
+          "mean_pct": -0.22641214550176747,
+          "median_pct": -0.1539099693335553,
+          "win_rate": 0.41621621621621624,
+          "profit_factor": 0.603143883860544,
+          "sum_pct_units": -83.77249383565396,
+          "sum_ex_top3_pct_units": -98.32391055193683,
+          "block_mean_lcb_5pct": -0.34678466201472485
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 370,
+          "mean_pct": 0.1438450212623061,
+          "median_pct": -0.0072555744896174446,
+          "win_rate": 0.5,
+          "profit_factor": 1.2368112049014504,
+          "sum_pct_units": 53.22265786705326,
+          "sum_ex_top3_pct_units": 32.3767596340426,
+          "block_mean_lcb_5pct": -0.012405887559207728
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 370,
+          "mean_pct": -0.12635963132489406,
+          "median_pct": -0.1855188168740316,
+          "win_rate": 0.3810810810810811,
+          "profit_factor": 0.6952479985606753,
+          "sum_pct_units": -46.7530635902108,
+          "sum_ex_top3_pct_units": -56.63403040123188,
+          "block_mean_lcb_5pct": -0.20592747055927113
+        }
+      }
+    },
+    "threshold_1.5_hold_3": {
+      "all": {
+        "sector_net_pct": {
+          "n": 835,
+          "mean_pct": 0.07866943200348706,
+          "median_pct": 0.08027788190016946,
+          "win_rate": 0.5101796407185629,
+          "profit_factor": 1.0642271020765726,
+          "sum_pct_units": 65.68897572291169,
+          "sum_ex_top3_pct_units": 23.861408994318708,
+          "block_mean_lcb_5pct": -0.13352530403008034
+        },
+        "benchmark_net_pct": {
+          "n": 835,
+          "mean_pct": -0.06394139207590653,
+          "median_pct": 0.025343283625022445,
+          "win_rate": 0.5017964071856288,
+          "profit_factor": 0.9268029451651654,
+          "sum_pct_units": -53.39106238338195,
+          "sum_ex_top3_pct_units": -87.01031913442807,
+          "block_mean_lcb_5pct": -0.22474037482921647
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 835,
+          "mean_pct": 0.14261082407939363,
+          "median_pct": -0.03725920272984462,
+          "win_rate": 0.4946107784431138,
+          "profit_factor": 1.1525643914823165,
+          "sum_pct_units": 119.08003810629367,
+          "sum_ex_top3_pct_units": 83.38582246390308,
+          "block_mean_lcb_5pct": -0.0166471015235578
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 835,
+          "mean_pct": -0.13728150831113822,
+          "median_pct": -0.22215065876204454,
+          "win_rate": 0.42634730538922155,
+          "profit_factor": 0.7631952398190816,
+          "sum_pct_units": -114.6300594398004,
+          "sum_ex_top3_pct_units": -131.95611451236528,
+          "block_mean_lcb_5pct": -0.21595690387044292
+        }
+      },
+      "discovery": {
+        "sector_net_pct": {
+          "n": 465,
+          "mean_pct": 0.1377929022848286,
+          "median_pct": -0.013995323538341459,
+          "win_rate": 0.4967741935483871,
+          "profit_factor": 1.132252921098028,
+          "sum_pct_units": 64.0736995624453,
+          "sum_ex_top3_pct_units": 30.664049310478845,
+          "block_mean_lcb_5pct": -0.12302903241333597
+        },
+        "benchmark_net_pct": {
+          "n": 465,
+          "mean_pct": -0.12518755359306116,
+          "median_pct": -0.21002214210046424,
+          "win_rate": 0.46236559139784944,
+          "profit_factor": 0.8396343169501574,
+          "sum_pct_units": -58.21221242077344,
+          "sum_ex_top3_pct_units": -81.96452559765373,
+          "block_mean_lcb_5pct": -0.3123673107089644
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 465,
+          "mean_pct": 0.26298045587788976,
+          "median_pct": 0.012092199159030592,
+          "win_rate": 0.5053763440860215,
+          "profit_factor": 1.3450205739752776,
+          "sum_pct_units": 122.28591198321874,
+          "sum_ex_top3_pct_units": 98.90272036286757,
+          "block_mean_lcb_5pct": 0.08057694800105315
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 465,
+          "mean_pct": -0.08971793843281796,
+          "median_pct": -0.19877067666234738,
+          "win_rate": 0.43655913978494626,
+          "profit_factor": 0.8190519625441799,
+          "sum_pct_units": -41.71884137126035,
+          "sum_ex_top3_pct_units": -52.7490842216323,
+          "block_mean_lcb_5pct": -0.181166342180513
+        }
+      },
+      "oos": {
+        "sector_net_pct": {
+          "n": 370,
+          "mean_pct": 0.00436561124450369,
+          "median_pct": 0.1366710437264653,
+          "win_rate": 0.527027027027027,
+          "profit_factor": 1.003000796413518,
+          "sum_pct_units": 1.6152761604663652,
+          "sum_ex_top3_pct_units": -38.707370626781994,
+          "block_mean_lcb_5pct": -0.3921002307335585
+        },
+        "benchmark_net_pct": {
+          "n": 370,
+          "mean_pct": 0.013030135236193178,
+          "median_pct": 0.19666125450526947,
+          "win_rate": 0.5513513513513514,
+          "profit_factor": 1.0131574871221127,
+          "sum_pct_units": 4.821150037391476,
+          "sum_ex_top3_pct_units": -26.330105337870236,
+          "block_mean_lcb_5pct": -0.3007842063842286
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 370,
+          "mean_pct": -0.00866452399168938,
+          "median_pct": -0.17824498363167574,
+          "win_rate": 0.4810810810810811,
+          "profit_factor": 0.9924761056862811,
+          "sum_pct_units": -3.2058738769250708,
+          "sum_ex_top3_pct_units": -38.90008951931554,
+          "block_mean_lcb_5pct": -0.31232151118850177
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 370,
+          "mean_pct": -0.19705734613118936,
+          "median_pct": -0.25907941074243634,
+          "win_rate": 0.4135135135135135,
+          "profit_factor": 0.7123964024504064,
+          "sum_pct_units": -72.91121806854007,
+          "sum_ex_top3_pct_units": -90.23727314110496,
+          "block_mean_lcb_5pct": -0.3456010297173546
+        }
+      }
+    },
+    "threshold_1.5_hold_5": {
+      "all": {
+        "sector_net_pct": {
+          "n": 834,
+          "mean_pct": 0.22272796078061086,
+          "median_pct": 0.32033149252379456,
+          "win_rate": 0.5311750599520384,
+          "profit_factor": 1.1378747705957215,
+          "sum_pct_units": 185.75511929102944,
+          "sum_ex_top3_pct_units": 124.1073174747221,
+          "block_mean_lcb_5pct": -0.10160202966501179
+        },
+        "benchmark_net_pct": {
+          "n": 834,
+          "mean_pct": 0.11642491945214714,
+          "median_pct": 0.1896240348142055,
+          "win_rate": 0.5347721822541966,
+          "profit_factor": 1.1069714427991153,
+          "sum_pct_units": 97.09838282309072,
+          "sum_ex_top3_pct_units": 52.95999328019434,
+          "block_mean_lcb_5pct": -0.15955511868996056
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 834,
+          "mean_pct": 0.1063030413284637,
+          "median_pct": 0.08634175288104173,
+          "win_rate": 0.5071942446043165,
+          "profit_factor": 1.0853945994625456,
+          "sum_pct_units": 88.65673646793873,
+          "sum_ex_top3_pct_units": 42.83194566163502,
+          "block_mean_lcb_5pct": -0.11242418189348422
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 834,
+          "mean_pct": -0.14925240295170258,
+          "median_pct": -0.20313077498342968,
+          "win_rate": 0.44364508393285373,
+          "profit_factor": 0.7943282257602166,
+          "sum_pct_units": -124.47650406171996,
+          "sum_ex_top3_pct_units": -147.27531695432214,
+          "block_mean_lcb_5pct": -0.2569793599312924
+        }
+      },
+      "discovery": {
+        "sector_net_pct": {
+          "n": 465,
+          "mean_pct": 0.23319795690741918,
+          "median_pct": 0.31439593097388663,
+          "win_rate": 0.5333333333333333,
+          "profit_factor": 1.1713588496546032,
+          "sum_pct_units": 108.43704996194992,
+          "sum_ex_top3_pct_units": 57.33313259291879,
+          "block_mean_lcb_5pct": -0.1644385049099337
+        },
+        "benchmark_net_pct": {
+          "n": 465,
+          "mean_pct": -0.109427604488753,
+          "median_pct": -0.07278812014690586,
+          "win_rate": 0.4817204301075269,
+          "profit_factor": 0.8903598923397599,
+          "sum_pct_units": -50.88383608727014,
+          "sum_ex_top3_pct_units": -84.03469914714191,
+          "block_mean_lcb_5pct": -0.4134926915202053
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 465,
+          "mean_pct": 0.3426255613961723,
+          "median_pct": 0.22337778126958474,
+          "win_rate": 0.5397849462365591,
+          "profit_factor": 1.3620597773367282,
+          "sum_pct_units": 159.32088604922012,
+          "sum_ex_top3_pct_units": 125.36790171528344,
+          "block_mean_lcb_5pct": 0.1109919694058597
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 465,
+          "mean_pct": -0.043172621035507265,
+          "median_pct": -0.07390051892052307,
+          "win_rate": 0.47096774193548385,
+          "profit_factor": 0.9251451682465291,
+          "sum_pct_units": -20.07526878151088,
+          "sum_ex_top3_pct_units": -36.627566673389765,
+          "block_mean_lcb_5pct": -0.1603049049491032
+        }
+      },
+      "oos": {
+        "sector_net_pct": {
+          "n": 369,
+          "mean_pct": 0.2095340632224377,
+          "median_pct": 0.4039682337566344,
+          "win_rate": 0.5284552845528455,
+          "profit_factor": 1.1082177770649349,
+          "sum_pct_units": 77.3180693290795,
+          "sum_ex_top3_pct_units": 20.209096302357466,
+          "block_mean_lcb_5pct": -0.3638315126741409
+        },
+        "benchmark_net_pct": {
+          "n": 369,
+          "mean_pct": 0.40103582360531403,
+          "median_pct": 0.5533809023673166,
+          "win_rate": 0.6016260162601627,
+          "profit_factor": 1.333590033647316,
+          "sum_pct_units": 147.98221891036087,
+          "sum_ex_top3_pct_units": 104.11941848069813,
+          "block_mean_lcb_5pct": -0.11686480296046468
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 369,
+          "mean_pct": -0.19150176038287633,
+          "median_pct": -0.29548689852278986,
+          "win_rate": 0.46612466124661245,
+          "profit_factor": 0.8818642250169663,
+          "sum_pct_units": -70.66414958128136,
+          "sum_ex_top3_pct_units": -116.4889403875851,
+          "block_mean_lcb_5pct": -0.5910950928757269
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 369,
+          "mean_pct": -0.2829301769111357,
+          "median_pct": -0.3776723234705579,
+          "win_rate": 0.4092140921409214,
+          "profit_factor": 0.6902314745787981,
+          "sum_pct_units": -104.40123528020908,
+          "sum_ex_top3_pct_units": -127.20004817281114,
+          "block_mean_lcb_5pct": -0.4752920416193472
+        }
+      }
+    },
+    "threshold_2.0_hold_1": {
+      "all": {
+        "sector_net_pct": {
+          "n": 587,
+          "mean_pct": -0.14079537429128286,
+          "median_pct": -0.21,
+          "win_rate": 0.42248722316865417,
+          "profit_factor": 0.8173389086810114,
+          "sum_pct_units": -82.64688470898304,
+          "sum_ex_top3_pct_units": -105.16067675003382,
+          "block_mean_lcb_5pct": -0.26375135115429776
+        },
+        "benchmark_net_pct": {
+          "n": 587,
+          "mean_pct": -0.2629750579331682,
+          "median_pct": -0.2389393720156239,
+          "win_rate": 0.39182282793867124,
+          "profit_factor": 0.5311320420450729,
+          "sum_pct_units": -154.36635900676976,
+          "sum_ex_top3_pct_units": -169.97635125089096,
+          "block_mean_lcb_5pct": -0.33890099211354885
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 587,
+          "mean_pct": 0.12217968364188533,
+          "median_pct": -0.01771989657265438,
+          "win_rate": 0.4957410562180579,
+          "profit_factor": 1.243440606891328,
+          "sum_pct_units": 71.71947429778669,
+          "sum_ex_top3_pct_units": 50.873576064776046,
+          "block_mean_lcb_5pct": 0.022042534496045756
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 587,
+          "mean_pct": -0.14448427436980155,
+          "median_pct": -0.2051384457784753,
+          "win_rate": 0.36115843270868825,
+          "profit_factor": 0.6085348917096822,
+          "sum_pct_units": -84.81226905507351,
+          "sum_ex_top3_pct_units": -94.69323586609461,
+          "block_mean_lcb_5pct": -0.1963285071239634
+        }
+      },
+      "discovery": {
+        "sector_net_pct": {
+          "n": 335,
+          "mean_pct": -0.20430558150606085,
+          "median_pct": -0.25999999999998336,
+          "win_rate": 0.40298507462686567,
+          "profit_factor": 0.7043273314949646,
+          "sum_pct_units": -68.44236980453039,
+          "sum_ex_top3_pct_units": -88.26961163132631,
+          "block_mean_lcb_5pct": -0.3488148594795111
+        },
+        "benchmark_net_pct": {
+          "n": 335,
+          "mean_pct": -0.26144713190248753,
+          "median_pct": -0.2630503978779739,
+          "win_rate": 0.3761194029850746,
+          "profit_factor": 0.5177562115426776,
+          "sum_pct_units": -87.58478918733331,
+          "sum_ex_top3_pct_units": -100.94586375613687,
+          "block_mean_lcb_5pct": -0.35416955949993084
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 335,
+          "mean_pct": 0.05714155039642669,
+          "median_pct": -0.08549239515087681,
+          "win_rate": 0.46567164179104475,
+          "profit_factor": 1.1311658175570374,
+          "sum_pct_units": 19.14241938280294,
+          "sum_ex_top3_pct_units": 6.667547010225547,
+          "block_mean_lcb_5pct": -0.051315236352508696
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 335,
+          "mean_pct": -0.18794849369476616,
+          "median_pct": -0.2440646602384864,
+          "win_rate": 0.33432835820895523,
+          "profit_factor": 0.4605746605809707,
+          "sum_pct_units": -62.962745387746665,
+          "sum_ex_top3_pct_units": -68.65900341943225,
+          "block_mean_lcb_5pct": -0.2430661879208073
+        }
+      },
+      "oos": {
+        "sector_net_pct": {
+          "n": 252,
+          "mean_pct": -0.05636712263671694,
+          "median_pct": -0.1795020391618061,
+          "win_rate": 0.44841269841269843,
+          "profit_factor": 0.9357203755950885,
+          "sum_pct_units": -14.204514904452669,
+          "sum_ex_top3_pct_units": -34.744710543202245,
+          "block_mean_lcb_5pct": -0.2780356326085632
+        },
+        "benchmark_net_pct": {
+          "n": 252,
+          "mean_pct": -0.265006229442208,
+          "median_pct": -0.15974560353320214,
+          "win_rate": 0.4126984126984127,
+          "profit_factor": 0.5475893574467364,
+          "sum_pct_units": -66.78156981943641,
+          "sum_ex_top3_pct_units": -80.32371328386071,
+          "block_mean_lcb_5pct": -0.4192795946914686
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 252,
+          "mean_pct": 0.20863910680549114,
+          "median_pct": 0.09514885883261659,
+          "win_rate": 0.5357142857142857,
+          "profit_factor": 1.3536563414041944,
+          "sum_pct_units": 52.57705491498377,
+          "sum_ex_top3_pct_units": 31.731156681973033,
+          "block_mean_lcb_5pct": 0.03487095272141142
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 252,
+          "mean_pct": -0.0867044589973288,
+          "median_pct": -0.14969377341226087,
+          "win_rate": 0.3968253968253968,
+          "profit_factor": 0.7813551373209213,
+          "sum_pct_units": -21.849523667326856,
+          "sum_ex_top3_pct_units": -31.730490478347946,
+          "block_mean_lcb_5pct": -0.17582424834318988
+        }
+      }
+    },
+    "threshold_2.0_hold_3": {
+      "all": {
+        "sector_net_pct": {
+          "n": 587,
+          "mean_pct": 0.1929990111177255,
+          "median_pct": 0.2919380349296832,
+          "win_rate": 0.5400340715502555,
+          "profit_factor": 1.153388700895794,
+          "sum_pct_units": 113.29041952610487,
+          "sum_ex_top3_pct_units": 71.46285279751191,
+          "block_mean_lcb_5pct": -0.06544947493094982
+        },
+        "benchmark_net_pct": {
+          "n": 587,
+          "mean_pct": -0.005991644769465218,
+          "median_pct": 0.04090375878320526,
+          "win_rate": 0.5025553662691652,
+          "profit_factor": 0.9932091583366911,
+          "sum_pct_units": -3.517095479676083,
+          "sum_ex_top3_pct_units": -37.136352230722196,
+          "block_mean_lcb_5pct": -0.1846517185407719
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 587,
+          "mean_pct": 0.1989906558871907,
+          "median_pct": -0.03725920272984462,
+          "win_rate": 0.49744463373083475,
+          "profit_factor": 1.2183292037066873,
+          "sum_pct_units": 116.80751500578094,
+          "sum_ex_top3_pct_units": 81.11329936339041,
+          "block_mean_lcb_5pct": 0.0008711513164420003
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 587,
+          "mean_pct": -0.1074966397222815,
+          "median_pct": -0.20714315951780948,
+          "win_rate": 0.43270868824531517,
+          "profit_factor": 0.8097544295054151,
+          "sum_pct_units": -63.10052751697924,
+          "sum_ex_top3_pct_units": -80.4265825895441,
+          "block_mean_lcb_5pct": -0.207628846921018
+        }
+      },
+      "discovery": {
+        "sector_net_pct": {
+          "n": 335,
+          "mean_pct": 0.19793380108554198,
+          "median_pct": 0.19127542430370423,
+          "win_rate": 0.5223880597014925,
+          "profit_factor": 1.1801270062850298,
+          "sum_pct_units": 66.30782336365657,
+          "sum_ex_top3_pct_units": 32.89817311169003,
+          "block_mean_lcb_5pct": -0.13788120502280393
+        },
+        "benchmark_net_pct": {
+          "n": 335,
+          "mean_pct": -0.09659215677556128,
+          "median_pct": -0.2241488118602151,
+          "win_rate": 0.4626865671641791,
+          "profit_factor": 0.8807328855069608,
+          "sum_pct_units": -32.35837251981303,
+          "sum_ex_top3_pct_units": -56.11068569669331,
+          "block_mean_lcb_5pct": -0.32865280183270673
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 335,
+          "mean_pct": 0.29452595786110336,
+          "median_pct": 0.04834699790625671,
+          "win_rate": 0.5074626865671642,
+          "profit_factor": 1.3900194314527006,
+          "sum_pct_units": 98.66619588346963,
+          "sum_ex_top3_pct_units": 75.28300426311839,
+          "block_mean_lcb_5pct": 0.0685787915417257
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 335,
+          "mean_pct": -0.0761073128446734,
+          "median_pct": -0.20714315951780948,
+          "win_rate": 0.43582089552238806,
+          "profit_factor": 0.8456458057355866,
+          "sum_pct_units": -25.495949802965587,
+          "sum_ex_top3_pct_units": -36.52619265333749,
+          "block_mean_lcb_5pct": -0.18942320851968908
+        }
+      },
+      "oos": {
+        "sector_net_pct": {
+          "n": 252,
+          "mean_pct": 0.18643887366050907,
+          "median_pct": 0.400481935901297,
+          "win_rate": 0.5634920634920635,
+          "profit_factor": 1.1268199879667407,
+          "sum_pct_units": 46.98259616244829,
+          "sum_ex_top3_pct_units": 6.659949375199972,
+          "block_mean_lcb_5pct": -0.300220759274232
+        },
+        "benchmark_net_pct": {
+          "n": 252,
+          "mean_pct": 0.1144495120640356,
+          "median_pct": 0.21973421049816722,
+          "win_rate": 0.5555555555555556,
+          "profit_factor": 1.1169522132715148,
+          "sum_pct_units": 28.841277040136973,
+          "sum_ex_top3_pct_units": -2.309978335124839,
+          "block_mean_lcb_5pct": -0.23417851853943406
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 252,
+          "mean_pct": 0.07198936159647357,
+          "median_pct": -0.11047683195842262,
+          "win_rate": 0.48412698412698413,
+          "profit_factor": 1.0643243655937684,
+          "sum_pct_units": 18.141319122311337,
+          "sum_ex_top3_pct_units": -17.552896520079173,
+          "block_mean_lcb_5pct": -0.27892666286240714
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 252,
+          "mean_pct": -0.14922451473814938,
+          "median_pct": -0.22269986020094867,
+          "win_rate": 0.42857142857142855,
+          "profit_factor": 0.7741482267654172,
+          "sum_pct_units": -37.604577714013644,
+          "sum_ex_top3_pct_units": -54.93063278657854,
+          "block_mean_lcb_5pct": -0.3236885232368842
+        }
+      }
+    },
+    "threshold_2.0_hold_5": {
+      "all": {
+        "sector_net_pct": {
+          "n": 586,
+          "mean_pct": 0.34919571625441154,
+          "median_pct": 0.3880385162391966,
+          "win_rate": 0.5426621160409556,
+          "profit_factor": 1.2075902376826297,
+          "sum_pct_units": 204.62868972508517,
+          "sum_ex_top3_pct_units": 142.98088790877773,
+          "block_mean_lcb_5pct": -0.032010847889973895
+        },
+        "benchmark_net_pct": {
+          "n": 586,
+          "mean_pct": 0.17976815797724502,
+          "median_pct": 0.2611287639186046,
+          "win_rate": 0.5494880546075085,
+          "profit_factor": 1.1596884391068778,
+          "sum_pct_units": 105.34414057466557,
+          "sum_ex_top3_pct_units": 61.20575103176918,
+          "block_mean_lcb_5pct": -0.1319989814471586
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 586,
+          "mean_pct": 0.16942755827716643,
+          "median_pct": 0.1586200799712727,
+          "win_rate": 0.5187713310580204,
+          "profit_factor": 1.1345463940896672,
+          "sum_pct_units": 99.28454915041954,
+          "sum_ex_top3_pct_units": 53.45975834411581,
+          "block_mean_lcb_5pct": -0.08086750326453251
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 586,
+          "mean_pct": -0.11201899950768844,
+          "median_pct": -0.18212763059536985,
+          "win_rate": 0.4522184300341297,
+          "profit_factor": 0.8459495362010176,
+          "sum_pct_units": -65.64313371150543,
+          "sum_ex_top3_pct_units": -88.44194660410744,
+          "block_mean_lcb_5pct": -0.2359020814787081
+        }
+      },
+      "discovery": {
+        "sector_net_pct": {
+          "n": 335,
+          "mean_pct": 0.3178401308989385,
+          "median_pct": 0.3221198646905057,
+          "win_rate": 0.5432835820895522,
+          "profit_factor": 1.221746091096976,
+          "sum_pct_units": 106.4764438511444,
+          "sum_ex_top3_pct_units": 55.37252648211336,
+          "block_mean_lcb_5pct": -0.17697455199699616
+        },
+        "benchmark_net_pct": {
+          "n": 335,
+          "mean_pct": -0.06256550655784861,
+          "median_pct": -0.059042818981414974,
+          "win_rate": 0.48955223880597015,
+          "profit_factor": 0.940189199255529,
+          "sum_pct_units": -20.959444696879284,
+          "sum_ex_top3_pct_units": -54.11030775675107,
+          "block_mean_lcb_5pct": -0.41759034206531176
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 335,
+          "mean_pct": 0.3804056374567872,
+          "median_pct": 0.22337778126958474,
+          "win_rate": 0.5402985074626866,
+          "profit_factor": 1.3956912602838398,
+          "sum_pct_units": 127.4358885480237,
+          "sum_ex_top3_pct_units": 93.482904214087,
+          "block_mean_lcb_5pct": 0.07706335239326997
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 335,
+          "mean_pct": -0.024747364408394666,
+          "median_pct": -0.10006432470591275,
+          "win_rate": 0.46567164179104475,
+          "profit_factor": 0.9576849842635777,
+          "sum_pct_units": -8.290367076812213,
+          "sum_ex_top3_pct_units": -24.842664968691054,
+          "block_mean_lcb_5pct": -0.1786388295849117
+        }
+      },
+      "oos": {
+        "sector_net_pct": {
+          "n": 251,
+          "mean_pct": 0.3910448042786482,
+          "median_pct": 0.577525006887746,
+          "win_rate": 0.5418326693227091,
+          "profit_factor": 1.19414525749124,
+          "sum_pct_units": 98.1522458739407,
+          "sum_ex_top3_pct_units": 41.04327284721859,
+          "block_mean_lcb_5pct": -0.27528454304338534
+        },
+        "benchmark_net_pct": {
+          "n": 251,
+          "mean_pct": 0.5032015349463941,
+          "median_pct": 0.6673968926481635,
+          "win_rate": 0.6294820717131474,
+          "profit_factor": 1.4084106300095927,
+          "sum_pct_units": 126.3035852715449,
+          "sum_ex_top3_pct_units": 82.44078484188213,
+          "block_mean_lcb_5pct": -0.07017654547103166
+        },
+        "sector_minus_benchmark_pct": {
+          "n": 251,
+          "mean_pct": -0.11215673066774574,
+          "median_pct": -0.07885037924164617,
+          "win_rate": 0.4900398406374502,
+          "profit_factor": 0.9323059993851522,
+          "sum_pct_units": -28.151339397604183,
+          "sum_ex_top3_pct_units": -73.97613020390776,
+          "block_mean_lcb_5pct": -0.5273328331834451
+        },
+        "sector_inverse_50_50_net_pct": {
+          "n": 251,
+          "mean_pct": -0.22849707822586937,
+          "median_pct": -0.2578531357692384,
+          "win_rate": 0.4342629482071713,
+          "profit_factor": 0.75085058485389,
+          "sum_pct_units": -57.35276663469321,
+          "sum_ex_top3_pct_units": -80.15157952729527,
+          "block_mean_lcb_5pct": -0.4373533853487273
+        }
+      }
+    }
+  }
+}

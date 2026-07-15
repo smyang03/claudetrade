@@ -1,0 +1,38 @@
+{
+  "alpha_pct": null,
+  "benchmark_return_pct": -4.8528,
+  "board_weight_source": "candidate_rows",
+  "board_weights": {
+    "KOSDAQ": 0.5619,
+    "KOSPI": 0.4381
+  },
+  "candidate_count": 106,
+  "db_path": "E:\\code\\claudetrade\\data\\audit\\candidate_audit.db",
+  "filled_count": 0,
+  "generated_at": "2026-06-26T09:49:25+00:00",
+  "indexes": {
+    "KOSDAQ": {
+      "change_pct": -4.1045,
+      "fallback_reason": "KIS index quote failed 1001: ERROR INPUT FIELD NOT FOUND [FID_INPUT_DATE_1]",
+      "index": "KOSDAQ",
+      "observed_at": "2026-06-26T09:49:25+00:00",
+      "prev_close": 887.8099975585938,
+      "price": 851.3699951171875,
+      "source": "yfinance",
+      "symbol": "^KQ11"
+    },
+    "KOSPI": {
+      "change_pct": -5.8127,
+      "fallback_reason": "KIS index quote failed 0001: ERROR INPUT FIELD NOT FOUND [FID_INPUT_DATE_1]",
+      "index": "KOSPI",
+      "observed_at": "2026-06-26T09:49:23+00:00",
+      "prev_close": 8930.2998046875,
+      "price": 8411.2099609375,
+      "source": "yfinance",
+      "symbol": "^KS11"
+    }
+  },
+  "runtime_mode": "live",
+  "session_date": "2026-06-26",
+  "strategy_return_pct": null
+}

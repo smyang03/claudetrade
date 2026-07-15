@@ -1,0 +1,725 @@
+{
+  "schema_version": "us_affordable_trend_lab_v1",
+  "as_of": "2026-07-15",
+  "generated_at_utc": "2026-07-15T07:36:06.944672+00:00",
+  "authority": "SHADOW_RESEARCH_ONLY_NO_ORDER_EFFECT",
+  "source": "yfinance_adjusted",
+  "contract": {
+    "risk_asset": "SCHG",
+    "reserve_asset": "BIL",
+    "signal_lag": "completed month t close -> month t+1 holding",
+    "currency": "KRW total return using KRW=X",
+    "one_way_cost_pct": 0.25,
+    "stress_one_way_cost_pct": 0.5,
+    "incomplete_current_month_excluded": true,
+    "parameter_grid": {
+      "sma_months": [
+        8,
+        10,
+        12
+      ],
+      "momentum_months": [
+        9,
+        12
+      ]
+    }
+  },
+  "manifest": {
+    "price_cache": "E:\\code\\claudetrade\\reports\\us_affordable_trend_prices_20260715.csv",
+    "price_cache_sha256": "4218405a2da64a82fd7a353f026d99217d06dd77191b43e9de575dc5c26c63ff"
+  },
+  "central_contract": {
+    "params": {
+      "sma_months": 10,
+      "momentum_months": 12
+    },
+    "base": {
+      "all": {
+        "months": 185,
+        "start": "2011-02-01",
+        "end": "2026-06-01",
+        "total_return_pct": 759.428554689689,
+        "cagr_pct": 14.973404380131306,
+        "sharpe_rf0": 1.0881830158455787,
+        "max_drawdown_pct": -16.091680626411886,
+        "annual_turnover": 2.464864864864865,
+        "risk_on_month_rate": 0.7891891891891892,
+        "annual_mean_ex_top3_pct": 13.377242738901613,
+        "annual_mean_block_lcb_5pct": 9.952069805390138,
+        "worst_rolling_12m_pct": -12.965947050377192
+      },
+      "discovery_pre_2018": {
+        "months": 83,
+        "start": "2011-02-01",
+        "end": "2017-12-01",
+        "total_return_pct": 85.37781441897026,
+        "cagr_pct": 9.3340255083191,
+        "sharpe_rf0": 0.8163772493469766,
+        "max_drawdown_pct": -14.330527803837178,
+        "annual_turnover": 2.602409638554217,
+        "risk_on_month_rate": 0.8192771084337349,
+        "annual_mean_ex_top3_pct": 5.999206424404641,
+        "annual_mean_block_lcb_5pct": 3.4398450178525204,
+        "worst_rolling_12m_pct": -12.965947050377192
+      },
+      "oos_2018_plus": {
+        "months": 102,
+        "start": "2018-01-01",
+        "end": "2026-06-01",
+        "total_return_pct": 363.60917426035894,
+        "cagr_pct": 19.776281484017243,
+        "sharpe_rf0": 1.2835155464619878,
+        "max_drawdown_pct": -16.091680626411886,
+        "annual_turnover": 2.3529411764705883,
+        "risk_on_month_rate": 0.7647058823529411,
+        "annual_mean_ex_top3_pct": 16.716837628404694,
+        "annual_mean_block_lcb_5pct": 11.860135997089191,
+        "worst_rolling_12m_pct": -2.693856781945425
+      },
+      "recent_2022_plus": {
+        "months": 54,
+        "start": "2022-01-01",
+        "end": "2026-06-01",
+        "total_return_pct": 110.2654380947973,
+        "cagr_pct": 17.957673502516514,
+        "sharpe_rf0": 1.1854013964067607,
+        "max_drawdown_pct": -16.091680626411886,
+        "annual_turnover": 2.6666666666666665,
+        "risk_on_month_rate": 0.6481481481481481,
+        "annual_mean_ex_top3_pct": 13.24957932789393,
+        "annual_mean_block_lcb_5pct": 8.923880289625497,
+        "worst_rolling_12m_pct": -2.693856781945425
+      }
+    },
+    "stress_oos_2018_plus": {
+      "months": 102,
+      "start": "2018-01-01",
+      "end": "2026-06-01",
+      "total_return_pct": 341.49075895467195,
+      "cagr_pct": 19.089406661282982,
+      "sharpe_rf0": 1.2471857080840616,
+      "max_drawdown_pct": -16.523182199972876,
+      "annual_turnover": 2.3529411764705883,
+      "risk_on_month_rate": 0.7647058823529411,
+      "annual_mean_ex_top3_pct": 16.171383082950143,
+      "annual_mean_block_lcb_5pct": 11.080514021210467,
+      "worst_rolling_12m_pct": -3.1870937190750848
+    },
+    "next_incomplete_month_signal": "SCHG"
+  },
+  "neighbourhood_oos_range": {
+    "variants": 6,
+    "cagr_pct": [
+      16.517435739518294,
+      19.776281484017243
+    ],
+    "sharpe_rf0": [
+      1.061646532198281,
+      1.2835155464619878
+    ],
+    "max_drawdown_pct": [
+      -17.543756573323844,
+      -16.091680626411875
+    ],
+    "block_lcb_pct": [
+      8.540925948420321,
+      11.860135997089191
+    ]
+  },
+  "strategies": {
+    "SCHG_SMA8_MOM9_BIL": {
+      "params": {
+        "sma_months": 8,
+        "momentum_months": 9
+      },
+      "base": {
+        "all": {
+          "months": 188,
+          "start": "2010-11-01",
+          "end": "2026-06-01",
+          "total_return_pct": 722.4583847326624,
+          "cagr_pct": 14.396181364710149,
+          "sharpe_rf0": 1.0580445765624968,
+          "max_drawdown_pct": -16.091680626411875,
+          "annual_turnover": 2.9361702127659575,
+          "risk_on_month_rate": 0.7872340425531915,
+          "annual_mean_ex_top3_pct": 12.839444304195533,
+          "annual_mean_block_lcb_5pct": 9.240169520322073,
+          "worst_rolling_12m_pct": -10.732959882912729
+        },
+        "discovery_pre_2018": {
+          "months": 86,
+          "start": "2010-11-01",
+          "end": "2017-12-01",
+          "total_return_pct": 111.80157913745118,
+          "cagr_pct": 11.039754303750549,
+          "sharpe_rf0": 0.9673250293027027,
+          "max_drawdown_pct": -12.405622173706854,
+          "annual_turnover": 2.511627906976744,
+          "risk_on_month_rate": 0.8255813953488372,
+          "annual_mean_ex_top3_pct": 7.644846114357205,
+          "annual_mean_block_lcb_5pct": 4.834592651470328,
+          "worst_rolling_12m_pct": -10.732959882912729
+        },
+        "oos_2018_plus": {
+          "months": 102,
+          "start": "2018-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 288.31551118838354,
+          "cagr_pct": 17.304818426212766,
+          "sharpe_rf0": 1.135166857511312,
+          "max_drawdown_pct": -16.091680626411886,
+          "annual_turnover": 3.294117647058824,
+          "risk_on_month_rate": 0.7549019607843137,
+          "annual_mean_ex_top3_pct": 14.555759893624924,
+          "annual_mean_block_lcb_5pct": 9.464345595689307,
+          "worst_rolling_12m_pct": -6.7611903591417555
+        },
+        "recent_2022_plus": {
+          "months": 54,
+          "start": "2022-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 90.0768768218719,
+          "cagr_pct": 15.341152362405008,
+          "sharpe_rf0": 1.0269953319393572,
+          "max_drawdown_pct": -16.091680626411886,
+          "annual_turnover": 3.5555555555555554,
+          "risk_on_month_rate": 0.6481481481481481,
+          "annual_mean_ex_top3_pct": 10.861465490589255,
+          "annual_mean_block_lcb_5pct": 6.704877451070929,
+          "worst_rolling_12m_pct": -2.693856781945425
+        }
+      },
+      "stress_oos_2018_plus": {
+        "months": 102,
+        "start": "2018-01-01",
+        "end": "2026-06-01",
+        "total_return_pct": 262.42092519883647,
+        "cagr_pct": 16.356271367853715,
+        "sharpe_rf0": 1.0816151826104812,
+        "max_drawdown_pct": -16.523182199972897,
+        "annual_turnover": 3.294117647058824,
+        "risk_on_month_rate": 0.7549019607843137,
+        "annual_mean_ex_top3_pct": 13.76788110574613,
+        "annual_mean_block_lcb_5pct": 8.498184209059671,
+        "worst_rolling_12m_pct": -8.158452169869634
+      },
+      "next_incomplete_month_signal": "SCHG"
+    },
+    "SCHG_SMA8_MOM12_BIL": {
+      "params": {
+        "sma_months": 8,
+        "momentum_months": 12
+      },
+      "base": {
+        "all": {
+          "months": 185,
+          "start": "2011-02-01",
+          "end": "2026-06-01",
+          "total_return_pct": 719.4979832185677,
+          "cagr_pct": 14.619143906022924,
+          "sharpe_rf0": 1.0678255958441991,
+          "max_drawdown_pct": -16.091680626411886,
+          "annual_turnover": 2.7243243243243245,
+          "risk_on_month_rate": 0.7783783783783784,
+          "annual_mean_ex_top3_pct": 13.022090640096387,
+          "annual_mean_block_lcb_5pct": 9.79648992736386,
+          "worst_rolling_12m_pct": -12.965947050377192
+        },
+        "discovery_pre_2018": {
+          "months": 83,
+          "start": "2011-02-01",
+          "end": "2017-12-01",
+          "total_return_pct": 97.52207789057661,
+          "cagr_pct": 10.341684934780314,
+          "sharpe_rf0": 0.9008526036556318,
+          "max_drawdown_pct": -14.330527803837189,
+          "annual_turnover": 2.602409638554217,
+          "risk_on_month_rate": 0.8072289156626506,
+          "annual_mean_ex_top3_pct": 6.87140373733072,
+          "annual_mean_block_lcb_5pct": 4.707439760070339,
+          "worst_rolling_12m_pct": -12.965947050377192
+        },
+        "oos_2018_plus": {
+          "months": 102,
+          "start": "2018-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 314.8893085625363,
+          "cagr_pct": 18.221893514867006,
+          "sharpe_rf0": 1.1919043588668605,
+          "max_drawdown_pct": -16.091680626411875,
+          "annual_turnover": 2.8235294117647056,
+          "risk_on_month_rate": 0.7549019607843137,
+          "annual_mean_ex_top3_pct": 15.359125840357846,
+          "annual_mean_block_lcb_5pct": 10.733467436692836,
+          "worst_rolling_12m_pct": -2.693856781945425
+        },
+        "recent_2022_plus": {
+          "months": 54,
+          "start": "2022-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 88.16901620837581,
+          "cagr_pct": 15.082872131376334,
+          "sharpe_rf0": 1.014594427412323,
+          "max_drawdown_pct": -16.091680626411886,
+          "annual_turnover": 3.5555555555555554,
+          "risk_on_month_rate": 0.6296296296296297,
+          "annual_mean_ex_top3_pct": 10.61402115109711,
+          "annual_mean_block_lcb_5pct": 6.4983414398186445,
+          "worst_rolling_12m_pct": -2.693856781945425
+        }
+      },
+      "stress_oos_2018_plus": {
+        "months": 102,
+        "start": "2018-01-01",
+        "end": "2026-06-01",
+        "total_return_pct": 291.11989167117986,
+        "cagr_pct": 17.404168787262098,
+        "sharpe_rf0": 1.1465601579824456,
+        "max_drawdown_pct": -16.523182199972897,
+        "annual_turnover": 2.8235294117647056,
+        "risk_on_month_rate": 0.7549019607843137,
+        "annual_mean_ex_top3_pct": 14.692459173691175,
+        "annual_mean_block_lcb_5pct": 9.769456967464205,
+        "worst_rolling_12m_pct": -3.1870937190750848
+      },
+      "next_incomplete_month_signal": "SCHG"
+    },
+    "SCHG_SMA10_MOM9_BIL": {
+      "params": {
+        "sma_months": 10,
+        "momentum_months": 9
+      },
+      "base": {
+        "all": {
+          "months": 187,
+          "start": "2010-12-01",
+          "end": "2026-06-01",
+          "total_return_pct": 767.9891135476566,
+          "cagr_pct": 14.87499756278423,
+          "sharpe_rf0": 1.0873890310357923,
+          "max_drawdown_pct": -16.091680626411897,
+          "annual_turnover": 2.3101604278074865,
+          "risk_on_month_rate": 0.8021390374331551,
+          "annual_mean_ex_top3_pct": 13.295901754338777,
+          "annual_mean_block_lcb_5pct": 9.671493573985886,
+          "worst_rolling_12m_pct": -10.175886440179937
+        },
+        "discovery_pre_2018": {
+          "months": 85,
+          "start": "2010-12-01",
+          "end": "2017-12-01",
+          "total_return_pct": 100.03673688122726,
+          "cagr_pct": 10.283264547718618,
+          "sharpe_rf0": 0.9044601686639737,
+          "max_drawdown_pct": -12.254433955805544,
+          "annual_turnover": 1.6941176470588235,
+          "risk_on_month_rate": 0.8470588235294118,
+          "annual_mean_ex_top3_pct": 6.966554719477708,
+          "annual_mean_block_lcb_5pct": 4.509981591715857,
+          "worst_rolling_12m_pct": -10.175886440179937
+        },
+        "oos_2018_plus": {
+          "months": 102,
+          "start": "2018-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 333.91485338167104,
+          "cagr_pct": 18.84714864157282,
+          "sharpe_rf0": 1.2257017021046397,
+          "max_drawdown_pct": -16.091680626411897,
+          "annual_turnover": 2.8235294117647056,
+          "risk_on_month_rate": 0.7647058823529411,
+          "annual_mean_ex_top3_pct": 15.913471681671766,
+          "annual_mean_block_lcb_5pct": 11.018531123704385,
+          "worst_rolling_12m_pct": -6.7611903591417555
+        },
+        "recent_2022_plus": {
+          "months": 54,
+          "start": "2022-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 112.39733608631535,
+          "cagr_pct": 18.222405643795135,
+          "sharpe_rf0": 1.1975743037441466,
+          "max_drawdown_pct": -16.091680626411886,
+          "annual_turnover": 2.6666666666666665,
+          "risk_on_month_rate": 0.6666666666666666,
+          "annual_mean_ex_top3_pct": 13.497023667386074,
+          "annual_mean_block_lcb_5pct": 8.761698142432696,
+          "worst_rolling_12m_pct": -2.693856781945425
+        }
+      },
+      "stress_oos_2018_plus": {
+        "months": 102,
+        "start": "2018-01-01",
+        "end": "2026-06-01",
+        "total_return_pct": 309.09575998146266,
+        "cagr_pct": 18.026467557771554,
+        "sharpe_rf0": 1.1808746137007757,
+        "max_drawdown_pct": -16.523182199972887,
+        "annual_turnover": 2.8235294117647056,
+        "risk_on_month_rate": 0.7647058823529411,
+        "annual_mean_ex_top3_pct": 15.246805015005101,
+        "annual_mean_block_lcb_5pct": 10.153640852741997,
+        "worst_rolling_12m_pct": -8.158452169869634
+      },
+      "next_incomplete_month_signal": "SCHG"
+    },
+    "SCHG_SMA10_MOM12_BIL": {
+      "params": {
+        "sma_months": 10,
+        "momentum_months": 12
+      },
+      "base": {
+        "all": {
+          "months": 185,
+          "start": "2011-02-01",
+          "end": "2026-06-01",
+          "total_return_pct": 759.428554689689,
+          "cagr_pct": 14.973404380131306,
+          "sharpe_rf0": 1.0881830158455787,
+          "max_drawdown_pct": -16.091680626411886,
+          "annual_turnover": 2.464864864864865,
+          "risk_on_month_rate": 0.7891891891891892,
+          "annual_mean_ex_top3_pct": 13.377242738901613,
+          "annual_mean_block_lcb_5pct": 9.952069805390138,
+          "worst_rolling_12m_pct": -12.965947050377192
+        },
+        "discovery_pre_2018": {
+          "months": 83,
+          "start": "2011-02-01",
+          "end": "2017-12-01",
+          "total_return_pct": 85.37781441897026,
+          "cagr_pct": 9.3340255083191,
+          "sharpe_rf0": 0.8163772493469766,
+          "max_drawdown_pct": -14.330527803837178,
+          "annual_turnover": 2.602409638554217,
+          "risk_on_month_rate": 0.8192771084337349,
+          "annual_mean_ex_top3_pct": 5.999206424404641,
+          "annual_mean_block_lcb_5pct": 3.4398450178525204,
+          "worst_rolling_12m_pct": -12.965947050377192
+        },
+        "oos_2018_plus": {
+          "months": 102,
+          "start": "2018-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 363.60917426035894,
+          "cagr_pct": 19.776281484017243,
+          "sharpe_rf0": 1.2835155464619878,
+          "max_drawdown_pct": -16.091680626411886,
+          "annual_turnover": 2.3529411764705883,
+          "risk_on_month_rate": 0.7647058823529411,
+          "annual_mean_ex_top3_pct": 16.716837628404694,
+          "annual_mean_block_lcb_5pct": 11.860135997089191,
+          "worst_rolling_12m_pct": -2.693856781945425
+        },
+        "recent_2022_plus": {
+          "months": 54,
+          "start": "2022-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 110.2654380947973,
+          "cagr_pct": 17.957673502516514,
+          "sharpe_rf0": 1.1854013964067607,
+          "max_drawdown_pct": -16.091680626411886,
+          "annual_turnover": 2.6666666666666665,
+          "risk_on_month_rate": 0.6481481481481481,
+          "annual_mean_ex_top3_pct": 13.24957932789393,
+          "annual_mean_block_lcb_5pct": 8.923880289625497,
+          "worst_rolling_12m_pct": -2.693856781945425
+        }
+      },
+      "stress_oos_2018_plus": {
+        "months": 102,
+        "start": "2018-01-01",
+        "end": "2026-06-01",
+        "total_return_pct": 341.49075895467195,
+        "cagr_pct": 19.089406661282982,
+        "sharpe_rf0": 1.2471857080840616,
+        "max_drawdown_pct": -16.523182199972876,
+        "annual_turnover": 2.3529411764705883,
+        "risk_on_month_rate": 0.7647058823529411,
+        "annual_mean_ex_top3_pct": 16.171383082950143,
+        "annual_mean_block_lcb_5pct": 11.080514021210467,
+        "worst_rolling_12m_pct": -3.1870937190750848
+      },
+      "next_incomplete_month_signal": "SCHG"
+    },
+    "SCHG_SMA12_MOM9_BIL": {
+      "params": {
+        "sma_months": 12,
+        "momentum_months": 9
+      },
+      "base": {
+        "all": {
+          "months": 185,
+          "start": "2011-02-01",
+          "end": "2026-06-01",
+          "total_return_pct": 602.910863623927,
+          "cagr_pct": 13.483852503365569,
+          "sharpe_rf0": 0.9750401450669582,
+          "max_drawdown_pct": -17.543756573323854,
+          "annual_turnover": 2.5945945945945947,
+          "risk_on_month_rate": 0.8216216216216217,
+          "annual_mean_ex_top3_pct": 12.079589372866572,
+          "annual_mean_block_lcb_5pct": 8.471425859266436,
+          "worst_rolling_12m_pct": -10.175886440179937
+        },
+        "discovery_pre_2018": {
+          "months": 83,
+          "start": "2011-02-01",
+          "end": "2017-12-01",
+          "total_return_pct": 91.6802864857698,
+          "cagr_pct": 9.863788518087624,
+          "sharpe_rf0": 0.8639931670733871,
+          "max_drawdown_pct": -12.254433955805544,
+          "annual_turnover": 1.7349397590361444,
+          "risk_on_month_rate": 0.8433734939759037,
+          "annual_mean_ex_top3_pct": 6.493253051930262,
+          "annual_mean_block_lcb_5pct": 4.199823684311797,
+          "worst_rolling_12m_pct": -10.175886440179937
+        },
+        "oos_2018_plus": {
+          "months": 102,
+          "start": "2018-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 266.7100443717828,
+          "cagr_pct": 16.517435739518294,
+          "sharpe_rf0": 1.061646532198281,
+          "max_drawdown_pct": -17.543756573323844,
+          "annual_turnover": 3.294117647058824,
+          "risk_on_month_rate": 0.803921568627451,
+          "annual_mean_ex_top3_pct": 13.932023054460982,
+          "annual_mean_block_lcb_5pct": 8.540925948420321,
+          "worst_rolling_12m_pct": -7.218560345293723
+        },
+        "recent_2022_plus": {
+          "months": 54,
+          "start": "2022-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 92.80488666828481,
+          "cagr_pct": 15.706981412484854,
+          "sharpe_rf0": 1.0444096268744962,
+          "max_drawdown_pct": -16.091680626411886,
+          "annual_turnover": 2.6666666666666665,
+          "risk_on_month_rate": 0.7037037037037037,
+          "annual_mean_ex_top3_pct": 11.211394198934071,
+          "annual_mean_block_lcb_5pct": 6.45255761128412,
+          "worst_rolling_12m_pct": -6.599265132520693
+        }
+      },
+      "stress_oos_2018_plus": {
+        "months": 102,
+        "start": "2018-01-01",
+        "end": "2026-06-01",
+        "total_return_pct": 241.99358549616474,
+        "cagr_pct": 15.564818726170483,
+        "sharpe_rf0": 1.006217347675737,
+        "max_drawdown_pct": -18.828265719315674,
+        "annual_turnover": 3.294117647058824,
+        "risk_on_month_rate": 0.803921568627451,
+        "annual_mean_ex_top3_pct": 13.144144266582195,
+        "annual_mean_block_lcb_5pct": 7.050714180667008,
+        "worst_rolling_12m_pct": -10.011242511749241
+      },
+      "next_incomplete_month_signal": "SCHG"
+    },
+    "SCHG_SMA12_MOM12_BIL": {
+      "params": {
+        "sma_months": 12,
+        "momentum_months": 12
+      },
+      "base": {
+        "all": {
+          "months": 185,
+          "start": "2011-02-01",
+          "end": "2026-06-01",
+          "total_return_pct": 639.8096041768368,
+          "cagr_pct": 13.861093160630844,
+          "sharpe_rf0": 1.0005095501333507,
+          "max_drawdown_pct": -16.091680626411886,
+          "annual_turnover": 2.464864864864865,
+          "risk_on_month_rate": 0.8162162162162162,
+          "annual_mean_ex_top3_pct": 12.416271938725258,
+          "annual_mean_block_lcb_5pct": 8.824480031506148,
+          "worst_rolling_12m_pct": -12.965947050377192
+        },
+        "discovery_pre_2018": {
+          "months": 83,
+          "start": "2011-02-01",
+          "end": "2017-12-01",
+          "total_return_pct": 85.37781441897026,
+          "cagr_pct": 9.3340255083191,
+          "sharpe_rf0": 0.8163772493469766,
+          "max_drawdown_pct": -14.330527803837178,
+          "annual_turnover": 2.602409638554217,
+          "risk_on_month_rate": 0.8192771084337349,
+          "annual_mean_ex_top3_pct": 5.999206424404641,
+          "annual_mean_block_lcb_5pct": 3.4330293760268056,
+          "worst_rolling_12m_pct": -12.965947050377192
+        },
+        "oos_2018_plus": {
+          "months": 102,
+          "start": "2018-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 299.0820619477155,
+          "cagr_pct": 17.682856352595966,
+          "sharpe_rf0": 1.1342906340941625,
+          "max_drawdown_pct": -16.091680626411886,
+          "annual_turnover": 2.3529411764705883,
+          "risk_on_month_rate": 0.8137254901960784,
+          "annual_mean_ex_top3_pct": 14.950204440201691,
+          "annual_mean_block_lcb_5pct": 9.375316387372157,
+          "worst_rolling_12m_pct": -6.599265132520693
+        },
+        "recent_2022_plus": {
+          "months": 54,
+          "start": "2022-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 90.86964417317202,
+          "cagr_pct": 15.447881990650192,
+          "sharpe_rf0": 1.0320725656049115,
+          "max_drawdown_pct": -16.091680626411875,
+          "annual_turnover": 2.6666666666666665,
+          "risk_on_month_rate": 0.6851851851851852,
+          "annual_mean_ex_top3_pct": 10.963949859441925,
+          "annual_mean_block_lcb_5pct": 7.007417359972937,
+          "worst_rolling_12m_pct": -6.599265132520693
+        }
+      },
+      "stress_oos_2018_plus": {
+        "months": 102,
+        "start": "2018-01-01",
+        "end": "2026-06-01",
+        "total_return_pct": 279.95021527351633,
+        "cagr_pct": 17.004655052251216,
+        "sharpe_rf0": 1.0976566483273542,
+        "max_drawdown_pct": -16.523182199972897,
+        "annual_turnover": 2.3529411764705883,
+        "risk_on_month_rate": 0.8137254901960784,
+        "annual_mean_ex_top3_pct": 14.404749894747141,
+        "annual_mean_block_lcb_5pct": 8.722312758188949,
+        "worst_rolling_12m_pct": -7.063394057937766
+      },
+      "next_incomplete_month_signal": "SCHG"
+    },
+    "SCHG_BUY_HOLD": {
+      "base": {
+        "all": {
+          "months": 185,
+          "start": "2011-02-01",
+          "end": "2026-06-01",
+          "total_return_pct": 1279.242062037969,
+          "cagr_pct": 18.55575117536774,
+          "sharpe_rf0": 1.2047159961746667,
+          "max_drawdown_pct": -27.76792704668565,
+          "annual_turnover": 0.0,
+          "risk_on_month_rate": 1.0,
+          "annual_mean_ex_top3_pct": 16.16306814881117,
+          "annual_mean_block_lcb_5pct": 12.291453286207851,
+          "worst_rolling_12m_pct": -27.76792704668565
+        },
+        "discovery_pre_2018": {
+          "months": 83,
+          "start": "2011-02-01",
+          "end": "2017-12-01",
+          "total_return_pct": 136.99907689270114,
+          "cagr_pct": 13.287042513869117,
+          "sharpe_rf0": 1.2011977353813077,
+          "max_drawdown_pct": -11.467872322260842,
+          "annual_turnover": 0.0,
+          "risk_on_month_rate": 1.0,
+          "annual_mean_ex_top3_pct": 9.832591427399363,
+          "annual_mean_block_lcb_5pct": 7.328402181665365,
+          "worst_rolling_12m_pct": -3.5086192914901115
+        },
+        "oos_2018_plus": {
+          "months": 102,
+          "start": "2018-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 481.96094268434865,
+          "cagr_pct": 23.023339089882388,
+          "sharpe_rf0": 1.261962064983314,
+          "max_drawdown_pct": -27.767927046685635,
+          "annual_turnover": 0.0,
+          "risk_on_month_rate": 1.0,
+          "annual_mean_ex_top3_pct": 18.70665560365263,
+          "annual_mean_block_lcb_5pct": 13.284769454518358,
+          "worst_rolling_12m_pct": -27.76792704668565
+        },
+        "recent_2022_plus": {
+          "months": 54,
+          "start": "2022-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 118.697538151546,
+          "cagr_pct": 18.99284971211037,
+          "sharpe_rf0": 1.048236915399174,
+          "max_drawdown_pct": -27.76792704668565,
+          "annual_turnover": 0.0,
+          "risk_on_month_rate": 1.0,
+          "annual_mean_ex_top3_pct": 12.904962314320958,
+          "annual_mean_block_lcb_5pct": 7.7448486066704385,
+          "worst_rolling_12m_pct": -27.76792704668565
+        }
+      }
+    },
+    "BIL_BUY_HOLD": {
+      "base": {
+        "all": {
+          "months": 185,
+          "start": "2011-02-01",
+          "end": "2026-06-01",
+          "total_return_pct": 71.1319745934162,
+          "cagr_pct": 3.5463975896281585,
+          "sharpe_rf0": 0.42462385149161014,
+          "max_drawdown_pct": -14.236433315141262,
+          "annual_turnover": 0.0,
+          "risk_on_month_rate": 0.0,
+          "annual_mean_ex_top3_pct": 2.4357648192162333,
+          "annual_mean_block_lcb_5pct": 0.7826331816783553,
+          "worst_rolling_12m_pct": -11.749043441220419
+        },
+        "discovery_pre_2018": {
+          "months": 83,
+          "start": "2011-02-01",
+          "end": "2017-12-01",
+          "total_return_pct": -3.876074315149558,
+          "cagr_pct": -0.5699158232270407,
+          "sharpe_rf0": -0.011681207129296788,
+          "max_drawdown_pct": -14.236433315141262,
+          "annual_turnover": 0.0,
+          "risk_on_month_rate": 0.0,
+          "annual_mean_ex_top3_pct": -3.1424891388447382,
+          "annual_mean_block_lcb_5pct": -3.652701880769054,
+          "worst_rolling_12m_pct": -11.749043441220419
+        },
+        "oos_2018_plus": {
+          "months": 102,
+          "start": "2018-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 78.03265250993326,
+          "cagr_pct": 7.021380440238012,
+          "sharpe_rf0": 0.8192938489082066,
+          "max_drawdown_pct": -12.922512357432158,
+          "annual_turnover": 0.0,
+          "risk_on_month_rate": 0.0,
+          "annual_mean_ex_top3_pct": 5.014165236234692,
+          "annual_mean_block_lcb_5pct": 2.9542482264985805,
+          "worst_rolling_12m_pct": -10.143953316137033
+        },
+        "recent_2022_plus": {
+          "months": 54,
+          "start": "2022-01-01",
+          "end": "2026-06-01",
+          "total_return_pct": 53.692547796797776,
+          "cagr_pct": 10.021712937515147,
+          "sharpe_rf0": 0.971051146561816,
+          "max_drawdown_pct": -12.92251235743217,
+          "annual_turnover": 0.0,
+          "risk_on_month_rate": 0.0,
+          "annual_mean_ex_top3_pct": 6.083627401269032,
+          "annual_mean_block_lcb_5pct": 3.641647739791519,
+          "worst_rolling_12m_pct": -1.5779217704299242
+        }
+      }
+    }
+  }
+}

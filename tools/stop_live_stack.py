@@ -31,6 +31,7 @@ ROLE_NEEDLES: dict[str, str] = {
     "guardian": "live_guardian.py",
     "broker_truth_scheduler": "broker_truth_scheduler.py",
     "preopen_scheduler": "preopen_scheduler.py",
+    "core_shadow_tracker": "core_shadow_tracker.py",
     "counterfactual_pipeline": "run_counterfactual_pipeline.py",
     "integrity_check": "integrity_check.py",
 }
@@ -42,6 +43,7 @@ STALE_STATE_FILES = (
     "state/headless_live_stack_pids.json",
     "state/preopen_scheduler.lock.json",
     "state/broker_truth_scheduler.lock.json",
+    "state/core_shadow_tracker_heartbeat.json",
     "state/live_guardian_heartbeat.json",
 )
 

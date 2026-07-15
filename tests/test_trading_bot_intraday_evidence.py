@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
 
@@ -548,6 +548,51 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertIn("222222", requested_features)
         self.assertEqual(requested_features["222222"]["evidence_requested_count"], 2)
         self.assertNotIn("111111", requested_features)
+
+    def test_paired_shadow_ticker_cannot_change_entry_coverage_or_returned_features(self) -> None:
+        requested: list[str] = []
+
+        def provider(**kwargs):
+            requested.append(str(kwargs.get("ticker") or ""))
+            return _candles()
+
+        bot = _make_bot(provider)
+        observer = Mock()
+        observer.enabled.return_value = True
+        observer.active_tickers.return_value = ["999999"]
+        bot._pathb_paired_exit_observer = observer
+
+        features = TradingBot._prefetch_selection_intraday_evidence(
+            bot,
+            "KR",
+            [{"ticker": "005930", "action": "BUY_READY"}],
+            phase={"phase": "post_open"},
+        )
+
+        self.assertEqual(set(features), {"005930"})
+        self.assertEqual(set(requested), {"005930", "999999"})
+        event, market, payload = bot._last_funnel_event
+        self.assertEqual((event, market), ("selection_intraday_evidence_coverage", "KR"))
+        self.assertEqual(payload["requested"], 1)
+        self.assertEqual(payload["complete"] + payload["partial"] + payload["missing"], 1)
+        self.assertEqual(payload["target_tickers_sample"], ["005930"])
+        self.assertEqual(payload["priority_counts"]["paired_shadow"], 1)
+        observer.consume_snapshot.assert_called_once()
+
+    def test_paired_shadow_ticker_limit_rotates_instead_of_starving_later_positions(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles())
+        bot.runtime_config.values["PATHB_KR_PAIRED_EXIT_MAX_TICKERS"] = 2
+        observer = Mock()
+        observer.enabled.return_value = True
+        observer.active_tickers.return_value = ["111111", "222222", "333333"]
+        bot._pathb_paired_exit_observer = observer
+        bot._pathb_paired_exit_cursor = 0
+
+        first = TradingBot._paired_exit_shadow_tickers(bot, "KR")
+        second = TradingBot._paired_exit_shadow_tickers(bot, "KR")
+
+        self.assertEqual(first, ["111111", "222222"])
+        self.assertEqual(second, ["333333", "111111"])
 
     def test_prefetch_failure_does_not_erase_same_session_feature(self) -> None:
         def provider(**kwargs):

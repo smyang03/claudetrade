@@ -316,6 +316,21 @@ def due_jobs(
                     args=("--session-date", session_date),
                 ))
 
+        if _env_bool("PROFIT_STRATEGY_MATERIALIZER_ENABLED", False):
+            strategy_due_dt = open_dt - timedelta(minutes=15)
+            strategy_late_by = (now_dt - strategy_due_dt).total_seconds() / 60.0
+            job_id = f"{runtime_mode}:{session_date}:{mkt}:profit_strategy_materializer"
+            if 0 <= strategy_late_by <= max(0, int(outcome_catchup_min)) and (force or job_id not in completed):
+                jobs.append(PreopenJob(
+                    market=mkt,
+                    session_date=session_date,
+                    kind="profit_strategy_materializer",
+                    job_id=job_id,
+                    due_at=strategy_due_dt.isoformat(timespec="seconds"),
+                    script="tools/profit_strategy_materializer.py",
+                    args=("--market", mkt, "--session-date", session_date),
+                ))
+
         # Yahoo Finance is a bounded, observational secondary feed for KR.
         # It never supplies a trading price or changes candidate selection.
         if mkt == "KR" and _env_bool("KR_YFINANCE_SHADOW_ENABLED", False):

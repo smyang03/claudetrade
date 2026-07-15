@@ -1,0 +1,47 @@
+{
+  "version": "kr_bullish_strength_probe_report.v1",
+  "shadow_only": true,
+  "non_executable": true,
+  "selection_sessions": 0,
+  "matured_sessions": 0,
+  "minimum_sessions": 20,
+  "promotion_eligible": false,
+  "promotion_reason": "insufficient_distinct_sessions",
+  "assumed_round_trip_cost_pct": 0.5,
+  "simulated_order_cap_krw": 200000.0,
+  "metrics_by_path": {
+    "immediate": {
+      "n": 0,
+      "mean_net_pct": null,
+      "median_net_pct": null,
+      "win_rate_pct": null,
+      "profit_factor": null,
+      "worst_net_pct": null
+    },
+    "volume_surge": {
+      "n": 0,
+      "mean_net_pct": null,
+      "median_net_pct": null,
+      "win_rate_pct": null,
+      "profit_factor": null,
+      "worst_net_pct": null
+    },
+    "wait_30m": {
+      "n": 0,
+      "mean_net_pct": null,
+      "median_net_pct": null,
+      "win_rate_pct": null,
+      "profit_factor": null,
+      "worst_net_pct": null
+    },
+    "wait_60m": {
+      "n": 0,
+      "mean_net_pct": null,
+      "median_net_pct": null,
+      "win_rate_pct": null,
+      "profit_factor": null,
+      "worst_net_pct": null
+    }
+  },
+  "rows": []
+}

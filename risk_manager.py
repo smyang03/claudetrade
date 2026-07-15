@@ -948,6 +948,57 @@ class RiskManager:
         }
         candidates.append({**pos, "exit_price": exit_price, "reason": reason, **meta})
 
+    @staticmethod
+    def _isolated_strategy_source(pos: dict) -> str:
+        source = str(pos.get("source_strategy") or "").strip().lower()
+        isolated = {
+            "us_schg_bil_trend_v1",
+            "kr_factor_trend_v1",
+            "us_swing_5d",
+            "us_consensus_3d",
+            "kr_us_sector_pulse_3d",
+        }
+        return source if source in isolated else ""
+
+    def _isolated_strategy_exit_candidate(self, pos: dict) -> tuple[bool, Optional[dict]]:
+        """Keep independent strategy sleeves out of the generic Path-A exit owner.
+
+        Core sleeves are monthly-rebalanced by their own bridge.  Fixed-horizon
+        sleeves retain only the predeclared catastrophe stop (and the US swing
+        arm's predeclared 12% take profit); their time exit is emitted by the
+        bot near the appropriate session close.
+        """
+
+        source = self._isolated_strategy_source(pos)
+        if not source:
+            return False, None
+        if source in {"us_schg_bil_trend_v1", "kr_factor_trend_v1"}:
+            return True, None
+        current_krw = float(pos.get("current_price") or 0.0)
+        is_us = pos.get("display_currency") == "USD"
+        entry_native = float(pos.get("display_avg_price") or 0.0) if is_us else float(pos.get("entry") or 0.0)
+        current_native = float(pos.get("display_current_price") or 0.0) if is_us else current_krw
+        if entry_native <= 0 or current_native <= 0 or current_krw <= 0:
+            return True, None
+        sl_pct = max(0.0, float(pos.get("sl_pct") or 0.25))
+        tp_pct = max(0.0, float(pos.get("tp_pct") or 0.0))
+        if sl_pct > 0 and current_native <= entry_native * (1.0 - sl_pct):
+            return True, {
+                **pos,
+                "exit_price": current_krw,
+                "reason": "strategy_catastrophe_stop",
+                "exit_owner": source,
+                "strategy_stop_price": entry_native * (1.0 - sl_pct),
+            }
+        if source == "us_swing_5d" and tp_pct > 0 and current_native >= entry_native * (1.0 + tp_pct):
+            return True, {
+                **pos,
+                "exit_price": current_krw,
+                "reason": "strategy_fixed_take_profit",
+                "exit_owner": source,
+            }
+        return True, None
+
     def get_exit_candidates(self):
         candidates = []
         for pos in self.positions:
@@ -958,6 +1009,11 @@ class RiskManager:
             if self._is_pathb_managed_position(pos):
                 continue
             cp = float(pos.get("current_price") or 0)
+            isolated, isolated_candidate = self._isolated_strategy_exit_candidate(pos)
+            if isolated:
+                if isolated_candidate is not None:
+                    candidates.append(isolated_candidate)
+                continue
             reason = None
 
             is_us = pos.get("display_currency") == "USD"

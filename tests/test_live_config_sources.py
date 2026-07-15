@@ -14,18 +14,98 @@ from tools.live_preflight import (
     _config_checks,
     _kr_live_expansion_guard_check,
     _kr_cap40_confirmation_enforce_check,
+    _pathb_kr_exit_policy_check,
     _pathb_cross_run_closed_lifecycle_evidence,
     _pathb_lifecycle_window_check_result,
     _market_session_calendar_check,
     _pathb_market_live_gate_check,
     _pathb_preopen_exit_policy_check,
+    _profit_strategy_micro_contract_check,
     _runtime_config_drift_check,
     _runtime_config_drift_payload,
+    _us_swing_shadow_runtime_check,
     load_effective_config,
 )
 
 
 class LiveConfigSourceTests(unittest.TestCase):
+    def test_us_swing_runtime_requires_consistent_authority_and_dependencies(self) -> None:
+        effective = {
+            "US_SWING_SHADOW_SCHEDULER_ENABLED": "true",
+            "US_SWING_AUTHORITY_MODE": "shadow",
+            "US_SWING_ORDER_HANDOFF_ENABLED": "false",
+            "US_SWING_ORDER_SUBMIT_ENABLED": "false",
+            "US_SWING_ORDER_LIVE_ACK": "",
+            "US_SWING_PYTHON_EXECUTABLE": "C:/research/python.exe",
+        }
+        probe = SimpleNamespace(returncode=0, stdout='{"sklearn":"1.0"}', stderr="")
+        with patch("tools.live_preflight.Path.is_file", return_value=True), patch(
+            "tools.live_preflight.subprocess.run", return_value=probe
+        ):
+            result = _us_swing_shadow_runtime_check(effective)
+        self.assertEqual(result.status, "PASS")
+
+        unsafe = {**effective, "US_SWING_ORDER_SUBMIT_ENABLED": "true"}
+        self.assertEqual(_us_swing_shadow_runtime_check(unsafe).status, "FAIL")
+
+        micro = {
+            **effective,
+            "US_SWING_AUTHORITY_MODE": "micro",
+            "US_SWING_ORDER_HANDOFF_ENABLED": "true",
+            "US_SWING_ORDER_SUBMIT_ENABLED": "true",
+            "US_SWING_ORDER_LIVE_ACK": "I_ACCEPT_LIVE_US_SWING",
+            "US_SWING_OPERATOR_MICRO_OVERRIDE_ACK": "I_ACCEPT_MICRO_WITHOUT_FORWARD",
+        }
+        with patch("tools.live_preflight.Path.is_file", return_value=True), patch(
+            "tools.live_preflight.subprocess.run", return_value=probe
+        ):
+            self.assertEqual(_us_swing_shadow_runtime_check(micro).status, "PASS")
+
+    def test_kr_exit_policy_requires_dual_source_and_blocks_unwired_enforce(self) -> None:
+        base = {
+            "base_env": {"PATHB_KR_EXIT_POLICY": "EARLY_FULL_V1"},
+            "overrides": {"PATHB_KR_EXIT_POLICY": "EARLY_FULL_V1"},
+            "effective": {"PATHB_KR_EXIT_POLICY": "EARLY_FULL_V1"},
+        }
+        self.assertEqual(_pathb_kr_exit_policy_check(base, "live").status, "PASS")
+
+        mismatch = {**base, "overrides": {"PATHB_KR_EXIT_POLICY": "SPLIT_RUNNER_V1"}}
+        self.assertEqual(_pathb_kr_exit_policy_check(mismatch, "live").status, "FAIL")
+
+        split = {
+            "base_env": {"PATHB_KR_EXIT_POLICY": "SPLIT_RUNNER_V1"},
+            "overrides": {"PATHB_KR_EXIT_POLICY": "SPLIT_RUNNER_V1"},
+            "effective": {"PATHB_KR_EXIT_POLICY": "SPLIT_RUNNER_V1"},
+        }
+        result = _pathb_kr_exit_policy_check(split, "live")
+        self.assertEqual(result.status, "FAIL")
+        self.assertIn("requires live partial-sell wiring", result.detail)
+
+        split["effective"].update({
+            "PATHB_KR_SPLIT_RUNNER_LIVE_ENABLED": "true",
+            "PATHB_KR_SPLIT_RUNNER_LIVE_ACK": "I_ACCEPT_LIVE_KR_SPLIT_RUNNER",
+        })
+        self.assertEqual(_pathb_kr_exit_policy_check(split, "live").status, "PASS")
+
+    def test_profit_strategy_contract_allows_only_approved_micro_arms(self) -> None:
+        effective = {
+            "PROFIT_STRATEGY_MATERIALIZER_ENABLED": "true",
+            "PROFIT_STRATEGY_AUTHORITY_MODE": "micro",
+            "PROFIT_STRATEGY_ORDER_HANDOFF_ENABLED": "true",
+            "PROFIT_STRATEGY_ORDER_SUBMIT_ENABLED": "true",
+            "PROFIT_STRATEGY_ORDER_LIVE_ACK": "I_ACCEPT_LIVE_PROFIT_STRATEGIES",
+            "PROFIT_STRATEGY_KILL_SWITCH": "false",
+            "PROFIT_STRATEGY_ENABLED_IDS": "US_CONSENSUS_3D_V1,KR_US_SECTOR_PULSE_3D_V0",
+            "PROFIT_STRATEGY_MAX_ORDER_KRW_KR": "100000",
+            "PROFIT_STRATEGY_MAX_ORDER_KRW_US": "100000",
+            "PROFIT_STRATEGY_MAX_NEW_PER_DAY_KR": "2",
+            "PROFIT_STRATEGY_MAX_NEW_PER_DAY_US": "1",
+            "PROFIT_STRATEGY_MAX_OPEN_SLOTS": "4",
+        }
+        self.assertEqual(_profit_strategy_micro_contract_check(effective, "live").status, "PASS")
+        effective["PROFIT_STRATEGY_ENABLED_IDS"] += ",REJECTED_ARM"
+        self.assertEqual(_profit_strategy_micro_contract_check(effective, "live").status, "FAIL")
+
     def test_live_effective_config_has_no_unapproved_conflicts(self) -> None:
         expected = load_effective_config("live")
         snapshot = {
@@ -480,6 +560,17 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertNotIn("CLAUDE_ANALYST_R1_MAX_TOKENS", drift)
         self.assertNotIn("CLAUDE_ANALYST_R2_MAX_TOKENS", drift)
 
+    def test_stopped_process_runtime_drift_is_startup_warning_not_deadlock(self) -> None:
+        config = {"effective": {"PATHB_KR_EXIT_POLICY": "SPLIT_RUNNER_V1"}}
+        snapshot = {"written_at": "2026-07-15T10:00:00+09:00", "effective": {"PATHB_KR_EXIT_POLICY": "EARLY_FULL_V1"}}
+        with patch("tools.live_preflight._latest_runtime_config_snapshot", return_value=(Path("old.json"), snapshot)), patch(
+            "tools.live_preflight._runtime_pid_state",
+            return_value={"pid_path": "live.pid", "pid": 0, "pid_alive": False, "pid_started_at": ""},
+        ):
+            result = _runtime_config_drift_check(config, "live")
+        self.assertEqual(result.status, "WARN")
+        self.assertIn("post-start verification required", result.detail)
+
     def test_runtime_config_drift_check_describes_snapshot_not_process_memory(self) -> None:
         config = {"effective": {"US_DAILY_ENTRY_CAP": "40"}}
         snapshot = {
@@ -491,6 +582,9 @@ class LiveConfigSourceTests(unittest.TestCase):
         with patch(
             "tools.live_preflight._latest_runtime_config_snapshot",
             return_value=(Path("effective_config_live.redacted.json"), snapshot),
+        ), patch(
+            "tools.live_preflight._runtime_pid_state",
+            return_value={"pid_path": "live.pid", "pid": 123, "pid_alive": True, "pid_started_at": ""},
         ):
             check = _runtime_config_drift_check(config, "live")
 
@@ -586,6 +680,9 @@ class LiveConfigSourceTests(unittest.TestCase):
         with patch(
             "tools.live_preflight._latest_runtime_config_snapshot",
             return_value=(Path("effective_config_live.redacted.json"), snapshot),
+        ), patch(
+            "tools.live_preflight._runtime_pid_state",
+            return_value={"pid_path": "live.pid", "pid": 123, "pid_alive": True, "pid_started_at": ""},
         ):
             check = _runtime_config_drift_check(config, "live")
 
@@ -610,6 +707,9 @@ class LiveConfigSourceTests(unittest.TestCase):
         with patch(
             "tools.live_preflight._latest_runtime_config_snapshot",
             return_value=(Path("effective_config_live.redacted.json"), snapshot),
+        ), patch(
+            "tools.live_preflight._runtime_pid_state",
+            return_value={"pid_path": "live.pid", "pid": 123, "pid_alive": True, "pid_started_at": ""},
         ):
             check = _runtime_config_drift_check(config, "live")
 
