@@ -29,8 +29,36 @@ BACKUP_STATE_FILES = (
     "live_open_positions.json",
     "live_pending_orders.json",
     "live_broker_truth_snapshot.json",
+    "live_broker_truth_snapshot.json.last_good",
+    "live_runtime_handoff_snapshot.json",
+    "live_runtime_handoff_snapshot.json.last_good",
+    "live_v2_order_unknown.json",
+    "live_live_status_KR.json",
+    "live_live_status_US.json",
+    "live_decisions.jsonl",
+    "brain.json",
+    "profit_strategy_handoff.jsonl",
+    "profit_strategy_signals_KR.json",
+    "profit_strategy_signals_US.json",
+    "us_swing_status.json",
+    "us_swing_execution_evidence.json",
+    "us_swing_historical_evidence.json",
+    "us_swing_veto_20260710.json",
+    "pathb_kr_paired_exit_heartbeat.json",
+    "core_shadow_book.json",
+    "core_shadow_tracker_heartbeat.json",
+    "broker_truth_scheduler_state.json",
+    "broker_truth_scheduler_heartbeat.json",
     "live_trading_bot.pid",
     "dashboard_server.pid",
+)
+BACKUP_PROJECT_FILES = (
+    "config/v2_start_config.json",
+)
+BACKUP_SHADOW_GLOBS = (
+    "core_shadow_signal_*.json",
+    "core_shadow_signals.jsonl",
+    "core_shadow_mtm.jsonl",
 )
 ACTIVE_PATH_RUN_STATUSES = {
     "WAITING",
@@ -239,10 +267,19 @@ def _copy_best_effort_file(source: Path, backup_dir: Path, *, role: str, optiona
 
 def _backup_sqlite_db(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(str(source)) as src, sqlite3.connect(str(target)) as dst:
+    src = sqlite3.connect(str(source))
+    dst = sqlite3.connect(str(target))
+    try:
         src.backup(dst)
-    with sqlite3.connect(str(target)) as conn:
+        dst.commit()
+    finally:
+        dst.close()
+        src.close()
+    conn = sqlite3.connect(str(target))
+    try:
         row = conn.execute("PRAGMA integrity_check").fetchone()
+    finally:
+        conn.close()
     if not row or str(row[0]).lower() != "ok":
         raise RuntimeError(f"backup integrity_check failed: {target}")
 
@@ -262,6 +299,7 @@ def create_live_backup(
     source_db = Path(db_path) if db_path else get_runtime_path("data", "v2_event_store.db", make_parents=False)
     if not source_db.exists():
         raise FileNotFoundError(f"event store DB not found: {source_db}")
+    source_root = source_db.resolve().parent.parent
 
     manifest: list[dict[str, Any]] = []
     optional_errors: list[dict[str, Any]] = []
@@ -284,11 +322,37 @@ def create_live_backup(
             role="state",
             manifest=manifest,
         )
+    for relative in BACKUP_PROJECT_FILES:
+        _copy_optional_file(
+            source_root / relative,
+            backup_dir,
+            role="config",
+            manifest=manifest,
+        )
+    shadow_dir = source_root / "data" / "shadow"
+    for pattern in BACKUP_SHADOW_GLOBS:
+        for source in sorted(shadow_dir.glob(pattern)) if shadow_dir.exists() else []:
+            _copy_optional_file(source, backup_dir, role="strategy_signal", manifest=manifest)
 
     manifest_payload = {
         "created_at": _now(),
         "mode": mode_key,
         "label": label,
+        "continuity_contract": {
+            "broker_truth_is_reconciled_after_restart": True,
+            "event_store_uses_sqlite_online_backup": True,
+            "state_files_are_point_in_time_copies": True,
+            "covered": [
+                "positions",
+                "pending_orders",
+                "broker_truth",
+                "order_unknown_registry",
+                "runtime_handoff",
+                "strategy_ledgers_and_signals",
+                "brain",
+                "effective_start_config",
+            ],
+        },
         "files": manifest,
         "optional_errors": optional_errors,
     }

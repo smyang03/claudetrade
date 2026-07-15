@@ -153,6 +153,16 @@ class LiveMaintenanceTests(unittest.TestCase):
             state_dir.mkdir(parents=True, exist_ok=True)
             (state_dir / "live_open_positions.json").write_text("[]", encoding="utf-8")
             (state_dir / "live_pending_orders.json").write_text("[]", encoding="utf-8")
+            (state_dir / "brain.json").write_text('{"memory": []}', encoding="utf-8")
+            (state_dir / "profit_strategy_handoff.jsonl").write_text(
+                '{"status":"SUBMITTED"}\n', encoding="utf-8"
+            )
+            config_dir = root / "config"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            (config_dir / "v2_start_config.json").write_text('{"env_overrides": {}}', encoding="utf-8")
+            shadow_dir = root / "data" / "shadow"
+            shadow_dir.mkdir(parents=True, exist_ok=True)
+            (shadow_dir / "core_shadow_signal_202607.json").write_text('{"arms": []}', encoding="utf-8")
 
             with patch("tools.live_maintenance.get_runtime_path", side_effect=_runtime_path(root)):
                 backup_dir = live_maintenance.create_live_backup(
@@ -165,6 +175,11 @@ class LiveMaintenanceTests(unittest.TestCase):
             self.assertIn("sqlite_backup", backed_roles)
             self.assertTrue((backup_dir / "v2_event_store.db").exists())
             self.assertTrue((backup_dir / "live_open_positions.json").exists())
+            self.assertTrue((backup_dir / "brain.json").exists())
+            self.assertTrue((backup_dir / "profit_strategy_handoff.jsonl").exists())
+            self.assertTrue((backup_dir / "v2_start_config.json").exists())
+            self.assertTrue((backup_dir / "core_shadow_signal_202607.json").exists())
+            self.assertTrue(manifest["continuity_contract"]["broker_truth_is_reconciled_after_restart"])
 
     def test_create_live_backup_tolerates_locked_sqlite_sidecar(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -176,7 +191,12 @@ class LiveMaintenanceTests(unittest.TestCase):
 
             def backup_and_create_sidecar(source, target):
                 original_backup(source, target)
-                Path(str(source) + "-shm").write_text("locked", encoding="utf-8")
+                sidecar = Path(str(source) + "-shm")
+                # EventStore may already have created and locked the SHM file
+                # on Windows. Its existence is sufficient for this copy-error
+                # test; rewriting the locked file is not portable.
+                if not sidecar.exists():
+                    sidecar.write_text("locked", encoding="utf-8")
 
             def copy2(source, target, *args, **kwargs):
                 if str(source).endswith(".db-shm"):
