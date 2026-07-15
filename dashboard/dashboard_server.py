@@ -14928,6 +14928,10 @@ PAGE_PATHB_HTML = """
       <div id="pathb-broker-truth" class="muted"></div>
     </div>
     <div class="card" style="margin-top:12px;">
+      <div class="card-title">신규 전략 레인 / 주문 안전</div>
+      <div id="strategy-lane-status" class="muted">전략 상태 로딩 중...</div>
+    </div>
+    <div class="card" style="margin-top:12px;">
       <div class="card-title">A/B 실현 수익률 비교</div>
       <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
         <div class="card"><div class="card-sub">A플랜 평균 수익률</div><div class="metric" id="patha-avg-pnl">-</div></div>
@@ -15182,6 +15186,29 @@ async function loadPathB() {
   const brokerMarkets = brokerTruth.markets || {};
   document.getElementById('pathb-broker-truth').innerHTML =
     `<div class="pathb-broker-grid">${['KR', 'US'].map(mkt => renderBrokerTruthCard(mkt, brokerMarkets[mkt] || {})).join('')}</div>`;
+  const trackers = (((d || {}).system_health || {}).strategy_trackers) || {};
+  const profit = trackers.profit_strategies || {};
+  const swing = trackers.us_swing || {};
+  const swingAuthority = swing.authority || {};
+  const core = trackers.core_shadow || {};
+  const paired = trackers.paired_exit || {};
+  const exitPolicy = trackers.kr_exit_policy || {};
+  const enforcedIds = (profit.enforced_ids || []).map(pathbEscapeHtml).join(', ') || '-';
+  const shadowIds = (profit.disabled_shadow_ids || profit.shadow_only_ids || []).map(pathbEscapeHtml).join(', ') || '-';
+  const unknownMarkets = (profit.order_unknown_markets || []).map(pathbEscapeHtml).join(', ') || '-';
+  const unknownBlocked = !!profit.order_unknown_blocked;
+  const strategyLaneEl = document.getElementById('strategy-lane-status');
+  if (strategyLaneEl) {
+    strategyLaneEl.innerHTML =
+      `<div><strong>실주문 허용</strong>: ${enforcedIds}</div>`
+      + `<div><strong>shadow 전용(주문 제외)</strong>: ${shadowIds}</div>`
+      + `<div><strong>전략 주문 안전</strong>: <span style="color:${unknownBlocked ? '#fca5a5' : '#86efac'}">${unknownBlocked ? 'ORDER_UNKNOWN 차단 중' : '정상'}</span> · 시장 ${unknownMarkets} · 누적 ${Number(profit.order_unknown_count || 0)}건 · 설정/실행 ${profit.config_matches_runtime ? '일치' : '불일치'}</div>`
+      + `<div><strong>신호</strong>: US ${Number((profit.US || {}).signal_count || 0)}건 · KR ${Number((profit.KR || {}).signal_count || 0)}건 · 최근 handoff ${pathbEscapeHtml((profit.last_handoff || {}).status || '-')}</div>`
+      + `<div><strong>US swing</strong>: live ${pathbEscapeHtml(swing.live_configured_mode || '-')} · 마지막 평가 ${pathbEscapeHtml(swingAuthority.configured_mode || '-')}→${pathbEscapeHtml(swingAuthority.effective_mode || '-')} · 설정/실행 ${swing.config_matches_runtime ? '일치' : '불일치'} · stale ${swing.stale ? '예' : '아니오'} · 실패 세션 ${pathbEscapeHtml(swing.failed_session_date || '-')}</div>`
+      + `<div><strong>코어 트래커</strong>: ${pathbEscapeHtml(core.status || 'missing')} · stale ${core.stale ? '예' : '아니오'} · 마지막 ${pathbEscapeHtml(core.last_success_at || core.last_tick_at || '-')}</div>`
+      + `<div><strong>KR paired A/B</strong>: ${pathbEscapeHtml(paired.clock_status || 'STARVED')} · gate n=${Number(paired.gate_sample_total || 0)}/15 · 7일 신규 ${Number(paired.paired_eligible_7d || 0)}건</div>`
+      + `<div><strong>KR 출구 정책</strong>: ${pathbEscapeHtml(exitPolicy.runtime_snapshot || '-')} · 이중소스/실행 ${exitPolicy.ok ? '일치' : '불일치'}</div>`;
+  }
   renderPathComparison(b.path_comparison || {});
   const quoteInterval = fmtPathBQuoteInterval(sel.quote_refresh_interval_sec || 0);
   const intervalEl = document.getElementById('pathb-watch-price-interval');

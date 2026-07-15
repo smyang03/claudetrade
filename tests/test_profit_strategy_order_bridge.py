@@ -19,12 +19,14 @@ class FakeBot:
         self.risk = SimpleNamespace(positions=[])
         self._last_micro_probe_submit_result: dict = {}
         self.submitted: list[dict] = []
+        self.order_unknowns: list[dict] = []
         self.config = {
             "PROFIT_STRATEGY_ORDER_HANDOFF_ENABLED": True,
             "PROFIT_STRATEGY_KILL_SWITCH": False,
             "PROFIT_STRATEGY_AUTHORITY_MODE": "micro",
             "PROFIT_STRATEGY_ORDER_SUBMIT_ENABLED": True,
             "PROFIT_STRATEGY_ORDER_LIVE_ACK": "I_ACCEPT_LIVE_PROFIT_STRATEGIES",
+            "PROFIT_STRATEGY_ENABLED_IDS": "US_CONSENSUS_3D_V1",
             "PROFIT_STRATEGY_ORDER_MIN_OPEN_MIN": 5,
             "PROFIT_STRATEGY_ORDER_MAX_OPEN_MIN": 45,
             "PROFIT_STRATEGY_MAX_NEW_PER_DAY_US": 1,
@@ -74,6 +76,9 @@ class FakeBot:
         self._last_micro_probe_submit_result = {"status": "SUBMITTED", "order_no": "123"}
         return True
 
+    def _v2_record_order_unknown(self, market: str, ticker: str, order: dict, detail: str) -> None:
+        self.order_unknowns.append({"market": market, "ticker": ticker, "order": order, "detail": detail})
+
 
 def _signal() -> list[dict]:
     return [{
@@ -120,3 +125,31 @@ def test_missing_exact_live_ack_blocks_before_signal_access(tmp_path, monkeypatc
     result = run_profit_strategy_handoff(bot, "US")
     assert result["status"] == "BLOCKED"
     assert bot.submitted == []
+
+
+def test_order_unknown_registers_global_guard_and_blocks_later_scans(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("runtime.profit_strategy_order_bridge.regular_open_dt", lambda *_: datetime.now(KST) - timedelta(minutes=10))
+    monkeypatch.setattr("runtime.profit_strategy_order_bridge.load_signals", lambda *_, **__: _signal())
+    monkeypatch.setattr("runtime.profit_strategy_order_bridge.get_price", lambda *_, **__: {"price": 10000, "open": 10000})
+    monkeypatch.setattr("runtime.profit_strategy_order_bridge.get_runtime_path", lambda *parts, **__: tmp_path.joinpath(*parts))
+    bot = FakeBot(cash=50000.0)
+
+    def unknown_submit(**kwargs) -> bool:
+        bot.submitted.append(kwargs)
+        bot._last_micro_probe_submit_result = {
+            "status": "UNKNOWN",
+            "order_no": "",
+            "reason": "order_exception",
+        }
+        return False
+
+    bot._submit_micro_probe_buy_order = unknown_submit
+    first = run_profit_strategy_handoff(bot, "US")
+    second = run_profit_strategy_handoff(bot, "US")
+
+    assert first["results"][0]["status"] == "ORDER_UNKNOWN"
+    assert len(bot.order_unknowns) == 1
+    assert bot.order_unknowns[0]["order"]["source_strategy"] == "us_consensus_3d"
+    assert second["status"] == "BLOCKED"
+    assert second["reason"] == "unresolved_strategy_order_unknown"
+    assert len(bot.submitted) == 1

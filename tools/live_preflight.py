@@ -1895,11 +1895,12 @@ def _us_swing_shadow_runtime_check(effective: dict[str, Any]) -> CheckResult:
 
 
 def _profit_strategy_micro_contract_check(effective: dict[str, Any], mode: str) -> CheckResult:
+    # Consensus and sector-pulse remain forward-shadow challengers.  Their
+    # research artifacts explicitly withhold live authority, so preflight must
+    # fail if either is accidentally added to the order allowlist.
     approved = {
         "US_SCHG_BIL_TREND_V1",
         "KR_FACTOR_TREND_V1",
-        "US_CONSENSUS_3D_V1",
-        "KR_US_SECTOR_PULSE_3D_V0",
     }
     enabled = _truthy(effective.get("PROFIT_STRATEGY_MATERIALIZER_ENABLED"))
     authority = str(effective.get("PROFIT_STRATEGY_AUTHORITY_MODE") or "shadow").strip().lower()

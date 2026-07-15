@@ -3014,6 +3014,11 @@ def _strategy_tracker_health(runtime_mode: str) -> dict[str, Any]:
             start_values = raw_start
     _snapshot_path, snapshot = _latest_runtime_config_snapshot(str(runtime_mode or "live"))
     snapshot_effective = dict((snapshot or {}).get("effective") or {})
+    swing_live_mode = str(effective.get("US_SWING_AUTHORITY_MODE") or "shadow").lower()
+    swing_runtime_mode = str(snapshot_effective.get("US_SWING_AUTHORITY_MODE") or "").lower()
+    swing["live_configured_mode"] = swing_live_mode
+    swing["runtime_configured_mode"] = swing_runtime_mode
+    swing["config_matches_runtime"] = bool(swing_runtime_mode and swing_runtime_mode == swing_live_mode)
     key = "PATHB_KR_EXIT_POLICY"
     env_value = str(env_values.get(key) or "")
     start_value = str(start_values.get(key) or "")
@@ -3033,16 +3038,19 @@ def _strategy_tracker_health(runtime_mode: str) -> dict[str, Any]:
     policy_config["ok"] = bool(policy_config["sources_match"] and policy_config["runtime_matches"])
 
     profit_last: dict[str, Any] = {}
+    profit_rows: list[dict[str, Any]] = []
     if profit_ledger_path.exists():
         try:
-            for raw_line in reversed(profit_ledger_path.read_text(encoding="utf-8", errors="ignore").splitlines()):
+            for raw_line in profit_ledger_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-2000:]:
                 if raw_line.strip():
                     parsed = json.loads(raw_line)
                     if isinstance(parsed, dict):
-                        profit_last = parsed
-                    break
+                        profit_rows.append(parsed)
+            if profit_rows:
+                profit_last = profit_rows[-1]
         except Exception:
             profit_last = {}
+            profit_rows = []
     profit_config_keys = (
         "PROFIT_STRATEGY_AUTHORITY_MODE",
         "PROFIT_STRATEGY_ORDER_HANDOFF_ENABLED",
@@ -3052,6 +3060,25 @@ def _strategy_tracker_health(runtime_mode: str) -> dict[str, Any]:
     )
     profit_config = {key: str(effective.get(key) or "") for key in profit_config_keys}
     profit_runtime = {key: str(snapshot_effective.get(key) or "") for key in profit_config_keys}
+    configured_ids = sorted({
+        item.strip().upper()
+        for item in str(profit_config.get("PROFIT_STRATEGY_ENABLED_IDS") or "").split(",")
+        if item.strip()
+    })
+    live_core_ids = {"US_SCHG_BIL_TREND_V1", "KR_FACTOR_TREND_V1"}
+    shadow_only_ids = {"US_CONSENSUS_3D_V1", "KR_US_SECTOR_PULSE_3D_V0"}
+    signal_sessions = {
+        "US": str(profit_us.get("session_date") or ""),
+        "KR": str(profit_kr.get("session_date") or ""),
+    }
+    unknown_by_market: dict[str, list[dict[str, Any]]] = {"US": [], "KR": []}
+    for row in profit_rows:
+        market_key = str(row.get("market") or "").upper()
+        if market_key not in unknown_by_market or str(row.get("status") or "").upper() != "ORDER_UNKNOWN":
+            continue
+        if signal_sessions.get(market_key) and str(row.get("session_date") or "") != signal_sessions[market_key]:
+            continue
+        unknown_by_market[market_key].append(row)
     profit_signals = {
         "US": {
             "path": str(profit_us_path),
@@ -3072,6 +3099,18 @@ def _strategy_tracker_health(runtime_mode: str) -> dict[str, Any]:
         "authority_mode": profit_config.get("PROFIT_STRATEGY_AUTHORITY_MODE"),
         "kill_switch": profit_config.get("PROFIT_STRATEGY_KILL_SWITCH"),
         "config_matches_runtime": all(profit_config.get(key) == profit_runtime.get(key) for key in profit_config_keys),
+        "enabled_ids": configured_ids,
+        "enforced_ids": sorted(set(configured_ids) & live_core_ids),
+        "shadow_only_ids": sorted(shadow_only_ids),
+        "disabled_shadow_ids": sorted(shadow_only_ids - set(configured_ids)),
+        "shadow_ids_in_live_allowlist": sorted(shadow_only_ids & set(configured_ids)),
+        "order_unknown_blocked": any(unknown_by_market.values()),
+        "order_unknown_markets": [market for market, rows in unknown_by_market.items() if rows],
+        "order_unknown_count": sum(len(rows) for rows in unknown_by_market.values()),
+        "latest_order_unknown": next(
+            (rows[-1] for rows in reversed(list(unknown_by_market.values())) if rows),
+            {},
+        ),
         "last_handoff": profit_last,
         "ledger_path": str(profit_ledger_path),
     }

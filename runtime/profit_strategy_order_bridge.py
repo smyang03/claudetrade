@@ -22,7 +22,9 @@ from runtime_paths import get_runtime_path
 log = get_trading_logger()
 LIVE_ACK = "I_ACCEPT_LIVE_PROFIT_STRATEGIES"
 CORE_IDS = {"US_SCHG_BIL_TREND_V1", "KR_FACTOR_TREND_V1"}
-DEFAULT_ENABLED = CORE_IDS | {"US_CONSENSUS_3D_V1", "KR_US_SECTOR_PULSE_3D_V0"}
+# Research challengers may still be materialized for forward observation, but
+# absence of an explicit live allowlist must never promote them to orders.
+DEFAULT_ENABLED = set(CORE_IDS)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -214,14 +216,21 @@ def run_profit_strategy_handoff(bot: Any, market: str) -> dict[str, Any]:
         return {"status": "SKIPPED", "reason": "no_exact_session_signal"}
     ledger_path = get_runtime_path("state", "profit_strategy_handoff.jsonl")
     ledger = _ledger_rows(ledger_path)
-    submitted_today = [
+    committed_today = [
         row for row in ledger
         if row.get("session_date") == session_date and row.get("market") == market_key
-        and row.get("status") == "SUBMITTED"
+        and row.get("status") in {"SUBMITTED", "ORDER_UNKNOWN"}
     ]
+    unresolved_unknown = [row for row in committed_today if row.get("status") == "ORDER_UNKNOWN"]
+    if unresolved_unknown:
+        return {
+            "status": "BLOCKED",
+            "reason": "unresolved_strategy_order_unknown",
+            "order_unknown": len(unresolved_unknown),
+        }
     max_new = bot._runtime_int(f"PROFIT_STRATEGY_MAX_NEW_PER_DAY_{market_key}", 1)
-    if len(submitted_today) >= max_new:
-        return {"status": "BLOCKED", "reason": "daily_strategy_order_cap", "submitted": len(submitted_today)}
+    if len(committed_today) >= max_new:
+        return {"status": "BLOCKED", "reason": "daily_strategy_order_cap", "submitted": len(committed_today)}
 
     bot._sync_runtime_with_broker()
     desired_core = [row for row in signals if str(row.get("strategy_id") or "").upper() in CORE_IDS]
@@ -330,6 +339,26 @@ def run_profit_strategy_handoff(bot: Any, market: str) -> dict[str, Any]:
         )
         outcome = dict(getattr(bot, "_last_micro_probe_submit_result", {}) or {})
         status = "SUBMITTED" if order_ok and outcome.get("order_no") else ("ORDER_UNKNOWN" if outcome.get("status") == "UNKNOWN" else "SUBMIT_BLOCKED")
+        if status == "ORDER_UNKNOWN":
+            try:
+                bot._v2_record_order_unknown(
+                    market_key,
+                    ticker,
+                    {
+                        "ticker": ticker,
+                        "market": market_key,
+                        "qty": qty,
+                        "order_no": str(outcome.get("order_no") or ""),
+                        "source_strategy": source,
+                        "strategy_id": strategy_id,
+                    },
+                    "profit strategy broker submission outcome unknown",
+                )
+            except Exception as exc:
+                log.error(
+                    f"[profit strategy handoff] ORDER_UNKNOWN registry failed "
+                    f"{market_key} {ticker}: {exc}"
+                )
         record = {
             "schema_version": "profit_strategy_handoff_v1",
             "recorded_at": datetime.now(KST).isoformat(timespec="seconds"),

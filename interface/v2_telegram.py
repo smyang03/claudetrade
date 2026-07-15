@@ -149,6 +149,10 @@ def _format_health(summary: dict[str, Any]) -> str:
     swing = trackers.get("us_swing") or {}
     profit = trackers.get("profit_strategies") or {}
     policy = trackers.get("kr_exit_policy") or {}
+    swing_authority = swing.get("authority") if isinstance(swing.get("authority"), dict) else {}
+    enforced_ids = ",".join(profit.get("enforced_ids") or []) or "-"
+    shadow_ids = ",".join(profit.get("disabled_shadow_ids") or profit.get("shadow_only_ids") or []) or "-"
+    unknown_markets = ",".join(profit.get("order_unknown_markets") or []) or "-"
     lines.extend(
         [
             "",
@@ -169,7 +173,11 @@ def _format_health(summary: dict[str, Any]) -> str:
                 f"ETA={paired.get('n15_eta_days') if paired.get('n15_eta_days') is not None else '-'}일"
             ),
             (
-                f"US swing: stale={_ko_bool(swing.get('stale', True))} "
+                f"US swing: live={swing.get('live_configured_mode') or '-'} "
+                f"last_eval={swing_authority.get('configured_mode') or '-'}"
+                f"→{swing_authority.get('effective_mode') or '-'} "
+                f"runtime_match={_ko_bool(swing.get('config_matches_runtime'))} "
+                f"stale={_ko_bool(swing.get('stale', True))} "
                 f"last={swing.get('updated_at') or swing.get('last_success_at') or swing.get('generated_at') or '-'} "
                 f"failure={swing.get('failed_session_date') or '-'}"
             ),
@@ -179,6 +187,12 @@ def _format_health(summary: dict[str, Any]) -> str:
                 f"US_n={(profit.get('US') or {}).get('signal_count', 0)} "
                 f"KR_n={(profit.get('KR') or {}).get('signal_count', 0)} "
                 f"last={(profit.get('last_handoff') or {}).get('status') or '-'}"
+            ),
+            f"주문 허용 전략: {enforced_ids}",
+            f"shadow 전용(주문 제외): {shadow_ids}",
+            (
+                f"전략 ORDER_UNKNOWN 차단: {_ko_bool(profit.get('order_unknown_blocked'))} "
+                f"markets={unknown_markets} count={profit.get('order_unknown_count', 0)}"
             ),
             (
                 f"KR exit policy: env={policy.get('env_live') or '-'} config={policy.get('start_config') or '-'} "
