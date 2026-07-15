@@ -216,12 +216,12 @@ def run_profit_strategy_handoff(bot: Any, market: str) -> dict[str, Any]:
         return {"status": "SKIPPED", "reason": "no_exact_session_signal"}
     ledger_path = get_runtime_path("state", "profit_strategy_handoff.jsonl")
     ledger = _ledger_rows(ledger_path)
-    committed_today = [
+    attempted_today = [
         row for row in ledger
         if row.get("session_date") == session_date and row.get("market") == market_key
-        and row.get("status") in {"SUBMITTED", "ORDER_UNKNOWN"}
+        and row.get("status") in {"SUBMITTED", "ORDER_UNKNOWN", "SUBMIT_BLOCKED"}
     ]
-    unresolved_unknown = [row for row in committed_today if row.get("status") == "ORDER_UNKNOWN"]
+    unresolved_unknown = [row for row in attempted_today if row.get("status") == "ORDER_UNKNOWN"]
     if unresolved_unknown:
         return {
             "status": "BLOCKED",
@@ -229,8 +229,13 @@ def run_profit_strategy_handoff(bot: Any, market: str) -> dict[str, Any]:
             "order_unknown": len(unresolved_unknown),
         }
     max_new = bot._runtime_int(f"PROFIT_STRATEGY_MAX_NEW_PER_DAY_{market_key}", 1)
-    if len(committed_today) >= max_new:
-        return {"status": "BLOCKED", "reason": "daily_strategy_order_cap", "submitted": len(committed_today)}
+    if len(attempted_today) >= max_new:
+        return {
+            "status": "BLOCKED",
+            "reason": "daily_strategy_order_cap",
+            "submitted": len(attempted_today),
+            "attempted": len(attempted_today),
+        }
 
     bot._sync_runtime_with_broker()
     desired_core = [row for row in signals if str(row.get("strategy_id") or "").upper() in CORE_IDS]
@@ -246,7 +251,7 @@ def run_profit_strategy_handoff(bot: Any, market: str) -> dict[str, Any]:
         identity = (session_date, market_key, strategy_id, ticker)
         if any(
             (row.get("session_date"), row.get("market"), row.get("strategy_id"), row.get("ticker")) == identity
-            and row.get("status") in {"SUBMITTED", "ORDER_UNKNOWN"}
+            and row.get("status") in {"SUBMITTED", "ORDER_UNKNOWN", "SUBMIT_BLOCKED"}
             for row in ledger
         ):
             continue
@@ -376,6 +381,8 @@ def run_profit_strategy_handoff(bot: Any, market: str) -> dict[str, Any]:
             "order_cost_krw": qty * risk_price,
             "hold_sessions": hold_sessions,
             "reason": str(outcome.get("reason") or ""),
+            "broker_outcome_status": str(outcome.get("status") or ""),
+            "broker_detail": str(outcome.get("detail") or "")[:240],
             "signal_known_at": signal.get("known_at"),
         }
         _append_jsonl(ledger_path, record)

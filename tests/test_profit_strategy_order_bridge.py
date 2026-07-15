@@ -153,3 +153,33 @@ def test_order_unknown_registers_global_guard_and_blocks_later_scans(tmp_path, m
     assert second["status"] == "BLOCKED"
     assert second["reason"] == "unresolved_strategy_order_unknown"
     assert len(bot.submitted) == 1
+
+
+def test_broker_rejection_is_not_retried_same_session(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("runtime.profit_strategy_order_bridge.regular_open_dt", lambda *_: datetime.now(KST) - timedelta(minutes=10))
+    monkeypatch.setattr("runtime.profit_strategy_order_bridge.load_signals", lambda *_, **__: _signal())
+    monkeypatch.setattr("runtime.profit_strategy_order_bridge.get_price", lambda *_, **__: {"price": 10000, "open": 10000})
+    monkeypatch.setattr("runtime.profit_strategy_order_bridge.get_runtime_path", lambda *parts, **__: tmp_path.joinpath(*parts))
+    bot = FakeBot(cash=50000.0)
+
+    def rejected_submit(**kwargs) -> bool:
+        bot.submitted.append(kwargs)
+        bot._last_micro_probe_submit_result = {
+            "status": "REJECTED",
+            "reason": "broker_reject",
+            "detail": "account capability missing",
+            "order_no": "",
+        }
+        return False
+
+    bot._submit_micro_probe_buy_order = rejected_submit
+    first = run_profit_strategy_handoff(bot, "US")
+    second = run_profit_strategy_handoff(bot, "US")
+
+    assert first["results"][0]["status"] == "SUBMIT_BLOCKED"
+    assert first["results"][0]["broker_outcome_status"] == "REJECTED"
+    assert first["results"][0]["broker_detail"] == "account capability missing"
+    assert second["status"] == "BLOCKED"
+    assert second["reason"] == "daily_strategy_order_cap"
+    assert second["attempted"] == 1
+    assert len(bot.submitted) == 1
