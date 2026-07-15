@@ -1902,6 +1902,13 @@ def _profit_strategy_micro_contract_check(effective: dict[str, Any], mode: str) 
         "US_SCHG_BIL_TREND_V1",
         "KR_FACTOR_TREND_V1",
     }
+    # Operator-approved MICRO envelopes are market-specific.  US-listed ETFs
+    # need a larger whole-share budget than the KR factor sleeve, while the
+    # one-new-US-order-per-day and shared slot caps remain unchanged.
+    approved_order_caps_krw = {
+        "KR": 100000.0,
+        "US": 300000.0,
+    }
     enabled = _truthy(effective.get("PROFIT_STRATEGY_MATERIALIZER_ENABLED"))
     authority = str(effective.get("PROFIT_STRATEGY_AUTHORITY_MODE") or "shadow").strip().lower()
     handoff = _truthy(effective.get("PROFIT_STRATEGY_ORDER_HANDOFF_ENABLED"))
@@ -1933,6 +1940,7 @@ def _profit_strategy_micro_contract_check(effective: dict[str, Any], mode: str) 
         "approved_ids": sorted(approved),
         "unapproved_ids": sorted(ids - approved),
         "max_order_krw": caps,
+        "approved_max_order_krw": approved_order_caps_krw,
         "max_new_per_day": daily_caps,
         "max_open_slots": slot_cap,
     }
@@ -1945,7 +1953,7 @@ def _profit_strategy_micro_contract_check(effective: dict[str, Any], mode: str) 
             "profit strategy list contains an unapproved or empty arm set",
             data,
         )
-    if any(value <= 0 or value > 100000 for value in caps.values()) or any(
+    if any(value <= 0 or value > approved_order_caps_krw[market] for market, value in caps.items()) or any(
         value <= 0 or value > 2 for value in daily_caps.values()
     ) or slot_cap <= 0 or slot_cap > 4:
         return CheckResult(

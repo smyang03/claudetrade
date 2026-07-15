@@ -97,13 +97,33 @@ class LiveConfigSourceTests(unittest.TestCase):
             "PROFIT_STRATEGY_KILL_SWITCH": "false",
             "PROFIT_STRATEGY_ENABLED_IDS": "US_SCHG_BIL_TREND_V1,KR_FACTOR_TREND_V1",
             "PROFIT_STRATEGY_MAX_ORDER_KRW_KR": "100000",
-            "PROFIT_STRATEGY_MAX_ORDER_KRW_US": "100000",
+            "PROFIT_STRATEGY_MAX_ORDER_KRW_US": "300000",
             "PROFIT_STRATEGY_MAX_NEW_PER_DAY_KR": "2",
             "PROFIT_STRATEGY_MAX_NEW_PER_DAY_US": "1",
             "PROFIT_STRATEGY_MAX_OPEN_SLOTS": "4",
         }
         self.assertEqual(_profit_strategy_micro_contract_check(effective, "live").status, "PASS")
         effective["PROFIT_STRATEGY_ENABLED_IDS"] += ",US_CONSENSUS_3D_V1"
+        self.assertEqual(_profit_strategy_micro_contract_check(effective, "live").status, "FAIL")
+
+    def test_profit_strategy_contract_rejects_above_operator_approved_market_caps(self) -> None:
+        effective = {
+            "PROFIT_STRATEGY_MATERIALIZER_ENABLED": "true",
+            "PROFIT_STRATEGY_AUTHORITY_MODE": "micro",
+            "PROFIT_STRATEGY_ORDER_HANDOFF_ENABLED": "true",
+            "PROFIT_STRATEGY_ORDER_SUBMIT_ENABLED": "true",
+            "PROFIT_STRATEGY_ORDER_LIVE_ACK": "I_ACCEPT_LIVE_PROFIT_STRATEGIES",
+            "PROFIT_STRATEGY_KILL_SWITCH": "false",
+            "PROFIT_STRATEGY_ENABLED_IDS": "US_SCHG_BIL_TREND_V1,KR_FACTOR_TREND_V1",
+            "PROFIT_STRATEGY_MAX_ORDER_KRW_KR": "100000",
+            "PROFIT_STRATEGY_MAX_ORDER_KRW_US": "300001",
+            "PROFIT_STRATEGY_MAX_NEW_PER_DAY_KR": "2",
+            "PROFIT_STRATEGY_MAX_NEW_PER_DAY_US": "1",
+            "PROFIT_STRATEGY_MAX_OPEN_SLOTS": "4",
+        }
+        self.assertEqual(_profit_strategy_micro_contract_check(effective, "live").status, "FAIL")
+        effective["PROFIT_STRATEGY_MAX_ORDER_KRW_US"] = "300000"
+        effective["PROFIT_STRATEGY_MAX_ORDER_KRW_KR"] = "100001"
         self.assertEqual(_profit_strategy_micro_contract_check(effective, "live").status, "FAIL")
 
     def test_live_effective_config_has_no_unapproved_conflicts(self) -> None:
