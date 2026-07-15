@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+import json
+import os
 from pathlib import Path
 import sqlite3
 from typing import Any
@@ -10,6 +12,7 @@ from bot.session_date import KST
 from kis_api import get_price
 from logger import get_trading_logger
 from preopen.scheduler import regular_open_dt
+from runtime_paths import get_runtime_path
 from runtime.us_swing_order_handoff import (
     evaluate_handoff,
     load_handoff_signals,
@@ -20,6 +23,51 @@ from runtime.us_swing_order_handoff import (
 
 log = get_trading_logger()
 OPERATOR_MICRO_OVERRIDE_ACK = "I_ACCEPT_MICRO_WITHOUT_FORWARD"
+
+
+def _write_execution_status(
+    bot: Any,
+    *,
+    session_date: str,
+    result: dict[str, Any],
+    research_authority: dict[str, Any] | None = None,
+    execution_authority: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Persist live execution truth separately from research authority."""
+
+    research = dict(research_authority or {})
+    execution = dict(execution_authority or research)
+    raw_submit = bot._runtime_bool("US_SWING_ORDER_SUBMIT_ENABLED", False)
+    live_ack = str(bot._runtime_value("US_SWING_ORDER_LIVE_ACK", "") or "")
+    payload = {
+        "schema_version": "us_swing_execution_status_v1",
+        "generated_at": datetime.now(KST).isoformat(timespec="seconds"),
+        "session_date": str(session_date or ""),
+        "configured_mode": str(bot._runtime_value("US_SWING_AUTHORITY_MODE", "shadow") or "shadow").lower(),
+        "research_authority": research,
+        "execution_authority": execution,
+        "operator_override_applied": bool(execution.get("operator_forward_override")),
+        "allowed_to_emit_orders": bool(execution.get("allowed_to_emit_orders")),
+        "submit_enabled": bool(raw_submit),
+        "live_ack_verified": bool(getattr(bot, "is_paper", False)) or live_ack == "I_ACCEPT_LIVE_US_SWING",
+        "max_order_krw": float(bot._runtime_float("US_SWING_ORDER_MAX_KRW", 250000.0)),
+        "entry_window_min": {
+            "start": int(bot._runtime_int("US_SWING_ORDER_MIN_OPEN_MIN", 5)),
+            "end": int(bot._runtime_int("US_SWING_ORDER_MAX_OPEN_MIN", 30)),
+        },
+        "last_result": dict(result),
+        "status": str(result.get("status") or "UNKNOWN"),
+        "reason": str(result.get("reason") or ""),
+    }
+    path = get_runtime_path("state", "us_swing_execution_status.json")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+        temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temp, path)
+    except Exception as exc:
+        log.error(f"[US swing handoff] execution status write failed: {exc}")
+    return result
 
 
 def _operator_micro_override(bot: Any, authority: dict[str, Any], configured_mode: str) -> dict[str, Any]:
@@ -86,6 +134,8 @@ def _has_broker_truth_open_order(bot: Any, ticker: str) -> bool:
 
 
 def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
+    session_date = bot._current_session_date_str("US")
+    configured_mode = str(bot._runtime_value("US_SWING_AUTHORITY_MODE", "shadow") or "shadow")
     db_path = Path(str(bot._runtime_value("US_SWING_SHADOW_DB", "data/analysis/us_swing_shadow.db")))
     policy_path = Path(str(bot._runtime_value("US_SWING_POLICY_PATH", "config/us_swing_accelerated.json")))
     historical_path = Path(str(bot._runtime_value(
@@ -95,26 +145,34 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
         "US_SWING_EXECUTION_EVIDENCE_PATH", "state/us_swing_execution_evidence.json"
     )))
     if not db_path.exists() or not policy_path.exists() or not historical_path.exists() or not execution_path.exists():
-        return {"status": "BLOCKED", "reason": "handoff_artifact_missing"}
+        return _write_execution_status(
+            bot,
+            session_date=session_date,
+            result={"status": "BLOCKED", "reason": "handoff_artifact_missing"},
+        )
     con = sqlite3.connect(db_path)
     try:
-        configured_mode = str(bot._runtime_value("US_SWING_AUTHORITY_MODE", "shadow") or "shadow")
-        authority = resolve_handoff_authority(
+        research_authority = resolve_handoff_authority(
             configured_mode=configured_mode,
             con=con,
             policy_path=policy_path,
             historical_path=historical_path,
             execution_path=execution_path,
         )
-        authority = _operator_micro_override(bot, authority, configured_mode)
-        session_date = bot._current_session_date_str("US")
+        authority = _operator_micro_override(bot, research_authority, configured_mode)
         signals = load_handoff_signals(
             con,
             session_date=session_date,
             limit=max(1, int(authority.get("max_new_per_day") or 1)),
         )
         if not signals:
-            return {"status": "SKIPPED", "reason": "no_handoff_signal", "authority": authority}
+            return _write_execution_status(
+                bot,
+                session_date=session_date,
+                result={"status": "SKIPPED", "reason": "no_handoff_signal", "authority": authority},
+                research_authority=research_authority,
+                execution_authority=authority,
+            )
         raw_submit_enabled = bot._runtime_bool("US_SWING_ORDER_SUBMIT_ENABLED", False)
         live_ack = str(bot._runtime_value("US_SWING_ORDER_LIVE_ACK", "") or "")
         ack_ok = bool(bot.is_paper) or live_ack == "I_ACCEPT_LIVE_US_SWING"
@@ -284,6 +342,12 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
             )
             record_handoff_result(con, decision=failed)
             results.append(failed.to_dict())
-        return {"status": "EVALUATED", "authority": authority, "results": results}
+        return _write_execution_status(
+            bot,
+            session_date=session_date,
+            result={"status": "EVALUATED", "authority": authority, "results": results},
+            research_authority=research_authority,
+            execution_authority=authority,
+        )
     finally:
         con.close()

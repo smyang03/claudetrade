@@ -139,6 +139,9 @@ def _run(bot: FakeBot) -> dict:
     quote = {"name": "TEST", "price": 100.5, "open": 100.0, "prev_close": 100.0, "volume": 1000}
     with patch("runtime.us_swing_order_bridge.regular_open_dt", return_value=opened), patch(
         "runtime.us_swing_order_bridge.get_price", return_value=quote
+    ), patch(
+        "runtime.us_swing_order_bridge.get_runtime_path",
+        side_effect=lambda *parts, **_: bot.db_path.parent.joinpath(*parts),
     ):
         return run_us_swing_handoff(bot)
 
@@ -156,6 +159,9 @@ def test_successful_submit_is_persisted_and_second_scan_is_idempotent(tmp_path: 
     assert bot.submit_calls == 1
     assert bot.last_submit_kwargs["tp_pct"] == 0.12
     assert bot.last_submit_kwargs["sl_pct"] == 0.25
+    status = (tmp_path / "state" / "us_swing_execution_status.json").read_text(encoding="utf-8")
+    assert '"schema_version": "us_swing_execution_status_v1"' in status
+    assert '"status": "SKIPPED"' in status
     con = sqlite3.connect(db_path)
     assert con.execute(
         "SELECT handoff_status,handoff_order_no FROM signals WHERE ticker='TEST'"

@@ -4,6 +4,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+import hashlib
 import json
 import os
 
@@ -2909,6 +2910,21 @@ def _read_json_payload(path: Path) -> dict[str, Any]:
         return {}
 
 
+def _manifest_source_hash_valid(payload: dict[str, Any]) -> bool:
+    source = Path(str(payload.get("source_artifact") or ""))
+    expected = str(payload.get("source_sha256") or "")
+    if not expected or not source.is_file():
+        return False
+    digest = hashlib.sha256()
+    try:
+        with source.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return False
+    return digest.hexdigest() == expected
+
+
 def _timestamp_age_sec(value: Any) -> float | None:
     text = str(value or "").strip()
     if not text:
@@ -2939,14 +2955,24 @@ def _strategy_tracker_health(runtime_mode: str) -> dict[str, Any]:
     core_path = get_runtime_path("state", "core_shadow_tracker_heartbeat.json", make_parents=False)
     paired_path = get_runtime_path("state", "pathb_kr_paired_exit_heartbeat.json", make_parents=False)
     swing_path = get_runtime_path("state", "us_swing_status.json", make_parents=False)
+    swing_execution_path = get_runtime_path("state", "us_swing_execution_status.json", make_parents=False)
     profit_us_path = get_runtime_path("state", "profit_strategy_signals_US.json", make_parents=False)
     profit_kr_path = get_runtime_path("state", "profit_strategy_signals_KR.json", make_parents=False)
+    core_manifest_us_path = get_runtime_path(
+        "state", "profit_strategy_core_live_manifest_US.json", make_parents=False
+    )
+    core_manifest_kr_path = get_runtime_path(
+        "state", "profit_strategy_core_live_manifest_KR.json", make_parents=False
+    )
     profit_ledger_path = get_runtime_path("state", "profit_strategy_handoff.jsonl", make_parents=False)
     core = _read_json_payload(core_path)
     paired = _read_json_payload(paired_path)
     swing = _read_json_payload(swing_path)
+    swing_execution = _read_json_payload(swing_execution_path)
     profit_us = _read_json_payload(profit_us_path)
     profit_kr = _read_json_payload(profit_kr_path)
+    core_manifest_us = _read_json_payload(core_manifest_us_path)
+    core_manifest_kr = _read_json_payload(core_manifest_kr_path)
     scheduler_state_path = get_runtime_path(
         "state", f"preopen_scheduler_{str(runtime_mode or 'live').lower()}.json", make_parents=False
     )
@@ -2956,12 +2982,14 @@ def _strategy_tracker_health(runtime_mode: str) -> dict[str, Any]:
     core_missing = not bool(core)
     paired_missing = not bool(paired)
     swing_missing = not bool(swing)
+    swing_execution_missing = not bool(swing_execution)
 
     core_age = _timestamp_age_sec(core.get("last_success_at") or core.get("last_tick_at"))
     paired_age = _timestamp_age_sec(paired.get("last_tick_at") or paired.get("generated_at"))
     swing_age = _timestamp_age_sec(
         swing.get("updated_at") or swing.get("last_success_at") or swing.get("generated_at")
     )
+    swing_execution_age = _timestamp_age_sec(swing_execution.get("generated_at"))
     core["heartbeat_path"] = str(core_path)
     core["age_sec"] = core_age
     core["next_expected_overdue"] = _timestamp_overdue(core.get("next_expected_at"), grace_sec=21600)
@@ -3002,6 +3030,23 @@ def _strategy_tracker_health(runtime_mode: str) -> dict[str, Any]:
         or swing_age > 172800
         or failure_is_newer
     )
+    swing_execution["status_path"] = str(swing_execution_path)
+    swing_execution["age_sec"] = swing_execution_age
+    swing_execution["stale"] = bool(
+        swing_execution_missing
+        or swing_execution_age is None
+        or swing_execution_age > 172800
+    )
+    swing["research_authority"] = (
+        dict(swing.get("authority") or {}) if isinstance(swing.get("authority"), dict) else {}
+    )
+    swing["execution"] = swing_execution
+    swing["execution_authority"] = (
+        dict(swing_execution.get("execution_authority") or {})
+        if isinstance(swing_execution.get("execution_authority"), dict)
+        else {}
+    )
+    swing["execution_status_stale"] = bool(swing_execution.get("stale", True))
 
     effective, source = _effective_runtime_env(runtime_mode)
     env_path = Path(str(source.get("runtime_env") or ""))
@@ -3057,6 +3102,8 @@ def _strategy_tracker_health(runtime_mode: str) -> dict[str, Any]:
         "PROFIT_STRATEGY_ORDER_SUBMIT_ENABLED",
         "PROFIT_STRATEGY_KILL_SWITCH",
         "PROFIT_STRATEGY_ENABLED_IDS",
+        "PROFIT_STRATEGY_MAX_ORDER_KRW_US",
+        "PROFIT_STRATEGY_MAX_ORDER_KRW_KR",
     )
     profit_config = {key: str(effective.get(key) or "") for key in profit_config_keys}
     profit_runtime = {key: str(snapshot_effective.get(key) or "") for key in profit_config_keys}
@@ -3096,8 +3143,42 @@ def _strategy_tracker_health(runtime_mode: str) -> dict[str, Any]:
             "status": str(profit_kr.get("status") or "missing"),
             "errors": list(profit_kr.get("errors") or []),
         },
+        "core_live_manifests": {
+            "US": {
+                "path": str(core_manifest_us_path),
+                "status": str(core_manifest_us.get("status") or "missing"),
+                "authority": str(core_manifest_us.get("authority") or ""),
+                "session_date": str(core_manifest_us.get("session_date") or ""),
+                "generated_at": str(core_manifest_us.get("generated_at") or ""),
+                "source_sha256": str(core_manifest_us.get("source_sha256") or ""),
+                "signal_count": len(core_manifest_us.get("signals") or []),
+                "errors": list(core_manifest_us.get("errors") or []),
+                "valid": bool(
+                    core_manifest_us.get("status") == "healthy"
+                    and core_manifest_us.get("authority") == "MICRO_ENFORCE_OPERATOR_PROMOTED"
+                    and _manifest_source_hash_valid(core_manifest_us)
+                ),
+            },
+            "KR": {
+                "path": str(core_manifest_kr_path),
+                "status": str(core_manifest_kr.get("status") or "missing"),
+                "authority": str(core_manifest_kr.get("authority") or ""),
+                "session_date": str(core_manifest_kr.get("session_date") or ""),
+                "generated_at": str(core_manifest_kr.get("generated_at") or ""),
+                "source_sha256": str(core_manifest_kr.get("source_sha256") or ""),
+                "signal_count": len(core_manifest_kr.get("signals") or []),
+                "errors": list(core_manifest_kr.get("errors") or []),
+                "valid": bool(
+                    core_manifest_kr.get("status") == "healthy"
+                    and core_manifest_kr.get("authority") == "MICRO_ENFORCE_OPERATOR_PROMOTED"
+                    and _manifest_source_hash_valid(core_manifest_kr)
+                ),
+            },
+        },
         "authority_mode": profit_config.get("PROFIT_STRATEGY_AUTHORITY_MODE"),
         "kill_switch": profit_config.get("PROFIT_STRATEGY_KILL_SWITCH"),
+        "PROFIT_STRATEGY_MAX_ORDER_KRW_US": profit_config.get("PROFIT_STRATEGY_MAX_ORDER_KRW_US"),
+        "PROFIT_STRATEGY_MAX_ORDER_KRW_KR": profit_config.get("PROFIT_STRATEGY_MAX_ORDER_KRW_KR"),
         "config_matches_runtime": all(profit_config.get(key) == profit_runtime.get(key) for key in profit_config_keys),
         "enabled_ids": configured_ids,
         "enforced_ids": sorted(set(configured_ids) & live_core_ids),

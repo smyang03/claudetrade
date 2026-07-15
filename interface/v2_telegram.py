@@ -149,7 +149,14 @@ def _format_health(summary: dict[str, Any]) -> str:
     swing = trackers.get("us_swing") or {}
     profit = trackers.get("profit_strategies") or {}
     policy = trackers.get("kr_exit_policy") or {}
-    swing_authority = swing.get("authority") if isinstance(swing.get("authority"), dict) else {}
+    swing_research = (
+        swing.get("research_authority") if isinstance(swing.get("research_authority"), dict) else {}
+    )
+    swing_execution = swing.get("execution") if isinstance(swing.get("execution"), dict) else {}
+    swing_execution_authority = (
+        swing.get("execution_authority") if isinstance(swing.get("execution_authority"), dict) else {}
+    )
+    core_manifests = profit.get("core_live_manifests") if isinstance(profit.get("core_live_manifests"), dict) else {}
     enforced_ids = ",".join(profit.get("enforced_ids") or []) or "-"
     shadow_ids = ",".join(profit.get("disabled_shadow_ids") or profit.get("shadow_only_ids") or []) or "-"
     unknown_markets = ",".join(profit.get("order_unknown_markets") or []) or "-"
@@ -173,12 +180,15 @@ def _format_health(summary: dict[str, Any]) -> str:
                 f"ETA={paired.get('n15_eta_days') if paired.get('n15_eta_days') is not None else '-'}일"
             ),
             (
-                f"US swing: live={swing.get('live_configured_mode') or '-'} "
-                f"last_eval={swing_authority.get('configured_mode') or '-'}"
-                f"→{swing_authority.get('effective_mode') or '-'} "
+                f"US swing: research={swing_research.get('configured_mode') or '-'}"
+                f"→{swing_research.get('effective_mode') or '-'} "
+                f"execution={swing_execution_authority.get('eligible_mode') or swing_execution_authority.get('effective_mode') or '-'} "
+                f"budget={float(swing_execution.get('max_order_krw') or 0):,.0f}KRW "
+                f"override={_ko_bool(swing_execution.get('operator_override_applied'))} "
                 f"runtime_match={_ko_bool(swing.get('config_matches_runtime'))} "
-                f"stale={_ko_bool(swing.get('stale', True))} "
-                f"last={swing.get('updated_at') or swing.get('last_success_at') or swing.get('generated_at') or '-'} "
+                f"execution_stale={_ko_bool(swing.get('execution_status_stale', True))} "
+                f"last={swing_execution.get('generated_at') or '-'} "
+                f"result={swing_execution.get('status') or '-'}:{swing_execution.get('reason') or '-'} "
                 f"failure={swing.get('failed_session_date') or '-'}"
             ),
             (
@@ -187,6 +197,10 @@ def _format_health(summary: dict[str, Any]) -> str:
                 f"US_n={(profit.get('US') or {}).get('signal_count', 0)} "
                 f"KR_n={(profit.get('KR') or {}).get('signal_count', 0)} "
                 f"last={(profit.get('last_handoff') or {}).get('status') or '-'}"
+            ),
+            (
+                f"core live manifest: US={_ko_bool((core_manifests.get('US') or {}).get('valid'))} "
+                f"KR={_ko_bool((core_manifests.get('KR') or {}).get('valid'))}"
             ),
             f"주문 허용 전략: {enforced_ids}",
             f"shadow 전용(주문 제외): {shadow_ids}",

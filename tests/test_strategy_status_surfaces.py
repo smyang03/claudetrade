@@ -21,6 +21,19 @@ def _summary() -> dict:
                 },
                 "us_swing": {
                     "authority": {"configured_mode": "micro", "effective_mode": "micro"},
+                    "research_authority": {"configured_mode": "micro", "effective_mode": "shadow"},
+                    "execution_authority": {
+                        "eligible_mode": "micro_operator_trial",
+                        "effective_mode": "micro",
+                    },
+                    "execution": {
+                        "max_order_krw": 300000,
+                        "operator_override_applied": True,
+                        "status": "EVALUATED",
+                        "reason": "",
+                        "generated_at": "2026-07-15T22:40:00+09:00",
+                    },
+                    "execution_status_stale": False,
                     "live_configured_mode": "micro",
                     "config_matches_runtime": True,
                     "stale": False,
@@ -36,6 +49,10 @@ def _summary() -> dict:
                     "order_unknown_count": 1,
                     "US": {"signal_count": 2},
                     "KR": {"signal_count": 1},
+                    "core_live_manifests": {
+                        "US": {"valid": True},
+                        "KR": {"valid": True},
+                    },
                 },
                 "kr_exit_policy": {
                     "env_live": "SPLIT_RUNNER_V1",
@@ -57,7 +74,9 @@ def test_telegram_health_shows_enforced_shadow_and_fail_closed_state() -> None:
     assert "KR_US_SECTOR_PULSE_3D_V0" in text
     assert "전략 ORDER_UNKNOWN 차단" in text
     assert "markets=US count=1" in text
-    assert "US swing: live=micro last_eval=micro→micro" in text
+    assert "US swing: research=micro→shadow execution=micro_operator_trial" in text
+    assert "budget=300,000KRW" in text
+    assert "core live manifest" in text
 
 
 def test_dashboard_has_strategy_lane_status_surface() -> None:
@@ -66,4 +85,5 @@ def test_dashboard_has_strategy_lane_status_surface() -> None:
     assert 'id="strategy-lane-status"' in source
     assert "profit.order_unknown_blocked" in source
     assert "profit.enforced_ids" in source
-    assert "swingAuthority.effective_mode" in source
+    assert "swingExecutionAuthority.eligible_mode" in source
+    assert "coreManifests" in source

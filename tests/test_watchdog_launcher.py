@@ -32,6 +32,14 @@ def test_broker_truth_scheduler_loop_lives_in_headless_launcher() -> None:
         assert flag in text
 
 
+def test_headless_role_repair_does_not_race_running_broker_scheduler() -> None:
+    text = (ROOT / "tools" / "start_live_stack_headless.ps1").read_text(encoding="utf-8")
+
+    assert "$existingBotRunning" in text
+    assert "reuse the running scheduler for role repair" in text
+    assert "if ($existingBotRunning)" in text
+
+
 def test_live_stack_bat_must_not_launch_its_own_stack() -> None:
     """★중복 봇 사고(2026-07-13) 재발 방지.
 

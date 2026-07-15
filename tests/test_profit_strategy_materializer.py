@@ -5,7 +5,15 @@ from pathlib import Path
 
 import pandas as pd
 
-from tools.profit_strategy_materializer import consensus_signals, sector_pulse_signals
+import json
+
+from tools.profit_strategy_materializer import (
+    CORE_LIVE_AUTHORITY,
+    CORE_SOURCE_AUTHORITY,
+    consensus_signals,
+    materialize_core_live_manifest,
+    sector_pulse_signals,
+)
 
 
 def _selection_db(path: Path) -> None:
@@ -68,3 +76,72 @@ def test_sector_pulse_rejects_subthreshold_move() -> None:
         return pd.Series([100.0, 101.0], index=pd.to_datetime(["2026-07-13", "2026-07-14"]))
 
     assert sector_pulse_signals(session_date="2026-07-15", close_loader=loader) == []
+
+
+def _core_source(path: Path, *, authority: str = CORE_SOURCE_AUTHORITY) -> None:
+    path.write_text(json.dumps({
+        "schema_version": "core_shadow_targets_v1",
+        "authority": authority,
+        "as_of": "2026-07-15",
+        "signal_month": "2026-06",
+        "effective_month": "2026-07",
+        "arms": [{
+            "strategy_id": "US_SCHG_BIL_TREND_V1",
+            "market": "US",
+            "role": "primary",
+            "weights": {"SCHG": 1.0},
+        }],
+    }), encoding="utf-8")
+
+
+def _live_env() -> dict[str, str]:
+    return {
+        "PROFIT_STRATEGY_AUTHORITY_MODE": "micro",
+        "PROFIT_STRATEGY_ORDER_HANDOFF_ENABLED": "true",
+        "PROFIT_STRATEGY_ORDER_SUBMIT_ENABLED": "true",
+        "PROFIT_STRATEGY_KILL_SWITCH": "false",
+        "PROFIT_STRATEGY_ORDER_LIVE_ACK": "I_ACCEPT_LIVE_PROFIT_STRATEGIES",
+        "PROFIT_STRATEGY_ENABLED_IDS": "US_SCHG_BIL_TREND_V1,KR_FACTOR_TREND_V1",
+    }
+
+
+def test_core_live_manifest_is_explicit_hashed_promotion(tmp_path: Path) -> None:
+    source = tmp_path / "core.json"
+    output = tmp_path / "manifest.json"
+    _core_source(source)
+
+    payload = materialize_core_live_manifest(
+        market="US",
+        session_date="2026-07-15",
+        output_path=output,
+        source_path=source,
+        env=_live_env(),
+    )
+
+    assert payload["status"] == "healthy"
+    assert payload["authority"] == CORE_LIVE_AUTHORITY
+    assert payload["source_authority"] == CORE_SOURCE_AUTHORITY
+    assert len(payload["source_sha256"]) == 64
+    assert payload["signals"][0]["ticker"] == "SCHG"
+    assert json.loads(output.read_text(encoding="utf-8"))["source_sha256"] == payload["source_sha256"]
+
+
+def test_core_live_manifest_fails_closed_without_operator_contract(tmp_path: Path) -> None:
+    source = tmp_path / "core.json"
+    output = tmp_path / "manifest.json"
+    _core_source(source)
+    env = _live_env()
+    env["PROFIT_STRATEGY_ORDER_LIVE_ACK"] = ""
+
+    payload = materialize_core_live_manifest(
+        market="US",
+        session_date="2026-07-15",
+        output_path=output,
+        source_path=source,
+        env=env,
+    )
+
+    assert payload["status"] == "blocked"
+    assert payload["authority"] == "NO_LIVE_AUTHORITY"
+    assert payload["signals"] == []
+    assert "operator_live_ack_missing" in payload["errors"]

@@ -42,6 +42,44 @@ def test_position_merge_preserves_broker_integrity_status() -> None:
     assert pos["broker_missing_seen_count"] == 1
 
 
+def test_live_mark_updates_display_price_without_changing_broker_qty_or_cost() -> None:
+    broker_rows = [{
+        "ticker": "SCHG",
+        "market": "US",
+        "qty": 1,
+        "avg_price": 34.81,
+        "current_price": 34.81,
+    }]
+    live_rows = [{
+        "ticker": "SCHG",
+        "market": "US",
+        "qty": 99,
+        "avg_price": 1.0,
+        "current_price": 34.75,
+    }]
+
+    merged = dashboard_server._merge_positions_for_display("US", broker_rows, live_rows, broker_ok=True)
+    changed = dashboard_server._apply_live_position_mark_overlays(merged, live_rows)
+
+    assert changed == 1
+    assert merged[0]["qty"] == 1
+    assert merged[0]["avg_price"] == 34.81
+    assert merged[0]["current_price"] == 34.75
+    assert merged[0]["display_quote_source"] == "live_status_mark"
+    assert merged[0]["pnl_pct"] < 0
+
+
+def test_profit_strategy_positions_are_not_mislabeled_as_plan_a() -> None:
+    assert dashboard_server._position_buy_path_label({
+        "source_strategy": "us_schg_bil_trend_v1",
+        "strategy": "MICRO_PROBE",
+    }) == "Core"
+    assert dashboard_server._position_buy_path_label({
+        "source_strategy": "us_swing_5d",
+        "strategy": "MICRO_PROBE",
+    }) == "US Swing"
+
+
 def test_judgment_basis_exposes_execution_authority_labels() -> None:
     preopen = dashboard_server._judgment_basis(
         {

@@ -8,6 +8,7 @@ guards and an append-only handoff ledger.  Research tools never call it.
 """
 
 from datetime import datetime
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,8 @@ from runtime_paths import get_runtime_path
 
 log = get_trading_logger()
 LIVE_ACK = "I_ACCEPT_LIVE_PROFIT_STRATEGIES"
+CORE_LIVE_AUTHORITY = "MICRO_ENFORCE_OPERATOR_PROMOTED"
+CORE_SOURCE_AUTHORITY = "SHADOW_ONLY_NO_ORDER_OR_LIVE_CONFIG_EFFECT"
 CORE_IDS = {"US_SCHG_BIL_TREND_V1", "KR_FACTOR_TREND_V1"}
 # Research challengers may still be materialized for forward observation, but
 # absence of an explicit live allowlist must never promote them to orders.
@@ -53,44 +56,69 @@ def _enabled_ids(bot: Any) -> set[str]:
     return {item.strip().upper() for item in raw.split(",") if item.strip()}
 
 
-def _core_signal_path() -> Path | None:
-    directory = get_runtime_path("data", "shadow")
-    rows = sorted(directory.glob("core_shadow_signal_*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
-    return rows[0] if rows else None
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def load_core_signals(*, market: str, session_date: str) -> list[dict[str, Any]]:
-    path = _core_signal_path()
-    payload = _read_json(path) if path else {}
-    if str(payload.get("effective_month") or "") != str(session_date)[:7]:
+    market_key = str(market or "").upper()
+    path = get_runtime_path(
+        "state", f"profit_strategy_core_live_manifest_{market_key}.json", make_parents=False
+    )
+    payload = _read_json(path)
+    if (
+        payload.get("schema_version") != "profit_strategy_core_live_manifest_v1"
+        or payload.get("authority") != CORE_LIVE_AUTHORITY
+        or payload.get("status") != "healthy"
+        or str(payload.get("market") or "").upper() != market_key
+        or str(payload.get("session_date") or "") != session_date
+        or str(payload.get("effective_month") or "") != str(session_date)[:7]
+    ):
+        return []
+    source_path = Path(str(payload.get("source_artifact") or ""))
+    if (
+        not source_path.is_file()
+        or str(payload.get("source_authority") or "") != CORE_SOURCE_AUTHORITY
+        or not str(payload.get("source_sha256") or "")
+        or _sha256(source_path) != str(payload.get("source_sha256") or "")
+    ):
+        return []
+    expected = {
+        "US": ("US_SCHG_BIL_TREND_V1", {"SCHG", "BIL"}),
+        "KR": ("KR_FACTOR_TREND_V1", {"275280", "275300"}),
+    }.get(market_key)
+    if expected is None:
         return []
     output: list[dict[str, Any]] = []
-    for arm in payload.get("arms") or []:
-        if str(arm.get("role") or "") != "primary" or str(arm.get("market") or "").upper() != market:
-            continue
-        strategy_id = str(arm.get("strategy_id") or "").upper()
-        for asset, weight in (arm.get("weights") or {}).items():
-            if float(weight or 0.0) <= 0:
-                continue
-            output.append({
-                "strategy_id": strategy_id,
-                "source_strategy": strategy_id.lower(),
-                "market": market,
-                "ticker": _ticker_key(market, str(asset)),
-                "signal_date": str(payload.get("signal_month") or ""),
-                "entry_session_date": session_date,
-                "known_at": str(payload.get("as_of") or ""),
-                "rank": len(output) + 1,
-                "priority": float(weight),
-                "hold_sessions": 9999,
-                "weight": float(weight),
-                "evidence": {
-                    "effective_month": payload.get("effective_month"),
-                    "target_asset": str(asset),
-                    "core_policy": "monthly_target_rebalance",
-                    "target_snapshot": str(path or ""),
-                },
-            })
+    strategy_id, allowed_tickers = expected
+    for raw in payload.get("signals") or []:
+        row = dict(raw) if isinstance(raw, dict) else {}
+        ticker = _ticker_key(market_key, str(row.get("ticker") or ""))
+        try:
+            weight = float(row.get("weight") or 0.0)
+        except Exception:
+            return []
+        if (
+            str(row.get("strategy_id") or "").upper() != strategy_id
+            or str(row.get("market") or "").upper() != market_key
+            or str(row.get("entry_session_date") or "") != session_date
+            or ticker not in allowed_tickers
+            or not 0.0 < weight <= 1.0
+        ):
+            return []
+        row["ticker"] = ticker
+        row["weight"] = weight
+        evidence = dict(row.get("evidence") or {})
+        evidence["live_manifest"] = str(path)
+        evidence["source_sha256"] = str(payload.get("source_sha256") or "")
+        row["evidence"] = evidence
+        output.append(row)
+    if not output or sum(float(row.get("weight") or 0.0) for row in output) > 1.000001:
+        return []
     return output
 
 

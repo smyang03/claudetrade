@@ -10,40 +10,52 @@ from lifecycle.event_store import EventStore
 
 
 class SelectionMetaCompactionTests(unittest.TestCase):
-    def test_compact_strips_only_heavy_unused_keys(self) -> None:
+    def test_compact_keeps_only_consumed_per_ticker_projection(self) -> None:
         meta = {
             "trade_ready": ["A"],
             "watchlist": ["B"],
             "consensus_mode": "BEAR",
-            "_final_prompt_pool": [{"x": 1}],
+            "price_targets": {"A": {"target": 101}, "B": {"target": 202}},
+            "_final_prompt_pool": [{
+                "ticker": "A",
+                "candidate_pool_role": "DISCOVERY",
+                "discovery_reason": "sector wave",
+                "huge_unused": "p" * 1000,
+            }],
             "_live_evidence": {"e": 1},
             "_adaptive_live_condition": {"a": 1},
+            "candidate_actions": [{"ticker": "A", "blob": "c" * 1000}],
+            "_candidate_action_routes": [{"ticker": "A", "blob": "r" * 1000}],
             "_post_open_features_by_ticker": {"A": {"big": "x" * 100}},
             "_shadow_overlay_prompt_pool": ["y" * 100],
             "_strategy_feasibility_by_ticker": {"A": "z" * 100},
             "_excluded_from_prompt": [{"candidate": {"ticker": "Z"}}],
         }
-        out = _compact_selection_meta(meta)
-        self.assertEqual(
-            set(meta) - set(out),
-            {
-                "_post_open_features_by_ticker",
-                "_shadow_overlay_prompt_pool",
-                "_strategy_feasibility_by_ticker",
-                "_excluded_from_prompt",
-            },
-        )
-        for keep in ("trade_ready", "watchlist", "consensus_mode", "_final_prompt_pool", "_live_evidence", "_adaptive_live_condition"):
-            self.assertIn(keep, out)
+        out = _compact_selection_meta(meta, ticker="A", market="US")
+        self.assertEqual(out["trade_ready"], ["A"])
+        self.assertNotIn("watchlist", out)
+        self.assertEqual(out["price_targets"], {"A": {"target": 101}})
+        self.assertEqual(out["_final_prompt_pool"], [{
+            "ticker": "A",
+            "candidate_pool_role": "DISCOVERY",
+            "discovery_reason": "sector wave",
+        }])
+        for removed in (
+            "_live_evidence", "_adaptive_live_condition", "candidate_actions",
+            "_candidate_action_routes", "_post_open_features_by_ticker",
+            "_shadow_overlay_prompt_pool", "_strategy_feasibility_by_ticker",
+            "_excluded_from_prompt",
+        ):
+            self.assertNotIn(removed, out)
 
     def test_compact_does_not_mutate_original(self) -> None:
         meta = {"trade_ready": ["A"], "_post_open_features_by_ticker": {"A": 1}}
         _compact_selection_meta(meta)
         self.assertIn("_post_open_features_by_ticker", meta)
 
-    def test_compact_returns_same_object_when_no_heavy_keys(self) -> None:
+    def test_compact_always_returns_detached_projection(self) -> None:
         meta = {"trade_ready": ["A"]}
-        self.assertIs(_compact_selection_meta(meta), meta)
+        self.assertIsNot(_compact_selection_meta(meta), meta)
 
     def test_registered_event_payload_excludes_heavy_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -73,6 +85,8 @@ class SelectionMetaCompactionTests(unittest.TestCase):
             self.assertNotIn("_excluded_from_prompt", stored_meta)
             self.assertIn("trade_ready", stored_meta)
             self.assertIn("consensus_mode", stored_meta)
+            self.assertEqual(stored_meta["recommended_strategy"], {"005930": "orp"})
+            self.assertLess(len(json.dumps(ready[0]["payload"])), 8192)
             # 원본 meta는 훼손되지 않아야 한다
             self.assertIn("_post_open_features_by_ticker", meta)
 

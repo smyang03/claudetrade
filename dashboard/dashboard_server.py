@@ -3408,7 +3408,19 @@ def _merge_positions_for_display(
         ticker = str(pos.get("ticker", "") or "").strip().upper()
         if not ticker:
             continue
-        merged.append(_merge_position_context(pos, live_map.get(ticker)))
+        item = _merge_position_context(pos, live_map.get(ticker))
+        # Broker truth owns position identity, quantity and cost basis.  The
+        # live status overlay contributes strategy/exit context and, in the
+        # separate mark overlay below, only the freshest display quote.
+        item["qty"] = pos.get("qty", 0)
+        broker_avg = pos.get("avg_price") or pos.get("entry") or 0
+        if broker_avg:
+            item["avg_price"] = broker_avg
+            item["entry"] = pos.get("entry") or broker_avg
+            item["display_avg_price"] = pos.get("display_avg_price") or broker_avg
+            if pos.get("raw_avg_price") not in (None, "", 0):
+                item["raw_avg_price"] = pos.get("raw_avg_price")
+        merged.append(item)
         seen.add(ticker)
 
     # broker API 성공 시 broker를 ground truth로 사용 (보유 0개 포함)
@@ -3419,6 +3431,49 @@ def _merge_positions_for_display(
                 merged.append(_merge_position_context(pos, None))
 
     return merged
+
+
+def _apply_live_position_mark_overlays(positions: list, live_positions: list) -> int:
+    """Overlay only fresh marks; broker remains truth for qty and cost basis."""
+
+    live_map = {
+        str(row.get("ticker") or "").strip().upper(): row
+        for row in live_positions or []
+        if isinstance(row, dict) and str(row.get("ticker") or "").strip()
+    }
+    changed = 0
+    for pos in positions or []:
+        ticker = str((pos or {}).get("ticker") or "").strip().upper()
+        overlay = live_map.get(ticker) or {}
+        price = _num_or_zero(
+            overlay.get("display_current_price")
+            or overlay.get("current_price")
+            or overlay.get("raw_current_price")
+        )
+        if price <= 0:
+            continue
+        if _apply_position_quote_fields(pos, price):
+            changed += 1
+        pos["display_quote_source"] = "live_status_mark"
+    return changed
+
+
+def _position_buy_path_label(pos: dict) -> str:
+    path_type = str(
+        pos.get("path_type", "")
+        or pos.get("source_strategy", "")
+        or pos.get("strategy", "")
+    ).strip()
+    source = str(pos.get("source_strategy") or "").strip().lower()
+    if source in {"us_schg_bil_trend_v1", "kr_factor_trend_v1"}:
+        return "Core"
+    if source == "us_swing_5d":
+        return "US Swing"
+    if bool(pos.get("pathb_path_run_id")) or path_type.lower() in ("claude_price", "pathb"):
+        return "PathB"
+    if str(pos.get("strategy", "") or "").strip() in ("broker_sync", "broker_balance"):
+        return "브로커"
+    return "PlanA"
 
 
 def _broker_trade_rows_with_pnl(market: str, period: str, start: str, end: str, mode: str = "paper") -> list[dict]:
@@ -6135,6 +6190,7 @@ def api_summary():
         else _saved_positions_for_market(market, mode=mode)
     )
     positions = _merge_positions_for_display(market, broker_positions, position_context, broker_ok=broker_ok)
+    _apply_live_position_mark_overlays(positions, position_context)
     _apply_dashboard_position_quote_overlays(market, positions, mode)
     _attach_position_sell_signals(positions, market, mode)
     pending_orders = _filter_items_for_market(live.get("pending_orders", []) if live else [], market)
@@ -6146,9 +6202,7 @@ def api_summary():
             or pos.get("source_strategy", "")
             or pos.get("strategy", "")
         ).strip()
-        is_pathb = bool(pos.get("pathb_path_run_id")) or path_type.lower() in ("claude_price", "pathb")
-        is_synced_only = str(pos.get("strategy", "") or "").strip() in ("broker_sync", "broker_balance")
-        pos["buy_path"] = "PathB" if is_pathb else ("브로커" if is_synced_only else "PlanA")
+        pos["buy_path"] = _position_buy_path_label(pos)
         pos["path_type"] = path_type
     for order in pending_orders:
         order["display_ticker"] = _display_ticker_label(order.get("ticker", ""), order.get("name", ""), name_map)
@@ -6199,6 +6253,29 @@ def api_summary():
                 base_equity = float(cum_asset) - float(pnl_krw)
                 if base_equity > 0:
                     pnl_pct = (float(pnl_krw) / base_equity) * 100.0
+
+    marked_positions = [
+        pos for pos in positions
+        if str(pos.get("display_quote_source") or "") == "live_status_mark"
+    ]
+    if marked_positions:
+        marked_unrealized_native = sum(
+            (
+                _num_or_zero(pos.get("display_current_price") or pos.get("current_price"))
+                - _num_or_zero(pos.get("display_avg_price") or pos.get("avg_price") or pos.get("entry"))
+            ) * _num_or_zero(pos.get("qty"))
+            for pos in marked_positions
+        )
+        unrealized_pnl_krw = (
+            marked_unrealized_native * float(usd_krw or 0.0)
+            if market == "US"
+            else marked_unrealized_native
+        )
+        pnl_krw = float(realized_pnl_krw or 0.0) + float(unrealized_pnl_krw or 0.0)
+        if cum_asset:
+            base_equity = float(cum_asset) - float(pnl_krw)
+            if base_equity > 0:
+                pnl_pct = float(pnl_krw) / base_equity * 100.0
 
     live_equity_summary: dict = {}
     if live_mode:
@@ -13968,7 +14045,7 @@ async function loadSummary() {
       const stratRaw = pos.strategy || '';
       const stratLabel = !stratRaw || stratRaw === 'broker_balance' || stratRaw === 'broker_sync' ? '' : stratRaw;
       const buyPath = pos.buy_path || ((pos.pathb_path_run_id || pos.path_type === 'claude_price') ? 'PathB' : (stratLabel ? 'PlanA' : '브로커'));
-      const planColor = buyPath === 'PathB' ? '#93c5fd' : (buyPath === 'PlanA' ? '#34d399' : '#94a3b8');
+      const planColor = buyPath === 'PathB' ? '#93c5fd' : (buyPath === 'PlanA' ? '#34d399' : (buyPath === 'Core' ? '#fbbf24' : (buyPath === 'US Swing' ? '#c084fc' : '#94a3b8')));
       const planBadge = `<span style="font-size:10px;color:${planColor};border:1px solid ${planColor}66;border-radius:999px;padding:1px 6px;margin-left:6px;white-space:nowrap">${buyPath}</span>`;
       const tickerDisp2 = pos.display_ticker || pos.ticker;
       const nameDisp2   = pos.name && !tickerDisp2.includes(pos.name) ? pos.name : '';
@@ -14079,7 +14156,7 @@ async function loadSummary() {
               <div style="font-size:11px;color:${netColor2}">${netStr2}${pnlKrwText ? ' · '+pnlKrwText : ''}</div>
             </div>
           </div>
-          <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${[buyPath === 'PathB' ? 'B플랜 가격대 진입' : (buyPath === 'PlanA' ? 'A플랜 신호 진입' : ''), stratLabel, qty+'주', entryDate ? entryDate+(heldDays?' ('+heldDays+'일째)':'') : (heldDays?heldDays+'일째':'')].filter(Boolean).join(' · ')}</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${[buyPath === 'PathB' ? 'B플랜 가격대 진입' : (buyPath === 'PlanA' ? 'A플랜 신호 진입' : (buyPath === 'Core' ? '저회전 코어 슬리브' : (buyPath === 'US Swing' ? '미국 5일 스윙' : ''))), stratLabel, qty+'주', entryDate ? entryDate+(heldDays?' ('+heldDays+'일째)':'') : (heldDays?heldDays+'일째':'')].filter(Boolean).join(' · ')}</div>
           <div style="display:flex;gap:16px;margin-bottom:4px">
             <div><div style="font-size:10px;color:var(--text-dim)">매수가</div><div style="font-family:var(--mono);font-size:12px">${entry}</div></div>
             <div><div style="font-size:10px;color:var(--text-dim)">현재가</div><div style="font-family:var(--mono);font-size:12px">${cur}</div></div>
@@ -15189,7 +15266,10 @@ async function loadPathB() {
   const trackers = (((d || {}).system_health || {}).strategy_trackers) || {};
   const profit = trackers.profit_strategies || {};
   const swing = trackers.us_swing || {};
-  const swingAuthority = swing.authority || {};
+  const swingResearch = swing.research_authority || {};
+  const swingExecution = swing.execution || {};
+  const swingExecutionAuthority = swing.execution_authority || {};
+  const coreManifests = profit.core_live_manifests || {};
   const core = trackers.core_shadow || {};
   const paired = trackers.paired_exit || {};
   const exitPolicy = trackers.kr_exit_policy || {};
@@ -15204,7 +15284,8 @@ async function loadPathB() {
       + `<div><strong>shadow 전용(주문 제외)</strong>: ${shadowIds}</div>`
       + `<div><strong>전략 주문 안전</strong>: <span style="color:${unknownBlocked ? '#fca5a5' : '#86efac'}">${unknownBlocked ? 'ORDER_UNKNOWN 차단 중' : '정상'}</span> · 시장 ${unknownMarkets} · 누적 ${Number(profit.order_unknown_count || 0)}건 · 설정/실행 ${profit.config_matches_runtime ? '일치' : '불일치'}</div>`
       + `<div><strong>신호</strong>: US ${Number((profit.US || {}).signal_count || 0)}건 · KR ${Number((profit.KR || {}).signal_count || 0)}건 · 최근 handoff ${pathbEscapeHtml((profit.last_handoff || {}).status || '-')}</div>`
-      + `<div><strong>US swing</strong>: live ${pathbEscapeHtml(swing.live_configured_mode || '-')} · 마지막 평가 ${pathbEscapeHtml(swingAuthority.configured_mode || '-')}→${pathbEscapeHtml(swingAuthority.effective_mode || '-')} · 설정/실행 ${swing.config_matches_runtime ? '일치' : '불일치'} · stale ${swing.stale ? '예' : '아니오'} · 실패 세션 ${pathbEscapeHtml(swing.failed_session_date || '-')}</div>`
+      + `<div><strong>코어 live manifest</strong>: US ${(coreManifests.US || {}).valid ? '유효' : '차단'} · KR ${(coreManifests.KR || {}).valid ? '유효' : '차단'} · US 상한 ${fmtMoney(Number(profit.PROFIT_STRATEGY_MAX_ORDER_KRW_US || 0))}원 · KR 상한 ${fmtMoney(Number(profit.PROFIT_STRATEGY_MAX_ORDER_KRW_KR || 0))}원</div>`
+      + `<div><strong>US swing</strong>: 연구 ${pathbEscapeHtml(swingResearch.configured_mode || '-')}→${pathbEscapeHtml(swingResearch.effective_mode || '-')} · 실행 ${pathbEscapeHtml(swingExecutionAuthority.eligible_mode || swingExecutionAuthority.effective_mode || '-')} · 상한 ${fmtMoney(Number(swingExecution.max_order_krw || 0))}원 · override ${swingExecution.operator_override_applied ? '예' : '아니오'} · 최근 ${pathbEscapeHtml(swingExecution.status || '-')}:${pathbEscapeHtml(swingExecution.reason || '-')} · execution stale ${swing.execution_status_stale ? '예' : '아니오'}</div>`
       + `<div><strong>코어 트래커</strong>: ${pathbEscapeHtml(core.status || 'missing')} · stale ${core.stale ? '예' : '아니오'} · 마지막 ${pathbEscapeHtml(core.last_success_at || core.last_tick_at || '-')}</div>`
       + `<div><strong>KR paired A/B</strong>: ${pathbEscapeHtml(paired.clock_status || 'STARVED')} · gate n=${Number(paired.gate_sample_total || 0)}/15 · 7일 신규 ${Number(paired.paired_eligible_7d || 0)}건</div>`
       + `<div><strong>KR 출구 정책</strong>: ${pathbEscapeHtml(exitPolicy.runtime_snapshot || '-')} · 이중소스/실행 ${exitPolicy.ok ? '일치' : '불일치'}</div>`;
@@ -15561,7 +15642,9 @@ function koBuyPath(v) {
     path_b: 'B플랜(클로드 가격)',
     timing_adapter: 'A플랜(타이밍 어댑터)',
     claude_price: 'B플랜(클로드 가격)',
-    manual_or_broker: '수동/브로커 동기화'
+    manual_or_broker: '수동/브로커 동기화',
+    Core: '저회전 코어',
+    'US Swing': '미국 5일 스윙'
   };
   return m[v] || v || '';
 }

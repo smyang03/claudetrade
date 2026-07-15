@@ -37,17 +37,32 @@ $roles = @(
     @{ Name = "integrity_check"; PidFile = ""; Args = @("tools\integrity_check.py", "--watch", "--interval-sec", "600", "--telegram-alert") }
 )
 
-# Break the cold-start dependency cycle: live guardian requires fresh broker
-# truth before it may launch the bot, while the long-running scheduler is
-# normally started later in this script.  A forced read-only refresh provides
-# that evidence without creating or changing orders.
+# Break the cold-start dependency cycle only when the bot is actually absent.
+# When the bot is already alive, a missing dashboard/observer role must be
+# repairable without racing the single-instance broker-truth scheduler.
+$existingBotPid = 0
+$existingBotRunning = $false
+$existingBotPidPath = Join-Path $Root "state\live_trading_bot.pid"
+if (Test-Path -LiteralPath $existingBotPidPath) {
+    try {
+        $existingBotPid = [int]((Get-Content -LiteralPath $existingBotPidPath -Raw | ConvertFrom-Json).pid)
+        $existingBotRunning = [bool](Get-Process -Id $existingBotPid -ErrorAction SilentlyContinue)
+    } catch {
+        $existingBotPid = 0
+        $existingBotRunning = $false
+    }
+}
 if (-not $DryRun) {
-    & $PythonExe "tools\broker_truth_scheduler.py" "--mode" "live" "--markets" "KR,US" "--once" "--force" "--json"
-    if ($LASTEXITCODE -ne 0) {
-        throw "Initial broker-truth refresh failed; trading_bot was not started."
+    if ($existingBotRunning) {
+        Write-Output "[BROKER TRUTH] bot already alive pid=$existingBotPid; reuse the running scheduler for role repair"
+    } else {
+        & $PythonExe "tools\broker_truth_scheduler.py" "--mode" "live" "--markets" "KR,US" "--once" "--force" "--json"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Initial broker-truth refresh failed; trading_bot was not started."
+        }
     }
 } else {
-    Write-Output "[DRY-RUN] would force one read-only broker-truth refresh before guardian startup"
+    Write-Output "[DRY-RUN] would force broker truth only if trading_bot is absent"
 }
 
 $manifestPath = Join-Path $Root "state\headless_live_stack_pids.json"

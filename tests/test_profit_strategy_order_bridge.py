@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import json
 from types import SimpleNamespace
 
 from bot.session_date import KST
-from runtime.profit_strategy_order_bridge import run_profit_strategy_handoff
+from runtime.profit_strategy_order_bridge import load_core_signals, run_profit_strategy_handoff
+from tools.profit_strategy_materializer import materialize_core_live_manifest
 
 
 class FakeBot:
@@ -183,3 +185,92 @@ def test_broker_rejection_is_not_retried_same_session(tmp_path, monkeypatch) -> 
     assert second["reason"] == "daily_strategy_order_cap"
     assert second["attempted"] == 1
     assert len(bot.submitted) == 1
+
+
+def test_core_loader_rejects_shadow_file_and_accepts_hashed_live_manifest(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "core_shadow_signal_202607.json"
+    source.write_text(json.dumps({
+        "schema_version": "core_shadow_targets_v1",
+        "authority": "SHADOW_ONLY_NO_ORDER_OR_LIVE_CONFIG_EFFECT",
+        "as_of": "2026-07-15",
+        "signal_month": "2026-06",
+        "effective_month": "2026-07",
+        "arms": [{
+            "strategy_id": "US_SCHG_BIL_TREND_V1",
+            "market": "US",
+            "role": "primary",
+            "weights": {"SCHG": 1.0},
+        }],
+    }), encoding="utf-8")
+    monkeypatch.setattr(
+        "runtime.profit_strategy_order_bridge.get_runtime_path",
+        lambda *parts, **__: tmp_path.joinpath(*parts),
+    )
+    assert load_core_signals(market="US", session_date="2026-07-15") == []
+
+    manifest = tmp_path / "state" / "profit_strategy_core_live_manifest_US.json"
+    env = {
+        "PROFIT_STRATEGY_AUTHORITY_MODE": "micro",
+        "PROFIT_STRATEGY_ORDER_HANDOFF_ENABLED": "true",
+        "PROFIT_STRATEGY_ORDER_SUBMIT_ENABLED": "true",
+        "PROFIT_STRATEGY_KILL_SWITCH": "false",
+        "PROFIT_STRATEGY_ORDER_LIVE_ACK": "I_ACCEPT_LIVE_PROFIT_STRATEGIES",
+        "PROFIT_STRATEGY_ENABLED_IDS": "US_SCHG_BIL_TREND_V1",
+    }
+    materialize_core_live_manifest(
+        market="US",
+        session_date="2026-07-15",
+        output_path=manifest,
+        source_path=source,
+        env=env,
+    )
+    rows = load_core_signals(market="US", session_date="2026-07-15")
+    assert [(row["strategy_id"], row["ticker"]) for row in rows] == [
+        ("US_SCHG_BIL_TREND_V1", "SCHG")
+    ]
+
+    source.write_text(source.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    assert load_core_signals(market="US", session_date="2026-07-15") == []
+
+
+def test_existing_core_position_is_never_topped_up_after_budget_change(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "runtime.profit_strategy_order_bridge.regular_open_dt",
+        lambda *_: datetime.now(KST) - timedelta(minutes=10),
+    )
+    monkeypatch.setattr(
+        "runtime.profit_strategy_order_bridge.get_runtime_path",
+        lambda *parts, **__: tmp_path.joinpath(*parts),
+    )
+    signal = [{
+        "strategy_id": "US_SCHG_BIL_TREND_V1",
+        "source_strategy": "us_schg_bil_trend_v1",
+        "market": "US",
+        "ticker": "SCHG",
+        "entry_session_date": "2026-07-15",
+        "known_at": "2026-07-15",
+        "rank": 1,
+        "priority": 1.0,
+        "hold_sessions": 9999,
+        "weight": 1.0,
+    }]
+    monkeypatch.setattr("runtime.profit_strategy_order_bridge.load_signals", lambda *_, **__: signal)
+    bot = FakeBot(cash=1_000_000.0)
+    bot.config["PROFIT_STRATEGY_ENABLED_IDS"] = "US_SCHG_BIL_TREND_V1"
+    bot.config["PROFIT_STRATEGY_MAX_ORDER_KRW_US"] = 300000
+    bot.risk.positions = [{
+        "market": "US",
+        "ticker": "SCHG",
+        "qty": 1,
+        "source_strategy": "us_schg_bil_trend_v1",
+    }]
+
+    result = run_profit_strategy_handoff(bot, "US")
+
+    assert bot.submitted == []
+    assert result["results"] == [{
+        "strategy_id": "US_SCHG_BIL_TREND_V1",
+        "ticker": "SCHG",
+        "status": "SKIPPED",
+        "reason": "already_open_for_strategy",
+    }]

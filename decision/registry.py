@@ -12,31 +12,89 @@ from lifecycle.models import (
 )
 
 
-# CLAUDE_TRADE_READY 이벤트/결정 payload에 저장할 때 걷어내는 대용량 내부 작업 필드.
-# 선정 파이프라인 내부용이며 영속 payload에서 다시 읽는 소비처가 없음을 실측 확인(2026-07-14).
-# 각각 종목별 배치에서 selection_meta 전체가 종목마다 중복 저장돼 event_store를 1.4GB로
-# 부풀렸다(CLAUDE_TRADE_READY 993건×평균 732KB=694MB). 아래 4개가 1732KB 중 1147KB(66%).
-# - _post_open_features_by_ticker / _shadow_overlay_prompt_pool / _strategy_feasibility_by_ticker: 소비처 0건
-# - _excluded_from_prompt: backfill_candidate_audit이 raw_calls 원문에서 읽으므로 event에서 제거해도 무해
-_SELECTION_META_HEAVY_UNUSED_KEYS = (
-    "_post_open_features_by_ticker",
-    "_shadow_overlay_prompt_pool",
-    "_strategy_feasibility_by_ticker",
-    "_excluded_from_prompt",
+# CLAUDE_TRADE_READY는 종목마다 한 건씩 영속된다. 전체 후보 작업공간을
+# 복제하지 않고 실제 lifecycle/learning 소비 필드만 종목별로 투영한다.
+_PERSISTED_SCALAR_KEYS = (
+    "consensus_mode",
+    "_selection_raw_schema",
+    "_selection_schema_version",
+    "_selection_stop_reason",
+    "_candidate_actions_source",
+    "_candidate_actions_missing_contract",
+    "_fallback_mode",
+    "generated_at",
+)
+_PERSISTED_TICKER_MAP_KEYS = (
+    "price_targets",
+    "_pathb_price_targets",
+    "recommended_strategy",
+    "timing_style",
+    "reasons",
+    "veto",
+    "_discovery_role_by_ticker",
+    "_discovery_action_ceiling_by_ticker",
+)
+_PERSISTED_PROMPT_ROW_KEYS = (
+    "ticker",
+    "candidate_pool_role",
+    "discovery_action_ceiling",
+    "discovery_signal_family",
+    "discovery_reason",
+    "discovery_overlay_rank",
 )
 
 
-def _compact_selection_meta(selection_meta: dict[str, Any] | None) -> dict[str, Any]:
-    """영속 payload용 selection_meta 축소본(원본 비파괴).
+def _ticker_key(market: str, value: Any) -> str:
+    text = str(value or "").strip()
+    return text.upper() if str(market or "").upper() == "US" else text
 
-    소비되지 않는 대용량 내부 필드만 제거한다. 파이프라인이 계속 쓰는 원본 dict는
-    건드리지 않으므로 얕은 복사 후 지정 키만 뺀다.
-    """
+
+def _map_item(value: Any, *, market: str, ticker: str) -> tuple[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    wanted = _ticker_key(market, ticker)
+    for raw_key, raw_value in value.items():
+        if _ticker_key(market, raw_key) == wanted:
+            return str(raw_key), raw_value
+    return None
+
+
+def _compact_selection_meta(
+    selection_meta: dict[str, Any] | None,
+    *,
+    ticker: str = "",
+    market: str = "",
+) -> dict[str, Any]:
+    """Return a non-mutating, per-ticker lifecycle projection."""
     if not isinstance(selection_meta, dict):
         return {}
-    if not any(k in selection_meta for k in _SELECTION_META_HEAVY_UNUSED_KEYS):
-        return selection_meta
-    return {k: v for k, v in selection_meta.items() if k not in _SELECTION_META_HEAVY_UNUSED_KEYS}
+    compact = {
+        key: selection_meta[key]
+        for key in _PERSISTED_SCALAR_KEYS
+        if key in selection_meta
+    }
+    ticker_text = str(ticker or "").strip()
+    wanted = _ticker_key(market, ticker_text)
+    for key in ("trade_ready", "watchlist", "_raw_trade_ready"):
+        values = list(selection_meta.get(key) or [])
+        if ticker_text:
+            values = [value for value in values if _ticker_key(market, value) == wanted]
+        if values:
+            compact[key] = values
+    if ticker_text:
+        for key in _PERSISTED_TICKER_MAP_KEYS:
+            item = _map_item(selection_meta.get(key), market=market, ticker=ticker_text)
+            if item is not None:
+                raw_key, raw_value = item
+                compact[key] = {raw_key: raw_value}
+        for raw in list(selection_meta.get("_final_prompt_pool") or []):
+            if not isinstance(raw, dict) or _ticker_key(market, raw.get("ticker")) != wanted:
+                continue
+            compact["_final_prompt_pool"] = [{
+                key: raw[key] for key in _PERSISTED_PROMPT_ROW_KEYS if key in raw
+            }]
+            break
+    return compact
 
 
 class DecisionRegistry:
@@ -74,7 +132,9 @@ class DecisionRegistry:
         # 방어: 어떤 호출자가 전체 selection_meta를 넘겨도 영속 payload는 축소본으로 저장한다.
         payload = dict(payload or {})
         if isinstance(payload.get("selection_meta"), dict):
-            payload["selection_meta"] = _compact_selection_meta(payload["selection_meta"])
+            payload["selection_meta"] = _compact_selection_meta(
+                payload["selection_meta"], ticker=ticker_value, market=market_value
+            )
         self.store.create_decision(
             decision_id=decision_id,
             market=market_value,
@@ -120,8 +180,7 @@ class DecisionRegistry:
         reuse_existing: bool = True,
     ) -> dict[str, str]:
         selection_meta = selection_meta or {}
-        # 종목마다 동일 selection_meta를 저장하므로 대용량 미소비 필드는 한 번만 걷어낸다.
-        compact_meta = _compact_selection_meta(selection_meta)
+        # register_trade_ready에서 종목별 영속 allowlist로 축소한다.
         strategy_map = selection_meta.get("recommended_strategy") or {}
         timing_map = selection_meta.get("timing_style") or {}
         origin_map = selection_meta.get("_pathb_wait_origins") if isinstance(selection_meta.get("_pathb_wait_origins"), dict) else {}
@@ -144,7 +203,7 @@ class DecisionRegistry:
                 brain_snapshot_id=brain_snapshot_id,
                 strategy_hint=strategy_hint,
                 timing_style=timing_style,
-                payload={"selection_meta": compact_meta, "ticker_origin": dict(ticker_origin or {})},
+                payload={"selection_meta": selection_meta, "ticker_origin": dict(ticker_origin or {})},
                 reuse_existing=reuse_existing,
             )
         return decision_ids
