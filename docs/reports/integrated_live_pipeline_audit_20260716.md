@@ -216,19 +216,30 @@ Yahoo 5분봉은 보조 데이터로만 사용했다. 내부 KIS/audit 관측가
 
 ## 7. 검증 결과
 
+- 배포 커밋:
+  - `c774e80 feat: audit live exit ownership without duplicate pipelines`
+  - `9665638 fix: close live observation and runtime root gaps`
+- 원격 브랜치와 로컬 HEAD 일치: `9665638a55d4e9c3ce54f19fb119a27efa752f5b`
 - 오늘 수정 관련 전체 테스트: `340 passed`
 - compile: 통과
 - `git diff --check`: 통과
 - live preflight:
   - `ok=true`
   - `fail=0`
+  - 안전 재시작 후 `warn=15`
   - consensus KR/US market-specific status: PASS
   - 신규 주문 오류/Traceback: 없음
 - 봇 런타임:
-  - 18:26 기동 후 생존
-  - RSS 약 220MB
-  - 스레드 6
+  - 20:32 안전 재시작 후 PID 47044 생존
+  - RSS 약 256MB
+  - 스레드 8
   - 포지션 0
+- 재시작 연속성:
+  - checkpoint: `data/backups/live_maintenance_20260716_113101_before_restart_post_9665638_pipeline_audit`
+  - 재시작 전·후 KR/US broker truth fresh
+  - 재시작 전·후 포지션 0, 미체결 0
+  - 8개 역할 전부 생존
+  - 20:30 이후 사용자 홈 runtime root에 새 파일 0
 
 ## 8. 남은 경고의 성격
 
