@@ -40238,6 +40238,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             str(Path(__file__).resolve().parent / "tools" / "v2_daily_loop.py"),
             "--market", str(market or "ALL").upper(),
             "--runtime-mode", str(getattr(self, "_mode", "live") or "live"),
+            # US closes after midnight KST.  Keep the lifecycle review pinned to
+            # the trading session that just closed instead of date.today() in
+            # the child process (which would silently write an empty next-day
+            # review).
+            "--session-date", str(session_date),
             "--forward-lookback-days", "10",
             "--skip-simulation",
             "--skip-optimizer",

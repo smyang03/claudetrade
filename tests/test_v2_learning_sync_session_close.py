@@ -64,6 +64,22 @@ class V2LearningSyncSessionCloseTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--runtime-mode") + 1], "paper")
         self.assertEqual(cmd[cmd.index("--market") + 1], "KR")
 
+    def test_forward_review_uses_closed_us_trading_session_date(self):
+        self.dummy._runtime_bool = lambda _key, default: default
+        completed = mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch.object(self.tb.subprocess, "run", return_value=completed) as run_mock:
+            self.tb.TradingBot._run_v2_forward_measure_at_session_close(
+                self.dummy,
+                "US",
+                "2026-07-15",
+            )
+
+        cmd = run_mock.call_args[0][0]
+        self.assertIn("v2_daily_loop.py", cmd[1])
+        self.assertEqual(cmd[cmd.index("--market") + 1], "US")
+        self.assertEqual(cmd[cmd.index("--runtime-mode") + 1], "live")
+        self.assertEqual(cmd[cmd.index("--session-date") + 1], "2026-07-15")
+
 
 if __name__ == "__main__":
     unittest.main()
