@@ -400,6 +400,14 @@ def classify_preflight_check(
     if name.startswith("telegram."):
         return GuardianFinding(name, status, "soft_fail", detail, data)
 
+    if name == "config.us_swing_shadow_runtime" and status != "PASS":
+        # US swing is a challenger sleeve (shadow/micro authority only). A missing
+        # or intermittently-unloadable research dependency in its Python probe
+        # (e.g. base-anaconda scipy qhull DLL) must never BLOCK_START the core
+        # KR/US trading stack. Degrade to soft_fail so the bot still launches;
+        # the swing sleeve stays gated by its own authority checks.
+        return GuardianFinding(name, status, "soft_fail", detail, data)
+
     if status == "FAIL":
         return GuardianFinding(name, status, "hard_fail", detail, data)
 
