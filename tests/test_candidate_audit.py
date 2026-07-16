@@ -10,7 +10,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from audit import candidate_audit_store as audit_store_module
-from audit.candidate_audit_store import CandidateAuditStore, candidate_key
+from audit.candidate_audit_store import (
+    CandidateAuditStore,
+    candidate_key,
+    candidate_registry_key,
+)
 from tools.analyze_candidate_audit import (
     analyze_candidate_audit,
     classify_strategy_match,
@@ -29,6 +33,115 @@ import ticker_selection_db
 
 
 class CandidateAuditBackfillTests(unittest.TestCase):
+    def test_candidate_registry_preserves_first_snapshot_and_bounds_quotes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            base = {
+                "runtime_mode": "live",
+                "market": "US",
+                "session_date": "2026-07-16",
+                "ticker": "PYPL",
+                "source_file": "trading_bot.prompt_pool_excluded",
+                "screener_seen": True,
+            }
+            store.upsert_candidate(
+                {
+                    **base,
+                    "call_id": "first",
+                    "known_at": "2026-07-16T22:35:11+09:00",
+                    "price": 74.0,
+                    "volume_ratio": 2.1,
+                    "classification": "not_in_prompt",
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "call_id": "second",
+                    "known_at": "2026-07-16T22:38:50+09:00",
+                    "price": 75.0,
+                    "volume_ratio": 3.2,
+                    "classification": "in_prompt_not_selected",
+                }
+            )
+            store.upsert_candidate(
+                {
+                    **base,
+                    "call_id": "third",
+                    "known_at": "2026-07-16T22:41:00+09:00",
+                    "price": 76.0,
+                    "volume_ratio": 3.8,
+                    "classification": "in_prompt_not_selected",
+                }
+            )
+
+            registry_key = candidate_registry_key(
+                runtime_mode="live",
+                market="US",
+                session_date="2026-07-16",
+                ticker="PYPL",
+            )
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            first = conn.execute(
+                "SELECT * FROM candidate_registry_first WHERE registry_key=?",
+                (registry_key,),
+            ).fetchone()
+            events = conn.execute(
+                "SELECT COUNT(*) FROM candidate_registry_events WHERE registry_key=?",
+                (registry_key,),
+            ).fetchone()[0]
+            quotes = conn.execute(
+                """
+                SELECT bucket_start, price
+                FROM candidate_registry_quotes
+                WHERE registry_key=?
+                ORDER BY bucket_start
+                """,
+                (registry_key,),
+            ).fetchall()
+            conn.close()
+
+        self.assertIsNotNone(first)
+        self.assertEqual(first["first_call_id"], "first")
+        self.assertEqual(first["first_price"], 74.0)
+        self.assertEqual(events, 3)
+        self.assertEqual(len(quotes), 2)
+        self.assertEqual([row["price"] for row in quotes], [74.0, 76.0])
+
+    def test_clear_session_does_not_delete_immutable_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.upsert_candidate(
+                {
+                    "runtime_mode": "live",
+                    "market": "KR",
+                    "session_date": "2026-07-16",
+                    "ticker": "005930",
+                    "call_id": "call1",
+                    "known_at": "2026-07-16T09:01:00+09:00",
+                    "price": 70000,
+                }
+            )
+            store.clear_session(
+                session_date="2026-07-16",
+                market="KR",
+                runtime_mode="live",
+            )
+            conn = sqlite3.connect(db_path)
+            mutable_count = conn.execute(
+                "SELECT COUNT(*) FROM audit_candidate_rows"
+            ).fetchone()[0]
+            registry_count = conn.execute(
+                "SELECT COUNT(*) FROM candidate_registry_first"
+            ).fetchone()[0]
+            conn.close()
+
+        self.assertEqual(mutable_count, 0)
+        self.assertEqual(registry_count, 1)
+
     def test_normalize_candidate_action_groups_action_families(self) -> None:
         self.assertEqual(normalize_candidate_action("BUY_READY"), "trade_ready_family")
         self.assertEqual(normalize_candidate_action("ADD_READY"), "trade_ready_family")

@@ -151,18 +151,39 @@ def _load_audit_outcome_candidates(
     try:
         conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=1.0)
         try:
-            rows = conn.execute(
+            registry_exists = conn.execute(
                 """
-                SELECT ticker, MAX(known_at) AS last_seen_at
-                FROM audit_candidate_rows
-                WHERE runtime_mode=? AND market=? AND session_date=?
-                  AND ticker IS NOT NULL AND ticker!=''
-                GROUP BY ticker
-                ORDER BY last_seen_at DESC, ticker ASC
-                LIMIT ?
-                """,
-                (runtime_mode, market, session_date, cap),
-            ).fetchall()
+                SELECT 1 FROM sqlite_master
+                WHERE type='table' AND name='candidate_registry_first'
+                """
+            ).fetchone()
+            if registry_exists:
+                rows = conn.execute(
+                    """
+                    SELECT ticker, first_seen_at AS last_seen_at
+                    FROM candidate_registry_first
+                    WHERE runtime_mode=? AND market=? AND session_date=?
+                      AND ticker IS NOT NULL AND ticker!=''
+                    ORDER BY first_seen_at ASC, ticker ASC
+                    LIMIT ?
+                    """,
+                    (runtime_mode, market, session_date, cap),
+                ).fetchall()
+                summary["source_table"] = "candidate_registry_first"
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT ticker, MAX(known_at) AS last_seen_at
+                    FROM audit_candidate_rows
+                    WHERE runtime_mode=? AND market=? AND session_date=?
+                      AND ticker IS NOT NULL AND ticker!=''
+                    GROUP BY ticker
+                    ORDER BY last_seen_at DESC, ticker ASC
+                    LIMIT ?
+                    """,
+                    (runtime_mode, market, session_date, cap),
+                ).fetchall()
+                summary["source_table"] = "audit_candidate_rows"
         finally:
             conn.close()
     except (OSError, sqlite3.Error) as exc:
@@ -172,7 +193,7 @@ def _load_audit_outcome_candidates(
     candidates = [
         {
             "ticker": str(row[0] or "").upper(),
-            "outcome_capture_source": "audit_candidate_rows",
+            "outcome_capture_source": str(summary.get("source_table") or "audit_candidate_rows"),
             "outcome_capture_last_seen_at": str(row[1] or ""),
         }
         for row in rows

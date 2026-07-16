@@ -34,6 +34,31 @@ def candidate_key(*, session_date: str, market: str, call_id: str, ticker: str) 
     return "cand_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
 
 
+def candidate_registry_key(
+    *,
+    runtime_mode: str,
+    session_date: str,
+    market: str,
+    ticker: str,
+) -> str:
+    """Stable one-row-per-session candidate identity.
+
+    Unlike ``candidate_key`` this key deliberately excludes the Claude call id.
+    It is used by the immutable prospective registry so repeated evaluation
+    cycles cannot rewrite the first observation.
+    """
+
+    raw = "|".join(
+        [
+            str(runtime_mode or "live").lower(),
+            str(session_date or ""),
+            str(market or "").upper(),
+            str(ticker or "").strip().upper(),
+        ]
+    )
+    return "creg_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
 EXTRA_CANDIDATE_COLUMNS: dict[str, str] = {
     "evidence_version": "TEXT",
     "schema_version": "TEXT",
@@ -239,6 +264,24 @@ _RUNTIME_EVIDENCE_PAYLOAD_KEYS_TO_PRESERVE = {
     "kr_confirmation_snapshot",
     "kr_confirmation_snapshot_json",
 }
+_REGISTRY_PAYLOAD_KEYS = {
+    "selection_stage",
+    "excluded_reason",
+    "screener_quality",
+    "runtime_gate",
+    "confirmation_state",
+    "confirmation_reason",
+    "confirmation_shadow",
+    "post_open_features",
+    "kr_confirmation_snapshot",
+}
+_REGISTRY_DROP_ROW_KEYS = {
+    "payload",
+    "payload_json",
+    "top_news_json",
+    "risk_news_json",
+    "prompt_news_ids_json",
+}
 
 
 def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
@@ -366,6 +409,50 @@ def _candidate_extra_value(column: str, row: dict[str, Any]) -> Any:
             return value
         return _json(value)
     return value
+
+
+def _registry_snapshot(row: dict[str, Any]) -> dict[str, Any]:
+    """Build a bounded decision-time snapshot for prospective research.
+
+    Candidate rows may contain verbose news or prompt payloads.  The registry
+    keeps the model/audit surface while excluding those unbounded blobs.  The
+    mutable audit table remains the detailed forensic source.
+    """
+
+    snapshot = {
+        str(key): value
+        for key, value in dict(row or {}).items()
+        if key not in _REGISTRY_DROP_ROW_KEYS
+    }
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    compact_payload = {
+        key: payload.get(key)
+        for key in _REGISTRY_PAYLOAD_KEYS
+        if key in payload
+    }
+    if compact_payload:
+        snapshot["payload"] = compact_payload
+    snapshot["registry_contract"] = {
+        "authority": "SHADOW_ONLY_NO_ORDER_AUTHORITY",
+        "first_observation_immutable": True,
+        "decision_time_only": True,
+    }
+    return snapshot
+
+
+def _snapshot_sha256(snapshot: dict[str, Any]) -> str:
+    raw = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _quote_bucket_start(known_at: Any, bucket_min: int = 5) -> str:
+    text = str(known_at or "").strip()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        parsed = datetime.now(timezone.utc)
+    minute = (parsed.minute // max(1, int(bucket_min))) * max(1, int(bucket_min))
+    return parsed.replace(minute=minute, second=0, microsecond=0).isoformat()
 
 
 class CandidateAuditStore:
@@ -511,6 +598,68 @@ class CandidateAuditStore:
                 CREATE INDEX IF NOT EXISTS idx_audit_candidate_outcomes_key
                     ON audit_candidate_outcomes(candidate_key, horizon_min);
 
+                CREATE TABLE IF NOT EXISTS candidate_registry_first (
+                    registry_key TEXT PRIMARY KEY,
+                    runtime_mode TEXT NOT NULL,
+                    market TEXT NOT NULL,
+                    session_date TEXT NOT NULL,
+                    ticker TEXT NOT NULL,
+                    first_seen_at TEXT NOT NULL,
+                    first_call_id TEXT,
+                    first_candidate_key TEXT,
+                    first_source_file TEXT,
+                    name TEXT,
+                    first_price REAL,
+                    first_change_pct REAL,
+                    first_volume_ratio REAL,
+                    first_turnover REAL,
+                    first_snapshot_sha256 TEXT NOT NULL,
+                    first_snapshot_json TEXT NOT NULL,
+                    observer_tags_json TEXT NOT NULL DEFAULT '[]',
+                    authority TEXT NOT NULL DEFAULT 'SHADOW_ONLY_NO_ORDER_AUTHORITY',
+                    created_at TEXT NOT NULL,
+                    UNIQUE(runtime_mode, market, session_date, ticker)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_candidate_registry_first_session
+                    ON candidate_registry_first(runtime_mode, market, session_date, first_seen_at);
+
+                CREATE TABLE IF NOT EXISTS candidate_registry_events (
+                    event_key TEXT PRIMARY KEY,
+                    registry_key TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    call_id TEXT,
+                    source_file TEXT,
+                    phase TEXT,
+                    price REAL,
+                    snapshot_sha256 TEXT NOT NULL,
+                    snapshot_json TEXT NOT NULL,
+                    authority TEXT NOT NULL DEFAULT 'SHADOW_ONLY_NO_ORDER_AUTHORITY',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_candidate_registry_events_key
+                    ON candidate_registry_events(registry_key, observed_at);
+
+                CREATE TABLE IF NOT EXISTS candidate_registry_quotes (
+                    registry_key TEXT NOT NULL,
+                    bucket_start TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    price REAL,
+                    bid REAL,
+                    ask REAL,
+                    spread_bps REAL,
+                    source TEXT,
+                    snapshot_sha256 TEXT NOT NULL,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    authority TEXT NOT NULL DEFAULT 'SHADOW_ONLY_NO_ORDER_AUTHORITY',
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(registry_key, bucket_start)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_candidate_registry_quotes_key
+                    ON candidate_registry_quotes(registry_key, observed_at);
+
                 CREATE VIEW IF NOT EXISTS audit_candidate_latest_rows AS
                     SELECT *
                     FROM (
@@ -530,6 +679,38 @@ class CandidateAuditStore:
             )
             _ensure_columns(conn, "audit_claude_calls", EXTRA_CALL_COLUMNS)
             _ensure_columns(conn, "audit_candidate_rows", EXTRA_CANDIDATE_COLUMNS)
+            _ensure_columns(
+                conn,
+                "candidate_registry_first",
+                {"first_candidate_key": "TEXT"},
+            )
+            conn.execute(
+                """
+                CREATE VIEW IF NOT EXISTS candidate_registry_first_outcomes AS
+                    SELECT
+                        f.registry_key,
+                        f.runtime_mode,
+                        f.market,
+                        f.session_date,
+                        f.ticker,
+                        f.first_seen_at,
+                        f.first_candidate_key,
+                        o.horizon_min,
+                        o.target_at,
+                        o.observed_at,
+                        o.observed_price,
+                        o.return_pct,
+                        o.max_runup_pct,
+                        o.max_drawdown_pct,
+                        o.status,
+                        o.source,
+                        o.label_generated_at,
+                        o.updated_at
+                    FROM candidate_registry_first f
+                    LEFT JOIN audit_candidate_outcomes o
+                      ON o.candidate_key=f.first_candidate_key
+                """
+            )
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_audit_candidate_rows_strength_shadow
@@ -662,6 +843,213 @@ class CandidateAuditStore:
         finally:
             conn.close()
 
+    def _register_candidate_snapshot(
+        self,
+        conn: sqlite3.Connection,
+        row: dict[str, Any],
+        *,
+        registry_key: str,
+        now: str,
+    ) -> None:
+        """Append a bounded prospective snapshot without affecting live logic."""
+
+        ticker = str(row.get("ticker") or "").strip().upper()
+        market = str(row.get("market") or "").upper()
+        session_date = str(row.get("session_date") or "")
+        runtime_mode = str(row.get("runtime_mode") or "live").lower()
+        if not ticker or not market or not session_date:
+            return
+
+        registry_row = dict(row)
+        observer_tags = row.get("observer_tags") or row.get("observer_tags_json") or []
+        if isinstance(observer_tags, str):
+            try:
+                observer_tags = json.loads(observer_tags)
+            except Exception:
+                observer_tags = [observer_tags] if observer_tags.strip() else []
+        observer_tags = list(observer_tags) if isinstance(observer_tags, list) else []
+        if market == "KR":
+            try:
+                from runtime.kr_disclosure_observer import disclosure_observer_tags
+
+                observer_tags.extend(
+                    disclosure_observer_tags(ticker, session_date=session_date)
+                )
+            except Exception:
+                pass
+        if observer_tags:
+            deduped_tags: dict[str, Any] = {}
+            for tag in observer_tags:
+                key = _json(tag) if isinstance(tag, dict) else str(tag)
+                deduped_tags[key] = tag
+            observer_tags = list(deduped_tags.values())
+            registry_row["observer_tags"] = observer_tags
+
+        known_at = str(row.get("known_at") or now)
+        call_id = str(row.get("call_id") or "")
+        source_file = str(row.get("source_file") or "")
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        phase = str(
+            row.get("registry_phase")
+            or payload.get("selection_stage")
+            or row.get("classification")
+            or source_file
+            or "candidate_observed"
+        )
+        snapshot = _registry_snapshot(registry_row)
+        snapshot_sha = _snapshot_sha256(snapshot)
+        snapshot_json = _json(snapshot)
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO candidate_registry_first (
+                registry_key, runtime_mode, market, session_date, ticker,
+                first_seen_at, first_call_id, first_candidate_key, first_source_file, name,
+                first_price, first_change_pct, first_volume_ratio, first_turnover,
+                first_snapshot_sha256, first_snapshot_json, observer_tags_json,
+                authority, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                registry_key,
+                runtime_mode,
+                market,
+                session_date,
+                ticker,
+                known_at,
+                call_id,
+                str(
+                    row.get("candidate_key")
+                    or candidate_key(
+                        session_date=session_date,
+                        market=market,
+                        call_id=call_id,
+                        ticker=ticker,
+                    )
+                ),
+                source_file,
+                row.get("name", ""),
+                row.get("price"),
+                row.get("change_pct"),
+                row.get("volume_ratio"),
+                row.get("turnover"),
+                snapshot_sha,
+                snapshot_json,
+                _json(observer_tags),
+                "SHADOW_ONLY_NO_ORDER_AUTHORITY",
+                now,
+            ),
+        )
+
+        event_snapshot = {
+            key: row.get(key)
+            for key in (
+                "known_at",
+                "price",
+                "change_pct",
+                "volume_ratio",
+                "turnover",
+                "prompt_rank",
+                "raw_rank",
+                "trainer_score_rank",
+                "trainer_prompt_score",
+                "candidate_quality_score",
+                "in_prompt",
+                "actual_prompt_included",
+                "classification",
+                "claude_action",
+                "claude_trade_ready",
+                "claude_watchlist",
+                "route_final_action",
+                "route_reason",
+                "candidate_pool_role",
+                "discovery_signal_family",
+                "post_open_features_json",
+            )
+            if row.get(key) not in (None, "", [], {})
+        }
+        event_snapshot.update(
+            {
+                "phase": phase,
+                "source_file": source_file,
+                "authority": "SHADOW_ONLY_NO_ORDER_AUTHORITY",
+            }
+        )
+        event_snapshot_sha = _snapshot_sha256(event_snapshot)
+        event_seed = "|".join(
+            [registry_key, known_at, call_id, source_file, phase, event_snapshot_sha]
+        )
+        event_key = "cevt_" + hashlib.sha256(event_seed.encode("utf-8")).hexdigest()[:28]
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO candidate_registry_events (
+                event_key, registry_key, observed_at, call_id, source_file,
+                phase, price, snapshot_sha256, snapshot_json, authority, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_key,
+                registry_key,
+                known_at,
+                call_id,
+                source_file,
+                phase,
+                row.get("price"),
+                event_snapshot_sha,
+                _json(event_snapshot),
+                "SHADOW_ONLY_NO_ORDER_AUTHORITY",
+                now,
+            ),
+        )
+
+        def _number(value: Any) -> float | None:
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return None
+            return number if number == number else None
+
+        bid = _number(row.get("bid") or payload.get("bid"))
+        ask = _number(row.get("ask") or payload.get("ask"))
+        spread_bps = None
+        if bid and ask and bid > 0 and ask >= bid:
+            spread_bps = ((ask - bid) / ((ask + bid) / 2.0)) * 10000.0
+        quote_payload = {
+            "call_id": call_id,
+            "phase": phase,
+            "change_pct": row.get("change_pct"),
+            "volume_ratio": row.get("volume_ratio"),
+            "turnover": row.get("turnover"),
+            "post_open_features": row.get("post_open_features_json")
+            or payload.get("post_open_features"),
+        }
+        bucket_start = _quote_bucket_start(known_at, bucket_min=5)
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO candidate_registry_quotes (
+                registry_key, bucket_start, observed_at, price, bid, ask,
+                spread_bps, source, snapshot_sha256, payload_json,
+                authority, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                registry_key,
+                bucket_start,
+                known_at,
+                row.get("price"),
+                bid,
+                ask,
+                spread_bps,
+                source_file,
+                snapshot_sha,
+                _json(quote_payload),
+                "SHADOW_ONLY_NO_ORDER_AUTHORITY",
+                now,
+            ),
+        )
+
     def upsert_candidate(self, row: dict[str, Any]) -> None:
         now = _utc_now()
         market = str(row.get("market") or "").upper()
@@ -675,9 +1063,21 @@ class CandidateAuditStore:
             call_id=call_id,
             ticker=ticker,
         )
+        registry_key = candidate_registry_key(
+            runtime_mode=runtime_mode,
+            session_date=session_date,
+            market=market,
+            ticker=ticker,
+        )
         conn = self.connect()
         try:
             with conn:
+                self._register_candidate_snapshot(
+                    conn,
+                    row,
+                    registry_key=registry_key,
+                    now=now,
+                )
                 existing = conn.execute(
                     """
                     SELECT source_file, payload_json

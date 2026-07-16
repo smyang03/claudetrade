@@ -2764,6 +2764,42 @@ def _heartbeat_checks(mode: str) -> list[CheckResult]:
                 process="core_shadow_tracker",
             )
         )
+        if str(os.getenv("CANDIDATE_CONSENSUS_SHADOW_ENABLED", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            checks.append(
+                _heartbeat_check(
+                    "runtime.candidate_consensus_shadow_status",
+                    get_runtime_path(
+                        "state",
+                        "candidate_consensus_shadow_status.json",
+                        make_parents=False,
+                    ),
+                    max_age_sec=129600,
+                    process="candidate_consensus_shadow",
+                )
+            )
+        if str(os.getenv("KR_DISCLOSURE_OBSERVER_ENABLED", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            checks.append(
+                _heartbeat_check(
+                    "runtime.kr_disclosure_observer_status",
+                    get_runtime_path(
+                        "state",
+                        "kr_disclosure_observer_status.json",
+                        make_parents=False,
+                    ),
+                    max_age_sec=129600,
+                    process="kr_disclosure_observer",
+                )
+            )
     return checks
 
 

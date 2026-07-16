@@ -316,6 +316,24 @@ def due_jobs(
                     args=("--session-date", session_date),
                 ))
 
+        if mkt == "KR" and _env_bool("KR_DISCLOSURE_OBSERVER_ENABLED", False):
+            disclosure_due_dt = open_dt - timedelta(minutes=35)
+            disclosure_late_by = (now_dt - disclosure_due_dt).total_seconds() / 60.0
+            job_id = f"{runtime_mode}:{session_date}:{mkt}:disclosure_observer"
+            if (
+                0 <= disclosure_late_by <= max(0, int(outcome_catchup_min))
+                and (force or job_id not in completed)
+            ):
+                jobs.append(PreopenJob(
+                    market=mkt,
+                    session_date=session_date,
+                    kind="disclosure_observer",
+                    job_id=job_id,
+                    due_at=disclosure_due_dt.isoformat(timespec="seconds"),
+                    script="tools/refresh_kr_disclosure_observer.py",
+                    args=("--days-back", "7"),
+                ))
+
         if _env_bool("PROFIT_STRATEGY_MATERIALIZER_ENABLED", False):
             strategy_due_dt = open_dt - timedelta(minutes=15)
             strategy_late_by = (now_dt - strategy_due_dt).total_seconds() / 60.0
@@ -357,6 +375,24 @@ def due_jobs(
                             "--once",
                         ),
                     ))
+
+        if _env_bool("CANDIDATE_CONSENSUS_SHADOW_ENABLED", False):
+            consensus_due_dt = open_dt + timedelta(minutes=15)
+            consensus_late_by = (now_dt - consensus_due_dt).total_seconds() / 60.0
+            job_id = f"{runtime_mode}:{session_date}:{mkt}:candidate_consensus_shadow"
+            if (
+                0 <= consensus_late_by <= max(0, int(outcome_catchup_min))
+                and (force or job_id not in completed)
+            ):
+                jobs.append(PreopenJob(
+                    market=mkt,
+                    session_date=session_date,
+                    kind="candidate_consensus_shadow",
+                    job_id=job_id,
+                    due_at=consensus_due_dt.isoformat(timespec="seconds"),
+                    script="tools/candidate_consensus_shadow.py",
+                    args=("--session-date", session_date, "--market", mkt),
+                ))
 
         offsets = (
             outcome_offsets_min

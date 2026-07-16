@@ -53,6 +53,9 @@ class PostOpenFeatureSnapshot:
     # (post_open jsonl 0/10,538 = 0%). 학습엔 있고 추론엔 영원히 없는 피처 = 상시 OOD 기여.
     market_open_elapsed_min: float | None = None
     volume_ratio_open: float | None = None
+    time_normalized_rvol: float | None = None
+    rvol_profile_sessions: int | None = None
+    rvol_profile_status: str = ""
     spread_bps: float | None = None
     vwap_distance_pct: float | None = None
     momentum_state: str = "unknown"
@@ -80,6 +83,9 @@ class PostOpenFeatureSnapshot:
             "opening_range_break": self.opening_range_break,
             "market_open_elapsed_min": self.market_open_elapsed_min,
             "volume_ratio_open": self.volume_ratio_open,
+            "time_normalized_rvol": self.time_normalized_rvol,
+            "rvol_profile_sessions": self.rvol_profile_sessions,
+            "rvol_profile_status": self.rvol_profile_status,
             "spread_bps": self.spread_bps,
             "vwap_distance_pct": self.vwap_distance_pct,
             "momentum_state": self.momentum_state,
@@ -216,6 +222,9 @@ def build_post_open_snapshot(
     opening_range_low: float | None = None,
     market_open_elapsed_min: float | None = None,
     volume_ratio_open: float | None = None,
+    time_normalized_rvol: float | None = None,
+    rvol_profile_sessions: int | None = None,
+    rvol_profile_status: str = "",
     bid: float | None = None,
     ask: float | None = None,
     vwap_distance_pct: float | None = None,
@@ -269,6 +278,11 @@ def build_post_open_snapshot(
             float(market_open_elapsed_min) if market_open_elapsed_min is not None else None
         ),
         volume_ratio_open=volume_ratio_open,
+        time_normalized_rvol=time_normalized_rvol,
+        rvol_profile_sessions=(
+            int(rvol_profile_sessions) if rvol_profile_sessions is not None else None
+        ),
+        rvol_profile_status=str(rvol_profile_status or ""),
         spread_bps=spread_bps,
         vwap_distance_pct=vwap_distance_pct,
         momentum_state=state,

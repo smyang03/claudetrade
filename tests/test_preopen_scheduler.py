@@ -215,6 +215,36 @@ class PreopenSchedulerTests(unittest.TestCase):
         self.assertIn("--max-tickers", shadow[0].args)
         self.assertIn("12", shadow[0].args)
 
+    def test_candidate_consensus_shadow_runs_once_after_open_when_enabled(self) -> None:
+        now = datetime(2026, 5, 4, 9, 16, tzinfo=KST)
+        with patch.dict(
+            "os.environ",
+            {"CANDIDATE_CONSENSUS_SHADOW_ENABLED": "true"},
+        ), patch("preopen.scheduler.is_trading_day", return_value=True):
+            jobs = due_jobs(now_dt=now, markets=["KR"], mode="live")
+
+        shadow = [job for job in jobs if job.kind == "candidate_consensus_shadow"]
+        self.assertEqual(len(shadow), 1)
+        self.assertEqual(shadow[0].due_at, "2026-05-04T09:15:00+09:00")
+        self.assertEqual(shadow[0].script, "tools/candidate_consensus_shadow.py")
+        self.assertEqual(
+            shadow[0].args,
+            ("--session-date", "2026-05-04", "--market", "KR"),
+        )
+
+    def test_kr_disclosure_observer_runs_preopen_when_enabled(self) -> None:
+        now = datetime(2026, 5, 4, 8, 26, tzinfo=KST)
+        with patch.dict(
+            "os.environ",
+            {"KR_DISCLOSURE_OBSERVER_ENABLED": "true"},
+        ), patch("preopen.scheduler.is_trading_day", return_value=True):
+            jobs = due_jobs(now_dt=now, markets=["KR"], mode="live")
+
+        observer = [job for job in jobs if job.kind == "disclosure_observer"]
+        self.assertEqual(len(observer), 1)
+        self.assertEqual(observer[0].due_at, "2026-05-04T08:25:00+09:00")
+        self.assertEqual(observer[0].script, "tools/refresh_kr_disclosure_observer.py")
+
     def test_us_outcome_catchup_after_kst_midnight_keeps_us_session_date(self) -> None:
         now = datetime(2026, 5, 5, 1, 0, tzinfo=KST)
 
@@ -333,6 +363,28 @@ class PreopenSchedulerTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "success")
         self.assertEqual(run_mock.call_args.kwargs["timeout"], 1200)
+
+    def test_disclosure_observer_gets_bounded_extended_timeout(self) -> None:
+        job = PreopenJob(
+            market="KR",
+            session_date="2026-07-16",
+            kind="disclosure_observer",
+            job_id="live:2026-07-16:KR:disclosure_observer",
+            due_at="2026-07-16T08:25:00+09:00",
+            script="tools/refresh_kr_disclosure_observer.py",
+            args=("--days-back", "7"),
+        )
+        with patch("tools.preopen_scheduler.subprocess.run") as run_mock:
+            run_mock.return_value = subprocess.CompletedProcess(
+                args=["python"],
+                returncode=0,
+                stdout="ok",
+                stderr="",
+            )
+            result = _run_job(job, timeout_sec=120, dry_run=False)
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(run_mock.call_args.kwargs["timeout"], 300)
 
     def test_dashboard_payload_includes_scheduler_status(self) -> None:
         now = datetime(2026, 5, 4, 17, 5, tzinfo=KST)

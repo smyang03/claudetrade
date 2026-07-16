@@ -234,8 +234,40 @@ def _load_price_observations(
             str(row["ticker"] or "").upper(),
         )
         observations.setdefault(key, []).append((ts, price))
+    if _table_exists(conn, "candidate_registry_quotes"):
+        registry_where = ["f.runtime_mode=?", "q.observed_at!=''", "q.price IS NOT NULL", "q.price>0"]
+        registry_params: list[Any] = [str(runtime_mode or "live").lower()]
+        if session_date:
+            registry_where.append("f.session_date=?")
+            registry_params.append(session_date)
+        if market:
+            registry_where.append("f.market=?")
+            registry_params.append(str(market).upper())
+        for row in conn.execute(
+            f"""
+            SELECT f.runtime_mode, f.market, f.session_date, f.ticker,
+                   q.observed_at AS known_at, q.price
+            FROM candidate_registry_quotes q
+            JOIN candidate_registry_first f ON f.registry_key=q.registry_key
+            WHERE {' AND '.join(registry_where)}
+            ORDER BY f.session_date, f.market, f.ticker, q.observed_at
+            """,
+            registry_params,
+        ):
+            ts = _parse_dt(row["known_at"])
+            price = _to_float(row["price"])
+            if ts is None or price is None:
+                continue
+            key = (
+                str(row["runtime_mode"] or "live").lower(),
+                str(row["market"] or "").upper(),
+                str(row["session_date"] or ""),
+                str(row["ticker"] or "").upper(),
+            )
+            observations.setdefault(key, []).append((ts, price))
     for values in observations.values():
-        values.sort(key=lambda item: item[0])
+        deduped = {ts: price for ts, price in values}
+        values[:] = sorted(deduped.items(), key=lambda item: item[0])
     return observations
 
 

@@ -299,6 +299,8 @@ def _job_timeout_sec(job: PreopenJob, default_timeout_sec: int) -> int:
         return max(timeout, 240)
     if job.kind == "yfinance_shadow":
         return max(timeout, 180)
+    if job.kind == "disclosure_observer":
+        return max(timeout, 300)
     if job.kind != "news":
         return timeout
     try:

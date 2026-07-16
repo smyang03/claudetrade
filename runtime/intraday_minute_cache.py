@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from typing import Any, Callable
 
 from runtime.intraday_features import compute_intraday_features, normalize_intraday_candles
+from runtime.time_normalized_rvol import LocalTimeNormalizedRvolStore
 
 
 Provider = Callable[..., Any]
@@ -46,6 +47,7 @@ class IntradayMinuteCache:
         min_call_interval_sec: float | None = None,
         timeout_sec: float | None = None,
         now_func: Callable[[], float] | None = None,
+        rvol_store: Any | None = None,
     ) -> None:
         self.provider = provider or _default_provider
         self.provider_name = provider_name or os.getenv("INTRADAY_EVIDENCE_PROVIDER", "auto")
@@ -64,6 +66,7 @@ class IntradayMinuteCache:
             float(timeout_sec if timeout_sec is not None else os.getenv("INTRADAY_EVIDENCE_PREFETCH_TIMEOUT_SEC", "8")),
         )
         self._now = now_func or time.time
+        self.rvol_store = rvol_store or LocalTimeNormalizedRvolStore()
         self._cache: dict[tuple[str, str, str, str], dict[str, Any]] = {}
         # Raw normalized bars are retained only for read-only observers.  The
         # public snapshot API below never calls the provider or mutates cache.
@@ -302,6 +305,22 @@ class IntradayMinuteCache:
                 opening_range_min=opening_range_min,
                 source=provider_name,
             )
+            try:
+                rvol_snapshot = self.rvol_store.snapshot(
+                    current_rows=normalized_bars,
+                    market=key[0],
+                    ticker=key[2],
+                    known_at=known_at,
+                    session_date=str(session_date),
+                )
+            except Exception as exc:
+                rvol_snapshot = {
+                    "time_normalized_rvol": None,
+                    "rvol_profile_sessions": 0,
+                    "rvol_profile_method": "median_prior_same_elapsed",
+                    "rvol_profile_status": f"profile_error:{str(exc)[:80]}",
+                }
+            features.update(rvol_snapshot)
             self._store(key, features, bars=normalized_bars)
             return key[2], features, False, ""
         except TimeoutError as exc:
