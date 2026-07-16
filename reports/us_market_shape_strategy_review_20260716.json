@@ -1,0 +1,1173 @@
+{
+  "schema_version": "us_market_shape_strategy_review_v1",
+  "generated_at": "2026-07-16T11:58:55+00:00",
+  "authority": "RESEARCH_ONLY_NO_ORDER_AUTHORITY",
+  "contracts": {
+    "open5": "first complete bar at or after US regular open+5m; same-bar barrier ambiguity stop-first; round trip cost 0.50%",
+    "open15": "richest snapshot known by regular open+15.5m; enter next complete minute; no later data in features; cost 0.50%",
+    "holdout": "fixed 2026-07-01+ holdout with the last pre-holdout session purged, plus one-session-purged expanding walk-forward"
+  },
+  "warnings": [
+    "Open+15 post-open feature history currently covers only recent sessions and cannot promote a live rule.",
+    "Candidate minute-price coverage is incomplete and trigger-oriented, so all positive findings would remain shadow-only.",
+    "US swing historical evidence uses one market-data vendor; independent KIS execution cross-check remains required.",
+    "STOP_FIRST is booked at the exact stop and excludes adverse stop slippage."
+  ],
+  "open5_candidate_pool": {
+    "h30_t1.6": {
+      "objective": "enter after first complete open+5m bar; 30m target 1.6% before stop 2.5%; US cost 0.50%",
+      "fixed_holdout": {
+        "train_rows": 690,
+        "test_rows": 368,
+        "purged_session": "2026-06-30",
+        "all_holdout": {
+          "n": 368,
+          "dates": 9,
+          "unique_tickers": 137,
+          "mean_policy_net_pct": -0.5323302965635297,
+          "median_policy_net_pct": -0.4044847774403721,
+          "win_rate": 0.421195652173913,
+          "ex_top3_mean_pct": -0.5457467099599422,
+          "session_block_lcb_pct": -0.8372668385355675,
+          "max_ticker_share": 0.024456521739130436
+        },
+        "system_scores_top3": {
+          "n": 27,
+          "dates": 9,
+          "mean_policy_net_pct": -0.191130122500257,
+          "win_rate": 0.6296296296296297,
+          "ex_top3_mean_pct": -0.3525213878127891,
+          "session_block_lcb_pct": -0.8384936329364493
+        },
+        "system_scores_top_decile": {
+          "n": 41,
+          "dates": 9,
+          "mean_policy_net_pct": -0.31200506511686804,
+          "win_rate": 0.5365853658536586,
+          "ex_top3_mean_pct": -0.42347914920504187,
+          "session_block_lcb_pct": -0.9064471877301378
+        }
+      },
+      "expanding_walk_forward": {
+        "tested_rows": 771,
+        "daily_top3": {
+          "n": 66,
+          "dates": 22,
+          "mean_policy_net_pct": -0.4153659850978301,
+          "win_rate": 0.5606060606060606,
+          "ex_top3_mean_pct": -0.48752627010248867,
+          "session_block_lcb_pct": -0.8254049556844744
+        },
+        "daily_top_decile": {
+          "n": 87,
+          "dates": 22,
+          "mean_policy_net_pct": -0.4663678656288447,
+          "win_rate": 0.5402298850574713,
+          "ex_top3_mean_pct": -0.5223095751155892,
+          "session_block_lcb_pct": -0.8526453350716413
+        },
+        "by_month_top_decile": {
+          "2026-06": {
+            "n": 46,
+            "dates": 13,
+            "mean_policy_net_pct": -0.4504342188680126,
+            "win_rate": 0.5652173913043478,
+            "ex_top3_mean_pct": -0.5586040480913624,
+            "session_block_lcb_pct": -0.9669478074149488
+          },
+          "2026-07": {
+            "n": 41,
+            "dates": 9,
+            "mean_policy_net_pct": -0.4842446400434367,
+            "win_rate": 0.5121951219512195,
+            "ex_top3_mean_pct": -0.6093165853100239,
+            "session_block_lcb_pct": -1.0244190069563714
+          }
+        }
+      }
+    },
+    "h30_t2.3": {
+      "objective": "enter after first complete open+5m bar; 30m target 2.3% before stop 2.5%; US cost 0.50%",
+      "fixed_holdout": {
+        "train_rows": 690,
+        "test_rows": 368,
+        "purged_session": "2026-06-30",
+        "all_holdout": {
+          "n": 368,
+          "dates": 9,
+          "unique_tickers": 137,
+          "mean_policy_net_pct": -0.5535912729997579,
+          "median_policy_net_pct": -0.5614216389122457,
+          "win_rate": 0.375,
+          "ex_top3_mean_pct": -0.5729358588052353,
+          "session_block_lcb_pct": -0.8915408683323819,
+          "max_ticker_share": 0.024456521739130436
+        },
+        "system_scores_top3": {
+          "n": 27,
+          "dates": 9,
+          "mean_policy_net_pct": -0.02045627848018287,
+          "win_rate": 0.6296296296296297,
+          "ex_top3_mean_pct": -0.24801331329020573,
+          "session_block_lcb_pct": -0.6418766121738108
+        },
+        "system_scores_top_decile": {
+          "n": 41,
+          "dates": 9,
+          "mean_policy_net_pct": -0.2610584360687131,
+          "win_rate": 0.5609756097560976,
+          "ex_top3_mean_pct": -0.4237735757583484,
+          "session_block_lcb_pct": -0.9216017248046802
+        }
+      },
+      "expanding_walk_forward": {
+        "tested_rows": 771,
+        "daily_top3": {
+          "n": 66,
+          "dates": 22,
+          "mean_policy_net_pct": -0.14797980572433306,
+          "win_rate": 0.5606060606060606,
+          "ex_top3_mean_pct": -0.2407407488540632,
+          "session_block_lcb_pct": -0.49188461909800724
+        },
+        "daily_top_decile": {
+          "n": 87,
+          "dates": 22,
+          "mean_policy_net_pct": -0.15190069748600993,
+          "win_rate": 0.5632183908045977,
+          "ex_top3_mean_pct": -0.22161143668193883,
+          "session_block_lcb_pct": -0.4229057925518429
+        },
+        "by_month_top_decile": {
+          "2026-06": {
+            "n": 46,
+            "dates": 13,
+            "mean_policy_net_pct": -0.08174555626922697,
+            "win_rate": 0.5434782608695652,
+            "ex_top3_mean_pct": -0.2130301299624289,
+            "session_block_lcb_pct": -0.3632910144908698
+          },
+          "2026-07": {
+            "n": 41,
+            "dates": 9,
+            "mean_policy_net_pct": -0.2306113437292298,
+            "win_rate": 0.5853658536585366,
+            "ex_top3_mean_pct": -0.39092276560259004,
+            "session_block_lcb_pct": -0.7961054299080831
+          }
+        }
+      }
+    },
+    "h30_t3.6": {
+      "objective": "enter after first complete open+5m bar; 30m target 3.6% before stop 2.5%; US cost 0.50%",
+      "fixed_holdout": {
+        "train_rows": 690,
+        "test_rows": 368,
+        "purged_session": "2026-06-30",
+        "all_holdout": {
+          "n": 368,
+          "dates": 9,
+          "unique_tickers": 137,
+          "mean_policy_net_pct": -0.5434896910135351,
+          "median_policy_net_pct": -0.5973701054217957,
+          "win_rate": 0.358695652173913,
+          "ex_top3_mean_pct": -0.5734361816246052,
+          "session_block_lcb_pct": -0.9234319360327241,
+          "max_ticker_share": 0.024456521739130436
+        },
+        "system_scores_top3": {
+          "n": 27,
+          "dates": 9,
+          "mean_policy_net_pct": -0.6434904330407101,
+          "win_rate": 0.3333333333333333,
+          "ex_top3_mean_pct": -1.069839570381122,
+          "session_block_lcb_pct": -1.366758282914375
+        },
+        "system_scores_top_decile": {
+          "n": 41,
+          "dates": 9,
+          "mean_policy_net_pct": -0.5079629491533857,
+          "win_rate": 0.3902439024390244,
+          "ex_top3_mean_pct": -0.7928021293497057,
+          "session_block_lcb_pct": -1.35378602517611
+        }
+      },
+      "expanding_walk_forward": {
+        "tested_rows": 771,
+        "daily_top3": {
+          "n": 66,
+          "dates": 22,
+          "mean_policy_net_pct": -0.3924688396227825,
+          "win_rate": 0.4090909090909091,
+          "ex_top3_mean_pct": -0.5587768796048198,
+          "session_block_lcb_pct": -0.8969430074504773
+        },
+        "daily_top_decile": {
+          "n": 87,
+          "dates": 22,
+          "mean_policy_net_pct": -0.3687117099541643,
+          "win_rate": 0.4367816091954023,
+          "ex_top3_mean_pct": -0.49259427102395587,
+          "session_block_lcb_pct": -0.8634755098874474
+        },
+        "by_month_top_decile": {
+          "2026-06": {
+            "n": 46,
+            "dates": 13,
+            "mean_policy_net_pct": -0.3782403915089239,
+            "win_rate": 0.45652173913043476,
+            "ex_top3_mean_pct": -0.6209083258002444,
+            "session_block_lcb_pct": -1.0075588498388086
+          },
+          "2026-07": {
+            "n": 41,
+            "dates": 9,
+            "mean_policy_net_pct": -0.3580209940634582,
+            "win_rate": 0.4146341463414634,
+            "ex_top3_mean_pct": -0.6310226514895207,
+            "session_block_lcb_pct": -1.2532818530499472
+          }
+        }
+      }
+    },
+    "h60_t1.6": {
+      "objective": "enter after first complete open+5m bar; 60m target 1.6% before stop 2.5%; US cost 0.50%",
+      "fixed_holdout": {
+        "train_rows": 691,
+        "test_rows": 368,
+        "purged_session": "2026-06-30",
+        "all_holdout": {
+          "n": 368,
+          "dates": 9,
+          "unique_tickers": 137,
+          "mean_policy_net_pct": -0.6365576205574055,
+          "median_policy_net_pct": -0.3168909767954915,
+          "win_rate": 0.42391304347826086,
+          "ex_top3_mean_pct": -0.6508306968907542,
+          "session_block_lcb_pct": -0.921983195530831,
+          "max_ticker_share": 0.024456521739130436
+        },
+        "system_scores_top3": {
+          "n": 27,
+          "dates": 9,
+          "mean_policy_net_pct": -0.17998639582641915,
+          "win_rate": 0.6296296296296297,
+          "ex_top3_mean_pct": -0.3399846953047215,
+          "session_block_lcb_pct": -0.830277489101276
+        },
+        "system_scores_top_decile": {
+          "n": 41,
+          "dates": 9,
+          "mean_policy_net_pct": -0.5035237604912577,
+          "win_rate": 0.5121951219512195,
+          "ex_top3_mean_pct": -0.6301177415826726,
+          "session_block_lcb_pct": -1.093132709947147
+        }
+      },
+      "expanding_walk_forward": {
+        "tested_rows": 773,
+        "daily_top3": {
+          "n": 66,
+          "dates": 22,
+          "mean_policy_net_pct": -0.20367450932013303,
+          "win_rate": 0.6363636363636364,
+          "ex_top3_mean_pct": -0.26575424785918705,
+          "session_block_lcb_pct": -0.612673003764456
+        },
+        "daily_top_decile": {
+          "n": 87,
+          "dates": 22,
+          "mean_policy_net_pct": -0.18316291296482146,
+          "win_rate": 0.6091954022988506,
+          "ex_top3_mean_pct": -0.22899015985642238,
+          "session_block_lcb_pct": -0.4819765629984406
+        },
+        "by_month_top_decile": {
+          "2026-06": {
+            "n": 46,
+            "dates": 13,
+            "mean_policy_net_pct": -0.04939317951617123,
+            "win_rate": 0.6739130434782609,
+            "ex_top3_mean_pct": -0.1295834013428808,
+            "session_block_lcb_pct": -0.43785423308056665
+          },
+          "2026-07": {
+            "n": 41,
+            "dates": 9,
+            "mean_policy_net_pct": -0.33324602854135604,
+            "win_rate": 0.5365853658536586,
+            "ex_top3_mean_pct": -0.44639703079462095,
+            "session_block_lcb_pct": -0.8977487820830657
+          }
+        }
+      }
+    },
+    "h60_t2.3": {
+      "objective": "enter after first complete open+5m bar; 60m target 2.3% before stop 2.5%; US cost 0.50%",
+      "fixed_holdout": {
+        "train_rows": 691,
+        "test_rows": 368,
+        "purged_session": "2026-06-30",
+        "all_holdout": {
+          "n": 368,
+          "dates": 9,
+          "unique_tickers": 137,
+          "mean_policy_net_pct": -0.66789727236793,
+          "median_policy_net_pct": -0.5923507354845532,
+          "win_rate": 0.36141304347826086,
+          "ex_top3_mean_pct": -0.688181359538077,
+          "session_block_lcb_pct": -1.0238232247239984,
+          "max_ticker_share": 0.024456521739130436
+        },
+        "system_scores_top3": {
+          "n": 27,
+          "dates": 9,
+          "mean_policy_net_pct": -0.1615520199132925,
+          "win_rate": 0.5555555555555556,
+          "ex_top3_mean_pct": -0.4067460224024541,
+          "session_block_lcb_pct": -0.8357851321412908
+        },
+        "system_scores_top_decile": {
+          "n": 41,
+          "dates": 9,
+          "mean_policy_net_pct": -0.32635651467471344,
+          "win_rate": 0.4878048780487805,
+          "ex_top3_mean_pct": -0.4942267658332435,
+          "session_block_lcb_pct": -0.8627521407921344
+        }
+      },
+      "expanding_walk_forward": {
+        "tested_rows": 773,
+        "daily_top3": {
+          "n": 66,
+          "dates": 22,
+          "mean_policy_net_pct": 0.1806216013554372,
+          "win_rate": 0.6212121212121212,
+          "ex_top3_mean_pct": 0.10350834427712459,
+          "session_block_lcb_pct": -0.26080056936316354
+        },
+        "daily_top_decile": {
+          "n": 87,
+          "dates": 22,
+          "mean_policy_net_pct": 0.1440438361852294,
+          "win_rate": 0.6091954022988506,
+          "ex_top3_mean_pct": 0.08490254462041628,
+          "session_block_lcb_pct": -0.1956077436261095
+        },
+        "by_month_top_decile": {
+          "2026-06": {
+            "n": 46,
+            "dates": 13,
+            "mean_policy_net_pct": 0.3989616604687722,
+            "win_rate": 0.6739130434782609,
+            "ex_top3_mean_pct": 0.3012147995712446,
+            "session_block_lcb_pct": -0.03080097271504134
+          },
+          "2026-07": {
+            "n": 41,
+            "dates": 9,
+            "mean_policy_net_pct": -0.14196152764508685,
+            "win_rate": 0.5365853658536586,
+            "ex_top3_mean_pct": -0.2952742798275937,
+            "session_block_lcb_pct": -0.7557403933274901
+          }
+        }
+      }
+    },
+    "h60_t3.6": {
+      "objective": "enter after first complete open+5m bar; 60m target 3.6% before stop 2.5%; US cost 0.50%",
+      "fixed_holdout": {
+        "train_rows": 691,
+        "test_rows": 368,
+        "purged_session": "2026-06-30",
+        "all_holdout": {
+          "n": 368,
+          "dates": 9,
+          "unique_tickers": 137,
+          "mean_policy_net_pct": -0.6952735502984165,
+          "median_policy_net_pct": -0.7826241606015356,
+          "win_rate": 0.32608695652173914,
+          "ex_top3_mean_pct": -0.7264675794789514,
+          "session_block_lcb_pct": -1.1149877411399156,
+          "max_ticker_share": 0.024456521739130436
+        },
+        "system_scores_top3": {
+          "n": 27,
+          "dates": 9,
+          "mean_policy_net_pct": -0.3891507380330465,
+          "win_rate": 0.4074074074074074,
+          "ex_top3_mean_pct": -0.8252945802871773,
+          "session_block_lcb_pct": -1.3219407140241903
+        },
+        "system_scores_top_decile": {
+          "n": 41,
+          "dates": 9,
+          "mean_policy_net_pct": -0.4955914364160043,
+          "win_rate": 0.3902439024390244,
+          "ex_top3_mean_pct": -0.7794539182383204,
+          "session_block_lcb_pct": -1.3311764331106883
+        }
+      },
+      "expanding_walk_forward": {
+        "tested_rows": 773,
+        "daily_top3": {
+          "n": 66,
+          "dates": 22,
+          "mean_policy_net_pct": -0.12166564968157187,
+          "win_rate": 0.48484848484848486,
+          "ex_top3_mean_pct": -0.27507829966640857,
+          "session_block_lcb_pct": -0.7099674534558927
+        },
+        "daily_top_decile": {
+          "n": 87,
+          "dates": 22,
+          "mean_policy_net_pct": -0.25619099607763496,
+          "win_rate": 0.45977011494252873,
+          "ex_top3_mean_pct": -0.3760549602232648,
+          "session_block_lcb_pct": -0.8491194232657578
+        },
+        "by_month_top_decile": {
+          "2026-06": {
+            "n": 46,
+            "dates": 13,
+            "mean_policy_net_pct": -0.094408006131872,
+            "win_rate": 0.5,
+            "ex_top3_mean_pct": -0.3172736809782816,
+            "session_block_lcb_pct": -0.8373296659372661
+          },
+          "2026-07": {
+            "n": 41,
+            "dates": 9,
+            "mean_policy_net_pct": -0.4377036189436129,
+            "win_rate": 0.4146341463414634,
+            "ex_top3_mean_pct": -0.7169960099128455,
+            "session_block_lcb_pct": -1.3590150392737985
+          }
+        }
+      }
+    }
+  },
+  "open15_build": {
+    "source_rows": 43370,
+    "candidate_sessions": 1776,
+    "selected_snapshots": 217,
+    "labeled_snapshots": 121,
+    "label_failures": {
+      "price_file_missing": 32,
+      "no_bar_after_known_at": 51,
+      "no_same_session_bar": 10,
+      "insufficient_horizon_coverage": 3
+    }
+  },
+  "open15_contexts": {
+    "coverage": {
+      "ret_5m_pct": 0.8760330578512396,
+      "ret_10m_pct": 0.8016528925619835,
+      "vwap_distance_pct": 0.743801652892562,
+      "opening_range_break": 0.1487603305785124
+    },
+    "rules": {
+      "all_open15_candidates": {
+        "h30_t1p6_s2p5_policy_net_pct": {
+          "n": 121,
+          "dates": 3,
+          "unique_tickers": 90,
+          "mean_policy_net_pct": -0.6421302011309618,
+          "median_policy_net_pct": -0.5853990508049463,
+          "win_rate": 0.3140495867768595,
+          "ex_top3_mean_pct": -0.6864216469224268,
+          "session_block_lcb_pct": -1.1434528912499526,
+          "max_ticker_share": 0.024793388429752067
+        },
+        "h30_t2p3_s2p5_policy_net_pct": {
+          "n": 121,
+          "dates": 3,
+          "unique_tickers": 90,
+          "mean_policy_net_pct": -0.6218273555727606,
+          "median_policy_net_pct": -0.6172803618986418,
+          "win_rate": 0.30578512396694213,
+          "ex_top3_mean_pct": -0.6833992374941019,
+          "session_block_lcb_pct": -1.1256948534597704,
+          "max_ticker_share": 0.024793388429752067
+        },
+        "h60_t1p6_s2p5_policy_net_pct": {
+          "n": 121,
+          "dates": 3,
+          "unique_tickers": 90,
+          "mean_policy_net_pct": -0.6778826092319393,
+          "median_policy_net_pct": -0.5834664072587477,
+          "win_rate": 0.33884297520661155,
+          "ex_top3_mean_pct": -0.7230830145513953,
+          "session_block_lcb_pct": -1.0822329646179756,
+          "max_ticker_share": 0.024793388429752067
+        },
+        "h60_t2p3_s2p5_policy_net_pct": {
+          "n": 121,
+          "dates": 3,
+          "unique_tickers": 90,
+          "mean_policy_net_pct": -0.6540600334904476,
+          "median_policy_net_pct": -0.6555648788326702,
+          "win_rate": 0.2892561983471074,
+          "ex_top3_mean_pct": -0.7164513902741031,
+          "session_block_lcb_pct": -1.158414904638797,
+          "max_ticker_share": 0.024793388429752067
+        },
+        "h60_t3p6_s2p5_policy_net_pct": {
+          "n": 121,
+          "dates": 3,
+          "unique_tickers": 90,
+          "mean_policy_net_pct": -0.7290316579701875,
+          "median_policy_net_pct": -0.6682385820074295,
+          "win_rate": 0.2644628099173554,
+          "ex_top3_mean_pct": -0.8263799204609551,
+          "session_block_lcb_pct": -1.1081859378185552,
+          "max_ticker_share": 0.024793388429752067
+        }
+      },
+      "feature_complete": {
+        "h30_t1p6_s2p5_policy_net_pct": {
+          "n": 84,
+          "dates": 3,
+          "unique_tickers": 67,
+          "mean_policy_net_pct": -0.8614969369926749,
+          "median_policy_net_pct": -0.7718868087117132,
+          "win_rate": 0.23809523809523808,
+          "ex_top3_mean_pct": -0.9341449716961073,
+          "session_block_lcb_pct": -1.2983300414754178,
+          "max_ticker_share": 0.03571428571428571
+        },
+        "h30_t2p3_s2p5_policy_net_pct": {
+          "n": 84,
+          "dates": 3,
+          "unique_tickers": 67,
+          "mean_policy_net_pct": -0.8359336404065741,
+          "median_policy_net_pct": -0.7718868087117132,
+          "win_rate": 0.23809523809523808,
+          "ex_top3_mean_pct": -0.9335608122734842,
+          "session_block_lcb_pct": -1.2608058459549405,
+          "max_ticker_share": 0.03571428571428571
+        },
+        "h60_t1p6_s2p5_policy_net_pct": {
+          "n": 84,
+          "dates": 3,
+          "unique_tickers": 67,
+          "mean_policy_net_pct": -0.8817465553696481,
+          "median_policy_net_pct": -0.7064568092599417,
+          "win_rate": 0.25,
+          "ex_top3_mean_pct": -0.9551445759388941,
+          "session_block_lcb_pct": -1.240925559706146,
+          "max_ticker_share": 0.03571428571428571
+        },
+        "h60_t2p3_s2p5_policy_net_pct": {
+          "n": 84,
+          "dates": 3,
+          "unique_tickers": 67,
+          "mean_policy_net_pct": -0.8367676115047198,
+          "median_policy_net_pct": -0.751411290919834,
+          "win_rate": 0.2261904761904762,
+          "ex_top3_mean_pct": -0.9344256711900796,
+          "session_block_lcb_pct": -1.2124740609329374,
+          "max_ticker_share": 0.03571428571428571
+        },
+        "h60_t3p6_s2p5_policy_net_pct": {
+          "n": 84,
+          "dates": 3,
+          "unique_tickers": 67,
+          "mean_policy_net_pct": -0.8988673539571201,
+          "median_policy_net_pct": -0.7721271074416776,
+          "win_rate": 0.21428571428571427,
+          "ex_top3_mean_pct": -1.0268170432552683,
+          "session_block_lcb_pct": -1.1616470648080461,
+          "max_ticker_share": 0.03571428571428571
+        }
+      },
+      "positive_tape": {
+        "h30_t1p6_s2p5_policy_net_pct": {
+          "n": 31,
+          "dates": 3,
+          "unique_tickers": 29,
+          "mean_policy_net_pct": -0.6505408074609257,
+          "median_policy_net_pct": -0.6172803618986418,
+          "win_rate": 0.22580645161290322,
+          "ex_top3_mean_pct": -0.8380987511174535,
+          "session_block_lcb_pct": -0.9228932844776029,
+          "max_ticker_share": 0.06451612903225806
+        },
+        "h30_t2p3_s2p5_policy_net_pct": {
+          "n": 31,
+          "dates": 3,
+          "unique_tickers": 29,
+          "mean_policy_net_pct": -0.6620470220176154,
+          "median_policy_net_pct": -0.6172803618986418,
+          "win_rate": 0.22580645161290322,
+          "ex_top3_mean_pct": -0.8628965399448071,
+          "session_block_lcb_pct": -0.9146662774574168,
+          "max_ticker_share": 0.06451612903225806
+        },
+        "h60_t1p6_s2p5_policy_net_pct": {
+          "n": 31,
+          "dates": 3,
+          "unique_tickers": 29,
+          "mean_policy_net_pct": -0.5842166920567288,
+          "median_policy_net_pct": -0.5242375212979873,
+          "win_rate": 0.25806451612903225,
+          "ex_top3_mean_pct": -0.7646684804913784,
+          "session_block_lcb_pct": -0.8605106469735834,
+          "max_ticker_share": 0.06451612903225806
+        },
+        "h60_t2p3_s2p5_policy_net_pct": {
+          "n": 31,
+          "dates": 3,
+          "unique_tickers": 29,
+          "mean_policy_net_pct": -0.6174768016432225,
+          "median_policy_net_pct": -0.5242375212979873,
+          "win_rate": 0.22580645161290322,
+          "ex_top3_mean_pct": -0.8764921732478536,
+          "session_block_lcb_pct": -0.8308318815810326,
+          "max_ticker_share": 0.06451612903225806
+        },
+        "h60_t3p6_s2p5_policy_net_pct": {
+          "n": 31,
+          "dates": 3,
+          "unique_tickers": 29,
+          "mean_policy_net_pct": -0.7952419632286294,
+          "median_policy_net_pct": -0.6562522224743401,
+          "win_rate": 0.1935483870967742,
+          "ex_top3_mean_pct": -0.9658455383462765,
+          "session_block_lcb_pct": -0.8699846624412815,
+          "max_ticker_share": 0.06451612903225806
+        }
+      },
+      "catalyst_positive_tape": {
+        "h30_t1p6_s2p5_policy_net_pct": {
+          "n": 10,
+          "dates": 3,
+          "unique_tickers": 8,
+          "mean_policy_net_pct": -0.5909616495849863,
+          "median_policy_net_pct": -0.5586401809493209,
+          "win_rate": 0.2,
+          "ex_top3_mean_pct": -0.8504905322812731,
+          "session_block_lcb_pct": -0.9034659989718521,
+          "max_ticker_share": 0.2
+        },
+        "h30_t2p3_s2p5_policy_net_pct": {
+          "n": 10,
+          "dates": 3,
+          "unique_tickers": 8,
+          "mean_policy_net_pct": -0.5909616495849863,
+          "median_policy_net_pct": -0.5586401809493209,
+          "win_rate": 0.2,
+          "ex_top3_mean_pct": -0.8504905322812731,
+          "session_block_lcb_pct": -0.9034659989718521,
+          "max_ticker_share": 0.2
+        },
+        "h60_t1p6_s2p5_policy_net_pct": {
+          "n": 10,
+          "dates": 3,
+          "unique_tickers": 8,
+          "mean_policy_net_pct": -0.7432256037726231,
+          "median_policy_net_pct": -0.700463629493397,
+          "win_rate": 0.0,
+          "ex_top3_mean_pct": -0.9849199436105351,
+          "session_block_lcb_pct": -0.9977817037076123,
+          "max_ticker_share": 0.2
+        },
+        "h60_t2p3_s2p5_policy_net_pct": {
+          "n": 10,
+          "dates": 3,
+          "unique_tickers": 8,
+          "mean_policy_net_pct": -0.7432256037726231,
+          "median_policy_net_pct": -0.700463629493397,
+          "win_rate": 0.0,
+          "ex_top3_mean_pct": -0.9849199436105351,
+          "session_block_lcb_pct": -0.9977817037076123,
+          "max_ticker_share": 0.2
+        },
+        "h60_t3p6_s2p5_policy_net_pct": {
+          "n": 10,
+          "dates": 3,
+          "unique_tickers": 8,
+          "mean_policy_net_pct": -0.7432256037726231,
+          "median_policy_net_pct": -0.700463629493397,
+          "win_rate": 0.0,
+          "ex_top3_mean_pct": -0.9849199436105351,
+          "session_block_lcb_pct": -0.9977817037076123,
+          "max_ticker_share": 0.2
+        }
+      },
+      "opening_break_positive_tape": {
+        "h30_t1p6_s2p5_policy_net_pct": {
+          "n": 0,
+          "dates": 0
+        },
+        "h30_t2p3_s2p5_policy_net_pct": {
+          "n": 0,
+          "dates": 0
+        },
+        "h60_t1p6_s2p5_policy_net_pct": {
+          "n": 0,
+          "dates": 0
+        },
+        "h60_t2p3_s2p5_policy_net_pct": {
+          "n": 0,
+          "dates": 0
+        },
+        "h60_t3p6_s2p5_policy_net_pct": {
+          "n": 0,
+          "dates": 0
+        }
+      },
+      "vwap_reclaim": {
+        "h30_t1p6_s2p5_policy_net_pct": {
+          "n": 3,
+          "dates": 3,
+          "unique_tickers": 3,
+          "mean_policy_net_pct": -0.7650574434052889,
+          "median_policy_net_pct": -0.9324821627134656,
+          "win_rate": 0.3333333333333333,
+          "ex_top3_mean_pct": null,
+          "session_block_lcb_pct": -2.46246937691151,
+          "max_ticker_share": 0.3333333333333333
+        },
+        "h30_t2p3_s2p5_policy_net_pct": {
+          "n": 3,
+          "dates": 3,
+          "unique_tickers": 3,
+          "mean_policy_net_pct": -0.5317241100719556,
+          "median_policy_net_pct": -0.9324821627134656,
+          "win_rate": 0.3333333333333333,
+          "ex_top3_mean_pct": null,
+          "session_block_lcb_pct": -2.5826125636585853,
+          "max_ticker_share": 0.3333333333333333
+        },
+        "h60_t1p6_s2p5_policy_net_pct": {
+          "n": 3,
+          "dates": 3,
+          "unique_tickers": 3,
+          "mean_policy_net_pct": -0.7502903220411169,
+          "median_policy_net_pct": -0.35087096612335067,
+          "win_rate": 0.3333333333333333,
+          "ex_top3_mean_pct": null,
+          "session_block_lcb_pct": -2.724781902533481,
+          "max_ticker_share": 0.3333333333333333
+        },
+        "h60_t2p3_s2p5_policy_net_pct": {
+          "n": 3,
+          "dates": 3,
+          "unique_tickers": 3,
+          "mean_policy_net_pct": -0.5169569887077836,
+          "median_policy_net_pct": -0.35087096612335067,
+          "win_rate": 0.3333333333333333,
+          "ex_top3_mean_pct": null,
+          "session_block_lcb_pct": -2.8004256510524157,
+          "max_ticker_share": 0.3333333333333333
+        },
+        "h60_t3p6_s2p5_policy_net_pct": {
+          "n": 3,
+          "dates": 3,
+          "unique_tickers": 3,
+          "mean_policy_net_pct": -0.0836236553744502,
+          "median_policy_net_pct": -0.35087096612335067,
+          "win_rate": 0.3333333333333333,
+          "ex_top3_mean_pct": null,
+          "session_block_lcb_pct": -2.9886622710123247,
+          "max_ticker_share": 0.3333333333333333
+        }
+      },
+      "controlled_pullback": {
+        "h30_t1p6_s2p5_policy_net_pct": {
+          "n": 27,
+          "dates": 3,
+          "unique_tickers": 25,
+          "mean_policy_net_pct": -0.8677529870260751,
+          "median_policy_net_pct": -0.7204531641496033,
+          "win_rate": 0.1111111111111111,
+          "ex_top3_mean_pct": -1.0239996230692394,
+          "session_block_lcb_pct": -1.0230939723721921,
+          "max_ticker_share": 0.07407407407407407
+        },
+        "h30_t2p3_s2p5_policy_net_pct": {
+          "n": 27,
+          "dates": 3,
+          "unique_tickers": 25,
+          "mean_policy_net_pct": -0.8934692124766639,
+          "median_policy_net_pct": -0.7204531641496033,
+          "win_rate": 0.1111111111111111,
+          "ex_top3_mean_pct": -1.0239996230692394,
+          "session_block_lcb_pct": -0.9984449840814038,
+          "max_ticker_share": 0.07407407407407407
+        },
+        "h60_t1p6_s2p5_policy_net_pct": {
+          "n": 27,
+          "dates": 3,
+          "unique_tickers": 25,
+          "mean_policy_net_pct": -0.843169997253783,
+          "median_policy_net_pct": -0.6682385820074295,
+          "win_rate": 0.14814814814814814,
+          "ex_top3_mean_pct": -1.086066246910506,
+          "session_block_lcb_pct": -0.9444485518788508,
+          "max_ticker_share": 0.07407407407407407
+        },
+        "h60_t2p3_s2p5_policy_net_pct": {
+          "n": 27,
+          "dates": 3,
+          "unique_tickers": 25,
+          "mean_policy_net_pct": -0.8514501140348559,
+          "median_policy_net_pct": -0.6682385820074295,
+          "win_rate": 0.1111111111111111,
+          "ex_top3_mean_pct": -1.114612524840476,
+          "session_block_lcb_pct": -0.8740243707413962,
+          "max_ticker_share": 0.07407407407407407
+        },
+        "h60_t3p6_s2p5_policy_net_pct": {
+          "n": 27,
+          "dates": 3,
+          "unique_tickers": 25,
+          "mean_policy_net_pct": -0.945674419550299,
+          "median_policy_net_pct": -0.6682385820074295,
+          "win_rate": 0.1111111111111111,
+          "ex_top3_mean_pct": -1.114612524840476,
+          "session_block_lcb_pct": -0.9890974959952187,
+          "max_ticker_share": 0.07407407407407407
+        }
+      }
+    }
+  },
+  "open15_ledger": "E:\\code\\claudetrade\\reports\\us_market_shape_open15_ledger_20260716.csv",
+  "us_swing_5d": {
+    "status": "OK",
+    "historical_top3": {
+      "ensemble_metrics": {
+        "block_bootstrap_lcb_pct": -0.15249404303360098,
+        "mean_excess_vs_candidate_universe_pct": 1.077925300285093,
+        "mean_net_ex_top3_days_pct": 1.079886119640498,
+        "mean_net_pct": 1.3568312301658798,
+        "median_net_pct": -0.029965230932770925,
+        "profit_factor": 1.511951866506713,
+        "rows": 879,
+        "sessions": 293,
+        "win_rate": 0.4948805460750853
+      },
+      "worst_block_lcb_pct": -0.15249404303360098,
+      "worst_ex_top3_days_pct": 1.079886119640498,
+      "worst_mean_net_pct": 1.3568312301658798,
+      "worst_profit_factor": 1.511951866506713,
+      "worst_stress_mean_net_pct": 1.0568312301658798
+    },
+    "execution_micro": {
+      "capacity_metrics": {
+        "scenarios": {
+          "0": {
+            "account_return_pct": 1.247613890412447,
+            "annualized_trades_at_252_sessions": 47.3037542662116,
+            "block_lcb_pct": 0.3514869967025773,
+            "by_year": {
+              "2025": {
+                "mean_net_pct": 0.5954143069955146,
+                "net_pnl_krw": 10656.87995558611,
+                "profit_factor": 1.1363589785650974,
+                "trades": 40,
+                "win_rate": 0.525
+              },
+              "2026": {
+                "mean_net_pct": 7.758105368578853,
+                "net_pnl_krw": 51723.81456503626,
+                "profit_factor": 5.0804683960610495,
+                "trades": 15,
+                "win_rate": 0.6666666666666666
+              }
+            },
+            "decision_sessions": 293,
+            "ending_sleeve_krw": 562380.6945206224,
+            "fallback_trades": 0,
+            "mean_net_pct": 2.5488755056091525,
+            "median_net_pct": 2.9236403701442875,
+            "missing_outcome_sessions": 0,
+            "net_pnl_krw": 62380.694520622346,
+            "profit_factor": 1.689970232410104,
+            "rank_counts": {
+              "1": 55
+            },
+            "realized_equity_max_drawdown_pct": -2.6105807773145417,
+            "skipped_slot_sessions": 170,
+            "skipped_unaffordable_sessions": 68,
+            "sleeve_return_pct": 12.476138904124468,
+            "trade_rate_per_decision_session": 0.18771331058020477,
+            "trades": 55,
+            "win_rate": 0.5636363636363636,
+            "worst_net_pct": -27.18487064266398
+          },
+          "0.25": {
+            "account_return_pct": 1.0638793469696999,
+            "annualized_trades_at_252_sessions": 47.3037542662116,
+            "block_lcb_pct": -0.04855583343293057,
+            "by_year": {
+              "2025": {
+                "mean_net_pct": 0.42105722017611547,
+                "net_pnl_krw": 7772.868823153969,
+                "profit_factor": 1.0941939909564242,
+                "trades": 40,
+                "win_rate": 0.525
+              },
+              "2026": {
+                "mean_net_pct": 6.6959213843584,
+                "net_pnl_krw": 45421.098525331014,
+                "profit_factor": 3.5628712485012155,
+                "trades": 15,
+                "win_rate": 0.6
+              }
+            },
+            "decision_sessions": 293,
+            "ending_sleeve_krw": 553193.967348485,
+            "fallback_trades": 0,
+            "mean_net_pct": 2.132383810407647,
+            "median_net_pct": 2.6655664781931714,
+            "missing_outcome_sessions": 0,
+            "net_pnl_krw": 53193.96734848499,
+            "profit_factor": 1.5380009552100078,
+            "rank_counts": {
+              "1": 55
+            },
+            "realized_equity_max_drawdown_pct": -2.720782292594429,
+            "skipped_slot_sessions": 171,
+            "skipped_unaffordable_sessions": 67,
+            "sleeve_return_pct": 10.638793469697,
+            "trade_rate_per_decision_session": 0.18771331058020477,
+            "trades": 55,
+            "win_rate": 0.5454545454545454,
+            "worst_net_pct": -27.18487064266398
+          },
+          "0.5": {
+            "account_return_pct": 1.0329536597733107,
+            "annualized_trades_at_252_sessions": 47.3037542662116,
+            "block_lcb_pct": -0.10964891952318097,
+            "by_year": {
+              "2025": {
+                "mean_net_pct": 0.42036234185712473,
+                "net_pnl_krw": 7114.719831999835,
+                "profit_factor": 1.091919086965219,
+                "trades": 40,
+                "win_rate": 0.525
+              },
+              "2026": {
+                "mean_net_pct": 6.540884234345481,
+                "net_pnl_krw": 44532.963156665704,
+                "profit_factor": 3.4170309979844045,
+                "trades": 15,
+                "win_rate": 0.6
+              }
+            },
+            "decision_sessions": 293,
+            "ending_sleeve_krw": 551647.6829886655,
+            "fallback_trades": 0,
+            "mean_net_pct": 2.0895955852630403,
+            "median_net_pct": 2.408935715809613,
+            "missing_outcome_sessions": 0,
+            "net_pnl_krw": 51647.68298866553,
+            "profit_factor": 1.5141730846338954,
+            "rank_counts": {
+              "1": 55
+            },
+            "realized_equity_max_drawdown_pct": -2.608960665310078,
+            "skipped_slot_sessions": 169,
+            "skipped_unaffordable_sessions": 69,
+            "sleeve_return_pct": 10.329536597733107,
+            "trade_rate_per_decision_session": 0.18771331058020477,
+            "trades": 55,
+            "win_rate": 0.5454545454545454,
+            "worst_net_pct": -27.18487064266398
+          }
+        },
+        "selected_policy": "rank1_skip",
+        "stress_boundary_entry_slippage_pct": 1.0,
+        "validated_entry_slippage_pct": [
+          0.0,
+          0.25,
+          0.5
+        ]
+      },
+      "metrics": {
+        "block_lcb_pct": -0.17140039293121645,
+        "by_year": {
+          "2025": {
+            "block_lcb_pct": -1.3291308286688963,
+            "mean_net_pct": 0.05196283596902935,
+            "profit_factor": 1.012717321728544,
+            "sessions": 230,
+            "win_rate": 0.4826086956521739
+          },
+          "2026": {
+            "block_lcb_pct": 1.558448895137362,
+            "mean_net_pct": 6.330302172889181,
+            "profit_factor": 3.231362901341199,
+            "sessions": 63,
+            "win_rate": 0.6190476190476191
+          }
+        },
+        "ex_top3_days_pct": 0.9234949125656847,
+        "exit_reasons": {
+          "FIFTH_CLOSE": 194,
+          "SL": 6,
+          "TP": 72,
+          "TP_GAP": 21
+        },
+        "mean_net_pct": 1.4019129323033965,
+        "median_net_pct": 0.7025782355153503,
+        "p10_net_pct": -11.02851194443443,
+        "profit_factor": 1.3672401919024777,
+        "rows": 293,
+        "sessions": 293,
+        "win_rate": 0.5119453924914675,
+        "worst_net_pct": -27.18487064266398
+      },
+      "passed": true,
+      "reasons": [],
+      "selection": "rank1"
+    },
+    "forward": {
+      "critical_data_errors": [],
+      "execution_shadow_policy": "rank1_skip_v1",
+      "matured": 0,
+      "observation_sessions": 2,
+      "sessions": 0,
+      "strategy_matched": true
+    },
+    "active_execution_shadow": {
+      "state": "ACTIVE_UNMATURED",
+      "active_count": 1,
+      "rows": [
+        {
+          "state": "ACTIVE_UNMATURED",
+          "signal_date": "2026-07-10",
+          "ticker": "SMCI",
+          "entry_date": "2026-07-10",
+          "entry_fill_usd": 28.421400690078734,
+          "qty": 1,
+          "execution_shadow_reason": "entry_open_whole_share_confirmed",
+          "observed_sessions": 4,
+          "max_hold_sessions": 5,
+          "expected_maturity_session": "2026-07-16",
+          "latest_bar_date": "2026-07-15",
+          "maturity_due": false
+        }
+      ]
+    },
+    "ledger_counts": {
+      "PENDING": 10
+    },
+    "latest_signals": [
+      {
+        "signal_date": "2026-07-15",
+        "ticker": "CRWD",
+        "rank": 1,
+        "probability": 0.6402008317630297,
+        "predicted_net_pct": 13.03183802793419,
+        "status": "PENDING",
+        "execution_shadow_eligible": 0,
+        "execution_shadow_reason": "slot_occupied_pending:2026-07-10"
+      },
+      {
+        "signal_date": "2026-07-15",
+        "ticker": "AXTI",
+        "rank": 2,
+        "probability": 0.6970100121328987,
+        "predicted_net_pct": 8.680616243661056,
+        "status": "PENDING",
+        "execution_shadow_eligible": 0,
+        "execution_shadow_reason": "rank_outside_micro_contract"
+      },
+      {
+        "signal_date": "2026-07-15",
+        "ticker": "SEZL",
+        "rank": 3,
+        "probability": 0.5503092098290411,
+        "predicted_net_pct": 9.529722714784675,
+        "status": "PENDING",
+        "execution_shadow_eligible": 0,
+        "execution_shadow_reason": "rank_outside_micro_contract"
+      },
+      {
+        "signal_date": "2026-07-15",
+        "ticker": "TXG",
+        "rank": 4,
+        "probability": 0.546775461698048,
+        "predicted_net_pct": 3.6402198364525984,
+        "status": "PENDING",
+        "execution_shadow_eligible": 0,
+        "execution_shadow_reason": "rank_outside_micro_contract"
+      },
+      {
+        "signal_date": "2026-07-15",
+        "ticker": "ERAS",
+        "rank": 5,
+        "probability": 0.5376023116140441,
+        "predicted_net_pct": 4.853353027197316,
+        "status": "PENDING",
+        "execution_shadow_eligible": 0,
+        "execution_shadow_reason": "rank_outside_micro_contract"
+      },
+      {
+        "signal_date": "2026-07-10",
+        "ticker": "SMCI",
+        "rank": 1,
+        "probability": 0.6230457894574758,
+        "predicted_net_pct": 1.7688443427115195,
+        "status": "PENDING",
+        "execution_shadow_eligible": 1,
+        "execution_shadow_reason": "entry_open_whole_share_confirmed"
+      },
+      {
+        "signal_date": "2026-07-10",
+        "ticker": "AVAV",
+        "rank": 2,
+        "probability": 0.5837680147927933,
+        "predicted_net_pct": 3.0150799101331316,
+        "status": "PENDING",
+        "execution_shadow_eligible": 0,
+        "execution_shadow_reason": "rank_outside_micro_contract"
+      },
+      {
+        "signal_date": "2026-07-10",
+        "ticker": "ORCL",
+        "rank": 3,
+        "probability": 0.5901562739218252,
+        "predicted_net_pct": 1.8057188529360904,
+        "status": "PENDING",
+        "execution_shadow_eligible": 0,
+        "execution_shadow_reason": "rank_outside_micro_contract"
+      },
+      {
+        "signal_date": "2026-07-10",
+        "ticker": "QS",
+        "rank": 4,
+        "probability": 0.5728996294007599,
+        "predicted_net_pct": 2.358627206263789,
+        "status": "PENDING",
+        "execution_shadow_eligible": 0,
+        "execution_shadow_reason": "rank_outside_micro_contract"
+      },
+      {
+        "signal_date": "2026-07-10",
+        "ticker": "QGEN",
+        "rank": 5,
+        "probability": 0.6006210489121502,
+        "predicted_net_pct": 1.247842720149417,
+        "status": "PENDING",
+        "execution_shadow_eligible": 0,
+        "execution_shadow_reason": "rank_outside_micro_contract"
+      }
+    ]
+  },
+  "verdict": {
+    "broad_opening_expansion": "REJECT_CURRENT_FORM",
+    "generic_system_score_rescue": "REJECT_CURRENT_FORM",
+    "open15_tape_rule": "COLLECT_PROSPECTIVE_ONLY",
+    "us_swing_5d": "KEEP_BOUNDED_MICRO_TRIAL_AND_MATURE_FORWARD",
+    "us_core_trend": "KEEP_AS_DEFAULT_US_CAPITAL_LANE",
+    "next_us_specific_research": [
+      "earnings D+1 to D+3 drift with structured surprise and announcement timing",
+      "second-day continuation using time-normalized RVOL and prior-day in-play state",
+      "opening-auction imbalance only after a licensed point-in-time NOII feed exists"
+    ]
+  }
+}
