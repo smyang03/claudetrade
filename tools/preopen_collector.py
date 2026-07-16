@@ -140,6 +140,21 @@ def _register_preopen_candidates(
                     "news_or_earnings_count": candidate.get("news_or_earnings_count"),
                     "news_quality": candidate.get("news_quality", ""),
                     "news_signal_type": candidate.get("news_signal_type", ""),
+                    "registration_basis": [
+                        {
+                            "source_axis": str(candidate.get("source") or "preopen_collector"),
+                            "rule_version": "preopen_collector_v1",
+                            "known_at": captured_at,
+                            "evidence": {
+                                "preopen_grade": candidate.get("preopen_grade"),
+                                "preopen_score": candidate.get("preopen_score"),
+                                "provider_rank": candidate.get("provider_rank"),
+                                "shadow_preopen_rank": candidate.get("shadow_preopen_rank"),
+                                "news_score": candidate.get("news_score"),
+                            },
+                        }
+                    ],
+                    "invalidation_conditions": candidate.get("invalidation_conditions") or [],
                     "payload": {
                         "preopen_grade": candidate.get("preopen_grade"),
                         "preopen_score": candidate.get("preopen_score"),

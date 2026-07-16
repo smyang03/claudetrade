@@ -33,6 +33,135 @@ ISOLATED_STRATEGY_SOURCES = frozenset({
     "kr_us_sector_pulse_3d",
 })
 
+# Generic advisor state must never own an isolated sleeve.  Keep this list in
+# the same module as ISOLATED_STRATEGY_SOURCES so runtime cleanup, preflight,
+# and post-session audits share one contract instead of maintaining parallel
+# field lists.
+ISOLATED_GENERIC_EXIT_FIELDS = (
+    "pending_next_open_sell",
+    "pending_next_open_reason",
+    "pending_next_open_sell_recheck_status",
+    "pending_next_open_sell_recheck_phase",
+    "pending_next_open_sell_recheck_session",
+    "pending_next_open_sell_recheck_at",
+    "pending_next_open_sell_recheck_cause",
+    "pending_intraday_recheck",
+    "pending_intraday_recheck_reason",
+    "pending_intraday_recheck_due_at",
+)
+
+
+def isolated_strategy_source(pos: dict) -> str:
+    source = str((pos or {}).get("source_strategy") or "").strip().lower()
+    return source if source in ISOLATED_STRATEGY_SOURCES else ""
+
+
+def active_isolated_generic_exit_fields(pos: dict) -> list[str]:
+    if not isolated_strategy_source(pos):
+        return []
+    active: list[str] = []
+    for field in ISOLATED_GENERIC_EXIT_FIELDS:
+        value = (pos or {}).get(field)
+        if field in {"pending_next_open_sell", "pending_intraday_recheck"}:
+            present = bool(value)
+        else:
+            present = bool(str(value or "").strip())
+        if present:
+            active.append(field)
+    return active
+
+
+def position_exit_contract(pos: dict) -> dict:
+    """Classify the software exit owner without mutating trading state.
+
+    This helper is intentionally deterministic and side-effect free so
+    preflight can verify the same ownership contract used by live runtime.
+    Broker/local quantity reconciliation remains the caller's responsibility.
+    """
+
+    position = dict(pos or {})
+    source = isolated_strategy_source(position)
+    if source:
+        return {
+            "protected": True,
+            "owner": source,
+            "policy": "isolated_strategy",
+            "generic_exit_conflicts": active_isolated_generic_exit_fields(position),
+            "owner_inferred": str(position.get("exit_owner") or "").strip().lower() != source,
+            "dependencies": [
+                "config.profit_strategy_micro_contract",
+                "runtime.process_inventory",
+            ],
+        }
+
+    path_run_id = str(
+        position.get("pathb_path_run_id")
+        or ((position.get("pathb_plan") or {}).get("path_run_id") if isinstance(position.get("pathb_plan"), dict) else "")
+        or ""
+    ).strip()
+    if path_run_id:
+        return {
+            "protected": True,
+            "owner": "pathb_plan",
+            "policy": "pathb_runtime",
+            "path_run_id": path_run_id,
+            "generic_exit_conflicts": [],
+            "owner_inferred": False,
+            "dependencies": [
+                "db.pathb_broker_truth_conflict",
+                "runtime.process_inventory",
+            ],
+        }
+
+    def numeric(value: object, default: float = 0.0) -> float:
+        try:
+            return float(str(value or "").replace(",", ""))
+        except (TypeError, ValueError):
+            return float(default)
+
+    if bool(position.get("recovery_micro")) or str(position.get("strategy") or "").strip().upper() == "RECOVERY_MICRO":
+        hard_loss = abs(numeric(position.get("recovery_micro_hard_loss_pct")))
+        force_exit_at = str(position.get("recovery_micro_force_exit_at") or "").strip()
+        return {
+            "protected": hard_loss > 0 and bool(force_exit_at),
+            "owner": "recovery_micro_policy",
+            "policy": "recovery_micro",
+            "generic_exit_conflicts": [],
+            "owner_inferred": False,
+            "missing_contract_fields": [
+                field
+                for field, missing in (
+                    ("recovery_micro_hard_loss_pct", hard_loss <= 0),
+                    ("recovery_micro_force_exit_at", not force_exit_at),
+                )
+                if missing
+            ],
+            "dependencies": ["runtime.process_inventory"],
+        }
+
+    entry = numeric(
+        position.get("display_avg_price")
+        or position.get("entry")
+        or position.get("avg_price")
+        or position.get("entry_price")
+        or position.get("buy_price")
+        or 0.0
+    )
+    qty = int(numeric(position.get("qty")))
+    return {
+        "protected": qty > 0 and entry > 0,
+        "owner": "plan_a_risk_manager",
+        "policy": "loss_cap_and_declared_exit_policy",
+        "generic_exit_conflicts": [],
+        "owner_inferred": False,
+        "missing_contract_fields": [
+            field
+            for field, missing in (("qty", qty <= 0), ("entry_price", entry <= 0))
+            if missing
+        ],
+        "dependencies": ["runtime.process_inventory"],
+    }
+
 
 def _market_session_date_local(market: str):
     now_dt = datetime.now(KST)
@@ -962,8 +1091,7 @@ class RiskManager:
 
     @staticmethod
     def _isolated_strategy_source(pos: dict) -> str:
-        source = str(pos.get("source_strategy") or "").strip().lower()
-        return source if source in ISOLATED_STRATEGY_SOURCES else ""
+        return isolated_strategy_source(pos)
 
     def _isolated_strategy_exit_candidate(self, pos: dict) -> tuple[bool, Optional[dict]]:
         """Keep independent strategy sleeves out of the generic Path-A exit owner.

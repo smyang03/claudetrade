@@ -140,7 +140,12 @@ from execution.claude_price_adapter import (
     round_up_to_cent,
     round_up_to_kr_tick,
 )
-from risk_manager import RiskManager, HARD_RULES, ISOLATED_STRATEGY_SOURCES
+from risk_manager import (
+    HARD_RULES,
+    ISOLATED_GENERIC_EXIT_FIELDS,
+    RiskManager,
+    isolated_strategy_source,
+)
 from telegram_reporter import (
     send,
     morning_briefing,
@@ -25766,8 +25771,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _isolated_strategy_exit_owner(pos: dict) -> str:
         """Return the explicit exit owner for an isolated strategy sleeve."""
 
-        source = str((pos or {}).get("source_strategy") or "").strip().lower()
-        return source if source in ISOLATED_STRATEGY_SOURCES else ""
+        return isolated_strategy_source(pos)
 
     def _clear_isolated_strategy_generic_exit_flags(self, market: str) -> int:
         """Remove stale generic-advisor sell state from isolated sleeves.
@@ -25777,18 +25781,6 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         """
 
         cleared = 0
-        generic_fields = (
-            "pending_next_open_sell",
-            "pending_next_open_reason",
-            "pending_next_open_sell_recheck_status",
-            "pending_next_open_sell_recheck_phase",
-            "pending_next_open_sell_recheck_session",
-            "pending_next_open_sell_recheck_at",
-            "pending_next_open_sell_recheck_cause",
-            "pending_intraday_recheck",
-            "pending_intraday_recheck_reason",
-            "pending_intraday_recheck_due_at",
-        )
         for pos in list(getattr(self.risk, "positions", []) or []):
             if self._ticker_market(pos.get("ticker", "")) != market:
                 continue
@@ -25796,7 +25788,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if not owner:
                 continue
             changed = False
-            for field in generic_fields:
+            for field in ISOLATED_GENERIC_EXIT_FIELDS:
                 if field not in pos:
                     continue
                 if field in {"pending_next_open_sell", "pending_intraday_recheck"}:

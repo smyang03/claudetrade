@@ -33,6 +33,72 @@ import ticker_selection_db
 
 
 class CandidateAuditBackfillTests(unittest.TestCase):
+    def test_candidate_registry_normalizes_basis_and_invalidation_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            store = CandidateAuditStore(db_path)
+            store.register_candidate_snapshot(
+                {
+                    "runtime_mode": "live",
+                    "market": "KR",
+                    "session_date": "2026-07-16",
+                    "ticker": "005930",
+                    "call_id": "preopen:KR:2026-07-16",
+                    "known_at": "2026-07-16T08:30:00+09:00",
+                    "source_file": "tools.preopen_collector",
+                    "registry_phase": "preopen_collector",
+                    "candidate_source": "high52_setup",
+                    "registration_basis": [
+                        {
+                            "source_axis": "high52_setup",
+                            "rule_version": "high52_v1",
+                            "evidence": {"from_52w_high_pct": -2.1},
+                        }
+                    ],
+                    "invalidation_conditions": [
+                        {
+                            "type": "price_below_reference_pct",
+                            "operator": "<=",
+                            "threshold": -8.0,
+                            "unit": "pct",
+                            "source": "daily_close",
+                            "rule_version": "high52_v1",
+                        },
+                        "free-form conditions are rejected",
+                    ],
+                    "observer_tags": [
+                        {
+                            "tag": "KR_RIGHTS_OFFERING_D0_D5",
+                            "date": "2026-07-15",
+                            "age_days": 1,
+                            "authority": "SHADOW_ONLY_NO_ORDER_AUTHORITY",
+                        }
+                    ],
+                }
+            )
+            conn = sqlite3.connect(db_path)
+            row = conn.execute(
+                "SELECT first_snapshot_json FROM candidate_registry_first"
+            ).fetchone()
+            conn.close()
+
+        snapshot = json.loads(row[0])
+        bases = snapshot["registration_basis"]
+        invalidations = snapshot["invalidation_conditions"]
+        self.assertTrue(any(item["source_axis"] == "high52_setup" for item in bases))
+        self.assertTrue(
+            any(item["source_axis"] == "observer:kr_rights_offering_d0_d5" for item in bases)
+        )
+        self.assertEqual(len(invalidations), 2)
+        self.assertTrue(
+            any(item["type"] == "disclosure_tag_present" for item in invalidations)
+        )
+        self.assertFalse(snapshot["registry_contract"]["automatic_enforcement"])
+        self.assertEqual(
+            snapshot["registry_contract"]["invalidation_conditions_version"],
+            "candidate_registry_invalidation.v1",
+        )
+
     def test_candidate_registry_preserves_first_snapshot_and_bounds_quotes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "candidate_audit.db"

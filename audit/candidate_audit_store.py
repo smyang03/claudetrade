@@ -284,6 +284,161 @@ _REGISTRY_DROP_ROW_KEYS = {
 }
 
 
+def _bounded_registry_value(value: Any, *, depth: int = 0) -> Any:
+    if depth >= 3:
+        return str(value)[:240]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:500]
+    if isinstance(value, list):
+        return [_bounded_registry_value(item, depth=depth + 1) for item in value[:20]]
+    if isinstance(value, dict):
+        return {
+            str(key)[:80]: _bounded_registry_value(item, depth=depth + 1)
+            for key, item in list(value.items())[:30]
+        }
+    return str(value)[:240]
+
+
+def _normalize_registration_basis(
+    value: Any,
+    *,
+    row: dict[str, Any],
+    observer_tags: list[Any],
+) -> list[dict[str, Any]]:
+    items = value if isinstance(value, list) else ([value] if isinstance(value, dict) else [])
+    output: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        source_axis = str(item.get("source_axis") or "").strip()[:100]
+        if not source_axis:
+            continue
+        output.append(
+            {
+                "source_axis": source_axis,
+                "rule_version": str(item.get("rule_version") or "v1").strip()[:80],
+                "known_at": str(item.get("known_at") or row.get("known_at") or "").strip()[:64],
+                "evidence": _bounded_registry_value(item.get("evidence") or {}),
+                "authority": "SHADOW_ONLY_NO_ORDER_AUTHORITY",
+            }
+        )
+    if not output:
+        source_axis = str(
+            row.get("candidate_source")
+            or row.get("registry_phase")
+            or row.get("classification")
+            or row.get("source_file")
+            or "candidate_observed"
+        ).strip()[:100]
+        output.append(
+            {
+                "source_axis": source_axis,
+                "rule_version": str(
+                    row.get("candidate_pool_version")
+                    or row.get("prompt_pool_version")
+                    or "v1"
+                ).strip()[:80],
+                "known_at": str(row.get("known_at") or "").strip()[:64],
+                "evidence": _bounded_registry_value(
+                    {
+                        key: row.get(key)
+                        for key in (
+                            "classification",
+                            "candidate_source",
+                            "primary_bucket",
+                            "prompt_rank",
+                            "raw_rank",
+                        )
+                        if row.get(key) not in (None, "")
+                    }
+                ),
+                "authority": "SHADOW_ONLY_NO_ORDER_AUTHORITY",
+            }
+        )
+    for tag_row in observer_tags:
+        if not isinstance(tag_row, dict):
+            continue
+        tag = str(tag_row.get("tag") or "").strip()
+        if not tag:
+            continue
+        output.append(
+            {
+                "source_axis": f"observer:{tag.lower()}"[:100],
+                "rule_version": "kr_disclosure_observer_v1",
+                "known_at": str(row.get("known_at") or "").strip()[:64],
+                "evidence": _bounded_registry_value(
+                    {key: val for key, val in tag_row.items() if key != "authority"}
+                ),
+                "authority": "SHADOW_ONLY_NO_ORDER_AUTHORITY",
+            }
+        )
+    deduped: dict[str, dict[str, Any]] = {}
+    for item in output:
+        key = _json(
+            {
+                "source_axis": item.get("source_axis"),
+                "rule_version": item.get("rule_version"),
+                "evidence": item.get("evidence"),
+            }
+        )
+        deduped[key] = item
+    return list(deduped.values())[:16]
+
+
+def _normalize_invalidation_conditions(
+    value: Any,
+    *,
+    row: dict[str, Any],
+    observer_tags: list[Any],
+) -> list[dict[str, Any]]:
+    items = value if isinstance(value, list) else ([value] if isinstance(value, dict) else [])
+    output: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        condition_type = str(item.get("type") or "").strip()[:80]
+        operator = str(item.get("operator") or "").strip()[:32]
+        if not condition_type or not operator:
+            continue
+        normalized = {
+            "type": condition_type,
+            "operator": operator,
+            "source": str(item.get("source") or "").strip()[:100],
+            "known_at_policy": str(item.get("known_at_policy") or "decision_time_only").strip()[:80],
+            "rule_version": str(item.get("rule_version") or "v1").strip()[:80],
+            "authority": "SHADOW_ONLY_NO_ORDER_AUTHORITY",
+        }
+        for key in ("threshold", "value", "unit", "reference", "window"):
+            if key in item:
+                normalized[key] = _bounded_registry_value(item.get(key))
+        output.append(normalized)
+    for tag_row in observer_tags:
+        if not isinstance(tag_row, dict):
+            continue
+        tag = str(tag_row.get("tag") or "").strip()
+        if tag != "KR_RIGHTS_OFFERING_D0_D5":
+            continue
+        output.append(
+            {
+                "type": "disclosure_tag_present",
+                "operator": "equals",
+                "value": tag,
+                "unit": "tag",
+                "source": "kr_disclosure_observer",
+                "known_at_policy": "known_by_candidate_session",
+                "rule_version": "kr_disclosure_observer_v1",
+                "observed_at_registration": True,
+                "authority": "SHADOW_ONLY_NO_ORDER_AUTHORITY",
+            }
+        )
+    deduped: dict[str, dict[str, Any]] = {}
+    for item in output:
+        deduped[_json(item)] = item
+    return list(deduped.values())[:16]
+
+
 def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
     existing = {
         str(row[1])
@@ -436,6 +591,9 @@ def _registry_snapshot(row: dict[str, Any]) -> dict[str, Any]:
         "authority": "SHADOW_ONLY_NO_ORDER_AUTHORITY",
         "first_observation_immutable": True,
         "decision_time_only": True,
+        "registration_basis_version": "candidate_registry_basis.v1",
+        "invalidation_conditions_version": "candidate_registry_invalidation.v1",
+        "automatic_enforcement": False,
     }
     return snapshot
 
@@ -886,6 +1044,16 @@ class CandidateAuditStore:
             registry_row["observer_tags"] = observer_tags
 
         known_at = str(row.get("known_at") or now)
+        registry_row["registration_basis"] = _normalize_registration_basis(
+            row.get("registration_basis"),
+            row=registry_row,
+            observer_tags=observer_tags,
+        )
+        registry_row["invalidation_conditions"] = _normalize_invalidation_conditions(
+            row.get("invalidation_conditions"),
+            row=registry_row,
+            observer_tags=observer_tags,
+        )
         call_id = str(row.get("call_id") or "")
         source_file = str(row.get("source_file") or "")
         payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}

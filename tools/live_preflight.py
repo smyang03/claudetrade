@@ -4035,6 +4035,214 @@ def _open_positions_market_metadata_check(mode: str) -> CheckResult:
     )
 
 
+def _position_exit_ownership_check(mode: str) -> CheckResult:
+    """Reconcile broker holdings with the existing software exit-owner contract.
+
+    This check does not create a second exit engine.  It reads the same
+    ownership predicates used by RiskManager/TradingBot, while existing
+    process/config/Path-B checks remain responsible for owner liveness.
+    """
+
+    from risk_manager import position_exit_contract
+    from runtime.broker_truth_snapshot import BrokerTruthSnapshot
+
+    positions_path = get_runtime_path("state", f"{mode}_open_positions.json", make_parents=False)
+    snapshot_path = get_runtime_path("state", f"{mode}_broker_truth_snapshot.json", make_parents=False)
+    data: dict[str, Any] = {
+        "positions_path": str(positions_path),
+        "broker_truth_path": str(snapshot_path),
+        "authority": "READ_ONLY_PREFLIGHT_NO_TRADE_AUTHORITY",
+        "local_position_count": 0,
+        "broker_position_count": 0,
+        "owners": [],
+        "critical": [],
+        "warnings": [],
+        "broker_markets_unavailable": [],
+        "dependency_checks": [],
+    }
+
+    if positions_path.exists():
+        try:
+            local_raw = json.loads(positions_path.read_text(encoding="utf-8") or "[]")
+        except Exception as exc:
+            return CheckResult(
+                "position.exit_ownership_reconciliation",
+                "FAIL",
+                f"open positions JSON unreadable: {exc}",
+                data,
+            )
+        if not isinstance(local_raw, list):
+            return CheckResult(
+                "position.exit_ownership_reconciliation",
+                "FAIL",
+                "open positions root is not a list",
+                {**data, "root_type": type(local_raw).__name__},
+            )
+        local_positions = [item for item in local_raw if isinstance(item, dict)]
+    else:
+        local_positions = []
+
+    broker_snapshot = BrokerTruthSnapshot(runtime_mode=mode, path=snapshot_path).load_snapshot()
+    broker_markets = (
+        broker_snapshot.get("markets")
+        if isinstance(broker_snapshot, dict) and isinstance(broker_snapshot.get("markets"), dict)
+        else {}
+    )
+    fresh_broker_positions: dict[tuple[str, str], int] = {}
+    comparable_markets: set[str] = set()
+    for market in ("KR", "US"):
+        item = broker_markets.get(market) if isinstance(broker_markets.get(market), dict) else {}
+        unavailable = (
+            not item
+            or bool(item.get("missing", True))
+            or bool(item.get("stale", True))
+            or bool(str(item.get("error") or "").strip())
+        )
+        if unavailable:
+            data["broker_markets_unavailable"].append(
+                {
+                    "market": market,
+                    "missing": bool(item.get("missing", True)) if item else True,
+                    "stale": bool(item.get("stale", True)) if item else True,
+                    "error": str(item.get("error") or "") if item else "snapshot_market_missing",
+                    "last_success_at": str(item.get("last_success_at") or "") if item else "",
+                }
+            )
+            continue
+        comparable_markets.add(market)
+        for broker_pos in item.get("positions") or []:
+            if not isinstance(broker_pos, dict):
+                continue
+            ticker = _ticker_key(market, broker_pos.get("ticker"))
+            qty = max(0, _safe_int(broker_pos.get("qty")))
+            if ticker and qty > 0:
+                key = (market, ticker)
+                fresh_broker_positions[key] = fresh_broker_positions.get(key, 0) + qty
+
+    local_quantities: dict[tuple[str, str], int] = {}
+    for index, pos in enumerate(local_positions):
+        ticker_raw = str(pos.get("ticker") or "").strip()
+        market = str(pos.get("market") or "").strip().upper()
+        if market not in {"KR", "US"}:
+            market = _position_market_from_ticker(ticker_raw)
+        ticker = _ticker_key(market, ticker_raw)
+        qty = max(0, _safe_int(pos.get("qty")))
+        contract = position_exit_contract(pos)
+        row = {
+            "index": index,
+            "market": market,
+            "ticker": ticker,
+            "qty": qty,
+            "source_strategy": str(pos.get("source_strategy") or ""),
+            "stored_exit_owner": str(pos.get("exit_owner") or ""),
+            "owner": str(contract.get("owner") or ""),
+            "policy": str(contract.get("policy") or ""),
+            "protected": bool(contract.get("protected")),
+            "owner_inferred": bool(contract.get("owner_inferred")),
+            "path_run_id": str(contract.get("path_run_id") or ""),
+            "dependencies": list(contract.get("dependencies") or []),
+        }
+        data["owners"].append(row)
+        for dependency in row["dependencies"]:
+            if dependency not in data["dependency_checks"]:
+                data["dependency_checks"].append(dependency)
+        if market in {"KR", "US"} and ticker and qty > 0:
+            key = (market, ticker)
+            local_quantities[key] = local_quantities.get(key, 0) + qty
+        if not market or not ticker or qty <= 0:
+            data["critical"].append({**row, "reason": "invalid_local_position_identity"})
+        if not bool(contract.get("protected")):
+            data["critical"].append(
+                {
+                    **row,
+                    "reason": "unprotected_position",
+                    "missing_contract_fields": list(contract.get("missing_contract_fields") or []),
+                }
+            )
+        conflicts = list(contract.get("generic_exit_conflicts") or [])
+        if conflicts:
+            data["critical"].append(
+                {
+                    **row,
+                    "reason": "isolated_owner_generic_exit_conflict",
+                    "active_generic_exit_fields": conflicts,
+                }
+            )
+        elif bool(contract.get("owner_inferred")):
+            data["warnings"].append(
+                {
+                    **row,
+                    "reason": "exit_owner_metadata_inferred_from_source_strategy",
+                }
+            )
+
+    for key, broker_qty in sorted(fresh_broker_positions.items()):
+        market, ticker = key
+        local_qty = local_quantities.get(key, 0)
+        if local_qty <= 0:
+            data["critical"].append(
+                {
+                    "market": market,
+                    "ticker": ticker,
+                    "broker_qty": broker_qty,
+                    "local_qty": 0,
+                    "reason": "orphan_broker_position",
+                }
+            )
+        elif local_qty != broker_qty:
+            data["critical"].append(
+                {
+                    "market": market,
+                    "ticker": ticker,
+                    "broker_qty": broker_qty,
+                    "local_qty": local_qty,
+                    "reason": "broker_local_quantity_mismatch",
+                }
+            )
+    for key, local_qty in sorted(local_quantities.items()):
+        market, ticker = key
+        if market not in comparable_markets:
+            continue
+        broker_qty = fresh_broker_positions.get(key, 0)
+        if broker_qty <= 0:
+            data["critical"].append(
+                {
+                    "market": market,
+                    "ticker": ticker,
+                    "broker_qty": 0,
+                    "local_qty": local_qty,
+                    "reason": "local_ghost_position",
+                }
+            )
+
+    data["local_position_count"] = len(local_positions)
+    data["broker_position_count"] = len(fresh_broker_positions)
+    data["comparable_markets"] = sorted(comparable_markets)
+    if data["critical"]:
+        return CheckResult(
+            "position.exit_ownership_reconciliation",
+            "FAIL",
+            f"position ownership critical findings={len(data['critical'])}",
+            data,
+        )
+    if data["warnings"] or data["broker_markets_unavailable"]:
+        return CheckResult(
+            "position.exit_ownership_reconciliation",
+            "WARN",
+            (
+                f"position ownership warnings={len(data['warnings'])} "
+                f"broker_unavailable={len(data['broker_markets_unavailable'])}"
+            ),
+            data,
+        )
+    return CheckResult(
+        "position.exit_ownership_reconciliation",
+        "PASS",
+        f"broker/local positions reconciled with exit owners={len(local_positions)}",
+        data,
+    )
+
+
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as fp:
@@ -4170,6 +4378,7 @@ def _state_checks(config: dict[str, Any], mode: str) -> list[CheckResult]:
         )
     )
     checks.append(_open_positions_market_metadata_check(mode))
+    checks.append(_position_exit_ownership_check(mode))
     brain_candidates = [
         ROOT / "state" / "brain.json",
         ROOT / "claude_memory" / "brain.json",
