@@ -15305,10 +15305,14 @@ async function loadPathB() {
   const swingResearch = swing.research_authority || {};
   const swingExecution = swing.execution || {};
   const swingExecutionAuthority = swing.execution_authority || {};
+  const swingActive = swing.active_execution_shadow || {};
   const coreManifests = profit.core_live_manifests || {};
+  const coreEntryPolicy = profit.core_analyst_entry_policy || {};
   const core = trackers.core_shadow || {};
   const paired = trackers.paired_exit || {};
   const exitPolicy = trackers.kr_exit_policy || {};
+  const runtimeHandoff = trackers.runtime_handoff || {};
+  const swingActiveRow = (swingActive.rows || [])[0] || {};
   const enforcedIds = (profit.enforced_ids || []).map(pathbEscapeHtml).join(', ') || '-';
   const shadowIds = (profit.disabled_shadow_ids || profit.shadow_only_ids || []).map(pathbEscapeHtml).join(', ') || '-';
   const unknownMarkets = (profit.order_unknown_markets || []).map(pathbEscapeHtml).join(', ') || '-';
@@ -15322,9 +15326,12 @@ async function loadPathB() {
       + `<div><strong>신호</strong>: US ${Number((profit.US || {}).signal_count || 0)}건 · KR ${Number((profit.KR || {}).signal_count || 0)}건 · 최근 handoff ${pathbEscapeHtml((profit.last_handoff || {}).status || '-')}</div>`
       + `<div><strong>코어 live manifest</strong>: US ${(coreManifests.US || {}).valid ? '유효' : '차단'} · KR ${(coreManifests.KR || {}).valid ? '유효' : '차단'} · US 상한 ${fmtMoney(Number(profit.PROFIT_STRATEGY_MAX_ORDER_KRW_US || 0))}원 · KR 상한 ${fmtMoney(Number(profit.PROFIT_STRATEGY_MAX_ORDER_KRW_KR || 0))}원</div>`
       + `<div><strong>US swing</strong>: 연구 ${pathbEscapeHtml(swingResearch.configured_mode || '-')}→${pathbEscapeHtml(swingResearch.effective_mode || '-')} · 실행 ${pathbEscapeHtml(swingExecutionAuthority.eligible_mode || swingExecutionAuthority.effective_mode || '-')} · 상한 ${fmtMoney(Number(swingExecution.max_order_krw || 0))}원 · override ${swingExecution.operator_override_applied ? '예' : '아니오'} · 최근 ${pathbEscapeHtml(swingExecution.status || '-')}:${pathbEscapeHtml(swingExecution.reason || '-')} · execution stale ${swing.execution_status_stale ? '예' : '아니오'}</div>`
+      + `<div><strong>US swing forward 시계</strong>: ${pathbEscapeHtml(swingActive.state || 'IDLE')} · ${pathbEscapeHtml(swingActiveRow.ticker || '-')} · 관측 ${Number(swingActiveRow.observed_sessions || 0)}/${Number(swingActiveRow.max_hold_sessions || 0)}세션 · 만기 ${pathbEscapeHtml(swingActiveRow.expected_maturity_session || '-')}</div>`
       + `<div><strong>코어 트래커</strong>: ${pathbEscapeHtml(core.status || 'missing')} · stale ${core.stale ? '예' : '아니오'} · 마지막 ${pathbEscapeHtml(core.last_success_at || core.last_tick_at || '-')}</div>`
+      + `<div><strong>코어 analyst 진입 격리</strong>: ${pathbEscapeHtml(coreEntryPolicy.policy || 'observe')} · 이중소스/실행/승인 ${coreEntryPolicy.ok ? '일치' : '불일치'} · 최근 방향차단 관측 ${coreEntryPolicy.last_direction_block_observed ? '예' : '아니오'} · 격리 적용 ${coreEntryPolicy.last_applied ? '예' : '아니오'} · 총노출 게이트 유지</div>`
       + `<div><strong>KR paired A/B</strong>: ${pathbEscapeHtml(paired.clock_status || 'STARVED')} · gate n=${Number(paired.gate_sample_total || 0)}/15 · 7일 신규 ${Number(paired.paired_eligible_7d || 0)}건</div>`
-      + `<div><strong>KR 출구 정책</strong>: ${pathbEscapeHtml(exitPolicy.runtime_snapshot || '-')} · 이중소스/실행 ${exitPolicy.ok ? '일치' : '불일치'}</div>`;
+      + `<div><strong>KR 출구 정책</strong>: ${pathbEscapeHtml(exitPolicy.runtime_snapshot || '-')} · 이중소스/실행 ${exitPolicy.ok ? '일치' : '불일치'}</div>`
+      + `<div><strong>재시작 handoff</strong>: ${runtimeHandoff.present ? '있음' : '없음'} · anchor ${Number(runtimeHandoff.anchor_count || 0)} · feature ${Number(runtimeHandoff.feature_count || 0)} · 저장시 세션외 제거 ${Number(runtimeHandoff.filter_dropped_total || 0)} · 마지막 ${pathbEscapeHtml(runtimeHandoff.written_at || '-')}</div>`;
   }
   renderPathComparison(b.path_comparison || {});
   const quoteInterval = fmtPathBQuoteInterval(sel.quote_refresh_interval_sec || 0);

@@ -462,12 +462,28 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         source.price_cache_raw = {"005930": 106.0, "AAPL": 200.0}
         source._or_high = {"005930": 104.0, "AAPL": 201.0}
         source._post_open_anchor = {
-            "KR:005930": {"anchor_price": 100.0},
-            "US:AAPL": {"anchor_price": 198.0},
+            "KR:005930": {"anchor_at": "2026-05-13T09:00:00", "anchor_price": 100.0},
+            "US:AAPL": {"anchor_at": "2026-05-13T22:30:00", "anchor_price": 198.0},
         }
         source._last_post_open_features_by_ticker = {
-            "KR": {"005930": {"ret_5m_pct": 5.0}},
-            "US": {"AAPL": {"ret_5m_pct": 2.0}},
+            "KR": {
+                "005930": {
+                    "market": "KR",
+                    "session_date": "2026-05-13",
+                    "anchor_at": "2026-05-13T09:00:00",
+                    "known_at": "2026-05-13T09:16:00",
+                    "ret_5m_pct": 5.0,
+                }
+            },
+            "US": {
+                "AAPL": {
+                    "market": "US",
+                    "session_date": "2026-05-13",
+                    "anchor_at": "2026-05-13T22:30:00",
+                    "known_at": "2026-05-14T03:00:00",
+                    "ret_5m_pct": 2.0,
+                }
+            },
         }
         source._last_rescreen_at = {"KR": 111.0, "US": 222.0}
         source._last_sub_screener_at = {"KR": 333.0, "US": 444.0}
@@ -517,6 +533,89 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertEqual(target._last_post_open_features_by_ticker["US"]["AAPL"]["ret_5m_pct"], 2.0)
         self.assertEqual(target._last_rescreen_at["US"], 222.0)
         self.assertEqual(target._last_funnel_event[2]["skipped_markets"]["KR"]["saved"], "2026-05-13")
+
+    def test_runtime_handoff_drops_contradictory_row_even_when_snapshot_session_is_current(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles())
+        bot._current_session_date_str = lambda _market: "2026-05-14"
+        fields = {
+            "today_tickers": {"KR": ["005930", "000660"]},
+            "trade_ready_tickers": {"KR": ["005930", "000660"]},
+            "_post_open_anchor": {
+                "KR:005930": {
+                    "anchor_at": "2026-05-13T09:00:00",
+                    "anchor_price": 100.0,
+                },
+                "KR:000660": {
+                    "anchor_at": "2026-05-14T09:00:00",
+                    "anchor_price": 200.0,
+                },
+            },
+            "_post_open_price_history": {
+                "KR:005930": [{"ts": "2026-05-13T09:01:00", "price": 101.0}],
+                "KR:000660": [{"ts": "2026-05-14T09:01:00", "price": 201.0}],
+            },
+            "_last_post_open_features_by_ticker": {
+                "KR": {
+                    "005930": {
+                        "market": "KR",
+                        "session_date": "2026-05-14",
+                        "anchor_at": "2026-05-13T09:00:00",
+                        "known_at": "2026-05-14T09:05:00",
+                    },
+                    "000660": {
+                        "market": "KR",
+                        "session_date": "2026-05-14",
+                        "anchor_at": "2026-05-14T09:00:00",
+                        "known_at": "2026-05-14T09:05:00",
+                    },
+                }
+            },
+        }
+
+        filtered, dropped = TradingBot._filter_runtime_handoff_fields(
+            bot,
+            fields,
+            {"KR": "2026-05-14", "US": "2026-05-14"},
+        )
+
+        self.assertNotIn("KR:005930", filtered["_post_open_anchor"])
+        self.assertNotIn("KR:005930", filtered["_post_open_price_history"])
+        self.assertNotIn("005930", filtered["_last_post_open_features_by_ticker"]["KR"])
+        self.assertIn("KR:000660", filtered["_post_open_anchor"])
+        self.assertIn("000660", filtered["_last_post_open_features_by_ticker"]["KR"])
+        self.assertEqual(dropped["_post_open_anchor"], 1)
+
+    def test_observe_post_open_price_reseeds_stale_anchor(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles())
+        bot._current_session_date_str = lambda _market: "2026-05-14"
+        bot._post_open_anchor = {
+            "KR:005930": {
+                "anchor_at": "2026-05-13T09:00:00",
+                "anchor_price": 100.0,
+                "anchor_source": "stale_test",
+            }
+        }
+        bot._post_open_price_history = {
+            "KR:005930": [{"ts": "2026-05-13T09:01:00", "price": 101.0}]
+        }
+        bot._post_open_feature_last_emit = {"KR:005930": 123.0}
+        bot._market_regular_open_dt = lambda _market, session_date=None, now_dt=None: datetime(
+            2026, 5, 14, 9, 0, tzinfo=KST
+        )
+
+        TradingBot._observe_post_open_price(
+            bot,
+            "KR",
+            "005930",
+            200.0,
+            observed_at=datetime(2026, 5, 14, 9, 0),
+            source="test",
+        )
+
+        self.assertEqual(bot._post_open_anchor["KR:005930"]["anchor_price"], 200.0)
+        self.assertEqual(bot._post_open_anchor["KR:005930"]["anchor_at"], "2026-05-14T09:00:00")
+        self.assertEqual(len(bot._post_open_price_history["KR:005930"]), 1)
+        self.assertNotIn("KR:005930", bot._post_open_feature_last_emit)
 
     def test_prefetch_uses_phase_target_limit_and_candidate_priority(self) -> None:
         bot = _make_bot(lambda **kwargs: _candles())
@@ -859,9 +958,12 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         bot._candidate_entry_timing_context = lambda *_args, **_kwargs: {"entry_timing_snapshot": {}}
         prompt_row = {"ticker": "333333", "market": "KR", "price": 107.0, "volume": 700, "vol_ratio": 3.0}
 
-        with patch(
-            "trading_bot.prepare_selection_prompt_pool",
-            return_value=([dict(prompt_row)], {"prompt_pool": [dict(prompt_row)], "prompt_pool_count": 1}),
+        with (
+            patch("trading_bot.datetime", _USWarmupDatetime),
+            patch(
+                "trading_bot.prepare_selection_prompt_pool",
+                return_value=([dict(prompt_row)], {"prompt_pool": [dict(prompt_row)], "prompt_pool_count": 1}),
+            ),
         ):
             candidates, prompt_rows, prompt_meta, evidence = TradingBot._prepare_selection_prompt_pool_with_evidence(
                 bot,
@@ -950,9 +1052,12 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
             {"ticker": "333333", "market": "KR", "price": 107.0, "volume": 700, "vol_ratio": 3.0},
         ]
 
-        with patch(
-            "trading_bot.prepare_selection_prompt_pool",
-            return_value=([dict(row) for row in prompt_rows], {"prompt_pool": [dict(row) for row in prompt_rows], "prompt_pool_count": 3}),
+        with (
+            patch("trading_bot.datetime", _USWarmupDatetime),
+            patch(
+                "trading_bot.prepare_selection_prompt_pool",
+                return_value=([dict(row) for row in prompt_rows], {"prompt_pool": [dict(row) for row in prompt_rows], "prompt_pool_count": 3}),
+            ),
         ):
             _candidates, annotated_rows, prompt_meta, evidence = TradingBot._prepare_selection_prompt_pool_with_evidence(
                 bot,

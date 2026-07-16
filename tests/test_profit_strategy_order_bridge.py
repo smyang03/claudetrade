@@ -187,7 +187,7 @@ def test_broker_rejection_is_not_retried_same_session(tmp_path, monkeypatch) -> 
     assert len(bot.submitted) == 1
 
 
-def test_transient_analyst_block_retries_after_cooldown_without_bypassing_gate(tmp_path, monkeypatch) -> None:
+def test_core_transient_entry_blackout_retries_after_cooldown(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         "runtime.profit_strategy_order_bridge.regular_open_dt",
         lambda *_: datetime.now(KST) - timedelta(minutes=10),
@@ -222,7 +222,7 @@ def test_transient_analyst_block_retries_after_cooldown_without_bypassing_gate(t
         if len(bot.submitted) == 1:
             bot._last_micro_probe_submit_result = {
                 "status": "BLOCKED",
-                "reason": "ANALYST_NEW_BUY_BLOCK",
+                "reason": "ENTRY_BLACKOUT",
                 "order_no": "",
             }
             return False
@@ -241,9 +241,59 @@ def test_transient_analyst_block_retries_after_cooldown_without_bypassing_gate(t
     second = run_profit_strategy_handoff(bot, "US")
 
     assert first["results"][0]["status"] == "SUBMIT_DEFERRED"
-    assert first["results"][0]["reason"] == "ANALYST_NEW_BUY_BLOCK"
+    assert first["results"][0]["reason"] == "ENTRY_BLACKOUT"
     assert second["results"][0]["status"] == "SUBMITTED"
     assert len(bot.submitted) == 2
+
+
+def test_core_handoff_persists_direction_isolation_observability(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "runtime.profit_strategy_order_bridge.regular_open_dt",
+        lambda *_: datetime.now(KST) - timedelta(minutes=10),
+    )
+    monkeypatch.setattr(
+        "runtime.profit_strategy_order_bridge.get_runtime_path",
+        lambda *parts, **__: tmp_path.joinpath(*parts),
+    )
+    signal = [{
+        "strategy_id": "US_SCHG_BIL_TREND_V1",
+        "source_strategy": "us_schg_bil_trend_v1",
+        "market": "US",
+        "ticker": "SCHG",
+        "entry_session_date": "2026-07-15",
+        "known_at": "2026-07-15",
+        "rank": 1,
+        "priority": 1.0,
+        "hold_sessions": 9999,
+        "weight": 1.0,
+    }]
+    monkeypatch.setattr("runtime.profit_strategy_order_bridge.load_signals", lambda *_, **__: signal)
+    monkeypatch.setattr(
+        "runtime.profit_strategy_order_bridge.get_price",
+        lambda *_, **__: {"price": 10000, "open": 10000},
+    )
+    bot = FakeBot(cash=50000.0)
+    bot.config["PROFIT_STRATEGY_ENABLED_IDS"] = "US_SCHG_BIL_TREND_V1"
+
+    def isolated_submit(**kwargs) -> bool:
+        bot.submitted.append(kwargs)
+        bot._last_micro_probe_submit_result = {
+            "status": "SUBMITTED",
+            "order_no": "123",
+            "core_analyst_entry_isolation_applied": True,
+            "analyst_direction_block_observed": True,
+            "analyst_gross_cap_source": "analyst_consensus",
+        }
+        return True
+
+    bot._submit_micro_probe_buy_order = isolated_submit
+    result = run_profit_strategy_handoff(bot, "US")
+    row = result["results"][0]
+
+    assert row["status"] == "SUBMITTED"
+    assert row["core_analyst_entry_isolation_applied"] is True
+    assert row["analyst_direction_block_observed"] is True
+    assert row["analyst_gross_cap_source"] == "analyst_consensus"
 
 
 def test_core_loader_rejects_shadow_file_and_accepts_hashed_live_manifest(tmp_path, monkeypatch) -> None:

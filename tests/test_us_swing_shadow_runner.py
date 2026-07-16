@@ -9,7 +9,9 @@ from tools.us_swing_shadow_runner import (
     annotate_execution_shadow,
     classify_breadth_context,
     ensure_schema,
+    expected_maturity_session,
     mature_pending,
+    summarize_active_execution_shadow,
     summarize_executable_forward,
     summarize_forward,
 )
@@ -109,3 +111,48 @@ def test_execution_shadow_uses_rank1_whole_share_and_contract_outcome(tmp_path: 
     assert executable["matured"] == 1
     assert executable["strategy_matched"] is True
     assert abs(executable["mean_net_pct"] - 11.5) < 1e-9
+
+
+def test_execution_shadow_reports_active_unmatured_without_releasing_slot(tmp_path: Path) -> None:
+    price_dir = tmp_path / "prices"
+    price_dir.mkdir()
+    pd.DataFrame([
+        {"date": "2026-07-10", "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1000},
+        {"date": "2026-07-13", "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1000},
+        {"date": "2026-07-14", "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1000},
+        {"date": "2026-07-15", "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1000},
+    ]).to_csv(price_dir / "us_TEST.csv", index=False)
+    con = sqlite3.connect(":memory:")
+    ensure_schema(con)
+    con.execute(
+        """INSERT INTO signals(signal_date,ticker,feature_date,model_version,rank,created_at,status,
+            reference_close) VALUES (?,?,?,?,?,?,?,?)""",
+        ("2026-07-10", "TEST", "2026-07-09", "m", 1, "now", "PENDING", 10.0),
+    )
+    policy = {
+        "authority_caps": {"micro": {"size_multiplier": 0.1}},
+        "execution_contract": {"max_hold_sessions": 5},
+    }
+    annotate_execution_shadow(
+        con,
+        signal_date="2026-07-10",
+        fx_map={"2026-07-10": 1000.0},
+        policy=policy,
+    )
+
+    result = mature_pending(
+        con,
+        price_dir=price_dir,
+        fx_map={date: 1000.0 for date in ["2026-07-10", "2026-07-13", "2026-07-14", "2026-07-15"]},
+        cost_pct=0.5,
+    )
+    row = con.execute("SELECT entry_date,entry_price,status FROM signals").fetchone()
+    active = summarize_active_execution_shadow(con, price_dir=price_dir, policy=policy)
+
+    assert result["execution_matured_now"] == 0
+    assert row == ("2026-07-10", 10.0, "PENDING")
+    assert active["state"] == "ACTIVE_UNMATURED"
+    assert active["active_count"] == 1
+    assert active["rows"][0]["observed_sessions"] == 4
+    assert active["rows"][0]["expected_maturity_session"] == "2026-07-16"
+    assert expected_maturity_session("2026-07-10", 5) == "2026-07-16"

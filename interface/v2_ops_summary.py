@@ -67,6 +67,8 @@ RUNTIME_DRIFT_KEYS: tuple[str, ...] = (
     "PATHB_MAX_DAILY_ENTRIES",
     "PATHB_FIXED_ORDER_KRW",
     "PATHB_KR_EXIT_POLICY",
+    "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY",
+    "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK",
 )
 
 PATHB_ACTIVE_STATUSES: set[str] = {
@@ -2885,6 +2887,8 @@ def _effective_runtime_env(runtime_mode: str | None) -> tuple[dict[str, str], di
         "KR_MAX_POSITIONS",
         "US_MAX_POSITIONS",
         "PATHB_KR_EXIT_POLICY",
+        "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY",
+        "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK",
     ]
     conflicts = {
         key: {"runtime_env": base_env.get(key), "start_config": overrides.get(key)}
@@ -2965,6 +2969,9 @@ def _strategy_tracker_health(runtime_mode: str) -> dict[str, Any]:
         "state", "profit_strategy_core_live_manifest_KR.json", make_parents=False
     )
     profit_ledger_path = get_runtime_path("state", "profit_strategy_handoff.jsonl", make_parents=False)
+    runtime_handoff_path = get_runtime_path(
+        "state", f"{str(runtime_mode or 'live').lower()}_runtime_handoff_snapshot.json", make_parents=False
+    )
     core = _read_json_payload(core_path)
     paired = _read_json_payload(paired_path)
     swing = _read_json_payload(swing_path)
@@ -2973,6 +2980,7 @@ def _strategy_tracker_health(runtime_mode: str) -> dict[str, Any]:
     profit_kr = _read_json_payload(profit_kr_path)
     core_manifest_us = _read_json_payload(core_manifest_us_path)
     core_manifest_kr = _read_json_payload(core_manifest_kr_path)
+    runtime_handoff_payload = _read_json_payload(runtime_handoff_path)
     scheduler_state_path = get_runtime_path(
         "state", f"preopen_scheduler_{str(runtime_mode or 'live').lower()}.json", make_parents=False
     )
@@ -3104,6 +3112,8 @@ def _strategy_tracker_health(runtime_mode: str) -> dict[str, Any]:
         "PROFIT_STRATEGY_ENABLED_IDS",
         "PROFIT_STRATEGY_MAX_ORDER_KRW_US",
         "PROFIT_STRATEGY_MAX_ORDER_KRW_KR",
+        "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY",
+        "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK",
     )
     profit_config = {key: str(effective.get(key) or "") for key in profit_config_keys}
     profit_runtime = {key: str(snapshot_effective.get(key) or "") for key in profit_config_keys}
@@ -3196,12 +3206,84 @@ def _strategy_tracker_health(runtime_mode: str) -> dict[str, Any]:
         "ledger_path": str(profit_ledger_path),
     }
 
+    core_policy_key = "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY"
+    core_ack_key = "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK"
+    core_policy = {
+        "policy": str(effective.get(core_policy_key) or "observe").lower(),
+        "env_live": str(env_values.get(core_policy_key) or ""),
+        "start_config": str(start_values.get(core_policy_key) or ""),
+        "runtime_snapshot": str(snapshot_effective.get(core_policy_key) or ""),
+        "sources_match": bool(
+            env_values.get(core_policy_key)
+            and str(env_values.get(core_policy_key)) == str(start_values.get(core_policy_key))
+        ),
+        "runtime_matches": bool(
+            snapshot_effective.get(core_policy_key)
+            and str(snapshot_effective.get(core_policy_key)) == str(effective.get(core_policy_key))
+        ),
+        "ack_verified": bool(
+            str(effective.get(core_ack_key) or "") == "I_ACCEPT_CORE_ANALYST_DIRECTION_ISOLATION"
+            and str(snapshot_effective.get(core_ack_key) or "") == "I_ACCEPT_CORE_ANALYST_DIRECTION_ISOLATION"
+        ),
+        "source_allowlist": ["us_schg_bil_trend_v1", "kr_factor_trend_v1"],
+        "last_applied": bool(profit_last.get("core_analyst_entry_isolation_applied")),
+        "last_direction_block_observed": bool(profit_last.get("analyst_direction_block_observed")),
+        "last_gross_cap_source": str(profit_last.get("analyst_gross_cap_source") or ""),
+    }
+    core_policy["ok"] = bool(
+        core_policy["policy"] == "isolated"
+        and core_policy["sources_match"]
+        and core_policy["runtime_matches"]
+        and core_policy["ack_verified"]
+    )
+    profit_signals["core_analyst_entry_policy"] = core_policy
+
+    handoff_fields = (
+        runtime_handoff_payload.get("fields")
+        if isinstance(runtime_handoff_payload.get("fields"), dict)
+        else {}
+    )
+    handoff_anchors = (
+        handoff_fields.get("_post_open_anchor")
+        if isinstance(handoff_fields.get("_post_open_anchor"), dict)
+        else {}
+    )
+    handoff_history = (
+        handoff_fields.get("_post_open_price_history")
+        if isinstance(handoff_fields.get("_post_open_price_history"), dict)
+        else {}
+    )
+    handoff_features = (
+        handoff_fields.get("_last_post_open_features_by_ticker")
+        if isinstance(handoff_fields.get("_last_post_open_features_by_ticker"), dict)
+        else {}
+    )
+    filter_dropped = (
+        runtime_handoff_payload.get("filter_dropped")
+        if isinstance(runtime_handoff_payload.get("filter_dropped"), dict)
+        else {}
+    )
+    runtime_handoff = {
+        "path": str(runtime_handoff_path),
+        "present": bool(runtime_handoff_payload),
+        "written_at": str(runtime_handoff_payload.get("written_at") or ""),
+        "trigger": str(runtime_handoff_payload.get("trigger") or ""),
+        "session_dates": dict(runtime_handoff_payload.get("session_dates") or {}),
+        "anchor_count": len(handoff_anchors),
+        "history_row_count": sum(len(rows) for rows in handoff_history.values() if isinstance(rows, list)),
+        "feature_count": sum(len(rows) for rows in handoff_features.values() if isinstance(rows, dict)),
+        "filter_dropped": filter_dropped,
+        "filter_dropped_total": sum(int(value or 0) for value in filter_dropped.values()),
+        "row_level_session_filter": True,
+    }
+
     return {
         "core_shadow": core,
         "paired_exit": paired,
         "us_swing": swing,
         "profit_strategies": profit_signals,
         "kr_exit_policy": policy_config,
+        "runtime_handoff": runtime_handoff,
     }
 
 

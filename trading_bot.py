@@ -568,6 +568,11 @@ _MIN_EFFECTIVE_ORDER_KRW = float(os.getenv("MIN_EFFECTIVE_ORDER_KRW", "30000"))
 _MIN_EFFECTIVE_ORDER_USD = float(os.getenv("MIN_EFFECTIVE_ORDER_USD", "30"))
 _MICRO_PROBE_STRATEGY = "MICRO_PROBE"
 _RECOVERY_MICRO_STRATEGY = "RECOVERY_MICRO"
+_CORE_ANALYST_ISOLATED_SOURCES = frozenset({
+    "us_schg_bil_trend_v1",
+    "kr_factor_trend_v1",
+})
+_CORE_ANALYST_ENTRY_ACK = "I_ACCEPT_CORE_ANALYST_DIRECTION_ISOLATION"
 _VIX_SIZE_TIERS = [
     (30.0, float(os.getenv("VIX_MULT_30", "0.55"))),   # VIX 30+ -> 55%
     (25.0, float(os.getenv("VIX_MULT_25", "0.70"))),   # VIX 25+ -> 70%
@@ -9965,7 +9970,32 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "new_buy_block_override_reason": reason,
         }
 
-    def _analyst_new_buy_block_state(self, market: str) -> dict:
+    def _core_analyst_entry_isolation_policy(self, source_strategy: str) -> dict:
+        source = str(source_strategy or "").strip().lower()
+        configured = str(
+            self._runtime_value("PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY", "observe")
+            or "observe"
+        ).strip().lower()
+        ack = str(
+            self._runtime_value("PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK", "") or ""
+        ).strip()
+        source_eligible = source in _CORE_ANALYST_ISOLATED_SOURCES
+        ack_verified = bool(getattr(self, "is_paper", False)) or ack == _CORE_ANALYST_ENTRY_ACK
+        applied = configured == "isolated" and source_eligible and ack_verified
+        return {
+            "core_analyst_entry_policy": configured,
+            "core_analyst_entry_source": source,
+            "core_analyst_entry_source_eligible": source_eligible,
+            "core_analyst_entry_ack_verified": ack_verified,
+            "core_analyst_entry_isolation_applied": applied,
+        }
+
+    def _analyst_new_buy_block_state(
+        self,
+        market: str,
+        *,
+        ignore_direction_block: bool = False,
+    ) -> dict:
         market_key = str(market or "").upper()
         consensus = ((getattr(self, "today_judgment", {}) or {}).get("consensus") or {})
         permission = str(consensus.get("new_buy_permission", "") or "").strip().lower()
@@ -10007,7 +10037,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if key in consensus:
                 details[key] = consensus.get(key)
         details.update(override_policy)
-        if permission == "block" and not bool(override_policy.get("new_buy_block_override_enabled")):
+        if (
+            permission == "block"
+            and not bool(override_policy.get("new_buy_block_override_enabled"))
+            and not bool(ignore_direction_block)
+        ):
             return {
                 "allowed": False,
                 "blocked": True,
@@ -10015,7 +10049,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "scope": "market",
                 "details": details,
             }
-        if permission == "block":
+        if permission == "block" and bool(ignore_direction_block):
+            details.update({
+                "core_analyst_direction_block_observed": True,
+                "permission_effective": "core_isolated_direction_policy",
+            })
+        elif permission == "block":
             details.update({
                 "new_buy_block_override_applied": True,
                 "permission_effective": "operator_override",
@@ -10795,6 +10834,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         ticker: str = "",
         strategy: str = "",
         profit_evidence: Optional[dict] = None,
+        source_strategy: str = "",
     ) -> dict:
         market_key = str(market or "").upper()
         raw_ticker = str(ticker or "").strip()
@@ -10803,6 +10843,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "market": market_key,
             "ticker": ticker_key,
             "strategy": str(strategy or ""),
+            "source_strategy": str(source_strategy or ""),
             "checked_at": datetime.now(KST).isoformat(),
         }
         if not self._is_order_allowed_now(market_key):
@@ -10868,7 +10909,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     dict(state.get("details") or {}),
                 )
                 return state
-        analyst_state = self._analyst_new_buy_block_state(market_key)
+        core_isolation = self._core_analyst_entry_isolation_policy(source_strategy)
+        details.update(core_isolation)
+        analyst_state = self._analyst_new_buy_block_state(
+            market_key,
+            ignore_direction_block=bool(core_isolation.get("core_analyst_entry_isolation_applied")),
+        )
         analyst_details = dict((analyst_state or {}).get("details") or {})
         if analyst_details:
             details.update(analyst_details)
@@ -10878,6 +10924,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 f"[operator override] {market_key} {ticker_key or '-'} analyst new-buy block override applied: "
                 f"strategy={str(strategy or '')} downstream_reason={downstream_reason} "
                 f"reason={details.get('new_buy_block_override_reason') or ''}"
+            )
+        if bool(details.get("core_analyst_direction_block_observed")):
+            log.warning(
+                f"[core entry isolation] {market_key} {ticker_key or '-'} "
+                f"source={str(source_strategy or '')} analyst_direction_block=observed "
+                "remaining_buy_gates=enforced"
             )
         if bool((analyst_state or {}).get("blocked")):
             return {
@@ -13959,7 +14011,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             ticker,
             _MICRO_PROBE_STRATEGY,
             profit_evidence=signal_row,
+            source_strategy=source_strategy,
         )
+        buy_gate_details = dict((buy_gate or {}).get("details") or {})
+        self._last_micro_probe_submit_result.update({
+            "core_analyst_entry_isolation_applied": bool(
+                buy_gate_details.get("core_analyst_entry_isolation_applied")
+            ),
+            "analyst_direction_block_observed": bool(
+                buy_gate_details.get("core_analyst_direction_block_observed")
+            ),
+            "analyst_gross_cap_source": str(buy_gate_details.get("gross_cap_source") or ""),
+        })
         if not bool(buy_gate.get("allowed", True)):
             self._last_micro_probe_submit_result.update(
                 status="BLOCKED", reason=str(buy_gate.get("reason") or "buy_gate_blocked")
@@ -14862,8 +14925,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _restore_post_open_tracking_from_features(self, market: str, features_by_ticker: dict[str, dict]) -> None:
         self._ensure_post_open_tracking()
         market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            session_date = self._current_session_date_str(market_key)
+        except Exception:
+            session_date = ""
         for raw_ticker, features in (features_by_ticker or {}).items():
             if not isinstance(features, dict):
+                continue
+            session_candidate = dict(features)
+            session_candidate.setdefault("market", market_key)
+            if not session_date or not self._post_open_feature_matches_session(session_candidate, session_date):
                 continue
             ticker = self._selection_ticker_key(market_key, features.get("ticker") or raw_ticker)
             if not ticker:
@@ -14910,6 +14981,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception as exc:
                 log.debug(f"[post_open restore] {market_key} failed: {exc}")
                 continue
+            features = {
+                raw_ticker: row
+                for raw_ticker, row in (features or {}).items()
+                if isinstance(row, dict)
+                and self._post_open_feature_matches_session(
+                    {**row, "market": str(row.get("market") or market_key)},
+                    session_date,
+                )
+            }
             if not features:
                 continue
             merged = self._merge_last_post_open_features(market_key, features)
@@ -15175,29 +15255,67 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             return False
 
+    def _post_open_timestamp_matches_session(
+        self,
+        market: str,
+        timestamp: Any,
+        session_date: str,
+    ) -> bool:
+        """Return whether a KST/UTC timestamp belongs to the market session.
+
+        US observations routinely cross KST midnight, so comparing the first
+        ten characters of a timestamp with ``session_date`` is not sufficient.
+        """
+
+        expected = str(session_date or "").strip()
+        if not expected or timestamp in (None, ""):
+            return False
+        if isinstance(timestamp, (int, float)):
+            try:
+                observed = datetime.fromtimestamp(float(timestamp), tz=KST)
+                timestamp = observed.isoformat()
+            except Exception:
+                return False
+        text = str(timestamp or "").strip()
+        if not text:
+            return False
+        if str(market or "").upper() == "US":
+            return self._us_post_open_known_at_matches_session(text, expected)
+        try:
+            observed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if observed.tzinfo is None:
+                observed = observed.replace(tzinfo=KST)
+            return observed.astimezone(KST).date().isoformat() == expected
+        except Exception:
+            return False
+
     def _post_open_feature_matches_session(self, features: dict, session_date: str) -> bool:
         if not isinstance(features, dict) or not str(session_date or "").strip():
             return False
         expected = str(session_date).strip()
         compact = expected.replace("-", "")
+        evidence_seen = False
         for key in ("session_date", "market_session_date"):
             value = str(features.get(key) or "").strip()
-            if value == expected:
-                return True
-        anchor_at = str(features.get("anchor_at") or "").strip()
-        if anchor_at:
-            return anchor_at[:10] == expected
-        snapshot_id = str(features.get("snapshot_id") or "").strip()
-        if snapshot_id.startswith(compact):
-            return True
+            if not value:
+                continue
+            evidence_seen = True
+            if value != expected:
+                return False
         market_key = str(features.get("market") or "").strip().upper()
-        known_at = str(features.get("known_at") or "").strip()
-        if market_key == "US":
-            if self._us_post_open_known_at_matches_session(known_at, expected):
-                return True
-        elif known_at[:10] == expected:
-            return True
-        return False
+        for key in ("anchor_at", "known_at"):
+            value = features.get(key)
+            if value in (None, ""):
+                continue
+            evidence_seen = True
+            if not self._post_open_timestamp_matches_session(market_key, value, expected):
+                return False
+        snapshot_id = str(features.get("snapshot_id") or "").strip()
+        if snapshot_id:
+            evidence_seen = True
+            if not snapshot_id.startswith(compact):
+                return False
+        return evidence_seen
 
     def _stale_cached_evidence_missing_feature(self, market: str, ticker: str, session_date: str) -> dict:
         try:
@@ -18191,6 +18309,179 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return value.isoformat()
         return str(value)
 
+    def _filter_runtime_handoff_fields(
+        self,
+        fields: dict[str, Any],
+        session_dates: dict[str, str],
+        *,
+        eligible_markets: Optional[set[str]] = None,
+    ) -> tuple[dict[str, Any], dict[str, int]]:
+        """Remove cross-session intraday state before save or restore.
+
+        The top-level snapshot date only says when the checkpoint was written;
+        long-lived dictionaries may still contain rows from earlier sessions.
+        """
+
+        markets = {
+            str(market or "").upper()
+            for market in (eligible_markets or {"KR", "US"})
+            if str(market or "").upper() in {"KR", "US"}
+        }
+        expected = {
+            market: str((session_dates or {}).get(market) or "").strip()
+            for market in markets
+        }
+        output = dict(fields or {})
+        dropped: dict[str, int] = {}
+
+        def _market_from_prefixed_key(key: Any) -> str:
+            prefix = str(key or "").split(":", 1)[0].upper()
+            return prefix if prefix in {"KR", "US"} else ""
+
+        def _record_drop(name: str, original: int, retained: int) -> None:
+            count = max(0, int(original) - int(retained))
+            if count:
+                dropped[name] = count
+
+        raw_anchors = fields.get("_post_open_anchor") if isinstance(fields.get("_post_open_anchor"), dict) else {}
+        anchors: dict[str, Any] = {}
+        for key, row in raw_anchors.items():
+            market = _market_from_prefixed_key(key)
+            if market not in markets or not isinstance(row, dict):
+                continue
+            if self._post_open_timestamp_matches_session(market, row.get("anchor_at"), expected.get(market, "")):
+                anchors[str(key)] = row
+        output["_post_open_anchor"] = anchors
+        _record_drop("_post_open_anchor", len(raw_anchors), len(anchors))
+
+        raw_history = (
+            fields.get("_post_open_price_history")
+            if isinstance(fields.get("_post_open_price_history"), dict)
+            else {}
+        )
+        history: dict[str, list[dict]] = {}
+        history_rows_before = 0
+        history_rows_after = 0
+        for key, rows in raw_history.items():
+            market = _market_from_prefixed_key(key)
+            if market not in markets or str(key) not in anchors or not isinstance(rows, list):
+                history_rows_before += len(rows) if isinstance(rows, list) else 1
+                continue
+            history_rows_before += len(rows)
+            kept = [
+                row for row in rows
+                if isinstance(row, dict)
+                and self._post_open_timestamp_matches_session(
+                    market,
+                    row.get("ts"),
+                    expected.get(market, ""),
+                )
+            ]
+            if kept:
+                history[str(key)] = kept[-240:]
+                history_rows_after += len(history[str(key)])
+        output["_post_open_price_history"] = history
+        _record_drop("_post_open_price_history_rows", history_rows_before, history_rows_after)
+
+        raw_emit = (
+            fields.get("_post_open_feature_last_emit")
+            if isinstance(fields.get("_post_open_feature_last_emit"), dict)
+            else {}
+        )
+        emitted: dict[str, Any] = {}
+        for key, value in raw_emit.items():
+            market = _market_from_prefixed_key(key)
+            if market not in markets or str(key) not in anchors:
+                continue
+            if self._post_open_timestamp_matches_session(market, value, expected.get(market, "")):
+                emitted[str(key)] = value
+        output["_post_open_feature_last_emit"] = emitted
+        _record_drop("_post_open_feature_last_emit", len(raw_emit), len(emitted))
+
+        raw_features = (
+            fields.get("_last_post_open_features_by_ticker")
+            if isinstance(fields.get("_last_post_open_features_by_ticker"), dict)
+            else {}
+        )
+        features_by_market: dict[str, dict[str, dict]] = {"KR": {}, "US": {}}
+        features_before = 0
+        features_after = 0
+        for market in markets:
+            rows = raw_features.get(market) if isinstance(raw_features.get(market), dict) else {}
+            features_before += len(rows)
+            for ticker, row in rows.items():
+                if not isinstance(row, dict):
+                    continue
+                candidate = dict(row)
+                candidate.setdefault("market", market)
+                if self._post_open_feature_matches_session(candidate, expected.get(market, "")):
+                    features_by_market[market][str(ticker)] = row
+                    features_after += 1
+        output["_last_post_open_features_by_ticker"] = features_by_market
+        _record_drop("_last_post_open_features_by_ticker", features_before, features_after)
+
+        raw_negative = (
+            fields.get("_pathb_negative_watch_counts")
+            if isinstance(fields.get("_pathb_negative_watch_counts"), dict)
+            else {}
+        )
+        output["_pathb_negative_watch_counts"] = {
+            str(key): value
+            for key, value in raw_negative.items()
+            if _market_from_prefixed_key(key) in markets
+        }
+
+        active_tickers: set[str] = set()
+        for name in ("today_tickers", "trade_ready_tickers"):
+            value = fields.get(name) if isinstance(fields.get(name), dict) else {}
+            for market in markets:
+                for ticker in value.get(market) or []:
+                    if isinstance(ticker, dict):
+                        ticker = ticker.get("ticker")
+                    ticker_text = self._selection_ticker_key(market, ticker)
+                    if ticker_text:
+                        active_tickers.add(ticker_text)
+        for key in anchors:
+            market, _, ticker = key.partition(":")
+            ticker_text = self._selection_ticker_key(market, ticker)
+            if ticker_text:
+                active_tickers.add(ticker_text)
+        for market, rows in features_by_market.items():
+            for ticker in rows:
+                ticker_text = self._selection_ticker_key(market, ticker)
+                if ticker_text:
+                    active_tickers.add(ticker_text)
+        for position in list(getattr(getattr(self, "risk", None), "positions", []) or []):
+            market = str(position.get("market") or self._ticker_market(position.get("ticker", ""))).upper()
+            if market not in markets:
+                continue
+            ticker_text = self._selection_ticker_key(market, position.get("ticker"))
+            if ticker_text:
+                active_tickers.add(ticker_text)
+
+        ticker_scoped_fields = (
+            "price_cache",
+            "price_cache_raw",
+            "_intraday_high",
+            "_intraday_low",
+            "_or_high",
+            "_or_low",
+            "_or_formed",
+            "_entry_blocked",
+            "_ticker_no_signal_minutes",
+            "_ticker_no_signal_cycles",
+        )
+        for name in ticker_scoped_fields:
+            value = fields.get(name) if isinstance(fields.get(name), dict) else {}
+            retained = {
+                str(key): item
+                for key, item in value.items()
+                if str(key).split(":")[-1].upper() in active_tickers
+            }
+            output[name] = retained
+            _record_drop(name, len(value), len(retained))
+        return output, dropped
+
     def _runtime_handoff_payload(self, trigger: str = "manual") -> dict:
         self._ensure_post_open_tracking()
         try:
@@ -18233,6 +18524,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 for k, v in (getattr(self, "_planb_bridge_completed_tickers", {}) or {}).items()
             },
         }
+        fields, filter_dropped = self._filter_runtime_handoff_fields(fields, session_dates)
         return {
             "schema_version": 1,
             "mode": getattr(self, "_mode", "live"),
@@ -18240,6 +18532,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "trigger": str(trigger or "manual"),
             "written_at": datetime.now(KST).isoformat(timespec="seconds"),
             "session_dates": session_dates,
+            "filter_dropped": filter_dropped,
             "fields": self._json_safe_runtime_value(fields),
         }
 
@@ -18311,6 +18604,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
             return
         fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+        fields, restore_filter_dropped = self._filter_runtime_handoff_fields(
+            fields,
+            current_session_dates,
+            eligible_markets=eligible_markets,
+        )
         dict_fields = (
             "today_tickers",
             "trade_ready_tickers",
@@ -18472,6 +18770,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "current_session_dates": current_session_dates,
                     "skipped_markets": skipped_markets,
                     "skipped_fields": skipped_fields,
+                    "restore_filter_dropped": restore_filter_dropped,
                 },
             )
         except Exception:
@@ -18537,9 +18836,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         observed = observed_at or datetime.now(KST)
         if observed.tzinfo is not None:
             observed = observed.astimezone(KST).replace(tzinfo=None)
+        session_date = self._current_session_date_str(market_key)
         anchor = self._post_open_anchor.get(key)
+        if anchor and not self._post_open_timestamp_matches_session(
+            market_key,
+            (anchor or {}).get("anchor_at"),
+            session_date,
+        ):
+            stale_anchor_at = str((anchor or {}).get("anchor_at") or "")
+            self._post_open_anchor.pop(key, None)
+            self._post_open_price_history.pop(key, None)
+            self._post_open_feature_last_emit.pop(key, None)
+            anchor = None
+            log.warning(
+                f"[post-open stale cache purged] {key} "
+                f"anchor_at={stale_anchor_at or '-'} session={session_date}"
+            )
         if not anchor:
-            session_date = self._current_session_date_str(market_key)
             regular_open = self._market_regular_open_dt(market_key, session_date=session_date).astimezone(KST).replace(tzinfo=None)
             meta = dict(preopen_meta or {})
             anchor_price = self._positive_float_or_none(

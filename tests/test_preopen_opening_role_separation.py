@@ -864,6 +864,101 @@ class PreopenOpeningRoleSeparationTests(unittest.TestCase):
         self.assertTrue(state["details"]["new_buy_block_override_applied"])
         self.assertEqual(state["details"]["gross_exposure_pct"], 25.0)
 
+    def test_core_entry_isolation_ignores_only_analyst_direction_block(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot.is_paper = False
+        bot._is_order_allowed_now = lambda market: True
+        bot._in_entry_blackout = lambda market: False
+        bot.v2_order_unknown = None
+        bot.v2 = None
+        bot.runtime_config = trading_bot.EffectiveRuntimeConfig(values={
+            "ANALYST_NEW_BUY_BLOCK_OVERRIDE_ENABLED": "false",
+            "KR_ANALYST_NEW_BUY_BLOCK_OVERRIDE_ENABLED": "",
+            "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY": "isolated",
+            "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK": (
+                "I_ACCEPT_CORE_ANALYST_DIRECTION_ISOLATION"
+            ),
+        })
+        bot.today_judgment = {
+            "consensus": {"new_buy_permission": "block", "max_gross_exposure_pct": 20}
+        }
+        bot._market_equity_reference_context = lambda market: {
+            "total_krw": 100000.0,
+            "position_krw": 10000.0,
+            "source": "test",
+        }
+
+        with patch.object(trading_bot.log, "warning") as warning:
+            state = trading_bot.TradingBot._new_buy_block_state(
+                bot,
+                "KR",
+                "275280",
+                "MICRO_PROBE",
+                source_strategy="kr_factor_trend_v1",
+            )
+
+        self.assertTrue(state["allowed"])
+        self.assertTrue(state["details"]["core_analyst_entry_isolation_applied"])
+        self.assertTrue(state["details"]["core_analyst_direction_block_observed"])
+        self.assertEqual(state["details"]["permission_effective"], "core_isolated_direction_policy")
+        self.assertEqual(state["details"]["gross_exposure_pct"], 10.0)
+        self.assertIn("remaining_buy_gates=enforced", warning.call_args.args[0])
+
+        ordinary = trading_bot.TradingBot._new_buy_block_state(
+            bot,
+            "KR",
+            "005930",
+            "momentum",
+            source_strategy="momentum",
+        )
+        self.assertFalse(ordinary["allowed"])
+        self.assertEqual(ordinary["reason"], "ANALYST_NEW_BUY_BLOCK")
+
+    def test_core_entry_isolation_preserves_analyst_gross_cap_and_exact_ack(self) -> None:
+        bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
+        bot.is_paper = False
+        bot._is_order_allowed_now = lambda market: True
+        bot._in_entry_blackout = lambda market: False
+        bot.v2_order_unknown = None
+        bot.v2 = None
+        bot.today_judgment = {
+            "consensus": {"new_buy_permission": "block", "max_gross_exposure_pct": 20}
+        }
+        bot._market_equity_reference_context = lambda market: {
+            "total_krw": 100000.0,
+            "position_krw": 25000.0,
+            "source": "test",
+        }
+        bot.runtime_config = trading_bot.EffectiveRuntimeConfig(values={
+            "ANALYST_NEW_BUY_BLOCK_OVERRIDE_ENABLED": "false",
+            "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY": "isolated",
+            "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK": (
+                "I_ACCEPT_CORE_ANALYST_DIRECTION_ISOLATION"
+            ),
+        })
+
+        capped = trading_bot.TradingBot._new_buy_block_state(
+            bot,
+            "KR",
+            "275280",
+            "MICRO_PROBE",
+            source_strategy="kr_factor_trend_v1",
+        )
+        self.assertFalse(capped["allowed"])
+        self.assertEqual(capped["reason"], "ANALYST_MAX_GROSS_EXPOSURE_REACHED")
+
+        bot.runtime_config.values["PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK"] = ""
+        missing_ack = trading_bot.TradingBot._new_buy_block_state(
+            bot,
+            "KR",
+            "275280",
+            "MICRO_PROBE",
+            source_strategy="kr_factor_trend_v1",
+        )
+        self.assertFalse(missing_ack["allowed"])
+        self.assertEqual(missing_ack["reason"], "ANALYST_NEW_BUY_BLOCK")
+        self.assertFalse(missing_ack["details"]["core_analyst_entry_ack_verified"])
+
     def test_market_mode_buy_block_state_blocks_us_bear_modes_by_default(self) -> None:
         bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
         bot._risk_off_mr_exception = lambda market, mode, strategy, sig_row: {

@@ -34,6 +34,15 @@ def _summary() -> dict:
                         "generated_at": "2026-07-15T22:40:00+09:00",
                     },
                     "execution_status_stale": False,
+                    "active_execution_shadow": {
+                        "state": "ACTIVE_UNMATURED",
+                        "rows": [{
+                            "ticker": "SMCI",
+                            "observed_sessions": 4,
+                            "max_hold_sessions": 5,
+                            "expected_maturity_session": "2026-07-16",
+                        }],
+                    },
                     "live_configured_mode": "micro",
                     "config_matches_runtime": True,
                     "stale": False,
@@ -53,12 +62,25 @@ def _summary() -> dict:
                         "US": {"valid": True},
                         "KR": {"valid": True},
                     },
+                    "core_analyst_entry_policy": {
+                        "policy": "isolated",
+                        "ok": True,
+                        "last_direction_block_observed": True,
+                        "last_applied": True,
+                    },
                 },
                 "kr_exit_policy": {
                     "env_live": "SPLIT_RUNNER_V1",
                     "start_config": "SPLIT_RUNNER_V1",
                     "runtime_snapshot": "SPLIT_RUNNER_V1",
                     "ok": True,
+                },
+                "runtime_handoff": {
+                    "present": True,
+                    "anchor_count": 2,
+                    "feature_count": 2,
+                    "filter_dropped_total": 442,
+                    "written_at": "2026-07-16T12:00:00+09:00",
                 },
             }
         },
@@ -77,6 +99,11 @@ def test_telegram_health_shows_enforced_shadow_and_fail_closed_state() -> None:
     assert "US swing: research=micro→shadow execution=micro_operator_trial" in text
     assert "budget=300,000KRW" in text
     assert "core live manifest" in text
+    assert "US swing forward: state=ACTIVE_UNMATURED ticker=SMCI sessions=4/5 maturity=2026-07-16" in text
+    assert "core analyst entry: policy=isolated" in text
+    assert "gross_cap=enforced" in text
+    assert "runtime handoff:" in text
+    assert "filtered=442" in text
 
 
 def test_dashboard_has_strategy_lane_status_surface() -> None:
@@ -87,3 +114,6 @@ def test_dashboard_has_strategy_lane_status_surface() -> None:
     assert "profit.enforced_ids" in source
     assert "swingExecutionAuthority.eligible_mode" in source
     assert "coreManifests" in source
+    assert "swingActive.state" in source
+    assert "coreEntryPolicy.policy" in source
+    assert "runtimeHandoff.filter_dropped_total" in source

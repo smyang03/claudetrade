@@ -469,6 +469,13 @@ def run_profit_strategy_handoff(bot: Any, market: str) -> dict[str, Any]:
             "reason": str(outcome.get("reason") or ""),
             "broker_outcome_status": str(outcome.get("status") or ""),
             "broker_detail": str(outcome.get("detail") or "")[:240],
+            "core_analyst_entry_isolation_applied": bool(
+                outcome.get("core_analyst_entry_isolation_applied")
+            ),
+            "analyst_direction_block_observed": bool(
+                outcome.get("analyst_direction_block_observed")
+            ),
+            "analyst_gross_cap_source": str(outcome.get("analyst_gross_cap_source") or ""),
             "signal_known_at": signal.get("known_at"),
         }
         _append_jsonl(ledger_path, record)

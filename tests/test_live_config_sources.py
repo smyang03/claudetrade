@@ -20,6 +20,7 @@ from tools.live_preflight import (
     _market_session_calendar_check,
     _pathb_market_live_gate_check,
     _pathb_preopen_exit_policy_check,
+    _profit_strategy_core_entry_policy_check,
     _profit_strategy_micro_contract_check,
     _runtime_config_drift_check,
     _runtime_config_drift_payload,
@@ -105,6 +106,42 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertEqual(_profit_strategy_micro_contract_check(effective, "live").status, "PASS")
         effective["PROFIT_STRATEGY_ENABLED_IDS"] += ",US_CONSENSUS_3D_V1"
         self.assertEqual(_profit_strategy_micro_contract_check(effective, "live").status, "FAIL")
+
+    def test_core_analyst_entry_isolation_requires_dual_source_and_exact_ack(self) -> None:
+        exact_ack = "I_ACCEPT_CORE_ANALYST_DIRECTION_ISOLATION"
+        config = {
+            "base_env": {
+                "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY": "isolated",
+                "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK": exact_ack,
+            },
+            "overrides": {
+                "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY": "isolated",
+                "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK": exact_ack,
+            },
+            "effective": {
+                "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY": "isolated",
+                "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK": exact_ack,
+            },
+        }
+        self.assertEqual(_profit_strategy_core_entry_policy_check(config, "live").status, "PASS")
+
+        missing_env = {
+            **config,
+            "base_env": {"PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY": "observe"},
+        }
+        self.assertEqual(
+            _profit_strategy_core_entry_policy_check(missing_env, "live").status,
+            "FAIL",
+        )
+
+        bad_ack = {
+            **config,
+            "overrides": {
+                **config["overrides"],
+                "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK": "wrong",
+            },
+        }
+        self.assertEqual(_profit_strategy_core_entry_policy_check(bad_ack, "live").status, "FAIL")
 
     def test_profit_strategy_contract_rejects_above_operator_approved_market_caps(self) -> None:
         effective = {

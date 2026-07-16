@@ -425,6 +425,84 @@ def annotate_execution_shadow(
     }
 
 
+def expected_maturity_session(signal_date: str, max_hold_sessions: int) -> str:
+    """Resolve the last session in an inclusive fixed-horizon US hold."""
+
+    count = max(1, int(max_hold_sessions or 1))
+    try:
+        import exchange_calendars as ec
+
+        calendar = ec.get_calendar("XNYS")
+        # Positive windows include the anchor session. A five-session
+        # inclusive hold starting Friday therefore matures Thursday.
+        sessions = calendar.sessions_window(str(signal_date), count)
+        return str(sessions[-1].date())
+    except Exception:
+        current = pd.Timestamp(str(signal_date))
+        observed = 1
+        while observed < count:
+            current += pd.Timedelta(days=1)
+            if current.weekday() < 5:
+                observed += 1
+        return current.strftime("%Y-%m-%d")
+
+
+def summarize_active_execution_shadow(
+    con: sqlite3.Connection,
+    *,
+    price_dir: Path,
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    """Expose legitimate one-slot maturity instead of labelling it stale."""
+
+    max_hold = int((policy.get("execution_contract") or {}).get("max_hold_sessions", 5) or 5)
+    rows = con.execute(
+        """SELECT signal_date,ticker,entry_date,execution_shadow_entry_fill_usd,
+                  execution_shadow_qty,execution_shadow_reason
+           FROM signals
+           WHERE execution_shadow_eligible=1
+             AND execution_shadow_net_krw_pct IS NULL
+           ORDER BY signal_date,ticker"""
+    ).fetchall()
+    active: list[dict[str, Any]] = []
+    for signal_date, ticker, entry_date, entry_fill, qty, reason in rows:
+        observed_sessions = 0
+        latest_bar_date = ""
+        path = price_dir / f"us_{str(ticker).upper()}.csv"
+        if path.exists():
+            try:
+                bars = _read_price(path)
+                future = bars[bars["date"].astype(str) >= str(signal_date)].sort_values("date")
+                observed_sessions = int(len(future))
+                if not future.empty:
+                    latest_bar_date = str(future.iloc[-1]["date"])
+            except Exception:
+                pass
+        expected_session = expected_maturity_session(str(signal_date), max_hold)
+        maturity_due = observed_sessions >= max_hold
+        active.append({
+            "state": "MATURITY_DUE" if maturity_due else "ACTIVE_UNMATURED",
+            "signal_date": str(signal_date),
+            "ticker": str(ticker),
+            "entry_date": str(entry_date or signal_date),
+            "entry_fill_usd": float(entry_fill) if entry_fill is not None else None,
+            "qty": int(qty or 0),
+            "execution_shadow_reason": str(reason or ""),
+            "observed_sessions": observed_sessions,
+            "max_hold_sessions": max_hold,
+            "expected_maturity_session": expected_session,
+            "latest_bar_date": latest_bar_date,
+            "maturity_due": maturity_due,
+        })
+    return {
+        "state": "ACTIVE_UNMATURED" if active and not any(row["maturity_due"] for row in active) else (
+            "MATURITY_DUE" if active else "IDLE"
+        ),
+        "active_count": len(active),
+        "rows": active,
+    }
+
+
 def mature_pending(
     con: sqlite3.Connection,
     *,
@@ -478,11 +556,16 @@ def mature_pending(
                 execution_unaffordable += 1
             else:
                 con.execute(
-                    """UPDATE signals SET execution_shadow_reason='entry_open_whole_share_confirmed',
+                    """UPDATE signals SET entry_date=COALESCE(entry_date,?),
+                        entry_price=COALESCE(entry_price,?),entry_fx=COALESCE(entry_fx,?),
+                        execution_shadow_reason='entry_open_whole_share_confirmed',
                         execution_shadow_qty=?,execution_shadow_entry_fill_usd=?,
                         execution_shadow_entry_price_krw=?,execution_shadow_fx=?
                        WHERE signal_date=? AND ticker=?""",
                     (
+                        str(first["date"]),
+                        float(first["open"]),
+                        first_fx,
                         shadow_qty,
                         shadow_entry,
                         shadow_entry * first_fx,
@@ -690,6 +773,7 @@ def main() -> int:
     applied_vetoes: list[dict[str, str]] = []
     breadth_context: dict[str, Any] = {}
     execution_shadow: dict[str, Any] = {}
+    active_execution_shadow: dict[str, Any] = {}
     if not args.mature_only:
         snapshot = Path(args.snapshot) if args.snapshot else ROOT / "state" / f"preopen_US_{args.session_date.replace('-', '')}.json"
         veto_path = Path(args.veto_file) if args.veto_file else ROOT / "state" / f"us_swing_veto_{args.session_date.replace('-', '')}.json"
@@ -745,6 +829,11 @@ def main() -> int:
             }
             for row in scored.to_dict("records")
         ]
+    active_execution_shadow = summarize_active_execution_shadow(
+        con,
+        price_dir=price_dir,
+        policy=policy,
+    )
     model_forward = summarize_forward(con)
     forward = summarize_executable_forward(con)
     historical = _load_json(Path(args.historical_evidence))
@@ -769,6 +858,7 @@ def main() -> int:
         "feature_errors": feature_errors,
         "maturity": maturity,
         "execution_shadow": execution_shadow,
+        "active_execution_shadow": active_execution_shadow,
         "forward_evidence": forward,
         "model_forward_diagnostic_only": model_forward,
         "historical_evidence_present": bool(historical),

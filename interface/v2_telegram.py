@@ -149,12 +149,27 @@ def _format_health(summary: dict[str, Any]) -> str:
     swing = trackers.get("us_swing") or {}
     profit = trackers.get("profit_strategies") or {}
     policy = trackers.get("kr_exit_policy") or {}
+    runtime_handoff = trackers.get("runtime_handoff") or {}
     swing_research = (
         swing.get("research_authority") if isinstance(swing.get("research_authority"), dict) else {}
     )
     swing_execution = swing.get("execution") if isinstance(swing.get("execution"), dict) else {}
     swing_execution_authority = (
         swing.get("execution_authority") if isinstance(swing.get("execution_authority"), dict) else {}
+    )
+    swing_active = (
+        swing.get("active_execution_shadow")
+        if isinstance(swing.get("active_execution_shadow"), dict)
+        else {}
+    )
+    swing_active_row = next(
+        (row for row in (swing_active.get("rows") or []) if isinstance(row, dict)),
+        {},
+    )
+    core_entry_policy = (
+        profit.get("core_analyst_entry_policy")
+        if isinstance(profit.get("core_analyst_entry_policy"), dict)
+        else {}
     )
     core_manifests = profit.get("core_live_manifests") if isinstance(profit.get("core_live_manifests"), dict) else {}
     enforced_ids = ",".join(profit.get("enforced_ids") or []) or "-"
@@ -192,6 +207,13 @@ def _format_health(summary: dict[str, Any]) -> str:
                 f"failure={swing.get('failed_session_date') or '-'}"
             ),
             (
+                f"US swing forward: state={swing_active.get('state') or 'IDLE'} "
+                f"ticker={swing_active_row.get('ticker') or '-'} "
+                f"sessions={swing_active_row.get('observed_sessions', 0)}/"
+                f"{swing_active_row.get('max_hold_sessions', 0)} "
+                f"maturity={swing_active_row.get('expected_maturity_session') or '-'}"
+            ),
+            (
                 f"MICRO strategies: mode={profit.get('authority_mode') or '-'} "
                 f"kill={profit.get('kill_switch') or '-'} runtime_match={_ko_bool(profit.get('config_matches_runtime'))} "
                 f"US_n={(profit.get('US') or {}).get('signal_count', 0)} "
@@ -202,6 +224,12 @@ def _format_health(summary: dict[str, Any]) -> str:
                 f"core live manifest: US={_ko_bool((core_manifests.get('US') or {}).get('valid'))} "
                 f"KR={_ko_bool((core_manifests.get('KR') or {}).get('valid'))}"
             ),
+            (
+                f"core analyst entry: policy={core_entry_policy.get('policy') or 'observe'} "
+                f"contract_ok={_ko_bool(core_entry_policy.get('ok'))} "
+                f"direction_block_seen={_ko_bool(core_entry_policy.get('last_direction_block_observed'))} "
+                f"isolated={_ko_bool(core_entry_policy.get('last_applied'))} gross_cap=enforced"
+            ),
             f"주문 허용 전략: {enforced_ids}",
             f"shadow 전용(주문 제외): {shadow_ids}",
             (
@@ -211,6 +239,13 @@ def _format_health(summary: dict[str, Any]) -> str:
             (
                 f"KR exit policy: env={policy.get('env_live') or '-'} config={policy.get('start_config') or '-'} "
                 f"runtime={policy.get('runtime_snapshot') or '-'} 일치={_ko_bool(policy.get('ok'))}"
+            ),
+            (
+                f"runtime handoff: present={_ko_bool(runtime_handoff.get('present'))} "
+                f"anchors={runtime_handoff.get('anchor_count', 0)} "
+                f"features={runtime_handoff.get('feature_count', 0)} "
+                f"filtered={runtime_handoff.get('filter_dropped_total', 0)} "
+                f"last={runtime_handoff.get('written_at') or '-'}"
             ),
         ]
     )

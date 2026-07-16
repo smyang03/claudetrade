@@ -66,6 +66,9 @@ AI의 사고 방식은 **트레이너이자 개발자**다. 시장·전략·분�
 - `PATHB_KR_LIVE_ENABLED`/`PATHB_US_LIVE_ENABLED=true`, `PATHB_INTRADAY_ONLY=false`(multi-day hold 허용).
 - `PATHB_KR_EXIT_POLICY` — KR PathB 자동매도 소유권. `.env.live`와 start-config 동시변경,
   재시작 후 새 PID effective-config 실측 없이는 enforce/rollback 완료로 보지 않는다.
+- `PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY`/`PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK` —
+  코어 2종만 analyst 방향 차단과 분리한다. 전역 override가 아니며 두 소스 일치·정확한 ACK·재시작 후
+  effective-config 실측이 모두 있어야 `isolated`로 인정한다.
 - 고정 주문금액 50만원 / 최대 포지션 PathB 15·시장별(KR·US) 각 20 / 일일 진입 40 / 최소 confidence 0.5 / 재진입 쿨다운 60분 / 장 초반 soft gate(KR 0~60분·US 0~30분, size×0.5).
 - 슬리피지 캡 KR 1.003 · US 1.002, protective hold 최소 거리 KR 0.5% · US 0.3%.
 

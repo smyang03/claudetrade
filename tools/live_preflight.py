@@ -242,6 +242,8 @@ LIVE_CONFIG_KEYS = {
     "PROFIT_STRATEGY_ORDER_LIVE_ACK",
     "PROFIT_STRATEGY_KILL_SWITCH",
     "PROFIT_STRATEGY_ENABLED_IDS",
+    "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY",
+    "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK",
     "PROFIT_STRATEGY_MAX_ORDER_KRW_KR",
     "PROFIT_STRATEGY_MAX_ORDER_KRW_US",
     "PROFIT_STRATEGY_MAX_NEW_PER_DAY_KR",
@@ -394,6 +396,8 @@ RUNTIME_CONFIG_DRIFT_KEYS = {
     "PROFIT_STRATEGY_ORDER_LIVE_ACK",
     "PROFIT_STRATEGY_KILL_SWITCH",
     "PROFIT_STRATEGY_ENABLED_IDS",
+    "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY",
+    "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK",
     "PROFIT_STRATEGY_MAX_ORDER_KRW_KR",
     "PROFIT_STRATEGY_MAX_ORDER_KRW_US",
     "PROFIT_STRATEGY_MAX_NEW_PER_DAY_KR",
@@ -444,6 +448,8 @@ CRITICAL_RUNTIME_CONFIG_DRIFT_KEYS = {
     "PROFIT_EVIDENCE_GATE_MODE_KR_PATH_B",
     "PROFIT_EVIDENCE_GATE_MODE_US_PATH_A",
     "PROFIT_EVIDENCE_GATE_MODE_US_PATH_B",
+    "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY",
+    "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK",
 }
 
 REQUIRED_TABLE_COLUMNS = {
@@ -1645,6 +1651,14 @@ CONFIG_SOURCE_MEANING_KEYS: dict[str, dict[str, str]] = {
         "used_by": "KR PathB per-position exit-owner pin and paired A/B contract",
         "meaning": "operator-controlled dual-source policy; SPLIT_RUNNER_V1 remains blocked until forward gate and live wiring",
     },
+    "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY": {
+        "used_by": "core strategy common-buy gate",
+        "meaning": "exact core allowlist may observe but ignore only analyst direction block; all remaining buy/risk gates stay enforced",
+    },
+    "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK": {
+        "used_by": "core strategy common-buy gate and live preflight",
+        "meaning": "dual-source operator acknowledgement required for isolated policy",
+    },
     "PATHB_PREOPEN_EXIT_POLICY_MODE": {
         "used_by": "US fallback for PathB preopen shallow-stop defer policy",
         "meaning": "legacy/global policy mode; KR does not inherit this value",
@@ -1806,6 +1820,63 @@ def _pathb_kr_exit_policy_check(config: dict[str, Any], mode: str) -> CheckResul
     )
 
 
+def _profit_strategy_core_entry_policy_check(config: dict[str, Any], mode: str) -> CheckResult:
+    """Require both live config sources for the core analyst-direction exception."""
+
+    effective = dict(config.get("effective") or {})
+    base_env = dict(config.get("base_env") or {})
+    overrides = dict(config.get("overrides") or {})
+    policy_key = "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY"
+    ack_key = "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK"
+    env_policy = str(base_env.get(policy_key) or "observe").strip().lower()
+    start_policy = str(overrides.get(policy_key) or "").strip().lower()
+    effective_policy = str(effective.get(policy_key) or "observe").strip().lower()
+    env_ack = str(base_env.get(ack_key) or "").strip()
+    start_ack = str(overrides.get(ack_key) or "").strip()
+    effective_ack = str(effective.get(ack_key) or "").strip()
+    exact_ack = "I_ACCEPT_CORE_ANALYST_DIRECTION_ISOLATION"
+    data = {
+        "env_policy": env_policy,
+        "start_config_policy": start_policy,
+        "effective_policy": effective_policy,
+        "policy_sources_match": bool(env_policy and env_policy == start_policy),
+        "ack_sources_match": bool(env_ack and env_ack == start_ack),
+        "effective_ack_verified": effective_ack == exact_ack,
+        "isolated_sources": ["KR_FACTOR_TREND_V1", "US_SCHG_BIL_TREND_V1"],
+    }
+    if effective_policy not in {"observe", "isolated"}:
+        return CheckResult(
+            "config.profit_strategy_core_entry_policy",
+            "FAIL",
+            f"invalid core analyst entry policy: {effective_policy}",
+            data,
+        )
+    if str(mode or "").lower() != "live" or effective_policy == "observe":
+        return CheckResult(
+            "config.profit_strategy_core_entry_policy",
+            "PASS",
+            f"core analyst entry policy effective: {effective_policy}",
+            data,
+        )
+    if (
+        not data["policy_sources_match"]
+        or not data["ack_sources_match"]
+        or effective_ack != exact_ack
+    ):
+        return CheckResult(
+            "config.profit_strategy_core_entry_policy",
+            "FAIL",
+            "core analyst entry isolation must match in .env.live and start-config with exact ACK",
+            data,
+        )
+    return CheckResult(
+        "config.profit_strategy_core_entry_policy",
+        "PASS",
+        "core analyst direction isolation is dual-source protected",
+        data,
+    )
+
+
 def _us_swing_shadow_runtime_check(effective: dict[str, Any]) -> CheckResult:
     enabled = _truthy(effective.get("US_SWING_SHADOW_SCHEDULER_ENABLED"))
     authority = str(effective.get("US_SWING_AUTHORITY_MODE") or "").strip().lower()
@@ -1926,6 +1997,12 @@ def _profit_strategy_micro_contract_check(effective: dict[str, Any], mode: str) 
     handoff = _truthy(effective.get("PROFIT_STRATEGY_ORDER_HANDOFF_ENABLED"))
     submit = _truthy(effective.get("PROFIT_STRATEGY_ORDER_SUBMIT_ENABLED"))
     ack = str(effective.get("PROFIT_STRATEGY_ORDER_LIVE_ACK") or "").strip()
+    core_entry_policy = str(
+        effective.get("PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY") or "observe"
+    ).strip().lower()
+    core_entry_ack = str(
+        effective.get("PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK") or ""
+    ).strip()
     killed = _truthy(effective.get("PROFIT_STRATEGY_KILL_SWITCH"))
     caps = {
         market: _float_value(effective.get(f"PROFIT_STRATEGY_MAX_ORDER_KRW_{market}"), 0.0)
@@ -1951,6 +2028,10 @@ def _profit_strategy_micro_contract_check(effective: dict[str, Any], mode: str) 
         "enabled_ids": sorted(ids),
         "approved_ids": sorted(approved),
         "unapproved_ids": sorted(ids - approved),
+        "core_analyst_entry_policy": core_entry_policy,
+        "core_analyst_entry_ack_verified": (
+            core_entry_ack == "I_ACCEPT_CORE_ANALYST_DIRECTION_ISOLATION"
+        ),
         "max_order_krw": caps,
         "approved_max_order_krw": approved_order_caps_krw,
         "max_new_per_day": daily_caps,
@@ -1981,6 +2062,23 @@ def _profit_strategy_micro_contract_check(effective: dict[str, Any], mode: str) 
             "config.profit_strategy_micro_contract",
             "FAIL",
             "profit strategy MICRO contract is incomplete",
+            data,
+        )
+    if core_entry_policy not in {"observe", "isolated"}:
+        return CheckResult(
+            "config.profit_strategy_micro_contract",
+            "FAIL",
+            "invalid core analyst entry policy",
+            data,
+        )
+    if (
+        core_entry_policy == "isolated"
+        and core_entry_ack != "I_ACCEPT_CORE_ANALYST_DIRECTION_ISOLATION"
+    ):
+        return CheckResult(
+            "config.profit_strategy_micro_contract",
+            "FAIL",
+            "core analyst direction isolation requires exact live ACK",
             data,
         )
     if killed:
@@ -2669,6 +2767,121 @@ def _heartbeat_checks(mode: str) -> list[CheckResult]:
     return checks
 
 
+def _runtime_handoff_timestamp_matches_session(market: str, value: Any, expected: str) -> bool:
+    if value in (None, "") or not str(expected or "").strip():
+        return False
+    try:
+        if isinstance(value, (int, float)):
+            observed = datetime.fromtimestamp(float(value), tz=KST or timezone.utc)
+        else:
+            observed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+            if observed.tzinfo is None:
+                observed = observed.replace(tzinfo=KST or timezone.utc)
+        zone = (
+            ZoneInfo("America/New_York")
+            if str(market or "").upper() == "US" and ZoneInfo is not None
+            else KST or timezone.utc
+        )
+        return observed.astimezone(zone).date().isoformat() == str(expected).strip()
+    except Exception:
+        return False
+
+
+def _runtime_handoff_cache_hygiene_check(mode: str) -> CheckResult:
+    """Detect mixed-session intraday rows in the restart handoff snapshot."""
+
+    path = get_runtime_path("state", f"{str(mode or 'live').lower()}_runtime_handoff_snapshot.json", make_parents=False)
+    data: dict[str, Any] = {"path": str(path)}
+    if not path.exists():
+        return CheckResult(
+            "runtime.handoff_cache_hygiene",
+            "PASS",
+            "runtime handoff snapshot absent; no cached session state to restore",
+            data,
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return CheckResult(
+            "runtime.handoff_cache_hygiene",
+            "WARN",
+            f"runtime handoff snapshot is unreadable: {exc}",
+            {**data, **_warning_meta("runtime_handoff_unreadable", accepted=False, action="rewrite snapshot on the next safe restart")},
+        )
+    sessions = payload.get("session_dates") if isinstance(payload.get("session_dates"), dict) else {}
+    fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+    stale: list[dict[str, str]] = []
+    anchors = fields.get("_post_open_anchor") if isinstance(fields.get("_post_open_anchor"), dict) else {}
+    for key, row in anchors.items():
+        market = str(key or "").split(":", 1)[0].upper()
+        expected = str(sessions.get(market) or "")
+        anchor_at = (row or {}).get("anchor_at") if isinstance(row, dict) else None
+        if market not in {"KR", "US"} or not _runtime_handoff_timestamp_matches_session(market, anchor_at, expected):
+            stale.append({"field": "_post_open_anchor", "key": str(key), "value": str(anchor_at or ""), "expected": expected})
+    features = (
+        fields.get("_last_post_open_features_by_ticker")
+        if isinstance(fields.get("_last_post_open_features_by_ticker"), dict)
+        else {}
+    )
+    for market in ("KR", "US"):
+        expected = str(sessions.get(market) or "")
+        rows = features.get(market) if isinstance(features.get(market), dict) else {}
+        for ticker, row in rows.items():
+            if not isinstance(row, dict):
+                stale.append({"field": "_last_post_open_features_by_ticker", "key": f"{market}:{ticker}", "value": "not_object", "expected": expected})
+                continue
+            evidence_seen = False
+            invalid = False
+            for field_name in ("session_date", "market_session_date"):
+                value = str(row.get(field_name) or "").strip()
+                if value:
+                    evidence_seen = True
+                    invalid = invalid or value != expected
+            for field_name in ("anchor_at", "known_at"):
+                value = row.get(field_name)
+                if value not in (None, ""):
+                    evidence_seen = True
+                    invalid = invalid or not _runtime_handoff_timestamp_matches_session(market, value, expected)
+            snapshot_id = str(row.get("snapshot_id") or "")
+            if snapshot_id:
+                evidence_seen = True
+                invalid = invalid or not snapshot_id.startswith(expected.replace("-", ""))
+            if invalid or not evidence_seen:
+                stale.append({"field": "_last_post_open_features_by_ticker", "key": f"{market}:{ticker}", "value": str(row.get("anchor_at") or row.get("session_date") or ""), "expected": expected})
+    data.update(
+        {
+            "written_at": str(payload.get("written_at") or ""),
+            "session_dates": sessions,
+            "anchor_count": len(anchors),
+            "feature_count": sum(len(rows) for rows in features.values() if isinstance(rows, dict)),
+            "stale_row_count": len(stale),
+            "stale_rows_sample": stale[:20],
+            "filter_dropped": payload.get("filter_dropped") if isinstance(payload.get("filter_dropped"), dict) else {},
+            "restore_is_fail_closed": True,
+        }
+    )
+    if stale:
+        data.update(
+            _warning_meta(
+                "runtime_handoff_cross_session_cache",
+                accepted=False,
+                action="deploy/restart with row-level handoff filtering; verify stale_row_count=0 after the next checkpoint",
+            )
+        )
+        return CheckResult(
+            "runtime.handoff_cache_hygiene",
+            "WARN",
+            f"runtime handoff contains cross-session rows={len(stale)}; new restore path will discard them",
+            data,
+        )
+    return CheckResult(
+        "runtime.handoff_cache_hygiene",
+        "PASS",
+        "runtime handoff intraday rows match their market sessions",
+        data,
+    )
+
+
 def _default_kis_base_url(mode: str) -> str:
     return (
         "https://openapivts.koreainvestment.com:29443"
@@ -2787,6 +3000,7 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
     checks.append(CheckResult("config.effective_values", "PASS", "effective live values captured", {"values": important}))
     checks.append(_config_source_meaning_check(config))
     checks.append(_pathb_kr_exit_policy_check(config, mode))
+    checks.append(_profit_strategy_core_entry_policy_check(config, mode))
     checks.append(_us_swing_shadow_runtime_check(effective))
     checks.append(_profit_strategy_micro_contract_check(effective, mode))
     checks.append(_pathb_preopen_exit_policy_check(config))
@@ -5052,6 +5266,7 @@ def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, i
     checks.extend(_db_checks(mode))
     checks.extend(_token_checks(mode))
     checks.extend(_state_checks(config, mode))
+    checks.append(_runtime_handoff_cache_hygiene_check(mode))
     checks.append(_process_inventory_check(mode))
     checks.extend(_heartbeat_checks(mode))
     checks.extend(_static_code_checks(config.get("effective", {})))
