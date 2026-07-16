@@ -101,6 +101,34 @@ function Test-ClaudeTradePythonPid([int]$ProcessId) {
     }
 }
 
+function Wait-BrokerTruthSchedulerReady([int]$ProcessId) {
+    if ($DryRun) { return }
+    $lockPath = Join-Path $Root "state\broker_truth_scheduler.lock.json"
+    $heartbeatPath = Join-Path $Root "state\broker_truth_scheduler_heartbeat.json"
+    for ($attempt = 0; $attempt -lt 80; $attempt++) {
+        if (-not (Test-ClaudeTradePythonPid $ProcessId)) {
+            throw "broker_truth_scheduler exited before acquiring writer authority pid=$ProcessId"
+        }
+        try {
+            $lock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
+            $heartbeat = Get-Content -LiteralPath $heartbeatPath -Raw | ConvertFrom-Json
+            if (
+                [int]$lock.pid -eq $ProcessId -and
+                [int]$heartbeat.pid -eq $ProcessId -and
+                [bool]$heartbeat.healthy
+            ) {
+                Write-Output "[READY] broker_truth_scheduler owns lock and heartbeat pid=$ProcessId"
+                return
+            }
+        } catch {
+            # Lock and heartbeat are atomic files but may not exist during the
+            # first scheduler tick. Keep the startup barrier bounded.
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "broker_truth_scheduler did not acquire lock and heartbeat authority pid=$ProcessId"
+}
+
 function Sync-CoreLiveManifests {
     if ($DryRun) {
         Write-Output "[DRY-RUN] would wait for core_shadow_tracker and refresh current KR/US core live manifests"
@@ -188,6 +216,12 @@ foreach ($role in $roles) {
         -PassThru
     $manifest[$role.Name] = [int]$process.Id
     Write-Output "[START] $($role.Name) pid=$($process.Id)"
+    if ($role.Name -eq "broker_truth_scheduler") {
+        # A safe restart performs a forced broker refresh immediately after
+        # this launcher returns. Do not let that one-shot process win the
+        # single-writer lock and strand this loop as a false-alive PID.
+        Wait-BrokerTruthSchedulerReady -ProcessId ([int]$process.Id)
+    }
     if ($role.Name -eq "core_shadow_tracker") {
         Sync-CoreLiveManifests
     }

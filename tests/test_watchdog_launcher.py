@@ -32,6 +32,17 @@ def test_broker_truth_scheduler_loop_lives_in_headless_launcher() -> None:
         assert flag in text
 
 
+def test_headless_launcher_waits_for_broker_scheduler_writer_authority() -> None:
+    text = (ROOT / "tools" / "start_live_stack_headless.ps1").read_text(encoding="utf-8")
+
+    assert "function Wait-BrokerTruthSchedulerReady" in text
+    assert "broker_truth_scheduler.lock.json" in text
+    assert "broker_truth_scheduler_heartbeat.json" in text
+    assert "[int]$lock.pid -eq $ProcessId" in text
+    assert "[int]$heartbeat.pid -eq $ProcessId" in text
+    assert "Wait-BrokerTruthSchedulerReady -ProcessId" in text
+
+
 def test_headless_role_repair_does_not_race_running_broker_scheduler() -> None:
     text = (ROOT / "tools" / "start_live_stack_headless.ps1").read_text(encoding="utf-8")
 
