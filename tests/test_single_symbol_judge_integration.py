@@ -44,6 +44,49 @@ def _base_bot() -> TradingBot:
 
 
 class SingleSymbolJudgeIntegrationTests(unittest.TestCase):
+    def test_judgment_not_executable_candidate_is_queued_without_direct_promotion(self) -> None:
+        bot = _base_bot()
+        bot.session_active = True
+        bot.current_market = "US"
+        bot._early_judge_budget_state_loaded = True
+        bot._single_symbol_judge_client = lambda **kwargs: {
+            "ticker": kwargs["ticker"],
+            "market": kwargs["market"],
+            "action": "REJECT",
+            "route": "wait",
+            "reason": "fresh evidence is not sufficient",
+        }
+        bot._apply_selection_meta = lambda *args, **kwargs: kwargs.get("meta_override")
+        before_ready = list(bot.trade_ready_tickers["US"])
+        env = {
+            "EARLY_JUDGE_TRIGGER_ENABLED": "true",
+            "US_EARLY_JUDGE_TRIGGER_ENABLED": "true",
+            "EARLY_JUDGE_RECHECK_CONSUMER_ENABLED": "true",
+            "EARLY_JUDGE_COOLDOWN_MIN": "0",
+            "PATHB_EARLY_JUDGE_AFFORDABILITY_PREFILTER_ENABLED": "false",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, env, clear=False):
+            bot._early_judge_budget_state_path = lambda: Path(tmpdir) / "budget.json"
+            queued = TradingBot._queue_judgment_gate_recheck(
+                bot,
+                "US",
+                "PYPL",
+                block_reason="non_executable_judgment_phase:preopen",
+                price=53.92,
+                mode="MILD_BULL",
+            )
+            self.assertTrue(queued)
+            self.assertEqual(bot._early_judge_recheck_queue["US"][0]["reason"], "judgment_not_executable")
+            self.assertEqual(before_ready, bot.trade_ready_tickers["US"])
+            bot._early_judge_recheck_queue["US"][0]["due_at"] = (
+                datetime.now() - timedelta(seconds=1)
+            ).isoformat(timespec="seconds")
+            consumed = TradingBot.run_early_judge_rechecks(bot, "US")
+
+        self.assertEqual(consumed["status"], "processed")
+        self.assertEqual(consumed["called"], ["PYPL"])
+        self.assertEqual(before_ready, bot.trade_ready_tickers["US"])
+
     def test_entry_blackout_candidate_is_queued_then_replayed_with_fresh_evidence(self) -> None:
         bot = _base_bot()
         bot.session_active = True

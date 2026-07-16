@@ -18,6 +18,7 @@ from credit_tracker import record as credit_record
 from minority_report.consensus import is_available_judgment
 from minority_report.raw_call_logger import save as save_raw_call
 from minority_report.claude_utils import response_text, thinking_extra_body
+from risk_manager import ISOLATED_STRATEGY_SOURCES
 
 log          = get_minority_logger()
 judgment_log = get_judgment_logger()
@@ -184,7 +185,7 @@ def _fallback_trade_label(trade):
     if not trade:
         return None
     ticker = str(trade.get("ticker", "-") or "-")
-    strategy = str(trade.get("strategy", "-") or "-")
+    strategy = _effective_strategy_label(trade)
     try:
         pnl_pct = float(trade.get("pnl_pct", 0) or 0)
     except Exception:
@@ -259,6 +260,15 @@ def _format_prompt_pnl(row: dict) -> str:
         return "0 KRW"
 
 
+def _effective_strategy_label(row: dict) -> str:
+    """Attribute isolated sleeve results to their real strategy owner."""
+
+    source = str((row or {}).get("source_strategy") or "").strip().lower()
+    if source in ISOLATED_STRATEGY_SOURCES:
+        return source
+    return str((row or {}).get("strategy") or source or "unknown")
+
+
 def _format_trade_log(trade_log: list, market: str = "") -> str:
     """체결 내역을 Claude 프롬프트용 텍스트로 변환한다."""
     if not trade_log:
@@ -267,6 +277,20 @@ def _format_trade_log(trade_log: list, market: str = "") -> str:
     for t in trade_log:
         side  = "매수" if t.get("side") == "buy" else "매도"
         pnl_s = f" PnL {_format_prompt_pnl(t)}" if t.get("pnl", 0) or t.get("pnl_usd") is not None else ""
+        strategy = _effective_strategy_label(t)
+        source = str(t.get("source_strategy") or "").strip().lower()
+        exit_owner = str(t.get("exit_owner") or "").strip()
+        exit_reason = str(t.get("reason") or t.get("exit_reason") or "").strip()
+        ownership = ""
+        if source:
+            ownership += f" source_strategy:{source}"
+        if exit_owner:
+            ownership += f" exit_owner:{exit_owner}"
+        if exit_reason:
+            ownership += f" exit_reason:{exit_reason}"
+        if source in ISOLATED_STRATEGY_SOURCES:
+            ownership += " contract:isolated_exit_owner_only"
+        t = {**t, "strategy": f"{strategy}{ownership}"}
         lines.append(
             f"  [{side}] {t.get('ticker','-')} {t.get('qty',0)}주"
             f"@{t.get('price', t.get('entry', 0)):,} "
@@ -280,7 +304,7 @@ def _strategy_pnl(trade_log: list) -> dict:
     result: dict = {}
     sells = [t for t in trade_log if t.get("side") == "sell" and "pnl_pct" in t]
     for t in sells:
-        s = t.get("strategy", "unknown")
+        s = _effective_strategy_label(t)
         if s in ("broker_sync", "broker_balance", "", None):
             continue
         result.setdefault(s, []).append(t["pnl_pct"])
@@ -621,11 +645,11 @@ def run(market: str, date: str, today_judgment: dict,
         best = max(sells, key=lambda t: t.get("pnl_pct", t.get("pnl", 0)), default=None)
         worst = min(sells, key=lambda t: t.get("pnl_pct", t.get("pnl", 0)), default=None)
         best_s = (
-            f"{best['ticker']} {best.get('pnl_pct', 0):+.2f}% ({_format_prompt_pnl(best)}) ({best.get('strategy','-')})"
+            f"{best['ticker']} {best.get('pnl_pct', 0):+.2f}% ({_format_prompt_pnl(best)}) ({_effective_strategy_label(best)})"
             if best else "없음"
         )
         worst_s = (
-            f"{worst['ticker']} {worst.get('pnl_pct', 0):+.2f}% ({_format_prompt_pnl(worst)}) ({worst.get('strategy','-')})"
+            f"{worst['ticker']} {worst.get('pnl_pct', 0):+.2f}% ({_format_prompt_pnl(worst)}) ({_effective_strategy_label(worst)})"
             if worst else "없음"
         )
 

@@ -140,7 +140,7 @@ from execution.claude_price_adapter import (
     round_up_to_cent,
     round_up_to_kr_tick,
 )
-from risk_manager import RiskManager, HARD_RULES
+from risk_manager import RiskManager, HARD_RULES, ISOLATED_STRATEGY_SOURCES
 from telegram_reporter import (
     send,
     morning_briefing,
@@ -25448,6 +25448,61 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "fixed_horizon_held_days": held_days,
             })
         return output
+
+    @staticmethod
+    def _isolated_strategy_exit_owner(pos: dict) -> str:
+        """Return the explicit exit owner for an isolated strategy sleeve."""
+
+        source = str((pos or {}).get("source_strategy") or "").strip().lower()
+        return source if source in ISOLATED_STRATEGY_SOURCES else ""
+
+    def _clear_isolated_strategy_generic_exit_flags(self, market: str) -> int:
+        """Remove stale generic-advisor sell state from isolated sleeves.
+
+        Strategy-owned broker confirmations use different fields, so clearing
+        these generic review flags cannot cancel an owner-issued order.
+        """
+
+        cleared = 0
+        generic_fields = (
+            "pending_next_open_sell",
+            "pending_next_open_reason",
+            "pending_next_open_sell_recheck_status",
+            "pending_next_open_sell_recheck_phase",
+            "pending_next_open_sell_recheck_session",
+            "pending_next_open_sell_recheck_at",
+            "pending_next_open_sell_recheck_cause",
+            "pending_intraday_recheck",
+            "pending_intraday_recheck_reason",
+            "pending_intraday_recheck_due_at",
+        )
+        for pos in list(getattr(self.risk, "positions", []) or []):
+            if self._ticker_market(pos.get("ticker", "")) != market:
+                continue
+            owner = self._isolated_strategy_exit_owner(pos)
+            if not owner:
+                continue
+            changed = False
+            for field in generic_fields:
+                if field not in pos:
+                    continue
+                if field in {"pending_next_open_sell", "pending_intraday_recheck"}:
+                    changed = changed or bool(pos.get(field))
+                else:
+                    changed = changed or bool(str(pos.get(field) or ""))
+                pos.pop(field, None)
+            pos["exit_owner"] = owner
+            pos["exit_policy"] = "isolated_strategy"
+            if changed:
+                cleared += 1
+                log.warning(
+                    f"[isolated exit cleanup] {market} {pos.get('ticker', '')} "
+                    f"owner={owner} generic flags cleared"
+                )
+        if cleared:
+            self._save_positions()
+        return cleared
+
     def _pre_session_position_review(self, market: str):
         """장전 보유 포지션 점검.
 
@@ -25457,6 +25512,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if not hasattr(self, "_pre_session_sell_queue"):
             self._pre_session_sell_queue = {"KR": [], "US": []}
         self._pre_session_sell_queue[market] = []
+        self._clear_isolated_strategy_generic_exit_flags(market)
         phase = self._current_judgment_phase(market)
         if phase == _JUDGMENT_PHASE_PREOPEN:
             pending = [
@@ -25484,8 +25540,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             else:
                 log.info(f"[오전 리뷰] {market} 장중 재시작 감지 - 리뷰/SELL 예약 건너뜀")
             return
-        positions = [p for p in self.risk.positions
-                     if self._ticker_market(p.get("ticker", "")) == market]
+        positions = [
+            p for p in self.risk.positions
+            if self._ticker_market(p.get("ticker", "")) == market
+            and not self._isolated_strategy_exit_owner(p)
+        ]
         if not positions:
             return
         self._pre_session_sell_queue[market] = []
@@ -25608,6 +25667,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     def _maybe_recheck_pending_next_open_sells(self, market: str) -> None:
         """Reconfirm prior next-open sell reservations with live opening context before any order."""
+        self._clear_isolated_strategy_generic_exit_flags(market)
         if not self.session_active or self.current_market != market:
             return
         phase = self._current_judgment_phase(market)
@@ -25802,7 +25862,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     def _post_session_position_review(self, market: str, positions: list):
         """장 종료 후 이월 포지션 Claude 점검 — 왜 보유 중인지 이유 기록 + 텔레그램 전송."""
+        isolated_positions = [p for p in positions if self._isolated_strategy_exit_owner(p)]
+        for pos in isolated_positions:
+            log.info(
+                f"[post-session review skipped] {market} {pos.get('ticker', '')} "
+                f"isolated_exit_owner={self._isolated_strategy_exit_owner(pos)}"
+            )
+        positions = [p for p in positions if not self._isolated_strategy_exit_owner(p)]
         if not positions:
+            if isolated_positions:
+                return
             block_alert("post-session positions", ["no carry positions"], market=market, icon="info")
             return
         digest = self.today_judgment.get("digest_prompt", "")
@@ -26104,6 +26173,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if self._ticker_market(p.get("ticker", "")) != market:
                 continue
             if ticker_filter and p.get("ticker", "") != ticker_filter:
+                continue
+            isolated_owner = self._isolated_strategy_exit_owner(p)
+            if isolated_owner:
+                log.info(
+                    f"[intraday review skipped] {market} {p.get('ticker', '')} "
+                    f"isolated_exit_owner={isolated_owner}"
+                )
                 continue
             # fill_time 또는 entry_date로 경과 판단
             fill_ts = p.get("_fill_ts", 0)
@@ -31631,6 +31707,65 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             pass
         return True
 
+    def _queue_judgment_gate_recheck(
+        self,
+        market: str,
+        ticker: str,
+        *,
+        block_reason: str,
+        price: float = 0.0,
+        mode: str = "",
+    ) -> bool:
+        """Preserve a candidate skipped before the market judgment became executable.
+
+        This is deliberately only a request for the bounded single-symbol Claude
+        judge. It never changes ``trade_ready`` or bypasses the normal market
+        judgment, PathB, risk, affordability, or broker gates.
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not self._early_judge_enabled(market_key):
+            return False
+        ticker_key = self._selection_ticker_key(market_key, ticker)
+        if not ticker_key:
+            return False
+        meta = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+        candidate_row: dict[str, Any] = {
+            "ticker": ticker_key,
+            "market": market_key,
+            "source": "run_cycle_judgment_gate",
+            "previous_blocker": str(block_reason or "judgment_not_executable"),
+            "reason": "judgment_not_executable",
+            "current_price": float(price or 0.0),
+            "price": float(price or 0.0),
+            "mode": str(mode or ""),
+        }
+        for collection_key in ("_final_prompt_pool", "candidate_actions"):
+            for raw in list(meta.get(collection_key) or []):
+                if not isinstance(raw, dict):
+                    continue
+                raw_ticker = self._selection_ticker_key(market_key, raw.get("ticker") or "")
+                if raw_ticker == ticker_key:
+                    candidate_row.update(dict(raw))
+                    break
+        features = self._early_judge_feature_for_ticker(market_key, ticker_key, meta)
+        if not isinstance(features, dict):
+            features = {}
+        if float(price or 0.0) > 0:
+            features["current_price"] = float(price)
+        candidate_row["post_open_features"] = features
+        candidate_row["ticker"] = ticker_key
+        candidate_row["market"] = market_key
+        candidate_row["previous_blocker"] = str(block_reason or "judgment_not_executable")
+        return self._queue_early_judge_recheck(
+            market_key,
+            ticker_key,
+            source="run_cycle_judgment_gate",
+            reason="judgment_not_executable",
+            row=candidate_row,
+            delay_min=1.0,
+            attempts=0,
+        )
+
     def _early_judge_recheck_status(self, market: str) -> dict[str, Any]:
         self._ensure_early_judge_state()
         market_key = "US" if str(market or "").upper() == "US" else "KR"
@@ -34262,6 +34397,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         else {str(t) for t in _raw_trade_ready_skip}
                     )
                     _was_trade_ready_skip = _trade_ready_lookup in _trade_ready_skip_set
+                    _judgment_recheck_queued = self._queue_judgment_gate_recheck(
+                        market,
+                        ticker,
+                        block_reason=_entry_judgment_block,
+                        price=float(price),
+                        mode=mode,
+                    )
                     analysis_log.info(
                         f"[skip {market}] {ticker} judgment_not_executable",
                         extra={"extra": {
@@ -34277,6 +34419,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             "preopen_5m": _po_meta.get("post_open_5m_return_pct"),
                             "preopen_30m": _po_meta.get("post_open_30m_return_pct"),
                             "was_trade_ready": _was_trade_ready_skip,
+                            "early_judge_recheck_queued": _judgment_recheck_queued,
                         }},
                     )
                     self._record_judgment_gate_event(

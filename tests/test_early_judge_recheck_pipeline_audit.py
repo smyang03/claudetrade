@@ -9,13 +9,14 @@ class EarlyJudgeRecheckPipelineAuditTests(unittest.TestCase):
     def test_kr_and_us_pipeline_matrix_has_no_missing_or_orphaned_flow(self) -> None:
         report = build_report()
 
-        self.assertEqual(report["record_count"], 8)
+        self.assertEqual(report["record_count"], 10)
         self.assertEqual(report["fail_count"], 0)
-        self.assertEqual(report["pass_count"], 8)
+        self.assertEqual(report["pass_count"], 10)
         self.assertEqual({row["market"] for row in report["records"]}, {"KR", "US"})
         self.assertEqual(
             {row["pipeline"] for row in report["records"]},
             {
+                "judgment_not_executable_replay",
                 "entry_blackout_replay",
                 "wait_recheck_consumer",
                 "watch_signal_to_claude",

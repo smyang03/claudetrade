@@ -187,6 +187,65 @@ def test_broker_rejection_is_not_retried_same_session(tmp_path, monkeypatch) -> 
     assert len(bot.submitted) == 1
 
 
+def test_transient_analyst_block_retries_after_cooldown_without_bypassing_gate(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "runtime.profit_strategy_order_bridge.regular_open_dt",
+        lambda *_: datetime.now(KST) - timedelta(minutes=10),
+    )
+    monkeypatch.setattr(
+        "runtime.profit_strategy_order_bridge.get_runtime_path",
+        lambda *parts, **__: tmp_path.joinpath(*parts),
+    )
+    signal = [{
+        "strategy_id": "US_SCHG_BIL_TREND_V1",
+        "source_strategy": "us_schg_bil_trend_v1",
+        "market": "US",
+        "ticker": "SCHG",
+        "entry_session_date": "2026-07-15",
+        "known_at": "2026-07-15",
+        "rank": 1,
+        "priority": 1.0,
+        "hold_sessions": 9999,
+        "weight": 1.0,
+    }]
+    monkeypatch.setattr("runtime.profit_strategy_order_bridge.load_signals", lambda *_, **__: signal)
+    monkeypatch.setattr(
+        "runtime.profit_strategy_order_bridge.get_price",
+        lambda *_, **__: {"price": 10000, "open": 10000},
+    )
+    bot = FakeBot(cash=50000.0)
+    bot.config["PROFIT_STRATEGY_ENABLED_IDS"] = "US_SCHG_BIL_TREND_V1"
+    bot.config["PROFIT_STRATEGY_TRANSIENT_RETRY_MIN"] = 5
+
+    def blocked_then_submitted(**kwargs) -> bool:
+        bot.submitted.append(kwargs)
+        if len(bot.submitted) == 1:
+            bot._last_micro_probe_submit_result = {
+                "status": "BLOCKED",
+                "reason": "ANALYST_NEW_BUY_BLOCK",
+                "order_no": "",
+            }
+            return False
+        bot._last_micro_probe_submit_result = {"status": "SUBMITTED", "order_no": "123"}
+        return True
+
+    bot._submit_micro_probe_buy_order = blocked_then_submitted
+    first = run_profit_strategy_handoff(bot, "US")
+    ledger_path = tmp_path / "state" / "profit_strategy_handoff.jsonl"
+    rows = [json.loads(line) for line in ledger_path.read_text(encoding="utf-8").splitlines()]
+    rows[-1]["recorded_at"] = (datetime.now(KST) - timedelta(minutes=6)).isoformat(timespec="seconds")
+    ledger_path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    second = run_profit_strategy_handoff(bot, "US")
+
+    assert first["results"][0]["status"] == "SUBMIT_DEFERRED"
+    assert first["results"][0]["reason"] == "ANALYST_NEW_BUY_BLOCK"
+    assert second["results"][0]["status"] == "SUBMITTED"
+    assert len(bot.submitted) == 2
+
+
 def test_core_loader_rejects_shadow_file_and_accepts_hashed_live_manifest(tmp_path, monkeypatch) -> None:
     source = tmp_path / "core_shadow_signal_202607.json"
     source.write_text(json.dumps({

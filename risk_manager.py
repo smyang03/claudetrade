@@ -22,6 +22,18 @@ except Exception:  # pragma: no cover - python<3.9 fallback
 KST = ZoneInfo("Asia/Seoul")
 
 
+# These sleeves own their exits. Generic Path-A/Claude review must not
+# mutate or close them; core sleeves rebalance through their bridge and the
+# fixed-horizon sleeves use their predeclared horizon/guard exits.
+ISOLATED_STRATEGY_SOURCES = frozenset({
+    "us_schg_bil_trend_v1",
+    "kr_factor_trend_v1",
+    "us_swing_5d",
+    "us_consensus_3d",
+    "kr_us_sector_pulse_3d",
+})
+
+
 def _market_session_date_local(market: str):
     now_dt = datetime.now(KST)
     d = now_dt.date()
@@ -951,14 +963,7 @@ class RiskManager:
     @staticmethod
     def _isolated_strategy_source(pos: dict) -> str:
         source = str(pos.get("source_strategy") or "").strip().lower()
-        isolated = {
-            "us_schg_bil_trend_v1",
-            "kr_factor_trend_v1",
-            "us_swing_5d",
-            "us_consensus_3d",
-            "kr_us_sector_pulse_3d",
-        }
-        return source if source in isolated else ""
+        return source if source in ISOLATED_STRATEGY_SOURCES else ""
 
     def _isolated_strategy_exit_candidate(self, pos: dict) -> tuple[bool, Optional[dict]]:
         """Keep independent strategy sleeves out of the generic Path-A exit owner.

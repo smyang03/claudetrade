@@ -28,6 +28,16 @@ CORE_IDS = {"US_SCHG_BIL_TREND_V1", "KR_FACTOR_TREND_V1"}
 # Research challengers may still be materialized for forward observation, but
 # absence of an explicit live allowlist must never promote them to orders.
 DEFAULT_ENABLED = set(CORE_IDS)
+TRANSIENT_SUBMIT_BLOCK_REASONS = {
+    "ANALYST_NEW_BUY_BLOCK",
+    "ENTRY_BLACKOUT",
+    "BROKER_SYNC_QUARANTINE",
+    "BROKER_TRUTH_UNTRUSTED",
+    "BROKER_TRUTH_UNAVAILABLE",
+    "GUARDIAN_MARKET_BLOCK",
+    "GUARDIAN_MARKET_GATE_MISSING",
+    "GUARDIAN_MARKET_GATE_INVALID",
+}
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -162,6 +172,21 @@ def _ledger_rows(path: Path) -> list[dict[str, Any]]:
     return output
 
 
+def _is_transient_submit_block(row: dict[str, Any]) -> bool:
+    return (
+        str((row or {}).get("status") or "").upper() in {"SUBMIT_BLOCKED", "SUBMIT_DEFERRED"}
+        and str((row or {}).get("reason") or "").upper() in TRANSIENT_SUBMIT_BLOCK_REASONS
+    )
+
+
+def _recorded_at(row: dict[str, Any]) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str((row or {}).get("recorded_at") or "").replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=KST)
+    except Exception:
+        return None
+
+
 def _position_sources(bot: Any, market: str) -> list[dict[str, Any]]:
     return [
         row for row in [
@@ -248,6 +273,7 @@ def run_profit_strategy_handoff(bot: Any, market: str) -> dict[str, Any]:
         row for row in ledger
         if row.get("session_date") == session_date and row.get("market") == market_key
         and row.get("status") in {"SUBMITTED", "ORDER_UNKNOWN", "SUBMIT_BLOCKED"}
+        and not _is_transient_submit_block(row)
     ]
     unresolved_unknown = [row for row in attempted_today if row.get("status") == "ORDER_UNKNOWN"]
     if unresolved_unknown:
@@ -280,8 +306,33 @@ def run_profit_strategy_handoff(bot: Any, market: str) -> dict[str, Any]:
         if any(
             (row.get("session_date"), row.get("market"), row.get("strategy_id"), row.get("ticker")) == identity
             and row.get("status") in {"SUBMITTED", "ORDER_UNKNOWN", "SUBMIT_BLOCKED"}
+            and not _is_transient_submit_block(row)
             for row in ledger
         ):
+            continue
+        retry_min = max(1, bot._runtime_int("PROFIT_STRATEGY_TRANSIENT_RETRY_MIN", 5))
+        recent_transient = next(
+            (
+                row
+                for row in reversed(ledger)
+                if (row.get("session_date"), row.get("market"), row.get("strategy_id"), row.get("ticker")) == identity
+                and _is_transient_submit_block(row)
+                and _recorded_at(row) is not None
+                and (now - _recorded_at(row)).total_seconds() < retry_min * 60
+            ),
+            None,
+        )
+        if recent_transient is not None:
+            results.append(
+                {
+                    "strategy_id": strategy_id,
+                    "ticker": ticker,
+                    "status": "WAIT",
+                    "reason": "transient_retry_cooldown",
+                    "previous_reason": str(recent_transient.get("reason") or ""),
+                    "retry_min": retry_min,
+                }
+            )
             continue
         if _is_open_for_source(bot, market_key, ticker, source):
             results.append({"strategy_id": strategy_id, "ticker": ticker, "status": "SKIPPED", "reason": "already_open_for_strategy"})
@@ -371,7 +422,14 @@ def run_profit_strategy_handoff(bot: Any, market: str) -> dict[str, Any]:
             },
         )
         outcome = dict(getattr(bot, "_last_micro_probe_submit_result", {}) or {})
-        status = "SUBMITTED" if order_ok and outcome.get("order_no") else ("ORDER_UNKNOWN" if outcome.get("status") == "UNKNOWN" else "SUBMIT_BLOCKED")
+        if order_ok and outcome.get("order_no"):
+            status = "SUBMITTED"
+        elif outcome.get("status") == "UNKNOWN":
+            status = "ORDER_UNKNOWN"
+        elif str(outcome.get("reason") or "").upper() in TRANSIENT_SUBMIT_BLOCK_REASONS:
+            status = "SUBMIT_DEFERRED"
+        else:
+            status = "SUBMIT_BLOCKED"
         if status == "ORDER_UNKNOWN":
             try:
                 bot._v2_record_order_unknown(

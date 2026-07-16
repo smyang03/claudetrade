@@ -168,6 +168,33 @@ def audit_market(market: str) -> list[dict[str, Any]]:
     }
     records: list[dict[str, Any]] = []
 
+    def judgment_gate_case() -> dict[str, Any]:
+        ticker = _ticker(market)
+        bot, events, calls = _bot(market, ticker)
+        bot._in_entry_blackout = lambda _market: False
+        before_ready = list(bot.trade_ready_tickers[market])
+        queued = bot._queue_judgment_gate_recheck(
+            market,
+            ticker,
+            block_reason="non_executable_judgment_phase:preopen",
+            price=_features(market)["current_price"],
+            mode="MILD_BULL",
+        )
+        queue_reason = str((bot._early_judge_recheck_queue[market][0] or {}).get("reason") or "")
+        _force_due(bot, market)
+        consumed = bot.run_early_judge_rechecks(market)
+        return _record(
+            "judgment_not_executable_replay",
+            market,
+            {
+                "candidate_queued": queued and queue_reason == "judgment_not_executable",
+                "no_direct_trade_ready": before_ready == bot.trade_ready_tickers[market] == [],
+                "claude_owner_called": calls == [ticker],
+                "terminal_queue_empty": len(bot._early_judge_recheck_queue[market]) == 0,
+            },
+            {"calls": calls, "consume_status": consumed.get("status"), "events": len(events)},
+        )
+
     def blackout_case() -> dict[str, Any]:
         ticker = _ticker(market)
         bot, events, calls = _bot(market, ticker)
@@ -284,6 +311,7 @@ def audit_market(market: str) -> list[dict[str, Any]]:
             {"calls": calls, "consume_status": consumed.get("status"), "events": len(events)},
         )
 
+    records.append(_with_env({**common_env, "ADAPTIVE_REASK_CLAUDE_BRIDGE_ENABLED": "false"}, judgment_gate_case))
     records.append(_with_env({**common_env, "ADAPTIVE_REASK_CLAUDE_BRIDGE_ENABLED": "false"}, blackout_case))
     records.append(_with_env({**common_env, "ADAPTIVE_REASK_CLAUDE_BRIDGE_ENABLED": "false"}, wait_case))
     records.append(
