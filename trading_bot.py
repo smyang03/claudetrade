@@ -14801,6 +14801,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         strategy_name = _normalize_strategy_name(strategy)
         if market_key == "US" and strategy_name == "momentum":
             return self._runtime_bool("US_MOMENTUM_LIVE_ENABLED", False)
+        if market_key == "US" and strategy_name == "gap_pullback":
+            return self._runtime_bool("US_GAP_PULLBACK_LIVE_ENABLED", False)
         if market_key == "US" and strategy_name == "volatility_breakout":
             return self._runtime_bool("US_VOLATILITY_BREAKOUT_LIVE_ENABLED", False)
         return True
@@ -14976,6 +14978,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if runtime_cfg is not None and not runtime_cfg.get_bool("ENABLE_POST_OPEN_FEATURE_JSONL", True):
             return
         restored_counts: dict[str, int] = {}
+        stale_counts: dict[str, int] = {}
         for market_key in ("KR", "US"):
             try:
                 session_date = self._current_session_date_str(market_key)
@@ -14986,7 +14989,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception as exc:
                 log.debug(f"[post_open restore] {market_key} failed: {exc}")
                 continue
-            features = {
+            session_features = {
                 raw_ticker: row
                 for raw_ticker, row in (features or {}).items()
                 if isinstance(row, dict)
@@ -14995,6 +14998,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     session_date,
                 )
             }
+            features = {
+                raw_ticker: row
+                for raw_ticker, row in session_features.items()
+                if self._post_open_feature_within_restore_lag(market_key, row)
+            }
+            stale_counts[market_key] = max(0, len(session_features) - len(features))
             if not features:
                 continue
             merged = self._merge_last_post_open_features(market_key, features)
@@ -15009,6 +15018,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             try:
                 log.info(
                     f"[post_open restore] {market_key} restored={len(features)} "
+                    f"stale_skipped={stale_counts.get(market_key, 0)} "
                     f"store={len(merged)} session={session_date}"
                 )
             except Exception:
@@ -15018,7 +15028,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self._write_funnel_event(
                     "post_open_feature_restore",
                     "KR" if restored_counts.get("KR") else "US",
-                    {"restored_counts": restored_counts},
+                    {
+                        "restored_counts": restored_counts,
+                        "stale_skipped_counts": stale_counts,
+                    },
                 )
             except Exception:
                 pass
@@ -15322,6 +15335,38 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 return False
         return evidence_seen
 
+    def _post_open_feature_within_restore_lag(self, market: str, features: dict) -> bool:
+        """Reject same-session snapshots that are too old for live reuse.
+
+        JSONL continuity is useful across a short restart, but a one-hour-old
+        opening snapshot must not be promoted into the current candidate
+        decision merely because it belongs to the same market session.
+        """
+
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            current_elapsed = float(self._market_elapsed_min(market_key))
+        except Exception:
+            return False
+        feature_elapsed = self._positive_float_or_none(
+            (features or {}).get("market_open_elapsed_min")
+        )
+        if feature_elapsed is None:
+            feature_elapsed = self._positive_float_or_none(
+                (features or {}).get("rvol_profile_elapsed_min")
+            )
+        if feature_elapsed is None:
+            # Legacy handoff snapshots predate the explicit elapsed contract.
+            # Keep their existing session-only behavior; every newly produced
+            # snapshot carries one of the two elapsed fields and is therefore
+            # subject to the strict live freshness check.
+            return True
+        max_lag = max(
+            1.0,
+            self._runtime_float("INTRADAY_EVIDENCE_RESTORE_MAX_LAG_MIN", 5.0),
+        )
+        return abs(float(current_elapsed) - float(feature_elapsed)) <= max_lag
+
     def _stale_cached_evidence_missing_feature(self, market: str, ticker: str, session_date: str) -> dict:
         try:
             session_dt = datetime.fromisoformat(f"{str(session_date)[:10]}T00:00:00")
@@ -15353,12 +15398,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             next_row = dict(row or {})
             key = self._selection_ticker_key(market_key, next_row.get("ticker"))
             row_features = next_row.get("post_open_features") if isinstance(next_row.get("post_open_features"), dict) else {}
-            had_stale_row_features = bool(row_features) and not self._post_open_feature_matches_session(row_features, session_date)
+            row_features_current = bool(row_features) and (
+                self._post_open_feature_matches_session(row_features, session_date)
+                and self._post_open_feature_within_restore_lag(market_key, row_features)
+            )
+            had_stale_row_features = bool(row_features) and not row_features_current
             if had_stale_row_features:
                 self._clear_post_open_features_from_row(next_row)
             features = cleaned_store.get(key)
             if isinstance(features, dict):
-                if self._post_open_feature_matches_session(features, session_date):
+                if (
+                    self._post_open_feature_matches_session(features, session_date)
+                    and self._post_open_feature_within_restore_lag(market_key, features)
+                ):
                     self._apply_post_open_features_to_row(next_row, features)
                 else:
                     cleaned_store.pop(key, None)
@@ -16617,10 +16669,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             session_date_for_features = datetime.now(KST).date().isoformat()
         existing_feature_store = dict((getattr(self, "_last_post_open_features_by_ticker", {}) or {}).get(market_key) or {})
         for key in list(dict.fromkeys(candidate_keys)):
+            # The prefetch result was produced for this exact annotation pass;
+            # only continuity-cache rows need the elapsed-age filter below.
+            if key in post_open_features_by_ticker:
+                continue
             existing_feature = existing_feature_store.get(key)
             if not isinstance(existing_feature, dict):
                 continue
-            if self._post_open_feature_matches_session(existing_feature, session_date_for_features):
+            if (
+                self._post_open_feature_matches_session(existing_feature, session_date_for_features)
+                and self._post_open_feature_within_restore_lag(market_key, existing_feature)
+            ):
                 post_open_features_by_ticker.setdefault(key, dict(existing_feature))
             else:
                 existing_feature_store.pop(key, None)
@@ -18419,7 +18478,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     continue
                 candidate = dict(row)
                 candidate.setdefault("market", market)
-                if self._post_open_feature_matches_session(candidate, expected.get(market, "")):
+                if (
+                    self._post_open_feature_matches_session(candidate, expected.get(market, ""))
+                    and self._post_open_feature_within_restore_lag(market, candidate)
+                ):
                     features_by_market[market][str(ticker)] = row
                     features_after += 1
         output["_last_post_open_features_by_ticker"] = features_by_market
@@ -22952,8 +23014,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "recovery_micro_force_time_stop_minutes": int(template.get("recovery_micro_force_time_stop_minutes", 0) or 0),
             "recovery_micro_force_time_stop_min_pnl_pct": float(template.get("recovery_micro_force_time_stop_min_pnl_pct", 0) or 0),
             "recovery_micro_preclose_minutes": int(template.get("recovery_micro_preclose_minutes", 0) or 0),
-            "tp": avg_price * (1 + tp_pct),
-            "sl": avg_price * (1 - sl_pct),
+            "tp": avg_price * (1 + tp_pct) if tp_pct > 0 else 0.0,
+            "sl": avg_price * (1 - sl_pct) if sl_pct > 0 else 0.0,
             "max_hold": int(template.get("max_hold", 1)),
             "held_days": int(template.get("held_days", 0)),
             "entry_date": template.get("entry_date", self._current_session_date_str(market)),
@@ -24499,8 +24561,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "original_order_cost_krw": float(order.get("original_order_cost_krw", 0) or 0),
             "adjusted_order_cost_krw": float(order.get("adjusted_order_cost_krw", 0) or 0),
             "oversize_ratio": float(order.get("oversize_ratio", 0) or 0),
-            "tp": avg_price * (1 + tp_pct),
-            "sl": avg_price * (1 - sl_pct),
+            "tp": avg_price * (1 + tp_pct) if tp_pct > 0 else 0.0,
+            "sl": avg_price * (1 - sl_pct) if sl_pct > 0 else 0.0,
             "tp_pct": tp_pct,        # 비율 보존 — US 환율 드리프트 방지
             "sl_pct": sl_pct,
             "max_hold": int(order.get("max_hold", 1)),
@@ -25796,6 +25858,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 else:
                     changed = changed or bool(str(pos.get(field) or ""))
                 pos.pop(field, None)
+            if owner in _CORE_ANALYST_ISOLATED_SOURCES:
+                for field in ("tp", "sl", "tp_pct", "sl_pct"):
+                    changed = changed or bool(float(pos.get(field, 0) or 0))
+                    pos[field] = 0.0
+                pos["exit_contract"] = "strategy_rebalance_only"
             pos["exit_owner"] = owner
             pos["exit_policy"] = "isolated_strategy"
             if changed:
@@ -39736,6 +39803,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             break
                 hold_adv = pos.get("hold_advice") or None
                 auto_sell_policy = pos.get("auto_sell_policy") if isinstance(pos.get("auto_sell_policy"), dict) else {}
+                isolated_owner = self._isolated_strategy_exit_owner(pos)
                 dedup_positions[key] = {
                     "ticker":          ticker,
                     "name":            pos_name,
@@ -39745,6 +39813,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "pnl_pct":         round(pnl_pct, 4),
                     "strategy":        pos.get("strategy", ""),
                     "source_strategy": pos.get("source_strategy", ""),
+                    "exit_owner":      pos.get("exit_owner", "") or isolated_owner,
+                    "exit_policy":     pos.get("exit_policy", "") or ("isolated_strategy" if isolated_owner else ""),
+                    "exit_contract":   pos.get("exit_contract", "") or (
+                        "strategy_rebalance_only"
+                        if isolated_owner in _CORE_ANALYST_ISOLATED_SOURCES
+                        else ("strategy_owned_exit" if isolated_owner else "")
+                    ),
                     "path_type":       pos.get("path_type", ""),
                     "pathb_path_run_id": pos.get("pathb_path_run_id", ""),
                     "pathb_plan":      pos.get("pathb_plan", {}),
@@ -39838,6 +39913,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "reason": self.risk.halt_reason or "",
                     },
                     "stop_cluster": self._stop_cluster_status_payload(market),
+                    "strategy_policy": {
+                        "US_MOMENTUM_LIVE_ENABLED": self._runtime_bool("US_MOMENTUM_LIVE_ENABLED", False),
+                        "US_GAP_PULLBACK_LIVE_ENABLED": self._runtime_bool("US_GAP_PULLBACK_LIVE_ENABLED", False),
+                        "PATHB_ZONE_FILL_MODE_US": str(
+                            self._runtime_value("PATHB_ZONE_FILL_MODE_US", "shadow") or "shadow"
+                        ),
+                    },
                     "positions":      positions,
                     "position_count": len(positions),
                     "pending_orders": pending_orders,

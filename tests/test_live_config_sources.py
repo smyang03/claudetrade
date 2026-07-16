@@ -3,11 +3,17 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+import json
+import sqlite3
+import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from tools.live_preflight import (
+    _candidate_consensus_runtime_check,
+    _candidate_rvol_clock_check,
     _heartbeat_checks,
     _candidate_actions_live_config_check,
     _config_source_meaning_check,
@@ -20,16 +26,215 @@ from tools.live_preflight import (
     _market_session_calendar_check,
     _pathb_market_live_gate_check,
     _pathb_preopen_exit_policy_check,
+    _pathb_zone_fill_policy_check,
     _profit_strategy_core_entry_policy_check,
     _profit_strategy_micro_contract_check,
     _runtime_config_drift_check,
     _runtime_config_drift_payload,
+    _us_live_strategy_policy_check,
     _us_swing_shadow_runtime_check,
     load_effective_config,
 )
 
 
 class LiveConfigSourceTests(unittest.TestCase):
+    def test_us_live_strategy_policy_rejects_reenabling_negative_gap_lane(self) -> None:
+        enabled = _us_live_strategy_policy_check(
+            {
+                "US_MOMENTUM_LIVE_ENABLED": "true",
+                "US_GAP_PULLBACK_LIVE_ENABLED": "true",
+            },
+            "live",
+        )
+        disabled = _us_live_strategy_policy_check(
+            {
+                "US_MOMENTUM_LIVE_ENABLED": "true",
+                "US_GAP_PULLBACK_LIVE_ENABLED": "false",
+            },
+            "live",
+        )
+
+        self.assertEqual(enabled.status, "FAIL")
+        self.assertEqual(disabled.status, "PASS")
+
+    def test_pathb_us_zone_fill_policy_requires_valid_dual_source_enforce(self) -> None:
+        config = {
+            "base_env": {
+                "PATHB_ZONE_FILL_MODE_US": "enforce_wait",
+                "PATHB_ZONE_FILL_TOP_THRESHOLD": "0.67",
+                "PATHB_ZONE_FILL_REWARD_PCT": "5.0",
+            },
+            "overrides": {
+                "PATHB_ZONE_FILL_MODE_US": "enforce_wait",
+                "PATHB_ZONE_FILL_TOP_THRESHOLD": "0.67",
+                "PATHB_ZONE_FILL_REWARD_PCT": "5.0",
+            },
+            "effective": {
+                "PATHB_ZONE_FILL_MODE_US": "enforce_wait",
+                "PATHB_ZONE_FILL_TOP_THRESHOLD": "0.67",
+                "PATHB_ZONE_FILL_REWARD_PCT": "5.0",
+            },
+        }
+
+        check = _pathb_zone_fill_policy_check(config, "live")
+
+        self.assertEqual(check.status, "PASS")
+        self.assertEqual(check.data["market_scope"], "US_only")
+        self.assertFalse(check.data["kr_affected"])
+
+    def test_pathb_us_zone_fill_policy_fails_on_single_source_or_invalid_threshold(self) -> None:
+        config = {
+            "base_env": {"PATHB_ZONE_FILL_MODE_US": "enforce_wait"},
+            "overrides": {"PATHB_ZONE_FILL_MODE_US": "enforce_wait"},
+            "effective": {
+                "PATHB_ZONE_FILL_MODE_US": "enforce_wait",
+                "PATHB_ZONE_FILL_TOP_THRESHOLD": "1.2",
+                "PATHB_ZONE_FILL_REWARD_PCT": "5.0",
+            },
+        }
+
+        check = _pathb_zone_fill_policy_check(config, "live")
+
+        self.assertEqual(check.status, "FAIL")
+        self.assertIn("top threshold", check.detail)
+        self.assertIn("dual-source", check.detail)
+
+    def test_candidate_rvol_clock_detects_us_naive_kst_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                """
+                CREATE TABLE audit_candidate_rows (
+                    runtime_mode TEXT,
+                    market TEXT,
+                    session_date TEXT,
+                    known_at TEXT,
+                    post_open_features_json TEXT
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO audit_candidate_rows VALUES (?,?,?,?,?)",
+                (
+                    "live",
+                    "US",
+                    "2026-07-16",
+                    "2026-07-16T22:36:33",
+                    json.dumps({"rvol_profile_elapsed_min": 786}),
+                ),
+            )
+            conn.commit()
+            conn.close()
+
+            with patch("tools.live_preflight.get_runtime_path", return_value=db_path):
+                check = _candidate_rvol_clock_check("live")
+
+        self.assertEqual(check.status, "WARN")
+        self.assertEqual(check.data["violations"][0]["expected_elapsed_min"], 6)
+        self.assertEqual(check.data["allowed_clock_delta_min"], 6)
+
+    def test_candidate_rvol_clock_accepts_correct_us_elapsed_minute(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                """
+                CREATE TABLE audit_candidate_rows (
+                    runtime_mode TEXT,
+                    market TEXT,
+                    session_date TEXT,
+                    known_at TEXT,
+                    post_open_features_json TEXT
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO audit_candidate_rows VALUES (?,?,?,?,?)",
+                (
+                    "live",
+                    "US",
+                    "2026-07-16",
+                    "2026-07-16T22:36:33",
+                    json.dumps({"rvol_profile_elapsed_min": 6}),
+                ),
+            )
+            conn.commit()
+            conn.close()
+
+            with patch("tools.live_preflight.get_runtime_path", return_value=db_path):
+                check = _candidate_rvol_clock_check("live")
+
+        self.assertEqual(check.status, "PASS")
+        self.assertEqual(check.data["checked_by_market"]["US"], 1)
+
+    def test_candidate_rvol_clock_uses_latest_capture_after_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "candidate_audit.db"
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                """
+                CREATE TABLE audit_candidate_rows (
+                    runtime_mode TEXT,
+                    market TEXT,
+                    session_date TEXT,
+                    known_at TEXT,
+                    post_open_features_json TEXT
+                )
+                """
+            )
+            conn.executemany(
+                "INSERT INTO audit_candidate_rows VALUES (?,?,?,?,?)",
+                [
+                    (
+                        "live",
+                        "US",
+                        "2026-07-16",
+                        "2026-07-16T22:33:00",
+                        json.dumps({"rvol_profile_elapsed_min": 783}),
+                    ),
+                    (
+                        "live",
+                        "US",
+                        "2026-07-16",
+                        "2026-07-16T22:36:00",
+                        json.dumps({"rvol_profile_elapsed_min": 6}),
+                    ),
+                ],
+            )
+            conn.commit()
+            conn.close()
+
+            with patch("tools.live_preflight.get_runtime_path", return_value=db_path):
+                check = _candidate_rvol_clock_check("live")
+
+        self.assertEqual(check.status, "PASS")
+        self.assertEqual(check.data["checked_by_market"]["US"], 1)
+        self.assertEqual(
+            check.data["latest_capture"]["US"],
+            "2026-07-16T22:36:00",
+        )
+
+    def test_candidate_consensus_runtime_uses_scheduler_interpreter_dependencies(self) -> None:
+        probe = SimpleNamespace(returncode=0, stdout='{"sklearn":"1.9.0"}', stderr="")
+        with patch("tools.live_preflight.subprocess.run", return_value=probe) as run_mock:
+            result = _candidate_consensus_runtime_check(
+                {"CANDIDATE_CONSENSUS_SHADOW_ENABLED": "true"}
+            )
+
+        self.assertEqual(result.status, "PASS")
+        self.assertEqual(
+            run_mock.call_args.args[0][0],
+            str(Path(sys.executable)),
+        )
+
+        failed_probe = SimpleNamespace(returncode=1, stdout="", stderr="missing sklearn")
+        with patch("tools.live_preflight.subprocess.run", return_value=failed_probe):
+            failed = _candidate_consensus_runtime_check(
+                {"CANDIDATE_CONSENSUS_SHADOW_ENABLED": "true"}
+            )
+        self.assertEqual(failed.status, "FAIL")
+
     def test_us_swing_runtime_requires_consistent_authority_and_dependencies(self) -> None:
         effective = {
             "US_SWING_SHADOW_SCHEDULER_ENABLED": "true",

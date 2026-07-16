@@ -356,12 +356,27 @@ def evaluate_handoff(
         return _decision("BLOCKED", "fx_rate_invalid", signal=signal, authority_mode=mode, quote_price=current, open_price=opened, reference_close=reference, gap_pct=gap_pct, chase_pct=chase_pct, details=base_details)
     price_krw = current * fx
     size_multiplier = float(authority.get("size_multiplier") or 0.0)
+    absolute_order_cap_krw = _number(authority.get("absolute_order_cap_krw"))
+    if absolute_order_cap_krw is not None and absolute_order_cap_krw > 0:
+        authority_budget_cap_krw = float(absolute_order_cap_krw)
+        budget_cap_source = "authority_absolute"
+    else:
+        authority_budget_cap_krw = float(base_order_budget_krw or 0.0) * size_multiplier
+        budget_cap_source = "risk_budget_multiplier"
     spend_caps = [
-        float(base_order_budget_krw or 0.0) * size_multiplier,
+        authority_budget_cap_krw,
         float(available_budget_krw or 0.0),
         float(cash_krw or 0.0),
         float(max_order_krw or 0.0),
     ]
+    budget_details = {
+        "base_order_budget_krw": float(base_order_budget_krw or 0.0),
+        "size_multiplier": size_multiplier,
+        "authority_budget_cap_krw": authority_budget_cap_krw,
+        "budget_cap_source": budget_cap_source,
+        "configured_max_order_krw": float(max_order_krw or 0.0),
+        "spend_caps_krw": spend_caps,
+    }
     if any(not math.isfinite(value) or value <= 0 for value in spend_caps):
         return _decision(
             "BLOCKED",
@@ -373,12 +388,28 @@ def evaluate_handoff(
             reference_close=reference,
             gap_pct=gap_pct,
             chase_pct=chase_pct,
-            details={**base_details, "price_krw": price_krw, "spend_caps_krw": spend_caps},
+            details={**base_details, "price_krw": price_krw, **budget_details},
         )
     spend_cap = min(spend_caps)
     qty = int(spend_cap // price_krw) if spend_cap > 0 else 0
     if qty <= 0:
-        return _decision("BLOCKED", "micro_budget_cannot_buy_one_share", signal=signal, authority_mode=mode, quote_price=current, open_price=opened, reference_close=reference, gap_pct=gap_pct, chase_pct=chase_pct, details={**base_details, "price_krw": price_krw, "spend_cap_krw": spend_cap})
+        return _decision(
+            "BLOCKED",
+            "micro_budget_cannot_buy_one_share",
+            signal=signal,
+            authority_mode=mode,
+            quote_price=current,
+            open_price=opened,
+            reference_close=reference,
+            gap_pct=gap_pct,
+            chase_pct=chase_pct,
+            details={
+                **base_details,
+                "price_krw": price_krw,
+                "spend_cap_krw": spend_cap,
+                **budget_details,
+            },
+        )
     order_cost = qty * price_krw
     status = "SUBMIT_READY" if submit_enabled else "REHEARSAL_READY"
     return _decision(
@@ -400,6 +431,7 @@ def evaluate_handoff(
             "elapsed_min": elapsed_min,
             "price_krw": price_krw,
             "spend_cap_krw": spend_cap,
+            **budget_details,
             "independent_prev_close": independent_prev_close,
             "reference_deviation_pct": reference_deviation_pct,
         },

@@ -495,6 +495,20 @@ def _pathb_status(bot: Any) -> str:
         f"최대 보유: {status.get('max_positions')}개 / 하루 진입: {status.get('max_daily_entries')}회",
         f"최소 신뢰도: {status.get('min_confidence')}",
     ]
+    entry_quality = status.get("entry_quality_policy") if isinstance(status.get("entry_quality_policy"), dict) else {}
+    us_quality = entry_quality.get("US") if isinstance(entry_quality.get("US"), dict) else {}
+    if us_quality:
+        lines.append(
+            f"US 진입가: {us_quality.get('zone_fill_mode') or '-'} "
+            f"(zone≥{float(us_quality.get('top_threshold') or 0):.2f}, "
+            f"목표≥{float(us_quality.get('reward_threshold_pct') or 0):.1f}%)"
+        )
+    us_strategy = status.get("us_live_strategy_policy") if isinstance(status.get("us_live_strategy_policy"), dict) else {}
+    if us_strategy:
+        lines.append(
+            f"US 전략: momentum {_ko_onoff(us_strategy.get('momentum_enabled'))} / "
+            f"gap-pullback {_ko_onoff(us_strategy.get('gap_pullback_enabled'))}"
+        )
     if status.get("updated_at"):
         lines.append(f"갱신: {status.get('updated_at')} / {_ko_actor(status.get('updated_by'))}")
     if status.get("reason"):

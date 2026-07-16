@@ -283,6 +283,7 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
 
     def test_startup_restore_loads_post_open_feature_jsonl_and_or_cache(self) -> None:
         bot = _make_bot(lambda **kwargs: _candles())
+        bot.runtime_config.values["INTRADAY_EVIDENCE_RESTORE_MAX_LAG_MIN"] = 15
         bot._last_post_open_features_by_ticker = {"KR": {}, "US": {}}
         bot._post_open_price_history = {}
         bot._post_open_anchor = {}
@@ -318,6 +319,75 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertEqual(bot._or_high["005930"], 104.0)
         self.assertIn("KR:005930", bot._post_open_anchor)
         self.assertGreaterEqual(len(bot._post_open_price_history["KR:005930"]), 2)
+
+    def test_startup_restore_skips_old_same_session_feature(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles(), market="US")
+        bot._market_elapsed_min = lambda _market: 66.0
+        bot._last_post_open_features_by_ticker = {"KR": {}, "US": {}}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("runtime_paths._RUNTIME_ROOT", Path(tmpdir)):
+                append_feature_snapshot_payload(
+                    {
+                        "market": "US",
+                        "ticker": "MSFT",
+                        "known_at": "2026-05-13T22:36:00",
+                        "anchor_at": "2026-05-13T22:30:00",
+                        "anchor_price": 100.0,
+                        "current_price": 101.0,
+                        "market_open_elapsed_min": 6.0,
+                        "rvol_profile_elapsed_min": 786,
+                        "data_quality": "minute_complete",
+                    }
+                )
+
+                TradingBot._restore_post_open_features_from_jsonl(bot)
+
+        self.assertNotIn("MSFT", bot._last_post_open_features_by_ticker["US"])
+
+    def test_runtime_handoff_filter_drops_old_same_session_feature(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles(), market="US")
+        bot._market_elapsed_min = lambda _market: 80.0
+        fields = {
+            "_last_post_open_features_by_ticker": {
+                "KR": {},
+                "US": {
+                    "MSFT": {
+                        "ticker": "MSFT",
+                        "market": "US",
+                        "known_at": "2026-05-13T22:36:00",
+                        "market_session_date": "2026-05-13",
+                        "market_open_elapsed_min": 6.0,
+                        "data_quality": "minute_complete",
+                    },
+                    "AAPL": {
+                        "ticker": "AAPL",
+                        "market": "US",
+                        "known_at": "2026-05-13T23:49:00",
+                        "market_session_date": "2026-05-13",
+                        "market_open_elapsed_min": 79.0,
+                        "data_quality": "minute_complete",
+                    },
+                },
+            }
+        }
+
+        filtered, dropped = TradingBot._filter_runtime_handoff_fields(
+            bot,
+            fields,
+            {"US": "2026-05-13"},
+            eligible_markets={"US"},
+        )
+
+        self.assertNotIn(
+            "MSFT",
+            filtered["_last_post_open_features_by_ticker"]["US"],
+        )
+        self.assertIn(
+            "AAPL",
+            filtered["_last_post_open_features_by_ticker"]["US"],
+        )
+        self.assertEqual(dropped["_last_post_open_features_by_ticker"], 1)
 
     def test_jsonl_restore_does_not_overwrite_handoff_fail_closed_with_older_complete(self) -> None:
         bot = _make_bot(lambda **kwargs: _candles())
@@ -739,6 +809,44 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertNotIn("post_open_features", rows[0])
         self.assertNotIn("005930", bot._last_post_open_features_by_ticker["KR"])
 
+    def test_old_same_session_feature_is_removed_for_candidate(self) -> None:
+        bot = _make_bot(lambda **kwargs: _candles(), market="US")
+        bot.runtime_config.values["INTRADAY_EVIDENCE_ENABLED"] = False
+        bot._market_elapsed_min = lambda _market: 66.0
+        bot._last_post_open_features_by_ticker = {
+            "KR": {},
+            "US": {
+                "MSFT": {
+                    "ticker": "MSFT",
+                    "market": "US",
+                    "known_at": "2026-05-13T22:36:00",
+                    "market_session_date": "2026-05-13",
+                    "market_open_elapsed_min": 6.0,
+                    "rvol_profile_elapsed_min": 6,
+                    "data_quality": "minute_complete",
+                }
+            },
+        }
+
+        rows = TradingBot._annotate_selection_execution_features(
+            bot,
+            "US",
+            [{"ticker": "MSFT", "price": 100.0}],
+            "NEUTRAL",
+        )
+
+        self.assertEqual(
+            rows[0]["post_open_features"]["market_open_elapsed_min"],
+            66.0,
+        )
+        self.assertNotIn(
+            "rvol_profile_elapsed_min",
+            rows[0]["post_open_features"],
+        )
+        refreshed = bot._last_post_open_features_by_ticker["US"]["MSFT"]
+        self.assertEqual(refreshed["market_open_elapsed_min"], 66.0)
+        self.assertNotIn("rvol_profile_elapsed_min", refreshed)
+
     def test_session_open_resolve_failure_is_logged_and_fail_closed(self) -> None:
         bot = _make_bot(lambda **kwargs: _candles())
         bot._current_session_date_str = lambda _market: (_ for _ in ()).throw(RuntimeError("session broken"))
@@ -951,6 +1059,10 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
                 "FINAL_PROMPT_EVIDENCE_ALIGNMENT_ENABLED": True,
                 "EVIDENCE_PACK_ENABLED": True,
                 "SELECTION_FULL_EVIDENCE_MAX": 5,
+                # This test freezes datetime to a US wall-clock while
+                # exercising KR prompt alignment; staleness is covered by
+                # dedicated continuity tests.
+                "INTRADAY_EVIDENCE_RESTORE_MAX_LAG_MIN": 1000,
             }
         )
         bot._write_funnel_event = lambda event, market_key, payload: events.append((event, market_key, payload))
@@ -1043,6 +1155,7 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
                 "EVIDENCE_PACK_ENABLED": True,
                 "SELECTION_FULL_EVIDENCE_MAX": 1,
                 "SELECTION_EVIDENCE_CLASS_ENABLED": True,
+                "INTRADAY_EVIDENCE_RESTORE_MAX_LAG_MIN": 1000,
             }
         )
         bot._write_funnel_event = lambda event, market_key, payload: events.append((event, market_key, payload))

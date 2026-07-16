@@ -93,6 +93,20 @@ def test_micro_budget_does_not_round_up_to_one_share() -> None:
     assert result.qty == 0
 
 
+def test_operator_absolute_cap_is_not_scaled_twice() -> None:
+    result = _evaluate(
+        authority=_authority(absolute_order_cap_krw=300_000.0),
+        base_order_budget_krw=500_000.0,
+        max_order_krw=300_000.0,
+        quote={"price": 100.0, "open": 100.0, "prev_close": 100.0, "volume": 1000},
+    )
+
+    assert result.status == "REHEARSAL_READY"
+    assert result.qty == 2
+    assert result.details["spend_cap_krw"] == 300_000.0
+    assert result.details["budget_cap_source"] == "authority_absolute"
+
+
 def test_zero_cash_or_exhausted_strategy_slot_fails_closed() -> None:
     no_cash = _evaluate(cash_krw=0.0)
     full_slot = _evaluate(current_open_slots=1)

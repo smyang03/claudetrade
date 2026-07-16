@@ -311,6 +311,22 @@ class PathBRuntime:
             "max_positions": int(self.config.pathb_max_positions),
             "max_daily_entries": int(self.config.pathb_max_daily_entries),
             "min_confidence": float(self.config.pathb_min_confidence),
+            "entry_quality_policy": {
+                "US": {
+                    "zone_fill_mode": str(os.getenv("PATHB_ZONE_FILL_MODE_US", "shadow") or "shadow"),
+                    "top_threshold": float(os.getenv("PATHB_ZONE_FILL_TOP_THRESHOLD", "0.67") or 0.67),
+                    "reward_threshold_pct": float(os.getenv("PATHB_ZONE_FILL_REWARD_PCT", "5.0") or 5.0),
+                    "behavior": "keep_waiting_for_better_zone_price",
+                },
+                "KR": {
+                    "zone_fill_mode": "off",
+                    "behavior": "market_specific_non_applicable",
+                },
+            },
+            "us_live_strategy_policy": {
+                "momentum_enabled": self._runtime_bool("US_MOMENTUM_LIVE_ENABLED", False),
+                "gap_pullback_enabled": self._runtime_bool("US_GAP_PULLBACK_LIVE_ENABLED", False),
+            },
             "updated_at": control.updated_at,
             "updated_by": control.updated_by,
             "reason": control.reason,
@@ -4759,45 +4775,126 @@ class PathBRuntime:
                 pass
         return idx
 
-    def _zone_fill_at_entry_shadow(self, plan: PricePlan, signal) -> None:
-        """체결가 품질(zone-fill) shadow — 진입 주문가가 buy_zone 어디에 들어가는지 기록.
+    def _zone_fill_at_entry_shadow(self, plan: PricePlan, signal) -> dict[str, Any]:
+        """US PathB 진입 품질을 기존 plan 원장에 기록한다.
 
-        실측(2026-07-05, zone_fill_quality_review): US는 buy_zone 하단 체결이 gross median 양수
-        (유일), top-of-zone 추격(zone_pos>0.67)+목표부풀림(reward_pct>=5)이 최악셀 per -1.15·
-        양월 음수(회피 Δ+0.207/거래). = Claude 매도(TARGET)가 더 잘 발동되게 하는 강점 강화 레버.
-        KR은 정반대(하단 최악)라 US 전용. 양날(체결 조이면 미체결로 승자 놓침)은 forward shadow로만
-        확증 가능해 지금은 관측(태그)만 — 차단·순서·주문 무영향. 진입 주문가(우리가 통제)로 판정.
-
-        기록은 PATHB_ZONE_FILL_SHADOW on일 때만. enforce(차단)는 미배선(양날 확증 후 별도 토글).
+        historical review의 ``hit_price`` 계약과 맞추기 위해 보호용 지정가가
+        아니라 실제 zone-hit 관측가를 사용한다. 별도 주문 파이프라인은 만들지 않는다.
         """
-        if str(os.getenv("PATHB_ZONE_FILL_SHADOW", "true")).strip().lower() not in ("1", "true", "yes", "on"):
-            return
         if str(plan.market or "").upper() != "US":
-            return
+            return {}
         try:
             lo = float(getattr(plan, "buy_zone_low", 0) or 0)
             hi = float(getattr(plan, "buy_zone_high", 0) or 0)
-            entry = float(getattr(signal, "limit_price", 0) or getattr(signal, "price", 0) or 0)
+            entry = float(getattr(signal, "price", 0) or getattr(signal, "limit_price", 0) or 0)
             if hi <= lo or entry <= 0:
-                return
+                return {}
             zone_pos = (entry - lo) / (hi - lo)
             reward_pct = float(getattr(plan, "reward_pct", 0) or 0)
             top_thr = float(os.getenv("PATHB_ZONE_FILL_TOP_THRESHOLD", "0.67") or 0.67)
             rp_thr = float(os.getenv("PATHB_ZONE_FILL_REWARD_PCT", "5.0") or 5.0)
-            top_of_zone = zone_pos > top_thr
+            mode = str(os.getenv("PATHB_ZONE_FILL_MODE_US", "shadow") or "shadow").strip().lower()
+            if mode not in {"off", "shadow", "enforce_wait"}:
+                mode = "off"
+            top_of_zone = zone_pos >= top_thr
             worst_cell = top_of_zone and reward_pct >= rp_thr
+            wait_price = lo + ((hi - lo) * top_thr)
             meta = {
-                "zone_fill_shadow": True,
-                "zone_fill_pos": round(zone_pos, 3),          # 0=하단(좋음) 1=상단(추격)
-                "zone_fill_top_of_zone": bool(top_of_zone),   # zone_pos>0.67 추격
-                "zone_fill_worst_cell": bool(worst_cell),     # 추격 + 목표부풀림(reward_pct>=5)
+                "zone_fill_shadow": mode != "off",
+                "zone_fill_mode": mode,
+                "zone_fill_entry_reference": "zone_hit_price",
+                "zone_fill_entry_price": round(entry, 6),
+                "zone_fill_pos": round(zone_pos, 3),
+                "zone_fill_top_threshold": round(top_thr, 3),
+                "zone_fill_reward_threshold_pct": round(rp_thr, 3),
+                "zone_fill_wait_price": round(wait_price, 6),
+                "zone_fill_top_of_zone": bool(top_of_zone),
+                "zone_fill_worst_cell": bool(worst_cell),
             }
-            self.store.update_path_run(plan.path_run_id, plan=meta, merge_plan=True)
+            if mode == "enforce_wait" and not worst_cell:
+                existing = self.store.find_path_run(plan.path_run_id) or {}
+                existing_plan = existing.get("plan") if isinstance(existing.get("plan"), dict) else {}
+                if existing_plan.get("zone_fill_wait_first_at"):
+                    meta.update(
+                        {
+                            "zone_fill_wait_released_at": datetime.now(KST).isoformat(timespec="seconds"),
+                            "zone_fill_wait_release_price": round(entry, 6),
+                            "zone_fill_wait_release_pos": round(zone_pos, 3),
+                        }
+                    )
+            shadow_enabled = str(os.getenv("PATHB_ZONE_FILL_SHADOW", "true")).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            if shadow_enabled or mode == "enforce_wait":
+                self.store.update_path_run(plan.path_run_id, plan=meta, merge_plan=True)
             if worst_cell:
-                log.info(f"[zone_fill shadow] {plan.market} {plan.ticker} 진입 zone_pos={zone_pos:.2f} "
-                         f"reward_pct={reward_pct:.1f} (top-of-zone 추격 최악셀, 관측만)")
+                log.info(
+                    f"[zone_fill {mode}] {plan.market} {plan.ticker} zone_pos={zone_pos:.2f} "
+                    f"reward_pct={reward_pct:.1f} wait_at<={wait_price:g}"
+                )
+            return meta
         except Exception:
-            pass
+            return {}
+
+    @staticmethod
+    def _zone_fill_entry_gate_block(plan: PricePlan, assessment: dict[str, Any]) -> bool:
+        return (
+            str(getattr(plan, "market", "") or "").upper() == "US"
+            and str((assessment or {}).get("zone_fill_mode") or "").lower() == "enforce_wait"
+            and bool((assessment or {}).get("zone_fill_worst_cell"))
+        )
+
+    def _defer_zone_fill_entry(
+        self,
+        plan: PricePlan,
+        signal: EntrySignal,
+        assessment: dict[str, Any],
+    ) -> None:
+        """존 상단 추격 대신 같은 plan을 WAITING으로 유지해 더 나은 가격을 기다린다."""
+        reason = "US_ZONE_FILL_WAIT"
+        blocked_at = datetime.now(KST)
+        payload = {
+            **self._execution_safety_payload(),
+            **dict(assessment or {}),
+            "stage": "pathb_submit_buy",
+            "scope": "ticker",
+            "guard_mode": "enforce_wait",
+            "price": float(signal.price or 0.0),
+            "limit_price": float(signal.limit_price or 0.0),
+            "signal_reason": str(signal.reason or ""),
+            "submit_block_keeps_waiting": True,
+        }
+        should_log_block = not self._recent_pathb_submit_block(plan.path_run_id, reason)
+        existing = self.store.find_path_run(plan.path_run_id) or {}
+        existing_plan = existing.get("plan") if isinstance(existing.get("plan"), dict) else {}
+        first_blocked_at = str(existing_plan.get("zone_fill_wait_first_at") or "")
+        self.store.update_path_run(
+            plan.path_run_id,
+            plan={
+                **dict(assessment or {}),
+                "zone_fill_wait_first_at": first_blocked_at or blocked_at.isoformat(timespec="seconds"),
+                "zone_fill_wait_last_at": blocked_at.isoformat(timespec="seconds"),
+                "zone_fill_wait_count": int(existing_plan.get("zone_fill_wait_count") or 0) + 1,
+                "last_submit_block_reason": reason,
+                "last_submit_block_at": blocked_at.isoformat(timespec="seconds"),
+                "last_submit_block_gate": payload,
+                "submit_block_keeps_waiting": True,
+                "submit_block_keep_reason": "better_price_inside_existing_zone",
+            },
+            merge_plan=True,
+        )
+        if should_log_block:
+            self._record_blocked(
+                plan.market,
+                plan.ticker,
+                plan.decision_id,
+                reason,
+                payload,
+                plan.path_run_id,
+            )
 
     def _red_tape_gate_threshold(self, market: str) -> float:
         try:
@@ -4826,8 +4923,8 @@ class PathBRuntime:
         self._falling_knife_reentry_shadow(plan, float(getattr(signal, "price", 0) or 0))
         # 반응형 tape shadow: 진입 순간 지수(캐시)를 기록 + 게이트 입력 idx 확보 (API 무호출)
         _tape_idx = self._red_tape_at_entry_shadow(plan)
-        # 체결가 품질(zone-fill) shadow: 진입 주문가의 zone 위치 기록 (US 전용, 관측만·차단 없음)
-        self._zone_fill_at_entry_shadow(plan, signal)
+        # 체결가 품질: 기존 PathB plan 안에서 관측하고, US enforce_wait이면 더 나은 zone 가격까지 대기.
+        _zone_fill = self._zone_fill_at_entry_shadow(plan, signal)
         if self._plan_shadow_only(plan):
             self._record_blocked(
                 market,
@@ -4901,6 +4998,14 @@ class PathBRuntime:
                 plan.path_run_id,
             )
             log.warning(f"[red_tape gate] {market} {plan.ticker} 진입 차단 — 개장대비 {float(_tape_idx):+.2f}% < {_thr}% (enforce)")
+            return False
+        if self._zone_fill_entry_gate_block(plan, _zone_fill):
+            self._defer_zone_fill_entry(plan, signal, _zone_fill)
+            log.warning(
+                f"[zone_fill gate] {market} {plan.ticker} top-of-zone 추격 보류 "
+                f"zone_pos={float(_zone_fill.get('zone_fill_pos') or 0):.2f} "
+                f"wait_at<={float(_zone_fill.get('zone_fill_wait_price') or 0):g}"
+            )
             return False
         # A1: REQUIRE_TRADE_READY — ready=0(=PULLBACK_WAIT/PROBE 출신, not_patha_trade_ready) 신규 진입 완전 차단.
         # 시장별 토글(_US/_KR override 후 글로벌 fallback, 기본 os.getenv=현행). 2026-07-02:

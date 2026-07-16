@@ -26,6 +26,37 @@ def _rows(day: str, *, volume: float, through: int = 5) -> list[dict]:
 
 
 class TimeNormalizedRvolTests(unittest.TestCase):
+    def test_naive_us_runtime_timestamp_is_interpreted_as_kst(self) -> None:
+        current = [
+            {
+                "ts": f"2026-07-16T22:{minute:02d}:00",
+                "volume": 200,
+            }
+            for minute in range(30, 37)
+        ]
+        history: list[dict] = []
+        for day in ("2026-07-09", "2026-07-10", "2026-07-13", "2026-07-14", "2026-07-15"):
+            history.extend(
+                {
+                    "ts": f"{day}T22:{minute:02d}:00+09:00",
+                    "volume": 100,
+                }
+                for minute in range(30, 37)
+            )
+
+        result = compute_time_normalized_rvol(
+            current_rows=current,
+            historical_rows=history,
+            market="US",
+            known_at="2026-07-16T22:36:33",
+            session_date="2026-07-16",
+            min_sessions=5,
+        )
+
+        self.assertEqual(result["rvol_profile_elapsed_min"], 6)
+        self.assertEqual(result["rvol_profile_status"], "ok")
+        self.assertAlmostEqual(result["time_normalized_rvol"], 2.0)
+
     def test_same_time_profile_excludes_current_and_future_sessions(self) -> None:
         history: list[dict] = []
         for day in ("2026-07-09", "2026-07-10", "2026-07-13", "2026-07-14", "2026-07-15"):

@@ -294,6 +294,8 @@ def test_core_handoff_persists_direction_isolation_observability(tmp_path, monke
     assert row["core_analyst_entry_isolation_applied"] is True
     assert row["analyst_direction_block_observed"] is True
     assert row["analyst_gross_cap_source"] == "analyst_consensus"
+    assert bot.submitted[0]["tp_pct"] == 0.0
+    assert bot.submitted[0]["sl_pct"] == 0.0
 
 
 def test_core_loader_rejects_shadow_file_and_accepts_hashed_live_manifest(tmp_path, monkeypatch) -> None:

@@ -10,6 +10,7 @@ from tools.candidate_consensus_shadow import (
     _append_unique_jsonl,
     _arm_specs,
     _consensus_decision,
+    _serveable_features,
 )
 
 
@@ -57,3 +58,32 @@ def test_feature_overlap_forces_abstain_even_when_both_arms_select() -> None:
 
     assert decision == "ABSTAIN"
     assert reason == "feature_overlap_fail_closed"
+
+
+def test_all_missing_or_unavailable_features_are_dropped_before_fit() -> None:
+    train = pd.DataFrame(
+        {
+            "usable": [1.0, 2.0],
+            "train_only": [3.0, 4.0],
+            "all_missing": [None, None],
+            "category": ["a", "b"],
+        }
+    )
+    serve = pd.DataFrame(
+        {
+            "usable": [5.0],
+            "train_only": [None],
+            "all_missing": [None],
+            "category": ["a"],
+        }
+    )
+
+    available, dropped = _serveable_features(
+        train,
+        serve,
+        ["usable", "train_only", "all_missing", "category", "absent"],
+        ["category"],
+    )
+
+    assert available == ["usable", "category"]
+    assert dropped == ["train_only", "all_missing", "absent"]

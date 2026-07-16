@@ -68,6 +68,9 @@ def test_generic_exit_flags_are_cleared_only_for_isolated_sleeves() -> None:
     assert bot._clear_isolated_strategy_generic_exit_flags("US") == 1
     assert isolated["exit_owner"] == "us_schg_bil_trend_v1"
     assert isolated["exit_policy"] == "isolated_strategy"
+    assert isolated["exit_contract"] == "strategy_rebalance_only"
+    assert isolated["tp_pct"] == 0.0
+    assert isolated["sl_pct"] == 0.0
     assert "pending_next_open_sell" not in isolated
     assert "pending_intraday_recheck" not in isolated
     assert ordinary["pending_next_open_sell"] is True

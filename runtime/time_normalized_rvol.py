@@ -14,6 +14,7 @@ from runtime_paths import get_runtime_path
 
 MARKET_TIMEZONE = {"KR": ZoneInfo("Asia/Seoul"), "US": ZoneInfo("America/New_York")}
 MARKET_OPEN_MINUTE = {"KR": 9 * 60, "US": 9 * 60 + 30}
+RUNTIME_TIMEZONE = ZoneInfo("Asia/Seoul")
 
 
 def _market_key(market: str) -> str:
@@ -30,7 +31,11 @@ def _parse_dt(value: Any, *, market: str) -> datetime | None:
         return None
     timezone = MARKET_TIMEZONE[_market_key(market)]
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone)
+        # Runtime candles and ``known_at`` are serialized in the host's KST
+        # clock, often without an offset after normalization.  Treating a
+        # naive US timestamp such as 22:36 as New York local time turns
+        # open+6m into open+786m and invalidates the same-time RVOL profile.
+        parsed = parsed.replace(tzinfo=RUNTIME_TIMEZONE)
     return parsed.astimezone(timezone)
 
 

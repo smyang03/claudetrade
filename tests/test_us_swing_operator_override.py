@@ -4,11 +4,15 @@ from runtime.us_swing_order_bridge import _operator_micro_override
 
 
 class Bot:
-    def __init__(self, ack: str) -> None:
+    def __init__(self, ack: str, max_order_krw: float = 300_000.0) -> None:
         self.ack = ack
+        self.max_order_krw = max_order_krw
 
     def _runtime_value(self, key: str, default=""):
         return self.ack if key == "US_SWING_OPERATOR_MICRO_OVERRIDE_ACK" else default
+
+    def _runtime_float(self, key: str, default=0.0):
+        return self.max_order_krw if key == "US_SWING_ORDER_MAX_KRW" else default
 
 
 def test_override_accepts_only_forward_maturity_blockers() -> None:
@@ -17,6 +21,8 @@ def test_override_accepts_only_forward_maturity_blockers() -> None:
     assert result["allowed_to_emit_orders"] is True
     assert result["max_open_slots"] == 1
     assert result["size_multiplier"] == 0.10
+    assert result["absolute_order_cap_krw"] == 300_000.0
+    assert result["order_cap_source"] == "operator_config_absolute"
 
 
 def test_override_preserves_non_forward_block() -> None:

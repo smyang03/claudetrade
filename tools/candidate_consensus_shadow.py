@@ -138,6 +138,32 @@ def _arm_specs(enriched: pd.DataFrame) -> dict[str, dict[str, Any]]:
     }
 
 
+def _serveable_features(
+    train: pd.DataFrame,
+    serve: pd.DataFrame,
+    features: list[str],
+    categorical_features: list[str],
+) -> tuple[list[str], list[str]]:
+    categorical = set(categorical_features)
+    available: list[str] = []
+    dropped: list[str] = []
+    for column in features:
+        if column not in train or column not in serve:
+            dropped.append(column)
+            continue
+        if column in categorical:
+            train_observed = train[column].notna() & train[column].astype(str).str.strip().ne("")
+            serve_observed = serve[column].notna() & serve[column].astype(str).str.strip().ne("")
+        else:
+            train_observed = pd.to_numeric(train[column], errors="coerce").notna()
+            serve_observed = pd.to_numeric(serve[column], errors="coerce").notna()
+        if bool(train_observed.any()) and bool(serve_observed.any()):
+            available.append(column)
+        else:
+            dropped.append(column)
+    return available, dropped
+
+
 def _score_arm(
     *,
     historical: pd.DataFrame,
@@ -159,16 +185,32 @@ def _score_arm(
     if purged_session:
         train = train[train["session_date"].astype(str) < purged_session].copy()
     serve = _opening_rows(current, market)
-    features = list(spec.get("features") or [])
-    categorical = [column for column in CATEGORICAL_FEATURES if column in features]
+    requested_features = list(spec.get("features") or [])
+    requested_categorical = [
+        column for column in CATEGORICAL_FEATURES if column in requested_features
+    ]
+    features, dropped_features = _serveable_features(
+        train,
+        serve,
+        requested_features,
+        requested_categorical,
+    )
+    categorical = [column for column in requested_categorical if column in features]
     if train.empty or serve.empty or not features:
         return {
             "status": "NO_SCORE",
-            "reason": "train_or_serve_empty",
+            "reason": (
+                "train_or_serve_empty"
+                if train.empty or serve.empty
+                else "no_serveable_features"
+            ),
             "arm": spec["name"],
             "train_rows": int(len(train)),
             "serve_rows": int(len(serve)),
             "purged_session": purged_session,
+            "requested_features": requested_features,
+            "features": features,
+            "dropped_unavailable_features": dropped_features,
         }, pd.DataFrame()
 
     for frame in (train, serve):
@@ -235,7 +277,9 @@ def _score_arm(
         "train_dates": int(train["session_date"].nunique()),
         "serve_rows": int(len(serve)),
         "purged_session": purged_session,
+        "requested_features": requested_features,
         "features": features,
+        "dropped_unavailable_features": dropped_features,
     }, scored
 
 
@@ -325,15 +369,18 @@ def run_shadow(
             str(row.ticker): row
             for row in right.itertuples(index=False)
         }
-        feature_overlap = sorted(
-            set(specs[market_key]["left"]["features"])
-            & set(specs[market_key]["right"]["features"])
-        )
+        left_name = specs[market_key]["left"]["name"]
+        right_name = specs[market_key]["right"]["name"]
+        left_features = list(arm_summaries.get(left_name, {}).get("features") or [])
+        right_features = list(arm_summaries.get(right_name, {}).get("features") or [])
+        feature_overlap = sorted(set(left_features) & set(right_features))
         contract = {
             "schema_version": "candidate_consensus_shadow_v1",
             "market": market_key,
-            "left_arm": specs[market_key]["left"]["name"],
-            "right_arm": specs[market_key]["right"]["name"],
+            "left_arm": left_name,
+            "right_arm": right_name,
+            "left_features": left_features,
+            "right_features": right_features,
             "shared_features": feature_overlap,
             "feature_sets_disjoint": not feature_overlap,
             "selection": "top3_intersection_else_abstain",

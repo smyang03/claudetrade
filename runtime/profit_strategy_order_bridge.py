@@ -389,8 +389,12 @@ def run_profit_strategy_handoff(bot: Any, market: str) -> dict[str, Any]:
             continue
         hold_sessions = int(signal.get("hold_sessions") or 1)
         is_core = strategy_id in CORE_IDS
-        tp_pct = 9.99 if is_core or source != "us_swing_5d" else 0.12
-        sl_pct = 0.99 if is_core else 0.25
+        # Core sleeves exit only through their monthly strategy owner.  Zero is
+        # the honest contract here; extreme sentinel percentages contaminated
+        # persisted positions and dashboards even though generic exits were
+        # correctly isolated.
+        tp_pct = 0.0 if is_core or source != "us_swing_5d" else 0.12
+        sl_pct = 0.0 if is_core else 0.25
         mode_name = str((getattr(bot, "today_judgment", {}) or {}).get("consensus", {}).get("mode", "CAUTIOUS"))
         order_ok = bot._submit_micro_probe_buy_order(
             market=market_key,

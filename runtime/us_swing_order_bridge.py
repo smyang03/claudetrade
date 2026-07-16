@@ -39,6 +39,18 @@ def _write_execution_status(
     execution = dict(execution_authority or research)
     raw_submit = bot._runtime_bool("US_SWING_ORDER_SUBMIT_ENABLED", False)
     live_ack = str(bot._runtime_value("US_SWING_ORDER_LIVE_ACK", "") or "")
+    configured_max_order_krw = float(bot._runtime_float("US_SWING_ORDER_MAX_KRW", 250000.0))
+    absolute_order_cap_krw = float(execution.get("absolute_order_cap_krw") or 0.0)
+    if absolute_order_cap_krw > 0:
+        effective_order_cap_krw = min(configured_max_order_krw, absolute_order_cap_krw)
+        order_cap_source = "operator_absolute_cap"
+    else:
+        effective_order_cap_krw = min(
+            configured_max_order_krw,
+            float(getattr(getattr(bot, "risk", None), "max_order_krw", 0.0) or 0.0)
+            * float(execution.get("size_multiplier") or 0.0),
+        )
+        order_cap_source = "risk_budget_multiplier"
     payload = {
         "schema_version": "us_swing_execution_status_v1",
         "generated_at": datetime.now(KST).isoformat(timespec="seconds"),
@@ -50,7 +62,9 @@ def _write_execution_status(
         "allowed_to_emit_orders": bool(execution.get("allowed_to_emit_orders")),
         "submit_enabled": bool(raw_submit),
         "live_ack_verified": bool(getattr(bot, "is_paper", False)) or live_ack == "I_ACCEPT_LIVE_US_SWING",
-        "max_order_krw": float(bot._runtime_float("US_SWING_ORDER_MAX_KRW", 250000.0)),
+        "max_order_krw": configured_max_order_krw,
+        "effective_order_cap_krw": effective_order_cap_krw,
+        "order_cap_source": order_cap_source,
         "entry_window_min": {
             "start": int(bot._runtime_int("US_SWING_ORDER_MIN_OPEN_MIN", 5)),
             "end": int(bot._runtime_int("US_SWING_ORDER_MAX_OPEN_MIN", 30)),
@@ -98,6 +112,8 @@ def _operator_micro_override(bot: Any, authority: dict[str, Any], configured_mod
         "effective_mode": "micro",
         "allowed_to_emit_orders": True,
         "size_multiplier": 0.10,
+        "absolute_order_cap_krw": float(bot._runtime_float("US_SWING_ORDER_MAX_KRW", 250000.0)),
+        "order_cap_source": "operator_config_absolute",
         "max_new_per_day": 1,
         "max_open_slots": 1,
         "operator_forward_override": True,

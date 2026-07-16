@@ -66,6 +66,11 @@ AI의 사고 방식은 **트레이너이자 개발자**다. 시장·전략·분�
 - `PATHB_KR_LIVE_ENABLED`/`PATHB_US_LIVE_ENABLED=true`, `PATHB_INTRADAY_ONLY=false`(multi-day hold 허용).
 - `PATHB_KR_EXIT_POLICY` — KR PathB 자동매도 소유권. `.env.live`와 start-config 동시변경,
   재시작 후 새 PID effective-config 실측 없이는 enforce/rollback 완료로 보지 않는다.
+- `PATHB_ZONE_FILL_MODE_US` — US PathB 진입가 소유권. `enforce_wait`은 상단 추격을
+  취소하지 않고 기존 plan을 WAITING 유지한다. `.env.live`와 start-config 동시변경,
+  재시작 후 effective-config 및 `US_ZONE_FILL_WAIT` 원장을 확인한다. KR에는 적용 금지.
+- `US_GAP_PULLBACK_LIVE_ENABLED=false` — canonical net 22건·두 달 연속 음수 레인 차단.
+  후보 관측은 유지하되 신규 실주문만 금지한다. 재활성은 신규 forward 반증과 운영자 확인 후에만 한다.
 - `PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY`/`PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK` —
   코어 2종만 analyst 방향 차단과 분리한다. 전역 override가 아니며 두 소스 일치·정확한 ACK·재시작 후
   effective-config 실측이 모두 있어야 `isolated`로 인정한다.

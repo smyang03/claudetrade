@@ -65,6 +65,7 @@ LIVE_CONFIG_KEYS = {
     "ENABLE_CLAUDE_CANDIDATE_ACTIONS",
     "ENABLE_ACTION_ROUTING",
     "CANDIDATE_ACTIONS_V2_ENABLED",
+    "CANDIDATE_CONSENSUS_SHADOW_ENABLED",
     "ALLOW_LEGACY_SELECTION_AUTO_READY",
     "KR_FAST_TRIGGER_WINDOW_MIN",
     "WATCH_TRIGGER_INITIAL_THRESHOLD",
@@ -139,6 +140,10 @@ LIVE_CONFIG_KEYS = {
     "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
     "US_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
     "KR_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
+    "PATHB_ZONE_FILL_MODE_US",
+    "PATHB_ZONE_FILL_SHADOW",
+    "PATHB_ZONE_FILL_TOP_THRESHOLD",
+    "PATHB_ZONE_FILL_REWARD_PCT",
     "PATHB_SELECTION_RECONCILE_CANCEL_INVALID",
     "PATHB_SELECTION_RECONCILE_CANCEL_SUSPENDED",
     "PATHB_SELECTION_RECONCILE_UPDATE_VALID_TARGETS",
@@ -197,6 +202,8 @@ LIVE_CONFIG_KEYS = {
     "US_EARLY_ENTRY_SOFT_GATE_START_MIN",
     "US_EARLY_ENTRY_SOFT_GATE_END_MIN",
     "US_EARLY_ENTRY_SIZE_MULT",
+    "US_MOMENTUM_LIVE_ENABLED",
+    "US_GAP_PULLBACK_LIVE_ENABLED",
     "CANDIDATE_PROMPT_POOL_REORDER_ENABLED",
     "CANDIDATE_QUALITY_TRAINER_PROMPT_HINT_ENABLED",
     "SUB_SCREENER_TRIAGE_SCORE_MODE",
@@ -312,6 +319,9 @@ RUNTIME_CONFIG_DRIFT_KEYS = {
     "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
     "US_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
     "KR_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
+    "PATHB_ZONE_FILL_MODE_US",
+    "PATHB_ZONE_FILL_TOP_THRESHOLD",
+    "PATHB_ZONE_FILL_REWARD_PCT",
     "PATHB_SELECTION_RECONCILE_HIT_SUSPEND_CANCEL",
     "PATHB_RECONCILE_FORCE_FRESH_AFTER_CANCEL",
     "ACTIVE_LESSONS_ENABLED",
@@ -349,6 +359,8 @@ RUNTIME_CONFIG_DRIFT_KEYS = {
     "US_EARLY_ENTRY_SOFT_GATE_START_MIN",
     "US_EARLY_ENTRY_SOFT_GATE_END_MIN",
     "US_EARLY_ENTRY_SIZE_MULT",
+    "US_MOMENTUM_LIVE_ENABLED",
+    "US_GAP_PULLBACK_LIVE_ENABLED",
     "CANDIDATE_PROMPT_POOL_REORDER_ENABLED",
     "CANDIDATE_QUALITY_TRAINER_PROMPT_HINT_ENABLED",
     "SUB_SCREENER_TRIAGE_SCORE_MODE",
@@ -423,6 +435,8 @@ CRITICAL_RUNTIME_CONFIG_DRIFT_KEYS = {
     "KR_PLAN_A_MOMENTUM_SIGNAL_ENABLED",
     "KR_PLAN_A_GAP_PULLBACK_SIGNAL_ENABLED",
     "KR_PLAN_A_ORP_SIGNAL_ENABLED",
+    "US_MOMENTUM_LIVE_ENABLED",
+    "US_GAP_PULLBACK_LIVE_ENABLED",
     "KR_PATHB_BULL_MODE_GATE_ENABLED",
     "KR_PATHB_STRATEGY_FILTER_ENABLED",
     "PATHB_MAX_POSITIONS",
@@ -440,6 +454,9 @@ CRITICAL_RUNTIME_CONFIG_DRIFT_KEYS = {
     "PATHB_SELECTION_RECONCILE_ZONE_UPDATE_ENABLED",
     "US_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
     "KR_PATHB_SELECTION_RECONCILE_ZONE_UPDATE_MODE",
+    "PATHB_ZONE_FILL_MODE_US",
+    "PATHB_ZONE_FILL_TOP_THRESHOLD",
+    "PATHB_ZONE_FILL_REWARD_PCT",
     "CANDIDATE_PROMPT_POOL_REORDER_ENABLED",
     "CANDIDATE_QUALITY_TRAINER_PROMPT_HINT_ENABLED",
     "SUB_SCREENER_TRIAGE_SCORE_MODE",
@@ -1623,6 +1640,79 @@ def _candidate_actions_live_config_check(effective: dict[str, str], mode: str) -
     )
 
 
+def _pathb_zone_fill_policy_check(config: dict[str, Any], mode: str) -> CheckResult:
+    effective = dict(config.get("effective") or {})
+    base_env = dict(config.get("base_env") or {})
+    overrides = dict(config.get("overrides") or {})
+    policy = str(effective.get("PATHB_ZONE_FILL_MODE_US") or "shadow").strip().lower()
+    try:
+        top_threshold = float(effective.get("PATHB_ZONE_FILL_TOP_THRESHOLD") or 0.67)
+    except (TypeError, ValueError):
+        top_threshold = -1.0
+    try:
+        reward_threshold = float(effective.get("PATHB_ZONE_FILL_REWARD_PCT") or 5.0)
+    except (TypeError, ValueError):
+        reward_threshold = -1.0
+
+    errors: list[str] = []
+    if policy not in {"off", "shadow", "enforce_wait"}:
+        errors.append(f"invalid mode={policy}")
+    if not 0.0 < top_threshold < 1.0:
+        errors.append(f"top threshold must be between 0 and 1: {top_threshold}")
+    if reward_threshold <= 0:
+        errors.append(f"reward threshold must be positive: {reward_threshold}")
+    if str(mode or "").lower() == "live" and policy == "enforce_wait":
+        for key in (
+            "PATHB_ZONE_FILL_MODE_US",
+            "PATHB_ZONE_FILL_TOP_THRESHOLD",
+            "PATHB_ZONE_FILL_REWARD_PCT",
+        ):
+            if key not in base_env or key not in overrides:
+                errors.append(f"{key} missing from dual-source live config")
+            elif str(base_env.get(key)) != str(overrides.get(key)):
+                errors.append(f"{key} env/start-config mismatch")
+
+    return CheckResult(
+        "config.pathb_us_zone_fill_policy",
+        "FAIL" if errors else "PASS",
+        "; ".join(errors) if errors else f"US zone-fill policy={policy} threshold={top_threshold} reward>={reward_threshold}%",
+        {
+            "market_scope": "US_only",
+            "mode": policy,
+            "top_threshold": top_threshold,
+            "reward_threshold_pct": reward_threshold,
+            "kr_affected": False,
+            "behavior": "keep_existing_plan_waiting_until_price_improves" if policy == "enforce_wait" else policy,
+            "dual_source_required": policy == "enforce_wait",
+            "errors": errors,
+        },
+    )
+
+
+def _us_live_strategy_policy_check(effective: dict[str, str], mode: str) -> CheckResult:
+    momentum_enabled = _truthy(effective.get("US_MOMENTUM_LIVE_ENABLED"))
+    gap_enabled = _truthy(effective.get("US_GAP_PULLBACK_LIVE_ENABLED"))
+    violations: list[str] = []
+    if str(mode or "").lower() == "live" and gap_enabled:
+        violations.append("US gap_pullback must remain disabled until new forward evidence reverses the two-month negative canonical net")
+    return CheckResult(
+        "config.us_live_strategy_policy",
+        "FAIL" if violations else "PASS",
+        "; ".join(violations) if violations else "US gap_pullback disabled; independent US strategy toggles captured",
+        {
+            "US_MOMENTUM_LIVE_ENABLED": momentum_enabled,
+            "US_GAP_PULLBACK_LIVE_ENABLED": gap_enabled,
+            "gap_pullback_evidence": {
+                "canonical_n": 22,
+                "avg_net_pct": -1.034,
+                "profit_factor": 0.28,
+                "negative_months": ["2026-04", "2026-05"],
+            },
+            "violations": violations,
+        },
+    )
+
+
 CONFIG_SOURCE_MEANING_KEYS: dict[str, dict[str, str]] = {
     "MAX_DAILY_LOSS_PCT": {
         "used_by": "legacy/global daily loss guard if referenced by runtime path",
@@ -1651,6 +1741,14 @@ CONFIG_SOURCE_MEANING_KEYS: dict[str, dict[str, str]] = {
     "PATHB_KR_EXIT_POLICY": {
         "used_by": "KR PathB per-position exit-owner pin and paired A/B contract",
         "meaning": "operator-controlled dual-source policy; SPLIT_RUNNER_V1 remains blocked until forward gate and live wiring",
+    },
+    "PATHB_ZONE_FILL_MODE_US": {
+        "used_by": "US PathB entry-price quality gate",
+        "meaning": "enforce_wait keeps the existing plan WAITING at the historically weak top-of-zone/high-reward cell; it never applies to KR",
+    },
+    "US_GAP_PULLBACK_LIVE_ENABLED": {
+        "used_by": "US Plan A live strategy allowlist",
+        "meaning": "false keeps the two-month negative gap-pullback lane observable but prevents real orders",
     },
     "PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY": {
         "used_by": "core strategy common-buy gate",
@@ -1974,6 +2072,74 @@ def _us_swing_shadow_runtime_check(effective: dict[str, Any]) -> CheckResult:
         "config.us_swing_shadow_runtime",
         "PASS",
         "US swing interpreter and explicit authority contract are ready",
+        data,
+    )
+
+
+def _candidate_consensus_runtime_check(effective: dict[str, Any]) -> CheckResult:
+    """Verify the scheduler interpreter can run the consensus shadow lane."""
+
+    enabled = _truthy(effective.get("CANDIDATE_CONSENSUS_SHADOW_ENABLED"))
+    python_path = Path(sys.executable)
+    data: dict[str, Any] = {
+        "enabled": enabled,
+        "python_executable": str(python_path),
+        "required_imports": ["sklearn", "scipy", "joblib", "pandas", "numpy"],
+        "scheduler_contract": "preopen_scheduler_uses_sys_executable",
+    }
+    if not enabled:
+        return CheckResult(
+            "config.candidate_consensus_runtime",
+            "PASS",
+            "candidate consensus shadow is disabled",
+            data,
+        )
+    kwargs: dict[str, Any] = {
+        "cwd": str(ROOT),
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": 30,
+    }
+    if sys.platform.startswith("win"):
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        probe = subprocess.run(
+            [
+                str(python_path),
+                "-c",
+                (
+                    "import json,sklearn,scipy,joblib,pandas,numpy;"
+                    "print(json.dumps({'sklearn':sklearn.__version__,"
+                    "'scipy':scipy.__version__,'joblib':joblib.__version__,"
+                    "'pandas':pandas.__version__,'numpy':numpy.__version__}))"
+                ),
+            ],
+            **kwargs,
+        )
+    except Exception as exc:
+        data["probe_error"] = str(exc)
+        return CheckResult(
+            "config.candidate_consensus_runtime",
+            "FAIL",
+            "candidate consensus scheduler dependency probe failed",
+            data,
+        )
+    data["probe_returncode"] = int(probe.returncode)
+    data["versions"] = str(probe.stdout or "").strip()
+    data["probe_stderr"] = str(probe.stderr or "").strip()[-500:]
+    if probe.returncode != 0:
+        return CheckResult(
+            "config.candidate_consensus_runtime",
+            "FAIL",
+            "preopen scheduler Python is missing candidate consensus dependencies",
+            data,
+        )
+    return CheckResult(
+        "config.candidate_consensus_runtime",
+        "PASS",
+        "candidate consensus scheduler dependencies are ready",
         data,
     )
 
@@ -3067,10 +3233,13 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
     checks.append(_config_source_meaning_check(config))
     checks.append(_pathb_kr_exit_policy_check(config, mode))
     checks.append(_profit_strategy_core_entry_policy_check(config, mode))
+    checks.append(_candidate_consensus_runtime_check(effective))
     checks.append(_us_swing_shadow_runtime_check(effective))
     checks.append(_profit_strategy_micro_contract_check(effective, mode))
     checks.append(_pathb_preopen_exit_policy_check(config))
     checks.append(_pathb_selection_reconcile_check(config))
+    checks.append(_pathb_zone_fill_policy_check(config, mode))
+    checks.append(_us_live_strategy_policy_check(effective, mode))
     checks.append(_kr_live_expansion_guard_check(effective))
     checks.append(_kr_cap40_confirmation_enforce_check(effective))
     checks.append(_runtime_config_drift_check(config, mode))
@@ -5328,6 +5497,138 @@ def _candidate_audit_outcome_checks(mode: str) -> list[CheckResult]:
     return [CheckResult("candidate_audit.outcome_update", status, detail, data)]
 
 
+def _candidate_rvol_clock_check(mode: str) -> CheckResult:
+    path = get_runtime_path("data", "audit", "candidate_audit.db", make_parents=False)
+    if not path.exists():
+        return CheckResult(
+            "candidate_audit.rvol_clock_contract",
+            "WARN",
+            f"candidate audit DB missing: {path}",
+        )
+    conn = None
+    try:
+        conn = sqlite3.connect(str(path), timeout=5)
+        tables = {
+            str(row[0])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if "audit_candidate_rows" not in tables:
+            return CheckResult(
+                "candidate_audit.rvol_clock_contract",
+                "WARN",
+                "audit_candidate_rows table missing",
+            )
+        rows = conn.execute(
+            """
+            SELECT market, session_date, known_at, post_open_features_json
+            FROM audit_candidate_rows
+            WHERE runtime_mode=?
+              AND post_open_features_json IS NOT NULL
+              AND post_open_features_json NOT IN ('', '{}')
+            ORDER BY known_at DESC
+            LIMIT 600
+            """,
+            (str(mode or "live"),),
+        ).fetchall()
+    except Exception as exc:
+        return CheckResult(
+            "candidate_audit.rvol_clock_contract",
+            "WARN",
+            f"RVOL clock check failed: {exc}",
+        )
+    finally:
+        if conn is not None:
+            conn.close()
+
+    latest_session: dict[str, str] = {}
+    latest_capture: dict[str, str] = {}
+    checked: dict[str, int] = {"KR": 0, "US": 0}
+    violations: list[dict[str, Any]] = []
+    timezone_by_market = {
+        "KR": ZoneInfo("Asia/Seoul") if ZoneInfo is not None else None,
+        "US": ZoneInfo("America/New_York") if ZoneInfo is not None else None,
+    }
+    open_minute = {"KR": 9 * 60, "US": 9 * 60 + 30}
+    restore_lag_min = max(
+        1,
+        int(float(os.getenv("INTRADAY_EVIDENCE_RESTORE_MAX_LAG_MIN", "5") or 5)),
+    )
+    allowed_clock_delta_min = restore_lag_min + 1
+    for market_raw, session_date, known_at, raw_payload in rows:
+        market = "US" if str(market_raw or "").upper() == "US" else "KR"
+        session = str(session_date or "")
+        if market not in latest_session:
+            latest_session[market] = session
+            latest_capture[market] = str(known_at or "")
+        if (
+            session != latest_session[market]
+            or str(known_at or "") != latest_capture[market]
+            or checked[market] >= 100
+        ):
+            continue
+        try:
+            payload = json.loads(str(raw_payload or "{}"))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        stored = payload.get("rvol_profile_elapsed_min")
+        if stored in (None, ""):
+            continue
+        try:
+            parsed = datetime.fromisoformat(str(known_at or "").replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=KST)
+            market_tz = timezone_by_market[market]
+            local = parsed.astimezone(market_tz) if market_tz is not None else parsed
+            expected = max(0, local.hour * 60 + local.minute - open_minute[market])
+            stored_int = int(float(stored))
+        except Exception:
+            continue
+        checked[market] += 1
+        if abs(stored_int - expected) > allowed_clock_delta_min:
+            violations.append(
+                {
+                    "market": market,
+                    "session_date": session,
+                    "known_at": str(known_at or ""),
+                    "stored_elapsed_min": stored_int,
+                    "expected_elapsed_min": expected,
+                }
+            )
+
+    total_checked = sum(checked.values())
+    status = "PASS" if total_checked > 0 and not violations else "WARN"
+    detail = (
+        f"checked={total_checked} by_market={checked} "
+        f"clock_violations={len(violations)} "
+        f"allowed_delta_min={allowed_clock_delta_min}"
+    )
+    data = {
+        "path": str(path),
+        "checked": total_checked,
+        "checked_by_market": checked,
+        "latest_session": latest_session,
+        "latest_capture": latest_capture,
+        "allowed_clock_delta_min": allowed_clock_delta_min,
+        "violations": violations[:20],
+    }
+    if status == "WARN":
+        data.update(
+            _warning_meta(
+                "candidate_rvol_clock_contract",
+                accepted=False,
+                action="restart with the corrected KST-naive timestamp contract before using RVOL evidence",
+            )
+        )
+    return CheckResult(
+        "candidate_audit.rvol_clock_contract",
+        status,
+        detail,
+        data,
+    )
+
+
 def _ticker_selection_attribution_checks(mode: str) -> list[CheckResult]:
     path = get_runtime_path("data", "ticker_selection_log.db", make_parents=False)
     if not path.exists():
@@ -5553,6 +5854,7 @@ def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, i
     checks.extend(_ml_db_health_checks(mode))
     checks.extend(_external_data_readiness_checks(config))
     checks.extend(_candidate_audit_outcome_checks(mode))
+    checks.append(_candidate_rvol_clock_check(mode))
     checks.extend(_ticker_selection_attribution_checks(mode))
     checks.extend(_ops_summary_checks(mode))
     checks.extend(_integrity_audit_checks(mode))

@@ -42,6 +42,7 @@ def main() -> int:
 
     closed = load_live_closed(ROOT / "state" / "live_decisions.jsonl")
     selection_rows = load_selection_rows(ROOT / "data" / "ticker_selection_log.db")
+    canonical_closed = load_canonical_closed(ROOT / "data" / "ml" / "decisions.db")
     preopen_rows = load_preopen_rows(ROOT / "state", ROOT / "logs" / "preopen")
     screener_rows = load_screener_quality(ROOT / "logs" / "screener_quality")
     action_rows = load_action_routing(ROOT / "logs" / "funnel")
@@ -51,6 +52,7 @@ def main() -> int:
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "basis": {
             "closed_trades": len(closed),
+            "canonical_closed_trades": len(canonical_closed),
             "selection_rows": len(selection_rows),
             "preopen_rows": len(preopen_rows),
             "valid_preopen_rows": sum(1 for row in preopen_rows if row.get("valid_outcome")),
@@ -61,10 +63,15 @@ def main() -> int:
                 "All inputs are local files or sqlite rows; no broker/API/Claude calls are made.",
                 "Preopen entry simulations are approximate: entry-to-final uses sampled anchor returns, not tick-level fills.",
                 "Forward return fields in ticker_selection_log are post-selection audit labels and must not be used inside live gating without known_at controls.",
+                "Canonical net portfolio rows are the profitability truth; state/live_decisions.jsonl is retained only as an operational close-event view.",
+                "Daily entry-cap simulations use v2_canonical_performance net portfolio truth when available; ticker_selection_log is only a legacy fallback.",
             ],
         },
-        "closed_trade": closed_trade_payload(closed),
-        "selection_gate": selection_payload(selection_rows),
+        "closed_trade": closed_trade_payload(closed, canonical_closed=canonical_closed),
+        "selection_gate": selection_payload(
+            selection_rows,
+            canonical_closed=canonical_closed,
+        ),
         "preopen": preopen_payload(preopen_rows),
         "screener_quality": screener_payload(screener_rows),
         "action_routing": action_payload(action_rows),
@@ -118,6 +125,58 @@ def load_selection_rows(db_path: Path) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     try:
         rows = [dict(row) for row in conn.execute("SELECT * FROM ticker_selection_log")]
+    finally:
+        conn.close()
+    return rows
+
+
+def load_canonical_closed(db_path: Path) -> list[dict[str, Any]]:
+    if not db_path.exists():
+        return []
+    conn = sqlite3.connect(str(db_path), timeout=10)
+    conn.row_factory = sqlite3.Row
+    try:
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='v2_canonical_performance'"
+        ).fetchone():
+            return []
+        columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(v2_canonical_performance)")
+        }
+        net_expr = (
+            "COALESCE(pnl_pct_net, pnl_pct)"
+            if "pnl_pct_net" in columns
+            else "pnl_pct"
+        )
+        portfolio_clause = (
+            "AND COALESCE(portfolio_realized, 0)=1"
+            if "portfolio_realized" in columns
+            else ""
+        )
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                f"""
+                SELECT
+                    session_date AS date,
+                    market,
+                    ticker,
+                    strategy,
+                    earliest_fill_at AS traded_at,
+                    {net_expr} AS pnl_pct
+                FROM v2_canonical_performance
+                WHERE runtime_mode='live'
+                  AND filled=1
+                  AND closed=1
+                  AND {net_expr} IS NOT NULL
+                  {portfolio_clause}
+                ORDER BY COALESCE(earliest_fill_at, session_date), ticker
+                """
+            )
+        ]
+    except sqlite3.Error:
+        return []
     finally:
         conn.close()
     return rows
@@ -227,7 +286,11 @@ def load_cohorts(state_dir: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def closed_trade_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def closed_trade_payload(
+    rows: list[dict[str, Any]],
+    *,
+    canonical_closed: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     strategy_rows = [row for row in rows if not is_broker_sync(row)]
     broker_sync_rows = [row for row in rows if is_broker_sync(row)]
     live_metrics = metrics_by(rows, lambda row: row.get("market"), "pnl_pct")
@@ -236,6 +299,17 @@ def closed_trade_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
     worst = sorted(rows, key=lambda row: safe_float(row.get("pnl_pct")))[:12]
     best = sorted(rows, key=lambda row: safe_float(row.get("pnl_pct")), reverse=True)[:12]
     return {
+        "profitability_truth_basis": (
+            "v2_canonical_performance_net"
+            if canonical_closed
+            else "state_live_decisions_operational_fallback"
+        ),
+        "canonical_by_market": metrics_by(canonical_closed or [], lambda row: row.get("market"), "pnl_pct"),
+        "canonical_by_strategy": metrics_by(
+            canonical_closed or [],
+            lambda row: f"{row.get('market')}|{row.get('strategy') or '(blank)'}",
+            "pnl_pct",
+        ),
         "by_market": live_metrics,
         "by_strategy": by_strategy,
         "broker_sync_operational": metrics_by(broker_sync_rows, lambda row: f"{row.get('market')}|broker_sync", "pnl_pct"),
@@ -252,7 +326,11 @@ def is_broker_sync(row: dict[str, Any]) -> bool:
     return strategy in {"broker_sync", "broker_balance"} or "broker_sync" in reason
 
 
-def selection_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def selection_payload(
+    rows: list[dict[str, Any]],
+    *,
+    canonical_closed: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     live = [row for row in rows if row.get("bot_mode") == "live"]
     paper = [row for row in rows if row.get("bot_mode") == "paper"]
     traded_live = [row for row in live if int(row.get("traded") or 0) == 1 and row.get("pnl_pct") is not None]
@@ -300,7 +378,12 @@ def selection_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "blocked_by_reason": blocked_by_reason(blocked_live),
         "missed_runup_top": compact_selection(missed[:20]),
-        "daily_caps": daily_caps(traded_live),
+        "daily_caps_basis": (
+            "v2_canonical_performance_net"
+            if canonical_closed
+            else "ticker_selection_log_legacy"
+        ),
+        "daily_caps": daily_caps(canonical_closed or traded_live),
     }
 
 
@@ -724,8 +807,21 @@ def to_markdown(payload: dict[str, Any]) -> str:
     lines.extend(["", "Notes:"])
     lines.extend(f"- {note}" for note in payload["basis"]["notes"])
 
-    lines.extend(section_metrics("Closed Trades By Market", payload["closed_trade"]["by_market"]))
-    lines.extend(section_metrics("Closed Trades By Strategy", payload["closed_trade"]["by_strategy"], limit=40))
+    lines.extend(
+        section_metrics(
+            f"Canonical Net Portfolio By Market ({payload['closed_trade'].get('profitability_truth_basis', 'unknown')})",
+            payload["closed_trade"].get("canonical_by_market", {}),
+        )
+    )
+    lines.extend(
+        section_metrics(
+            "Canonical Net Portfolio By Strategy",
+            payload["closed_trade"].get("canonical_by_strategy", {}),
+            limit=40,
+        )
+    )
+    lines.extend(section_metrics("Operational Close Events By Market", payload["closed_trade"]["by_market"]))
+    lines.extend(section_metrics("Operational Close Events By Strategy", payload["closed_trade"]["by_strategy"], limit=40))
     lines.extend(section_metrics("Broker Sync Operational Cases", payload["closed_trade"].get("broker_sync_operational", {}), limit=20))
     lines.extend(section_metrics("Selection Live Traded By Ready", payload["selection_gate"]["live_traded_by_trade_ready"]))
     lines.extend(section_metrics("Selection Live Traded By Strategy", payload["selection_gate"]["live_traded_by_strategy"], limit=40))
@@ -758,7 +854,10 @@ def to_markdown(payload: dict[str, Any]) -> str:
     lines.extend(list_table("Missed Selection Runup Top", payload["selection_gate"]["missed_runup_top"]))
 
     lines.append("")
-    lines.append("## Daily Entry Caps")
+    lines.append(
+        "## Daily Entry Caps "
+        f"({payload['selection_gate'].get('daily_caps_basis', 'unknown')})"
+    )
     lines.append("| Rule | Kept | N | W/L | Win | Avg | PF |")
     lines.append("|---|---:|---:|---:|---:|---:|---:|")
     for key, item in payload["selection_gate"]["daily_caps"].items():

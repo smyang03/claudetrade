@@ -12970,8 +12970,12 @@ async function loadSummary() {
     const effectiveTp = policyTarget || adviceTarget || tp;
     const effectiveSl = policyStop || adviceStop || sl;
     const adjustedLine = !!(policyTarget || adviceTarget || policyStop || adviceStop);
+    const isolatedOwner = String(pos.exit_owner || '').trim();
+    const isolatedExit = String(pos.exit_policy || '').toLowerCase() === 'isolated_strategy' && !!isolatedOwner;
     let stopLine = '';
-    if (isTrailing && trailSl > 0) {
+    if (isolatedExit) {
+      stopLine = `<span style="color:#fbbf24">전략 전용 출구</span> — ${isolatedOwner} · 일반 일중 손절/목표 미적용`;
+    } else if (isTrailing && trailSl > 0) {
       const distPct = curPrice > 0 ? ((trailSl / curPrice - 1) * 100).toFixed(1) : '';
       const tpTxt = fmtPx(effectiveTp) ? `${adjustedLine ? '조정 목표' : '최초 목표'} ${fmtPx(effectiveTp)}` : '';
       const trailStartTxt = fmtPx(tpPrice) ? `목표가 달성가 ${fmtPx(tpPrice)}` : '';
@@ -14124,8 +14128,12 @@ async function loadSummary() {
       const effectiveTp = policyTarget || adviceTarget || tp;
       const effectiveSl = policyStop || adviceStop || sl;
       const adjustedLine = !!(policyTarget || adviceTarget || policyStop || adviceStop);
+      const isolatedOwner = String(pos.exit_owner || '').trim();
+      const isolatedExit = String(pos.exit_policy || '').toLowerCase() === 'isolated_strategy' && !!isolatedOwner;
       let stopLine = '';
-      if (isTrailing && trailSl > 0) {
+      if (isolatedExit) {
+        stopLine = `<span style="color:#fbbf24">전략 전용 출구</span> — ${isolatedOwner} · 일반 일중 손절/목표 미적용`;
+      } else if (isTrailing && trailSl > 0) {
         const distPct = curPx > 0 ? ((trailSl / curPx - 1) * 100).toFixed(1) : '';
         const tpTxt = fmtPx(effectiveTp) ? `${adjustedLine ? '조정 목표' : '최초 목표'} ${fmtPx(effectiveTp)}` : '';
         const trailStartTxt = fmtPx(tpPrice) ? `목표가 달성가 ${fmtPx(tpPrice)}` : '';
@@ -15268,8 +15276,11 @@ async function loadPathB() {
     ? ` | 실행중 설정 차이 ${Object.entries(runtimeDrift).map(([k, v]) => `${koConfigKey(k)} ${koConfigValue(v.runtime_snapshot)}→${koConfigValue(v.file_effective)}`).join(', ')}`
     : '';
   const ctlReason = koPathBReason(ctl.reason || '');
+  const usEntryPolicy = `US 진입가 ${cfg.us_zone_fill_mode || 'shadow'}`
+    + ` (zone≥${Number(cfg.us_zone_fill_top_threshold || 0.67).toFixed(2)}, 목표≥${Number(cfg.us_zone_fill_reward_threshold_pct || 5).toFixed(1)}%)`
+    + ` | US gap ${cfg.us_gap_pullback_live_enabled ? '실주문' : '관측만'}`;
   document.getElementById('pathb-limits').textContent =
-    `1회 예산 ${fmtMoney(cfg.fixed_order_krw || 0)}원 | 투입금액 ${fmtPathBMoney(m.deployed_value || 0, m.currency || market)} | 동시보유 ${cfg.max_positions || 0}개 | 하루 진입 ${cfg.max_daily_entries || 0}회 | 최소 신뢰도 ${cfg.min_confidence || 0} | 당일청산 ${cfg.intraday_only ? '사용' : '미사용'} | 설정 ${src.start_config_applied ? '시작설정 적용' : '환경변수 기준'} | 제어 ${koControlBy(ctl.updated_by || 'default')}${ctlReason ? ' ' + ctlReason : ''}${conflictText}${runtimeDriftText}`;
+    `1회 예산 ${fmtMoney(cfg.fixed_order_krw || 0)}원 | 투입금액 ${fmtPathBMoney(m.deployed_value || 0, m.currency || market)} | 동시보유 ${cfg.max_positions || 0}개 | 하루 진입 ${cfg.max_daily_entries || 0}회 | 최소 신뢰도 ${cfg.min_confidence || 0} | 당일청산 ${cfg.intraday_only ? '사용' : '미사용'} | ${usEntryPolicy} | 설정 ${src.start_config_applied ? '시작설정 적용' : '환경변수 기준'} | 제어 ${koControlBy(ctl.updated_by || 'default')}${ctlReason ? ' ' + ctlReason : ''}${conflictText}${runtimeDriftText}`;
   const sel = b.selection || {};
   const sc = sel.counts || {};
   const noPlan = (sel.no_plan_reasons || []).map(koPathBSelectionReason).filter(Boolean);

@@ -73,6 +73,8 @@ class DashboardPathBTests(unittest.TestCase):
         self.assertIn("function pathbPreopenPolicyCell", body)
         self.assertIn("개장 재검증", body)
         self.assertIn("preopen_exit_policy_decision", body)
+        self.assertIn("US 진입가", body)
+        self.assertIn("US gap", body)
 
     def test_today_page_shows_pnl_source_badge_helpers(self) -> None:
         res = app.test_client().get("/")

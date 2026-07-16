@@ -1164,6 +1164,14 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         self.assertTrue(TradingBot._live_strategy_allowed(bot, "US", "momentum", "MODERATE_BULL"))
         self.assertIn("momentum", TradingBot._selection_active_strategies(bot, "US", "MODERATE_BULL"))
 
+    def test_us_gap_pullback_requires_explicit_live_enable(self) -> None:
+        bot = _make_bot()
+
+        self.assertFalse(TradingBot._live_strategy_allowed(bot, "US", "gap_pullback", "MODERATE_BULL"))
+        self.assertNotIn("gap_pullback", TradingBot._selection_active_strategies(bot, "US", "MODERATE_BULL"))
+        bot.runtime_config.values["US_GAP_PULLBACK_LIVE_ENABLED"] = True
+        self.assertTrue(TradingBot._live_strategy_allowed(bot, "US", "gap_pullback", "MODERATE_BULL"))
+
     def test_discovery_buy_ready_demoted_to_watch_by_default(self) -> None:
         bot = _make_bot()
         raw_meta = {
