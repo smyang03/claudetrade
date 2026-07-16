@@ -5,6 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
+$env:CLAUDETRADE_RUNTIME_DIR = $Root
 $PythonExe = if ($env:CLAUDETRADE_PYTHON) {
     $env:CLAUDETRADE_PYTHON
 } else {

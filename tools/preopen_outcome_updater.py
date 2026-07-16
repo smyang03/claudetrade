@@ -110,6 +110,34 @@ def _upsert_outcome_sample(candidate: dict, sample: dict) -> list[dict]:
     return samples
 
 
+def _compact_outcome_record_for_append(record: dict) -> dict:
+    """Persist one cadence sample while keeping cumulative state in preopen state.
+
+    ``candidate["outcome_samples"]`` is intentionally cumulative so the mutable
+    state and dashboard can recover the full intraday path after a restart.  The
+    JSONL log is already append-only, however, so copying that full list into
+    every cadence row grows the daily file quadratically.  Keep the matching
+    cadence sample only and expose the cumulative count for observability.
+    """
+    payload = dict(record or {})
+    samples = [dict(row) for row in (payload.get("outcome_samples") or []) if isinstance(row, dict)]
+    if not samples:
+        return payload
+    payload["outcome_sample_count"] = len(samples)
+    try:
+        offset_min = int(payload.get("offset_min"))
+    except (TypeError, ValueError):
+        offset_min = None
+    current = [
+        row
+        for row in samples
+        if offset_min is not None and int(row.get("offset_min", -1) or -1) == offset_min
+    ]
+    payload["outcome_samples"] = current[-1:] if current else samples[-1:]
+    payload["outcome_samples_compacted"] = True
+    return payload
+
+
 def _should_fetch_price(candidate: dict, state: dict) -> bool:
     data_quality = str(candidate.get("data_quality") or state.get("data_quality") or "").lower()
     provider = str(candidate.get("provider") or state.get("provider") or "").lower()
@@ -411,7 +439,12 @@ def update_once(market: str, *, offset_min: int, mode: str = "live") -> dict:
                 record["price_error"] = str(exc)[:240]
         record["outcome_status"] = _classify_outcome(record)
         candidate[f"outcome_{int(offset_min)}m_captured_at"] = captured_at
-        save_outcome_record(market, session_date, record, mode=runtime_mode)
+        save_outcome_record(
+            market,
+            session_date,
+            _compact_outcome_record_for_append(record),
+            mode=runtime_mode,
+        )
         updated += 1
     state["last_outcome_update_at"] = captured_at
     state["last_outcome_offset_min"] = int(offset_min)

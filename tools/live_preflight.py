@@ -45,6 +45,7 @@ from tools.order_unknown_evidence import (
     mark_order_unknown_remediation_hint as _shared_mark_order_unknown_remediation_hint,
     pathb_local_exposure_index as _shared_pathb_local_exposure_index,
 )
+from tools.candidate_consensus_status import candidate_consensus_status_path
 
 LIVE_CONFIG_KEYS = {
     "ENABLED_MARKETS",
@@ -2781,11 +2782,7 @@ def _heartbeat_checks(
             checks.append(
                 _heartbeat_check(
                     "runtime.candidate_consensus_shadow_status",
-                    get_runtime_path(
-                        "state",
-                        "candidate_consensus_shadow_status.json",
-                        make_parents=False,
-                    ),
+                    candidate_consensus_status_path("shadow"),
                     max_age_sec=129600,
                     process="candidate_consensus_shadow",
                 )
@@ -2793,15 +2790,33 @@ def _heartbeat_checks(
             checks.append(
                 _heartbeat_check(
                     "runtime.candidate_consensus_outcome_status",
-                    get_runtime_path(
-                        "state",
-                        "candidate_consensus_outcome_status.json",
-                        make_parents=False,
-                    ),
+                    candidate_consensus_status_path("outcome"),
                     max_age_sec=129600,
                     process="candidate_consensus_outcome_review",
                 )
             )
+            enabled_markets = {
+                item.strip().upper()
+                for item in str(values.get("ENABLED_MARKETS", "") or "").split(",")
+                if item.strip().upper() in {"KR", "US"}
+            }
+            for market_key in sorted(enabled_markets):
+                checks.append(
+                    _heartbeat_check(
+                        f"runtime.candidate_consensus_shadow_status_{market_key}",
+                        candidate_consensus_status_path("shadow", market_key),
+                        max_age_sec=129600,
+                        process=f"candidate_consensus_shadow_{market_key}",
+                    )
+                )
+                checks.append(
+                    _heartbeat_check(
+                        f"runtime.candidate_consensus_outcome_status_{market_key}",
+                        candidate_consensus_status_path("outcome", market_key),
+                        max_age_sec=129600,
+                        process=f"candidate_consensus_outcome_review_{market_key}",
+                    )
+                )
         if enabled("KR_DISCLOSURE_OBSERVER_ENABLED"):
             checks.append(
                 _heartbeat_check(

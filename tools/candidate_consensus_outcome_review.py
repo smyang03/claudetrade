@@ -24,6 +24,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from runtime_paths import get_runtime_path
+from tools.candidate_consensus_status import write_candidate_consensus_status
 
 
 AUTHORITY = "SHADOW_ONLY_NO_ORDER_AUTHORITY"
@@ -233,10 +234,12 @@ def main() -> int:
         decision_ledger=decision_ledger,
         outcome_ledger=outcome_ledger,
     )
-    status_path.parent.mkdir(parents=True, exist_ok=True)
-    status_path.write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    write_candidate_consensus_status(
+        summary,
+        kind="outcome",
+        markets=[args.market],
+        primary_path=status_path,
+        write_market_copy=not bool(args.status_output),
     )
     print(json.dumps(summary, ensure_ascii=False))
     return 0

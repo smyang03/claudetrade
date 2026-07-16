@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from runtime_paths import get_runtime_path
+from tools.candidate_consensus_status import write_candidate_consensus_status
 from tools.candidate_path_prediction_lab import (
     CATEGORICAL_FEATURES,
     FEATURE_GROUPS,
@@ -434,22 +435,14 @@ def main() -> int:
         screener_root=args.screener_root,
         ledger_path=args.ledger,
     )
-    status_path = get_runtime_path("state", "candidate_consensus_shadow_status.json")
-    status_path.parent.mkdir(parents=True, exist_ok=True)
-    temp = status_path.with_suffix(".tmp")
-    temp.write_text(
-        json.dumps(
-            {
-                **result,
-                "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-            default=str,
-        ),
-        encoding="utf-8",
+    write_candidate_consensus_status(
+        {
+            **result,
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        },
+        kind="shadow",
+        markets=markets,
     )
-    temp.replace(status_path)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True, default=str))
     return 0
 

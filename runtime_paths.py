@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 
 
@@ -9,15 +10,23 @@ _RUNTIME_ROOT: Path | None = None
 
 
 def _is_writable_dir(path: Path) -> bool:
+    probe: Path | None = None
     try:
         path.mkdir(parents=True, exist_ok=True)
-        probe = path / ".write_probe"
-        with open(probe, "w", encoding="utf-8") as f:
+        probe = path / f".write_probe_{os.getpid()}_{uuid.uuid4().hex}"
+        with open(probe, "x", encoding="utf-8") as f:
             f.write("ok")
         probe.unlink()
+        probe = None
         return True
     except OSError:
         return False
+    finally:
+        if probe is not None:
+            try:
+                probe.unlink()
+            except OSError:
+                pass
 
 
 def get_runtime_root() -> Path:

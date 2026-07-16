@@ -814,12 +814,17 @@ class LiveConfigSourceTests(unittest.TestCase):
                 {
                     "CANDIDATE_CONSENSUS_SHADOW_ENABLED": "true",
                     "KR_DISCLOSURE_OBSERVER_ENABLED": "true",
+                    "ENABLED_MARKETS": "KR,US",
                 },
             )
 
         names = [check.name for check in checks]
         self.assertIn("runtime.candidate_consensus_shadow_status", names)
         self.assertIn("runtime.candidate_consensus_outcome_status", names)
+        self.assertIn("runtime.candidate_consensus_shadow_status_KR", names)
+        self.assertIn("runtime.candidate_consensus_outcome_status_KR", names)
+        self.assertIn("runtime.candidate_consensus_shadow_status_US", names)
+        self.assertIn("runtime.candidate_consensus_outcome_status_US", names)
         self.assertIn("runtime.kr_disclosure_observer_status", names)
 
 

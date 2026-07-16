@@ -106,6 +106,7 @@ def test_headless_live_stack_launcher_covers_all_runtime_roles() -> None:
     assert "Start-Process" in text
     assert "-WindowStyle Hidden" in text
     assert "OPENBLAS_NUM_THREADS" in text
+    assert '$env:CLAUDETRADE_RUNTIME_DIR = $Root' in text
     assert "-RedirectStandardOutput" in text
     assert "-RedirectStandardError" in text
     for command in (

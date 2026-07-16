@@ -299,6 +299,65 @@ class PreopenShadowTests(unittest.TestCase):
         self.assertEqual(candidate["outcome_samples"][0]["return_basis"], "anchor_price")
         self.assertEqual(outcome[-1]["post_open_90m_return_pct"], 10.0)
 
+    def test_outcome_updater_compacts_append_log_without_losing_timeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preopen.storage.get_runtime_path", side_effect=_runtime_path(root)), patch(
+                "tools.preopen_collector.get_runtime_path",
+                side_effect=_runtime_path(root),
+            ):
+                save_preopen_state("US", {
+                    "market": "US",
+                    "session_date": "2026-05-04",
+                    "captured_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "collector_status": "ok",
+                    "provider": "screen_cache",
+                    "data_quality": "screen_cache_display",
+                    "candidates": [{
+                        "ticker": "AAA",
+                        "provider": "screen_cache",
+                        "data_quality": "screen_cache_display",
+                        "price": 100.0,
+                        "shadow_preopen_rank": 1,
+                    }],
+                }, session_date="2026-05-04")
+                with patch("tools.preopen_outcome_updater.resolve_session_date_str", return_value="2026-05-04"), patch(
+                    "kis_api.get_price",
+                    side_effect=[
+                        {
+                            "ticker": "AAA",
+                            "price": 101.0,
+                            "open": 100.0,
+                            "high": 102.0,
+                            "low": 99.0,
+                            "volume": 10_000,
+                        },
+                        {
+                            "ticker": "AAA",
+                            "price": 103.0,
+                            "open": 100.0,
+                            "high": 104.0,
+                            "low": 98.0,
+                            "volume": 20_000,
+                        },
+                    ],
+                ):
+                    update_once("US", mode="live", offset_min=5)
+                    update_once("US", mode="live", offset_min=30)
+                state = load_preopen_state("US", session_date="2026-05-04", max_age_min=24 * 60)
+                outcome_path = root / "logs" / "preopen" / "20260504_US_outcome.jsonl"
+                records = [json.loads(line) for line in outcome_path.read_text(encoding="utf-8").splitlines()]
+                dashboard = load_preopen_dashboard("US", session_date="2026-05-04")
+
+        self.assertEqual([row["outcome_sample_count"] for row in records], [1, 2])
+        self.assertTrue(all(row["outcome_samples_compacted"] for row in records))
+        self.assertEqual([len(row["outcome_samples"]) for row in records], [1, 1])
+        self.assertEqual([row["outcome_samples"][0]["offset_min"] for row in records], [5, 30])
+        self.assertEqual([row["offset_min"] for row in state["candidates"][0]["outcome_samples"]], [5, 30])
+        timeline = dashboard["outcome_timeline"][0]
+        self.assertEqual(timeline["returns_by_offset"]["5"], 1.0)
+        self.assertEqual(timeline["returns_by_offset"]["30"], 3.0)
+
     def test_outcome_updater_captures_current_audit_tickers_without_mutating_preopen_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
