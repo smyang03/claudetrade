@@ -82,6 +82,7 @@ state/candidate_health_*.json
 state/bucket_detection_state.json
 state/daily_baseline.json
 state/lesson_candidates.json
+state/lesson_action_registry.json
 state/pead_shadow_state.json
 # Dual runtime — paper/live 분리 파일 (모두 runtime 생성, git 제외)
 state/paper_*.json

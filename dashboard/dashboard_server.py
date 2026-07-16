@@ -7474,6 +7474,14 @@ def api_judgments():
     postmortem = rec.get("postmortem", {})
     r1 = rec.get("round1_judgments", {})
     changes = rec.get("debate_changes", [])
+    lesson_action = rec.get("lesson_action") or {}
+    if not lesson_action:
+        try:
+            from minority_report.lesson_actions import find_lesson_action
+
+            lesson_action = find_lesson_action(market, rec.get("date", ""))
+        except Exception:
+            lesson_action = {}
     return jsonify({
         "date":     rec.get("date", ""),
         "bull":     {**judgments.get("bull", {}),
@@ -7490,6 +7498,7 @@ def api_judgments():
                      "r1_stance": r1.get("neutral", {}).get("stance", "")},
         "consensus":    rec.get("consensus", {}),
         "lesson":       _clean_lesson(postmortem.get("key_lesson", "")),
+        "lesson_action": lesson_action,
         "debate_changes": changes,
         "basis":       _judgment_basis(rec, market),
     })
@@ -7684,10 +7693,27 @@ def api_patterns():
             continue
         lessons[cleaned] = max(lessons.get(cleaned, 0), 1)
     top_lessons = sorted(lessons.items(), key=lambda x: x[1], reverse=True)[:10]
+    lesson_action_patterns = []
+    try:
+        from minority_report.lesson_actions import load_lesson_action_registry
+
+        registry = load_lesson_action_registry()
+        lesson_action_patterns = [
+            {"id": key, **value}
+            for key, value in (registry.get("patterns") or {}).items()
+            if str(value.get("market") or "").upper() == str(market or "").upper()
+        ]
+        lesson_action_patterns.sort(
+            key=lambda row: (str(row.get("last_session") or ""), int(row.get("occurrences") or 0)),
+            reverse=True,
+        )
+    except Exception:
+        lesson_action_patterns = []
     return jsonify({
         "lessons": [{"text": k, "count": v} for k, v in top_lessons],
         "modes":   normalized_modes,
         "active_lessons": _dashboard_active_lessons_payload(market, request_mode),
+        "lesson_action_patterns": lesson_action_patterns[:20],
         "unit": "percent",
     })
 
@@ -12024,6 +12050,16 @@ async function loadJudgments() {
 
   if (d.lesson) {
     sec.innerHTML += `<div class="lesson-box">오늘의 교훈: ${escapeHtml(d.lesson)}</div>`;
+  }
+  const action = d.lesson_action || {};
+  if (action.root_cause) {
+    const validation = action.validation_contract || {};
+    const recommendation = action.recommended_action_ko || action.recommended_action || '-';
+    const metric = validation.metric ? ` · forward: ${escapeHtml(validation.metric)}` : '';
+    sec.innerHTML += `<div class="lesson-box" style="border-left-color:var(--cyan)">
+      <b>개선 액션(매매권한 없음)</b>: ${escapeHtml(action.root_cause)} · ${escapeHtml(action.status || 'OBSERVED')}${metric}<br>
+      <span style="color:var(--text-dim)">${escapeHtml(recommendation)}</span>
+    </div>`;
   }
 }
 

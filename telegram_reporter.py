@@ -783,6 +783,24 @@ def _clean_postmortem_lesson(text: str) -> str:
     return "" if any(p in text for p in placeholders) else text
 
 
+def _lesson_action_block(action: Optional[dict]) -> str:
+    if not isinstance(action, dict) or not action.get("root_cause"):
+        return ""
+    root = str(action.get("root_cause") or "OBSERVATION")
+    status = str(action.get("status") or "OBSERVED")
+    recommendation = str(
+        action.get("recommended_action_ko") or action.get("recommended_action") or ""
+    ).strip()
+    validation = action.get("validation_contract") or {}
+    metric = str(validation.get("metric") or "").strip()
+    lines = [f"개선 액션(매매권한 없음): <b>{root}</b> · {status}"]
+    if recommendation:
+        lines.append(f"  {recommendation[:220]}")
+    if metric:
+        lines.append(f"  forward 판정: {metric}")
+    return "\n".join(lines) + "\n\n"
+
+
 def daily_summary(
     date: str,
     market: str,
@@ -795,6 +813,7 @@ def daily_summary(
     postmortem: dict,
     realized_excluding_eval_pnl_krw: Optional[float] = None,
     unrealized_today_delta_krw: Optional[float] = None,
+    lesson_action: Optional[dict] = None,
 ) -> str:
     icon = "🇰🇷" if market == "KR" else "🇺🇸"
     credit_line = _credit_line()
@@ -812,6 +831,7 @@ def daily_summary(
         f"오늘의 교훈:\n"
         f"  {lesson}\n\n"
     ) if lesson else ""
+    action_block = _lesson_action_block(lesson_action)
     text = (
         f"━━━━━━━━━━━\n"
         f"{icon} <b>[{MODE_LABEL}][일일 결산] {date} {market}</b>\n"
@@ -824,6 +844,7 @@ def daily_summary(
         f"  하락 분석가: {_ko_result(postmortem.get('bear_result', '?'))}\n"
         f"  중립 분석가: {_ko_result(postmortem.get('neutral_result', '?'))}\n\n"
         f"{lesson_block}"
+        f"{action_block}"
         f"{credit_line}\n"
         f"━━━━━━━━━━━"
     )

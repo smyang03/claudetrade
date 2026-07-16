@@ -40004,6 +40004,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self.today_judgment["ops_review_snapshot"] = ops_review_snapshot
         self.today_judgment["runtime_safety_summary"] = runtime_safety_summary
         self._emit_session_runtime_safety_alerts(market, runtime_safety_summary)
+        lesson_action = {}
+        try:
+            from minority_report.lesson_actions import classify_lesson_action, record_lesson_action
+
+            lesson_action = classify_lesson_action(
+                market=market,
+                session_date=today,
+                postmortem=pm,
+                actual_result=actual,
+                trade_log=session_trades,
+                ops_review_snapshot=ops_review_snapshot,
+                runtime_safety_summary=runtime_safety_summary,
+                judgment_eval=judgment_eval,
+            )
+            lesson_action = record_lesson_action(lesson_action)
+            self.today_judgment["lesson_action"] = lesson_action
+            log.info(
+                f"[lesson action {market}] root={lesson_action.get('root_cause')} "
+                f"status={lesson_action.get('status')} authority={lesson_action.get('authority')}"
+            )
+        except Exception as _lesson_action_exc:
+            # Observability-only: a registry failure must never block close or
+            # gain authority over prompts, configuration, sizing, or orders.
+            log.warning(f"[lesson action {market}] registry update failed: {_lesson_action_exc}")
         lesson_candidates = self._persist_lesson_candidates(market, ops_review_snapshot)
         # 반복 기반 자동 신뢰 원장 갱신 — 독립 패턴 교훈이 3세션 반복되면 자동 승인
         try:
@@ -40057,6 +40081,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "judgment_eval": judgment_eval,
                 "ops_review_snapshot": ops_review_snapshot,
                 "runtime_safety_summary": runtime_safety_summary,
+                "lesson_action": lesson_action,
         # ── 파인튜닝/프롬프트 개선을 위한 완전한 training record 저장 ──────────
                 "trades": session_trades,
             }},
@@ -40071,6 +40096,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "judgment_eval": judgment_eval,
             "ops_review_snapshot": ops_review_snapshot,
             "runtime_safety_summary": runtime_safety_summary,
+            "lesson_action": lesson_action,
             "postmortem":     pm,
             "trades":         session_trades,
             "decision_events": [e for e in self.decision_event_log if e.get("market") == market],
@@ -40102,6 +40128,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             pm,
             realized_excluding_eval_pnl_krw=actual["pnl_krw"],
             unrealized_today_delta_krw=0,
+            lesson_action=lesson_action,
         )
         log.info(f"[{market}] summary | {actual['pnl_pct']:+.2f}% | {actual['pnl_krw']:+,}")
         try:
