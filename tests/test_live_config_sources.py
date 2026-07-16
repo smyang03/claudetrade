@@ -800,6 +800,28 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertEqual(checks[1].kwargs["process"], "paper_preopen_scheduler")
         self.assertEqual(checks[2].kwargs["process"], "paper_broker_truth_scheduler")
 
+    def test_live_optional_heartbeat_checks_use_effective_config(self) -> None:
+        with patch(
+            "tools.live_preflight._heartbeat_check",
+            side_effect=lambda name, path, **kwargs: SimpleNamespace(
+                name=name,
+                path=str(path),
+                kwargs=kwargs,
+            ),
+        ):
+            checks = _heartbeat_checks(
+                "live",
+                {
+                    "CANDIDATE_CONSENSUS_SHADOW_ENABLED": "true",
+                    "KR_DISCLOSURE_OBSERVER_ENABLED": "true",
+                },
+            )
+
+        names = [check.name for check in checks]
+        self.assertIn("runtime.candidate_consensus_shadow_status", names)
+        self.assertIn("runtime.candidate_consensus_outcome_status", names)
+        self.assertIn("runtime.kr_disclosure_observer_status", names)
+
 
 if __name__ == "__main__":
     unittest.main()

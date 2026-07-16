@@ -469,6 +469,7 @@ def load_first_candidates(audit_db: Path, *, markets: Iterable[str]) -> pd.DataF
             WHERE type='table' AND name='candidate_registry_first'
             """
         ).fetchone()
+        registry_frame = pd.DataFrame(columns=output_columns)
         if registry_exists:
             registry_rows = con.execute(
                 f"""
@@ -510,8 +511,34 @@ def load_first_candidates(audit_db: Path, *, markets: Iterable[str]) -> pd.DataF
                             sort_keys=True,
                         )
                     records.append(record)
-                return pd.DataFrame(records, columns=output_columns)
-        return pd.read_sql_query(sql, con, params=selected)
+                registry_frame = pd.DataFrame(records, columns=output_columns)
+        mutable_frame = pd.read_sql_query(sql, con, params=selected)
+        if registry_frame.empty:
+            return mutable_frame
+        if mutable_frame.empty:
+            return registry_frame
+        registry_identity = {
+            (
+                str(row.market).upper(),
+                str(row.session_date),
+                str(row.ticker).upper(),
+            )
+            for row in registry_frame.itertuples(index=False)
+        }
+        mutable_identity = mutable_frame.apply(
+            lambda row: (
+                str(row["market"]).upper(),
+                str(row["session_date"]),
+                str(row["ticker"]).upper(),
+            ),
+            axis=1,
+        )
+        mutable_frame = mutable_frame[~mutable_identity.isin(registry_identity)]
+        return (
+            pd.concat([mutable_frame, registry_frame], ignore_index=True, sort=False)
+            .sort_values(["market", "session_date", "ticker", "known_at"])
+            .reset_index(drop=True)
+        )
     finally:
         con.close()
 

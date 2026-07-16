@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 from pathlib import Path
 
 import pandas as pd
 
-from audit.candidate_audit_store import CandidateAuditStore
+from audit.candidate_audit_store import CandidateAuditStore, candidate_registry_key
 from tools.candidate_path_prediction_lab import (
     FEATURE_GROUPS,
     _daily_top,
@@ -137,6 +138,53 @@ def test_first_candidate_loader_prefers_immutable_registry_snapshot() -> None:
     assert frame.iloc[0]["candidate_price"] == 74.0
     assert frame.iloc[0]["trainer_prompt_score"] == 0.4
     assert str(frame.iloc[0]["candidate_key"]).startswith("creg_")
+
+
+def test_first_candidate_loader_keeps_legacy_sessions_when_registry_starts() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "candidate_audit.db"
+        store = CandidateAuditStore(db)
+        store.upsert_candidate(
+            {
+                "runtime_mode": "live",
+                "market": "US",
+                "session_date": "2026-07-15",
+                "ticker": "AAPL",
+                "call_id": "legacy",
+                "known_at": "2026-07-15T13:31:00+00:00",
+                "price": 200.0,
+            }
+        )
+        con = sqlite3.connect(db)
+        try:
+            legacy_registry = candidate_registry_key(
+                runtime_mode="live",
+                market="US",
+                session_date="2026-07-15",
+                ticker="AAPL",
+            )
+            con.execute("DELETE FROM candidate_registry_quotes WHERE registry_key=?", (legacy_registry,))
+            con.execute("DELETE FROM candidate_registry_events WHERE registry_key=?", (legacy_registry,))
+            con.execute("DELETE FROM candidate_registry_first WHERE registry_key=?", (legacy_registry,))
+            con.commit()
+        finally:
+            con.close()
+        store.upsert_candidate(
+            {
+                "runtime_mode": "live",
+                "market": "US",
+                "session_date": "2026-07-16",
+                "ticker": "PYPL",
+                "call_id": "registry",
+                "known_at": "2026-07-16T13:31:00+00:00",
+                "price": 74.0,
+            }
+        )
+        frame = load_first_candidates(db, markets=["US"])
+
+    assert set(frame["ticker"]) == {"AAPL", "PYPL"}
+    assert frame.loc[frame["ticker"] == "AAPL", "candidate_key"].iloc[0].startswith("cand_")
+    assert frame.loc[frame["ticker"] == "PYPL", "candidate_key"].iloc[0].startswith("creg_")
 
 
 def test_session_entry_floor_respects_market_clock_and_dst() -> None:

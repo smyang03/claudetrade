@@ -2719,8 +2719,21 @@ def _heartbeat_check(name: str, path: Path, *, max_age_sec: int, process: str) -
     return CheckResult(name, "PASS", f"{process} heartbeat fresh age_sec={age}", data)
 
 
-def _heartbeat_checks(mode: str) -> list[CheckResult]:
+def _heartbeat_checks(
+    mode: str,
+    effective_env: dict[str, Any] | None = None,
+) -> list[CheckResult]:
     runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+    values = effective_env if effective_env is not None else os.environ
+
+    def enabled(name: str) -> bool:
+        return str(values.get(name, "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
     guardian_name = "live_guardian_heartbeat.json" if runtime_mode == "live" else f"{runtime_mode}_guardian_heartbeat.json"
     preopen_name = "preopen_scheduler_heartbeat.json" if runtime_mode == "live" else f"{runtime_mode}_preopen_scheduler_heartbeat.json"
     broker_truth_name = (
@@ -2764,12 +2777,7 @@ def _heartbeat_checks(mode: str) -> list[CheckResult]:
                 process="core_shadow_tracker",
             )
         )
-        if str(os.getenv("CANDIDATE_CONSENSUS_SHADOW_ENABLED", "")).strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }:
+        if enabled("CANDIDATE_CONSENSUS_SHADOW_ENABLED"):
             checks.append(
                 _heartbeat_check(
                     "runtime.candidate_consensus_shadow_status",
@@ -2782,12 +2790,19 @@ def _heartbeat_checks(mode: str) -> list[CheckResult]:
                     process="candidate_consensus_shadow",
                 )
             )
-        if str(os.getenv("KR_DISCLOSURE_OBSERVER_ENABLED", "")).strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }:
+            checks.append(
+                _heartbeat_check(
+                    "runtime.candidate_consensus_outcome_status",
+                    get_runtime_path(
+                        "state",
+                        "candidate_consensus_outcome_status.json",
+                        make_parents=False,
+                    ),
+                    max_age_sec=129600,
+                    process="candidate_consensus_outcome_review",
+                )
+            )
+        if enabled("KR_DISCLOSURE_OBSERVER_ENABLED"):
             checks.append(
                 _heartbeat_check(
                     "runtime.kr_disclosure_observer_status",
@@ -5304,7 +5319,7 @@ def run_preflight(mode: str = "live", *, allow_config_conflicts: bool = False, i
     checks.extend(_state_checks(config, mode))
     checks.append(_runtime_handoff_cache_hygiene_check(mode))
     checks.append(_process_inventory_check(mode))
-    checks.extend(_heartbeat_checks(mode))
+    checks.extend(_heartbeat_checks(mode, config.get("effective", {})))
     checks.extend(_static_code_checks(config.get("effective", {})))
     checks.extend(_pathb_feature_checks())
     if include_dashboard:

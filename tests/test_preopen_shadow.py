@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timedelta
@@ -168,6 +169,38 @@ class PreopenShadowTests(unittest.TestCase):
         self.assertEqual(state["candidate_count"], 1)
         place_order.assert_not_called()
 
+    def test_preopen_collector_registers_observation_without_mutable_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audit_db = root / "data" / "audit" / "candidate_audit.db"
+            env = {
+                "ENABLE_CANDIDATE_AUDIT_LIVE": "true",
+                "CANDIDATE_AUDIT_DB_PATH": str(audit_db),
+            }
+            with patch.dict("os.environ", env), patch(
+                "tools.preopen_collector.get_runtime_path",
+                side_effect=_runtime_path(root),
+            ), patch(
+                "preopen.storage.get_runtime_path",
+                side_effect=_runtime_path(root),
+            ):
+                state = collect_once("US", mode="live", tickers="PYPL")
+
+            con = sqlite3.connect(audit_db)
+            try:
+                registry_count = con.execute(
+                    "SELECT COUNT(*) FROM candidate_registry_first"
+                ).fetchone()[0]
+                mutable_count = con.execute(
+                    "SELECT COUNT(*) FROM audit_candidate_rows"
+                ).fetchone()[0]
+            finally:
+                con.close()
+
+        self.assertEqual(state["candidate_registry"]["registered"], 1)
+        self.assertEqual(registry_count, 1)
+        self.assertEqual(mutable_count, 0)
+
     def test_kr_collector_uses_kis_screen_when_token_is_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -314,7 +347,7 @@ class PreopenShadowTests(unittest.TestCase):
         self.assertEqual(result["sampled"], 2)
         self.assertEqual([row["ticker"] for row in state["candidates"]], ["AAA"])
         audit_record = next(row for row in records if row["ticker"] == "BBB")
-        self.assertEqual(audit_record["outcome_capture_source"], "audit_candidate_rows")
+        self.assertEqual(audit_record["outcome_capture_source"], "candidate_registry_first")
         self.assertEqual(audit_record["price"], 210.0)
 
     def test_paper_preopen_state_and_logs_are_separated_from_live(self) -> None:

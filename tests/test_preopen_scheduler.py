@@ -232,6 +232,25 @@ class PreopenSchedulerTests(unittest.TestCase):
             ("--session-date", "2026-05-04", "--market", "KR"),
         )
 
+    def test_candidate_consensus_outcome_review_runs_after_sixty_minute_label(self) -> None:
+        now = datetime(2026, 5, 4, 10, 16, tzinfo=KST)
+        with patch.dict(
+            "os.environ",
+            {"CANDIDATE_CONSENSUS_SHADOW_ENABLED": "true"},
+        ), patch("preopen.scheduler.is_trading_day", return_value=True):
+            jobs = due_jobs(now_dt=now, markets=["KR"], mode="live")
+
+        review = [
+            job for job in jobs
+            if job.kind == "candidate_consensus_outcome_review"
+        ]
+        self.assertEqual(len(review), 1)
+        self.assertEqual(review[0].due_at, "2026-05-04T10:15:00+09:00")
+        self.assertEqual(
+            review[0].script,
+            "tools/candidate_consensus_outcome_review.py",
+        )
+
     def test_kr_disclosure_observer_runs_preopen_when_enabled(self) -> None:
         now = datetime(2026, 5, 4, 8, 26, tzinfo=KST)
         with patch.dict(

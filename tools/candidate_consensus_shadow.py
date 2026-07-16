@@ -42,6 +42,19 @@ DEFAULT_PRICE_ROOT = ROOT / "data" / "price"
 DEFAULT_SCREENER_ROOT = ROOT / "logs" / "screener_quality"
 
 
+def _consensus_decision(
+    *,
+    left_selected: bool,
+    right_selected: bool,
+    shared_features: list[str],
+) -> tuple[str, str]:
+    if shared_features:
+        return "ABSTAIN", "feature_overlap_fail_closed"
+    if left_selected and right_selected:
+        return "SELECT_SHADOW", ""
+    return "ABSTAIN", "top3_intersection_not_met"
+
+
 def _opening_rows(frame: pd.DataFrame, market: str) -> pd.DataFrame:
     subset = frame[frame["market"].astype(str).str.upper() == market].copy()
     known = pd.to_datetime(subset["known_at"], utc=True, errors="coerce")
@@ -335,12 +348,12 @@ def run_shadow(
                 getattr(left_row, "candidate_key", "")
                 or getattr(right_row, "candidate_key", "")
             )
-            selected = bool(
-                left_row is not None
-                and right_row is not None
-                and bool(left_row.arm_selected)
-                and bool(right_row.arm_selected)
+            decision, abstain_reason = _consensus_decision(
+                left_selected=bool(left_row is not None and left_row.arm_selected),
+                right_selected=bool(right_row is not None and right_row.arm_selected),
+                shared_features=feature_overlap,
             )
+            selected = decision == "SELECT_SHADOW"
             event_seed = "|".join(
                 [session_date, market_key, ticker, candidate_key, contract_hash]
             )
@@ -353,7 +366,8 @@ def run_shadow(
                     "market": market_key,
                     "ticker": ticker,
                     "candidate_key": candidate_key,
-                    "decision": "SELECT_SHADOW" if selected else "ABSTAIN",
+                    "decision": decision,
+                    "abstain_reason": abstain_reason,
                     "left": (
                         {
                             "arm": left_row.arm,

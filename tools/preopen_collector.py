@@ -56,6 +56,106 @@ def _screen_mode(market: str) -> str:
     return os.getenv(f"PREOPEN_{market}_SCREEN_MODE", os.getenv("PREOPEN_SCREEN_MODE", "NEUTRAL")).strip() or "NEUTRAL"
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _candidate_audit_db_path() -> Path:
+    raw = str(os.getenv("CANDIDATE_AUDIT_DB_PATH", "") or "").strip()
+    if not raw:
+        return get_runtime_path("data", "audit", "candidate_audit.db")
+    path = Path(raw).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+def _register_preopen_candidates(
+    market: str,
+    session_date: str,
+    captured_at: str,
+    candidates: list[dict],
+    *,
+    runtime_mode: str,
+) -> dict:
+    enabled = (
+        _env_bool("ENABLE_CANDIDATE_AUDIT_LIVE", False)
+        if runtime_mode == "live"
+        else _env_bool("ENABLE_CANDIDATE_AUDIT_SHADOW", False)
+    )
+    summary = {
+        "authority": "SHADOW_ONLY_NO_ORDER_AUTHORITY",
+        "enabled": enabled,
+        "attempted": 0,
+        "registered": 0,
+        "error": "",
+    }
+    if not enabled or not candidates:
+        return summary
+    try:
+        from audit.candidate_audit_store import CandidateAuditStore
+
+        store = CandidateAuditStore(_candidate_audit_db_path())
+        call_id = f"preopen:{market}:{session_date}:{captured_at}"
+        for candidate in candidates:
+            ticker = str(candidate.get("ticker") or "").strip().upper()
+            if not ticker:
+                continue
+            summary["attempted"] += 1
+            price = (
+                candidate.get("extended_price")
+                or candidate.get("price")
+                or candidate.get("anchor_price")
+            )
+            change_pct = (
+                candidate.get("extended_change_pct")
+                if candidate.get("extended_change_pct") not in (None, "")
+                else candidate.get("gap_pct", candidate.get("change_rate"))
+            )
+            store.register_candidate_snapshot(
+                {
+                    "runtime_mode": runtime_mode,
+                    "market": market,
+                    "session_date": session_date,
+                    "ticker": ticker,
+                    "call_id": call_id,
+                    "known_at": captured_at,
+                    "source_file": "tools.preopen_collector",
+                    "registry_phase": "preopen_collector",
+                    "classification": "preopen_shadow_candidate",
+                    "name": candidate.get("name", ticker),
+                    "price": price,
+                    "change_pct": change_pct,
+                    "volume_ratio": candidate.get("volume_ratio"),
+                    "turnover": candidate.get("extended_dollar_volume")
+                    or candidate.get("prior_day_traded_value"),
+                    "candidate_source": candidate.get("source", ""),
+                    "liquidity_bucket": candidate.get("liquidity_bucket", ""),
+                    "market_type": candidate.get("market_type", ""),
+                    "primary_bucket": candidate.get("category", ""),
+                    "prompt_rank": candidate.get("shadow_preopen_rank")
+                    or candidate.get("provider_rank"),
+                    "news_score": candidate.get("news_score"),
+                    "news_or_earnings_count": candidate.get("news_or_earnings_count"),
+                    "news_quality": candidate.get("news_quality", ""),
+                    "news_signal_type": candidate.get("news_signal_type", ""),
+                    "payload": {
+                        "preopen_grade": candidate.get("preopen_grade"),
+                        "preopen_score": candidate.get("preopen_score"),
+                        "data_quality": candidate.get("data_quality"),
+                        "provider": candidate.get("provider"),
+                        "preopen_pinned": candidate.get("preopen_pinned"),
+                        "preopen_pin_tier": candidate.get("preopen_pin_tier"),
+                    },
+                }
+            )
+            summary["registered"] += 1
+    except Exception as exc:
+        summary["error"] = f"{type(exc).__name__}:{str(exc)[:240]}"
+    return summary
+
+
 def _token_paths(mode: str, market: str) -> list[Path]:
     market_key = _market_key(market).lower()
     paths = [get_runtime_path("state", f"{mode}_kis_token_{market_key}.json")]
@@ -390,6 +490,13 @@ def collect_once(market: str, *, mode: str = "live", tickers: str = "") -> dict:
             "does not affect bot selection or orders",
         ],
     }
+    state["candidate_registry"] = _register_preopen_candidates(
+        market,
+        session_date,
+        captured_at,
+        candidates,
+        runtime_mode=runtime_mode,
+    )
     save_preopen_state(market, state, session_date=session_date, mode=runtime_mode)
     save_candidate_records(market, session_date, candidates, state, mode=runtime_mode)
     return state

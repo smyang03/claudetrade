@@ -1216,6 +1216,39 @@ class CandidateAuditStore:
         finally:
             conn.close()
 
+    def register_candidate_snapshot(self, row: dict[str, Any]) -> None:
+        """Write only the immutable prospective registry.
+
+        Preopen research collectors use this entry point so their candidates
+        share the same point-in-time registry without creating mutable audit
+        decisions or affecting the live selection/order path.
+        """
+
+        now = _utc_now()
+        market = str(row.get("market") or "").upper()
+        runtime_mode = str(row.get("runtime_mode") or "live").lower()
+        session_date = str(row.get("session_date") or "")
+        ticker = str(row.get("ticker") or "").strip().upper()
+        if not market or not session_date or not ticker:
+            return
+        registry_key = candidate_registry_key(
+            runtime_mode=runtime_mode,
+            session_date=session_date,
+            market=market,
+            ticker=ticker,
+        )
+        conn = self.connect()
+        try:
+            with conn:
+                self._register_candidate_snapshot(
+                    conn,
+                    row,
+                    registry_key=registry_key,
+                    now=now,
+                )
+        finally:
+            conn.close()
+
     def candidate_row_uniqueness(
         self,
         *,

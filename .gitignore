@@ -100,6 +100,7 @@ state/us_swing_execution_status.json
 state/us_swing_status.json
 state/us_swing_veto_*.json
 state/candidate_consensus_shadow_status.json
+state/candidate_consensus_outcome_status.json
 state/kr_disclosure_observer_status.json
 # 날짜별 유니버스 스냅샷 (재생성 가능)
 data/universe/

@@ -393,6 +393,24 @@ def due_jobs(
                     script="tools/candidate_consensus_shadow.py",
                     args=("--session-date", session_date, "--market", mkt),
                 ))
+            outcome_review_due_dt = open_dt + timedelta(minutes=75)
+            outcome_review_late_by = (
+                now_dt - outcome_review_due_dt
+            ).total_seconds() / 60.0
+            job_id = f"{runtime_mode}:{session_date}:{mkt}:candidate_consensus_outcome_review"
+            if (
+                0 <= outcome_review_late_by <= max(0, int(outcome_catchup_min))
+                and (force or job_id not in completed)
+            ):
+                jobs.append(PreopenJob(
+                    market=mkt,
+                    session_date=session_date,
+                    kind="candidate_consensus_outcome_review",
+                    job_id=job_id,
+                    due_at=outcome_review_due_dt.isoformat(timespec="seconds"),
+                    script="tools/candidate_consensus_outcome_review.py",
+                    args=("--session-date", session_date, "--market", mkt),
+                ))
 
         offsets = (
             outcome_offsets_min
