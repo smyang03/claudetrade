@@ -40920,9 +40920,31 @@ def main(is_paper: bool = True):
     if us_mid_session and "US" in enabled_markets:
         log.info("[startup] US 세션 진행 중 - session_open 즉시 실행")
         bot.session_open("US", trigger="startup_mid_session")
+    consecutive_loop_errors = 0
     try:
         while True:
-            schedule.run_pending()
+            # 한 잡 콜백의 비포획 예외가 스케줄러 루프를 무너뜨려 양 시장을 동시에
+            # 죽이지 않도록 사이클 단위로 격리한다. 예외는 삼키지 않고 로그+텔레그램
+            # (폭주 방지 스로틀)으로 알린 뒤 다음 사이클을 계속한다. 손절·청산은
+            # 다음 사이클에서 재시도되고, 지속 실패는 연속 카운트로 운영자에게 드러난다.
+            try:
+                schedule.run_pending()
+                consecutive_loop_errors = 0
+            except Exception as loop_exc:
+                consecutive_loop_errors += 1
+                log.error(
+                    "[main loop] run_pending 예외 — 사이클 스킵·프로세스 유지 "
+                    f"(연속 {consecutive_loop_errors}회): {loop_exc}",
+                    exc_info=True,
+                )
+                if consecutive_loop_errors in (1, 5, 25, 100):
+                    try:
+                        send(
+                            f"🚨 메인 루프 예외(프로세스 유지, 연속 {consecutive_loop_errors}회): "
+                            f"{str(loop_exc)[:200]}"
+                        )
+                    except Exception:
+                        pass
             bot._write_main_loop_heartbeat()
             time.sleep(1)
     finally:
