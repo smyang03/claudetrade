@@ -25737,7 +25737,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     continue
                 if reason_priority.get(cand.get("reason", ""), 99) < reason_priority.get(prev.get("reason", ""), 99):
                     deduped[key] = cand
-            for cand in deduped.values():
+            # 손실 방어(하드 스톱)가 이익 실현 소프트 중재(profit_floor/trail_stop의
+            # Claude 8초 arbitration)에 밀리지 않도록, 중재 대상 후보를 하드 후보 뒤로
+            # 정렬한다. deduped.values()의 삽입 순서로는 한 배치의 이익 중재가 같은
+            # 배치의 loss_cap/stop_loss 실행을 최대 8초 지연시킬 수 있었다(락·로직 무변경,
+            # 순서만 조정). 하드 그룹 내부는 기존 reason_priority(loss_cap 최우선)를 유지.
+            _arbitration_reasons = {"profit_floor", "trail_stop"}
+            _ordered_candidates = sorted(
+                deduped.values(),
+                key=lambda c: (
+                    1 if str(c.get("reason", "")) in _arbitration_reasons else 0,
+                    reason_priority.get(str(c.get("reason", "")), 99),
+                ),
+            )
+            for cand in _ordered_candidates:
                 if float(cand.get("exit_price") or 0) <= 0:
                     log.error(f"[exit skip] {cand['ticker']} exit_price={cand.get('exit_price')} <= 0 — 매도 차단 (가격 조회 실패)")
                     continue
