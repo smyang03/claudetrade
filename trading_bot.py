@@ -40043,6 +40043,34 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                        unrealized_today_delta_krw=unrealized_today_delta_krw,
                        buy_readiness=buy_readiness)
         self._last_tg_state = state
+    def _write_main_loop_heartbeat(self) -> None:
+        """메인 스케줄 루프의 생존을 시장 상태와 무관하게 파일로 남긴다.
+
+        _heartbeat(텔레그램 요약, 세션 활성 시에만)와 달리 휴장·마감에도 매 루프
+        갱신되므로, guardian이 이 파일의 나이로 hang(프로세스는 살아있으나 루프가
+        정지)을 감지할 수 있다. 프로세스 PID 생존만 보는 기존 감시의 사각을 메운다.
+        실패는 조용히 무시한다(감시 보조 신호이며 매매를 막지 않는다). 30초 스로틀.
+        """
+        now = time.time()
+        if now - getattr(self, "_last_main_loop_hb_ts", 0.0) < 30.0:
+            return
+        self._last_main_loop_hb_ts = now
+        try:
+            mode = "paper" if getattr(self, "is_paper", True) else "live"
+            path = get_runtime_path("state", f"{mode}_main_loop_heartbeat.json")
+            payload = {
+                "pid": os.getpid(),
+                "written_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "epoch": now,
+                "session_active": bool(getattr(self, "session_active", False)),
+                "current_market": str(getattr(self, "current_market", "") or ""),
+            }
+            tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception:
+            pass
+
     def _heartbeat(self):
         """1시간마다 로그 + 변화 없어도 강제 텔레그램 전송"""
         if not self.session_active:
@@ -40895,6 +40923,7 @@ def main(is_paper: bool = True):
     try:
         while True:
             schedule.run_pending()
+            bot._write_main_loop_heartbeat()
             time.sleep(1)
     finally:
         bot._write_runtime_handoff_snapshot("shutdown")

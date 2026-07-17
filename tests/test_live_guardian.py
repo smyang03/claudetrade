@@ -12,6 +12,7 @@ from tools.live_guardian import (
     GuardianAction,
     _apply_auto_fixes,
     _alert_state_path,
+    _bot_main_loop_hang_finding,
     _guardian_heartbeat_path,
     _maybe_send_telegram_alert,
     _write_guardian_heartbeat,
@@ -1133,6 +1134,49 @@ class LiveGuardianTests(unittest.TestCase):
         self.assertEqual(recovery.status, "PASS")
         self.assertTrue(recovery.data["recovered"])
         self.assertEqual(send_mock.call_count, 2)
+
+
+class MainLoopHangDetectionTests(unittest.TestCase):
+    def _write_hb(self, tmpdir: str, epoch: float) -> Path:
+        path = Path(tmpdir) / "live_main_loop_heartbeat.json"
+        path.write_text(
+            json.dumps({"pid": 1, "epoch": epoch, "session_active": True}),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_fresh_heartbeat_yields_no_finding(self) -> None:
+        import time as _time
+
+        with tempfile.TemporaryDirectory() as td:
+            path = self._write_hb(td, _time.time())
+            with patch("tools.live_guardian.get_runtime_path", return_value=path):
+                self.assertIsNone(_bot_main_loop_hang_finding("live"))
+
+    def test_stale_heartbeat_is_soft_fail_warning(self) -> None:
+        import time as _time
+
+        with tempfile.TemporaryDirectory() as td:
+            path = self._write_hb(td, _time.time() - 1200.0)  # 20분 전 = 임계(15분) 초과
+            with patch("tools.live_guardian.get_runtime_path", return_value=path):
+                finding = _bot_main_loop_hang_finding("live")
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding.name, "runtime.bot_main_loop_hang")
+        self.assertEqual(finding.classification, "soft_fail")  # 봇 기동/게이트 미차단
+        self.assertEqual(finding.status, "WARN")
+
+    def test_missing_heartbeat_yields_no_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "absent.json"
+            with patch("tools.live_guardian.get_runtime_path", return_value=path):
+                self.assertIsNone(_bot_main_loop_hang_finding("live"))
+
+    def test_corrupt_epoch_yields_no_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "live_main_loop_heartbeat.json"
+            path.write_text(json.dumps({"pid": 1, "epoch": "bad"}), encoding="utf-8")
+            with patch("tools.live_guardian.get_runtime_path", return_value=path):
+                self.assertIsNone(_bot_main_loop_hang_finding("live"))
 
 
 if __name__ == "__main__":

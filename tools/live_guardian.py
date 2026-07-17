@@ -639,6 +639,49 @@ def _process_inventory_unavailable(preflight: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+_MAIN_LOOP_HANG_THRESHOLD_SEC = 900.0
+
+
+def _bot_main_loop_hang_finding(mode: str) -> GuardianFinding | None:
+    """봇 PID는 살아있으나 메인 스케줄 루프가 hang(heartbeat 정지)인지 감지.
+
+    프로세스 생존만 보는 기존 감시(_matching_bot_process)의 사각을 메운다.
+    자동 재기동은 하지 않고 WARN(soft_fail)으로만 표면화한다 — judge 배치 등
+    정상 블로킹을 오판해 살아있는 봇을 죽이는 위험을 피한다. 임계는 보수적 15분.
+    heartbeat가 없으면(구버전 봇/미기동) 조용히 넘어간다.
+    """
+    runtime_mode = "live" if str(mode or "").lower() == "live" else "paper"
+    try:
+        path = get_runtime_path("state", f"{runtime_mode}_main_loop_heartbeat.json", make_parents=False)
+        if not path.exists():
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except Exception:
+        return None
+    epoch = payload.get("epoch")
+    if not isinstance(epoch, (int, float)):
+        return None
+    age = time.time() - float(epoch)
+    if age <= _MAIN_LOOP_HANG_THRESHOLD_SEC:
+        return None
+    return GuardianFinding(
+        "runtime.bot_main_loop_hang",
+        "WARN",
+        "soft_fail",
+        f"main loop heartbeat stale {age:.0f}s (>{_MAIN_LOOP_HANG_THRESHOLD_SEC:.0f}s); "
+        "bot PID alive but scheduler may be hung",
+        {
+            "age_sec": round(age, 1),
+            "threshold_sec": _MAIN_LOOP_HANG_THRESHOLD_SEC,
+            "heartbeat": payload,
+            "operator_action": (
+                "inspect the bot; if the scheduler loop is hung (not just a long judge "
+                "batch), restart the live stack with tools/restart_live_stack_safely.ps1"
+            ),
+        },
+    )
+
+
 def run_guardian_once(
     *,
     mode: str = "live",
@@ -730,6 +773,13 @@ def run_guardian_once(
                 inventory_unavailable,
             )
         )
+
+    # 봇 프로세스가 살아있을 때만 hang(루프 정지)을 확인한다. soft_fail이라 봇
+    # 기동/게이트를 막지 않고 경고로만 표면화한다(오살 방지).
+    if bot_start_requested and active_bot_process:
+        hang_finding = _bot_main_loop_hang_finding(mode)
+        if hang_finding is not None:
+            findings.append(hang_finding)
 
     hard_fail = [finding for finding in findings if finding.classification == "hard_fail"]
     soft_fail = [finding for finding in findings if finding.classification == "soft_fail"]
