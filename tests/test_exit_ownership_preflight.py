@@ -77,7 +77,9 @@ def test_exit_ownership_fails_for_orphan_broker_position() -> None:
     assert {row["reason"] for row in check.data["critical"]} == {"orphan_broker_position"}
 
 
-def test_exit_ownership_fails_when_isolated_sleeve_has_generic_sell_state() -> None:
+def test_exit_ownership_warns_for_recoverable_isolated_generic_sell_state() -> None:
+    # 격리 슬리브의 되살아난 일반매도 플래그는 봇이 _restore_positions에서 자동
+    # 청소하므로 봇 기동을 막지 않는다(WARN). hard_fail이면 청소할 봇이 못 떠 데드락.
     check = _check(
         [
             {
@@ -93,13 +95,15 @@ def test_exit_ownership_fails_when_isolated_sleeve_has_generic_sell_state() -> N
         _snapshot(us_positions=[{"ticker": "SCHG", "qty": 1}]),
     )
 
-    assert check.status == "FAIL"
+    assert check.status == "WARN"
     finding = next(
         row
         for row in check.data["critical"]
         if row["reason"] == "isolated_owner_generic_exit_conflict"
     )
     assert "pending_next_open_sell" in finding["active_generic_exit_fields"]
+    assert finding in check.data["critical_recoverable"]
+    assert check.data["critical_severe"] == []
 
 
 def test_exit_ownership_warns_when_isolated_owner_metadata_is_inferred() -> None:

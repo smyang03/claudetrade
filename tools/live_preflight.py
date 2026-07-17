@@ -4422,19 +4422,29 @@ def _position_exit_ownership_check(mode: str) -> CheckResult:
     data["local_position_count"] = len(local_positions)
     data["broker_position_count"] = len(fresh_broker_positions)
     data["comparable_markets"] = sorted(comparable_markets)
-    if data["critical"]:
+    # generic_exit_conflict(격리 슬리브에 되살아난 일반매도 플래그)는 봇이 기동하며
+    # _restore_positions에서 자동 청소한다. 이것만으로 봇 기동을 막으면(hard_fail →
+    # guardian BLOCK_START) 청소할 봇이 못 떠 데드락이 된다(us_swing DLL 사고와 동형).
+    # 청소 불가한 severe(무방비/고아/식별불가)만 FAIL로, 자동 청소되는 것은 WARN으로.
+    _recoverable_reasons = {"isolated_owner_generic_exit_conflict"}
+    severe = [c for c in data["critical"] if str(c.get("reason") or "") not in _recoverable_reasons]
+    recoverable = [c for c in data["critical"] if str(c.get("reason") or "") in _recoverable_reasons]
+    data["critical_severe"] = severe
+    data["critical_recoverable"] = recoverable
+    if severe:
         return CheckResult(
             "position.exit_ownership_reconciliation",
             "FAIL",
-            f"position ownership critical findings={len(data['critical'])}",
+            f"position ownership critical findings={len(severe)}",
             data,
         )
-    if data["warnings"] or data["broker_markets_unavailable"]:
+    if recoverable or data["warnings"] or data["broker_markets_unavailable"]:
         return CheckResult(
             "position.exit_ownership_reconciliation",
             "WARN",
             (
-                f"position ownership warnings={len(data['warnings'])} "
+                f"position ownership recoverable={len(recoverable)} "
+                f"warnings={len(data['warnings'])} "
                 f"broker_unavailable={len(data['broker_markets_unavailable'])}"
             ),
             data,
