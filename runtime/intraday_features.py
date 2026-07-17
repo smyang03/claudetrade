@@ -4,11 +4,23 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from runtime.post_open_features import build_post_open_snapshot, pct_change, returns_from_price_history
+from runtime.time_normalized_rvol import LocalTimeNormalizedRvolStore
 
 
 RETURN_FIELDS = ("ret_3m_pct", "ret_5m_pct", "ret_10m_pct", "ret_30m_pct")
 SESSION_MINUTES = {"KR": 390.0, "US": 390.0}
 OPENING_RANGE_MIN = {"KR": 10, "US": 15}
+
+# 시간대 정규화 RVOL store(과거 분봉 파일 + per-session 캐시 보유). 지연 생성해
+# 모듈 로드 시 부작용을 피한다.
+_RVOL_STORE: LocalTimeNormalizedRvolStore | None = None
+
+
+def _rvol_store() -> LocalTimeNormalizedRvolStore:
+    global _RVOL_STORE
+    if _RVOL_STORE is None:
+        _RVOL_STORE = LocalTimeNormalizedRvolStore()
+    return _RVOL_STORE
 
 
 def _market_key(market: str) -> str:
@@ -242,6 +254,21 @@ def compute_intraday_features(
         if expected > 0:
             volume_ratio = volume_sum / expected
 
+    # 시간대 정규화 RVOL: 당일 누적 거래량 ÷ 과거 20세션 동시각 누적의 중앙값.
+    # volume_ratio_open(avg_daily_volume 기반)과 별개로, U자형 거래량 패턴을 시각별로
+    # 정규화한 실무 표준 지표다. 과거 분봉이 없거나 부족하면 status로만 남고 값은 None.
+    _rvol = {}
+    try:
+        _rvol = _rvol_store().snapshot(
+            current_rows=[{"ts": r.get("ts"), "volume": r.get("volume")} for r in usable],
+            market=market_key,
+            ticker=ticker_key,
+            known_at=known_dt.isoformat(timespec="seconds"),
+            session_date=open_dt.date().isoformat(),
+        )
+    except Exception:
+        _rvol = {}
+
     snapshot = build_post_open_snapshot(
         market=market_key,
         ticker=ticker_key,
@@ -258,6 +285,9 @@ def compute_intraday_features(
         # ★train/serve skew 봉합: profit_path 모델이 학습한 피처인데 추론측 post_open에 없었다.
         market_open_elapsed_min=max(0.0, (known_dt - open_dt).total_seconds() / 60.0),
         volume_ratio_open=volume_ratio,
+        time_normalized_rvol=_rvol.get("time_normalized_rvol"),
+        rvol_profile_sessions=_rvol.get("rvol_profile_sessions"),
+        rvol_profile_status=str(_rvol.get("rvol_profile_status") or ""),
         vwap_distance_pct=vwap_distance,
         data_quality="minute_partial",
         market_session_date=open_dt.date().isoformat(),
