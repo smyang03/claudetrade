@@ -3212,6 +3212,26 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
         )
     )
 
+    # 화이트리스트(LIVE_CONFIG_KEYS) 밖 키도 .env.live와 env_overrides가 다르면
+    # live에선 env_overrides가 조용히 이겨 운영자가 .env.live만 보고 stale 값을
+    # 신뢰할 수 있다. 중요 키는 위 FAIL 체크가 잡으므로 나머지는 WARN으로만
+    # 표면화한다(사각 제거).
+    non_whitelisted_conflicts = {
+        key: {"env": base_env[key], "start_config": overrides[key]}
+        for key in sorted(set(base_env) & set(overrides))
+        if key not in LIVE_CONFIG_KEYS and str(base_env[key]) != str(overrides[key])
+    }
+    checks.append(
+        CheckResult(
+            "config.env_vs_start_config_all",
+            "WARN" if non_whitelisted_conflicts else "PASS",
+            f"{len(non_whitelisted_conflicts)} non-whitelisted env/start_config value conflict(s)"
+            if non_whitelisted_conflicts
+            else "no non-whitelisted env/start_config conflicts",
+            {"conflicts": non_whitelisted_conflicts},
+        )
+    )
+
     internal_conflicts = {}
     for key, value in overrides.items():
         if key in start_config and _norm_config_value(start_config.get(key)) != _norm_config_value(value):
