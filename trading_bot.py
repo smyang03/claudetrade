@@ -22487,6 +22487,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 self.risk.positions.append(pos)
             log.info(f"[포지션 복구] {[p['ticker'] for p in saved]} "
                      f"(총 {len(saved)}개 / 현금 잔여 {self.risk.cash:,.0f}원)")
+            # 격리 슬리브(코어/스윙)에 되살아난 일반매도 플래그를 복구 직후 청소한다.
+            # cc4b9bd는 플래그가 새로 붙는 것을 막지만, 재시작 전 저장된 플래그는
+            # _restore로 되살아나 다음 session_open까지 남는다(exit_ownership 감사가
+            # 이를 격리 계약 위반으로 잡음). 재시작 시점부터 계약을 보장한다.
+            for _mk in ("KR", "US"):
+                try:
+                    self._clear_isolated_strategy_generic_exit_flags(_mk)
+                except Exception as _clear_exc:
+                    log.warning(f"[포지션 복구] isolated exit flag cleanup failed {_mk}: {_clear_exc}")
             try:
                 self._save_positions()
             except Exception as save_exc:
