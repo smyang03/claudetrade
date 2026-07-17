@@ -90,34 +90,41 @@ def review_consensus_outcomes(
         if str(row.get("session_date") or "") == str(session_date)
         and str(row.get("market") or "").upper() == market_key
     ]
-    candidate_keys = sorted(
-        {
-            str(row.get("candidate_key") or "")
-            for row in decisions
-            if str(row.get("candidate_key") or "")
-        }
+    def _ticker_key(value: Any) -> str:
+        text = str(value or "").strip()
+        return text.upper() if market_key == "US" else text
+
+    tickers = sorted(
+        {_ticker_key(row.get("ticker")) for row in decisions if _ticker_key(row.get("ticker"))}
     )
     outcomes: dict[tuple[str, int], dict[str, Any]] = {}
-    if candidate_keys and audit_db.exists():
+    if tickers and audit_db.exists():
         uri = f"file:{audit_db.resolve().as_posix()}?mode=ro"
         con = sqlite3.connect(uri, uri=True)
         con.row_factory = sqlite3.Row
         try:
-            placeholders = ",".join("?" for _ in candidate_keys)
+            placeholders = ",".join("?" for _ in tickers)
+            # candidate_key 네임스페이스 불일치 우회: 원장은 registry의 creg_ 키를 쓰지만
+            # outcome 라벨은 audit_candidate_rows의 cand_ 키에 붙는다. registry가 켜진
+            # 시장(US)에서만 키가 갈려 문자열 조인이 0 매칭됐다. (market,session,ticker)
+            # identity로 조인해 라벨을 붙인다. 같은 세션·티커에 라벨이 여럿이면
+            # label_generated_at 최신이 이긴다.
+            ticker_expr = "UPPER(r.ticker)" if market_key == "US" else "r.ticker"
             rows = con.execute(
                 f"""
-                SELECT candidate_key,horizon_min,return_pct,max_runup_pct,
-                       max_drawdown_pct,status,source,label_generated_at
-                FROM audit_candidate_outcomes
-                WHERE candidate_key IN ({placeholders})
-                  AND horizon_min IN (30,60)
+                SELECT r.ticker AS ticker, o.horizon_min, o.return_pct, o.max_runup_pct,
+                       o.max_drawdown_pct, o.status, o.source, o.label_generated_at
+                FROM audit_candidate_rows r
+                JOIN audit_candidate_outcomes o ON o.candidate_key = r.candidate_key
+                WHERE r.market = ? AND r.session_date = ?
+                  AND {ticker_expr} IN ({placeholders})
+                  AND o.horizon_min IN (30,60)
+                ORDER BY o.label_generated_at
                 """,
-                candidate_keys,
+                [market_key, str(session_date)] + tickers,
             ).fetchall()
-            outcomes = {
-                (str(row["candidate_key"]), int(row["horizon_min"])): dict(row)
-                for row in rows
-            }
+            for row in rows:
+                outcomes[(_ticker_key(row["ticker"]), int(row["horizon_min"]))] = dict(row)
         finally:
             con.close()
 
@@ -129,7 +136,7 @@ def review_consensus_outcomes(
         quality: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         matched = 0
         for decision in decisions:
-            result = outcomes.get((str(decision.get("candidate_key") or ""), horizon))
+            result = outcomes.get((_ticker_key(decision.get("ticker")), horizon))
             decision_name = str(decision.get("decision") or "ABSTAIN").upper()
             if result is None:
                 quality[decision_name]["missing"] += 1
