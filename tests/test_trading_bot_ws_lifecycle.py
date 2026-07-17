@@ -138,6 +138,32 @@ class TradingBotWebSocketLifecycleTests(unittest.TestCase):
         self.assertTrue(failed_ws.stopped)
         self.assertIsNone(bot.ws_by_market["US"])
 
+    def test_held_positions_are_force_subscribed(self) -> None:
+        bot = _bot_for_ws_tests()
+        bot.risk = types.SimpleNamespace(
+            positions=[
+                {"ticker": "000660"},  # KR 보유, selection엔 없음 → 강제 구독돼야
+                {"ticker": "005930"},  # KR 보유 + selection 중복 → 1회만
+                {"ticker": "AAPL"},    # US 보유 → KR 구독엔 제외
+            ]
+        )
+        bot._ticker_market = lambda t: "US" if str(t).isalpha() else "KR"
+
+        with patch.object(trading_bot, "KISWebSocket", FakeSocket):
+            ws = bot._start_ws_for_market("KR", ["005930", "035720"])
+
+        self.assertIn("000660", ws.tickers)   # 보유가 selection에 없어도 구독
+        self.assertIn("035720", ws.tickers)   # selection 유지
+        self.assertNotIn("AAPL", ws.tickers)  # 다른 시장 보유 제외
+        self.assertEqual(ws.tickers.count("005930"), 1)  # 중복 제거
+        self.assertEqual(ws.tickers[0], "000660")        # 보유 우선 배치
+
+    def test_missing_risk_falls_back_to_selection_only(self) -> None:
+        bot = _bot_for_ws_tests()  # risk 속성 없음
+        with patch.object(trading_bot, "KISWebSocket", FakeSocket):
+            ws = bot._start_ws_for_market("KR", ["005930"])
+        self.assertEqual(ws.tickers, ["005930"])
+
 
 if __name__ == "__main__":
     unittest.main()

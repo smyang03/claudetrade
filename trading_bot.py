@@ -1303,9 +1303,28 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _start_ws_for_market(self, market: str, tickers=None) -> KISWebSocket:
         market_key = self._market_key_for_ws(market)
         self._stop_ws_for_market(market_key)
+        # 구독 목록에 현재 보유 종목을 강제 합집합한다. selection(today_tickers)이
+        # rescreen에서 보유 종목을 밀어내도 실시간 손절/청산이 5분 폴링으로 강등되지
+        # 않게 한다(WS 틱 → _on_tick → _process_exit_candidates). 구독 수 제한 시에도
+        # 청산이 우선되도록 보유 종목을 앞에 배치한다.
+        _sub: list[str] = []
+        _seen: set[str] = set()
+        try:
+            for _p in getattr(getattr(self, "risk", None), "positions", []) or []:
+                _tk = str(_p.get("ticker") or "").strip()
+                if _tk and _tk not in _seen and self._ticker_market(_tk) == market_key:
+                    _sub.append(_tk)
+                    _seen.add(_tk)
+        except Exception:
+            _sub, _seen = [], set()
+        for _t in (tickers or []):
+            _tk = str(_t or "").strip()
+            if _tk and _tk not in _seen:
+                _sub.append(_tk)
+                _seen.add(_tk)
         ws = KISWebSocket(
             self._token_for_market(market_key),
-            list(tickers or []),
+            _sub,
             on_tick=self._on_tick,
             on_notice=self._on_fill_notice,
             market=market_key,
