@@ -21402,6 +21402,24 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as exc:
             log.warning(f"[US quality] enrichment failed: {exc}")
             return self._us_quality_error_row(row, exc, "us_quality_enrichment_error")
+    def _attach_pool_quality_features(self, market: str, row: dict, candles) -> dict:
+        """KR/US 공용 풀 품질 관측 피처(anti-chase MAX·spike·vol·모멘텀) 부착.
+
+        순수 관측 — candidate_quality_score/랭킹 불변(스코어 산출 이후 병합). 실패해도
+        후보 흐름 무영향(관측). 외부 검증 근거: alpha_hunt_and_design_20260719.md.
+        """
+        if not _env_bool("ENABLE_POOL_QUALITY_SHADOW", True):
+            return row
+        try:
+            from bot.pool_quality_features import compute_pool_quality_features
+            feats = compute_pool_quality_features(candles)
+            if feats:
+                out = dict(row or {})
+                out.update(feats)
+                return out
+        except Exception as exc:
+            log.debug(f"[pool quality] {market} attach skip: {exc}")
+        return row
     def _apply_candidate_post_rank_shadow(self, market: str, candidates: list[dict]) -> list[dict]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         if market_key != "KR" or not _env_bool("KR_CANDIDATE_POST_RANK_ENABLED", False):
@@ -21642,6 +21660,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         watch_candidate = self._enrich_candidate_with_history(candidate, candles, sig_df)
                         watch_candidate = self._enrich_kr_candidate_quality(market_key, watch_candidate, candles)
                         watch_candidate = self._enrich_us_candidate_quality_shadow(market_key, watch_candidate, candles)
+                        watch_candidate = self._attach_pool_quality_features(market_key, watch_candidate, candles)
                         watch_candidate["data_quality"] = "WATCH_DATA_INSUFFICIENT"
                         watch_candidate["history_status"] = "DATA_INSUFFICIENT"
                         watch_candidate["history_usable_rows"] = usable_rows
@@ -21700,6 +21719,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 enriched_candidate = self._enrich_candidate_with_history(candidate, candles, sig_df)
                 enriched_candidate = self._enrich_kr_candidate_quality(market_key, enriched_candidate, candles)
                 enriched_candidate = self._enrich_us_candidate_quality_shadow(market_key, enriched_candidate, candles)
+                enriched_candidate = self._attach_pool_quality_features(market_key, enriched_candidate, candles)
                 filtered_v2.append(enriched_candidate)
             except Exception as exc:
                 removed_v2.append((ticker, f"error:{exc}"))

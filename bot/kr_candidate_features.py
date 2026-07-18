@@ -50,6 +50,12 @@ QUALITY_FEATURE_KEYS: tuple[str, ...] = (
     "foreign_flow_institution_net_qty_5d_obs",
     "foreign_flow_net_to_volume_1d",
     "foreign_flow_signal",
+    # 풀 품질 관측 피처(KR/US 공용, pool_quality_features 산출 — anti-chase/vol/모멘텀)
+    "max_daily_ret_21d",
+    "spike_chase_level",
+    "realized_vol_21d",
+    "ret_1m_pct",
+    "pool_quality_source",
 )
 
 

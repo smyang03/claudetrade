@@ -35,6 +35,10 @@ class ScreenerQualityTests(unittest.TestCase):
                         "foreign_flow_buy_days_consec": 3,
                         "foreign_flow_net_qty_5d": 1234.5,
                         "foreign_flow_signal": "accumulation",
+                        "max_daily_ret_21d": 13.4,
+                        "spike_chase_level": 12,
+                        "realized_vol_21d": 2.1,
+                        "ret_1m_pct": 5.5,
                     },
                 ],
                 selected=["001510"],
@@ -68,6 +72,11 @@ class ScreenerQualityTests(unittest.TestCase):
             self.assertEqual(by_ticker["001510"]["foreign_flow_buy_days_consec"], 3)
             self.assertEqual(by_ticker["001510"]["foreign_flow_net_qty_5d"], 1234.5)
             self.assertEqual(by_ticker["001510"]["foreign_flow_signal"], "accumulation")
+            # 풀 품질 관측 피처(anti-chase 등)가 실제 로그 행으로 emit되는지
+            self.assertEqual(by_ticker["001510"]["max_daily_ret_21d"], 13.4)
+            self.assertEqual(by_ticker["001510"]["spike_chase_level"], 12)
+            self.assertEqual(by_ticker["001510"]["realized_vol_21d"], 2.1)
+            self.assertEqual(by_ticker["001510"]["ret_1m_pct"], 5.5)
 
     def test_write_candidate_quality_log_uses_final_prompt_pool_for_actual_visibility(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

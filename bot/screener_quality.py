@@ -188,6 +188,11 @@ def write_candidate_quality_log(
                 "foreign_flow_institution_net_qty_5d_obs": _safe_float(feature_candidate.get("foreign_flow_institution_net_qty_5d_obs")),
                 "foreign_flow_net_to_volume_1d": _safe_float(feature_candidate.get("foreign_flow_net_to_volume_1d")),
                 "foreign_flow_signal": str(feature_candidate.get("foreign_flow_signal") or ""),
+                # 풀 품질 관측(KR/US 공용, anti-chase MAX·spike·vol·모멘텀) — forward 승격 판단 원장
+                "max_daily_ret_21d": _safe_float(feature_candidate.get("max_daily_ret_21d")),
+                "spike_chase_level": _safe_int(feature_candidate.get("spike_chase_level")),
+                "realized_vol_21d": _safe_float(feature_candidate.get("realized_vol_21d")),
+                "ret_1m_pct": _safe_float(feature_candidate.get("ret_1m_pct")),
                 "forward_30m_from_bucket": None,
                 "forward_60m_from_bucket": None,
                 "forward_close_from_bucket": None,
