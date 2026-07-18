@@ -533,6 +533,31 @@ def load_first_candidates(audit_db: Path, *, markets: Iterable[str]) -> pd.DataF
             ),
             axis=1,
         )
+        # registry 행의 post_open은 first_snapshot(첫 관측=개장 전/직후)이라 RVOL 등
+        # 개장 후 피처가 미성숙(NULL)이다. 같은 identity의 audit 행에는 개장 후 성숙된
+        # post_open(RVOL 포함)이 있으므로, registry 행을 채택하되 post_open만 audit의
+        # 것으로 덮는다. (진입시점 lookahead 가드는 _post_open_features가 별도 적용.)
+        if "post_open_features_json" in mutable_frame.columns and not registry_frame.empty:
+            audit_po: dict[tuple, str] = {}
+            for m, s, t, po in zip(
+                mutable_frame["market"].astype(str).str.upper(),
+                mutable_frame["session_date"].astype(str),
+                mutable_frame["ticker"].astype(str).str.upper(),
+                mutable_frame["post_open_features_json"],
+            ):
+                key = (m, s, t)
+                if key in registry_identity and isinstance(po, str) and po.strip():
+                    audit_po[key] = po  # 최신(마지막) audit post_open
+            if audit_po:
+                registry_frame["post_open_features_json"] = [
+                    audit_po.get((str(m).upper(), str(s), str(t).upper()), cur)
+                    for m, s, t, cur in zip(
+                        registry_frame["market"],
+                        registry_frame["session_date"],
+                        registry_frame["ticker"],
+                        registry_frame["post_open_features_json"],
+                    )
+                ]
         mutable_frame = mutable_frame[~mutable_identity.isin(registry_identity)]
         return (
             pd.concat([mutable_frame, registry_frame], ignore_index=True, sort=False)

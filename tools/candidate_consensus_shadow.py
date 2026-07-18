@@ -78,9 +78,21 @@ def _current_candidates(
     frame = frame[frame["session_date"].astype(str) == str(session_date)].copy()
     if frame.empty:
         return frame
+    # RVOL 등 개장 후 피처는 candidate 최초 관측(장전)이 아니라 진입 시점(개장+5분,
+    # lab의 lag5 계약)에 알 수 있는 정보다. 그 시점을 기준선으로 넘겨야 진입시점 피처가
+    # lookahead로 오판돼 드롭되지 않는다(개장+5분 이후 관측은 여전히 차단).
+    from tools.candidate_path_prediction_lab import session_entry_floor
+
     post_open = [
-        _post_open_features(raw, candidate_known_at=known_at)
-        for raw, known_at in zip(frame["post_open_features_json"], frame["known_at"])
+        _post_open_features(
+            raw,
+            candidate_known_at=(
+                session_entry_floor(known_at, market=str(market), entry_lag_min=5) or known_at
+            ),
+        )
+        for raw, known_at, market in zip(
+            frame["post_open_features_json"], frame["known_at"], frame["market"]
+        )
     ]
     frame = pd.concat(
         [
