@@ -210,6 +210,39 @@ def flow_for_ticker(cache: dict[str, Any], ticker: Any) -> dict[str, Any]:
     return out
 
 
+def load_recent_flow_records(
+    session_date: str | date,
+    ticker: Any,
+    *,
+    days: int = 5,
+    path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """세션 직전 완료 거래일부터 최대 `days`개 일별 flow 레코드를 반환(오래된→최신).
+
+    lookahead 없음: effective_flow_source_date(lag=1..days)로 완료된 거래일만 사용한다.
+    신뢰 불가(flow_values_trusted is False) 레코드는 제외한다. path는 테스트용 단일
+    경로 오버라이드(운영 경로는 기본 date별 파일).
+    """
+    key = normalize_kr_ticker(ticker)
+    window = max(1, int(days or 1))
+    out: list[dict[str, Any]] = []
+    seen_dates: set[str] = set()
+    for lag in range(1, window + 1):
+        source_date = effective_flow_source_date(session_date, lag_trading_days=lag)
+        if source_date in seen_dates:
+            continue
+        seen_dates.add(source_date)
+        cache = load_flow_cache(source_date, path=path)
+        record = flow_for_ticker(cache, key)
+        if not record or record.get("flow_values_trusted") is False:
+            continue
+        rec = dict(record)
+        rec.setdefault("date", source_date)
+        out.append(rec)
+    out.sort(key=lambda item: str(item.get("date") or ""))
+    return out
+
+
 def rolling_flow_from_caches(caches: list[dict[str, Any]], ticker: Any) -> dict[str, Any]:
     key = normalize_kr_ticker(ticker)
     records = []

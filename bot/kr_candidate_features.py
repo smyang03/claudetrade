@@ -42,6 +42,14 @@ QUALITY_FEATURE_KEYS: tuple[str, ...] = (
     "candidate_quality_flags",
     "quality_data_gaps",
     "quality_source",
+    # 외국인 단독 수급 관측 피처(shadow-only, 스코어·랭킹 불변 — foreign_flow_features 산출)
+    "foreign_flow_window_count",
+    "foreign_flow_buy_days_consec",
+    "foreign_flow_sell_days_consec",
+    "foreign_flow_net_qty_5d",
+    "foreign_flow_institution_net_qty_5d_obs",
+    "foreign_flow_net_to_volume_1d",
+    "foreign_flow_signal",
 )
 
 
@@ -258,6 +266,86 @@ def rolling_flow_features(records: list[dict[str, Any]]) -> dict[str, Any]:
         "institution_net_qty_5d": _sum("institution", last5),
     }
     return {key: value for key, value in out.items() if value is not None}
+
+
+def foreign_flow_features(
+    records: list[dict[str, Any]],
+    *,
+    today_volume: Any | None = None,
+) -> dict[str, Any]:
+    """외국인 단독 수급 관측 피처(shadow-only).
+
+    학술 실증(PBFJ 2026, 외국인 t=3.66 / 국내 기관 6유형 무예측력) 근거로 **신호는
+    외국인만** 사용한다. 기관은 관측 필드로만 병행 기록(신호 계산 제외).
+
+    설계 계약:
+    - 순수 관측 — 이 함수 산출물은 candidate_quality_score/랭킹에 들어가지 않는다
+      (호출부가 스코어 산출 뒤 post-enrich로 병합, 키를 `foreign_flow_` 접두로 격리).
+    - lookahead 없음 — records는 완료된 과거 거래일(T-1 이하) 레코드만 받는다.
+
+    Args:
+        records: 오래된→최신 순 일별 flow 레코드(foreign/institution 순매수 수량).
+                 정렬 미보장 시 date/target_date로 재정렬.
+        today_volume: size 정규화용 당일 거래량(있으면 순매수/거래량 비중 산출).
+                      진짜 시총 정규화는 시총 데이터 미보유로 후속 과제.
+    """
+    clean = [dict(item or {}) for item in (records or []) if isinstance(item, dict)]
+    if any(item.get("date") or item.get("target_date") for item in clean):
+        clean.sort(key=lambda item: str(item.get("date") or item.get("target_date") or ""))
+    out: dict[str, Any] = {"foreign_flow_window_count": len(clean)}
+    if not clean:
+        return out
+
+    foreign_series = [_optional_float(item.get("foreign")) for item in clean]
+
+    # 연속 순매수/순매도일 — 최신에서 역방향, 첫 non-null·non-zero가 방향 결정
+    consec_buy = 0
+    consec_sell = 0
+    for value in reversed(foreign_series):
+        if value is None or value == 0:
+            break
+        if value > 0:
+            if consec_sell > 0:
+                break
+            consec_buy += 1
+        else:
+            if consec_buy > 0:
+                break
+            consec_sell += 1
+    out["foreign_flow_buy_days_consec"] = consec_buy
+    out["foreign_flow_sell_days_consec"] = consec_sell
+
+    last5 = clean[-5:]
+    foreign_5d = [value for value in (_optional_float(item.get("foreign")) for item in last5) if value is not None]
+    net_5d: float | None = None
+    if foreign_5d:
+        net_5d = round(sum(foreign_5d), 4)
+        out["foreign_flow_net_qty_5d"] = net_5d
+
+    # 기관 관측 전용(신호 제외)
+    institution_5d = [value for value in (_optional_float(item.get("institution")) for item in last5) if value is not None]
+    if institution_5d:
+        out["foreign_flow_institution_net_qty_5d_obs"] = round(sum(institution_5d), 4)
+
+    # size 정규화: 외국인 순매수(당일) / 당일 거래량 = "외국인 순매수 비중"(시총 프록시)
+    latest_foreign = foreign_series[-1]
+    volume = _positive_float(today_volume)
+    if volume and latest_foreign is not None:
+        out["foreign_flow_net_to_volume_1d"] = round(latest_foreign / volume, 6)
+
+    # 외국인 단독 신호(기관 무관)
+    if consec_buy >= 3 and (net_5d is None or net_5d > 0):
+        signal = "accumulation"
+    elif consec_sell >= 3 and (net_5d is None or net_5d < 0):
+        signal = "distribution"
+    elif net_5d is not None and net_5d > 0:
+        signal = "net_buy"
+    elif net_5d is not None and net_5d < 0:
+        signal = "net_sell"
+    else:
+        signal = "neutral"
+    out["foreign_flow_signal"] = signal
+    return out
 
 
 def _with_score(features: dict[str, Any]) -> dict[str, Any]:

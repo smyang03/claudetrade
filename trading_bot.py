@@ -21258,15 +21258,36 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 except Exception as index_exc:
                     _add_quality_gap("index_history_cache_error")
                     row["candidate_quality_index_error"] = str(index_exc)[:160]
+            foreign_feats = None
             if _env_bool("ENABLE_KR_CANDIDATE_FLOW_SHADOW", False):
                 try:
-                    from bot.kr_investor_flow_cache import flow_for_ticker, load_effective_flow_cache
+                    from bot.kr_investor_flow_cache import (
+                        flow_for_ticker,
+                        load_effective_flow_cache,
+                        load_recent_flow_records,
+                    )
+                    from bot.kr_candidate_features import foreign_flow_features
                     session_date = self._current_session_date_str(market_key)
                     flow = flow_for_ticker(load_effective_flow_cache(session_date), row.get("ticker"))
+                    # 외국인 단독 관측 피처(shadow) — 다중일 캐시 기반, 스코어/랭킹 불변(post-enrich 병합)
+                    try:
+                        recent = load_recent_flow_records(session_date, row.get("ticker"), days=5)
+                        try:
+                            today_volume = float(row.get("volume") or 0.0) or None
+                        except (TypeError, ValueError):
+                            today_volume = None
+                        foreign_feats = foreign_flow_features(recent, today_volume=today_volume)
+                    except Exception as foreign_exc:
+                        _add_quality_gap("foreign_flow_feature_error")
+                        row["candidate_quality_foreign_flow_error"] = str(foreign_exc)[:160]
                 except Exception as flow_exc:
                     _add_quality_gap("flow_cache_error")
                     row["candidate_quality_flow_error"] = str(flow_exc)[:160]
-            return enrich_kr_candidate_with_features(row, candles, index_ohlcv=index_ohlcv, flow=flow)
+            enriched = enrich_kr_candidate_with_features(row, candles, index_ohlcv=index_ohlcv, flow=flow)
+            if foreign_feats:
+                # 스코어 산출 이후 병합 — 순수 관측(candidate_quality_score/랭킹 미변경)
+                enriched.update(foreign_feats)
+            return enriched
         except Exception as exc:
             _add_quality_gap("kr_candidate_quality_error")
             row["candidate_quality_error"] = str(exc)[:160]
