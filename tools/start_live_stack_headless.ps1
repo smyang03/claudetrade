@@ -6,6 +6,11 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 $env:CLAUDETRADE_RUNTIME_DIR = $Root
+# 스케줄 태스크(claudetrade_live_stack_watchdog)는 CWD=system32로 실행된다. 이 스크립트의
+# 인라인 python 호출(Sync-CoreLiveManifests·live_guardian --ensure-bot)이 상대경로 tools\..를
+# 쓰므로, 호출자 CWD와 무관하게 항상 repo 루트에서 해석되도록 작업 디렉터리를 고정한다.
+# (Start-Process role 기동은 -WorkingDirectory $Root로 이미 격리돼 영향 없음.)
+Set-Location -LiteralPath $Root
 $PythonExe = if ($env:CLAUDETRADE_PYTHON) {
     $env:CLAUDETRADE_PYTHON
 } else {
