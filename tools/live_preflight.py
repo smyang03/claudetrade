@@ -1610,6 +1610,79 @@ def _pathb_market_live_gate_check(effective: dict[str, Any]) -> CheckResult:
     )
 
 
+# 운영자 확인 필수 파라미터 — .env.live와 config env_overrides에 동시 존재하면 값이
+# 일치해야 한다. config env_overrides가 항상 .env.live를 덮으므로(무조건 override),
+# 운영자가 .env.live만 편집하면 조용히 무시된다. 이 검증이 그 침묵을 표면화한다.
+_OPERATOR_CRITICAL_DUAL_SOURCE_KEYS: tuple[str, ...] = (
+    # 주문 금액
+    "KR_FIXED_ORDER_KRW", "US_FIXED_ORDER_KRW",
+    "PATHB_FIXED_ORDER_KRW", "PATHB_FIXED_ORDER_KRW_US",
+    # 포지션 캡
+    "PATHB_MAX_POSITIONS", "KR_MAX_POSITIONS", "US_MAX_POSITIONS",
+    # 일일 진입/손실 한도
+    "PATHB_MAX_DAILY_ENTRIES", "V2_MAX_DAILY_ENTRIES",
+    "KR_DAILY_ENTRY_CAP", "US_DAILY_ENTRY_CAP", "DAILY_LOSS_LIMIT_PCT",
+    # 진입/청산 라이브 스위치
+    "PATHB_KR_LIVE_ENABLED", "PATHB_US_LIVE_ENABLED", "PATHB_INTRADAY_ONLY",
+    "PATHB_MIN_CONFIDENCE", "CLAUDE_REVIEW_ALL_AUTOMATED_SELLS",
+    "KR_FLOW_ENTRY_GATE_MODE", "US_GAP_PULLBACK_LIVE_ENABLED",
+    "PATHB_KR_EXIT_POLICY", "PATHB_ZONE_FILL_MODE_US",
+)
+
+
+def _operator_critical_dual_source_check(config: dict[str, Any], mode: str) -> CheckResult:
+    """운영자 핵심 파라미터가 .env.live와 config env_overrides에 동시 존재할 때
+    값 불일치를 잡는다. 불일치면 config가 조용히 이기므로(=.env.live 편집 무시)
+    핵심 키는 FAIL, 그 외는 WARN으로 표면화한다.
+    """
+    name = "config.operator_critical_dual_source"
+    base_env = dict(config.get("base_env") or {})
+    overrides = dict(config.get("overrides") or {})
+    if str(mode or "").lower() != "live":
+        return CheckResult(name, "PASS", "non-live 모드 — dual-source override 미적용", {"mode": mode})
+
+    critical_mismatch: list[dict[str, str]] = []
+    other_mismatch: list[dict[str, str]] = []
+    coexisting = sorted(set(base_env) & set(overrides))
+    for key in coexisting:
+        env_val = str(base_env.get(key, "")).strip()
+        ov_val = str(overrides.get(key, "")).strip()
+        if env_val == ov_val:
+            continue
+        record = {"key": key, "env_live": env_val, "config_override": ov_val}
+        if key in _OPERATOR_CRITICAL_DUAL_SOURCE_KEYS:
+            critical_mismatch.append(record)
+        else:
+            other_mismatch.append(record)
+
+    data = {
+        "mode": mode,
+        "coexisting_key_count": len(coexisting),
+        "critical_mismatch": critical_mismatch,
+        "other_mismatch_count": len(other_mismatch),
+        "other_mismatch_sample": other_mismatch[:10],
+        "note": "config env_overrides가 .env.live를 항상 덮음 — 불일치 시 .env.live 값은 무시됨",
+    }
+    if critical_mismatch:
+        keys = ", ".join(record["key"] for record in critical_mismatch)
+        return CheckResult(
+            name, "FAIL",
+            f"운영자 핵심 파라미터 dual-source 불일치(config가 이김, .env.live 무시): {keys}",
+            data,
+        )
+    if other_mismatch:
+        return CheckResult(
+            name, "WARN",
+            f"비핵심 dual-source 불일치 {len(other_mismatch)}건(config가 이김) — .env.live 값 무시됨",
+            data,
+        )
+    return CheckResult(
+        name, "PASS",
+        f"dual-source 공존 키 {len(coexisting)}개 값 일치(운영자 핵심 파라미터 불일치 없음)",
+        data,
+    )
+
+
 def _candidate_actions_live_config_check(effective: dict[str, str], mode: str) -> CheckResult:
     keys = (
         "ENABLE_CLAUDE_CANDIDATE_ACTIONS",
@@ -3251,6 +3324,7 @@ def _config_checks(mode: str, allow_config_conflicts: bool) -> tuple[list[CheckR
     important = {key: effective.get(key, "") for key in sorted(LIVE_CONFIG_KEYS) if key in effective}
     checks.append(CheckResult("config.effective_values", "PASS", "effective live values captured", {"values": important}))
     checks.append(_config_source_meaning_check(config))
+    checks.append(_operator_critical_dual_source_check(config, mode))
     checks.append(_pathb_kr_exit_policy_check(config, mode))
     checks.append(_profit_strategy_core_entry_policy_check(config, mode))
     checks.append(_candidate_consensus_runtime_check(effective))
