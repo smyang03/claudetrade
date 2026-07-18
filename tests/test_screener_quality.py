@@ -31,6 +31,10 @@ class ScreenerQualityTests(unittest.TestCase):
                         "rs_20d_vs_board": 4.2,
                         "quality_data_gaps": ["flow_missing"],
                         "flow_window_5d_count": "3.0",
+                        "foreign_flow_window_count": 4,
+                        "foreign_flow_buy_days_consec": 3,
+                        "foreign_flow_net_qty_5d": 1234.5,
+                        "foreign_flow_signal": "accumulation",
                     },
                 ],
                 selected=["001510"],
@@ -59,6 +63,11 @@ class ScreenerQualityTests(unittest.TestCase):
             self.assertEqual(by_ticker["001510"]["rs_20d_vs_board"], 4.2)
             self.assertIn("flow_missing", by_ticker["001510"]["quality_data_gaps"])
             self.assertEqual(by_ticker["001510"]["flow_window_5d_count"], 3)
+            # 외국인 단독 수급 관측 피처가 실제 로그 행으로 emit되는지(승격 원장 연결)
+            self.assertEqual(by_ticker["001510"]["foreign_flow_window_count"], 4)
+            self.assertEqual(by_ticker["001510"]["foreign_flow_buy_days_consec"], 3)
+            self.assertEqual(by_ticker["001510"]["foreign_flow_net_qty_5d"], 1234.5)
+            self.assertEqual(by_ticker["001510"]["foreign_flow_signal"], "accumulation")
 
     def test_write_candidate_quality_log_uses_final_prompt_pool_for_actual_visibility(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
