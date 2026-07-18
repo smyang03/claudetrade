@@ -10452,6 +10452,7 @@ class PathBRuntime:
             exit_meta=exit_meta,
         )
         if close_reason in {"CLOSED_LOSS_CAP", "CLOSED_HARD_STOP", "CLOSED_CLAUDE_PRICE_STOP", "CLOSED_WEAK_MFE"}:
+            key = None
             try:
                 key = plan.ticker.upper() if market == "US" else plan.ticker
                 note_stop = getattr(self.bot, "_note_stop_loss_event", None)
@@ -10470,8 +10471,22 @@ class PathBRuntime:
                 else:
                     self.bot._v2_same_day_stop_tickers.setdefault(market, set()).add(key)
                     self.bot._daily_sl_count[market] = int(self.bot._daily_sl_count.get(market, 0) or 0) + 1
-            except Exception:
-                pass
+            except Exception as exc:
+                # loud-fail: 일일 손절 카운터/재진입 차단은 서킷브레이커라 침묵하면
+                # 한도가 조용히 과소집계된다. ERROR로 표면화하고, 최소한 당일 재진입
+                # 차단 집합에는 반영(idempotent set.add — 안전 방향)한다.
+                log.error(
+                    f"[stop counter] {market} {getattr(plan, 'ticker', '?')} "
+                    f"손절 이벤트 기록 실패({close_reason}): {exc}",
+                    exc_info=True,
+                )
+                try:
+                    fallback_key = key if key is not None else (
+                        plan.ticker.upper() if market == "US" else plan.ticker
+                    )
+                    self.bot._v2_same_day_stop_tickers.setdefault(market, set()).add(fallback_key)
+                except Exception:
+                    pass
             try:
                 mark_runtime = getattr(self.bot, "_selection_meta_mark_runtime_filtered", None)
                 if callable(mark_runtime):

@@ -4234,14 +4234,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 if self._has_open_position(ticker, market_key):
                     runtime_filtered[ticker] = "already_holding"
                     continue
-            except Exception:
-                pass
+            except Exception as exc:
+                # fail-safe: 보유 확인이 실패하면 중복 매수 방지를 위해 후보에서 제외한다
+                # (조용히 통과시키면 이미 보유 종목에 재매수가 나갈 수 있음).
+                runtime_filtered[ticker] = "position_guard_error"
+                log.warning(f"[dup guard] {market_key} {ticker} 보유확인 실패 → 후보 제외: {exc}")
+                continue
             try:
                 if self._has_pending_order(ticker, market_key):
                     runtime_filtered[ticker] = "pending_order"
                     continue
-            except Exception:
-                pass
+            except Exception as exc:
+                # fail-safe: 미체결 확인 실패도 중복 주문 방지를 위해 후보에서 제외한다.
+                runtime_filtered[ticker] = "pending_order_guard_error"
+                log.warning(f"[dup guard] {market_key} {ticker} 미체결확인 실패 → 후보 제외: {exc}")
+                continue
             filtered_ready.append(ticker)
         ready_candidates = filtered_ready
         ready_candidates = self._apply_selection_quality_runtime_filter(
