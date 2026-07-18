@@ -21420,6 +21420,26 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as exc:
             log.debug(f"[pool quality] {market} attach skip: {exc}")
         return row
+    def _anti_chase_screen(self, market: str, candidate: dict) -> dict:
+        """극단 급등 추격(MAX≥threshold) 배제 판정. off=no-op·shadow=관측만·enforce=배제.
+
+        검증(docs/reports/alpha_hunt_and_design_20260719.md): 극단 급등(MAX≥20%)은
+        반전·독성(우리 net −1.08%, 외부 5일 −1.62%), 중간(8~20%)은 정상 → 보존.
+        네거티브 스크린(배제, 리랭킹 아님). fail-open: MAX 결손이면 막지 않음.
+        """
+        try:
+            from bot.anti_chase_gate import evaluate_anti_chase, normalize_mode
+            mode = normalize_mode(os.getenv("ANTI_CHASE_SCREEN_MODE", "off"))
+            if mode == "off":
+                return {"mode": "off", "block": False, "decision": "off"}
+            try:
+                threshold = float(os.getenv("ANTI_CHASE_MAX_THRESHOLD", "20") or 20)
+            except (TypeError, ValueError):
+                threshold = 20.0
+            return evaluate_anti_chase((candidate or {}).get("max_daily_ret_21d"), mode, threshold=threshold)
+        except Exception as exc:
+            log.debug(f"[anti-chase] {market} screen skip: {exc}")
+            return {"mode": "off", "block": False, "decision": "error"}
     def _apply_candidate_post_rank_shadow(self, market: str, candidates: list[dict]) -> list[dict]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         if market_key != "KR" or not _env_bool("KR_CANDIDATE_POST_RANK_ENABLED", False):
@@ -21720,6 +21740,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 enriched_candidate = self._enrich_kr_candidate_quality(market_key, enriched_candidate, candles)
                 enriched_candidate = self._enrich_us_candidate_quality_shadow(market_key, enriched_candidate, candles)
                 enriched_candidate = self._attach_pool_quality_features(market_key, enriched_candidate, candles)
+                anti_chase = self._anti_chase_screen(market_key, enriched_candidate)
+                if anti_chase.get("block"):
+                    # enforce: 극단 급등 추격 배제(네거티브 스크린) — 후보 풀에서 제외
+                    removed_v2.append((ticker, f"anti_chase_extreme_spike(MAX={anti_chase.get('max_daily_ret_21d')})"))
+                    log.info(
+                        f"[anti-chase] {market_key} {ticker} 극단급등 배제 "
+                        f"MAX={anti_chase.get('max_daily_ret_21d')}%>=thr{anti_chase.get('threshold')}%"
+                    )
+                    continue
+                if anti_chase.get("decision") == "would_skip":
+                    enriched_candidate["anti_chase_would_skip"] = True
                 filtered_v2.append(enriched_candidate)
             except Exception as exc:
                 removed_v2.append((ticker, f"error:{exc}"))
