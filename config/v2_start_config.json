@@ -711,7 +711,9 @@
     "SINGLE_SYMBOL_JUDGE_MIN_REWARD_RISK_KR": "1.1",
     "SINGLE_SYMBOL_JUDGE_MIN_REWARD_RISK_US": "1.5",
     "GUARDIAN_MARKET_GATE_REQUIRED": "true",
-    "GUARDIAN_MARKET_GATE_MAX_AGE_SEC": "900"
+    "GUARDIAN_MARKET_GATE_MAX_AGE_SEC": "900",
+    "ANTI_CHASE_SCREEN_MODE": "enforce",
+    "ANTI_CHASE_MAX_THRESHOLD": "20"
   },
   "updated_at": "2026-06-09T21:27:06+09:00",
   "updated_by": "dashboard_order_size_control"
