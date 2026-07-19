@@ -10542,6 +10542,33 @@ class PathBRuntime:
             },
             merge_plan=True,
         )
+        # 경로 유전자 shadow 기록(관측 전용) — 청산 시점 초기경로 형태·확인·outcome_tag를
+        # funnel JSONL에 남겨 ride-규칙(확인된 승자 연장)을 우리 net으로 forward 검증. 실제
+        # 출구 무변경. 근거: six-visions-verified-20260719(② r=0.49, 컷 반증·연장 실익).
+        try:
+            from bot.path_genome import classify_path_genome, record_path_genome
+            genome = classify_path_genome(
+                entry_at=exit_meta.get("entry_at") or exit_meta.get("filled_at"),
+                peak_at=exit_meta.get("observed_peak_at"),
+                low_at=exit_meta.get("observed_low_at"),
+                mfe_pct=exit_meta.get("position_mfe_pct"),
+                mae_pct=exit_meta.get("position_mae_pct"),
+                pnl_pct=pnl_pct,
+            )
+            record_path_genome(
+                session_date=self._session_date(market),
+                market=market,
+                ticker=plan.ticker,
+                close_reason=str(close_reason or ""),
+                genome=genome,
+                extra={
+                    "path_run_id": plan.path_run_id,
+                    "decision_id": plan.decision_id,
+                    "entry_market_regime": str(exit_meta.get("entry_market_regime") or ""),
+                },
+            )
+        except Exception as exc:
+            log.debug(f"[path genome] {getattr(plan, 'ticker', '?')} record skip: {exc}")
         if market == "KR":
             try:
                 get_paired_exit_observer().record_live_exit(
