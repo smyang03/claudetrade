@@ -517,6 +517,49 @@ def _prioritize_ticker_map(ticker_map: dict, market: str) -> dict:
     return out
 
 
+def _load_core_and_held_tickers(market: str) -> list[str]:
+    """코어 sleeve(월간 리밸런스 대상) + 현재 보유 종목 — 수집 유니버스에 항상 포함.
+
+    이들이 CSV 없으면 guardian price integrity가 하드 차단한다(2026-07-20 275280
+    코어 ETF 미수집 → 보유 시 BLOCK_START 사고). market별(KR/US) 필터. 실패해도
+    빈 리스트 반환(수집 흐름 무영향). state 스냅샷/매니페스트는 utf-8-sig 관용.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    market_key = str(market or "").upper()
+    out: list[str] = []
+
+    def _add(tk: object) -> None:
+        text = str(tk or "").strip()
+        if market_key == "US":
+            text = text.upper()
+        if text and text not in out:
+            out.append(text)
+
+    # 1) 코어 매니페스트 (state/profit_strategy_core_live_manifest_{market}.json)
+    try:
+        manifest = _Path("state") / f"profit_strategy_core_live_manifest_{market_key}.json"
+        if manifest.exists():
+            payload = _json.loads(manifest.read_text(encoding="utf-8-sig"))
+            for sig in payload.get("signals") or []:
+                if str((sig or {}).get("market") or "").upper() == market_key:
+                    _add((sig or {}).get("ticker"))
+    except Exception:
+        pass
+    # 2) 현재 보유 종목 (state/live_broker_truth_snapshot.json)
+    try:
+        snap = _Path("state") / "live_broker_truth_snapshot.json"
+        if snap.exists():
+            payload = _json.loads(snap.read_text(encoding="utf-8-sig"))
+            row = (payload.get("markets") or {}).get(market_key) or {}
+            for pos in row.get("positions") or []:
+                _add((pos or {}).get("ticker"))
+    except Exception:
+        pass
+    return out
+
+
 def fetch_kr_daily_yfinance(ticker: str, start_dt: pd.Timestamp, end_dt: pd.Timestamp) -> pd.DataFrame:
     """yfinance 폴백 — KIS API 실패 시 사용 (KOSPI: .KS, KOSDAQ: .KQ)"""
     try:
@@ -562,6 +605,10 @@ def collect_kr_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
         code = p.stem[3:]  # "kr_005930" → "005930"
         if code not in all_tickers:
             all_tickers[code] = code  # 이름 모를 경우 코드로 대체
+    # 코어 sleeve + 보유 종목 항상 포함(CSV 없어도 선제 수집 — 275280 차단 사고 방지)
+    for code in _load_core_and_held_tickers("KR"):
+        if code not in all_tickers:
+            all_tickers[code] = code
     all_tickers = _prioritize_ticker_map(all_tickers, "KR")
 
     print(f"  대상 종목: {len(all_tickers)}개 (KR_TICKERS {len(KR_TICKERS)} + 기존CSV 추가)")
@@ -757,6 +804,10 @@ def collect_us_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
     us_price_dir = PRICE_DIR / "us"
     for p in us_price_dir.glob("us_*.csv"):
         sym = p.stem[3:]  # "us_NVDA" → "NVDA"
+        if sym not in all_tickers:
+            all_tickers[sym] = sym
+    # 코어 sleeve + 보유 종목 항상 포함(CSV 없어도 선제 수집 — 차단 사고 방지)
+    for sym in _load_core_and_held_tickers("US"):
         if sym not in all_tickers:
             all_tickers[sym] = sym
     all_tickers = _prioritize_ticker_map(all_tickers, "US")
