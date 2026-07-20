@@ -338,3 +338,13 @@ class UnsettledZeroFlowTrustTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KrFlowCalendarHolidayTests(unittest.TestCase):
+    def test_flow_source_skips_known_holiday(self) -> None:
+        # 2026-07-17은 제헌절(known-holiday). XKRX는 거래일로 알 수 있으나 flow 소스는
+        # 실거래일 7/16으로 잡혀야 한다(전량 0 휴장 캐시를 소스로 쓰지 않도록).
+        from datetime import date
+        from bot.kr_investor_flow_cache import _is_kr_trading_day
+        self.assertFalse(_is_kr_trading_day(date(2026, 7, 17)))
+        self.assertEqual(effective_flow_source_date("2026-07-20"), "2026-07-16")

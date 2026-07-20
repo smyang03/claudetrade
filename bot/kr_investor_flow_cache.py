@@ -419,6 +419,16 @@ def _parse_date(value: str | date) -> date:
 def _is_kr_trading_day(day: date) -> bool:
     if day.weekday() >= 5:
         return False
+    # known-holiday 오버라이드 우선 — exchange_calendars(XKRX)가 모르는 KR 임시공휴일
+    # (제헌절·선거 등)을 거래일로 오판하면 flow 소스가 휴장일(전량 0)로 잡힌다.
+    # bot/market_utils._is_trading_day와 동일 계약(bot/session_date).
+    try:
+        from bot.session_date import is_known_market_holiday
+
+        if is_known_market_holiday("KR", day):
+            return False
+    except Exception:
+        pass
     global _KR_CALENDAR
     try:
         import exchange_calendars as ec
