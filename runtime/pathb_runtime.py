@@ -3472,6 +3472,25 @@ class PathBRuntime:
                     plan.path_run_id,
                 )
                 continue
+            regime_gate = self._pathb_regime_entry_gate(plan, signal, market)
+            if regime_gate is not None and regime_gate.get("block"):
+                self._record_blocked(
+                    market,
+                    plan.ticker,
+                    plan.decision_id,
+                    "REGIME_BAD_ENTRY_BLOCK",
+                    {
+                        **self._execution_safety_payload(),
+                        "stage": "pathb_regime_entry_gate",
+                        "regime": regime_gate.get("regime"),
+                        "block_modes": regime_gate.get("block_modes"),
+                        "price": float(current or 0.0),
+                        "limit_price": float(signal.limit_price or 0.0),
+                        "signal_reason": str(signal.reason or ""),
+                    },
+                    plan.path_run_id,
+                )
+                continue
             trend_gate = self._pathb_trend_overlay_gate(plan, signal, market)
             if trend_gate is not None and trend_gate.get("block"):
                 self._record_blocked(
@@ -4622,6 +4641,42 @@ class PathBRuntime:
             return verdict
         except Exception as exc:
             log.debug(f"[PathB flow entry gate] {plan.ticker} eval skip: {exc}")
+            return None
+
+    def _pathb_regime_entry_gate(self, plan: PricePlan, signal: EntrySignal, market: str) -> dict[str, Any] | None:
+        """나쁜장 진입 게이트 (PathB 국면 진입 억제). off면 None(완전 no-op).
+
+        문제(2026-07-21): 손실 지배 PathB에 나쁜장 게이트가 없었다(진입차단은 Path A만).
+        실측: 나쁜장(CAUTIOUS·MILD_BEAR·MILD_BULL) 진입만 건너뛰면 net −331k→−48k.
+        shadow: would_skip 관측만. enforce: 차단대상 국면이면 block=True. fail-open: 국면 미상이면 진행.
+        ★매수 차단 = 운영자 확인 필수. 기본 off, block_modes 기본 CAUTIOUS(무후회).
+        """
+        from bot.regime_entry_gate import normalize_mode
+        mode = normalize_mode(self._runtime_value("REGIME_ENTRY_GATE_MODE", "off"))
+        if mode == "off":
+            return None
+        try:
+            from bot.regime_entry_gate import evaluate_regime_entry_gate, record_regime_entry_gate
+
+            session_date = self._session_date(market)
+            regime = self._pathb_entry_market_regime(market)
+            block_modes = self._runtime_value("REGIME_ENTRY_GATE_BLOCK_MODES", "CAUTIOUS")
+            verdict = evaluate_regime_entry_gate(regime, mode, block_modes=block_modes)
+            record_regime_entry_gate(
+                session_date=session_date,
+                market=market,
+                ticker=plan.ticker,
+                verdict=verdict,
+                extra={
+                    "decision_id": plan.decision_id,
+                    "path_run_id": plan.path_run_id,
+                    "limit_price": float(signal.limit_price or 0.0),
+                    "signal_reason": str(signal.reason or ""),
+                },
+            )
+            return verdict
+        except Exception as exc:
+            log.debug(f"[PathB regime entry gate] {plan.ticker} eval skip: {exc}")
             return None
 
     def _pathb_trend_overlay_gate(self, plan: PricePlan, signal: EntrySignal, market: str) -> dict[str, Any] | None:
