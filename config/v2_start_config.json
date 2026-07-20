@@ -713,7 +713,9 @@
     "GUARDIAN_MARKET_GATE_REQUIRED": "true",
     "GUARDIAN_MARKET_GATE_MAX_AGE_SEC": "900",
     "ANTI_CHASE_SCREEN_MODE": "enforce",
-    "ANTI_CHASE_MAX_THRESHOLD": "25"
+    "ANTI_CHASE_MAX_THRESHOLD": "25",
+    "REGIME_ENTRY_GATE_MODE": "shadow",
+    "REGIME_ENTRY_GATE_BLOCK_MODES": "CAUTIOUS,MILD_BEAR,MILD_BULL"
   },
   "updated_at": "2026-06-09T21:27:06+09:00",
   "updated_by": "dashboard_order_size_control"
