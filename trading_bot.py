@@ -10962,6 +10962,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 f"source={str(source_strategy or '')} analyst_direction_block=observed "
                 "remaining_buy_gates=enforced"
             )
+            # ① shadow 관측: 코어가 국면 방어를 우회해 진입하는 순간의 국면 기록
+            # (급락 국면 코어 진입이 손해인지 사후 net으로 판정할 원장). 매매 무변경.
+            try:
+                from bot.defense_gap_observer import record_core_entry_regime
+                regime = str(((self.today_judgment or {}).get("consensus") or {}).get("mode", "") or "")
+                record_core_entry_regime(
+                    session_date=self._current_session_date_str(market_key),
+                    market=market_key,
+                    ticker=ticker_key or "",
+                    source_strategy=str(source_strategy or ""),
+                    regime=regime,
+                    analyst_blocked_for_discretionary=bool((analyst_state or {}).get("blocked")),
+                )
+            except Exception as _exc:
+                log.debug(f"[core entry regime obs] skip: {_exc}")
         if bool((analyst_state or {}).get("blocked")):
             return {
                 "allowed": False,
@@ -40360,6 +40375,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         p2["pending_next_open_reason"] = reason_txt
                         break
                 log.info(f"[session close Claude sell] {ticker} {pnl:+.2f}% queued for next session open")
+                # ② shadow 관측: next-open 청산 예약 시점 종가 기록 → 익일 갭(밤사이 노출
+                # 비용) 판정 기준. 매매·청산 무변경. 별도 리뷰가 익일 체결가와 조인.
+                try:
+                    from bot.defense_gap_observer import record_next_open_sell_scheduled
+                    record_next_open_sell_scheduled(
+                        session_date=self._current_session_date_str(market),
+                        market=("US" if str(market or "").upper() == "US" else "KR"),
+                        ticker=ticker,
+                        close_price=cp,
+                        pnl_pct_at_schedule=pnl,
+                        reason=str(reason_txt or "")[:80],
+                    )
+                except Exception as _exc:
+                    log.debug(f"[next-open sell obs] skip: {_exc}")
             else:
                 # HOLD/TRAIL → 이월. max_hold/hold_days는 매도 트리거로 쓰지 않는다.
                 for p2 in self.risk.positions:
