@@ -60,6 +60,7 @@ def init() -> None:
                 selected_at          TEXT,
                 change_pct           REAL,
                 vol_ratio            REAL,
+                rel_vol_shadow       REAL,
                 atr_pct              REAL,
                 gap_pct              REAL,
                 from_high_pct        REAL,
@@ -118,6 +119,11 @@ def init() -> None:
             conn.execute("ALTER TABLE ticker_selection_log ADD COLUMN category TEXT")
         if "liquidity_bucket" not in existing:
             conn.execute("ALTER TABLE ticker_selection_log ADD COLUMN liquidity_bucket TEXT")
+        # US의 vol_ratio는 1.0 placeholder다(전략 게이트 4곳이 소비하므로 고정). 실제 상대거래량은
+        # rel_vol_shadow에만 있는데 이 원장에 기록되지 않아, US 거래량 축의 사후 분석이 불가능했다
+        # (2026-07-22 실측: US 20,044행 전부 vol_ratio=1.0 / KR은 고유값 2,580으로 정상).
+        if "rel_vol_shadow" not in existing:
+            conn.execute("ALTER TABLE ticker_selection_log ADD COLUMN rel_vol_shadow REAL")
         if "from_high_bucket" not in existing:
             conn.execute("ALTER TABLE ticker_selection_log ADD COLUMN from_high_bucket TEXT")
         if "forward_1d" not in existing:
@@ -289,10 +295,10 @@ def insert_batch(
                     (bot_mode, date, market, ticker, consensus_mode, selection_rank,
                      watchlist_rank, source_type, selection_batch_id, selected_reason,
                      veto_reason, selected_reason_tag, selected_at,
-                     change_pct, vol_ratio, gap_pct, from_high_pct, above_ma60, market_type, category, sector,
+                     change_pct, vol_ratio, rel_vol_shadow, gap_pct, from_high_pct, above_ma60, market_type, category, sector,
                      liquidity_bucket, from_high_bucket,
                      trade_ready, risk_tags, recommended_strategy, max_position_pct)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     _BOT_MODE,
@@ -303,6 +309,7 @@ def insert_batch(
                     now_str,
                     c.get("change_rate") or c.get("change_pct"),
                     c.get("vol_ratio"),
+                    c.get("rel_vol_shadow"),
                     c.get("gap_pct"),
                     c.get("from_high_pct"),
                     int(bool(above)) if above is not None else None,
