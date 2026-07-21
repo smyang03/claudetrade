@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -96,8 +97,15 @@ def _sector_lookup(market: str, ticker: str) -> str:
     2026-07-22 실측에서 selection 원장 35,124행의 sector가 KR/US 100% 비어 있었다.
     생산자가 없어 섹터 집중 방지가 영구 미작동이었으므로 여기서 값을 공급한다.
     캐시는 tools/build_sector_map.py가 만든다(파일 없으면 현행과 동일하게 빈 값).
+
+    ★ 기본 off인 이유: 캡이 US sector=3 / KR=2로 타이트한데 실제 체결은 Technology가
+    54.5%(138/253)다. 값을 갑자기 공급하면 프롬프트 후보 구성이 급변한다. 후보 랭킹 변경은
+    과거에 역효과가 확인된 영역이므로(screener 리랭킹 backfire, 2026-06-27) shadow 관측과
+    운영자 승인 없이 켜지 않는다. SECTOR_MAP_ENABLED=true로 활성화한다.
     """
     global _sector_map_cache, _sector_map_mtime
+    if str(os.getenv("SECTOR_MAP_ENABLED", "false") or "false").strip().lower() not in {"1", "true", "yes", "on"}:
+        return ""
     try:
         if not _SECTOR_MAP_PATH.exists():
             return ""

@@ -17,6 +17,10 @@ from unittest.mock import patch
 import universe_manager as um
 
 
+def _enabled():
+    return patch.dict("os.environ", {"SECTOR_MAP_ENABLED": "true"})
+
+
 class SectorLookupTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -41,29 +45,29 @@ class SectorLookupTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_lookup_returns_sector_for_known_ticker(self) -> None:
-        with patch.object(um, "_SECTOR_MAP_PATH", self.path):
+        with _enabled(), patch.object(um, "_SECTOR_MAP_PATH", self.path):
             self.assertEqual(um._sector_lookup("US", "NVDA"), "Technology")
             self.assertEqual(um._sector_lookup("US", "AAL"), "Industrials")
 
     def test_lookup_accepts_plain_string_entry(self) -> None:
-        with patch.object(um, "_SECTOR_MAP_PATH", self.path):
+        with _enabled(), patch.object(um, "_SECTOR_MAP_PATH", self.path):
             self.assertEqual(um._sector_lookup("US", "PLAIN"), "Energy")
 
     def test_unknown_ticker_returns_empty_not_fabricated(self) -> None:
         """모르는 종목의 섹터를 위조하지 않는다(캡은 현행대로 통과)."""
-        with patch.object(um, "_SECTOR_MAP_PATH", self.path):
+        with _enabled(), patch.object(um, "_SECTOR_MAP_PATH", self.path):
             self.assertEqual(um._sector_lookup("US", "NOSUCH"), "")
             self.assertEqual(um._sector_lookup("KR", "005930"), "")
 
     def test_missing_cache_file_is_safe(self) -> None:
         """캐시가 없어도 예외 없이 빈 값 — 현행 동작으로 안전하게 후퇴한다."""
-        with patch.object(um, "_SECTOR_MAP_PATH", Path(self._tmp.name) / "nope.json"):
+        with _enabled(), patch.object(um, "_SECTOR_MAP_PATH", Path(self._tmp.name) / "nope.json"):
             self.assertEqual(um._sector_lookup("US", "NVDA"), "")
 
     def test_corrupt_cache_is_safe(self) -> None:
         bad = Path(self._tmp.name) / "bad.json"
         bad.write_text("{not json", encoding="utf-8")
-        with patch.object(um, "_SECTOR_MAP_PATH", bad):
+        with _enabled(), patch.object(um, "_SECTOR_MAP_PATH", bad):
             self.assertEqual(um._sector_lookup("US", "NVDA"), "")
 
     def test_build_universe_fills_sector_from_cache(self) -> None:
@@ -72,7 +76,7 @@ class SectorLookupTests(unittest.TestCase):
             {"ticker": "NVDA", "name": "NVDA", "price": 100.0, "volume": 1_000_000, "change_rate": 5.0},
             {"ticker": "AAL", "name": "AAL", "price": 20.0, "volume": 2_000_000, "change_rate": 3.0},
         ]
-        with patch.object(um, "_SECTOR_MAP_PATH", self.path):
+        with _enabled(), patch.object(um, "_SECTOR_MAP_PATH", self.path):
             snap = um.build_universe_from_candidates("US", "2026-07-22", candidates)
         by_ticker = {c["ticker"]: c for c in snap.get("candidates", [])}
         self.assertEqual(by_ticker["NVDA"]["sector"], "Technology")
@@ -84,10 +88,23 @@ class SectorLookupTests(unittest.TestCase):
             {"ticker": "NVDA", "name": "NVDA", "price": 100.0, "volume": 1_000_000,
              "change_rate": 5.0, "sector": "FromScreener"},
         ]
-        with patch.object(um, "_SECTOR_MAP_PATH", self.path):
+        with _enabled(), patch.object(um, "_SECTOR_MAP_PATH", self.path):
             snap = um.build_universe_from_candidates("US", "2026-07-22", candidates)
         by_ticker = {c["ticker"]: c for c in snap.get("candidates", [])}
         self.assertEqual(by_ticker["NVDA"]["sector"], "FromScreener")
+
+
+    def test_disabled_by_default_returns_empty(self) -> None:
+        """기본은 off — 캡이 US sector=3으로 타이트한데 실제 체결은 Technology 54.5%라,
+        값을 갑자기 공급하면 후보 구성이 급변한다. 승인 전까지 현행 동작을 유지한다."""
+        with patch.dict("os.environ", {"SECTOR_MAP_ENABLED": "false"}),              patch.object(um, "_SECTOR_MAP_PATH", self.path):
+            self.assertEqual(um._sector_lookup("US", "NVDA"), "")
+
+    def test_absent_toggle_is_off(self) -> None:
+        import os as _os
+        env = {k: v for k, v in _os.environ.items() if k != "SECTOR_MAP_ENABLED"}
+        with patch.dict("os.environ", env, clear=True),              patch.object(um, "_SECTOR_MAP_PATH", self.path):
+            self.assertEqual(um._sector_lookup("US", "NVDA"), "")
 
 
 if __name__ == "__main__":
