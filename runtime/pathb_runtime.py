@@ -1121,6 +1121,55 @@ class PathBRuntime:
             value_getter = lambda key, default=None: self._runtime_float(key, default)
         return resolve_min_reward_risk(market, value_getter=value_getter)
 
+    def _pathb_us_weekday_entry_block_state(self, market: str) -> dict[str, Any]:
+        """US 요일 진입 게이트 — 기본 shadow(관측만).
+
+        2026-07-22 실측. 두 독립 소스가 같은 방향을 지지한다:
+        - forward(대표본, 요일당 2,600~4,200건): 금 비대칭 1.51/fwd3d +1.25%,
+          수 1.11/+0.16%, 목 0.70/-1.35%, 화 0.72/-1.72%, 월 0.56/-2.37%
+        - 우리 실제 net(국면게이트 통과분): 금 +40.11%(승률 55.0%), 목 +9.40%, 수 +7.03%,
+          월 -15.51%, 화 -39.79%(n=26, 승률 11.5%)
+        화요일만 차단해도 +39.55%p이고 거래는 178->152건으로 15%만 준다.
+        KR은 forward에서 요일차가 없고(0.89~1.10) 우리 표본도 2~11건이라 대상에서 제외한다.
+
+        표본이 26~43건이고 "5개 중 최악을 뺀다"는 구조상 과적합 위험이 있어 기본 shadow다.
+        US_WEEKDAY_ENTRY_BLOCK_MODE=enforce + BLOCK_DAYS로 전환한다(0=월 … 4=금).
+        """
+        market_key = str(market or "").upper()
+        if market_key != "US":
+            return {"active": False, "blocked_now": False}
+        getter = getattr(self, "_runtime_value", None)
+        mode = str((getter("US_WEEKDAY_ENTRY_BLOCK_MODE", "shadow") if callable(getter) else "shadow") or "shadow").strip().lower()
+        if mode in {"off", "disabled", "false", ""}:
+            return {"active": False, "blocked_now": False}
+        raw = str((getter("US_WEEKDAY_ENTRY_BLOCK_DAYS", "1") if callable(getter) else "1") or "").strip()
+        days: list[int] = []
+        for token in raw.replace(";", ",").split(","):
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                value = int(token)
+            except ValueError:
+                continue
+            if 0 <= value <= 6:
+                days.append(value)
+        if not days:
+            return {"active": False, "blocked_now": False}
+        # 미 동부 기준 요일(개장일). UTC로 보면 자정 넘긴 세션이 다음날로 잡힌다.
+        weekday = (datetime.now(timezone.utc) - timedelta(hours=4)).weekday()
+        hit = weekday in days
+        return {
+            "active": True,
+            "mode": mode,
+            "blocked_now": bool(hit and mode == "enforce"),
+            "would_block": bool(hit),
+            "weekday_et": weekday,
+            "block_days": days,
+            "reason": "US_WEEKDAY_ENTRY_BLOCK",
+        }
+
+
     def _pathb_us_midday_entry_block_state(self, market: str) -> dict[str, Any]:
         """미 동부 정오(기본 16시 UTC) US 신규 진입 제출 차단 상태.
 
@@ -3304,6 +3353,8 @@ class PathBRuntime:
         risk_off_blocked_tickers: list[str] = []
         midday_block_state = self._pathb_us_midday_entry_block_state(market)
         midday_blocked_tickers: list[str] = []
+        weekday_block_state = self._pathb_us_weekday_entry_block_state(market)
+        weekday_blocked_tickers: list[str] = []
         if bool(burst_cap.get("active")):
             def _confidence_sort_value(item: tuple[int, dict[str, Any], PricePlan]) -> float:
                 try:
@@ -3492,6 +3543,37 @@ class PathBRuntime:
                         plan.path_run_id,
                     )
                 continue
+            if bool(weekday_block_state.get("blocked_now")):
+                weekday_blocked_tickers.append(plan.ticker)
+                plan_data = dict(run.get("plan") or {})
+                blocked_at = datetime.now(KST)
+                if self._pathb_risk_origin_block_log_allowed(plan_data, "US_WEEKDAY_ENTRY_BLOCK", now=blocked_at):
+                    self.store.update_path_run(
+                        plan.path_run_id,
+                        plan={
+                            "last_submit_block_reason": "US_WEEKDAY_ENTRY_BLOCK",
+                            "last_submit_block_at": blocked_at.isoformat(timespec="seconds"),
+                            "last_submit_block_log_reason": "US_WEEKDAY_ENTRY_BLOCK",
+                            "last_submit_block_log_at": blocked_at.isoformat(timespec="seconds"),
+                        },
+                        merge_plan=True,
+                    )
+                    self._record_blocked(
+                        market,
+                        plan.ticker,
+                        plan.decision_id,
+                        "US_WEEKDAY_ENTRY_BLOCK",
+                        {
+                            **self._execution_safety_payload(),
+                            **weekday_block_state,
+                            "stage": "pathb_waiting_scan_zone_hit",
+                            "price": float(current or 0.0),
+                            "limit_price": float(signal.limit_price or 0.0),
+                            "signal_reason": str(signal.reason or ""),
+                        },
+                        plan.path_run_id,
+                    )
+                continue
             flow_gate = self._pathb_flow_entry_gate(plan, signal, market)
             if flow_gate is not None and flow_gate.get("block"):
                 self._record_blocked(
@@ -3583,6 +3665,19 @@ class PathBRuntime:
                 f"[PathB 미 정오 진입 보류] {market} utc_hour={midday_block_state.get('utc_hour')} "
                 f"block_hour={midday_block_state.get('block_hour_utc')} "
                 f"count={len(midday_blocked_tickers)} tickers={sample}"
+            )
+        if weekday_blocked_tickers:
+            wd_sample = ",".join(weekday_blocked_tickers[:8])
+            log.info(
+                f"[PathB 요일 진입 보류] {market} et_weekday={weekday_block_state.get('weekday_et')} "
+                f"block_days={weekday_block_state.get('block_days')} "
+                f"count={len(weekday_blocked_tickers)} tickers={wd_sample}"
+            )
+        elif bool(weekday_block_state.get("would_block")) and not bool(weekday_block_state.get("blocked_now")):
+            # shadow 관측: 오늘이 차단 대상 요일인데 mode가 shadow라 막지 않았다.
+            log.info(
+                f"[PathB 요일게이트 shadow] {market} et_weekday={weekday_block_state.get('weekday_et')} "
+                f"block_days={weekday_block_state.get('block_days')} — 관측만, 차단 없음"
             )
 
     def reconcile_buy_pending_cancel_above(self, market: str, *, force: bool = False) -> dict[str, Any]:

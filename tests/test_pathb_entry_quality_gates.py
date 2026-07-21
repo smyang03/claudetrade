@@ -6,7 +6,7 @@ import sys
 import types
 import unittest
 from unittest.mock import patch
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -187,6 +187,64 @@ class UsMiddayMultiHourBlockTests(unittest.TestCase):
     def test_kr_unaffected(self) -> None:
         st = self._state("KR", {"US_MIDDAY_ENTRY_BLOCK_ENABLED": True,
                                 "US_MIDDAY_ENTRY_BLOCK_UTC_HOURS": "15,16"})
+        self.assertFalse(st["active"])
+        self.assertFalse(st["blocked_now"])
+
+
+class UsWeekdayEntryBlockTests(unittest.TestCase):
+    """US 요일 진입 게이트 — 기본 shadow(관측만).
+
+    두 독립 소스가 같은 방향을 지지한다(2026-07-22):
+      forward(요일당 2,600~4,200건): 금 비대칭 1.51/+1.25% … 월 0.56/-2.37%
+      우리 net(국면게이트 통과분): 금 +40.11%(승률 55.0%) / 화 -39.79%(n=26, 승률 11.5%)
+    화요일만 차단해도 +39.55%p이고 거래는 15%만 준다. 다만 표본이 작고 "5개 중 최악을
+    뺀다"는 구조라 과적합 위험이 있어 기본은 shadow다.
+    """
+
+    def _state(self, market, values):
+        dummy = types.SimpleNamespace(_runtime_value=lambda key, default=None: values.get(key, default))
+        return PathBRuntime._pathb_us_weekday_entry_block_state(dummy, market)
+
+    def _today_et(self) -> int:
+        return (datetime.now(timezone.utc) - timedelta(hours=4)).weekday()
+
+    def test_shadow_observes_without_blocking(self) -> None:
+        st = self._state("US", {"US_WEEKDAY_ENTRY_BLOCK_DAYS": str(self._today_et())})
+        self.assertTrue(st["active"])
+        self.assertTrue(st["would_block"])
+        self.assertFalse(st["blocked_now"], "shadow는 관측만 하고 막지 않는다")
+
+    def test_enforce_blocks_target_day(self) -> None:
+        st = self._state("US", {
+            "US_WEEKDAY_ENTRY_BLOCK_MODE": "enforce",
+            "US_WEEKDAY_ENTRY_BLOCK_DAYS": str(self._today_et()),
+        })
+        self.assertTrue(st["blocked_now"])
+
+    def test_other_day_not_blocked(self) -> None:
+        other = (self._today_et() + 2) % 7
+        st = self._state("US", {
+            "US_WEEKDAY_ENTRY_BLOCK_MODE": "enforce",
+            "US_WEEKDAY_ENTRY_BLOCK_DAYS": str(other),
+        })
+        self.assertFalse(st["would_block"])
+        self.assertFalse(st["blocked_now"])
+
+    def test_mode_off_disables(self) -> None:
+        st = self._state("US", {"US_WEEKDAY_ENTRY_BLOCK_MODE": "off"})
+        self.assertFalse(st["active"])
+
+    def test_empty_days_disables(self) -> None:
+        """요일 목록이 비면 게이트를 끈다 — 빈 값이 전면 차단이 되지 않게."""
+        st = self._state("US", {"US_WEEKDAY_ENTRY_BLOCK_DAYS": "  "})
+        self.assertFalse(st["active"])
+
+    def test_malformed_tokens_skipped(self) -> None:
+        st = self._state("US", {"US_WEEKDAY_ENTRY_BLOCK_DAYS": f"abc,9,{self._today_et()}"})
+        self.assertEqual(st["block_days"], [self._today_et()])
+
+    def test_kr_unaffected(self) -> None:
+        st = self._state("KR", {"US_WEEKDAY_ENTRY_BLOCK_MODE": "enforce"})
         self.assertFalse(st["active"])
         self.assertFalse(st["blocked_now"])
 
