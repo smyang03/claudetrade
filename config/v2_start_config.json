@@ -716,7 +716,10 @@
     "ANTI_CHASE_MAX_THRESHOLD": "25",
     "REGIME_ENTRY_GATE_MODE": "shadow",
     "REGIME_ENTRY_GATE_BLOCK_MODES": "CAUTIOUS,MILD_BEAR,MILD_BULL",
-    "REVERSE_EXEMPT_CORE_SLEEVE": "true"
+    "REVERSE_EXEMPT_CORE_SLEEVE": "true",
+    "DIP_ENTRY_GATE_MODE": "shadow",
+    "DIP_ENTRY_RET5D_THRESHOLD": "-5",
+    "DIP_ENTRY_GATE_MARKETS": "US"
   },
   "updated_at": "2026-06-09T21:27:06+09:00",
   "updated_by": "dashboard_order_size_control"

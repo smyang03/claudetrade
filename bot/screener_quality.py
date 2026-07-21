@@ -193,6 +193,8 @@ def write_candidate_quality_log(
                 "spike_chase_level": _safe_int(feature_candidate.get("spike_chase_level")),
                 "realized_vol_21d": _safe_float(feature_candidate.get("realized_vol_21d")),
                 "ret_1m_pct": _safe_float(feature_candidate.get("ret_1m_pct")),
+                "ret_5d_pct_pool": _safe_float(feature_candidate.get("ret_5d_pct_pool")),
+                "dip_entry_would_block": bool(feature_candidate.get("dip_entry_would_block")),
                 "forward_30m_from_bucket": None,
                 "forward_60m_from_bucket": None,
                 "forward_close_from_bucket": None,

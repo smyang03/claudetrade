@@ -55,6 +55,7 @@ QUALITY_FEATURE_KEYS: tuple[str, ...] = (
     "spike_chase_level",
     "realized_vol_21d",
     "ret_1m_pct",
+    "ret_5d_pct_pool",
     "pool_quality_source",
 )
 

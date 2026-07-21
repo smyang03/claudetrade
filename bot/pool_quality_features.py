@@ -19,6 +19,7 @@ POOL_QUALITY_FEATURE_KEYS: tuple[str, ...] = (
     "spike_chase_level",
     "realized_vol_21d",
     "ret_1m_pct",
+    "ret_5d_pct_pool",
     "pool_quality_source",
 )
 
@@ -53,6 +54,10 @@ def compute_pool_quality_features(candles: Any, *, lookback: int = 21) -> dict[s
 
     if len(closes) > lookback and closes[-lookback - 1] > 0:
         out["ret_1m_pct"] = round((closes[-1] / closes[-lookback - 1] - 1.0) * 100.0, 3)
+    # 5일 수익률 — US 손실원 변별 실증(2026-07-21: ret_5d<−5 낙폭베팅 배제군 net −42.2%p,
+    # 잔존 −13.6). dip_entry_gate 입력. 키명은 screener의 ret_5d_pct(KR rich)와 소스 구분.
+    if len(closes) >= 6 and closes[-6] > 0:
+        out["ret_5d_pct_pool"] = round((closes[-1] / closes[-6] - 1.0) * 100.0, 3)
     return out
 
 
