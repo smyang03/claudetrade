@@ -201,7 +201,9 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         )
         self.assertEqual(env_overrides.get("KR_PATHB_STRATEGY_FILTER_ENABLED"), "false")
         self.assertEqual(env_overrides.get("KR_PATHB_STRATEGY_FILTER_SHADOW"), "true")
-        self.assertEqual(env_overrides.get("KR_PATHB_STRATEGY_ALLOWLIST"), "claude_price,gap_pullback")
+        # gap_pullback은 609e77a(2026-07-21)에서 KR allowlist에서 제거됐다. config가 의도한
+        # 값이고 이 기대값만 뒤처져 있었다.
+        self.assertEqual(env_overrides.get("KR_PATHB_STRATEGY_ALLOWLIST"), "claude_price")
 
     def test_balanced_mode_family_is_not_risk_off(self) -> None:
         self.assertEqual(_mode_family("BALANCED"), "BALANCED")
