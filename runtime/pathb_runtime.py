@@ -4660,7 +4660,16 @@ class PathBRuntime:
 
             session_date = self._session_date(market)
             regime = self._pathb_entry_market_regime(market)
-            block_modes = self._runtime_value("REGIME_ENTRY_GATE_BLOCK_MODES", "CAUTIOUS")
+            # 차단 국면은 시장별로 최적이 정반대다(2026-07-22 실측, 퍼센트 net·커버리지 99%).
+            # 25개 조합 스캔: US는 CAUTIOUS,MILD_BEAR가 최선(-53.97%→+5.09%, 거래 176건 유지)이고
+            # MILD_BULL을 빼야 한다(포함 시 +1.61%, 거래 94건으로 급감). KR은 반대로
+            # CAUTIOUS,MILD_BULL이 최선(-33.27%→+5.78%)이고 MILD_BEAR를 빼야 한다.
+            # 현재 단일 설정(CAUTIOUS,MILD_BEAR,MILD_BULL)은 양 시장 모두 25개 중 4위다.
+            # 시장별 키를 우선 조회하고 없으면 기존 공용 키로 후퇴한다(현행 동작 보존).
+            market_key = "US" if str(market or "").upper() == "US" else "KR"
+            block_modes = self._runtime_value(f"{market_key}_REGIME_ENTRY_GATE_BLOCK_MODES", "")
+            if not str(block_modes or "").strip():
+                block_modes = self._runtime_value("REGIME_ENTRY_GATE_BLOCK_MODES", "CAUTIOUS")
             verdict = evaluate_regime_entry_gate(regime, mode, block_modes=block_modes)
             record_regime_entry_gate(
                 session_date=session_date,
