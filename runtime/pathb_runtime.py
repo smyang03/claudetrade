@@ -1132,13 +1132,34 @@ class PathBRuntime:
             return {"active": False, "blocked_now": False}
         if not self._runtime_bool("US_MIDDAY_ENTRY_BLOCK_ENABLED", True):
             return {"active": False, "blocked_now": False}
-        block_hour = self._runtime_int("US_MIDDAY_ENTRY_BLOCK_UTC_HOUR", 16)
+        # 복수 시간대 지원(2026-07-22). 게이트 통과 건만으로 64개 조합을 스캔하면
+        # 15시 UTC(ET 11시)가 n=36에 -6.83%로 16시 다음가는 손실 구간이고, 15+16시를 함께
+        # 막으면 +14.10% -> +20.92%(+6.82%p)다. 반면 17시는 +9.77%라 확장하면 오히려 손해다.
+        # 18시(n=10)·19시(n=7)는 표본이 작아 조합 최적화에 넣으면 과적합이다.
+        # 값은 현행 16시를 유지한다 — 오늘 이미 국면게이트·일일상한 두 레버를 바꿔서
+        # 세 번째 동시 변경은 원인 분리를 막는다. 확장은 다음 세션 검증 후.
+        # _runtime_value가 없는 축약 호출자(테스트 더블 등)도 있어 방어적으로 조회한다.
+        _getter = getattr(self, "_runtime_value", None)
+        hours_raw = str((_getter("US_MIDDAY_ENTRY_BLOCK_UTC_HOURS", "") if callable(_getter) else "") or "").strip()
+        block_hours: list[int] = []
+        if hours_raw:
+            for token in hours_raw.replace(";", ",").split(","):
+                token = token.strip()
+                if not token:
+                    continue
+                try:
+                    block_hours.append(int(token))
+                except ValueError:
+                    continue
+        if not block_hours:
+            block_hours = [self._runtime_int("US_MIDDAY_ENTRY_BLOCK_UTC_HOUR", 16)]
         utc_hour = datetime.now(timezone.utc).hour
         return {
             "active": True,
-            "blocked_now": utc_hour == block_hour,
+            "blocked_now": utc_hour in block_hours,
             "utc_hour": utc_hour,
-            "block_hour_utc": block_hour,
+            "block_hour_utc": block_hours[0],
+            "block_hours_utc": list(block_hours),
             "reason": "US_MIDDAY_ENTRY_BLOCK",
         }
 

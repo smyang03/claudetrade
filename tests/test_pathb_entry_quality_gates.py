@@ -130,5 +130,66 @@ class MinRewardRiskRuntimeDefaultTests(unittest.TestCase):
         self.assertEqual(PathBRuntime._pathb_min_reward_risk(dummy, "KR"), 1.5)
 
 
+class UsMiddayMultiHourBlockTests(unittest.TestCase):
+    """차단 시간대 복수 지원 — 64개 조합 스캔에서 15+16시가 최선이었다.
+
+    게이트 통과 건 기준: 16시만 +14.10%(현행·7위) / 15+16시 +20.92%(+6.82%p).
+    17시는 +9.77%라 확장 대상이 아니고, 18시(n=10)·19시(n=7)는 표본이 작아 제외한다.
+    값은 현행 16시를 유지하며(오늘 이미 두 레버를 바꿔 원인 분리가 필요), 배선만 넣는다.
+    """
+
+    def _state(self, market, values):
+        dummy = types.SimpleNamespace(
+            _runtime_bool=lambda key, default=False: bool(values.get(key, default)),
+            _runtime_int=lambda key, default=0: int(values.get(key, default)),
+            _runtime_value=lambda key, default=None: values.get(key, default),
+        )
+        return PathBRuntime._pathb_us_midday_entry_block_state(dummy, market)
+
+    def test_multi_hour_list_is_honored(self) -> None:
+        now = datetime.now(timezone.utc).hour
+        other = (now + 3) % 24
+        st = self._state("US", {
+            "US_MIDDAY_ENTRY_BLOCK_ENABLED": True,
+            "US_MIDDAY_ENTRY_BLOCK_UTC_HOURS": f"{now},{other}",
+        })
+        self.assertEqual(sorted(st["block_hours_utc"]), sorted([now, other]))
+        self.assertTrue(st["blocked_now"])
+
+    def test_falls_back_to_single_key_when_absent(self) -> None:
+        now = datetime.now(timezone.utc).hour
+        st = self._state("US", {
+            "US_MIDDAY_ENTRY_BLOCK_ENABLED": True,
+            "US_MIDDAY_ENTRY_BLOCK_UTC_HOUR": now,
+        })
+        self.assertEqual(st["block_hours_utc"], [now])
+        self.assertTrue(st["blocked_now"])
+
+    def test_blank_multi_key_falls_back(self) -> None:
+        now = datetime.now(timezone.utc).hour
+        st = self._state("US", {
+            "US_MIDDAY_ENTRY_BLOCK_ENABLED": True,
+            "US_MIDDAY_ENTRY_BLOCK_UTC_HOURS": "   ",
+            "US_MIDDAY_ENTRY_BLOCK_UTC_HOUR": now,
+        })
+        self.assertEqual(st["block_hours_utc"], [now])
+
+    def test_malformed_tokens_are_skipped_not_fatal(self) -> None:
+        """오염된 값이 진입을 전면 차단하거나 예외를 내지 않는다."""
+        now = datetime.now(timezone.utc).hour
+        st = self._state("US", {
+            "US_MIDDAY_ENTRY_BLOCK_ENABLED": True,
+            "US_MIDDAY_ENTRY_BLOCK_UTC_HOURS": f"abc,,{now}",
+        })
+        self.assertEqual(st["block_hours_utc"], [now])
+        self.assertTrue(st["blocked_now"])
+
+    def test_kr_unaffected(self) -> None:
+        st = self._state("KR", {"US_MIDDAY_ENTRY_BLOCK_ENABLED": True,
+                                "US_MIDDAY_ENTRY_BLOCK_UTC_HOURS": "15,16"})
+        self.assertFalse(st["active"])
+        self.assertFalse(st["blocked_now"])
+
+
 if __name__ == "__main__":
     unittest.main()
