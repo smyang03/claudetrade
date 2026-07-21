@@ -1157,6 +1157,21 @@ def fetch_live_context_kr() -> dict:
             pass
 
     _vkospi_raw = _yf_last("^KS200VOL") or _yf_last("^VKOSPI") or None
+    # VKOSPI 소스 사망(2026-07-21 실측: 야후 ^KS200VOL/^VKOSPI 404, KIS 업종코드 없음,
+    # 네이버 VKOSPI 페이지는 KOSPI로 폴백, KRX JSON은 세션 필요) — 결측이 분석가 보수화의
+    # 반복 근거였다. 정직한 프록시(KOSPI 20d 실현변동성 연율%)를 **별도 라벨**로 공급한다.
+    # vkospi 필드는 실값 아니면 None 유지(프록시를 VKOSPI로 위장하지 않음).
+    _vol_proxy = None
+    if _vkospi_raw is None:
+        try:
+            import math as _math
+            import yfinance as _yf
+            _h = _yf.Ticker("^KS11").history(period="30d")["Close"]
+            if len(_h) >= 21:
+                _rets = _h.pct_change().dropna().iloc[-20:]
+                _vol_proxy = round(float(_rets.std()) * _math.sqrt(252) * 100.0, 2)
+        except Exception:
+            _vol_proxy = None
     _usd_krw_val = _yf_last("KRW=X") or None
     return {
         "kospi":          {"change_pct": _yf_change("^KS11"), "close": _yf_last("^KS11")},
@@ -1165,6 +1180,8 @@ def fetch_live_context_kr() -> dict:
         "usd_krw":        _usd_krw_val,
         "usd_krw_trend":  _yf_multi_change("KRW=X") if _usd_krw_val else {},
         "vkospi":         _vkospi_raw,
+        "kr_vol_proxy":   _vol_proxy,
+        "kr_vol_proxy_source": "kospi_realized_20d_annualized_pct" if _vol_proxy is not None else "",
         "kr_sectors":     kr_sectors,
     }
 
@@ -1266,7 +1283,14 @@ def build_intraday_advisor_context(market: str = "KR") -> dict:
                     if trend.get("from_20d_high_pct") is not None:
                         usd_str += f", 20일고점대비 {trend['from_20d_high_pct']:+.1f}%"
                     usd_str += ")"
-            vk_str = f"VKOSPI {vkospi:.1f}" if vkospi else "VKOSPI 결측"
+            _vol_proxy = ctx.get("kr_vol_proxy")
+            if vkospi:
+                vk_str = f"VKOSPI {vkospi:.1f}"
+            elif _vol_proxy:
+                # 실소스 사망(2026-07-21) — 프록시를 VKOSPI로 위장하지 않고 별도 표기.
+                vk_str = f"VKOSPI 결측(변동성 프록시: KOSPI 실현변동성 20d 연율 {_vol_proxy:.1f}%)"
+            else:
+                vk_str = "VKOSPI 결측"
             parts = [kospi_str, kosdaq_str]
             if usd_str:
                 parts.append(usd_str)

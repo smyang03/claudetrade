@@ -32155,6 +32155,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "broker_quarantine",
             "run_cap_reached",
             "capacity_exhausted",
+            "market_open_warmup",
         }
 
     def _queue_early_judge_recheck(
@@ -32985,6 +32986,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         ticker = self._selection_ticker_key(market_key, (row or {}).get("ticker") or "")
         features = (row or {}).get("post_open_features") if isinstance((row or {}).get("post_open_features"), dict) else {}
+        # 개장 직후 호출 지연(2026-07-21): 구조(VWAP/ORB) 형성 전 호출은 WAIT 확정으로
+        # 캡만 소모(오늘 09시대 15/30콜, "0.28 min since open" 사유). 캡 상향이 아니라
+        # 낭비 제거 — 재큐되어 형성 후 재평가된다. 0이면 비활성.
+        try:
+            min_elapsed = self._runtime_float("EARLY_JUDGE_MIN_MARKET_ELAPSED_MIN", 5.0)
+        except Exception:
+            min_elapsed = 5.0
+        if min_elapsed > 0:
+            elapsed = self._market_open_elapsed_min(market_key)
+            if elapsed is not None and 0 <= elapsed < min_elapsed:
+                return "market_open_warmup"
         def _truthy_value(value: Any) -> bool:
             if isinstance(value, bool):
                 return value
@@ -33414,15 +33426,27 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             or (getattr(self, "today_judgment", {}) or {}).get("consensus", {}).get("mode", "")
             or ""
         )
-        # 지수 등락률은 이미 보유한 digest context에서 읽는다(shadow 관측에 브로커 API 신규
-        # 호출을 추가하지 않기 위함 — early-judge는 종목 수만큼 이 경로를 탄다).
+        # 지수 등락률: KIS 라이브 캐시(TTL 내) 1순위, digest fallback. 신규 API 호출 없음.
+        # 2026-07-21 실측: digest 단독은 장전값(-6.37)이 장중 내내 기록돼(실제 +2.95)
+        # 관측 원장이 스테일 — 판단 오염은 아니나(judge 프롬프트에 지수 없음) 분석 오염.
         index_change = None
         try:
-            ctx = ((getattr(self, "today_judgment", {}) or {}).get("digest_raw") or {}).get("context") or {}
-            raw_change = (ctx.get("kospi" if market_key == "KR" else "sp500") or {}).get("change_pct")
-            index_change = float(raw_change) if raw_change is not None else None
+            _cached = (getattr(self, "_kis_index_cache", {}) or {}).get(market_key)
+            if _cached and isinstance(_cached.get("ts"), datetime):
+                _age = (datetime.now(KST) - _cached["ts"]).total_seconds()
+                if _age < _KIS_INDEX_CACHE_TTL_SEC:
+                    snap = _cached.get("kospi" if market_key == "KR" else "sp500") or {}
+                    raw_change = snap.get("change_pct")
+                    index_change = float(raw_change) if raw_change is not None else None
         except Exception:
             index_change = None
+        if index_change is None:
+            try:
+                ctx = ((getattr(self, "today_judgment", {}) or {}).get("digest_raw") or {}).get("context") or {}
+                raw_change = (ctx.get("kospi" if market_key == "KR" else "sp500") or {}).get("change_pct")
+                index_change = float(raw_change) if raw_change is not None else None
+            except Exception:
+                index_change = None
         try:
             confidence = float((normalized or {}).get("confidence") or 0.0)
         except Exception:
@@ -33452,8 +33476,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         서지 종목(TGTX/CASY/DKNG)은 0콜. 결측은 0으로 두어 기존 순서 유지(stable sort).
         2026-06-11 운영자 승인으로 shadow 생략, 라이브 직행.
         """
+        # judgment_not_executable 우선(2026-07-21, KR/US 공통): judge가 이미 매수 의사를
+        # 냈는데 시장판단 비실행으로 차단됐던 후보 — 캡 소진 전에 최우선 재평가한다.
+        # (오늘 실측: 005930 conf0.58·332570 conf0.60이 재큐 후 capacity_exhausted로 드롭)
+        def _not_executable_first(rows: list) -> list:
+            if not self._runtime_bool("EARLY_JUDGE_NOT_EXECUTABLE_PRIORITY_ENABLED", True):
+                return rows
+            front = [r for r in rows if str((r or {}).get("previous_blocker") or "") == "judgment_not_executable"]
+            rest = [r for r in rows if str((r or {}).get("previous_blocker") or "") != "judgment_not_executable"]
+            return front + rest
+
         if market_key != "US" or not self._runtime_bool("EARLY_JUDGE_REL_VOL_PRIORITY_ENABLED", True):
-            return candidate_rows
+            return _not_executable_first(candidate_rows)
 
         def _rel_vol(row: dict) -> float:
             value = row.get("rel_vol_shadow")
@@ -33468,7 +33502,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception:
                 return 0.0
 
-        return sorted(candidate_rows, key=_rel_vol, reverse=True)
+        return _not_executable_first(sorted(candidate_rows, key=_rel_vol, reverse=True))
 
     def maybe_run_early_judge_triggers(
         self,
@@ -33564,13 +33598,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 hard_skip = str(affordability_prefilter.get("reason") or "high_price_unaffordable_before_judge")
             should_call = not hard_skip and len(selected_rows) < max_calls
             if hard_skip and self._early_judge_queueable_skip(hard_skip):
+                _requeue_delay = 1.0 if hard_skip == "entry_blackout" else None
+                if hard_skip == "market_open_warmup":
+                    # 워밍업 임계까지 남은 시간만큼 지연 — 형성 직후 재평가
+                    _elapsed = self._market_open_elapsed_min(market_key)
+                    _min_elapsed = self._runtime_float("EARLY_JUDGE_MIN_MARKET_ELAPSED_MIN", 5.0)
+                    _requeue_delay = max(1.0, float(_min_elapsed) - float(_elapsed or 0.0))
                 self._queue_early_judge_recheck(
                     market_key,
                     ticker,
                     source=str(source or ""),
                     reason=hard_skip,
                     row=row,
-                    delay_min=1.0 if hard_skip == "entry_blackout" else None,
+                    delay_min=_requeue_delay,
                     attempts=int(row.get("_early_judge_recheck_attempt") or 0),
                     now=now,
                 )
