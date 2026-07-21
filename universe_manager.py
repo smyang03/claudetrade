@@ -84,6 +84,35 @@ def _candidate_score(c: dict, vol_weight: float = 4.0) -> float:
     return (liquidity * 0.6) + (vol_ratio * vol_weight) + (change_rate * 2.0)
 
 
+_SECTOR_MAP_PATH = Path(__file__).resolve().parent / "data" / "sector_map.json"
+_sector_map_cache: dict | None = None
+_sector_map_mtime: float = 0.0
+
+
+def _sector_lookup(market: str, ticker: str) -> str:
+    """티커→섹터 조회(캐시). 없으면 빈 문자열 — 위조하지 않는다.
+
+    후보 다양성 캡(analysts.py)은 `if sector and ...` 형태라 빈 값이면 조용히 통과한다.
+    2026-07-22 실측에서 selection 원장 35,124행의 sector가 KR/US 100% 비어 있었다.
+    생산자가 없어 섹터 집중 방지가 영구 미작동이었으므로 여기서 값을 공급한다.
+    캐시는 tools/build_sector_map.py가 만든다(파일 없으면 현행과 동일하게 빈 값).
+    """
+    global _sector_map_cache, _sector_map_mtime
+    try:
+        if not _SECTOR_MAP_PATH.exists():
+            return ""
+        mtime = _SECTOR_MAP_PATH.stat().st_mtime
+        if _sector_map_cache is None or mtime != _sector_map_mtime:
+            _sector_map_cache = json.loads(_SECTOR_MAP_PATH.read_text(encoding="utf-8"))
+            _sector_map_mtime = mtime
+        entry = ((_sector_map_cache or {}).get(str(market or "").upper()) or {}).get(str(ticker or "").strip())
+        if isinstance(entry, dict):
+            return str(entry.get("sector") or "").strip()
+        return str(entry or "").strip()
+    except Exception:
+        return ""
+
+
 def _candidate_pullback_bucket(from_high_pct) -> str:
     value = _safe_float(from_high_pct, 0.0)
     if value <= -5.0:
@@ -287,7 +316,8 @@ def build_universe_from_candidates(
             "vol_ratio": _safe_float(c.get("vol_ratio", 0.0)),
             "market_type": str(c.get("market_type", "") or "").strip().upper(),
             "category": str(c.get("category", "") or "").strip(),
-            "sector": str(c.get("sector", "") or "").strip(),
+            # 스크리너가 sector를 주지 않으므로 캐시에서 보완한다(없으면 빈 값 유지).
+            "sector": str(c.get("sector", "") or "").strip() or _sector_lookup(market, ticker),
             "from_high_pct": _safe_float(c.get("from_high_pct", 0.0)),
             "above_ma60": c.get("above_ma60"),
         }
