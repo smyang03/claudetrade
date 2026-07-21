@@ -36084,8 +36084,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 # strategy=claude_price_a(PlanA 태그 — hold_advisor PathB 오분류 방지). 하류 게이트는
                 # 기존 흐름을 그대로 타므로 우회 없음. 국면 게이트는 judge 단·_market_mode_buy_block 이중.
                 if (not signal_fired) and self._buy_ready_immediate_enabled():
-                    _br_route = self._candidate_action_route_for_ticker(market, ticker, final_action="BUY_READY")
-                    if _br_route:
+                    # route 조회는 검증된 _log_kr_plan_a_no_signal_pathb_shadow(5943-5964)와 동일 계약:
+                    # route="PlanA.buy" 매칭 + requested_action=="BUY_READY" 재확인(final_action이 아님).
+                    _br_route = self._candidate_action_route_for_ticker(
+                        market, ticker, final_action="BUY_READY", route="PlanA.buy",
+                    )
+                    if not _br_route:
+                        _br_route = self._candidate_action_route_for_ticker(market, ticker, route="PlanA.buy")
+                    _br_requested = str(
+                        (_br_route or {}).get("requested_action")
+                        or (_br_route or {}).get("original_action")
+                        or (_br_route or {}).get("claude_action")
+                        or ""
+                    ).strip().upper()
+                    if _br_route and _br_requested == "BUY_READY":
                         _br_meta = self.selection_meta.get("US" if str(market).upper() == "US" else "KR") or {}
                         _br_plan = self._selection_price_target_for_ticker(market, _br_meta.get("price_targets") or {}, ticker)
                         _br_tp, _br_sl = self._buy_ready_tp_sl_pct(_br_plan, float(price))
