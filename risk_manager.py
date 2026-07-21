@@ -483,6 +483,68 @@ class RiskManager:
         log.info(f"[BUY] {ticker} {qty}@{price:,} TP={pos['tp']:.0f} SL={pos['sl']:.0f}")
         return True
 
+    def _mark_early_peak_exit_shadow(self, pos: dict, cur_pnl: float) -> None:
+        """조기고점 정리 후보를 관측만 한다(주문·리스크 판정에 일절 영향 없음).
+
+        2026-07-22 백필 실측(US n=159, yf근사 편향 +0.169%p 보정): 진입 후 고점이 먼저 온
+        89건은 승률 4%(평균 net -1.695%)로 사실상 회복하지 않는다. "30분 내 고점 + 하락전환
+        + MFE>=0.2%"로 정리하면 +0.3288%p이고, 포기이익이 1.56%p뿐이라 러너를 거의 죽이지
+        않는다. 해당 28건을 그냥 뒀을 때 평균 net이 -1.867%라 손익분기 청산가가 -5% 이하로
+        슬리피지에도 둔감하다.
+
+        다만 그 시뮬은 사후 MFE/MAE 순서를 썼다. 라이브에서 같은 판별이 서는지가 남은 관문이라
+        먼저 shadow로 발동 시점·빈도만 쌓는다. 전환은 실제 net 대조 후 운영자 승인으로 한다.
+        """
+        mode = str(os.getenv("EARLY_PEAK_EXIT_SHADOW_MODE", "shadow") or "shadow").strip().lower()
+        if mode in {"off", "disabled", "false", "0", "no"}:
+            return
+        if pos.get("early_peak_exit_shadow"):
+            return  # 최초 1회만 기록한다(중복 관측 방지)
+        try:
+            entry_at = pos.get("entry_time")
+            peak_at = pos.get("peak_pnl_at")
+            if not entry_at or not peak_at:
+                return
+            entered = datetime.fromisoformat(str(entry_at))
+            peaked = datetime.fromisoformat(str(peak_at))
+            if entered.tzinfo is None:
+                entered = entered.replace(tzinfo=KST)
+            if peaked.tzinfo is None:
+                peaked = peaked.replace(tzinfo=KST)
+            now = datetime.now(KST)
+            window_min = _env_float("EARLY_PEAK_EXIT_WINDOW_MIN", 30.0)
+            mfe_min_pct = _env_float("EARLY_PEAK_EXIT_MFE_MIN_PCT", 0.2)
+            giveback_pct = _env_float("EARLY_PEAK_EXIT_GIVEBACK_PCT", 0.2)
+
+            held_min = (now - entered.astimezone(KST)).total_seconds() / 60.0
+            peak_min = (peaked.astimezone(KST) - entered.astimezone(KST)).total_seconds() / 60.0
+            peak_pct = float(pos.get("peak_pnl_pct") or 0.0)
+
+            # 창이 지나야 '조기 고점'이 확정된다(그 전에는 더 오를 수 있다).
+            if held_min < window_min or peak_min > window_min:
+                return
+            if peak_pct < mfe_min_pct:
+                return
+            if cur_pnl > peak_pct - giveback_pct:
+                return  # 아직 하락 전환으로 보지 않는다
+
+            pos["early_peak_exit_shadow"] = {
+                "marked_at": now.isoformat(timespec="seconds"),
+                "peak_pnl_pct": round(peak_pct, 3),
+                "peak_minutes": round(peak_min, 1),
+                "held_minutes": round(held_min, 1),
+                "pnl_at_mark": round(float(cur_pnl), 3),
+                "window_min": window_min,
+                "mfe_min_pct": mfe_min_pct,
+                "giveback_pct": giveback_pct,
+            }
+            log.info(
+                f"[조기고점 shadow] {pos.get('ticker')} 고점 {peak_pct:+.2f}%"
+                f"(진입 {peak_min:.0f}분) → 현재 {cur_pnl:+.2f}% — 관측만, 주문 없음"
+            )
+        except Exception:
+            return
+
     def update_prices(self, prices: dict, raw_prices: dict | None = None):
         """prices: KRW 환산 가격 dict / raw_prices: USD(US) 또는 KRW(KR) 원시가격 dict (선택)"""
         for pos in self.positions:
@@ -516,6 +578,9 @@ class RiskManager:
             if _cur_pnl is not None and _cur_pnl < float(pos.get("trough_pnl_pct") or 0):
                 pos["trough_pnl_pct"] = round(_cur_pnl, 3)
                 pos["trough_pnl_at"] = datetime.now(KST).isoformat(timespec="seconds")
+
+            if _cur_pnl is not None:
+                self._mark_early_peak_exit_shadow(pos, _cur_pnl)
 
             # 수익 보호: +3% 이상이면 TP 도달 이벤트를 기다리지 않고 본전 위 트레일링 전환.
             if (

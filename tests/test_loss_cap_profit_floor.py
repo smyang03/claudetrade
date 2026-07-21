@@ -355,5 +355,82 @@ class PeakTroughTimestampTests(unittest.TestCase):
         self.assertIsNone(pos.get("peak_pnl_at"))
 
 
+class EarlyPeakExitShadowTests(unittest.TestCase):
+    """조기고점 정리 후보를 관측만 하는지 — 주문에는 일절 영향이 없어야 한다.
+
+    백필 실측(US n=159): 진입 후 고점이 먼저 온 89건은 승률 4%. "30분 내 고점 + 하락전환
+    + MFE>=0.2%" 정리는 +0.3288%p이고 포기이익이 1.56%p뿐이라 러너를 거의 죽이지 않는다.
+    다만 그 시뮬은 사후 순서를 썼으므로, 라이브 판별이 서는지를 shadow로 먼저 쌓는다.
+    """
+
+    def _pos(self, *, held_min: float, peak_after_min: float, peak_pct: float) -> dict:
+        now = datetime.now(risk_module.KST)
+        entered = now - timedelta(minutes=held_min)
+        return _kr_position(
+            entry_time=entered.isoformat(timespec="seconds"),
+            peak_pnl_pct=peak_pct,
+            peak_pnl_at=(entered + timedelta(minutes=peak_after_min)).isoformat(timespec="seconds"),
+            trough_pnl_pct=0.0,
+        )
+
+    def _rm(self):
+        rm = RiskManager.__new__(RiskManager)
+        rm.market = "KR"
+        rm.positions = []
+        return rm
+
+    def test_marks_when_peak_is_early_and_price_gave_back(self) -> None:
+        rm = self._rm()
+        pos = self._pos(held_min=45, peak_after_min=10, peak_pct=1.5)
+        rm._mark_early_peak_exit_shadow(pos, 0.5)
+        mark = pos.get("early_peak_exit_shadow")
+        self.assertTrue(mark)
+        self.assertEqual(mark["peak_pnl_pct"], 1.5)
+        self.assertAlmostEqual(mark["peak_minutes"], 10.0, delta=0.5)
+
+    def test_does_not_mark_before_window_elapses(self) -> None:
+        """창이 지나기 전에는 더 오를 수 있으므로 '조기 고점'으로 확정하지 않는다."""
+        rm = self._rm()
+        pos = self._pos(held_min=20, peak_after_min=10, peak_pct=1.5)
+        rm._mark_early_peak_exit_shadow(pos, 0.5)
+        self.assertIsNone(pos.get("early_peak_exit_shadow"))
+
+    def test_does_not_mark_when_peak_is_outside_window(self) -> None:
+        rm = self._rm()
+        pos = self._pos(held_min=60, peak_after_min=45, peak_pct=1.5)
+        rm._mark_early_peak_exit_shadow(pos, 0.5)
+        self.assertIsNone(pos.get("early_peak_exit_shadow"))
+
+    def test_does_not_mark_without_giveback(self) -> None:
+        rm = self._rm()
+        pos = self._pos(held_min=45, peak_after_min=10, peak_pct=1.5)
+        rm._mark_early_peak_exit_shadow(pos, 1.45)   # 아직 고점 근처
+        self.assertIsNone(pos.get("early_peak_exit_shadow"))
+
+    def test_toggle_off_disables_observation(self) -> None:
+        rm = self._rm()
+        pos = self._pos(held_min=45, peak_after_min=10, peak_pct=1.5)
+        with patch.dict("os.environ", {"EARLY_PEAK_EXIT_SHADOW_MODE": "off"}):
+            rm._mark_early_peak_exit_shadow(pos, 0.5)
+        self.assertIsNone(pos.get("early_peak_exit_shadow"))
+
+    def test_marks_only_once(self) -> None:
+        rm = self._rm()
+        pos = self._pos(held_min=45, peak_after_min=10, peak_pct=1.5)
+        rm._mark_early_peak_exit_shadow(pos, 0.5)
+        first = dict(pos["early_peak_exit_shadow"])
+        rm._mark_early_peak_exit_shadow(pos, 0.1)
+        self.assertEqual(pos["early_peak_exit_shadow"], first)
+
+    def test_shadow_does_not_touch_exit_fields(self) -> None:
+        """관측 표식이 tp/sl/trailing 같은 주문 필드를 건드리지 않는다."""
+        rm = self._rm()
+        pos = self._pos(held_min=45, peak_after_min=10, peak_pct=1.5)
+        before = {k: pos.get(k) for k in ("tp", "sl", "trailing", "trail_sl", "qty")}
+        rm._mark_early_peak_exit_shadow(pos, 0.5)
+        after = {k: pos.get(k) for k in ("tp", "sl", "trailing", "trail_sl", "qty")}
+        self.assertEqual(before, after)
+
+
 if __name__ == "__main__":
     unittest.main()
