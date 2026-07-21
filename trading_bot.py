@@ -21508,6 +21508,87 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception as exc:
             log.debug(f"[dip-entry] {market} screen skip: {exc}")
             return {"mode": "off", "block": False, "decision": "error"}
+    def _maybe_write_profit_evidence_snapshot(self, market: str, candidates: list[dict]) -> None:
+        """전체 후보 profit evidence 배치 스코어 → snapshot 파일 + JSONL 원장 (관측 전용).
+
+        배경(2026-07-21): state/profit_evidence_{market}.json은 resolve의 fallback 채널인데
+        writer가 없어 영구 미사용이었고, shadow 이벤트는 실제 진입에만 기록돼 2주 6행 —
+        enforce 전환 근거가 진입 기아에 종속됐다. 여기서 진입과 무관하게 후보 전체를
+        주기 스코어링해 두 채널을 채운다. 매매·게이트 무영향(쓰기만).
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        if not _env_bool("PROFIT_EVIDENCE_SNAPSHOT_WRITER_ENABLED", True):
+            return
+        try:
+            interval_min = float(os.getenv("PROFIT_EVIDENCE_SNAPSHOT_INTERVAL_MIN", "30") or 30)
+        except Exception:
+            interval_min = 30.0
+        now = datetime.now(KST)
+        last_map = getattr(self, "_profit_evidence_snapshot_last", None)
+        if not isinstance(last_map, dict):
+            last_map = {}
+            self._profit_evidence_snapshot_last = last_map
+        last = last_map.get(market_key)
+        if isinstance(last, datetime) and (now - last).total_seconds() < interval_min * 60.0:
+            return
+        from runtime.profit_path_predictor import predict_profit_path_evidence
+
+        by_ticker: dict[str, dict] = {}
+        for row in list(candidates or [])[:40]:
+            if not isinstance(row, dict):
+                continue
+            ticker = self._selection_ticker_key(market_key, row.get("ticker") or "")
+            if not ticker or ticker in by_ticker:
+                continue
+            try:
+                evidence = predict_profit_path_evidence(
+                    market=market_key,
+                    ticker=ticker,
+                    strategy=str(row.get("recommended_strategy") or "claude_price"),
+                    context=row,
+                )
+            except Exception:
+                continue
+            if evidence:
+                by_ticker[ticker] = evidence
+        if not by_ticker:
+            # 모델 미가용(artifact 없음/비활성)이면 조용히 넘어간다 — fail-open 관측
+            last_map[market_key] = now
+            return
+        payload = {
+            "schema_version": "profit_evidence_snapshot_v1",
+            "market": market_key,
+            "generated_at": now.isoformat(timespec="seconds"),
+            "session_date": self._current_session_date_str(market_key),
+            "candidate_count": len(by_ticker),
+            "profit_evidence_by_ticker": by_ticker,
+        }
+        snapshot_path = get_runtime_path("state", f"profit_evidence_{market_key}.json")
+        tmp = snapshot_path.with_name(snapshot_path.name + ".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        tmp.replace(snapshot_path)
+        # 분석용 일별 JSONL 원장(후일 forward 라벨 조인용)
+        try:
+            day = now.strftime("%Y%m%d")
+            ledger = get_runtime_path("logs", "shadow", f"profit_evidence_snapshot_{day}_{market_key}.jsonl")
+            ledger.parent.mkdir(parents=True, exist_ok=True)
+            with ledger.open("a", encoding="utf-8") as fh:
+                for ticker, evidence in by_ticker.items():
+                    fh.write(json.dumps({
+                        "written_at": now.isoformat(timespec="seconds"),
+                        "market": market_key,
+                        "ticker": ticker,
+                        **{k: evidence.get(k) for k in (
+                            "p_target_before_stop_calibrated", "expected_net_pct", "expected_gross_pct",
+                            "expected_cost_pct_p75", "uncertainty", "ood", "model_version", "model_state",
+                            "path_name",
+                        )},
+                    }, ensure_ascii=False, default=str) + "\n")
+        except Exception:
+            pass
+        last_map[market_key] = now
+        log.info(f"[profit evidence snapshot] {market_key} wrote {len(by_ticker)} tickers -> {snapshot_path.name}")
+
     def _apply_candidate_post_rank_shadow(self, market: str, candidates: list[dict]) -> list[dict]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         if market_key != "KR" or not _env_bool("KR_CANDIDATE_POST_RANK_ENABLED", False):
@@ -21870,6 +21951,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             f"[history filter] {market_key} candidates {len(candidates)} -> "
             f"valid_or_watch {len(filtered_v2)} (removed {len(removed_v2)})"
         )
+        # profit evidence snapshot writer(2026-07-21): load만 있고 writer 부재였던 죽은 배관 수리.
+        # 세션 중 신선(evidence TTL 180min) 산출 — 진입 여부와 무관하게 전체 후보를 스코어링해
+        # enforce 판단 데이터를 축적한다. 스로틀·fail-silent(후보 흐름 무영향).
+        try:
+            self._maybe_write_profit_evidence_snapshot(market_key, filtered_v2)
+        except Exception as exc:
+            log.debug(f"[profit evidence snapshot] {market_key} skip: {exc}")
         return self._apply_candidate_post_rank_shadow(market_key, filtered_v2)
         filtered = []
         removed = [
