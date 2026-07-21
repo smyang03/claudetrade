@@ -97,16 +97,26 @@ def main() -> int:
     ap.add_argument("--start", default="2026-07-07")
     ap.add_argument("--market", default="KR", choices=["KR", "US"])
     ap.add_argument("--horizon", type=int, default=60)
+    # net-proxy: forward에서 왕복비용 차감(2026-07-21 검증). forward≠net이므로 비용
+    # 차감으로 net 근사. KR 왕복 ~0.35%(수수료·세금·슬리피지 보수적), US ~0.20%.
+    ap.add_argument("--net-cost", type=float, default=None,
+                    help="왕복비용%%를 forward에서 차감해 net-proxy로 비교(기본: KR 0.35·US 0.20)")
     args = ap.parse_args()
+
+    cost = args.net_cost
+    if cost is None:
+        cost = 0.35 if args.market == "KR" else 0.20
 
     sessions = load_sessions(args.start, args.market)
     outcomes = load_outcomes(args.start, args.market, args.horizon)
+    # net-proxy 적용(모든 forward에서 왕복비용 차감 — 상대비교라 both에 동일 적용)
+    outcomes = {k: v - cost for k, v in outcomes.items()}
     if not sessions:
         print("세션 데이터 없음")
         return 0
 
     agg_actual, agg_value = [], []
-    print(f"{args.market} 세션별 프롬프트 코호트 forward ret{args.horizon} (실제 vs 중간모멘텀 재정렬 반사실)")
+    print(f"{args.market} 세션별 프롬프트 코호트 net-proxy(=forward{args.horizon}-{cost}%) — 실제 vs 중간모멘텀 재정렬")
     for sd, rows in sorted(sessions.items()):
         actual = [r for r in rows if r.get("input_to_claude")]
         n = len(actual)
