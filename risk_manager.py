@@ -456,6 +456,19 @@ class RiskManager:
             "management_protected": False,
         }
         self.positions.append(pos)
+        # 진입시각 관측(shadow-only, 2026-07-21): 개장 후 경과분 버킷 원장 — 실패해도 진입 무영향
+        try:
+            from bot.entry_timing_observer import record_entry_timing
+            from runtime.market_resolver import infer_ticker_market
+            record_entry_timing(
+                market=infer_ticker_market(ticker, unknown=self.market),
+                ticker=ticker,
+                strategy=strategy,
+                price=price,
+                qty=qty,
+            )
+        except Exception:
+            pass
         evt = {
             "side": "buy",
             "ticker": ticker,
