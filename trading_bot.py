@@ -33232,12 +33232,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         features["orderbook_imbalance"] = micro["orderbook_imbalance"]
             except Exception:
                 pass
+        # 즉시매수(BUY_READY) 국면 게이트용 regime 주입(2026-07-21) — 안정 per-market consensus.
+        _regime_cache = getattr(self, "market_consensus_mode", {}) or {}
+        _judge_regime = str(
+            _regime_cache.get("US" if str(candidate_market or "").upper() == "US" else "KR", "")
+            or (getattr(self, "today_judgment", {}) or {}).get("consensus", {}).get("mode", "")
+            or ""
+        )
         risk_context = {
             "feature": "early_judge_pathb_price_plan",
             "order_quantity": "runtime_owned",
             "broker_truth": "runtime_gate_required",
             "pathb_plan_before_registration_only": True,
             "pullback_wait_requires_structural_buy_zone": True,
+            "market": "US" if str(candidate_market or "").upper() == "US" else "KR",
+            "market_regime": _judge_regime,
         }
         fake_client = getattr(self, "_single_symbol_judge_client", None)
         if callable(fake_client):
@@ -33310,7 +33319,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         route = str(result.get("route") or "").lower()
         if route == "path_b":
             action_name = "PULLBACK_WAIT"
-        price_targets = self._single_symbol_price_targets(result) if action_name == "PULLBACK_WAIT" else {}
+        # BUY_READY(즉시매수)도 sell_target/stop_loss/hold_days를 실행에 넘겨야 관리(손절·러너)가 붙는다.
+        price_targets = self._single_symbol_price_targets(result) if action_name in {"PULLBACK_WAIT", "BUY_READY"} else {}
         now_text = datetime.now(KST).replace(tzinfo=None).isoformat(timespec="seconds")
         confidence = float(result.get("confidence") or 0.0)
         action = {
@@ -33320,7 +33330,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "action": action_name,
             "confidence": confidence,
             "size_intent": "probe" if action_name == "PROBE_READY" else ("normal" if action_name == "BUY_READY" else "none"),
-            "strategy": str(result.get("strategy") or ("claude_price" if action_name == "PULLBACK_WAIT" else "")),
+            "strategy": str(result.get("strategy") or ("claude_price" if action_name in {"PULLBACK_WAIT", "BUY_READY"} else "")),
             "reason": str(result.get("reason") or "single_symbol_judge"),
             "reason_code": str(result.get("reason_code") or "single_symbol_judge"),
             "invalidation_condition": str(result.get("invalid_if") or result.get("invalidation_condition") or "runtime gate invalidates stale action"),

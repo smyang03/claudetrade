@@ -110,12 +110,28 @@ def build_single_symbol_judge_prompt(
         "strategy_feasibility": strategy_feasibility or {},
         "risk_context": risk_context or {},
     })
+    # 즉시매수(BUY_READY) 국면 게이트 — 허용 시 프롬프트에 즉시매수 옵션 노출(2026-07-21).
+    buy_ready_ok, _buy_ready_reason = _immediate_buy_allowed(market_key, risk_context)
+    if buy_ready_ok:
+        action_line = "Allowed action: BUY_READY, PULLBACK_WAIT, WAIT_RECHECK, REJECT.\n"
+        route_line = "Allowed route: plan_a, path_b, wait, reject.\n"
+        buy_ready_guide = (
+            "Use BUY_READY for immediate market entry when a good candidate shows strong continuation/"
+            "momentum in a strong regime — do NOT wait for a pullback. For BUY_READY (route=plan_a) include "
+            "sell_target, stop_loss, hold_days, confidence, invalid_if. Keep stop_loss TIGHT (small % below "
+            "current). Losers are cut at the stop; winners are held to run. buy_zone is not required for BUY_READY.\n"
+        )
+    else:
+        action_line = "Allowed action: PULLBACK_WAIT, WAIT_RECHECK, REJECT. Do not use BUY_READY or PROBE_READY.\n"
+        route_line = "Allowed route: path_b, wait, reject.\n"
+        buy_ready_guide = ""
     return (
-        "You are deciding whether ONE already-screened live trading candidate can receive a PathB waiting price plan now.\n"
+        "You are deciding whether ONE already-screened live trading candidate can enter now.\n"
         "Return JSON only. Do not include markdown.\n"
-        "Allowed action: PULLBACK_WAIT, WAIT_RECHECK, REJECT. Do not use BUY_READY or PROBE_READY.\n"
-        "Allowed route: path_b, wait, reject.\n"
-        "You may judge setup quality, route, invalidation, and price plan. You must not decide order quantity, order amount, or override broker/risk gates.\n"
+        + action_line
+        + route_line
+        + buy_ready_guide
+        + "You may judge setup quality, route, invalidation, and price plan. You must not decide order quantity, order amount, or override broker/risk gates.\n"
         "Use PULLBACK_WAIT only when the buy zone is anchored to structural support/retest evidence such as VWAP, open anchor, opening range breakout retest, or a controlled pullback from high.\n"
         f"{PULLBACK_ZONE_RULE} If it would fill immediately, use WAIT_RECHECK instead.\n"
         "For route=path_b or action=PULLBACK_WAIT, include buy_zone_low, buy_zone_high, sell_target, stop_loss, hold_days, confidence, invalid_if, structural_basis, zone_basis.\n"
@@ -284,6 +300,99 @@ def validate_pathb_price_plan(
     return list(dict.fromkeys(errors))
 
 
+# 즉시매수(BUY_READY) 필수 필드 — 눌림존(buy_zone) 불필요. entry=현재가.
+IMMEDIATE_BUY_REQUIRED_FIELDS = ("sell_target", "stop_loss", "hold_days", "confidence")
+
+
+def _immediate_buy_allowed(market: str, risk_context: dict[str, Any] | None) -> tuple[bool, str]:
+    """즉시매수(BUY_READY) 허용 여부 — env 게이트 + 시장 + 국면 조건.
+
+    2026-07-21 운영자 방향: 눌림 폐기, 좋은 후보 사서 관리. 단 US 강세일 급등은 추세
+    이어짐(+0.45%)·KR 강세는 추격 죽음(−1.30%)이라 국면·시장 차등. 기본 off(가역).
+    """
+    if str(os.getenv("SINGLE_SYMBOL_JUDGE_ALLOW_BUY_READY", "false") or "false").strip().lower() not in {"1", "true", "yes", "on"}:
+        return False, "buy_ready_gate_off"
+    mkt = _market_key(market)
+    allowed_markets = {
+        m.strip().upper()
+        for m in str(os.getenv("SINGLE_SYMBOL_JUDGE_BUY_READY_MARKETS", "US") or "US").replace(";", ",").split(",")
+        if m.strip()
+    }
+    if mkt not in allowed_markets:
+        return False, "buy_ready_market_not_allowed"
+    regime = str((risk_context or {}).get("market_regime") or "").strip().upper()
+    allowed_regimes = {
+        r.strip().upper()
+        for r in str(os.getenv("SINGLE_SYMBOL_JUDGE_BUY_READY_REGIMES", "RISK_ON,MODERATE_BULL,STRONG_BULL,BULL") or "").replace(";", ",").split(",")
+        if r.strip()
+    }
+    if allowed_regimes and regime and regime not in allowed_regimes:
+        return False, f"buy_ready_regime_blocked:{regime}"
+    if allowed_regimes and not regime:
+        # 국면 미상이면 보수적으로 차단(fail-closed) — 강세 확인 못 하면 즉시매수 금지
+        return False, "buy_ready_regime_unknown"
+    return True, "buy_ready_allowed"
+
+
+def validate_immediate_buy_plan(
+    result: dict[str, Any],
+    *,
+    features: dict[str, Any] | None = None,
+    risk_context: dict[str, Any] | None = None,
+) -> list[str]:
+    """즉시매수(BUY_READY) 검증 — 눌림존 협착 없이 손절 짧게·target·RR·품질만.
+
+    entry=현재가(즉시 체결). 손절은 짧게 유지(IMMEDIATE_BUY_MAX_STOP_PCT), 러너로 이익 관리.
+    """
+    errors: list[str] = []
+    fp = dict(features or {})
+    current = _num(fp.get("current_price"), 0.0)
+    target = _num(result.get("sell_target"), 0.0)
+    stop = _num(result.get("stop_loss") or result.get("stop_reference"), 0.0)
+    hold_days = _num(result.get("hold_days"), 0.0)
+    confidence = _num(result.get("confidence"), 0.0)
+    strict = bool(features) or bool((risk_context or {}).get("pathb_plan_before_registration_only"))
+    min_reward_risk = judge_min_reward_risk(
+        result.get("market") or (risk_context or {}).get("market") or ""
+    )
+    for key in IMMEDIATE_BUY_REQUIRED_FIELDS:
+        if result.get(key) in (None, ""):
+            errors.append(f"missing_{key}")
+    if not str(result.get("invalid_if") or "").strip():
+        errors.append("missing_invalid_if")
+    if target <= 0:
+        errors.append("sell_target_nonpositive")
+    if stop <= 0:
+        errors.append("stop_loss_nonpositive")
+    if hold_days < 1:
+        errors.append("hold_days_below_one")
+    if not (0.0 < confidence <= 1.0):
+        errors.append("confidence_out_of_range")
+    if strict and current <= 0:
+        errors.append("missing_current_price_for_immediate_buy")
+    if current > 0:
+        if target > 0 and target <= current:
+            errors.append("sell_target_not_above_current")
+        if stop > 0 and stop >= current:
+            errors.append("stop_loss_not_below_current")
+        if stop > 0 and stop < current:
+            stop_dist_pct = (current - stop) / current * 100.0
+            max_stop_pct = _num(os.getenv("IMMEDIATE_BUY_MAX_STOP_PCT", "3.0"), 3.0)
+            if stop_dist_pct > max_stop_pct:
+                errors.append("stop_loss_too_wide")  # 손절 짧게 원칙 — 넓은 손절 금지
+        if target > current and stop > 0 and stop < current:
+            reward_risk = (target - current) / (current - stop)
+            if reward_risk < min_reward_risk:
+                errors.append("reward_risk_below_min")
+    if strict:
+        quality = str(fp.get("data_quality") or "").strip().lower()
+        if quality in PATHB_BAD_DATA_QUALITY:
+            errors.append("post_open_feature_quality_fail_closed")
+        if str(fp.get("momentum_state") or "").strip().lower() == "fade":
+            errors.append("post_open_momentum_fade")
+    return list(dict.fromkeys(errors))
+
+
 def normalize_single_symbol_judge_result(
     result: dict[str, Any],
     *,
@@ -295,8 +404,16 @@ def normalize_single_symbol_judge_result(
     ticker = _ticker_key(raw.get("ticker"), market)
     action = _normalize_action(raw.get("action"))
     route = _normalize_route(raw.get("route"), action)
-    if route == "path_b" and action in {"BUY_READY", "PROBE_READY"}:
+    # 즉시매수(BUY_READY) 국면 게이트(2026-07-21): 허용되면 plan_a로 유지, 아니면 현행 강등.
+    buy_ready_ok, buy_ready_reason = _immediate_buy_allowed(market, risk_context)
+    if action == "BUY_READY" and buy_ready_ok:
+        route = "plan_a"
+    elif route == "path_b" and action in {"BUY_READY", "PROBE_READY"}:
         action = "PULLBACK_WAIT"
+    elif action in {"BUY_READY", "PROBE_READY"} and not buy_ready_ok:
+        # 게이트 off/국면 불가 시 즉시매수 요청을 눌림 대기로 강등(현행 안전 동작 보존)
+        action = "PULLBACK_WAIT"
+        route = "path_b"
     if action == "PULLBACK_WAIT":
         route = "path_b"
     if action == "WAIT_RECHECK":
@@ -348,6 +465,21 @@ def normalize_single_symbol_judge_result(
             out["audit_reason"] = "early_judge_pathb_price_plan_missing" if any(
                 error.startswith("missing_") for error in errors
             ) else "early_judge_pathb_price_plan_invalid"
+    elif route == "plan_a" and action == "BUY_READY":
+        # 즉시매수 검증(2026-07-21): 눌림존 없이 손절 짧게·target·RR·품질. 실패 시 눌림 대기로
+        # 강등(현행 안전 경로)이 아니라 WAIT_RECHECK — 즉시매수 부적합이면 다음 사이클 재평가.
+        errors = validate_immediate_buy_plan(out, features=features, risk_context=risk_context)
+        if errors:
+            out["valid"] = False
+            out["errors"] = errors
+            out["action"] = "WAIT_RECHECK"
+            out["route"] = "wait"
+            out["reason"] = out["reason"] or "invalid_immediate_buy_plan"
+            out["audit_reason"] = "early_judge_immediate_buy_missing" if any(
+                error.startswith("missing_") for error in errors
+            ) else "early_judge_immediate_buy_invalid"
+        else:
+            out["immediate_buy_gate"] = "allowed"
     if pullback_soft_block_reason:
         out["pullback_wait_soft_block_reason"] = pullback_soft_block_reason
         out["pullback_wait_soft_block_enforced"] = pullback_soft_block_enforced
