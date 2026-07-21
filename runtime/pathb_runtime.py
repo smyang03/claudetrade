@@ -1093,6 +1093,24 @@ class PathBRuntime:
         """US 체결/청산 시점 환율 — net 손익(수수료+환차) 기록용. KR은 0."""
         return float(self._usd_krw() or 0) if str(market or "").upper() == "US" else 0.0
 
+    def _pathb_max_daily_entries(self, market: str = "") -> int:
+        """시장별 일일 진입 상한. {MARKET}_DAILY_ENTRY_CAP 우선, 없으면 글로벌.
+
+        2026-07-22 실측(국면게이트 통과 건, 시간순 앞 N건 시뮬): US는 세션당 5건이
+        +2.22% -> +28.73%(+26.52%p)로 최적이고 4~6건이 안정 구간이다(3건은 -9.57%로 과도).
+        KR은 n=38로 표본이 부족해 판정할 수 없어 글로벌 값을 그대로 쓴다.
+        "하루에 많이 살수록 진다" — US 세션당 7건 이상 구간이 거래 95건에 -44.65%였다.
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            raw = self._runtime_value(f"{market_key}_DAILY_ENTRY_CAP", "")
+            cap = int(str(raw).strip()) if str(raw or "").strip() else 0
+        except Exception:
+            cap = 0
+        if cap > 0:
+            return cap
+        return int(self.config.pathb_max_daily_entries)
+
     def _pathb_min_reward_risk(self, market: str = "") -> float:
         # rr<1.5 플랜 등록 차단 — live 실측: rr<1.5 평균 +0.02%(수수료 차감 시 음수), rr>=2 평균 +0.74%
         # 시장별 override(PATHB_MIN_REWARD_RISK_KR/_US, 미설정=글로벌과 동일):
@@ -5178,6 +5196,7 @@ class PathBRuntime:
             # 다만 플랜이 등록 시 승인받은 임계(validated_min_reward_risk)가 있으면 게이트가 그걸
             # 우선한다 — 등록 후 정책이 바뀌어도 이미 승인된 플랜이 주문 직전에 소급 취소되지 않는다.
             min_reward_risk=self._pathb_min_reward_risk(market),
+            max_daily_entries=self._pathb_max_daily_entries(market),
         )
         if not decision.passed:
             keep_waiting = self._pathb_submit_safety_block_keeps_waiting(plan, decision)

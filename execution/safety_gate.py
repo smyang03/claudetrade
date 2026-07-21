@@ -168,6 +168,7 @@ class PathBSafetyGate:
         manually_disabled: bool = False,
         order_unknown_blocked: bool = False,
         min_reward_risk: float | None = None,
+        max_daily_entries: int | None = None,
     ) -> SafetyDecision:
         details = {
             "market": str(ctx.market or "").upper(),
@@ -226,7 +227,14 @@ class PathBSafetyGate:
             return _blocked("PATH_DUPLICATE_HOLDING", "same ticker live overlap is forbidden", details)
         if int(pathb_open_positions or 0) >= int(self.config.pathb_max_positions):
             return _blocked("PATHB_MAX_POSITIONS", "Path B max positions reached", details)
-        if int(pathb_daily_count or 0) >= int(self.config.pathb_max_daily_entries):
+        # 일일 진입 상한은 시장별로 최적이 다르다(min_reward_risk와 동일한 주입 패턴).
+        # 2026-07-22 실측(국면게이트 통과 건, 시간순 앞 N건 시뮬): US는 세션당 5건에서
+        # +2.22% -> +28.73%(+26.52%p)로 가장 좋고 4~6건이 안정 구간이다. 3건은 -9.57%로
+        # 과도하다. KR은 n=38로 표본이 부족해 효과가 불명확하므로 현행을 유지한다.
+        # 인자가 없으면 기존 config 값을 그대로 쓴다(현행 동작 보존).
+        daily_cap = int(max_daily_entries) if max_daily_entries else int(self.config.pathb_max_daily_entries)
+        details["max_daily_entries"] = daily_cap
+        if int(pathb_daily_count or 0) >= daily_cap:
             return _blocked("PATHB_MAX_DAILY_ENTRIES", "Path B daily entry limit reached", details)
         if float(getattr(plan, "confidence", 0.0) or 0.0) < float(self.config.pathb_min_confidence):
             return _blocked("PATHB_CONFIDENCE_TOO_LOW", "Path B confidence is below minimum", details)

@@ -119,5 +119,42 @@ class PathBSafetyTests(unittest.TestCase):
         self.assertTrue(decision.passed, decision)
 
 
+class MarketScopedDailyEntryCapTests(unittest.TestCase):
+    """일일 진입 상한의 시장별 주입 — 최적값이 시장마다 다르다.
+
+    2026-07-22 실측(국면게이트 통과 건, 시간순 앞 N건 시뮬):
+      US 세션당 5건: +2.22% -> +28.73% (+26.52%p). 4~6건이 안정 구간, 3건은 -9.57%로 과도.
+      US 세션당 7건 이상 구간은 거래 95건에 -44.65% — "하루에 많이 살수록 진다".
+      KR은 n=38로 표본이 부족해 글로벌 값을 유지한다.
+    """
+
+    def test_injected_cap_overrides_config(self) -> None:
+        gate = PathBSafetyGate(V2Config(pathb_max_daily_entries=40))
+        blocked = gate.evaluate(_ctx(), plan=_plan(), pathb_daily_count=5, max_daily_entries=5)
+        self.assertEqual(blocked.reason_code, "PATHB_MAX_DAILY_ENTRIES")
+        self.assertEqual(blocked.details.get("max_daily_entries"), 5)
+
+    def test_injected_cap_allows_below_limit(self) -> None:
+        gate = PathBSafetyGate(V2Config(pathb_max_daily_entries=40))
+        ok = gate.evaluate(_ctx(), plan=_plan(), pathb_daily_count=4, max_daily_entries=5)
+        self.assertNotEqual(ok.reason_code, "PATHB_MAX_DAILY_ENTRIES")
+
+    def test_without_injection_falls_back_to_config(self) -> None:
+        """인자가 없으면 기존 config 값을 그대로 쓴다(현행 동작 보존)."""
+        gate = PathBSafetyGate(V2Config(pathb_max_daily_entries=2))
+        self.assertEqual(
+            gate.evaluate(_ctx(), plan=_plan(), pathb_daily_count=2).reason_code,
+            "PATHB_MAX_DAILY_ENTRIES",
+        )
+        ok = gate.evaluate(_ctx(), plan=_plan(), pathb_daily_count=1)
+        self.assertNotEqual(ok.reason_code, "PATHB_MAX_DAILY_ENTRIES")
+
+    def test_zero_injection_is_ignored(self) -> None:
+        """0/None은 미설정으로 보고 config로 후퇴한다(실수로 진입을 전면 차단하지 않는다)."""
+        gate = PathBSafetyGate(V2Config(pathb_max_daily_entries=40))
+        ok = gate.evaluate(_ctx(), plan=_plan(), pathb_daily_count=10, max_daily_entries=0)
+        self.assertNotEqual(ok.reason_code, "PATHB_MAX_DAILY_ENTRIES")
+
+
 if __name__ == "__main__":
     unittest.main()
