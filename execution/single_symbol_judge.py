@@ -321,9 +321,11 @@ def _immediate_buy_allowed(market: str, risk_context: dict[str, Any] | None) -> 
     if mkt not in allowed_markets:
         return False, "buy_ready_market_not_allowed"
     regime = str((risk_context or {}).get("market_regime") or "").strip().upper()
+    # 실제 consensus 국면 체계(minority_report/consensus.py STANCE_SCORE): 강세=AGGRESSIVE(1.0)·
+    # MODERATE_BULL(0.7)·MILD_BULL(0.4). RISK_ON/STRONG_BULL/BULL은 존재하지 않는 값(2026-07-21 누수수정).
     allowed_regimes = {
         r.strip().upper()
-        for r in str(os.getenv("SINGLE_SYMBOL_JUDGE_BUY_READY_REGIMES", "RISK_ON,MODERATE_BULL,STRONG_BULL,BULL") or "").replace(";", ",").split(",")
+        for r in str(os.getenv("SINGLE_SYMBOL_JUDGE_BUY_READY_REGIMES", "MILD_BULL,MODERATE_BULL,AGGRESSIVE") or "").replace(";", ",").split(",")
         if r.strip()
     }
     if allowed_regimes and regime and regime not in allowed_regimes:

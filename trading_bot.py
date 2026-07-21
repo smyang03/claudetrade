@@ -5875,6 +5875,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             return None
 
+    def _buy_ready_immediate_enabled(self) -> bool:
+        """즉시매수(BUY_READY) 주문 배선 게이트 — judge 게이트와 동일 토글 재사용(가역)."""
+        return str(os.getenv("SINGLE_SYMBOL_JUDGE_ALLOW_BUY_READY", "false") or "false").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _buy_ready_tp_sl_pct(self, plan: dict, price: float):
+        """judge 가격 플랜(sell_target/stop_loss=가격)을 현재가 기준 tp_pct/sl_pct(비율)로 변환.
+
+        방향 불량(target<=현재<=stop 위반)이면 (None,None) → 진입 안 함. sl은 하드 손실캡
+        (HARD_RULES max_single_loss_pct, 기본 -2%)으로 clamp — 손절 짧게 유지.
+        """
+        if not isinstance(plan, dict) or price <= 0:
+            return None, None
+        try:
+            sell_target = float(plan.get("sell_target", 0) or 0)
+            stop_loss = float(plan.get("stop_loss", 0) or 0)
+        except (TypeError, ValueError):
+            return None, None
+        if not (sell_target > price and 0 < stop_loss < price):
+            return None, None
+        tp = max(0.001, (sell_target / price) - 1.0)
+        sl = max(0.001, 1.0 - (stop_loss / price))
+        sl_cap = abs(HARD_RULES["max_single_loss_pct"]) / 100.0
+        return tp, min(sl, sl_cap)
+
     def _candidate_action_route_for_ticker(
         self,
         market: str,
@@ -35607,6 +35631,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 signal_fired = False
                 strategy_name = ""
                 params = {}
+                _buy_ready_active = False   # BUY_READY 즉시매수 플래그 — 종목 간 누수 방지(매 iteration 리셋 필수)
                 kr_momentum_diag = None
                 none_detail = ""
                 _blocked_plan_a_signals: list[str] = []
@@ -36054,6 +36079,28 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         detail=str(none_detail or ""),
                     )
                     continue
+                # BUY_READY 즉시매수 배선(2026-07-21, env 가역): 기술 신호 미발화 + judge가 BUY_READY로
+                # 확정한(demote 안 된) 종목은 judge 가격플랜을 tp/sl로 부착해 즉시 진입시킨다.
+                # strategy=claude_price_a(PlanA 태그 — hold_advisor PathB 오분류 방지). 하류 게이트는
+                # 기존 흐름을 그대로 타므로 우회 없음. 국면 게이트는 judge 단·_market_mode_buy_block 이중.
+                if (not signal_fired) and self._buy_ready_immediate_enabled():
+                    _br_route = self._candidate_action_route_for_ticker(market, ticker, final_action="BUY_READY")
+                    if _br_route:
+                        _br_meta = self.selection_meta.get("US" if str(market).upper() == "US" else "KR") or {}
+                        _br_plan = self._selection_price_target_for_ticker(market, _br_meta.get("price_targets") or {}, ticker)
+                        _br_tp, _br_sl = self._buy_ready_tp_sl_pct(_br_plan, float(price))
+                        if _br_tp is not None and _br_sl is not None:
+                            signal_fired = True
+                            strategy_name = "claude_price_a"
+                            params = {
+                                "sl_pct": _br_sl,
+                                "tp_pct": _br_tp,
+                                "size_mult": 1.0,
+                                "max_hold": int(_br_plan.get("hold_days", 1) or 1),
+                                "buy_ready_immediate": True,
+                            }
+                            _buy_ready_active = True
+                            log.info(f"[BUY_READY 즉시 {market}] {ticker} tp={_br_tp:.2%} sl={_br_sl:.2%}")
                 _scan_interval_min = self._entry_scan_interval_sec(market) / 60.0
                 if signal_fired:
                     if _soft_watch_candidate:
@@ -36542,8 +36589,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     _ep_score = 0.0
                     _ep_detail = {}
                 # ── entry_priority cutoff (Phase 2 — env/텔레그램 ON/OFF) ────
+                # BUY_READY 즉시매수는 judge가 결정한 진입이라 기술신호 품질 랭킹 게이트에서 예외
+                # (entry_priority는 리스크 게이트 아님 — 리스크·affordability는 하류에서 그대로 탐).
                 _effective_entry_cutoff = self._effective_entry_priority_cutoff(market)
-                if self._is_entry_priority_blocked(_ep_score, market):
+                if self._is_entry_priority_blocked(_ep_score, market) and not _buy_ready_active:
                     log.info(
                         f"  [{ticker}] entry_priority cutoff: "
                         f"score={_ep_score:.3f} < {_effective_entry_cutoff:.3f} → 진입 보류"
@@ -36579,6 +36628,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         tp_pct = max((bb_mid - float(price)) / float(price), 0.005) if bb_mid > float(price) else 0.03
                     else:
                         tp_pct = params.get("tp_pct", HARD_RULES["take_profit_pct"] / 100.0)
+                if _buy_ready_active:
+                    # BUY_READY: judge 플랜 tp/sl을 ATR override 위에 강제(익절=target 길게·손절=짧게).
+                    # sl_cap(하드 손실캡)은 유지 — 손절이 캡을 넘지 못하게.
+                    tp_pct = float(params.get("tp_pct", tp_pct))
+                    sl_pct = min(float(params.get("sl_pct", sl_pct)), sl_cap)
                 atr_pct = None
                 _atr_sizing_on = self.enable_atr_position_sizing and (
                     strategy_name != "continuation" or self.continuation_atr_position_sizing
