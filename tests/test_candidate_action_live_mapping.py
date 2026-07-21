@@ -16,7 +16,7 @@ from bot.candidate_policy import normalize_selection_result
 from execution.sizing import FixedSizingResult
 from runtime.candidate_quality_trainer import score_candidate_for_trainer
 from runtime.tuning_bounds import RUNTIME_ADJUSTMENT_BOUNDS
-from trading_bot import KST, TradingBot, _mode_family
+from trading_bot import HARD_RULES, KST, TradingBot, _mode_family
 
 
 class _RuntimeConfig:
@@ -4321,6 +4321,93 @@ class CandidateActionLiveMappingTests(unittest.TestCase):
         entry_snapshot = json.loads(row["entry_timing_snapshot_json"])
         self.assertEqual(entry_snapshot["snapshot_source"], "record_decision_event_fallback")
         self.assertEqual(entry_snapshot["price_native"], 125.5)
+
+
+class ImmediateBuyRouteWiringTests(unittest.TestCase):
+    """BUY_READY 오버레이가 PlanA.buy route가 되고 즉시매수 배선이 그것을 찾아내는지.
+
+    실행 배선(trading_bot.py `_buy_ready_immediate_enabled` 블록)은 route="PlanA.buy"에
+    requested_action/original_action 중 하나가 BUY_READY인 레코드만 집는다. 라우팅이 필드명이나
+    route 문자열을 바꾸면 조용히 매수 0이 되므로 그 계약을 여기서 고정한다.
+    """
+
+    ACTION = {
+        "ticker": "AVGO",
+        "market": "US",
+        "schema_version": "candidate_actions.v2",
+        "action": "BUY_READY",
+        "confidence": 0.7,
+        "size_intent": "normal",
+        "strategy": "claude_price",
+        "reason": "strong continuation",
+        "invalidation_condition": "loses VWAP",
+        "price_targets": {
+            "sell_target": 108.0,
+            "stop_loss": 101.0,
+            "hold_days": 3,
+            "confidence": 0.7,
+            "reference_price": 103.0,
+            "invalid_if": "loses VWAP",
+        },
+        "setup_maturity": "CONFIRMED",
+        "action_ceiling_ack": "BUY_READY",
+    }
+
+    def _meta(self) -> dict:
+        return {
+            "watchlist": ["AVGO"],
+            "trade_ready": [],
+            "candidate_actions": [dict(self.ACTION)],
+            "_candidate_actions_present": True,
+            "price_targets": {"AVGO": dict(self.ACTION["price_targets"])},
+        }
+
+    def test_buy_ready_action_becomes_plan_a_buy_route_and_is_found_by_wiring(self) -> None:
+        bot = _make_bot()
+        bot.today_judgment = {"market": "US", "consensus": {"mode": "MILD_BULL"}}
+
+        out = bot._apply_candidate_action_live_routes("US", self._meta())
+
+        routes = out.get("_candidate_action_routes") or []
+        self.assertEqual(len(routes), 1)
+        route = routes[0]
+        self.assertEqual(route["final_action"], "BUY_READY")
+        self.assertEqual(route["route"], "PlanA.buy")
+        # 배선은 requested_action -> original_action -> claude_action 순으로 읽는다.
+        self.assertEqual(
+            str(route.get("requested_action") or route.get("original_action") or "").upper(),
+            "BUY_READY",
+        )
+        self.assertIn("AVGO", out.get("_candidate_action_plan_a_ready") or [])
+
+        # 실행 배선의 조회를 그대로 재현한다.
+        bot.selection_meta = {"KR": {}, "US": out}
+        found = bot._candidate_action_route_for_ticker(
+            "US", "AVGO", final_action="BUY_READY", route="PlanA.buy"
+        )
+        self.assertTrue(found, "즉시매수 배선이 PlanA.buy route를 찾지 못하면 매수가 0이 된다")
+        requested = str(
+            found.get("requested_action") or found.get("original_action") or found.get("claude_action") or ""
+        ).strip().upper()
+        self.assertEqual(requested, "BUY_READY")
+
+    def test_buy_ready_plan_carries_target_and_stop_for_tp_sl_conversion(self) -> None:
+        """_buy_ready_tp_sl_pct가 쓰는 sell_target/stop_loss가 price_targets에 살아있어야 한다."""
+        bot = _make_bot()
+        bot.today_judgment = {"market": "US", "consensus": {"mode": "MILD_BULL"}}
+
+        out = bot._apply_candidate_action_live_routes("US", self._meta())
+        plan = bot._selection_price_target_for_ticker("US", out.get("price_targets") or {}, "AVGO")
+
+        self.assertEqual(plan.get("sell_target"), 108.0)
+        self.assertEqual(plan.get("stop_loss"), 101.0)
+
+        tp, sl = bot._buy_ready_tp_sl_pct(plan, 103.0)
+        self.assertIsNotNone(tp)
+        self.assertIsNotNone(sl)
+        # 손절은 하드 손실캡으로 clamp된다 — 진입 시점에도 "손절 짧게"가 보장돼야 한다.
+        self.assertLessEqual(sl, abs(HARD_RULES["max_single_loss_pct"]) / 100.0)
+        self.assertGreater(tp, 0)
 
 
 if __name__ == "__main__":

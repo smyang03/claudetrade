@@ -442,7 +442,8 @@ class EntryRiskControlTests(unittest.TestCase):
         bot._is_order_allowed_now = lambda market: True  # type: ignore[method-assign]
         bot._in_entry_blackout = lambda market: False  # type: ignore[method-assign]
         bot._daily_stop_cluster_state = lambda market, ticker="": {"blocked": False}  # type: ignore[method-assign]
-        bot._analyst_new_buy_block_state = lambda market: {"blocked": False}  # type: ignore[method-assign]
+        # 코어 analyst 격리 정책이 ignore_direction_block을 넘긴다(trading_bot.py:10969).
+        bot._analyst_new_buy_block_state = lambda market, **kwargs: {"blocked": False}  # type: ignore[method-assign]
         bot._v2_order_unknown_block_state = lambda market, ticker: {"blocked": False}  # type: ignore[method-assign]
 
         with patch.dict(os.environ, {"US_BROKER_SYNC_QUARANTINE_ENABLED": "true"}, clear=False):

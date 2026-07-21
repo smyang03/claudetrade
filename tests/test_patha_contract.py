@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from bot.candidate_policy import normalize_selection_result
@@ -54,6 +55,11 @@ class PathAContractTests(unittest.TestCase):
         bot.trade_ready_tickers = {"KR": [], "US": []}
         bot.v2 = None
         bot.pathb = None
+        # dup guard가 보유/미체결을 bot.risk.positions와 bot.pending_orders로 확인한다.
+        # 없으면 예외를 먹고 fail-closed로 전 후보가 position_guard_error로 빠져
+        # 계약 검증이 무의미해진다.
+        bot.risk = SimpleNamespace(positions=[])
+        bot.pending_orders = []
 
         raw_meta = {
             "watchlist": ["TWLO", "TEAM"],
@@ -98,6 +104,11 @@ class PathAContractTests(unittest.TestCase):
         bot.enable_kr_momentum_shrink = True
         bot.v2 = None
         bot.pathb = None
+        # dup guard가 보유/미체결을 bot.risk.positions와 bot.pending_orders로 확인한다.
+        # 없으면 예외를 먹고 fail-closed로 전 후보가 position_guard_error로 빠져
+        # 계약 검증이 무의미해진다.
+        bot.risk = SimpleNamespace(positions=[])
+        bot.pending_orders = []
 
         raw_meta = {
             "watchlist": ["TWLO"],
@@ -132,6 +143,9 @@ class PathAContractTests(unittest.TestCase):
         bot.today_ticker_reasons = {"KR": {}, "US": {"TWLO": "soft setup can be rechecked intraday"}}
         bot.enable_continuation_live = False
         bot.enable_kr_momentum_shrink = True
+        # dup guard 의존성 — 없으면 fail-closed로 후보가 빠져 승격 계약을 검증할 수 없다.
+        bot.risk = SimpleNamespace(positions=[])
+        bot.pending_orders = []
 
         promoted = bot._promote_trade_ready_ticker(
             "US",

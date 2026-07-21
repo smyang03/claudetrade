@@ -560,5 +560,99 @@ class SingleSymbolJudgeIntegrationTests(unittest.TestCase):
         self.assertIn("reward_risk_below_min", results[0]["errors"])
 
 
+class ImmediateBuyEndToEndTests(unittest.TestCase):
+    """즉시매수(BUY_READY)가 judge 판정에서 실행 오버레이까지 살아서 도달하는지.
+
+    2026-07-21 라이브에서 judge가 BUY_READY를 4건 냈는데 전부 죽어 매수가 0이었다.
+    두 결함(적용 경로 regime 누락 / features 결측 시 현재가 미조회) 모두 이 구간에서
+    터졌으므로, 판정만이 아니라 candidate_actions 오버레이까지 확인한다.
+    """
+
+    ENV = {
+        "SINGLE_SYMBOL_JUDGE_ALLOW_BUY_READY": "true",
+        "SINGLE_SYMBOL_JUDGE_BUY_READY_MARKETS": "US",
+        "SINGLE_SYMBOL_JUDGE_BUY_READY_REGIMES": "MILD_BULL,MODERATE_BULL,AGGRESSIVE",
+        "EARLY_JUDGE_TRIGGER_ENABLED": "true",
+        "US_EARLY_JUDGE_TRIGGER_ENABLED": "true",
+        "US_EARLY_JUDGE_TRIGGER_SCORE_MIN": "70",
+    }
+
+    def _run(self, bot) -> tuple[list, dict]:
+        captured: dict[str, object] = {}
+        bot._apply_selection_meta = lambda market, selected, mode="", source="", meta_override=None: captured.update(
+            {"market": market, "selected": selected, "meta": meta_override}
+        ) or meta_override
+        rows = [{"ticker": "AVGO", "trainer_candidate_state": "PLAN_A", "trainer_prompt_score": 72.0}]
+        with patch.dict(os.environ, self.ENV, clear=False):
+            results = TradingBot.maybe_run_early_judge_triggers(bot, "US", source="sub_screener", rows=rows)
+        return results, captured
+
+    @staticmethod
+    def _judge_plan(**kwargs) -> dict:
+        # 실제 라이브 응답(AMAT 2026-07-21 23:59:51)과 같은 형태. buy_zone 없음이 정상이다.
+        return {
+            "ticker": kwargs["ticker"],
+            "market": kwargs["market"],
+            "action": "BUY_READY",
+            "route": "plan_a",
+            "confidence": 0.7,
+            "reason": "strong continuation in mild-bull regime",
+            "invalid_if": "loses VWAP or momentum stalls",
+            # _base_bot의 AVGO post_open_features.current_price=103.0에 맞춘다. 손절은
+            # IMMEDIATE_BUY_MAX_STOP_PCT(3%) 안쪽인 1.94%, RR은 US 임계 1.5를 넘는 2.5다.
+            "reference_price": 103.0,
+            "sell_target": 108.0,
+            "stop_loss": 101.0,
+            "hold_days": 3,
+        }
+
+    def test_immediate_buy_survives_to_candidate_action_overlay(self) -> None:
+        bot = _base_bot()
+        bot.today_judgment = {"consensus": {"mode": "MILD_BULL"}}
+        bot._single_symbol_judge_client = self._judge_plan
+
+        results, captured = self._run(bot)
+
+        self.assertEqual(len(results), 1)
+        # 결함1 회귀: 적용 경로에서 regime이 빠지면 여기서 WAIT_RECHECK로 죽는다.
+        self.assertEqual(results[0]["action"], "BUY_READY")
+        self.assertEqual(results[0]["route"], "plan_a")
+        self.assertTrue(results[0]["applied"])
+        self.assertEqual(results[0].get("immediate_buy_gate"), "allowed")
+
+        actions = captured["meta"]["candidate_actions"]
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]["action"], "BUY_READY")
+        self.assertEqual(actions[0]["size_intent"], "normal")
+        # 실행 배선이 tp/sl을 만들려면 이 두 값이 반드시 실려야 한다(_buy_ready_tp_sl_pct).
+        self.assertEqual(actions[0]["price_targets"]["sell_target"], 108.0)
+        self.assertEqual(actions[0]["price_targets"]["stop_loss"], 101.0)
+        self.assertEqual(actions[0]["price_targets"]["hold_days"], 3)
+
+    def test_immediate_buy_survives_when_post_open_features_are_missing(self) -> None:
+        """결함2 회귀: features가 비어도 reference_price로 현재가를 구해 통과해야 한다."""
+        bot = _base_bot()
+        bot.today_judgment = {"consensus": {"mode": "MILD_BULL"}}
+        bot._last_post_open_features_by_ticker = {"KR": {}, "US": {}}
+        bot._single_symbol_judge_client = self._judge_plan
+
+        results, captured = self._run(bot)
+
+        self.assertEqual(results[0]["action"], "BUY_READY")
+        self.assertTrue(results[0]["applied"])
+        self.assertNotIn("missing_current_price_for_immediate_buy", results[0].get("errors") or [])
+        self.assertEqual(captured["meta"]["candidate_actions"][0]["action"], "BUY_READY")
+
+    def test_immediate_buy_blocked_outside_allowed_regime(self) -> None:
+        """약세 국면에서는 강등돼야 한다 — 게이트가 살아있는지 확인."""
+        bot = _base_bot()
+        bot.today_judgment = {"consensus": {"mode": "DEFENSIVE"}}
+        bot._single_symbol_judge_client = self._judge_plan
+
+        results, _ = self._run(bot)
+
+        self.assertNotEqual(results[0]["action"], "BUY_READY")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -12,7 +12,9 @@ def _bot() -> TradingBot:
     bot._is_order_allowed_now = lambda market: True
     bot._in_entry_blackout = lambda market: False
     bot._daily_stop_cluster_state = lambda market, ticker="": {}
-    bot._analyst_new_buy_block_state = lambda market: {}
+    # 코어 analyst 격리 정책이 ignore_direction_block을 넘긴다(trading_bot.py:10969).
+    # kwargs를 받지 않으면 게이트 진입 전에 TypeError로 죽는다.
+    bot._analyst_new_buy_block_state = lambda market, **kwargs: {}
     bot.v2_order_unknown = None
     bot._v2_order_unknown_block_state = lambda market, ticker: {}
     bot._broker_trust_level = lambda market: "trusted"
