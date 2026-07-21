@@ -311,5 +311,49 @@ class LossCapProfitFloorTests(unittest.TestCase):
         self.assertEqual(candidates[0]["recovery_micro_exit_trigger"], "recovery_micro_profit_guard")
 
 
+class PeakTroughTimestampTests(unittest.TestCase):
+    """고점·저점 갱신 시각이 남는지 — MFE/MAE '순서' 판정의 전제.
+
+    크기만으로는 봉우리를 만들고 반납한 건과 되돌림 뒤 오른 건을 구분할 수 없다.
+    2026-07-22 백필 실측(US n=159): 고점이 먼저 온 89건 승률 4%(평균 -1.70%),
+    저점이 먼저 온 66건 승률 61%(평균 +1.13%). observed_peak_at은 PathB 전용이라
+    Path A 포지션(즉시매수 claude_price_a 포함)에는 이 필드가 유일한 순서 근거다.
+    """
+
+    def _rm(self):
+        rm = RiskManager.__new__(RiskManager)
+        rm.market = "KR"
+        rm.positions = [_kr_position(current_price=10_000.0, trough_pnl_pct=0.0)]
+        return rm
+
+    def test_peak_update_records_timestamp(self) -> None:
+        rm = self._rm()
+        rm.update_prices({"058430": 10_300.0})
+        pos = rm.positions[0]
+        self.assertEqual(pos["peak_pnl_pct"], 3.0)
+        self.assertTrue(pos.get("peak_pnl_at"), "고점 갱신 시각이 없으면 순서 판정이 불가능하다")
+
+    def test_trough_update_records_timestamp(self) -> None:
+        rm = self._rm()
+        rm.update_prices({"058430": 9_700.0})
+        pos = rm.positions[0]
+        self.assertEqual(pos["trough_pnl_pct"], -3.0)
+        self.assertTrue(pos.get("trough_pnl_at"))
+
+    def test_peak_then_trough_order_is_recoverable(self) -> None:
+        rm = self._rm()
+        rm.update_prices({"058430": 10_300.0})   # 고점 먼저
+        rm.update_prices({"058430": 9_700.0})    # 이후 저점
+        pos = rm.positions[0]
+        self.assertLessEqual(pos["peak_pnl_at"], pos["trough_pnl_at"])
+
+    def test_timestamps_absent_until_a_new_extreme_occurs(self) -> None:
+        """갱신이 없으면 시각을 위조하지 않는다(빈 값은 빈 값으로 남는다)."""
+        rm = self._rm()
+        rm.update_prices({"058430": 10_000.0})   # 진입가 그대로 — 갱신 없음
+        pos = rm.positions[0]
+        self.assertIsNone(pos.get("peak_pnl_at"))
+
+
 if __name__ == "__main__":
     unittest.main()

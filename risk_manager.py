@@ -505,10 +505,17 @@ class RiskManager:
                     _cur_pnl = (cp_usd / avg_usd - 1) * 100
             elif _entry > 0:
                 _cur_pnl = (pos["current_price"] / _entry - 1) * 100
+            # 고점·저점의 '시각'을 함께 남긴다(순수 관측 필드 — 주문·리스크 판정에는 쓰이지 않는다).
+            # 크기만으로는 봉우리를 만들고 반납한 건과 되돌림 뒤 오른 건을 구분할 수 없다.
+            # 2026-07-22 백필 실측(US n=159): 진입 후 고점이 먼저 온 89건은 승률 4%/평균 -1.70%,
+            # 저점이 먼저 온 66건은 승률 61%/평균 +1.13%. 특히 15분 내 고점 46건은 승률 2%다.
+            # 이 시각이 없으면 조기고점 정리 룰을 라이브에서 판별할 수 없다.
             if _cur_pnl is not None and _cur_pnl > float(pos.get("peak_pnl_pct") or 0):
                 pos["peak_pnl_pct"] = round(_cur_pnl, 3)
+                pos["peak_pnl_at"] = datetime.now(KST).isoformat(timespec="seconds")
             if _cur_pnl is not None and _cur_pnl < float(pos.get("trough_pnl_pct") or 0):
                 pos["trough_pnl_pct"] = round(_cur_pnl, 3)
+                pos["trough_pnl_at"] = datetime.now(KST).isoformat(timespec="seconds")
 
             # 수익 보호: +3% 이상이면 TP 도달 이벤트를 기다리지 않고 본전 위 트레일링 전환.
             if (
