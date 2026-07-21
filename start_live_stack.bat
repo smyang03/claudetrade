@@ -88,8 +88,15 @@ echo.
 echo [OK] 단일 스택 기동 완료. 로그: logs\runtime\*.log / logs\system\live_trading_*.log
 echo      자동복구: watchdog(%WATCHDOG_TASK%)이 5분마다 죽은 역할을 되살린다.
 
-:: 6) 로그 tail 탭 — 프로세스를 띄우는 게 아니라 읽기만 한다(중복 위험 없음^).
+:: 6) 로그 tail 탭 — 프로세스를 띄우는 게 아니라 읽기만 한다(주문에는 무관^).
 ::    스택은 headless라 실행 창이 없으므로, 돌아가는 걸 눈으로 보려면 이 탭들을 쓴다.
+::
+::    ★재시작마다 3개씩 쌓인다. stop_live_stack은 cwd 기준으로 스택 역할만 정리하므로
+::    이 tail 창들은 대상이 아니었고, 2026-07-22 재시작 5회에 15개가 남아 있었다.
+::    새로 열기 전에 기존 tail을 먼저 닫는다(읽기 전용이라 언제 끊어도 안전^).
+echo [CLEANUP] 이전 로그 tail 창 정리...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%\tools\stop_log_tails.ps1"
+
 where wt >nul 2>nul
 if errorlevel 1 (
   echo [INFO] Windows Terminal(wt^)이 없어 로그 탭을 열지 않는다. 대시보드: http://localhost:5000
