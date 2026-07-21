@@ -14,7 +14,14 @@ set "PROJECT_DIR=E:\code\claudetrade"
 set "CONDA_ENV=upbit"
 set "WATCHDOG_TASK=claudetrade_live_stack_watchdog"
 set "DRY_RUN=0"
-if /I "%~1"=="--dry-run" set "DRY_RUN=1"
+set "NO_PAUSE=0"
+:: 인자는 순서 무관하게 훑는다(--dry-run --no-pause 조합 허용).
+:: --no-pause: 끝에서 멈추지 않고 창을 닫는다. 자동/반복 재시작용 —
+:: pause로 대기하던 cmd 창이 재시작마다 쌓였다(2026-07-22 실측 3개 잔존).
+for %%A in (%*) do (
+  if /I "%%~A"=="--dry-run" set "DRY_RUN=1"
+  if /I "%%~A"=="--no-pause" set "NO_PAUSE=1"
+)
 
 echo [INFO] project=%PROJECT_DIR%
 if "%DRY_RUN%"=="1" echo [INFO] dry-run: 프로세스를 죽이거나 기동하지 않는다.
@@ -110,5 +117,9 @@ if errorlevel 1 (
 
 echo.
 echo      대시보드: http://localhost:5000
-pause
+if "%NO_PAUSE%"=="1" (
+  echo [INFO] --no-pause: 창을 닫는다.
+) else (
+  pause
+)
 exit /b 0
