@@ -400,7 +400,13 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertEqual(effective.get("US_MAX_POSITIONS"), "20")
         self.assertEqual(effective.get("V2_MAX_DAILY_ENTRIES"), "40")
         self.assertEqual(effective.get("KR_DAILY_ENTRY_CAP"), "40")
-        self.assertEqual(effective.get("US_DAILY_ENTRY_CAP"), "40")
+        # 2026-07-22 운영자 위임 판단으로 US만 40 -> 5. 근거(국면게이트 통과 건, 선착순 시뮬):
+        #   상한 없음 +2.22% / 4건 +26.17% / 5건 +28.73% / 6건 +20.67% / 3건 -9.57%(과도)
+        #   세션당 7건 이상 구간이 거래 95건에 -44.65%.
+        # 외부 독립 표본(404신호/56세션)에서도 상한 5가 최적(+0.2448%p)으로 재현됐다.
+        #   단 메커니즘은 "많이 사면 나쁘다"가 아니라 "8번째 이후 신호가 나쁘다"다.
+        # KR은 표본 n=38로 판정 불가라 40을 유지한다. 롤백: US_DAILY_ENTRY_CAP=40.
+        self.assertEqual(effective.get("US_DAILY_ENTRY_CAP"), "5")
         self.assertEqual(effective.get("PATHB_MAX_POSITIONS"), "15")
         self.assertEqual(effective.get("PATHB_MAX_DAILY_ENTRIES"), "40")
         # 2026-06-11 운영자 변경: 고가주 병목 완화 (70만 → 100만)
