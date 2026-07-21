@@ -335,5 +335,37 @@ class PostOpenFeatureTests(unittest.TestCase):
         self.assertAlmostEqual(returns["ret_5m_pct"], 2.0)
 
 
+class MomentumStateQuietLabelTests(unittest.TestCase):
+    """'데이터 없음'과 '데이터는 있는데 약함'을 구분한다.
+
+    2026-07-22 실측: judge의 WAIT_RECHECK 사유에 "momentum_state unknown, first-observed
+    data quality"가 반복 등장했다. 조건 미달을 전부 unknown으로 묶으면 judge가 정보 부족으로
+    읽고 이중으로 보수화된다. 소비처는 모두 == "특정값" 형태라 quiet는 어느 분기에도 걸리지
+    않으므로(unknown과 동일 취급) 동작 변경 없이 라벨 정확도만 올린다.
+    """
+
+    def test_no_data_stays_unknown(self) -> None:
+        self.assertEqual(infer_momentum_state(), "unknown")
+
+    def test_observed_but_weak_is_quiet(self) -> None:
+        self.assertEqual(
+            infer_momentum_state(ret_3m_pct=0.1, ret_5m_pct=0.3, ret_30m_pct=0.5), "quiet"
+        )
+
+    def test_negative_return_is_quiet_not_unknown(self) -> None:
+        self.assertEqual(infer_momentum_state(ret_3m_pct=-0.2), "quiet")
+
+    def test_zero_is_observed(self) -> None:
+        """0.0은 결측이 아니라 관측값이다(falsy로 잘못 처리하지 않는다)."""
+        self.assertEqual(infer_momentum_state(ret_5m_pct=0.0), "quiet")
+
+    def test_strong_labels_unchanged(self) -> None:
+        self.assertEqual(infer_momentum_state(ret_5m_pct=1.5), "early_strength")
+        self.assertEqual(infer_momentum_state(ret_3m_pct=0.8), "early_probe_only")
+        self.assertEqual(infer_momentum_state(ret_30m_pct=3.0), "late_mover")
+        self.assertEqual(infer_momentum_state(ret_5m_pct=1.5, ret_30m_pct=3.0), "sustained")
+        self.assertEqual(infer_momentum_state(pullback_from_high_pct=-5.0), "fade")
+
+
 if __name__ == "__main__":
     unittest.main()

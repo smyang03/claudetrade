@@ -205,6 +205,12 @@ def infer_momentum_state(
         return "early_probe_only"
     if ret30 is not None and ret30 > 2.0:
         return "late_mover"
+    # 여기까지 왔다는 건 '조건 미달'이지 '데이터 없음'이 아니다. 둘을 같은 unknown으로
+    # 묶으면 judge가 정보 부족으로 읽고 이중으로 보수화된다(2026-07-22 실측: WAIT_RECHECK
+    # 사유에 "momentum_state unknown, first-observed data quality"가 반복 등장).
+    # 수치가 하나라도 있으면 quiet(관측됐고 약함)로 구분해 알려준다.
+    if any(v is not None for v in (ret_3m_pct, ret5, ret_10m_pct, ret30, pullback)):
+        return "quiet"
     return "unknown"
 
 
