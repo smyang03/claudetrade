@@ -38982,6 +38982,31 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         # REVERSE 청산도 로컬 포지션 파일을 즉시 갱신한다(2026-07-21: 미갱신으로
                         # 유령포지션→재시작 exit_ownership BLOCK_START 사고. _execute_sell과 동일 계약).
                         self._save_positions()
+                        # CLOSED 이벤트도 발행(2026-07-21 같은 계열 2호): _execute_sell 우회로
+                        # 청산이 학습·성과 원장에서 영구 실종됐다(275280·275300 실측). 실패해도
+                        # 청산 루프는 계속(fail-silent 관측).
+                        try:
+                            self._v2_record_lifecycle_event(
+                                "CLOSED",
+                                market,
+                                ex["ticker"],
+                                decision_id=str(ex.get("v2_decision_id", "") or ""),
+                                execution_id=str(ex.get("v2_execution_id", "") or ""),
+                                position_id=str(ex.get("position_id", "") or ""),
+                                reason_code=_v2_close_reason("tuner_reverse"),
+                                payload={
+                                    "close_reason": _v2_close_reason("tuner_reverse"),
+                                    "raw_reason": "tuner_reverse",
+                                    "pnl_krw": float(ex.get("pnl", 0) or 0),
+                                    "pnl_pct": float(ex.get("pnl_pct", 0) or 0),
+                                    "qty": int(ex.get("qty", 0) or 0),
+                                    "exit_price": float(cp or 0),
+                                    "path_type": ex.get("path_type", ""),
+                                    "exit_owner": "tuner_reverse",
+                                },
+                            )
+                        except Exception as _ce:
+                            log.warning(f"[REVERSE] CLOSED 이벤트 기록 실패 [{ex['ticker']}]: {_ce}")
                         ex_name = str(ex.get("name", "") or "").strip() or self._lookup_ticker_name(ex["ticker"], market)
                         pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), "tuner_reverse", market=market, name=ex_name, usd_krw=self.usd_krw_rate)
                         trade_alert("sell", ex["ticker"], ex["qty"], alert_cp,
