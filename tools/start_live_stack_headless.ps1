@@ -11,6 +11,27 @@ $env:CLAUDETRADE_RUNTIME_DIR = $Root
 # 쓰므로, 호출자 CWD와 무관하게 항상 repo 루트에서 해석되도록 작업 디렉터리를 고정한다.
 # (Start-Process role 기동은 -WorkingDirectory $Root로 이미 격리돼 영향 없음.)
 Set-Location -LiteralPath $Root
+
+# 재진입 잠금 — watchdog(5분 주기)이 이 스크립트의 기동 도중에 다시 실행되면, manifest
+# (state\headless_live_stack_pids.json)가 아직 기록되기 전이라 PidFile이 없는 역할
+# (counterfactual_pipeline·integrity_check)을 "부재"로 오판해 두 번째 세트를 띄운다.
+# manifest는 마지막에 한 번만 쓰이고 그 앞에 Wait-BrokerTruthSchedulerReady(<=20초)와
+# Sync-CoreLiveManifests(<=60초) 배리어가 있어 창이 1~2분 열린다.
+# → 2026-07-21 23:38:41 / 23:39:35 두 세트로 보조 3종이 중복 실행된 것을 실측했다.
+# 기동 구간 전체를 단일 인스턴스로 묶어 그 창을 닫는다.
+$StackMutex = New-Object System.Threading.Mutex($false, "Global\claudetrade_live_stack_headless")
+$MutexHeld = $false
+try {
+    $MutexHeld = $StackMutex.WaitOne(0)
+} catch [System.Threading.AbandonedMutexException] {
+    # 직전 인스턴스가 락을 쥔 채 죽은 경우다. 소유권은 이 프로세스로 넘어오므로 그대로 진행한다.
+    $MutexHeld = $true
+}
+if (-not $MutexHeld) {
+    Write-Output "[SKIP] 다른 기동 인스턴스가 진행 중 — 중복 기동을 건너뛴다."
+    exit 0
+}
+
 $PythonExe = if ($env:CLAUDETRADE_PYTHON) {
     $env:CLAUDETRADE_PYTHON
 } else {
@@ -235,4 +256,11 @@ foreach ($role in $roles) {
 
 if (-not $DryRun) {
     $manifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+}
+
+# 잠금 해제. 예외로 여기 도달하지 못하고 프로세스가 죽어도 OS가 abandoned 상태로 넘겨
+# 다음 인스턴스가 위 catch 경로로 획득하므로, 락이 영구히 잠기지는 않는다.
+if ($MutexHeld) {
+    $StackMutex.ReleaseMutex()
+    $StackMutex.Dispose()
 }
