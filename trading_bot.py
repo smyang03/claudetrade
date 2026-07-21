@@ -19233,6 +19233,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         candidate_actions = list((meta or {}).get("candidate_actions") or [])
         full_pool_count = (meta or {}).get("_full_pool_count")
         prompt_pool_count = (meta or {}).get("_prompt_pool_count")
+        prompt_pool_metrics = dict((meta or {}).get("_prompt_pool_metrics") or {})
         excluded_from_prompt = list((meta or {}).get("_excluded_from_prompt") or [])
         deferred_sources = list((meta or {}).get("_deferred_sources") or [])
         if prompt_pool_count is None:
@@ -19281,6 +19282,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "full_pool_count": full_pool_count,
             "prompt_pool_count": prompt_pool_count,
             "pool_separation_state": pool_separation_state,
+            "prompt_pool_metrics": prompt_pool_metrics,
+            "prompt_pool_shadow_reorder": dict(prompt_pool_metrics.get("shadow_reorder") or {}),
             "excluded_from_prompt": excluded_from_prompt,
             "deferred_sources": deferred_sources,
             "execution_pool_count": len(trade_ready),
@@ -21364,7 +21367,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "max_tickers": max_tickers,
         }
         try:
-            from bot.kr_investor_flow_cache import effective_flow_source_date, update_candidate_flow_cache
+            from bot.kr_investor_flow_cache import (
+                effective_flow_source_date,
+                update_candidate_flow_cache,
+                update_candidate_flow_series,
+            )
 
             session_date = self._current_session_date_str(market_key)
             flow_source_date = effective_flow_source_date(session_date)
@@ -21374,14 +21381,33 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "flow_source_policy": "previous_completed_trading_day",
             })
 
-            cache = update_candidate_flow_cache(
-                tickers,
-                session_date=session_date,
-                flow_source_date=flow_source_date,
-                token=self._token_for_market("KR"),
-                max_tickers=max_tickers,
-                sleep_sec=max(0.0, sleep_sec),
-            )
+            # 다중일 series 캡처(2026-07-21): 엔드포인트가 범위 리스트를 반환하므로
+            # 티커당 호출 수는 단일일과 동일. days<=1이면 기존 단일일 경로 유지(롤백 토글).
+            try:
+                series_days = int(float(os.getenv("KR_CANDIDATE_FLOW_SERIES_DAYS", "5") or 5))
+            except Exception:
+                series_days = 5
+            if series_days > 1:
+                cache = update_candidate_flow_series(
+                    tickers,
+                    session_date=session_date,
+                    days=series_days,
+                    token=self._token_for_market("KR"),
+                    max_tickers=max_tickers,
+                    sleep_sec=max(0.0, sleep_sec),
+                )
+                summary["flow_series_days"] = series_days
+                summary["flow_series_dates"] = list(cache.get("series_dates") or [])
+                summary["flow_series_fetch_errors"] = int(cache.get("series_fetch_errors") or 0)
+            else:
+                cache = update_candidate_flow_cache(
+                    tickers,
+                    session_date=session_date,
+                    flow_source_date=flow_source_date,
+                    token=self._token_for_market("KR"),
+                    max_tickers=max_tickers,
+                    sleep_sec=max(0.0, sleep_sec),
+                )
             records = dict(cache.get("records") or {})
             ok = sum(1 for record in records.values() if isinstance(record, dict) and record.get("status") == "ok")
             error = sum(1 for record in records.values() if isinstance(record, dict) and record.get("status") == "error")
@@ -21454,6 +21480,33 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return evaluate_anti_chase((candidate or {}).get("max_daily_ret_21d"), mode, threshold=threshold)
         except Exception as exc:
             log.debug(f"[anti-chase] {market} screen skip: {exc}")
+            return {"mode": "off", "block": False, "decision": "error"}
+    def _dip_entry_screen(self, market: str, candidate: dict) -> dict:
+        """US 낙폭베팅(ret_5d<−5%) 배제 판정. off=no-op·shadow=관측만·enforce=배제.
+
+        실증(2026-07-21): US 손실은 낙폭 반등 베팅에 집중 — 배제군 net −42.2%p,
+        잔존 −13.6%p, 월별 부호역전 없음. KR은 정반대(급등추격=anti-chase 관할)라
+        기본 US 전용. fail-open: ret_5d 결손이면 막지 않음. 매수 차단 게이트 —
+        enforce는 운영자 확인 필수(기본 shadow).
+        """
+        try:
+            from bot.dip_entry_gate import evaluate_dip_entry, normalize_mode
+            mode = normalize_mode(os.getenv("DIP_ENTRY_GATE_MODE", "off"))
+            if mode == "off":
+                return {"mode": "off", "block": False, "decision": "off"}
+            try:
+                threshold = float(os.getenv("DIP_ENTRY_RET5D_THRESHOLD", "-5") or -5)
+            except (TypeError, ValueError):
+                threshold = -5.0
+            return evaluate_dip_entry(
+                (candidate or {}).get("ret_5d_pct_pool"),
+                mode,
+                market=market,
+                threshold=threshold,
+                markets=os.getenv("DIP_ENTRY_GATE_MARKETS", "US"),
+            )
+        except Exception as exc:
+            log.debug(f"[dip-entry] {market} screen skip: {exc}")
             return {"mode": "off", "block": False, "decision": "error"}
     def _apply_candidate_post_rank_shadow(self, market: str, candidates: list[dict]) -> list[dict]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
@@ -21766,6 +21819,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     continue
                 if anti_chase.get("decision") == "would_skip":
                     enriched_candidate["anti_chase_would_skip"] = True
+                dip_gate = self._dip_entry_screen(market_key, enriched_candidate)
+                if dip_gate.get("block"):
+                    # enforce: US 낙폭베팅 배제(네거티브 스크린) — 후보 풀에서 제외
+                    removed_v2.append((ticker, f"dip_rebound_bet(ret5d={dip_gate.get('ret_5d_pct')})"))
+                    log.info(
+                        f"[dip-entry] {market_key} {ticker} 낙폭베팅 배제 "
+                        f"ret5d={dip_gate.get('ret_5d_pct')}%<thr{dip_gate.get('threshold')}%"
+                    )
+                    continue
+                if dip_gate.get("decision") == "would_block":
+                    enriched_candidate["dip_entry_would_block"] = True
                 filtered_v2.append(enriched_candidate)
             except Exception as exc:
                 removed_v2.append((ticker, f"error:{exc}"))
@@ -38787,6 +38851,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                             continue
                     ex = self.risk.close_position(pos["ticker"], cp, "tuner_reverse")
                     if ex:
+                        # REVERSE 청산도 로컬 포지션 파일을 즉시 갱신한다(2026-07-21: 미갱신으로
+                        # 유령포지션→재시작 exit_ownership BLOCK_START 사고. _execute_sell과 동일 계약).
+                        self._save_positions()
                         ex_name = str(ex.get("name", "") or "").strip() or self._lookup_ticker_name(ex["ticker"], market)
                         pnl_alert(ex["ticker"], ex["pnl_pct"], int(ex["pnl"]), "tuner_reverse", market=market, name=ex_name, usd_krw=self.usd_krw_rate)
                         trade_alert("sell", ex["ticker"], ex["qty"], alert_cp,
