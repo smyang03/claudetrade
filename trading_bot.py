@@ -33224,6 +33224,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             )
         return payload
 
+    def _judge_market_regime(self, market: str) -> str:
+        """즉시매수(BUY_READY) 국면 게이트용 regime — 안정 per-market consensus.
+
+        judge 호출과 그 결과 적용이 반드시 같은 값을 봐야 한다. 한쪽만 regime을 넘기면
+        _immediate_buy_allowed가 국면 미상으로 판단해 fail-closed로 BUY_READY를 강등시키고,
+        buy_zone이 없는 즉시매수 플랜은 그대로 WAIT_RECHECK로 죽어 매수가 0이 된다
+        (2026-07-21 WDC 2건 실측: judge valid=True → 적용 단계에서 pathb_price_plan_missing).
+        """
+        cache = getattr(self, "market_consensus_mode", {}) or {}
+        return str(
+            cache.get("US" if str(market or "").upper() == "US" else "KR", "")
+            or (getattr(self, "today_judgment", {}) or {}).get("consensus", {}).get("mode", "")
+            or ""
+        )
+
     def _single_symbol_judge_call(self, market: str, candidate: Any) -> dict[str, Any]:
         if isinstance(candidate, dict):
             row = dict(candidate.get("row") or candidate)
@@ -33257,12 +33272,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception:
                 pass
         # 즉시매수(BUY_READY) 국면 게이트용 regime 주입(2026-07-21) — 안정 per-market consensus.
-        _regime_cache = getattr(self, "market_consensus_mode", {}) or {}
-        _judge_regime = str(
-            _regime_cache.get("US" if str(candidate_market or "").upper() == "US" else "KR", "")
-            or (getattr(self, "today_judgment", {}) or {}).get("consensus", {}).get("mode", "")
-            or ""
-        )
+        _judge_regime = self._judge_market_regime(candidate_market)
         risk_context = {
             "feature": "early_judge_pathb_price_plan",
             "order_quantity": "runtime_owned",
@@ -33414,6 +33424,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             risk_context={
                 "feature": "early_judge_pathb_price_plan",
                 "pathb_plan_before_registration_only": True,
+                # judge 호출부(_single_symbol_judge_call)와 같은 regime을 넘긴다. 빠지면
+                # 즉시매수 게이트가 국면 미상으로 fail-closed 강등시켜 BUY_READY가 전멸한다.
+                "market": market_key,
+                "market_regime": self._judge_market_regime(market_key),
             },
         )
         ticker = self._selection_ticker_key(market_key, normalized.get("ticker") or candidate_ticker)

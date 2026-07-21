@@ -348,7 +348,17 @@ def validate_immediate_buy_plan(
     """
     errors: list[str] = []
     fp = dict(features or {})
+    # 현재가 조회 fallback — 즉시매수는 buy_zone 구조 검증이 없고 현재가는 target/stop의
+    # 방향·거리를 재는 기준점일 뿐이다. judge 입력 후보에는 가격이 있는데 post_open_features만
+    # 결측인 경우가 있어(2026-07-21 AMAT·HUT 실측: candidate.price=565.4999인데 features 없음)
+    # 그 한 필드 때문에 완전한 플랜이 탈락했다. 실제 진입 tp/sl은 주문 시점 실시간가로 다시
+    # 계산되고 손절은 하드캡으로 clamp되므로, 여기서는 사전 타당성 확인이면 충분하다.
+    # 모든 fallback이 비면 아래 strict 검사가 그대로 차단한다(fail-closed 유지).
     current = _num(fp.get("current_price"), 0.0)
+    if current <= 0:
+        current = _num(fp.get("price"), 0.0)
+    if current <= 0:
+        current = _num(result.get("reference_price"), 0.0)
     target = _num(result.get("sell_target"), 0.0)
     stop = _num(result.get("stop_loss") or result.get("stop_reference"), 0.0)
     hold_days = _num(result.get("hold_days"), 0.0)
