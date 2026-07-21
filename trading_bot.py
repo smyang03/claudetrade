@@ -38735,12 +38735,32 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     pos["sl"] = pos["sl"] * (1 + adj_clamped)
                 log.info(f"SL adjusted: {adj_clamped:+.3f}")
             # REVERSE: Claude가 장세 반전 판단 → 보유 포지션 청산
-            # broker_sync 전략은 hold_advisor가 개별 판단하므로 REVERSE 대상에서 제외
+            # broker_sync 전략은 hold_advisor가 개별 판단하므로 REVERSE 대상에서 제외.
+            # 코어 sleeve(kr_factor_trend_v1·us_schg_bil_trend_v1)는 월간 리밸런스 장기홀드라
+            # 단기 국면 튜너 REVERSE에서 제외한다(2026-07-21: 코어가 장중 청산되어 장기 볼록트랙
+            # 철학과 충돌). REVERSE_EXEMPT_CORE_SLEEVE=false로 기존 동작 롤백 가능. 코어의
+            # strategy는 MICRO_PROBE이고 코어 전략 id는 source_strategy에 있음.
             if action == "REVERSE" and market_positions:
-                reverse_targets = [p for p in market_positions if p.get("strategy") != "broker_sync"]
-                skipped = [p["ticker"] for p in market_positions if p.get("strategy") == "broker_sync"]
+                exempt_core = _env_bool("REVERSE_EXEMPT_CORE_SLEEVE", True)
+
+                def _reverse_exempt(p: dict) -> bool:
+                    if str(p.get("strategy") or "") == "broker_sync":
+                        return True
+                    if exempt_core and str(p.get("source_strategy") or "").strip().lower() in _CORE_ANALYST_ISOLATED_SOURCES:
+                        return True
+                    return False
+
+                reverse_targets = [p for p in market_positions if not _reverse_exempt(p)]
+                skipped = [p["ticker"] for p in market_positions if str(p.get("strategy") or "") == "broker_sync"]
+                core_skipped = [
+                    p["ticker"] for p in market_positions
+                    if exempt_core and str(p.get("source_strategy") or "").strip().lower() in _CORE_ANALYST_ISOLATED_SOURCES
+                    and str(p.get("strategy") or "") != "broker_sync"
+                ]
                 if skipped:
                     log.info(f"[REVERSE] broker_sync 포지션 제외 (hold_advisor 관할): {skipped}")
+                if core_skipped:
+                    log.info(f"[REVERSE] 코어 sleeve 제외 (장기 홀드·hold_advisor 관할): {core_skipped}")
                 log.warning(f"[REVERSE] 튜너 판단: {result.get('reason','')} — {len(reverse_targets)}개 포지션 청산")
                 for pos in reverse_targets:
                     cp = self.price_cache.get(pos["ticker"], pos["current_price"])
