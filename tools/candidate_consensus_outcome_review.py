@@ -75,6 +75,35 @@ def _metrics(values: list[float]) -> dict[str, Any]:
     }
 
 
+def _consensus_grade(decision: dict[str, Any]) -> str:
+    """top3 교집합(SELECT)보다 넓은 등급 코호트 — 원장에 이미 있는 arm rank로 소급 계산.
+
+    top3 교집합이 사실상 0건(5세션 1건)이라 SELECT 코호트 forward가 굶는다(2026-07-21).
+    스코어러 계약(top3_intersection_else_abstain)은 그대로 두고, 리뷰만 등급을 나눠
+    "완화하면 어떤 코호트가 벌었나"를 관측한다. 관측 전용 — 선정 권한 변화 없음.
+    """
+    left = decision.get("left") if isinstance(decision.get("left"), dict) else {}
+    right = decision.get("right") if isinstance(decision.get("right"), dict) else {}
+    lr = left.get("rank")
+    rr = right.get("rank")
+    try:
+        lr = int(lr) if lr is not None else None
+        rr = int(rr) if rr is not None else None
+    except (TypeError, ValueError):
+        lr = rr = None
+    if lr is None or rr is None:
+        return "missing_rank"
+    if lr <= 3 and rr <= 3:
+        return "both_top3"
+    if lr <= 5 and rr <= 5:
+        return "both_top5"
+    if lr <= 10 and rr <= 10:
+        return "both_top10"
+    if lr <= 3 or rr <= 3:
+        return "one_top3"
+    return "neither"
+
+
 def review_consensus_outcomes(
     *,
     session_date: str,
@@ -134,10 +163,14 @@ def review_consensus_outcomes(
     for horizon in HORIZONS:
         grouped: dict[str, list[float]] = defaultdict(list)
         quality: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        grade_grouped: dict[str, list[float]] = defaultdict(list)
+        grade_counts: dict[str, int] = defaultdict(int)
         matched = 0
         for decision in decisions:
             result = outcomes.get((_ticker_key(decision.get("ticker")), horizon))
             decision_name = str(decision.get("decision") or "ABSTAIN").upper()
+            grade = _consensus_grade(decision)
+            grade_counts[grade] += 1
             if result is None:
                 quality[decision_name]["missing"] += 1
                 continue
@@ -147,6 +180,7 @@ def review_consensus_outcomes(
                 continue
             matched += 1
             grouped[decision_name].append(float(value))
+            grade_grouped[grade].append(float(value))
         per_decision = {
             decision: {
                 **_metrics(grouped.get(decision, [])),
@@ -155,6 +189,14 @@ def review_consensus_outcomes(
             for decision in sorted(
                 set(grouped) | set(quality) | {"SELECT_SHADOW", "ABSTAIN"}
             )
+        }
+        # 등급 코호트(원장 rank 소급): top3 교집합이 굶어도 완화 후보 코호트의 forward를 관측
+        per_grade = {
+            grade: {
+                **_metrics(grade_grouped.get(grade, [])),
+                "decision_count": grade_counts.get(grade, 0),
+            }
+            for grade in sorted(set(grade_grouped) | set(grade_counts))
         }
         decision_metrics[str(horizon)] = per_decision
         event_seed = f"{session_date}|{market_key}|{horizon}|candidate_consensus_outcome_v1"
@@ -170,6 +212,7 @@ def review_consensus_outcomes(
                 "decision_records": len(decisions),
                 "matched_outcomes": matched,
                 "metrics": per_decision,
+                "grade_metrics": per_grade,
                 "promotion_eligible": False,
                 "promotion_block_reason": "prospective_gate_not_met",
             }
