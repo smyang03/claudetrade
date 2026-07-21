@@ -149,6 +149,56 @@ def fetch_investor_flow_kr(ticker: str, target_date: str, token: str) -> dict:
         log.debug(f"수급 조회 실패 [{ticker}]: {e}")
         return {}
 
+@log_retry(max_retries=3, delay=2.0, logger=log)
+def fetch_investor_flow_kr_series(ticker: str, start_date: str, end_date: str, token: str) -> list:
+    """KIS FHKST01010900 범위 조회 — 완료 거래일별 수급 시리즈(오래된→최신).
+
+    단일일 함수(fetch_investor_flow_kr)와 같은 엔드포인트·같은 1콜이지만, 응답에
+    이미 들어있는 최근 거래일 리스트를 버리지 않고 전부 반환한다(2026-07-21:
+    다중일 series 캡처 — 호출 수 증가 없음). 각 행은 stck_bsop_date 매칭이므로
+    flow_date_matched=True로 취급 가능. 실패 시 [] 반환.
+    """
+    start = str(start_date or "").replace("-", "")
+    end = str(end_date or "").replace("-", "")
+    url = f"{KIS_BASE}/uapi/domestic-stock/v1/quotations/inquire-investor"
+    params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker,
+              "FID_INPUT_DATE_1": start,
+              "FID_INPUT_DATE_2": end,
+              "FID_PERIOD_DIV_CODE": "D"}
+    headers = {"Content-Type": "application/json", "authorization": f"Bearer {token}",
+               "appkey": KIS_KEY, "appsecret": KIS_SEC, "tr_id": "FHKST01010900"}
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=15)
+        resp.raise_for_status()
+        output = resp.json().get("output", [])
+        rows = [r for r in output if isinstance(r, dict)]
+
+        def _toint(v, default=0):
+            try:
+                return int(v) if v != "" else default
+            except (TypeError, ValueError):
+                return default
+
+        out = []
+        for row in rows:
+            raw_date = str(row.get("stck_bsop_date") or "").strip()
+            if len(raw_date) != 8 or not raw_date.isdigit():
+                continue
+            out.append({
+                "date": f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}",
+                "foreign": _toint(row.get("frgn_ntby_qty")),
+                "institution": _toint(row.get("orgn_ntby_qty")),
+                "individual": _toint(row.get("prsn_ntby_qty") or row.get("indv_ntby_qty")),
+                "flow_date": f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}",
+                "flow_date_matched": True,
+            })
+        out.sort(key=lambda item: item["date"])
+        return out
+    except Exception as e:
+        log.debug(f"수급 시리즈 조회 실패 [{ticker}]: {e}")
+        return []
+
+
 @log_retry(max_retries=3, delay=12.0, logger=log)
 def fetch_vix_detail(target_date: str) -> dict:
     """Alpha Vantage VIX with yfinance fallback."""

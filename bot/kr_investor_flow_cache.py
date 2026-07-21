@@ -177,6 +177,137 @@ def update_candidate_flow_cache(
     return cache
 
 
+def update_candidate_flow_series(
+    tickers: list[Any],
+    *,
+    session_date: str | date,
+    days: int = 5,
+    token: str,
+    fetch_series_fn: Callable[[str, str, str, str], list] | None = None,
+    max_tickers: int = 30,
+    sleep_sec: float = 0.2,
+    path_for: Callable[[str], Path] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """다중일 수급 시리즈 캡처(2026-07-21) — 티커당 1콜로 완료 거래일 lag 1..days를
+    각 date별 캐시 파일에 분배 저장한다. 호출 수는 단일일 방식과 동일(엔드포인트가
+    이미 범위 리스트를 반환). 반환값은 lag-1 캐시 + 시리즈 메타(기존 소비자 호환).
+
+    no-lookahead: 완료 거래일(lag>=1)만 저장. 미래·당일(미정산) 행은 버린다.
+    """
+    session_day = _date_key(session_date)
+    window = max(1, int(days or 1))
+    source_dates: list[str] = []
+    seen: set[str] = set()
+    for lag in range(1, window + 1):
+        d = effective_flow_source_date(session_day, lag_trading_days=lag)
+        if d not in seen:
+            seen.add(d)
+            source_dates.append(d)
+    if not source_dates:
+        return _empty_cache(session_day)
+    newest, oldest = source_dates[0], source_dates[-1]
+
+    def _path(d: str) -> Path | None:
+        return path_for(d) if path_for is not None else None
+
+    caches: dict[str, dict[str, Any]] = {d: load_flow_cache(d, path=_path(d)) for d in source_dates}
+    for d, cache in caches.items():
+        cache["date"] = d
+        cache["flow_source_date"] = d
+        cache.setdefault("flow_source_policy", "series_capture")
+
+    if fetch_series_fn is None:
+        from phase1_trainer.supplement_collector import fetch_investor_flow_kr_series
+
+        fetch_series_fn = fetch_investor_flow_kr_series
+    fetched_at = (now or datetime.now()).isoformat(timespec="seconds")
+    date_set = set(source_dates)
+    changed: set[str] = set()
+    fetch_errors = 0
+
+    selected = _unique_tickers(tickers)[: max(0, int(max_tickers or 0))]
+    for idx, ticker in enumerate(selected):
+        # 윈도 내 모든 date에 신뢰 레코드가 이미 있으면 skip(증분 — 2일차부터는 최신 1일만 부족)
+        missing = [
+            d for d in source_dates
+            if not (
+                isinstance(caches[d]["records"].get(ticker), dict)
+                and caches[d]["records"][ticker].get("status") == "ok"
+                and _record_flow_values_trusted(caches[d]["records"][ticker], caches[d])
+            )
+        ]
+        if not missing:
+            continue
+        try:
+            series = fetch_series_fn(ticker, oldest, newest, token) or []
+        except Exception as exc:
+            fetch_errors += 1
+            log_dates = missing[:1]
+            for d in log_dates:
+                caches[d]["records"][ticker] = {
+                    "ticker": ticker,
+                    "date": d,
+                    "flow_source_date": d,
+                    "fetched_at": fetched_at,
+                    "status": "error",
+                    "error": str(exc)[:200],
+                    "flow_values_trusted": False,
+                    "flow_unavailable_reason": "fetch_error",
+                    "source": "kis:inquire-investor:series",
+                }
+                changed.add(d)
+            continue
+        by_date = {str(row.get("date") or ""): row for row in series if isinstance(row, dict)}
+        for d in missing:
+            row = by_date.get(d)
+            if row is None:
+                # 응답 범위에 그 date가 없으면 missing으로 기록(휴장 오판·범위 밖 구분용)
+                caches[d]["records"][ticker] = {
+                    "ticker": ticker,
+                    "date": d,
+                    "flow_source_date": d,
+                    "fetched_at": fetched_at,
+                    "status": "missing",
+                    "flow_values_trusted": False,
+                    "flow_unavailable_reason": "not_in_series_response",
+                    "source": "kis:inquire-investor:series",
+                }
+                changed.add(d)
+                continue
+            caches[d]["records"][ticker] = {
+                "ticker": ticker,
+                "date": d,
+                "flow_source_date": d,
+                "flow_age_trading_days": _trading_day_distance(d, session_day),
+                "fetched_at": fetched_at,
+                "status": "ok",
+                "foreign": _optional_int(row.get("foreign")),
+                "institution": _optional_int(row.get("institution")),
+                "individual": _optional_int(row.get("individual")),
+                "flow_reported_date": str(row.get("flow_date") or d),
+                "flow_date_matched": True,
+                "flow_values_trusted": True,
+                "source": "kis:inquire-investor:series",
+            }
+            changed.add(d)
+        if sleep_sec > 0 and idx < len(selected) - 1:
+            time.sleep(float(sleep_sec))
+
+    for d in changed:
+        caches[d]["updated_at"] = fetched_at
+        save_flow_cache(caches[d], path=_path(d))
+
+    primary = caches[newest]
+    primary["requested_session_date"] = session_day
+    primary["flow_age_trading_days"] = _trading_day_distance(newest, session_day)
+    primary["series_dates"] = source_dates
+    primary["series_days"] = window
+    primary["series_changed_dates"] = sorted(changed)
+    primary["series_fetch_errors"] = fetch_errors
+    return primary
+
+
 def flow_for_ticker(cache: dict[str, Any], ticker: Any) -> dict[str, Any]:
     key = normalize_kr_ticker(ticker)
     record = ((cache or {}).get("records") or {}).get(key)
