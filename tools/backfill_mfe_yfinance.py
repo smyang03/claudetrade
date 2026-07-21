@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS mfe_backfill_yf (
     market TEXT, ticker TEXT, yf_symbol TEXT,
     entry_price REAL, exit_price REAL, pnl_pct REAL, close_reason TEXT,
     mfe_pct REAL, mae_pct REAL,
-    bars INTEGER, interval TEXT, source TEXT, synced_at TEXT
+    bars INTEGER, interval TEXT, source TEXT, synced_at TEXT,
+    mfe_minutes REAL, mae_minutes REAL
 )
 """
 
@@ -46,6 +47,8 @@ def main() -> int:
     ap.add_argument("--interval", default="5m")
     ap.add_argument("--limit", type=int, default=0, help="종목 수 제한(테스트용)")
     ap.add_argument("--sleep", type=float, default=0.25)
+    ap.add_argument("--intraday-window-days", type=int, default=59,
+                    help="분봉 조회 가능 창(일). yfinance 5m은 60일 제한이라 안쪽으로 클램프한다.")
     args = ap.parse_args()
 
     import yfinance as yf
@@ -76,6 +79,17 @@ def main() -> int:
         ends = [parse_utc(p["closed_at"]) for p in pl]
         s = min(starts) - timedelta(days=1)
         e = max(ends) + timedelta(days=2)
+        # 분봉은 yfinance가 최근 N일만 준다. 종목별 전체 구간을 한 번에 요청하면 오래된
+        # 거래가 하나만 있어도 요청 전체가 거부돼(“range must be within the last 60 days”)
+        # 같은 종목의 최근 거래까지 통째로 날아간다. 창 안쪽으로 클램프해 최근 건을 살린다.
+        if args.interval.endswith("m"):
+            floor = datetime.now(timezone.utc) - timedelta(days=args.intraday_window_days)
+            if e <= floor:
+                for p in pl:
+                    out.append((p, None, None, 0, "outside_intraday_window", None, None, None))
+                continue
+            if s < floor:
+                s = floor
         cands = [ticker] if market == "US" else [f"{ticker}.KS", f"{ticker}.KQ"]
         df = None
         sym = None
@@ -90,7 +104,7 @@ def main() -> int:
                 break
         if df is None or len(df) == 0:
             for p in pl:
-                out.append((p, None, None, 0, "no_data", None))
+                out.append((p, None, None, 0, "no_data", None, None, None))
             continue
         high = df["High"]
         low = df["Low"]
@@ -112,33 +126,50 @@ def main() -> int:
             mask = (idx >= f) & (idx <= cl)
             n = int(mask.sum())
             if n == 0:
-                out.append((p, None, None, 0, "no_bars", sym))
+                out.append((p, None, None, 0, "no_bars", sym, None, None))
                 continue
-            hmax = float(high[mask].max())
-            lmin = float(low[mask].min())
+            h_sub = high[mask]
+            l_sub = low[mask]
+            hmax = float(h_sub.max())
+            lmin = float(l_sub.min())
             entry = float(p["entry_price"])
             mfe = (hmax / entry - 1.0) * 100.0
             mae = (lmin / entry - 1.0) * 100.0
-            out.append((p, mfe, mae, n, "yfinance_est", sym))
+            # MFE/MAE의 '시점'을 함께 남긴다. 크기만으로는 봉우리를 만들고 반납한 건과
+            # 되돌림을 겪고 오른 건을 구분할 수 없어, breakeven stop·peak-trail의 순효과가
+            # 밴드로만 나오고 확정되지 않는다(2026-07-22 실측: -0.76%p ~ +0.04%p).
+            mfe_min = mae_min = None
+            try:
+                mfe_min = round((h_sub.idxmax() - f).total_seconds() / 60.0, 1)
+                mae_min = round((l_sub.idxmin() - f).total_seconds() / 60.0, 1)
+            except Exception:
+                mfe_min = mae_min = None
+            out.append((p, mfe, mae, n, "yfinance_est", sym, mfe_min, mae_min))
         time.sleep(args.sleep)
 
     w = sqlite3.connect(str(ML_DB), timeout=30)
     try:
         w.executescript(SCHEMA)
+        # 기존 테이블에는 CREATE TABLE IF NOT EXISTS가 새 컬럼을 추가하지 않는다.
+        existing = {r[1] for r in w.execute("PRAGMA table_info(mfe_backfill_yf)")}
+        for col in ("mfe_minutes", "mae_minutes"):
+            if col not in existing:
+                w.execute(f"ALTER TABLE mfe_backfill_yf ADD COLUMN {col} REAL")
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        for p, mfe, mae, n, src, sym in out:
+        for p, mfe, mae, n, src, sym, mfe_min, mae_min in out:
             w.execute(
                 "INSERT INTO mfe_backfill_yf "
-                "(v2_decision_id,market,ticker,yf_symbol,entry_price,exit_price,pnl_pct,close_reason,mfe_pct,mae_pct,bars,interval,source,synced_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "(v2_decision_id,market,ticker,yf_symbol,entry_price,exit_price,pnl_pct,close_reason,mfe_pct,mae_pct,bars,interval,source,synced_at,mfe_minutes,mae_minutes) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(v2_decision_id) DO UPDATE SET yf_symbol=excluded.yf_symbol,mfe_pct=excluded.mfe_pct,"
-                "mae_pct=excluded.mae_pct,bars=excluded.bars,interval=excluded.interval,source=excluded.source,synced_at=excluded.synced_at "
+                "mae_pct=excluded.mae_pct,bars=excluded.bars,interval=excluded.interval,source=excluded.source,synced_at=excluded.synced_at,"
+                "mfe_minutes=excluded.mfe_minutes,mae_minutes=excluded.mae_minutes "
                 # 재-sweep 시 yfinance 60일 윈도우 밖(no_bars→mfe NULL)이 기존 유효 추정치를 덮지 않도록 가드.
                 "WHERE excluded.mfe_pct IS NOT NULL",
                 (
                     p["v2_decision_id"], p["market"], str(p["ticker"]), sym,
                     float(p["entry_price"]), p.get("exit_price"), p.get("pnl_pct"), p.get("close_reason"),
-                    mfe, mae, n, args.interval, src, now,
+                    mfe, mae, n, args.interval, src, now, mfe_min, mae_min,
                 ),
             )
         w.commit()
