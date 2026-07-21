@@ -1,15 +1,19 @@
-"""US 멀티데이 볼록트랙 반사실 — 실제 청산 트레이드를 "N일 더 보유했으면"으로 재평가.
+"""멀티데이 볼록트랙 반사실 — 실제 청산 트레이드를 "N일 더 보유했으면"으로 재평가.
 
 근거: d1 분해(2026-07-11) — US 적자는 전부 당일청산, 멀티데이는 흑자.
 이 도구는 그 명제를 우리 실체결 원장(v2_learning_performance, live·closed)에
 직접 검증한다. 읽기 전용·주문경로 무접촉(shadow 분석 전용).
 
-- 반사실 가격: data/price/us/us_TICKER.csv (일봉). 청산일 다음 거래일 시가/종가,
+--market으로 US/KR 분리(2026-07-21 코덱스 검토 반영): KR은 정반대 결론을 재현
+가능하게 하기 위해 일반화. KR 결과(전 코호트 5일 연장 음수 = 출구 near-optimal)는
+ultimate 리포트의 핵심 문장이므로 이 스크립트로 고정한다.
+
+- 반사실 가격: data/price/{mkt}/{mkt}_TICKER.csv (일봉). 청산일 다음 거래일 시가/종가,
   +2일 종가, +5일 종가로 청산했다면의 추가 수익률(청산가 대비 %)을 계산.
 - 동일 1회 매도이므로 왕복 수수료 추가 없음. FX 드리프트는 미반영(명시 한계).
 - 코호트: close_reason별 · 청산시점 승/패별. 평균 뒤 분포(양/음 비율)도 표시.
 
-사용: python tools/us_multiday_counterfactual.py [--start 2026-06-01]
+사용: python tools/us_multiday_counterfactual.py [--market US|KR] [--start 2026-06-01]
 """
 from __future__ import annotations
 
@@ -22,13 +26,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "data" / "ml" / "decisions.db"
-PRICE_ROOT = ROOT / "data" / "price" / "us"
 
 HORIZONS = ("next_open", "next_close", "plus2_close", "plus5_close")
 
 
-def _load_price_series(ticker: str) -> list[dict]:
-    path = PRICE_ROOT / f"us_{ticker.upper()}.csv"
+def _price_ticker(market: str, ticker: str) -> str:
+    """가격 CSV 파일명 티커 정규화 — KR은 6자리 zero-fill, US는 대문자."""
+    raw = str(ticker or "").strip()
+    return raw.zfill(6) if str(market).upper() == "KR" else raw.upper()
+
+
+def _load_price_series(market: str, ticker: str) -> list[dict]:
+    sub = "kr" if str(market).upper() == "KR" else "us"
+    path = ROOT / "data" / "price" / sub / f"{sub}_{_price_ticker(market, ticker)}.csv"
     if not path.exists():
         return []
     out = []
@@ -81,8 +91,11 @@ def _summ(vals: list[float]) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--start", default="2026-06-01")
+    ap.add_argument("--market", default="US", choices=["US", "KR"])
+    ap.add_argument("--start", default="")
     args = ap.parse_args()
+    market = args.market.upper()
+    start = args.start or ("2026-06-01" if market == "US" else "2026-05-01")
 
     con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
@@ -91,9 +104,9 @@ def main() -> int:
         """select session_date, ticker, close_reason, closed_at, exit_price,
         coalesce(pnl_pct_net, pnl_pct) as pnl
         from v2_learning_performance
-        where runtime_mode='live' and closed=1 and market='US'
+        where runtime_mode='live' and closed=1 and market=?
           and session_date>=? and exit_price is not null""",
-        (args.start,),
+        (market, start),
     ).fetchall()
     con.close()
 
@@ -101,14 +114,14 @@ def main() -> int:
     missing_price = 0
     for r in rows:
         exit_date = str(r["closed_at"] or "")[:10] or str(r["session_date"])
-        series = _load_price_series(str(r["ticker"]))
+        series = _load_price_series(market, str(r["ticker"]))
         cf = _counterfactuals(series, exit_date, float(r["exit_price"] or 0))
         if cf is None:
             missing_price += 1
             continue
         joined.append({**dict(r), "exit_date": exit_date, **cf})
 
-    print(f"US closed 트레이드 {len(rows)}건 (start {args.start}) — 반사실 계산 {len(joined)}건, 가격누락 {missing_price}건\n")
+    print(f"{market} closed 트레이드 {len(rows)}건 (start {start}) — 반사실 계산 {len(joined)}건, 가격누락 {missing_price}건\n")
     if not joined:
         return 0
 
