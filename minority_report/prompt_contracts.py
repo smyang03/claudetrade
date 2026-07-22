@@ -57,7 +57,8 @@ PRICE_PLAN_CONTRACT = price_plan_contract("US")
 
 HARD_SOFT_RULE_CONTRACT = """Hard/soft rule boundary:
 - Hard rules owned by the system: daily loss limit, broker-truth distrust, unconfirmed orders, market-close forced liquidation, max position limits, cash shortage, minimum order, and bad data quality.
-- Reviewable risk exits during AUTO_SELL_REVIEW: loss_cap, stop_loss, hard_stop, trail_stop, profit_floor, and profit_ladder.
+- Reviewable risk exits during AUTO_SELL_REVIEW: loss_cap, stop_loss, hard_stop, trail_stop, profit_floor, profit_ladder, and early_path_breakeven.
+- early_path_breakeven means the position was flat-to-negative 30 minutes after entry and has now recovered to breakeven. Measured evidence: entries that are negative at the 30-minute mark end at net -1.34% with a 16% win rate (US n=92), while positive ones end at +0.68%/45% (KR is starker: 0% vs 100%). This is not a stop — it exits a stalled position at breakeven instead of letting it bleed to the stop. HOLD is reasonable only if fresh evidence shows the original thesis is now working.
 - Soft areas where Claude may advise: target trailing, pre-close carry exception, soft-exit recheck, candidate risk cap, and price-plan proposal.
 - A Claude HOLD never overrides catastrophic, broker-truth, emergency, or operator-kill conditions.
 - For reviewable risk exits, HOLD is valid only as bounded advice with protective_stop, invalid_if, and next_review_min."""
