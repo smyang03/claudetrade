@@ -108,11 +108,10 @@ where wt >nul 2>nul
 if errorlevel 1 (
   echo [INFO] Windows Terminal(wt^)이 없어 로그 탭을 열지 않는다. 대시보드: http://localhost:5000
 ) else (
-  echo [VIEW] 로그 tail 탭 여는 중...
-  wt ^
-    new-tab --title "live_trading" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%PROJECT_DIR%\tools\tail_live_logs.ps1" -Role live_trading ^
-    ; new-tab --title "bot_stderr" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%PROJECT_DIR%\tools\tail_live_logs.ps1" -Role trading_bot ^
-    ; new-tab --title "live_error" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%PROJECT_DIR%\tools\tail_live_logs.ps1" -Role error
+  echo [VIEW] 통합 로그 탭 여는 중(창 1개^)...
+  :: 2026-07-22: 탭 3개 -> 1개. 재시작할 때마다 tail 창이 3개씩 쌓였다
+  :: (재시작 5회에 15개 잔존 실측). -Role all 이 같은 세 로그를 한 창에 합쳐 보여준다.
+  wt new-tab --title "claudetrade" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%PROJECT_DIR%\tools\tail_live_logs.ps1" -Role all
 )
 
 echo.
