@@ -9,6 +9,26 @@ from minority_report.claude_utils import extract_json, claude_response_meta, res
 from minority_report.prompt_contracts import PULLBACK_ZONE_RULE
 
 
+def _log_buy_ready_gate(market: str, allowed: bool, reason: str, risk_context: dict | None) -> None:
+    """즉시매수 게이트 판정을 시장·사유별로 한 번씩만 남긴다.
+
+    매 judge 호출마다 찍으면 세션당 수십 줄이 되어 묻힌다. (시장, 사유) 조합이
+    바뀔 때만 기록하면 "오늘 왜 한 건도 안 나왔나"를 한 줄로 답할 수 있다.
+    """
+    from logger import get_trading_logger
+
+    key = f"{market}|{reason}"
+    if _BUY_READY_GATE_LOGGED.get(key):
+        return
+    _BUY_READY_GATE_LOGGED[key] = True
+    regime = str((risk_context or {}).get("market_regime") or "미상")
+    get_trading_logger().info(
+        f"[즉시매수 게이트] {market} allowed={allowed} 사유={reason} 국면={regime}"
+    )
+
+
+_BUY_READY_GATE_LOGGED: dict[str, bool] = {}
+
 ALLOWED_ACTIONS = {"BUY_READY", "PROBE_READY", "PULLBACK_WAIT", "WAIT_RECHECK", "REJECT"}
 ALLOWED_ROUTES = {"plan_a", "path_b", "wait", "reject"}
 PATHB_REQUIRED_FIELDS = ("buy_zone_low", "buy_zone_high", "sell_target", "stop_loss", "hold_days", "confidence")
@@ -111,7 +131,14 @@ def build_single_symbol_judge_prompt(
         "risk_context": risk_context or {},
     })
     # 즉시매수(BUY_READY) 국면 게이트 — 허용 시 프롬프트에 즉시매수 옵션 노출(2026-07-21).
-    buy_ready_ok, _buy_ready_reason = _immediate_buy_allowed(market_key, risk_context)
+    buy_ready_ok, buy_ready_reason = _immediate_buy_allowed(market_key, risk_context)
+    # 사유를 반드시 남긴다. 이 값이 없으면 "왜 즉시매수가 한 번도 안 나오는가"를
+    # 사후에 알 수 없다(2026-07-22: 7/14 이후 BUY_READY 로그가 0건인데 게이트에서
+    # 막힌 건지 judge가 선택하지 않은 건지 구분할 수 없었다). 판정에는 영향 없다.
+    try:
+        _log_buy_ready_gate(market_key, buy_ready_ok, buy_ready_reason, risk_context)
+    except Exception:
+        pass
     if buy_ready_ok:
         action_line = "Allowed action: BUY_READY, PULLBACK_WAIT, WAIT_RECHECK, REJECT.\n"
         route_line = "Allowed route: plan_a, path_b, wait, reject.\n"

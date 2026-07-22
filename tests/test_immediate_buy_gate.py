@@ -125,5 +125,46 @@ class ImmediateBuyGateTests(unittest.TestCase):
             self.assertEqual(out["action"], "WAIT_RECHECK")
 
 
+class BuyReadyGateLoggingTest(unittest.TestCase):
+    """게이트 판정 사유가 남는지 검증한다.
+
+    사유가 없으면 "왜 즉시매수가 한 건도 안 나왔나"를 사후에 알 수 없다
+    (2026-07-22: BUY_READY 로그 0건인데 게이트 차단인지 judge 미선택인지 구분 불가였다).
+    """
+
+    def setUp(self) -> None:
+        from execution import single_symbol_judge as m
+
+        m._BUY_READY_GATE_LOGGED.clear()
+
+    def test_reason_is_logged_once_per_market_and_reason(self) -> None:
+        from execution import single_symbol_judge as m
+
+        with patch("logger.get_trading_logger") as logger:
+            m._log_buy_ready_gate("US", False, "buy_ready_regime_blocked:CAUTIOUS",
+                                  {"market_regime": "CAUTIOUS"})
+            m._log_buy_ready_gate("US", False, "buy_ready_regime_blocked:CAUTIOUS",
+                                  {"market_regime": "CAUTIOUS"})   # 같은 조합 → 억제
+            m._log_buy_ready_gate("KR", False, "buy_ready_market_not_allowed", {})
+            self.assertEqual(logger.return_value.info.call_count, 2,
+                             "같은 (시장,사유)는 1회만 남아야 한다")
+
+    def test_gate_reasons_are_distinguishable(self) -> None:
+        """차단 사유가 서로 구분되어야 원인 추적이 된다."""
+        with patch.dict(os.environ, {**_GATE_ON,
+                                     "SINGLE_SYMBOL_JUDGE_BUY_READY_MARKETS": "US",
+                                     "SINGLE_SYMBOL_JUDGE_BUY_READY_REGIMES": "MILD_BULL"}):
+            self.assertEqual(
+                _immediate_buy_allowed("KR", {"market_regime": "MILD_BULL"})[1],
+                "buy_ready_market_not_allowed")
+            self.assertEqual(
+                _immediate_buy_allowed("US", {"market_regime": "CAUTIOUS"})[1],
+                "buy_ready_regime_blocked:CAUTIOUS")
+            self.assertEqual(
+                _immediate_buy_allowed("US", {})[1], "buy_ready_regime_unknown")
+            self.assertTrue(
+                _immediate_buy_allowed("US", {"market_regime": "MILD_BULL"})[0])
+
+
 if __name__ == "__main__":
     unittest.main()
