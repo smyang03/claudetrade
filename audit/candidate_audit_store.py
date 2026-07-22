@@ -194,6 +194,13 @@ EXTRA_CANDIDATE_COLUMNS: dict[str, str] = {
     "evidence_ceiling_applied": "INTEGER",
     "from_high_pct": "REAL",
     "consensus_mode": "TEXT",
+    # US 거래량 상대비(장중 누적 / 20일평균 × 세션진행률). kis_api._annotate_us_rel_vol_shadow가
+    # 산출하나 이 원장까지 전파되지 않아, 랭킹 점수(trainer_score_components)가 기록되는
+    # 곳에서 거래량 축을 볼 수 없었다(2026-07-22 실측: US volume_ratio는 전부 1.0 placeholder,
+    # judge의 1순위 거부 사유는 RVOL<1). 변별력 검증 전이라 관측만 한다.
+    "rel_vol_shadow": "REAL",
+    "rel_vol_shadow_avg20": "REAL",
+    "rel_vol_shadow_fraction": "REAL",
     "strength_capture_shadow": "INTEGER",
     "strength_capture_rules": "TEXT",
     "bullish_probe_shadow": "INTEGER",
@@ -1116,6 +1123,9 @@ class CandidateAuditStore:
                 "price",
                 "change_pct",
                 "volume_ratio",
+                "rel_vol_shadow",
+                "rel_vol_shadow_avg20",
+                "rel_vol_shadow_fraction",
                 "turnover",
                 "prompt_rank",
                 "raw_rank",
@@ -1188,6 +1198,7 @@ class CandidateAuditStore:
             "phase": phase,
             "change_pct": row.get("change_pct"),
             "volume_ratio": row.get("volume_ratio"),
+            "rel_vol_shadow": row.get("rel_vol_shadow"),
             "turnover": row.get("turnover"),
             "post_open_features": row.get("post_open_features_json")
             or payload.get("post_open_features"),
