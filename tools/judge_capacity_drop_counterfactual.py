@@ -149,7 +149,105 @@ def main() -> int:
         print(f"  {h*5:3d}분 후: 세션 {len(per):3d}개  세션평균 {mean(per):+.3f}%  "
               f"양수 세션 {pos}/{len(per)}")
 
-    print("\n  판정: 거래·세션 단위가 모두 양수여야 '예산이 기회를 깎는다'가 성립한다.")
+    # ── 평균만 보면 틀린다 ───────────────────────────────────────────────
+    # 우리 시스템은 예측이 아니라 볼록 수확(승/패 1.53, TARGET +5.07)으로 번다.
+    # 평균이 0이어도 상단 꼬리가 두꺼우면 '사서 관리'가 이긴다. 실제 운용 방식대로
+    # 손절 -2%를 먼저 적용하고 남은 것을 러너로 들고 가는 경로 시뮬을 함께 본다.
+    print("\n=== 분포 (평균 뒤에 숨은 꼬리) ===")
+    for h in horizons:
+        v = sorted(per_h.get(h) or [])
+        if not v:
+            continue
+        n = len(v)
+        p = lambda q: v[min(n - 1, int(n * q))]  # noqa: E731
+        big = sum(1 for x in v if x >= 3.0) / n * 100
+        print(f"  {h*5:3d}분: p10 {p(0.10):+6.2f}%  중앙 {p(0.50):+6.2f}%  "
+              f"p90 {p(0.90):+6.2f}%  최대 {v[-1]:+6.2f}%  |  +3%이상 {big:4.1f}%")
+
+    print("\n=== 비대칭 관리 시뮬 (손절 -2% 선적용 → 러너 보유, gross) ===")
+    print("  경로를 봉 단위로 훑어 손절이 먼저 닿으면 -2%로 확정한다.")
+    for stop in (-2.0, -3.0, -4.0, -99.0):
+        for h in horizons:
+            realized: list[float] = []
+            for ts, ticker in rows:
+                s = series(ticker)
+                if not s:
+                    continue
+                idx, close = s
+                dtu = ts - timedelta(hours=9)
+                pos = [i for i, t in enumerate(idx)
+                       if t.to_pydatetime().replace(tzinfo=None) <= dtu]
+                if not pos:
+                    continue
+                t0 = pos[-1]
+                entry = float(close.iloc[t0])
+                if entry <= 0 or t0 + h >= len(close):
+                    continue
+                out = None
+                for k in range(t0 + 1, t0 + h + 1):
+                    r = (float(close.iloc[k]) / entry - 1.0) * 100.0
+                    if r <= stop:
+                        out = stop
+                        break
+                realized.append(out if out is not None
+                                else (float(close.iloc[t0 + h]) / entry - 1.0) * 100.0)
+            if not realized:
+                continue
+            wins = [x for x in realized if x > 0]
+            losses = [x for x in realized if x <= 0]
+            payoff = (mean(wins) / abs(mean(losses))) if wins and losses else float("nan")
+            print(f"  손절{stop:+.0f}% / {h*5:3d}분 보유: n={len(realized):4d}  "
+                  f"평균 {mean(realized):+.3f}%  승률 "
+                  f"{len(wins)/len(realized)*100:5.1f}%  승/패 {payoff:.2f}")
+
+    # ── 초기 경로 분기 ──────────────────────────────────────────────────
+    # [[six-visions-verified-20260719]]에서 초기 경로가 이후를 가른다는 것이
+    # 실증됐다(d1 녹색 승률 76% vs 적색 30%, d1->d5 r=0.49). 사전 선별이 아니라
+    # '사고 나서 초기 반응으로 분기'하는 축이므로, 버려진 풀에도 적용해본다.
+    print("\n=== 초기 경로 분기 (진입 후 30분 반응으로 러너/컷, gross) ===")
+    probe = 6  # 5분봉 6개 = 30분
+    for h in horizons:
+        if h <= probe:
+            continue
+        green: list[float] = []
+        red: list[float] = []
+        red_at_cut: list[float] = []   # 적색을 30분 시점에 실제로 끊었을 때의 손익
+        for ts, ticker in rows:
+            s = series(ticker)
+            if not s:
+                continue
+            idx, close = s
+            dtu = ts - timedelta(hours=9)
+            pos = [i for i, t in enumerate(idx)
+                   if t.to_pydatetime().replace(tzinfo=None) <= dtu]
+            if not pos:
+                continue
+            t0 = pos[-1]
+            entry = float(close.iloc[t0])
+            if entry <= 0 or t0 + h >= len(close):
+                continue
+            mark = (float(close.iloc[t0 + probe]) / entry - 1.0) * 100.0
+            final = (float(close.iloc[t0 + h]) / entry - 1.0) * 100.0
+            if mark > 0:
+                green.append(final)
+            else:
+                red.append(final)
+                red_at_cut.append(mark)
+        if not green or not red:
+            continue
+        gw = sum(1 for x in green if x > 0) / len(green) * 100
+        rw = sum(1 for x in red if x > 0) / len(red) * 100
+        print(f"  {h*5:3d}분 최종  |  30분 녹색 n={len(green):3d} {mean(green):+6.3f}% 승률 {gw:5.1f}%"
+              f"   적색 n={len(red):3d} {mean(red):+6.3f}% 승률 {rw:5.1f}%"
+              f"   격차 {mean(green)-mean(red):+.3f}%p")
+        # 적색을 30분에 실제로 끊었다면: 녹색은 끝까지, 적색은 그 시점 손익으로 확정
+        combined = green + red_at_cut
+        hold_all = green + red
+        print(f"           → 적색 30분 컷: {mean(combined):+.3f}%  "
+              f"(전량 보유 {mean(hold_all):+.3f}%, 개선 {mean(combined)-mean(hold_all):+.3f}%p)")
+
+    print("\n  판정: 평균이 0이어도 상단 꼬리가 두껍고 손절 적용 후 평균이 양수로")
+    print("        돌아서면 '사서 관리'가 성립한다 — 그때는 예산이 기회를 깎는 것이다.")
     print("  한계: gross · yfinance 60일 창 · judge가 거부했을 수 있어 상한 추정치.")
     return 0
 
