@@ -483,6 +483,86 @@ class RiskManager:
         log.info(f"[BUY] {ticker} {qty}@{price:,} TP={pos['tp']:.0f} SL={pos['sl']:.0f}")
         return True
 
+    def _capture_early_path_mark(self, pos: dict, cur_pnl: float) -> None:
+        """진입 후 N분 시점의 손익을 한 번만 기록한다(관측 필드).
+
+        2026-07-22 실측(US 157건·25세션, 우리 실제 net): 진입 30분 시점 손익이
+        이후를 강하게 가른다 — 녹색 net +0.675%/승률 44.6% vs 적색 -1.339%/16.3%,
+        구간별 완전 단조(<-2% -2.617%/0% … >+2% +3.047%/70%). 거래단위 rho +0.531
+        (p=0.0000), 세션단위 rho +0.578(p=0.0008)로 세션 단위에서도 살아남았다.
+
+        이 값이 있어야 적색 건에만 본전 목표를 걸 수 있다(녹색은 러너로 둔다).
+        캡처 자체는 어떤 판정에도 쓰이지 않으며 mfe_breakeven(peak 기반)과 별개 축이다.
+        """
+        if pos.get("early_path_mark") is not None:
+            return
+        try:
+            entry_at = pos.get("entry_time")
+            if not entry_at:
+                return
+            entered = datetime.fromisoformat(str(entry_at))
+            if entered.tzinfo is None:
+                entered = entered.replace(tzinfo=KST)
+            window_min = _env_float("EARLY_PATH_MARK_WINDOW_MIN", 30.0)
+            held_min = (datetime.now(KST) - entered.astimezone(KST)).total_seconds() / 60.0
+            if held_min < window_min:
+                return
+            pos["early_path_mark"] = round(float(cur_pnl), 3)
+            pos["early_path_mark_at"] = datetime.now(KST).isoformat(timespec="seconds")
+            log.info(
+                f"[초기경로 마크] {pos.get('ticker')} 진입 {held_min:.0f}분 "
+                f"{cur_pnl:+.2f}% ({'녹색' if cur_pnl > 0 else '적색'}) — 관측 기록"
+            )
+        except Exception:
+            return
+
+    def early_path_breakeven_price(self, pos: dict, *, native: bool = False) -> float:
+        """30분 마크가 적색인 건에만 '본전+여유' 청산가를 준다.
+
+        peak 기반 mfe_breakeven과 다르다. 저쪽은 많이 올랐다 되밀린 건을 잡아
+        러너를 죽여서 껐다(2026-07-21). 이쪽은 처음부터 부진한 건만 대상이라
+        러너와 충돌하지 않는다.
+
+        시뮬(US 157건, lookahead 제거 후): 거래 -0.505% → -0.102%(+0.403%p),
+        세션 -0.484% → -0.045%(개선 17세션 / 악화 5세션, 부호검정 p≈0.008).
+        녹색은 손대지 않으므로 꼬리를 버리지 않는다 — 단순 '적색 컷'은 적색 중
+        결국 이긴 15건(평균 net +2.238%)을 버려서 세션 단위로 악화됐고 기각했다.
+
+        기본은 shadow다. 30분 마크 캡처가 새 배관이라 라이브에서 같은 값이
+        잡히는지부터 확인해야 한다. 전환 조건: shadow 발동 20건 이상에서 마크가
+        yfinance 재계산과 ±0.3%p 내로 일치하면 enforce.
+        """
+        mode = str(os.getenv("EARLY_PATH_BREAKEVEN_MODE", "shadow") or "shadow").strip().lower()
+        if mode in {"off", "disabled", "false", "0", "no"}:
+            return 0.0
+        mark = pos.get("early_path_mark")
+        if mark is None or float(mark) > 0:
+            return 0.0          # 미확정이거나 녹색이면 개입하지 않는다
+        buffer_pct = max(0.0, _env_float("EARLY_PATH_BREAKEVEN_BUFFER_PCT", 0.005))
+        if mode != "enforce":
+            if not pos.get("early_path_breakeven_shadow"):
+                pos["early_path_breakeven_shadow"] = {
+                    "marked_at": datetime.now(KST).isoformat(timespec="seconds"),
+                    "early_path_mark": float(mark),
+                    "buffer_pct": buffer_pct,
+                }
+                log.info(
+                    f"[초기경로 본전 shadow] {pos.get('ticker')} 30분 마크 {float(mark):+.2f}%"
+                    f" → 본전+{buffer_pct*100:.1f}% 목표 후보 — 관측만, 주문 없음"
+                )
+            return 0.0
+        if native and pos.get("display_currency") == "USD":
+            avg_usd = float(pos.get("display_avg_price") or pos.get("avg_price") or 0)
+            return avg_usd * (1.0 + buffer_pct) if avg_usd > 0 else 0.0
+        entry = float(
+            pos.get("entry")
+            or pos.get("avg_price")
+            or pos.get("entry_price")
+            or pos.get("buy_price")
+            or 0
+        )
+        return entry * (1.0 + buffer_pct) if entry > 0 else 0.0
+
     def _mark_early_peak_exit_shadow(self, pos: dict, cur_pnl: float) -> None:
         """조기고점 정리 후보를 관측만 한다(주문·리스크 판정에 일절 영향 없음).
 
@@ -581,6 +661,7 @@ class RiskManager:
 
             if _cur_pnl is not None:
                 self._mark_early_peak_exit_shadow(pos, _cur_pnl)
+                self._capture_early_path_mark(pos, _cur_pnl)
 
             # 수익 보호: +3% 이상이면 TP 도달 이벤트를 기다리지 않고 본전 위 트레일링 전환.
             if (
@@ -1291,6 +1372,11 @@ class RiskManager:
                 exit_meta["mfe_breakeven_triggered"] = bool(mfe_hit)
                 exit_meta["mfe_breakeven_trigger_pct"] = self._plana_mfe_breakeven_trigger_pct(pos)
                 exit_meta["mfe_breakeven_buffer_pct"] = self._plana_mfe_breakeven_buffer_pct(pos)
+                early_path_be_usd = self.early_path_breakeven_price(pos, native=True)
+                exit_meta["early_path_breakeven_price"] = early_path_be_usd
+                exit_meta["early_path_mark"] = pos.get("early_path_mark")
+                early_path_hit_usd = bool(early_path_be_usd > 0 and cp_usd >= early_path_be_usd)
+                exit_meta["early_path_breakeven_triggered"] = early_path_hit_usd
 
                 recovery_reason, recovery_trigger = self._recovery_micro_exit_signal(pos)
                 if recovery_reason:
@@ -1307,6 +1393,13 @@ class RiskManager:
                 if mfe_hit:
                     exit_meta["effective_stop_price"] = mfe_breakeven_usd
                     candidates.append({**pos, "exit_price": cp, "reason": "mfe_breakeven", **exit_meta})
+                    continue
+                # 초기경로 본전탈출(US) — shadow 모드면 가격이 0이라 걸리지 않는다.
+                if early_path_hit_usd:
+                    exit_meta["effective_stop_price"] = early_path_be_usd
+                    candidates.append(
+                        {**pos, "exit_price": cp, "reason": "early_path_breakeven", **exit_meta}
+                    )
                     continue
 
                 policy_decision = self._evaluate_plan_a_auto_sell_policy(pos, cp_usd, "US")
@@ -1384,6 +1477,11 @@ class RiskManager:
             exit_meta["mfe_breakeven_triggered"] = bool(mfe_hit)
             exit_meta["mfe_breakeven_trigger_pct"] = self._plana_mfe_breakeven_trigger_pct(pos)
             exit_meta["mfe_breakeven_buffer_pct"] = self._plana_mfe_breakeven_buffer_pct(pos)
+            early_path_be_krw = self.early_path_breakeven_price(pos)
+            exit_meta["early_path_breakeven_price"] = early_path_be_krw
+            exit_meta["early_path_mark"] = pos.get("early_path_mark")
+            early_path_hit_krw = bool(early_path_be_krw > 0 and cp >= early_path_be_krw)
+            exit_meta["early_path_breakeven_triggered"] = early_path_hit_krw
             recovery_reason, recovery_trigger = self._recovery_micro_exit_signal(pos)
             if recovery_reason:
                 reason = recovery_reason
@@ -1399,6 +1497,15 @@ class RiskManager:
             if mfe_hit:
                 exit_meta["effective_stop_price"] = mfe_breakeven_krw
                 candidates.append({**pos, "exit_price": cp, "reason": "mfe_breakeven", **exit_meta})
+                continue
+            # 초기경로 본전탈출 — 30분 마크가 적색인 건이 본전을 회복하면 나간다.
+            # mfe_breakeven과 방향이 반대다(저쪽은 하락 시 보호, 이쪽은 회복 시 탈출).
+            # shadow 모드면 가격이 0이라 여기 걸리지 않는다.
+            if early_path_hit_krw:
+                exit_meta["effective_stop_price"] = early_path_be_krw
+                candidates.append(
+                    {**pos, "exit_price": cp, "reason": "early_path_breakeven", **exit_meta}
+                )
                 continue
 
             policy_decision = self._evaluate_plan_a_auto_sell_policy(pos, cp, "KR")

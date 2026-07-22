@@ -622,5 +622,59 @@ class EntryRiskControlTests(unittest.TestCase):
         self.assertEqual(candidates[0]["reason"], "mfe_breakeven")
 
 
+class EarlyPathBreakevenTest(unittest.TestCase):
+    """초기경로 적색 본전탈출 — 녹색(러너)을 건드리지 않는 것이 핵심 계약이다.
+
+    단순 '적색 컷'은 적색 중 결국 이긴 건(평균 net +2.238%)을 버려서 세션 단위로
+    악화됐고 기각했다. 이 규칙은 본전을 회복한 건만 내보내므로 꼬리를 죽이지 않는다.
+    """
+
+    def _rm(self) -> RiskManager:
+        return RiskManager.__new__(RiskManager)
+
+    def test_green_is_never_touched(self) -> None:
+        """녹색은 어떤 모드에서도 개입하지 않는다(러너 보존)."""
+        for mode in ("shadow", "enforce"):
+            with patch.dict(os.environ, {"EARLY_PATH_BREAKEVEN_MODE": mode}):
+                pos = {"ticker": "AAA", "early_path_mark": 1.2, "entry": 100.0}
+                self.assertEqual(
+                    self._rm().early_path_breakeven_price(pos), 0.0,
+                    f"mode={mode}에서 녹색에 개입했다",
+                )
+
+    def test_unmarked_position_is_never_touched(self) -> None:
+        """30분 마크가 아직 없으면 판정하지 않는다."""
+        with patch.dict(os.environ, {"EARLY_PATH_BREAKEVEN_MODE": "enforce"}):
+            pos = {"ticker": "BBB", "entry": 100.0}
+            self.assertEqual(self._rm().early_path_breakeven_price(pos), 0.0)
+
+    def test_shadow_records_but_returns_zero(self) -> None:
+        """shadow는 관측만 하고 청산가를 주지 않는다."""
+        with patch.dict(os.environ, {"EARLY_PATH_BREAKEVEN_MODE": "shadow"}):
+            pos = {"ticker": "CCC", "early_path_mark": -0.8, "entry": 100.0}
+            self.assertEqual(self._rm().early_path_breakeven_price(pos), 0.0)
+            self.assertTrue(pos.get("early_path_breakeven_shadow"))
+
+    def test_enforce_gives_breakeven_plus_buffer(self) -> None:
+        with patch.dict(os.environ, {"EARLY_PATH_BREAKEVEN_MODE": "enforce",
+                                     "EARLY_PATH_BREAKEVEN_BUFFER_PCT": "0.005"}):
+            pos = {"ticker": "DDD", "early_path_mark": -0.8, "entry": 100.0}
+            self.assertAlmostEqual(self._rm().early_path_breakeven_price(pos), 100.5)
+
+    def test_off_disables_entirely(self) -> None:
+        with patch.dict(os.environ, {"EARLY_PATH_BREAKEVEN_MODE": "off"}):
+            pos = {"ticker": "EEE", "early_path_mark": -0.8, "entry": 100.0}
+            self.assertEqual(self._rm().early_path_breakeven_price(pos), 0.0)
+            self.assertIsNone(pos.get("early_path_breakeven_shadow"))
+
+    def test_close_reason_is_mapped_not_unknown(self) -> None:
+        """미매핑이면 CLOSED_UNKNOWN으로 새어 성과 귀속이 끊긴다."""
+        from runtime.v2_lifecycle_runtime import v2_close_reason
+
+        self.assertEqual(
+            v2_close_reason("early_path_breakeven"), "CLOSED_EARLY_PATH_BREAKEVEN"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

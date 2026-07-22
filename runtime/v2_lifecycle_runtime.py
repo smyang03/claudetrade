@@ -57,6 +57,8 @@ def v2_close_reason(reason: str) -> str:
         "claude_stop_loss": "CLOSED_CLAUDE_PRICE_STOP",
         "mfe_breakeven": "CLOSED_MFE_BREAKEVEN",
         "CLOSED_MFE_BREAKEVEN": "CLOSED_MFE_BREAKEVEN",
+        "early_path_breakeven": "CLOSED_EARLY_PATH_BREAKEVEN",
+        "CLOSED_EARLY_PATH_BREAKEVEN": "CLOSED_EARLY_PATH_BREAKEVEN",
         "pre_close": "CLOSED_CLAUDE_PRICE_PRE_CLOSE",
         "pathb_kill": "CLOSED_PANIC",
         "pathb_closeall": "CLOSED_USER_MANUAL",

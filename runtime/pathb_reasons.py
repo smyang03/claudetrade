@@ -13,6 +13,7 @@ PATHB_DECISION_EXIT_REASON_MAP = {
     "CLOSED_CLAUDE_SELL": "claude_sell",
     "CLOSED_CLAUDE_PRICE_PRE_CLOSE": "pre_close",
     "CLOSED_MFE_BREAKEVEN": "mfe_breakeven",
+    "CLOSED_EARLY_PATH_BREAKEVEN": "early_path_breakeven",
     "CLOSED_POLICY_RECHECK": "policy_recheck",
     "CLOSED_SESSION_END": "session_end",
 }
@@ -22,6 +23,8 @@ PATHB_AUTO_CLOSE_REASON_PRIORITY = [
     "CLOSED_LOSS_CAP",
     "CLOSED_CLAUDE_PRICE_STOP",
     "CLOSED_MFE_BREAKEVEN",
+    # 초기경로 적색 본전탈출 — 보호성 청산이라 이익 실현 계열보다 앞에 둔다.
+    "CLOSED_EARLY_PATH_BREAKEVEN",
     "CLOSED_PROFIT_LADDER",
     "CLOSED_TRAILING_STOP",
     "CLOSED_CLAUDE_PRICE_PRE_CLOSE",

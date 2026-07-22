@@ -15614,6 +15614,7 @@ function koPathBReason(v) {
     CLOSED_PROFIT_FLOOR: '수익 보호선 청산',
     CLOSED_PROFIT_LADDER: 'B플랜 수익 래더 청산',
     CLOSED_MFE_BREAKEVEN: '최대수익 기준 본전 보호 청산',
+    CLOSED_EARLY_PATH_BREAKEVEN: '초기경로 적색 본전 탈출',
     CLOSED_TRAILING_STOP: '트레일링 스탑 청산',
     CLOSED_SOFT_EXIT_FLOOR: '소프트 보호선 청산',
     CLOSED_CLAUDE_PRICE_PRE_CLOSE: '마감 전 청산',
