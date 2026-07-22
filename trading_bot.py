@@ -7000,6 +7000,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             live_features["opening_range_break"] = opening_range_break
         if vwap is not None and "vwap" not in live_features:
             live_features["vwap"] = vwap
+        # spread_bps는 features 또는 action에서 해석되는데(:6940), 실측상 features 쪽은
+        # 0건이고 action 경유분만 있었다. live_features는 features의 복사본이라
+        # 여기서 넣어주지 않으면 evidence가 보는 값은 영원히 None이고,
+        # KR fade_recovered_shadow의 스프레드 게이트가 무조건 통과 상태가 된다.
+        if spread_bps is not None and live_features.get("spread_bps") is None:
+            live_features["spread_bps"] = spread_bps
         if volume_ratio_open is not None:
             live_features["volume_ratio_open"] = volume_ratio_open
         if momentum_state:
@@ -7027,6 +7033,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "opening_range_low": opening_range_low,
             "vwap": vwap,
             "vwap_proxy": vwap_proxy,
+            # vwap은 넘어가는데 파생값만 빠져 있었다 — route 재생·사후 분석에서 축 하나가 통째로 비었다.
+            "vwap_distance_pct": _num_or_none(features.get("vwap_distance_pct")),
             "volume_acceleration": volume_acceleration,
             "volume_ratio_open": volume_ratio_open,
             "opening_range_break": opening_range_break,
@@ -9498,7 +9506,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         signal_fired: bool = False,
         strategy: str = "",
         plan_a_signal_allowed: bool = True,
+        signals_evaluated: bool = False,
     ) -> dict:
+        """PlanA 룰 발화 플래그.
+
+        signals_evaluated=True는 "네 전략을 실제로 돌렸다"는 뜻이다. 그 경우 조회에
+        실패한 값은 None(미상)이 아니라 False(평가했고 발화 안 함)로 기록한다.
+
+        2026-07-23 실측: sig_row는 `calc_all()` 출력이라 mom/gap/vb/mr 컬럼이 존재한
+        적이 없다. 그래서 raw가 77/77 전부 null이었다 — 데이터 미전달이 아니라
+        조회 키 계약 불일치였다. `*_fired` 별칭을 추가하고, 평가 여부를 명시한다.
+        """
         row = dict(sig_row or {})
 
         def _truthy_signal(*keys: str) -> bool:
@@ -9514,23 +9532,34 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     return str(value).strip().lower() in {"true", "yes", "on", "ready"}
             return False
 
+        def _first_present(*keys: str):
+            for key in keys:
+                if key in row and row.get(key) is not None:
+                    return row.get(key)
+            return False if signals_evaluated else None
+
         raw = {
-            "mom": row.get("mom", row.get("momentum", row.get("momentum_signal"))),
-            "gap": row.get("gap", row.get("gap_pullback", row.get("gap_signal"))),
-            "vb": row.get("vb", row.get("volatility_breakout", row.get("vb_signal"))),
-            "mr": row.get("mr", row.get("mean_reversion", row.get("mr_signal"))),
+            "mom": _first_present("mom_fired", "mom", "momentum", "momentum_signal"),
+            "gap": _first_present("gap_fired", "gap", "gap_pullback", "gap_signal"),
+            "vb": _first_present("vb_fired", "vb", "volatility_breakout", "vb_signal"),
+            "mr": _first_present("mr_fired", "mr", "mean_reversion", "mr_signal"),
         }
         strategy_key = str(strategy or "").strip().lower()
-        return {
-            "momentum": _truthy_signal("mom", "momentum", "momentum_signal") or strategy_key == "momentum" and bool(signal_fired),
-            "gap_pullback": _truthy_signal("gap", "gap_pullback", "gap_signal") or strategy_key == "gap_pullback" and bool(signal_fired),
-            "opening_range_pullback": _truthy_signal("orp", "opening_range_pullback", "orp_signal") or strategy_key == "opening_range_pullback" and bool(signal_fired),
-            "volume_surge": _truthy_signal("vb", "volatility_breakout", "vb_signal") or strategy_key == "volatility_breakout" and bool(signal_fired),
-            "mean_reversion": _truthy_signal("mr", "mean_reversion", "mr_signal") or strategy_key == "mean_reversion" and bool(signal_fired),
+        flags = {
+            "momentum": _truthy_signal("mom_fired", "mom", "momentum", "momentum_signal") or strategy_key == "momentum" and bool(signal_fired),
+            "gap_pullback": _truthy_signal("gap_fired", "gap", "gap_pullback", "gap_signal") or strategy_key == "gap_pullback" and bool(signal_fired),
+            "opening_range_pullback": _truthy_signal("orp_fired", "orp", "opening_range_pullback", "orp_signal") or strategy_key == "opening_range_pullback" and bool(signal_fired),
+            "volume_surge": _truthy_signal("vb_fired", "vb", "volatility_breakout", "vb_signal") or strategy_key == "volatility_breakout" and bool(signal_fired),
+            "mean_reversion": _truthy_signal("mr_fired", "mr", "mean_reversion", "mr_signal") or strategy_key == "mean_reversion" and bool(signal_fired),
             "strategy_signal": bool(signal_fired),
             "plan_a_signal_allowed": bool(plan_a_signal_allowed),
+            "signals_evaluated": bool(signals_evaluated),
             "raw": raw,
         }
+        # 평가했다고 표시했는데도 raw가 전부 비면 계약이 또 깨진 것이다 — 조용히 넘기지 않는다.
+        if signals_evaluated and all(v is None for v in raw.values()):
+            flags["metadata_contract_violation"] = "plan_a_signal_raw_empty"
+        return flags
 
     def _no_signal_strategy_cooldown_payload(
         self,
@@ -36437,12 +36466,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 signal_fired=False,
                                 strategy=strategy_name,
                                 plan_a_signal_allowed=not bool(_blocked_plan_a_signals),
+                                # 이 분기는 네 전략을 모두 돌린 뒤의 "무신호"다.
+                                # 따라서 미상(None)이 아니라 False로 기록해야 정확하다.
+                                signals_evaluated=True,
                             ),
                             block_meta={
                                 "stage": "plan_a_signal_check",
                                 "local_reason": "no_signal",
                                 "rejection_reason": _rej_reason,
                                 "volume_state": _vol_state,
+                                "signal_detail": str(none_detail or "")[:800],
                                 "strategy_order": list(_ticker_kr_strat_list or []),
                                 "blocked_plan_a_signals": list(_blocked_plan_a_signals or []),
                             },

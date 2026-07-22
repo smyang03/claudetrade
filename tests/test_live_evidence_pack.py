@@ -264,5 +264,59 @@ class LiveEvidencePackTests(unittest.TestCase):
         self.assertEqual(evidence["fade_recovered_shadow"]["tickers"], ["036540"])
 
 
+class DataQualityAbsenceTest(unittest.TestCase):
+    """data_quality 라벨 미전달이 강등 사유가 되면 안 된다.
+
+    2026-07-23 실측: judge가 actionable 판정을 낸 행의 US 7.54%·KR 5.53%에서
+    data_quality가 아예 전달되지 않았고(그 외 행은 0.03%), pack이 'unknown'을
+    대입해 PROBE_READY로 강등시켰다. 필드를 안 넣어준 것만으로 매수 자격이 사라졌다.
+    """
+
+    CONFIRMED = {
+        "current_price": 100.0,
+        "ret_3m_pct": 0.5,
+        "ret_5m_pct": 0.6,
+        "opening_range_break": True,
+        "vwap_distance_pct": 0.3,
+        "volume_ratio_open": 1.8,
+        "momentum_state": "sustained",
+    }
+
+    def _pack(self, features):
+        return build_live_evidence_pack(
+            market="US", ticker="TEST", features=features,
+            action={"action": "BUY_READY"})
+
+    def test_absent_label_with_confirmed_data_does_not_demote(self):
+        pack = self._pack(dict(self.CONFIRMED))
+        self.assertEqual(pack["data_state"], "confirmed")
+        self.assertTrue(pack["data_quality_absent"])
+        self.assertEqual(pack["action_ceiling"], "BUY_READY")
+
+    def test_explicit_unknown_still_demotes(self):
+        pack = self._pack({**self.CONFIRMED, "data_quality": "unknown"})
+        self.assertFalse(pack["data_quality_absent"])
+        self.assertEqual(pack["action_ceiling"], "PROBE_READY")
+
+    def test_explicit_first_observed_still_demotes(self):
+        pack = self._pack({**self.CONFIRMED, "data_quality": "first_observed"})
+        self.assertEqual(pack["action_ceiling"], "PROBE_READY")
+
+    def test_absent_label_with_partial_data_still_demotes(self):
+        feats = {k: v for k, v in self.CONFIRMED.items() if k != "volume_ratio_open"}
+        pack = self._pack(feats)
+        self.assertEqual(pack["data_state"], "partial")
+        self.assertEqual(pack["action_ceiling"], "PROBE_READY")
+
+    def test_absent_label_does_not_bypass_fade(self):
+        pack = self._pack({**self.CONFIRMED, "momentum_state": "fade"})
+        self.assertEqual(pack["action_ceiling"], "WATCH")
+
+    def test_healthy_label_unchanged(self):
+        pack = self._pack({**self.CONFIRMED, "data_quality": "minute_complete"})
+        self.assertFalse(pack["data_quality_absent"])
+        self.assertEqual(pack["action_ceiling"], "BUY_READY")
+
+
 if __name__ == "__main__":
     unittest.main()

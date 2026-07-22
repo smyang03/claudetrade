@@ -211,7 +211,13 @@ def build_live_evidence_pack(
 
     data_state, missing_fields = classify_live_evidence_state(features)
     momentum_state = str(features.get("momentum_state") or "unknown").strip().lower()
-    data_quality = str(features.get("data_quality") or "unknown").strip().lower()
+    # data_quality가 아예 안 실려온 경우와 실제로 "unknown"으로 판정된 경우를 구분한다.
+    # 전자는 품질 신호가 아니라 전달 누락이다 — 그걸 강등 사유로 쓰면
+    # 필드를 안 넣어준 것만으로 매수 자격이 사라진다(2026-07-23 실측: judge actionable
+    # 행의 US 7.54%·KR 5.53%에서 발생, 그 외 행은 0.03%로 250배 집중).
+    _raw_data_quality = features.get("data_quality")
+    data_quality_absent = _raw_data_quality is None or not str(_raw_data_quality).strip()
+    data_quality = str(_raw_data_quality or "unknown").strip().lower()
 
     hard_blocks: list[str] = []
     feature_gate_reason = str(features.get("runtime_gate_reason") or features.get("fail_closed_reason") or "")
@@ -252,12 +258,19 @@ def build_live_evidence_pack(
     if hard_blocks:
         negative.extend(hard_blocks)
 
+    # data_quality 라벨이 통째로 빠졌는데 확인 필드는 전부 실측값으로 차 있는 경우,
+    # 데이터는 온전하고 라벨만 없는 것이므로 강등하지 않는다. 라벨이 실제로
+    # first_observed/unknown/missing으로 "판정"된 경우는 그대로 강등한다.
+    _quality_demotes = data_quality in {"first_observed", "unknown", "missing"} and not (
+        data_quality_absent and data_state == "confirmed"
+    )
+
     action_ceiling = "BUY_READY"
     if hard_blocks or momentum_state == "fade":
         action_ceiling = "WATCH"
     elif data_state == "missing":
         action_ceiling = "WATCH"
-    elif data_state == "partial" or data_quality in {"first_observed", "unknown", "missing"}:
+    elif data_state == "partial" or _quality_demotes:
         action_ceiling = "PROBE_READY"
 
     requested_action = str(action.get("action") or route.get("requested_action") or "").strip().upper()
@@ -279,6 +292,8 @@ def build_live_evidence_pack(
         "ticker": key,
         "data_state": data_state,
         "data_quality": data_quality,
+        # 라벨이 전달되지 않은 것과 실제 unknown 판정을 구분해 관측한다.
+        "data_quality_absent": bool(data_quality_absent),
         "missing_fields": missing_fields,
         "action_ceiling": action_ceiling,
         **fade_recovered,

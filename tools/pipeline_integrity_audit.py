@@ -268,11 +268,18 @@ def audit_placeholder_columns(since: str) -> None:
     targets = ["atr_pct", "volume_ratio", "from_high_pct", "candidate_quality_score",
                "trainer_prompt_score", "cohort_reliability", "entry_delay_min",
                "position_mfe_pct", "position_mae_pct", "us_early_entry_size_mult"]
-    print("\n  값은 있으나 고유값 1개 = placeholder 의심")
+    # ★ 컬럼 존재를 먼저 확인해야 한다. SQLite는 존재하지 않는 식별자를 큰따옴표로 감싸면
+    #   문자열 리터럴로 해석한다 — "atr_pct"가 문자열이 되어 전 행 non-null·고유값 1로
+    #   보이고, 없는 컬럼이 placeholder로 오진된다(2026-07-23에 실제로 겪음).
+    existing = {r[1] for r in con.execute("PRAGMA table_info(audit_candidate_rows)")}
+    print("\n  값은 있으나 고유값 1개 = placeholder 의심 / 컬럼 부재는 별도 표기")
     for c in targets:
+        if c not in existing:
+            print(f"    {c:26s} ★원장에 컬럼 자체가 없음")
+            continue
         try:
             total, filled, uniq = con.execute(
-                f'SELECT COUNT(*), SUM("{c}" IS NOT NULL AND "{c}"!=\'\'), COUNT(DISTINCT "{c}") '
+                f"SELECT COUNT(*), SUM([{c}] IS NOT NULL AND [{c}]!=''), COUNT(DISTINCT [{c}]) "
                 f"FROM audit_candidate_rows WHERE session_date>=?", (since,)).fetchone()
         except sqlite3.Error:
             continue
