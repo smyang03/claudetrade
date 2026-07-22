@@ -553,11 +553,27 @@ def _merge_payload(
     return _preserve_runtime_evidence_payload(incoming_payload, existing_payload)
 
 
+# 컬럼명과 후보 dict의 키 이름이 다른 경우. 이름이 어긋나면 계산은 되는데
+# 원장에는 한 번도 안 씌어 "미수집"으로 보인다 — 2026-07-23에 cohort_reliability가
+# 0/91,556으로 확인됐다(후보에는 trainer_cohort_reliability로 붙어 있었다).
+_CANDIDATE_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
+    "cohort_reliability": ("trainer_cohort_reliability",),
+}
+
+
 def _candidate_extra_value(column: str, row: dict[str, Any]) -> Any:
     value = row[column] if column in row else _MISSING
     payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
     if value is _MISSING and isinstance(payload, dict) and column in payload:
         value = payload.get(column)
+    if value is _MISSING:
+        for alias in _CANDIDATE_COLUMN_ALIASES.get(column, ()):
+            if alias in row:
+                value = row[alias]
+                break
+            if isinstance(payload, dict) and alias in payload:
+                value = payload.get(alias)
+                break
     if value is _MISSING or value is None:
         return None
     if column in _INT_BOOL_COLUMNS:

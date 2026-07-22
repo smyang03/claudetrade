@@ -31992,6 +31992,113 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         discovery_added = list((meta or {}).get("_discovery_added_tickers") or [])
         discovery_count = int((meta or {}).get("_prompt_pool_discovery_count") or 0)
         return bool(discovery_added or discovery_count > 0)
+    def _log_recheck_queue_order_shadow(
+        self, market: str, due: list, selected: list, capacity: int
+    ) -> None:
+        """recheck 큐 선별을 품질 정렬로 바꿨다면 무엇을 봤을지 기록한다(관측 전용, 주문 무영향).
+
+        왜 필요한가:
+          현재 선별은 `due[:max_per_run]` — **순수 FIFO**다. 점수도 우선순위도 없다.
+          2026-07 실측: 큐 평균 23.4개에서 예산 10건을 도착 순서로 자르고,
+          축출 사유는 421건 전부 `expired`였다(품질 기반 축출 0건).
+
+          judge 예산 '확대'는 이미 반증됐다(세션 -0.128%). 그러나 "같은 10개를 무엇으로
+          고르는가"는 검증된 적이 없다. 먼저 shadow로 겹침률과 후속 성과를 쌓는다.
+          n=17로 enforce하면 오늘 P0-1과 같은 실수가 된다.
+        """
+        if not self._runtime_bool("EARLY_JUDGE_RECHECK_ORDER_SHADOW_ENABLED", True):
+            return
+        try:
+            if not due or capacity <= 0:
+                return
+
+            def _score(item: dict) -> float:
+                row = dict((item or {}).get("candidate_row") or {})
+                for key in ("trainer_prompt_score", "candidate_quality_score",
+                            "raw_score_current", "trainer_plan_a_score"):
+                    try:
+                        value = row.get(key)
+                        if value is not None:
+                            return float(value)
+                    except (TypeError, ValueError):
+                        continue
+                return 0.0
+
+            ranked = sorted(due, key=_score, reverse=True)[:capacity]
+            fifo_set = {str((i or {}).get("ticker") or "") for i in selected}
+            ranked_set = {str((i or {}).get("ticker") or "") for i in ranked}
+            overlap = len(fifo_set & ranked_set)
+            scored_n = sum(1 for i in due if _score(i) > 0)
+            self._write_funnel_event(
+                "early_judge_recheck_order_shadow",
+                market,
+                {
+                    "queue_due": len(due),
+                    "capacity": capacity,
+                    "fifo_selected": sorted(fifo_set),
+                    "ranked_selected": sorted(ranked_set),
+                    "overlap": overlap,
+                    "overlap_ratio": round(overlap / max(len(fifo_set), 1), 3),
+                    "scored_items": scored_n,
+                    "note": "shadow only — 실제 선별은 FIFO 유지",
+                },
+            )
+        except Exception:
+            return
+
+    def _track_non_pathb_excursion(self, market: str) -> None:
+        """PathB 밖 포지션의 MFE/MAE·시간축을 기록한다(관측 전용).
+
+        왜 필요한가:
+          `PathBRuntime._update_position_excursion()`은 PathB 청산 스캔에서만 호출되고
+          `pathb_path_run_id`가 없으면 영속화도 건너뛴다. 그래서 sleeve(MICRO_PROBE)나
+          즉시매수(claude_price_a) 포지션은 MFE/MAE가 **아예 생성되지 않는다.**
+          2026-07-23 실측: 보유 4종목 전부 PathB가 아니라 observed_* 키가 없었다.
+          초기경로·capture 분석의 입력이 통째로 비는 구간이 생긴다.
+
+        observed_* 전용 키에만 쓴다 — ladder가 읽는 peak_pnl_pct는 건드리지 않는다.
+        포지션 dict에 쓰므로 _save_positions로 자연히 durable해진다.
+        """
+        if not self._runtime_bool("NON_PATHB_EXCURSION_TRACK_ENABLED", True):
+            return
+        try:
+            positions = list(getattr(self.risk, "positions", None) or [])
+        except Exception:
+            return
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        now_iso = datetime.now(KST).isoformat(timespec="seconds")
+        for pos in positions:
+            try:
+                if str(pos.get("pathb_path_run_id") or "").strip():
+                    continue  # PathB가 자기 포지션을 이미 기록한다
+                is_us = pos.get("display_currency") == "USD"
+                if (market_key == "US") != bool(is_us):
+                    continue
+                if is_us:
+                    entry = float(pos.get("display_avg_price") or 0)
+                    current = float(pos.get("display_current_price") or 0)
+                else:
+                    entry = float(pos.get("entry") or 0)
+                    current = float(pos.get("current_price") or 0)
+                if entry <= 0 or current <= 0:
+                    continue
+
+                prev_peak = float(pos.get("observed_peak_price", 0) or 0)
+                prev_low = float(pos.get("observed_low_price", 0) or 0)
+                peak = current if prev_peak <= 0 else max(prev_peak, current)
+                low = current if prev_low <= 0 else min(prev_low, current)
+                if peak != prev_peak:
+                    pos["observed_peak_at"] = now_iso
+                if low != prev_low:
+                    pos["observed_low_at"] = now_iso
+                pos["observed_peak_price"] = peak
+                pos["observed_low_price"] = low
+                pos["observed_mfe_pct"] = (peak / entry - 1.0) * 100.0
+                pos["observed_mae_pct"] = (low / entry - 1.0) * 100.0
+                pos["observed_source"] = "non_pathb_tracker"
+            except Exception:
+                continue
+
     def _maybe_sync_candidate_fill_attribution(self, market: str) -> None:
         """체결을 후보 원장에 귀속시킨다(세션 중 주기 실행).
 
@@ -32183,6 +32290,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._consume_pending_claude_trigger(market)
             self._sync_runtime_with_broker()
             self.risk.update_prices(self.price_cache, self.price_cache_raw)
+            self._track_non_pathb_excursion(market)
             self._process_exit_candidates()
             if getattr(self, "pathb", None) is not None:
                 self.pathb.scan_exits(market)
@@ -32743,6 +32851,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 due_at = now
             (due if due_at <= now else pending).append(item)
         selected_items = due[:max_per_run]
+        self._log_recheck_queue_order_shadow(market_key, due, selected_items, max_per_run)
         self._early_judge_recheck_queue[market_key] = due[max_per_run:] + pending
         if not selected_items:
             self._save_early_judge_budget_state()
