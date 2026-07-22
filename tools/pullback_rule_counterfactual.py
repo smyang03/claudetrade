@@ -70,21 +70,48 @@ def main() -> int:
 
     cache: dict = {}
 
+    def _yahoo_symbols(tk: str) -> list[str]:
+        """KR 6자리 코드는 야후 접미사가 필요하다(.KS 코스피 / .KQ 코스닥)."""
+        if args.market == "KR" and tk.isdigit() and len(tk) == 6:
+            return [f"{tk}.KS", f"{tk}.KQ"]
+        return [tk]
+
     def series(tk):
+        """5분봉만 채택한다.
+
+        경고: 존재하지 않는 접미사(예: 코스닥 종목에 .KS)를 요청하면 야후가
+        빈 응답이 아니라 '일봉'을 돌려주는 경우가 있다. 2026-07-22 실측에서
+        403870.KS가 59개(일봉)를 반환해 5분봉으로 오인되었고, KR 반사실이
+        60분 -4.457%로 크게 왜곡됐다. 봉 간격을 검사해 5분봉이 아니면 버린다.
+        """
         if tk in cache:
             return cache[tk]
-        try:
-            df = yf.download(tk, period="60d", interval="5m", progress=False, auto_adjust=False)
-            c = df["Close"].iloc[:, 0] if hasattr(df["Close"], "columns") else df["Close"]
+        cache[tk] = None
+        best = None
+        for sym in _yahoo_symbols(tk):
+            try:
+                df = yf.download(sym, period="60d", interval="5m",
+                                 progress=False, auto_adjust=False)
+            except Exception:
+                continue
+            if df is None or len(df) < 2:
+                continue
             idx = df.index
+            # 5분봉 검증: 연속 두 봉 간격의 최빈값이 5분이어야 한다.
+            deltas = [(idx[i + 1] - idx[i]).total_seconds()
+                      for i in range(min(50, len(idx) - 1))]
+            if not deltas or min(deltas) > 600:
+                continue
+            c = df["Close"].iloc[:, 0] if hasattr(df["Close"], "columns") else df["Close"]
             idx = idx.tz_convert("UTC") if idx.tz is not None else idx.tz_localize("UTC")
-            cache[tk] = (idx, c)
-        except Exception:
-            cache[tk] = None
+            if best is None or len(idx) > len(best[0]):
+                best = (idx, c)
+        cache[tk] = best
         return cache[tk]
 
     horizons = [int(x) for x in str(args.horizons).split(",") if x.strip()]
     res: dict = defaultdict(list)
+    skipped: list[str] = []
     for r in rows:
         s = series(str(r["ticker"]).strip())
         if not s:
@@ -100,6 +127,16 @@ def main() -> int:
             continue
         t0 = pos[-1]
         entry = float(r["would_entry_price"])
+        # 종목/시각 오매칭 방어: 진입 시점 봉 종가가 기록된 진입가와 크게 다르면
+        # 다른 종목이거나 정렬이 어긋난 것이므로 버린다(진입가는 이미 아는 값이라
+        # lookahead가 아니다).
+        try:
+            base = float(c.iloc[t0])
+        except Exception:
+            continue
+        if base <= 0 or abs(base / entry - 1.0) > 0.03:
+            skipped.append(str(r.get("ticker")))
+            continue
         for h in horizons:
             if t0 + h < len(c):
                 res[h].append((float(c.iloc[t0 + h]) / entry - 1.0) * 100.0)
