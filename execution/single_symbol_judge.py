@@ -549,6 +549,11 @@ def normalize_single_symbol_judge_result(
                 "stop_loss": out.get("stop_loss"),
                 "confidence": out.get("confidence"),
                 "reason": out.get("reason"),
+                # 국면을 함께 남긴다. shadow 경로는 시장 체크에서 바로 통과하므로
+                # 국면 게이트를 우회한다 — US는 강세 국면에서만 BUY_READY가 노출되는데
+                # shadow 시장은 전 국면에서 관측된다. 나중에 US와 비교하거나 enforce를
+                # 판단할 때 국면을 맞춰 걸러야 하므로 기록 자체에 넣어둔다.
+                "market_regime": str((risk_context or {}).get("market_regime") or ""),
             }
             out["immediate_buy_gate"] = "shadow_observe"
             out["action"] = "WAIT_RECHECK"
