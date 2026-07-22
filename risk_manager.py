@@ -494,7 +494,7 @@ class RiskManager:
         이 값이 있어야 적색 건에만 본전 목표를 걸 수 있다(녹색은 러너로 둔다).
         캡처 자체는 어떤 판정에도 쓰이지 않으며 mfe_breakeven(peak 기반)과 별개 축이다.
         """
-        if pos.get("early_path_mark") is not None:
+        if pos.get("early_path_mark") is not None or pos.get("early_path_mark_skipped"):
             return
         try:
             entry_at = pos.get("entry_time")
@@ -506,6 +506,17 @@ class RiskManager:
             window_min = _env_float("EARLY_PATH_MARK_WINDOW_MIN", 30.0)
             held_min = (datetime.now(KST) - entered.astimezone(KST)).total_seconds() / 60.0
             if held_min < window_min:
+                return
+            # 창을 크게 지난 뒤 처음 보는 포지션(예: 재시작 직후 기존 보유)은
+            # 지금 값이 '30분 시점'이 아니다. 잘못 박으면 적색/녹색 판정이 통째로
+            # 오염되므로 마크를 포기하고 영구 미판정으로 남긴다(개입도 하지 않는다).
+            grace_min = max(1.0, _env_float("EARLY_PATH_MARK_GRACE_MIN", 15.0))
+            if held_min > window_min + grace_min:
+                pos["early_path_mark_skipped"] = {
+                    "reason": "window_missed",
+                    "held_minutes": round(held_min, 1),
+                    "window_min": window_min,
+                }
                 return
             pos["early_path_mark"] = round(float(cur_pnl), 3)
             pos["early_path_mark_at"] = datetime.now(KST).isoformat(timespec="seconds")

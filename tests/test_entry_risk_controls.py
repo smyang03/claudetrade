@@ -667,6 +667,42 @@ class EarlyPathBreakevenTest(unittest.TestCase):
             self.assertEqual(self._rm().early_path_breakeven_price(pos), 0.0)
             self.assertIsNone(pos.get("early_path_breakeven_shadow"))
 
+    def test_mark_is_skipped_when_window_already_missed(self) -> None:
+        """재시작 직후 기존 보유에 '지금 값'을 30분 마크로 박으면 안 된다.
+
+        그러면 적색/녹색 판정이 통째로 오염된다. 창을 크게 지난 건은 영구 미판정으로
+        남겨 개입하지 않는다.
+        """
+        from datetime import datetime, timedelta
+
+        from risk_manager import KST
+
+        now = datetime.now(KST)
+
+        def pos_at(minutes: int) -> dict:
+            return {"ticker": f"T{minutes}",
+                    "entry_time": (now - timedelta(minutes=minutes)).isoformat()}
+
+        rm = self._rm()
+        fresh = pos_at(31)          # 창 직후 — 기록해야 한다
+        rm._capture_early_path_mark(fresh, -0.9)
+        self.assertEqual(fresh.get("early_path_mark"), -0.9)
+
+        stale = pos_at(180)         # 3시간 보유 — 기록하면 안 된다
+        rm._capture_early_path_mark(stale, -0.9)
+        self.assertIsNone(stale.get("early_path_mark"))
+        self.assertTrue(stale.get("early_path_mark_skipped"))
+
+        early = pos_at(10)          # 창 전 — 아직 판정하지 않는다
+        rm._capture_early_path_mark(early, -0.9)
+        self.assertIsNone(early.get("early_path_mark"))
+        self.assertIsNone(early.get("early_path_mark_skipped"))
+
+        # 미판정 건에는 개입하지 않는다
+        with patch.dict(os.environ, {"EARLY_PATH_BREAKEVEN_MODE": "enforce"}):
+            stale["entry"] = 100.0
+            self.assertEqual(rm.early_path_breakeven_price(stale), 0.0)
+
     def test_close_reason_is_mapped_not_unknown(self) -> None:
         """미매핑이면 CLOSED_UNKNOWN으로 새어 성과 귀속이 끊긴다."""
         from runtime.v2_lifecycle_runtime import v2_close_reason
