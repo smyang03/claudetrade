@@ -42,6 +42,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT_DB = ROOT / "data" / "audit" / "candidate_audit.db"
 ML_DB = ROOT / "data" / "ml" / "decisions.db"
+EVENT_DB = ROOT / "data" / "v2_event_store.db"
 
 PATHB_ROUTES = {"PathB.wait"}
 PLANA_ROUTES = {"PlanA.buy", "PlanA.probe", "PlanA.add"}
@@ -94,10 +95,68 @@ def expected_routes(canon_route: str) -> set[str] | None:
     return None  # unknown/빈값 = sleeve 등 후보 파이프라인 밖
 
 
+def _plan_anchor(decision_id: str) -> tuple[str | None, str]:
+    """체결을 만든 결정의 **앵커 시각**을 lifecycle에서 찾는다.
+
+    ★ 핵심: 체결 시각이 아니라 **플랜/주문이 만들어진 시각**이 정답이다.
+      PathB는 플랜 생성 → 존 도달 대기 → 체결이라 둘이 수십 분 벌어진다.
+      FILLED payload의 selection_snapshot_ts는 *체결 시점*의 최신 스냅샷이라
+      원 결정 행과 다르다(IREN: 플랜 22:54 vs 체결시 스냅샷 23:10).
+
+    우선순위: PATHB_SELECTION_RECONCILE의 selection_snapshot_ts(플랜과 같은 시각)
+             → CLAUDE_PRICE_PLAN_CREATED.occurred_at
+             → ORDER_SENT.occurred_at
+    """
+    if not EVENT_DB.exists() or not decision_id:
+        return None, "no_event_db"
+    con = _ro(EVENT_DB)
+    try:
+        rows = con.execute(
+            "SELECT event_type, occurred_at, payload_json FROM lifecycle_events "
+            "WHERE decision_id=? ORDER BY occurred_at", (decision_id,)).fetchall()
+    except sqlite3.Error:
+        return None, "event_query_failed"
+    finally:
+        con.close()
+    if not rows:
+        return None, "no_lifecycle_event"
+
+    plan_at = None
+    for r in rows:
+        if str(r["event_type"] or "") == "CLAUDE_PRICE_PLAN_CREATED":
+            plan_at = r["occurred_at"]
+            break
+    if plan_at:
+        # 같은 시각의 RECONCILE이 실제 스냅샷 ts를 들고 있으면 그게 가장 정확하다.
+        pdt = _parse_dt(plan_at)
+        for r in rows:
+            if str(r["event_type"] or "") != "PATHB_SELECTION_RECONCILE":
+                continue
+            rdt = _parse_dt(r["occurred_at"])
+            if pdt is None or rdt is None or abs((rdt - pdt).total_seconds()) > 120:
+                continue
+            try:
+                snap = (json.loads(r["payload_json"]) or {}).get("selection_snapshot_ts")
+            except (TypeError, ValueError):
+                snap = None
+            if snap:
+                return str(snap), "reconcile_snapshot_ts"
+        return str(plan_at), "plan_created_at"
+
+    for r in rows:
+        if str(r["event_type"] or "") == "ORDER_SENT":
+            return str(r["occurred_at"]), "order_sent_at"
+    return None, "no_anchor_event"
+
+
 def resolve_target(con: sqlite3.Connection, fill: sqlite3.Row) -> tuple[str | None, str]:
-    """체결을 만든 후보 행을 고른다. 못 고르면 (None, 사유)."""
-    want = expected_routes(fill["route"])
-    if want is None:
+    """체결을 만든 후보 행을 고른다. 못 고르면 (None, 사유).
+
+    route 계열로 거르지 않는다 — PathB는 selection이 WATCH인 스냅샷에서도 플랜을
+    만든다(NVDA 2026-07-06 실증). 계열로 거르면 그 사실을 지우고 미귀속이 된다.
+    대신 **앵커 시각에 가장 가까운 행**을 고른다. 그게 실제 원 결정 행이다.
+    """
+    if expected_routes(fill["route"]) is None:
         return None, f"non_candidate_lane(route={fill['route'] or 'empty'})"
 
     rows = con.execute(
@@ -107,26 +166,47 @@ def resolve_target(con: sqlite3.Connection, fill: sqlite3.Row) -> tuple[str | No
     if not rows:
         return None, "no_candidate_row"
 
-    cands = [r for r in rows
-             if str(r["route_route"] or "") in want
-             and not str(r["no_submit_reason_code"] or "").strip()]
+    # 주문을 안 냈다고 원장이 명시한 행은 체결 주체가 될 수 없다.
+    cands = [r for r in rows if not str(r["no_submit_reason_code"] or "").strip()]
     if not cands:
-        return None, f"no_row_with_route_in({'/'.join(sorted(want))})"
+        return None, "all_rows_no_submit"
 
-    # ★ known_at은 KST(+09:00), earliest_fill_at은 UTC(+00:00)다.
-    #   문자열로 비교하면 22:22+09:00 > 14:21+00:00 이 되어 항상 어긋난다.
-    #   실제로 22:22 KST = 13:22 UTC로 체결보다 이르다. 반드시 파싱해서 비교한다.
-    fill_dt = _parse_dt(fill["earliest_fill_at"])
-    if fill_dt is not None:
-        before = [r for r in cands
-                  if (_parse_dt(r["known_at"]) is not None
-                      and _parse_dt(r["known_at"]) <= fill_dt)]
-        pool = before or cands
-        rule = "route_match+nearest_before_fill" if before else "route_match+no_row_before_fill"
+    anchor_raw, anchor_kind = _plan_anchor(str(fill["v2_decision_id"] or ""))
+    anchor = _parse_dt(anchor_raw) or _parse_dt(fill["earliest_fill_at"])
+    if anchor is None:
+        pick = max(cands, key=lambda r: (_parse_dt(r["known_at"]) or _EPOCH))
+        return pick["candidate_key"], "latest_row(no_anchor)"
+
+    # ★ known_at은 KST(+09:00), 이벤트는 UTC(+00:00)다. tz-aware로 파싱해 비교한다.
+    #   문자열 비교하면 22:22+09:00 > 14:21+00:00 이 되어 항상 어긋난다.
+    scored = [(r, _parse_dt(r["known_at"])) for r in cands]
+    scored = [(r, dt) for r, dt in scored if dt is not None]
+    if not scored:
+        return None, "no_parsable_known_at"
+
+    # 같은 known_at에 행이 여럿이면(스냅샷이 여러 벌 기록됨) 기대 계열 route를 가진 행을
+    # 우선한다. 정보량이 더 큰 행이 실제 결정을 담고 있다.
+    want = expected_routes(fill["route"]) or set()
+
+    def rank(r) -> int:
+        route = str(r["route_route"] or "")
+        if route in want:
+            return 2
+        if route and route != "WATCH":
+            return 1
+        return 0
+
+    before = [(r, dt) for r, dt in scored if dt <= anchor]
+    if before:
+        newest = max(dt for _, dt in before)
+        tied = [r for r, dt in before if dt == newest]
+        pick = max(tied, key=rank)
+        rule = f"anchor:{anchor_kind}+nearest_before"
     else:
-        pool = cands
-        rule = "route_match+latest(no_fill_time)"
-    pick = max(pool, key=lambda r: (_parse_dt(r["known_at"]) or _EPOCH))
+        oldest = min(dt for _, dt in scored)
+        tied = [r for r, dt in scored if dt == oldest]
+        pick = max(tied, key=rank)
+        rule = f"anchor:{anchor_kind}+earliest_after"
     return pick["candidate_key"], rule
 
 
@@ -151,14 +231,13 @@ def audit(since: str) -> list[tuple]:
         total += 1
         f = fills.get(fa.get("v2_decision_id"))
         want = expected_routes(f["route"]) if f is not None else None
-        rroute = str(r["route_route"] or "")
         problems = []
         if str(r["no_submit_reason_code"] or "").strip():
             problems.append(f"NO_SUBMIT({r['no_submit_reason_code']})")
         if want is None:
             problems.append("후보 파이프라인 밖 체결인데 귀속됨")
-        elif rroute not in want:
-            problems.append(f"route={rroute or '빈값'} ∉ {'/'.join(sorted(want))}")
+        # ※ route 계열 불일치는 위반이 아니다 — PathB는 WATCH 스냅샷에서도 플랜을 만든다.
+        #    앵커 시각으로 고른 행이면 route가 WATCH여도 그게 실제 원 결정 행이다.
         if problems:
             kinds[" + ".join(problems)] += 1
             bad.append((r["candidate_key"], r["market"], r["ticker"], r["session_date"],
@@ -176,6 +255,9 @@ def main() -> int:
     ap.add_argument("--since", default="2026-05-01")
     ap.add_argument("--audit", action="store_true", help="정합성 검사만")
     ap.add_argument("--repair", action="store_true", help="오귀속 해제 후 재귀속")
+    ap.add_argument("--reset", action="store_true",
+                    help="backfill이 쓴 귀속을 전부 해제 후 현재 규칙으로 재귀속"
+                         "(resolver를 바꿨을 때 두 규칙이 섞이는 것을 막는다)")
     ap.add_argument("--apply", action="store_true", help="실제 기록(기본 dry-run)")
     args = ap.parse_args()
 
@@ -188,7 +270,27 @@ def main() -> int:
     bad = audit(args.since)
     if args.audit:
         return 0
-    if not args.repair:
+    if args.reset:
+        # resolver를 바꿨으면 이전 규칙으로 쓴 것을 전부 걷어내고 다시 건다.
+        # 두 규칙이 섞인 원장은 어느 쪽 근거로 읽어야 할지 알 수 없다.
+        a = _ro(AUDIT_DB)
+        bad = []
+        for r in a.execute(
+            "SELECT candidate_key, market, ticker, session_date, claude_action, route_route, "
+            "no_submit_reason_code, payload_json FROM audit_candidate_rows WHERE filled_count>0"
+        ):
+            try:
+                payload = json.loads(r["payload_json"]) if r["payload_json"] else {}
+            except (TypeError, ValueError):
+                payload = {}
+            fa = payload.get("fill_attribution") if isinstance(payload, dict) else None
+            if isinstance(fa, dict) and str(fa.get("source") or "").startswith(BACKFILL_SOURCE):
+                bad.append((r["candidate_key"], r["market"], r["ticker"], r["session_date"],
+                            r["claude_action"], r["route_route"], r["no_submit_reason_code"],
+                            fa.get("v2_decision_id")))
+        a.close()
+        print(f"\n[reset] backfill이 쓴 귀속 {len(bad)}건 전부 해제 대상")
+    if not (args.repair or args.reset):
         print("\n--repair 로 교정, --audit 으로 검사만")
         return 0
 
