@@ -2093,3 +2093,29 @@ class V2LearningPerformanceSyncTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MicroProbeStrategyFallbackTest(unittest.TestCase):
+    """코어 sleeve(MICRO_PROBE) 주문의 전략 귀속 — 없으면 성과 추적이 통째로 끊긴다.
+
+    MICRO_PROBE는 fill/close payload에 source_strategy를 싣지 않아 canonical의
+    strategy가 빈 값이 된다. 그러면 전략별 분석에서 코어 sleeve 거래가 전부 사라진다
+    (2026-07-22 실측: canonical에 MICRO_PROBE 0행, KR 유일 실노출인 코어 sleeve의
+    성과를 측정할 수 없었다).
+    """
+
+    def test_lookup_returns_source_strategy_for_known_probe(self) -> None:
+        from tools.sync_v2_learning_performance import _micro_probe_strategy
+
+        # 원장에 실제로 존재하는 코어 sleeve 주문(없으면 스킵)
+        got = _micro_probe_strategy("KR", "2026-07-22", "275280")
+        if not got:
+            self.skipTest("micro_probe_log에 해당 주문이 없다(환경 의존)")
+        self.assertEqual(got, "kr_factor_trend_v1")
+
+    def test_lookup_is_empty_for_unrelated_ticker(self) -> None:
+        """코어 sleeve가 아닌 종목에 전략을 붙이면 안 된다(오귀속 방지)."""
+        from tools.sync_v2_learning_performance import _micro_probe_strategy
+
+        self.assertEqual(_micro_probe_strategy("KR", "2026-07-22", "005930"), "")
+        self.assertEqual(_micro_probe_strategy("", "", ""), "")

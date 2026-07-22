@@ -606,6 +606,36 @@ def _close_payload_qty(close_payload: dict[str, Any]) -> float | None:
     return _num(close_payload, *CLOSE_QTY_KEYS)
 
 
+
+_MICRO_PROBE_CACHE: dict[tuple[str, str, str], str] | None = None
+
+
+def _micro_probe_strategy(market: str, session_date: str, ticker: str) -> str:
+    """코어 sleeve 주문의 source_strategy를 micro_probe_log에서 찾는다.
+
+    MICRO_PROBE 경로는 fill/close payload에 source_strategy를 싣지 않아 canonical의
+    strategy가 빈 값이 된다. 결과적으로 전략별 성과 분석에서 코어 sleeve 거래가
+    전부 누락된다. 원장(ticker_selection_log.db)에는 값이 정확히 남으므로 결합 키
+    (session_date, market, ticker)로 보강한다. 읽기 전용이며 실패해도 무시한다.
+    """
+    global _MICRO_PROBE_CACHE
+    if _MICRO_PROBE_CACHE is None:
+        _MICRO_PROBE_CACHE = {}
+        db = ROOT / "data" / "ticker_selection_log.db"
+        if db.exists():
+            try:
+                con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=15)
+                con.execute("PRAGMA busy_timeout=10000")
+                for sd, mk, tk, src in con.execute(
+                    "SELECT session_date, market, ticker, source_strategy FROM micro_probe_log "
+                    "WHERE source_strategy IS NOT NULL AND source_strategy != ''"
+                ):
+                    _MICRO_PROBE_CACHE[(str(sd), str(mk), str(tk))] = str(src)
+                con.close()
+            except Exception:
+                pass
+    return _MICRO_PROBE_CACHE.get((str(session_date), str(market), str(ticker)), "")
+
 def _strategy_attribution(close_event: dict[str, Any], close_payload: dict[str, Any]) -> str:
     close_reason = _code(_text(close_payload, "close_reason", "exit_reason") or close_event.get("reason_code"))
     data_quality = _code(close_event.get("data_quality") or close_payload.get("data_quality"))
@@ -988,6 +1018,15 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
         _text(close_payload, "strategy", "source_strategy", "strategy_used")
         or _text(fill_payload, "strategy", "source_strategy", "strategy_used")
         or str(decision.get("strategy_hint") or "")
+        # 코어 sleeve(MICRO_PROBE) 주문은 fill/close payload에 source_strategy가 담기지
+        # 않아 strategy가 빈 채로 들어간다. 그러면 전략별 분석에서 코어 거래가 통째로
+        # 사라진다(2026-07-22: canonical에 MICRO_PROBE 0행, KR 유일 실노출인 코어
+        # sleeve 성과를 추적할 수 없었다). micro_probe_log를 fallback으로 참조한다.
+        or _micro_probe_strategy(
+            str(decision.get("market") or ""),
+            str(decision.get("session_date") or ""),
+            str(decision.get("ticker") or ""),
+        )
         or ("claude_price" if path_type == "claude_price" else "")
     )
     close_reason = _text(close_payload, "close_reason", "exit_reason") or str(close.get("reason_code") or "")
