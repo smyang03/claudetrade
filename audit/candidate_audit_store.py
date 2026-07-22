@@ -627,6 +627,49 @@ class CandidateAuditStore:
     operating DBs/logs instead of replacing them.
     """
 
+    # 체결·실행 결과로 갱신 가능한 컬럼. ticker 기준/키 기준 두 갱신 경로가 공유한다.
+    _EXECUTION_UPDATE_FIELDS = {
+    "decision_count",
+    "buy_signal_count",
+    "no_signal_count",
+    "watch_only_count",
+    "filled_count",
+    "first_signal_at",
+    "first_fill_at",
+    "entry_price",
+    "exit_price",
+    "pnl_pct",
+    "exit_reason",
+    "strategy_used",
+    "lifecycle_event_count",
+    "last_lifecycle_event",
+    "close_reason",
+    "path_run_count",
+    "intraday_signal_count",
+    "intraday_traded_count",
+    "execution_link_source",
+    "execution_decision_id",
+    "execution_event_id",
+    "no_submit_reason_code",
+    "no_submit_reason_detail",
+    "no_submit_signal_flags_json",
+    "no_submit_block_meta_json",
+    "entry_timing_snapshot_json",
+    "post_open_features_json",
+    "kr_confirmation_snapshot_json",
+    "candidate_health_snapshot_json",
+    "entry_delay_min",
+    "entry_price_vs_first_seen_pct",
+    "entry_price_vs_first_ready_pct",
+    "position_mfe_pct",
+    "position_mae_pct",
+    "us_early_entry_window",
+    "us_early_entry_elapsed_min",
+    "us_early_entry_size_mult",
+    "us_early_entry_confirmation_reason",
+    "us_early_entry_gate_json",
+    }
+
     def __init__(self, path: str | Path, *, timeout: float = 5.0) -> None:
         self.path = Path(path)
         self.timeout = float(timeout or 5.0)
@@ -1483,6 +1526,39 @@ class CandidateAuditStore:
             "duplicate_group_count": duplicate_groups,
         }
 
+    def update_execution_by_candidate_key(
+        self, *, candidate_key: str, values: dict[str, Any]
+    ) -> int:
+        """특정 후보 행 하나만 갱신한다.
+
+        ticker 기준 갱신(update_execution_by_ticker)은 같은 종목의 최신 행에 붙어서
+        WATCH/NO_SIGNAL 행에 체결이 실리는 사고를 낸다(2026-07-23 실측 22.8% 오귀속).
+        체결처럼 "어느 행이 만들었는가"가 중요한 값은 반드시 이 경로를 쓴다.
+        대상 행은 audit/fill_attribution.resolve_fill_target()이 고른다.
+        """
+        key = str(candidate_key or "").strip()
+        if not key:
+            return 0
+        updates = {k: v for k, v in (values or {}).items()
+                   if k in self._EXECUTION_UPDATE_FIELDS and v is not None}
+        for field, value in list(updates.items()):
+            if field.endswith("_json") and not isinstance(value, str):
+                updates[field] = _json(value)
+        if not updates:
+            return 0
+        updates["updated_at"] = _utc_now()
+        set_clause = ", ".join(f"{field}=?" for field in updates)
+        conn = self.connect()
+        try:
+            cur = conn.execute(
+                f"UPDATE audit_candidate_rows SET {set_clause} WHERE candidate_key=?",
+                list(updates.values()) + [key],
+            )
+            conn.commit()
+            return int(cur.rowcount or 0)
+        finally:
+            conn.close()
+
     def update_execution_by_ticker(
         self,
         *,
@@ -1493,47 +1569,7 @@ class CandidateAuditStore:
         values: dict[str, Any],
         latest_only: bool = False,
     ) -> int:
-        allowed = {
-            "decision_count",
-            "buy_signal_count",
-            "no_signal_count",
-            "watch_only_count",
-            "filled_count",
-            "first_signal_at",
-            "first_fill_at",
-            "entry_price",
-            "exit_price",
-            "pnl_pct",
-            "exit_reason",
-            "strategy_used",
-            "lifecycle_event_count",
-            "last_lifecycle_event",
-            "close_reason",
-            "path_run_count",
-            "intraday_signal_count",
-            "intraday_traded_count",
-            "execution_link_source",
-            "execution_decision_id",
-            "execution_event_id",
-            "no_submit_reason_code",
-            "no_submit_reason_detail",
-            "no_submit_signal_flags_json",
-            "no_submit_block_meta_json",
-            "entry_timing_snapshot_json",
-            "post_open_features_json",
-            "kr_confirmation_snapshot_json",
-            "candidate_health_snapshot_json",
-            "entry_delay_min",
-            "entry_price_vs_first_seen_pct",
-            "entry_price_vs_first_ready_pct",
-            "position_mfe_pct",
-            "position_mae_pct",
-            "us_early_entry_window",
-            "us_early_entry_elapsed_min",
-            "us_early_entry_size_mult",
-            "us_early_entry_confirmation_reason",
-            "us_early_entry_gate_json",
-        }
+        allowed = self._EXECUTION_UPDATE_FIELDS
         updates = {k: v for k, v in values.items() if k in allowed and v is not None}
         for key, value in list(updates.items()):
             if key.endswith("_json") and not isinstance(value, str):

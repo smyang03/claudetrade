@@ -31992,6 +31992,106 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         discovery_added = list((meta or {}).get("_discovery_added_tickers") or [])
         discovery_count = int((meta or {}).get("_prompt_pool_discovery_count") or 0)
         return bool(discovery_added or discovery_count > 0)
+    def _maybe_sync_candidate_fill_attribution(self, market: str) -> None:
+        """체결을 후보 원장에 귀속시킨다(세션 중 주기 실행).
+
+        왜 필요한가:
+          `_candidate_audit_update_from_decision_event()`는 buy_order/sell_filled만 처리하고
+          FILLED lifecycle 이벤트를 다루는 분기가 없었다. 그래서 `filled_count`가
+          라이브로 채워지지 않았고 2026-05-08 이후 후보→체결 귀속이 통째로 끊겼다.
+
+        왜 주문 경로가 아니라 여기인가:
+          체결 발행 지점이 여럿(PathB·PlanA·adapter)이라 각각을 고치면 누락이 남는다.
+          주기 동기화는 발행 지점과 무관하게 lifecycle을 truth로 삼아 한 번에 맞춘다.
+          주문 핫패스를 건드리지 않아 라이브 위험도 낮다.
+
+        귀속 대상 행은 audit/fill_attribution 의 공용 규칙이 고른다.
+        ticker 기준 갱신은 쓰지 않는다 — 최신 WATCH 행에 체결이 붙는다.
+        """
+        if not self._runtime_bool("CANDIDATE_AUDIT_FILL_SYNC_ENABLED", True):
+            return
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        interval_min = max(1, self._runtime_int("CANDIDATE_AUDIT_FILL_SYNC_INTERVAL_MIN", 5))
+        elapsed_min = self._market_open_elapsed_min(market_key)
+        if elapsed_min is None:
+            return
+        try:
+            session_date = self._current_session_date_str(market_key)
+        except Exception:
+            session_date = date.today().isoformat()
+
+        done = getattr(self, "_candidate_fill_sync_done", None)
+        if not isinstance(done, set):
+            done = set()
+            self._candidate_fill_sync_done = done
+        run_key = (getattr(self, "_mode", "live"), market_key, session_date,
+                   int(float(elapsed_min) // float(interval_min)))
+        if run_key in done:
+            return
+        done.add(run_key)
+
+        try:
+            from audit.fill_attribution import collect_session_fills, resolve_fill_target
+
+            store = self._candidate_audit_store()
+            if store is None:
+                return
+            runtime_mode = getattr(self, "_mode", "live")
+            fills = collect_session_fills(session_date, market_key, runtime_mode)
+            if not fills:
+                return
+            linked = 0
+            unresolved: list[str] = []
+            conn = store.connect()
+            try:
+                conn.row_factory = sqlite3.Row
+                for fill in fills:
+                    key, rule = resolve_fill_target(
+                        conn,
+                        market=market_key,
+                        ticker=fill["ticker"],
+                        session_date=session_date,
+                        decision_id=fill["decision_id"],
+                        canonical_route=fill["canonical_route"],
+                        fill_at=fill["fill_at"],
+                    )
+                    if not key:
+                        unresolved.append(f"{fill['ticker']}:{rule}")
+                        continue
+                    row = conn.execute(
+                        "SELECT filled_count FROM audit_candidate_rows WHERE candidate_key=?",
+                        (key,)).fetchone()
+                    if row and (row["filled_count"] or 0) > 0:
+                        continue
+                    store.update_execution_by_candidate_key(
+                        candidate_key=key,
+                        values={
+                            "filled_count": 1,
+                            "first_fill_at": fill["fill_at"],
+                            "entry_price": fill["entry_price"],
+                            "execution_decision_id": fill["decision_id"],
+                            "execution_event_id": fill["event_uuid"],
+                            "execution_link_source": f"fill_sync:{rule}",
+                            "strategy_used": fill["strategy_used"],
+                        },
+                    )
+                    linked += 1
+            finally:
+                conn.close()
+            if linked or unresolved:
+                self._write_funnel_event(
+                    "candidate_fill_attribution_sync",
+                    market_key,
+                    {
+                        "session_date": session_date,
+                        "fills": len(fills),
+                        "linked": linked,
+                        "unresolved": unresolved[:20],
+                    },
+                )
+        except Exception as exc:
+            log.warning(f"[체결 귀속 동기화] {market_key} 실패: {exc}")
+
     def _maybe_update_candidate_audit_outcomes_intraday(self, market: str) -> None:
         if not self._runtime_bool("CANDIDATE_AUDIT_INTRADAY_OUTCOME_UPDATE_ENABLED", True):
             return
@@ -32087,6 +32187,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if getattr(self, "pathb", None) is not None:
                 self.pathb.scan_exits(market)
             self._maybe_update_candidate_audit_outcomes_intraday(market)
+            self._maybe_sync_candidate_fill_attribution(market)
             self._write_live_status(market)
         except Exception as _hk_e:
             log.error(f"[housekeeping 오류] {market}: {_hk_e}", exc_info=True)
