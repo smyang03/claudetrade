@@ -693,6 +693,44 @@ class PathBRuntime:
             except Exception:
                 pass
 
+    @staticmethod
+    def _entry_block_cause_suffix(entry_gate: dict[str, Any]) -> str:
+        """차단 '사유'를 로그 한 줄에 덧붙인다.
+
+        기존에는 reason/scope만 남아 왜 막혔는지가 사라졌다. 가디언 게이트는
+        state/live_guardian_market_gates.json이 갱신되면 덮어써지므로, 그때
+        기록하지 않으면 원인이 영구 손실된다(2026-07-21 KR 3시간 차단 사례:
+        blockers를 알 수 없어 사후 판정 불가). 관측 전용이며 차단 판단 자체는
+        건드리지 않는다.
+        """
+        details = (entry_gate or {}).get("details")
+        if not isinstance(details, dict):
+            return ""
+        parts: list[str] = []
+        gate = details.get("guardian_market_gate")
+        if isinstance(gate, dict):
+            names = [
+                str((b or {}).get("name") or (b or {}).get("reason") or b)[:40]
+                for b in (gate.get("blockers") or [])
+                if b
+            ]
+            if gate.get("gate"):
+                parts.append(f"gate={gate.get('gate')}")
+            if names:
+                parts.append(f"blockers={','.join(names[:4])}")
+        # 키 이름은 trading_bot._new_buy_block_state가 실제로 담는 것과 맞춘다.
+        for key in ("permission", "consensus_quality"):
+            val = details.get(key)
+            if val:
+                parts.append(f"{key}={str(val)[:32]}")
+        votes = details.get("permission_votes_by_role")
+        if isinstance(votes, dict) and votes:
+            # 누가 반대했는지가 사후 판정의 핵심이다.
+            parts.append(
+                "votes=" + ",".join(f"{k}:{v}" for k, v in list(votes.items())[:4])[:80]
+            )
+        return f" | {' '.join(parts)}" if parts else ""
+
     def _log_entry_scan_blocked(self, market: str, entry_gate: dict[str, Any]) -> None:
         market_key = str(market or "").upper()
         reason = str((entry_gate or {}).get("reason") or "NEW_BUY_BLOCKED")
@@ -705,7 +743,10 @@ class PathBRuntime:
                 payload={"scope": scope, "stage": "pathb_entry_scan", "entry_gate": entry_gate},
             )
         if reason != "BROKER_SYNC_QUARANTINE":
-            log.warning(f"[PathB entry scan blocked] {market_key} {reason} scope={scope}")
+            log.warning(
+                f"[PathB entry scan blocked] {market_key} {reason} scope={scope}"
+                f"{self._entry_block_cause_suffix(entry_gate)}"
+            )
             return
         state_key = f"{market_key}:{reason}:{scope}"
         states = getattr(self, "_entry_block_log_state", None)

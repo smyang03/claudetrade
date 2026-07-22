@@ -156,5 +156,41 @@ class MarketScopedDailyEntryCapTests(unittest.TestCase):
         self.assertNotEqual(ok.reason_code, "PATHB_MAX_DAILY_ENTRIES")
 
 
+class EntryBlockCauseSuffixTest(unittest.TestCase):
+    """차단 로그가 '왜' 막혔는지를 남기는지 검증한다.
+
+    가디언 게이트 파일은 갱신 시 덮어써지므로 차단 시점에 남기지 않으면
+    사유가 영구 손실된다(2026-07-21 KR 3시간 차단을 사후 판정할 수 없었다).
+    """
+
+    @staticmethod
+    def _suffix(gate: dict) -> str:
+        from runtime.pathb_runtime import PathBRuntime
+
+        return PathBRuntime._entry_block_cause_suffix(gate)
+
+    def test_guardian_blockers_are_logged(self) -> None:
+        out = self._suffix(
+            {"details": {"guardian_market_gate": {"gate": "BLOCK_START",
+                                                  "blockers": [{"name": "kr_feed"}]}}}
+        )
+        self.assertIn("gate=BLOCK_START", out)
+        self.assertIn("kr_feed", out)
+
+    def test_analyst_permission_and_votes_are_logged(self) -> None:
+        out = self._suffix(
+            {"details": {"permission": "block",
+                         "permission_votes_by_role": {"risk": "block"}}}
+        )
+        self.assertIn("permission=block", out)
+        self.assertIn("risk:block", out)
+
+    def test_malformed_details_never_raise(self) -> None:
+        """관측용이므로 어떤 입력에도 예외로 진입 루프를 깨면 안 된다."""
+        for bad in ({}, {"details": None}, {"details": {"guardian_market_gate": "x"}},
+                    {"details": {"permission_votes_by_role": [1, 2]}}):
+            self.assertEqual(self._suffix(bad), "")
+
+
 if __name__ == "__main__":
     unittest.main()
