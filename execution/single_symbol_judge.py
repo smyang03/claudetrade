@@ -331,6 +331,16 @@ def validate_pathb_price_plan(
 IMMEDIATE_BUY_REQUIRED_FIELDS = ("sell_target", "stop_loss", "hold_days", "confidence")
 
 
+def _shadow_markets() -> set[str]:
+    """즉시매수를 '관측만' 할 시장. 여기 든 시장은 실주문이 나가지 않는다."""
+    return {
+        m.strip().upper()
+        for m in str(os.getenv("SINGLE_SYMBOL_JUDGE_BUY_READY_SHADOW_MARKETS", "") or "")
+        .replace(";", ",").split(",")
+        if m.strip()
+    }
+
+
 def _immediate_buy_allowed(market: str, risk_context: dict[str, Any] | None) -> tuple[bool, str]:
     """즉시매수(BUY_READY) 허용 여부 — env 게이트 + 시장 + 국면 조건.
 
@@ -346,6 +356,14 @@ def _immediate_buy_allowed(market: str, risk_context: dict[str, Any] | None) -> 
         if m.strip()
     }
     if mkt not in allowed_markets:
+        # shadow 시장: 프롬프트에는 BUY_READY를 노출해 judge 판정을 관측하되,
+        # 결과는 normalize 단계에서 WAIT_RECHECK로 강등되어 실주문이 나가지 않는다.
+        # KR은 즉시매수가 한 번도 관측된 적이 없다 — 금지 근거는 judge가 '거부한' 건이
+        # 나빴다는 것이고(WAIT_RECHECK 건 반사실 -1.557%), 그건 judge가 '승인한' 건이
+        # 나쁘다는 증거가 아니다(US는 거부 -1.075% vs 승인 +2.89%로 정반대였다).
+        # 거래가 없어 데이터가 안 쌓이는 교착을 리스크 0으로 깨기 위한 경로다.
+        if mkt in _shadow_markets():
+            return True, "buy_ready_shadow_observe"
         return False, "buy_ready_market_not_allowed"
     regime = str((risk_context or {}).get("market_regime") or "").strip().upper()
     # 실제 consensus 국면 체계(minority_report/consensus.py STANCE_SCORE): 강세=AGGRESSIVE(1.0)·
@@ -519,6 +537,23 @@ def normalize_single_symbol_judge_result(
             ) else "early_judge_immediate_buy_invalid"
         else:
             out["immediate_buy_gate"] = "allowed"
+        # ★ shadow 시장은 검증 통과 여부와 무관하게 여기서 실주문 경로를 끊는다.
+        #   프롬프트 노출(관측)과 주문 실행을 분리하는 유일한 지점이므로 절대 제거하지 말 것.
+        #   판정 내용은 immediate_buy_shadow_*에 보존해 사후 반사실 검증에 쓴다.
+        if _market_key((risk_context or {}).get("market") or out.get("market")) in _shadow_markets():
+            out["immediate_buy_shadow"] = True
+            out["immediate_buy_shadow_valid"] = bool(not out.get("errors"))
+            out["immediate_buy_shadow_plan"] = {
+                "reference_price": out.get("reference_price"),
+                "sell_target": out.get("sell_target"),
+                "stop_loss": out.get("stop_loss"),
+                "confidence": out.get("confidence"),
+                "reason": out.get("reason"),
+            }
+            out["immediate_buy_gate"] = "shadow_observe"
+            out["action"] = "WAIT_RECHECK"
+            out["route"] = "wait"
+            out["audit_reason"] = "immediate_buy_shadow_observed"
     if pullback_soft_block_reason:
         out["pullback_wait_soft_block_reason"] = pullback_soft_block_reason
         out["pullback_wait_soft_block_enforced"] = pullback_soft_block_enforced
