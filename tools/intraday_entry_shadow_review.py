@@ -28,7 +28,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 FUNNEL_DIR = ROOT / "logs" / "funnel"
 KST = timezone(timedelta(hours=9))
-DEFAULT_FEE_PCT = 0.5  # 왕복 근사(한투 미국 0.25%/편도, 우대 없음). KR도 보수적 동일 가정.
+DEFAULT_FEE_PCT = 0.44  # US 왕복 실측 2026-07-22: 0.4390%(기존 0.5는 12% 과대) — tools/measure_actual_fees.py  # 왕복 근사(한투 미국 0.25%/편도, 우대 없음). KR도 보수적 동일 가정.
 DEFAULT_PULLBACK_PCT = 0.5  # 눌림 판정 임계(would_entry 대비 -0.5%)
 HORIZONS_MIN = (30, 60)
 

@@ -30,7 +30,7 @@ ML_DB = ROOT / "data" / "ml" / "decisions.db"
 FUNNEL_DIR = ROOT / "logs" / "funnel"
 
 # 수수료 왕복(%) — capture_net_review와 동일. net_basis='measured'/'backfilled_*'면 pnl_pct_net 우선.
-FEE_PCT = {"US": 0.5, "KR": 0.21}  # KR 왕복 0.21%(거래세 포함, 환전없음). 2026-07-08 KR=0.5 버그 정정.
+FEE_PCT = {"US": 0.44, "KR": 0.21}  # 실측 2026-07-22(tools/measure_actual_fees.py): US 0.4390%·KR 0.2075%. US 상수 0.5는 12% 과대였고 KR은 거래세가 대부분(0.2005%)이라 0.21이 맞다.
 FX_SPREAD_PCT = {"US": 0.2, "KR": 0.0}  # US 환전 스프레드 왕복(%) — backfilled_fee_only는 미반영이라 추가 차감
 KILL_NET_THRESHOLD_PCT = 0.0  # skip 후보 net_avg가 이 값보다 크면(양수) 오버레이 해로움
 
@@ -46,7 +46,7 @@ def _net_of(market: str, pnl_pct, pnl_pct_net, net_basis) -> float | None:
         return net
     if pnl_pct is None:
         return None
-    return float(pnl_pct) - FEE_PCT.get(mkt, 0.5) - FX_SPREAD_PCT.get(mkt, 0.0)
+    return float(pnl_pct) - FEE_PCT.get(mkt, 0.44) - FX_SPREAD_PCT.get(mkt, 0.0)
 
 
 def _agg(nets: list[float]) -> str:

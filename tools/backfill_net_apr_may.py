@@ -26,7 +26,7 @@ DEFAULT_ML_DB = ROOT / "data" / "ml" / "decisions.db"
 # 왕복 수수료 % (권위값: execution.claude_price_sell_manager._fee_rates_for_market).
 # US 왕복 0.50%(편도 0.25×2). KR 왕복 0.21%(매수 0.015 + 매도 0.195 거래세 포함) — 환전 없음.
 # ★2026-07-08 정정: KR을 0.5로 하드코딩했던 버그(US fee 오적용)를 0.21로 수정.
-FEE_PCT = {"US": 0.5, "KR": 0.21}
+FEE_PCT = {"US": 0.44, "KR": 0.21}  # 실측 2026-07-22(tools/measure_actual_fees.py): US 0.4390%·KR 0.2075%. US 상수 0.5는 12% 과대였고 KR은 거래세가 대부분(0.2005%)이라 0.21이 맞다.
 FX_SPREAD_PCT = {"US": 0.2, "KR": 0.0}
 
 TABLES = ("v2_learning_performance", "v2_canonical_performance")

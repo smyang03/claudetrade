@@ -25,7 +25,7 @@ ML_DB = ROOT / "data" / "ml" / "decisions.db"
 TIERS = (1.2, 2.0, 3.0, 4.0)
 CUR = {"t1": 0.0, "t2": 0.005, "gb3": 0.010, "gb4": 0.012}
 NEW = {"t1": 0.006, "t2": 0.010, "gb3": 0.010, "gb4": 0.012}
-FEE_PCT = 0.5
+FEE_PCT = 0.44  # US 왕복 실측 2026-07-22: 0.4390%(기존 0.5는 12% 과대) — tools/measure_actual_fees.py
 
 
 def parse_utc(s: str) -> datetime:
