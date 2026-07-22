@@ -221,6 +221,80 @@ def main() -> int:
         print(f"  세션단위: 현행 {mean(sa):+.3f}% → 컷 {mean(sc):+.3f}%  "
               f"({better}/{len(sa)} 세션에서 개선)")
 
+    # ── 출구 차등화 시뮬 ────────────────────────────────────────────────
+    # 컷은 기각됐다(꼬리 손실). 대신 적색에만 '본전 탈출' 목표를 걸어본다:
+    # 30분 마크가 음수면 이후 진입가+비용을 회복하는 순간 청산하고, 회복하지
+    # 못하면 실제 결과를 그대로 둔다. 녹색은 손대지 않아 러너를 보존한다.
+    # 이렇게 하면 꼬리를 버리지 않으면서 되돌아온 손실만 건진다.
+    if fee is not None:
+        print(f"\n=== 출구 차등화 시뮬 (적색만 본전탈출, 녹색 러너 보존) ===")
+        for be in (0.0, 0.5):
+            improved: list[float] = []
+            rescued = 0
+            for sd, tk, mark, net in data:
+                if mark > 0:              # 녹색은 현행 유지(러너)
+                    improved.append(net)
+                    continue
+                s = series(tk)
+                if not s:
+                    improved.append(net)
+                    continue
+                idx, close = s
+                # 진입 시각 재계산
+                hit = None
+                for tkr, sdate, fill_at, entry_price, _n in rows:
+                    if str(tkr) == tk and str(sdate) == sd:
+                        hit = (fill_at, float(entry_price))
+                        break
+                if not hit:
+                    improved.append(net)
+                    continue
+                try:
+                    fill = datetime.fromisoformat(str(hit[0]).replace("Z", "+00:00"))
+                except ValueError:
+                    improved.append(net)
+                    continue
+                naive = fill.replace(tzinfo=None)
+                pos = [i for i, t in enumerate(idx)
+                       if t.to_pydatetime().replace(tzinfo=None) <= naive]
+                if not pos:
+                    improved.append(net)
+                    continue
+                t0 = pos[-1]
+                entry = hit[1]
+                target = fee + be          # 회복 목표(비용 + 여유)
+                got = None
+                # 30분 이후부터 그 세션 안에서만 본다(오버나이트 미포함)
+                for k in range(t0 + probe, min(len(close), t0 + probe + 78)):
+                    r = (float(close.iloc[k]) / entry - 1.0) * 100.0
+                    if r >= target:
+                        got = be           # 비용 제하고 남는 순이익
+                        break
+                # 본전에 닿으면 '무조건' 나간다. got > net일 때만 바꾸면 유리한
+                # 쪽만 고르는 lookahead가 되어 결과가 낙관 편향된다(실제로 그렇게
+                # 짰다가 '악화 0세션'이라는 비현실적 결과가 나와 잡았다).
+                if got is not None:
+                    improved.append(got)
+                    if got > net:
+                        rescued += 1
+                else:
+                    improved.append(net)
+            actual = [d[3] for d in data]
+            print(f"  본전+{be:.1f}% 탈출: net {mean(improved):+7.3f}%  "
+                  f"(현행 {mean(actual):+7.3f}%, 개선 {mean(improved)-mean(actual):+.3f}%p, "
+                  f"구제 {rescued}건)")
+            # 세션 단위
+            sc2: dict = defaultdict(list)
+            sa2: dict = defaultdict(list)
+            for (sd, _t, _m, nt), im in zip(data, improved):
+                sa2[sd].append(nt)
+                sc2[sd].append(im)
+            better = sum(1 for k in sa2 if mean(sc2[k]) > mean(sa2[k]))
+            worse = sum(1 for k in sa2 if mean(sc2[k]) < mean(sa2[k]))
+            print(f"      세션단위: {mean([mean(v) for v in sa2.values()]):+.3f}% → "
+                  f"{mean([mean(v) for v in sc2.values()]):+.3f}%  "
+                  f"(개선 {better}세션 / 악화 {worse}세션)")
+
     print("\n  판정: 거래·세션 단위가 모두 같은 방향이고 순열 p가 낮아야 채택한다.")
     print("  한계: yfinance 60일 창 · 마크는 야후 종가 기준이라 실체결 경로와 미세 차이.")
     return 0
