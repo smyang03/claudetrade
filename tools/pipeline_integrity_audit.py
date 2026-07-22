@@ -186,10 +186,309 @@ def audit_ledger_gap() -> None:
         print(f"    {c}")
 
 
+# ---------------------------------------------------------------- 축 5·6 (2026-07-23 추가)
+
+# 각 필드가 어느 소비처에서 실제로 읽히는지. 출처는 코드 실측이다.
+#   evidence  = runtime/live_evidence_pack.classify_live_evidence_state / build_live_evidence_pack
+#   route     = runtime/action_routing.route_candidate_action (execution_context 경유)
+FIELD_CONSUMERS = {
+    "current_price":          ("evidence", "route"),
+    "ret_3m_pct":             ("evidence",),
+    "ret_5m_pct":             ("evidence",),
+    "opening_range_break":    ("evidence",),
+    "vwap_distance_pct":      ("evidence",),
+    "volume_ratio_open":      ("evidence",),
+    "momentum_state":         ("evidence",),
+    "pullback_from_high_pct": ("evidence",),
+    "spread_bps":             ("evidence",),      # fade_recovered_shadow(KR)에서만
+    "time_normalized_rvol":   (),                 # 계산되지만 읽는 소비처가 없다
+    "vwap":                   (),
+    "opening_range_high":     (),
+}
+
+
+def audit_field_flow(since: str, sample: int = 20000) -> None:
+    """축 5 — 필드의 [생성]→[전달]→[소비] 흐름.
+
+    누수는 세 유형으로 갈린다. 이 셋을 구분해야 처방이 갈린다.
+      빠짐   : 소비처가 읽는데 생성 자체가 없다
+      안넘김 : 생성됐는데 다음 단계 컨텍스트로 전달되지 않는다
+      안씀   : 전달까지 됐는데 아무도 읽지 않는다
+    """
+    con = _con(AUDIT_DB)
+    if not con:
+        return
+    gen: Counter = Counter()
+    ctx: Counter = Counter()
+    n = 0
+    for pof, pj in con.execute(
+        "SELECT post_open_features_json, payload_json FROM audit_candidate_rows "
+        "WHERE session_date>=? AND post_open_features_json NOT IN ('','{}','null') "
+        f"LIMIT {int(sample)}", (since,)
+    ):
+        n += 1
+        try:
+            feats = json.loads(pof) or {}
+        except (TypeError, ValueError):
+            feats = {}
+        try:
+            gate = (json.loads(pj) or {}).get("runtime_gate") or {}
+        except (TypeError, ValueError):
+            gate = {}
+        for key in FIELD_CONSUMERS:
+            if feats.get(key) is not None:
+                gen[key] += 1
+            if isinstance(gate, dict) and gate.get(key) is not None:
+                ctx[key] += 1
+
+    print(f"  표본 {n}행 — [생성] post_open_features → [전달] runtime_gate ctx")
+    print(f"    {'필드':24s} {'생성':>7s} {'전달':>7s} {'소비처':<18s} 판정")
+    for key, consumers in FIELD_CONSUMERS.items():
+        g, c = gen[key], ctx[key]
+        who = ",".join(consumers) if consumers else "(없음)"
+        verdict = ""
+        if g == 0 and consumers:
+            verdict = "★빠짐 — 소비처가 읽는데 생성 0"
+        elif g >= 100 and c == 0 and "route" in consumers:
+            verdict = "★안넘김 — 생성되나 route ctx 미전달"
+        elif g >= 100 and c == 0 and not consumers:
+            verdict = "★안씀 — 계산만 하고 소비처 없음"
+        elif g >= 100 and not consumers:
+            verdict = "안씀(전달은 됨)"
+        elif g and c and c < g * 0.5:
+            verdict = f"전달률 {c/g*100:.0f}% — 부분 누락"
+        print(f"    {key:24s} {g:7d} {c:7d} {who:<18s} {verdict}")
+
+
+def audit_placeholder_columns(since: str) -> None:
+    """축 5b — 값은 채워져 있는데 고유값이 1개인 컬럼(= 실제 데이터가 아닌 placeholder)."""
+    con = _con(AUDIT_DB)
+    if not con:
+        return
+    targets = ["atr_pct", "volume_ratio", "from_high_pct", "candidate_quality_score",
+               "trainer_prompt_score", "cohort_reliability", "entry_delay_min",
+               "position_mfe_pct", "position_mae_pct", "us_early_entry_size_mult"]
+    print("\n  값은 있으나 고유값 1개 = placeholder 의심")
+    for c in targets:
+        try:
+            total, filled, uniq = con.execute(
+                f'SELECT COUNT(*), SUM("{c}" IS NOT NULL AND "{c}"!=\'\'), COUNT(DISTINCT "{c}") '
+                f"FROM audit_candidate_rows WHERE session_date>=?", (since,)).fetchone()
+        except sqlite3.Error:
+            continue
+        filled = filled or 0
+        if not total:
+            continue
+        mark = ""
+        if filled >= 1000 and uniq <= 1:
+            mark = "  ★placeholder"
+        elif filled == 0:
+            mark = "  ★미수집"
+        print(f"    {c:26s} 값보유 {filled:6d}/{total:<6d} 고유값 {uniq:5d}{mark}")
+
+
+def _pick_cases(since: str, per_bucket: int) -> list:
+    """축 6 시드 — 다양한 종목 × 시나리오를 원장에서 뽑는다.
+
+    한 종목이 시나리오를 독식하지 않도록 ticker당 1건으로 제한한다
+    (평균의 오류: 종목 편중이 결론을 만든다).
+    """
+    con = _con(AUDIT_DB)
+    if not con:
+        return []
+    scenarios = [
+        ("S1 judge BUY_READY", "claude_action='BUY_READY'"),
+        ("S2 judge PULLBACK_WAIT", "claude_action='PULLBACK_WAIT'"),
+        ("S3 judge PROBE_READY", "claude_action='PROBE_READY'"),
+        ("S4 ceiling 강등", "evidence_action_ceiling IN ('PROBE_READY','WATCH') AND in_prompt=1"),
+        ("S5 route 차단", "route_final_action='WATCH' AND claude_action NOT IN ('WATCH','')"),
+        ("S6 실제 체결", "filled_count>0"),
+    ]
+    out = []
+    for label, where in scenarios:
+        seen = set()
+        rows = con.execute(
+            "SELECT market, ticker, session_date, known_at, claude_action, "
+            "post_open_features_json, payload_json, evidence_data_state, "
+            "evidence_action_ceiling, route_final_action, route_route, filled_count "
+            f"FROM audit_candidate_rows WHERE session_date>=? AND {where} "
+            "AND post_open_features_json NOT IN ('','{}','null') "
+            "ORDER BY session_date DESC LIMIT 4000", (since,)).fetchall()
+        for r in rows:
+            key = (r[0], r[1])
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append((label, r))
+            if len(seen) >= per_bucket:
+                break
+    return out
+
+
+def audit_injection(since: str, per_bucket: int = 8) -> None:
+    """축 6 — 실제 종목 데이터를 파이프라인에 직접 주입해 어디서 끊기는지 종목별로 지목.
+
+    통계 집계로는 "몇 %가 죽는다"까지만 나온다. 종목 단위로 값을 넣어봐야
+    "이 종목은 이 필드가 없어서 여기서 죽었고, 채우면 살아난다"가 나온다.
+    """
+    try:
+        import sys as _sys
+        if str(ROOT) not in _sys.path:
+            _sys.path.insert(0, str(ROOT))
+        from runtime.live_evidence_pack import build_live_evidence_pack
+    except ImportError as exc:
+        print(f"  evidence 모듈 임포트 실패: {exc}")
+        return
+
+    cases = _pick_cases(since, per_bucket)
+    if not cases:
+        print("  주입할 케이스 없음")
+        return
+
+    # ★ 확인 3필드만 보면 안 된다. evidence는 코어 모멘텀(ret_3m/ret_5m)도 함께 세고,
+    #   그쪽이 비면 확인 필드를 다 채워도 partial에 남는다(DELL이 그 사례였다).
+    confirm = ("opening_range_break", "vwap_distance_pct", "volume_ratio_open")
+    core = ("ret_3m_pct", "ret_5m_pct", "current_price")
+    tracked = confirm + core
+    fillers = {"opening_range_break": False, "vwap_distance_pct": 0.0,
+               "volume_ratio_open": 1.0, "ret_3m_pct": 0.0, "ret_5m_pct": 0.0,
+               "current_price": 1.0}
+    leak_kinds: Counter = Counter()
+
+    print(f"  케이스 {len(cases)}건 (종목 중복 제외, 시나리오당 최대 {per_bucket}종목)")
+    print("  ceiling은 원장/재생 둘 다 표시한다 — 어긋나면 그 자체가 전파 누수다.\n")
+    print(f"    {'시나리오':20s} {'시장':4s} {'종목':9s} {'세션':11s} "
+          f"{'원장ceil':11s} {'재생ceil':11s} {'결측필드':40s} 주입 반사실")
+    last_label = None
+    for label, r in cases:
+        (mkt, tkr, sess, _known, c_act, pof, _pj, _st, ceil, _rfa, _rr, _fc) = r
+        try:
+            feats = json.loads(pof) or {}
+        except (TypeError, ValueError):
+            continue
+        act = {"action": c_act or "WATCH"}
+        pack = build_live_evidence_pack(market=mkt, ticker=tkr, features=feats, action=act)
+        replayed = pack["action_ceiling"]
+        missing = [f for f in tracked if feats.get(f) is None]
+
+        cure = "-"
+        if replayed != "BUY_READY":
+            # ① 한 필드만 채워도 풀리는가 — 단일 병목 지목
+            for f in missing:
+                trial = build_live_evidence_pack(
+                    market=mkt, ticker=tkr, features={**feats, f: fillers[f]}, action=act)
+                if trial["action_ceiling"] == "BUY_READY":
+                    cure = f"{f} 하나로 해소"
+                    leak_kinds[f"단일필드 병목:{f}"] += 1
+                    break
+            else:
+                if missing:
+                    trial = build_live_evidence_pack(
+                        market=mkt, ticker=tkr,
+                        features={**feats, **{f: fillers[f] for f in missing}}, action=act)
+                    if trial["action_ceiling"] == "BUY_READY":
+                        cure = f"{len(missing)}필드 동시 필요({','.join(missing)})"
+                        leak_kinds["복합 결측"] += 1
+                    else:
+                        # 필드를 다 채워도 안 풀리면 진짜 게이트를 지목한다(추측 금지).
+                        # data_quality는 pack이 최종 판정한 값을 봐야 한다.
+                        # features에 없으면 pack이 'unknown'으로 채우고 그게 곧 강등이다.
+                        dq = str(trial.get("data_quality") or "")
+                        raw_dq = feats.get("data_quality")
+                        mom = str(feats.get("momentum_state") or "")
+                        if trial.get("data_state") != "confirmed":
+                            why = f"잔여 결측({trial.get('data_state')})"
+                        elif mom == "fade":
+                            why = "momentum_state=fade"
+                        elif raw_dq is None and dq in {"unknown", "first_observed", "missing"}:
+                            why = f"data_quality 미전달 → '{dq}' 대입되어 강등"
+                        elif dq in {"first_observed", "unknown", "missing"}:
+                            why = f"data_quality={dq} 게이트"
+                        else:
+                            why = f"미상(state=confirmed,dq={dq})"
+                        cure = f"필드 무관 — {why}"
+                        leak_kinds[f"필드 무관:{why}"] += 1
+                else:
+                    cure = "결측 없음 — 다른 단계에서 차단"
+                    leak_kinds["evidence 통과(하류 차단)"] += 1
+
+        # 이원화 점검: 같은 개념의 대체 필드가 실제로 존재하는가
+        alt = ""
+        if "volume_ratio_open" in missing and feats.get("time_normalized_rvol") is not None:
+            alt = f"  ※rvol={feats['time_normalized_rvol']} 있으나 evidence 미인정"
+            leak_kinds["필드 이원화(rvol 있으나 미사용)"] += 1
+
+        diverge = "" if str(ceil or "") == replayed else "  ★원장≠재생"
+        head = label if label != last_label else ""
+        last_label = label
+        print(f"    {head:20s} {mkt:4s} {tkr:9s} {sess:11s} "
+              f"{str(ceil or '-'):11s} {replayed:11s} "
+              f"{','.join(missing) or '(없음)':40s} {cure}{alt}{diverge}")
+
+    print("\n  주입 결과 누수 유형 집계")
+    for k, v in leak_kinds.most_common():
+        print(f"    {k:40s} {v}건")
+
+
+def audit_stream_liveness() -> None:
+    """축 7 — funnel 스트림 생존.
+
+    ★ 주의: '안 찍힘 = 누수'가 아니다. 조건부 로거는 이벤트가 없으면 안 찍히는 게 정상이다.
+    그래서 상시/조건부를 표시하고, 조건부는 판정을 유보한다.
+    """
+    import re
+    from datetime import datetime
+    fdir = ROOT / "logs" / "funnel"
+    if not fdir.exists():
+        return
+    # 코드 실측 기반 분류. 조건부는 "그 사건이 없으면 0건이 정상"이다.
+    KIND = {
+        "candidate_funnel_snapshot": "상시", "post_open_feature_snapshot": "상시",
+        "gate_evaluation": "상시", "candidate_cycle_latency": "상시",
+        "selection_intraday_evidence_coverage": "상시", "action_routing_shadow": "상시",
+        "single_symbol_judge": "조건부(judge 호출 시)",
+        "exit_lifecycle_decision": "조건부(청산후보·장중리뷰 발생 시, 쿨다운 중복억제)",
+        "auto_sell_review_force_sell_bypass": "조건부(강제매도 임계 돌파 시)",
+        "system_sell_bypass": "조건부(EXIT_LIFECYCLE_ALLOWLIST_LIVE off면 영구 0건)",
+        "hold_advisor_cache_hard_guard_bypass": "조건부(hard_guard+review_all 동시)",
+        "session_evidence_degraded": "조건부(엣지 트리거·장애 시에만)",
+        "kr_plan_a_no_signal_pathb_shadow": "조건부(KR 전용)",
+        "tail_capture": "조건부(TAIL_CAPTURE_MODE 기본 off면 영구 0건)",
+        "fast_fill": "조건부(매수 미체결 데드존 진입 시)",
+    }
+    streams: dict = {}
+    for name in fdir.iterdir():
+        m = re.match(r"^(.*?)_(\d{8})_(KR|US)\.jsonl$", name.name)
+        if not m:
+            m2 = re.match(r"^(.*?)_(\d{4}-\d{2}-\d{2})(_(KR|US))?\.(jsonl|json)$", name.name)
+            if not m2:
+                continue
+            stream, day = m2.group(1), m2.group(2).replace("-", "")
+        else:
+            stream, day = m.group(1), m.group(2)
+        streams.setdefault(stream, []).append(day)
+
+    print("  ★ '안 찍힘 = 누수' 아님. 조건부 로거는 사건이 없으면 0건이 정상이다.")
+    print(f"    {'스트림':42s} {'마지막':10s} {'경과':>5s}  분류")
+    today = datetime(2026, 7, 23)
+    for stream, days in sorted(streams.items(), key=lambda kv: max(kv[1])):
+        last = max(days)
+        try:
+            age = (today - datetime.strptime(last, "%Y%m%d")).days
+        except ValueError:
+            continue
+        kind = KIND.get(stream, "미분류")
+        mark = ""
+        if kind == "상시" and age > 3:
+            mark = "  ★상시인데 끊김"
+        print(f"    {stream:42s} {last:10s} {age:4d}일  {kind}{mark}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="파이프라인 무결성 감사")
     ap.add_argument("--since", default="2026-07-01")
     ap.add_argument("--market", default="both", choices=["US", "KR", "both"])
+    ap.add_argument("--cases", type=int, default=8, help="축6 시나리오당 종목 수")
     args = ap.parse_args()
     markets = ["US", "KR"] if args.market == "both" else [args.market]
 
@@ -204,6 +503,16 @@ def main() -> int:
         audit_propagation(args.since, mk)
     print("\n[축4] 원장 간 전파 갭")
     audit_ledger_gap()
+
+    print("\n[축5] 필드 흐름 — [생성]→[전달]→[소비] 중 어디서 끊기는가")
+    audit_field_flow(args.since)
+    audit_placeholder_columns(args.since)
+
+    print("\n[축6] 종목별 주입 검증 — 실제 데이터를 넣어 어디서 끊기는지 지목")
+    audit_injection(args.since, per_bucket=args.cases)
+
+    print("\n[축7] funnel 스트림 생존")
+    audit_stream_liveness()
     print("\n판정: '★급감'과 'placeholder 의심'이 나온 지점이 누수 후보다.")
     print("      코드가 있어도 데이터가 조건을 못 채우면 실전에서만 드러난다.")
     return 0
