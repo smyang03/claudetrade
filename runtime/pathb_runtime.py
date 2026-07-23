@@ -10691,6 +10691,26 @@ class PathBRuntime:
             pos=pos,
             exit_meta=exit_meta,
         )
+        # 2026-07-24 Codex P0-③: PathB 청산도 hold advisor JSONL outcome을 닫는다.
+        # 기존엔 _finalize_pathb_sell_close가 outcome 기록을 호출하지 않아 018880처럼 hold
+        # 판단이 맞아도 outcome=null로 남았다(결과·학습 배선 실패). _update는 같은 ticker의
+        # 미결 행만 갱신하므로 hold 판단이 없던 포지션엔 무영향(no-op). 손절/보호청산은
+        # 이익여부로 실패 라벨하지 않는다(Codex P0-④와 정합). decision_id 정밀연결은 후속.
+        try:
+            updater = getattr(self.bot, "_update_hold_advisor_jsonl_outcome", None)
+            if callable(updater):
+                cr = str(close_reason or "").lower()
+                is_protective = any(k in cr for k in ("stop", "loss_cap", "hard_stop", "weak_mfe", "trail"))
+                pnl_pct = float((ex or {}).get("pnl_pct") or 0.0)
+                success = True if is_protective else (pnl_pct > 0)
+                patched = updater(plan.ticker, "SELL", success, exit_price_krw, pnl_pct)
+                if patched:
+                    log.info(
+                        f"[hold_advisor 결과·PathB] {plan.ticker} SELL({close_reason}) "
+                        f"→ {'성공' if success else '실패'} pnl={pnl_pct:+.2f}%"
+                    )
+        except Exception:
+            pass
         if close_reason in {"CLOSED_LOSS_CAP", "CLOSED_HARD_STOP", "CLOSED_CLAUDE_PRICE_STOP", "CLOSED_WEAK_MFE"}:
             key = None
             try:

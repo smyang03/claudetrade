@@ -29931,12 +29931,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 elif exit_price > 0 and self.usd_krw_rate > 0 and exit_price < 5000:
                     # exit_price가 USD raw 값으로 의심될 때 (< $5000 수준) → KRW 환산
                     exit_price = exit_price * self.usd_krw_rate
+            # 2026-07-24 Codex P0-④: success를 최종 pnl>0로만 판정하지 않는다.
+            # 손절/보호청산은 계획대로 실행됐으면 이익여부와 무관하게 실패가 아니다
+            # (보유 시 더 큰 손실 가능 — 손절의 목적은 이익이 아니라 손실 제한).
+            exit_reason = str(
+                ex.get("exit_reason") or ex.get("reason") or (advice or {}).get("reason") or ""
+            ).lower()
+            is_protective_stop = any(
+                k in exit_reason for k in ("stop", "loss_cap", "hard_stop", "trail", "protect")
+            )
             if decision in ("HOLD", "TRAIL"):
                 # HOLD/TRAIL 성공: 청산가 > TP 도달가 (보유/트레일 덕에 더 벌었음)
                 success = exit_price > tp_price if tp_price > 0 else (ex.get("pnl", 0) > 0)
                 # 추가 수익: TP 대비 청산가 차이
                 extra_pnl_pct = ((exit_price / tp_price - 1) * 100) if tp_price > 0 else 0.0
-            else:  # SELL (즉시 청산)
+            elif is_protective_stop:
+                # 계획된 손절 실행은 성공(음수 pnl이어도). 보유 대비 감축의 정량 비교는
+                # bounded-hold 반사실이 별도로 필요하며, 여기서 pnl>0 실패 라벨은 붙이지 않는다.
+                try:
+                    stop_ref = float(ex.get("stop_price") or ex.get("stop") or (advice or {}).get("stop_loss") or 0.0)
+                except (TypeError, ValueError):
+                    stop_ref = 0.0
+                success = True if stop_ref > 0 or exit_reason else (ex.get("pnl", 0) > 0)
+                extra_pnl_pct = ex.get("pnl_pct", 0.0)
+            else:  # SELL (즉시 청산, 손절 아님)
                 # TP 도달 → 즉시 청산 자체는 수익 실현
                 success = ex.get("pnl", 0) > 0
                 extra_pnl_pct = ex.get("pnl_pct", 0.0)
@@ -30097,8 +30115,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log_file.write_text(
                 "\n".join(reversed(updated)) + "\n", encoding="utf-8"
             )
+            return patched
         except Exception as e:
             log.warning(f"[hold_advisor] JSONL outcome 업데이트 실패: {e}")
+            return False
     def _backfill_missed_postmortem(self, market: str):
         """재시작·비정상종료로 session_close 미실행 → actual_result 공백인 날 postmortem 소급"""
         base_date = self._current_session_date(market)
