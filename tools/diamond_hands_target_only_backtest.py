@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def load_positions(market):
     con = sqlite3.connect(str(ROOT / "data/ml/decisions.db"))
     con.row_factory = sqlite3.Row
-    q = ("SELECT market,ticker,session_date,entry_price,exit_price,pnl_pct,close_reason "
+    q = ("SELECT market,ticker,session_date,entry_price,exit_price,pnl_pct,pnl_pct_net,close_reason "
          "FROM v2_learning_performance WHERE status='CLOSED' "
          "AND entry_price IS NOT NULL AND entry_price>0")
     args = []
@@ -102,14 +102,15 @@ def main():
             no_data += 1
             continue
         entry = float(p["entry_price"]); target = float(p["sell_target"])
+        _fee = 0.44 if str(p.get("market") or "").upper()=="US" else 0.21  # 왕복 수수료(net actual 과 공정비교 2026-07-23)
         hit = float(fwd["High"].max()) >= target
         if hit:
-            cf = (target / entry - 1) * 100
+            cf = (target / entry - 1) * 100 - _fee
             outcome = "target_hit"
         else:
-            cf = (float(fwd["Close"].iloc[-1]) / entry - 1) * 100
+            cf = (float(fwd["Close"].iloc[-1]) / entry - 1) * 100 - _fee
             outcome = "still_holding"
-        res.append({"tk": tk, "actual": p["pnl_pct"] or 0.0, "cf": cf,
+        res.append({"tk": tk, "actual": (p["pnl_pct_net"] if p.get("pnl_pct_net") is not None else p["pnl_pct"]) or 0.0, "cf": cf,
                     "outcome": outcome, "reason": p["close_reason"]})
 
     if not res:

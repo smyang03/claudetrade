@@ -17,14 +17,22 @@ from pathlib import Path
 from statistics import mean, median
 
 ROOT = Path(__file__).resolve().parents[1]
-COST = 0.5  # 왕복 % 가정
+COST = 0.5  # 왕복 % 가정 (measured net 없는 행의 폴백 근사)
+
+
+def _net(r):
+    # net 우선(2026-07-23): measured/backfilled net 있으면 그걸 쓰고, 없을 때만 가정 COST.
+    v = r.get("pnl_pct_net")
+    if v is not None:
+        return float(v)
+    return float(r["pnl_pct"]) - COST
 
 
 def load_us():
     con = sqlite3.connect(str(ROOT / "data/ml/decisions.db"))
     con.row_factory = sqlite3.Row
     rows = [dict(r) for r in con.execute(
-        "SELECT ticker,session_date,pnl_pct,close_reason FROM v2_learning_performance "
+        "SELECT ticker,session_date,pnl_pct,pnl_pct_net,net_basis,close_reason FROM v2_learning_performance "
         "WHERE status='CLOSED' AND market='US' AND pnl_pct IS NOT NULL "
         "AND session_date IS NOT NULL ORDER BY session_date").fetchall()]
     con.close()
@@ -71,8 +79,8 @@ def split_report(rows, feat, key, label):
     off = [r for r in rows if r["session_date"] in feat and not feat[r["session_date"]].get(key)]
     if not on or not off:
         print(f"  {label:22} (표본부족 on={len(on)} off={len(off)})"); return
-    on_net = [r["pnl_pct"] - COST for r in on]
-    off_net = [r["pnl_pct"] - COST for r in off]
+    on_net = [_net(r) for r in on]
+    off_net = [_net(r) for r in off]
     print(f"  {label:22} ON n={len(on):>3} net평균{mean(on_net):+.2f}% 합{sum(on_net):+6.0f} | "
           f"OFF n={len(off):>3} net평균{mean(off_net):+.2f}% | "
           f"스킵ON시 합{sum(off_net):+6.0f}(현행{sum(on_net)+sum(off_net):+.0f})")
@@ -83,9 +91,9 @@ def main():
     feat = qqq_features()
     matched = [r for r in rows if r["session_date"] in feat]
     print(f"US 청산 {len(rows)}건, QQQ 일봉 매칭 {len(matched)}건")
-    base_net = sum(r["pnl_pct"] - COST for r in matched)
+    base_net = sum(_net(r) for r in matched)
     print(f"현행 전체 net 합(비용 {COST}% 반영): {base_net:+.1f}%p  "
-          f"평균 {mean([r['pnl_pct']-COST for r in matched]):+.2f}%\n")
+          f"평균 {mean([_net(r) for r in matched]):+.2f}%\n")
 
     print("=== [1] ex-ante 신호별: 신호 ON 세션 포지션이 더 나쁜가? + 스킵 효과 ===")
     print("    (스킵ON시 합 > 현행 이면 그 신호로 줄이는 게 이득)")

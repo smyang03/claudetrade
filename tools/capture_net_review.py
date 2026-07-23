@@ -189,11 +189,21 @@ def build_report(
     report: dict[str, Any] = {"by_market": {}, "by_close_reason": {}, "by_hold_bucket": {}, "by_ticker": {}, "capture": {}, "mfe_capture": {}, "by_month": {}}
 
     # 측정 재정의: 실제 MFE 기반 net capture + 월별 국면 분해
+    try:
+        from audit.mfe_trust import is_holding_period_mfe
+    except Exception:
+        def is_holding_period_mfe(row):  # 폴백: mfe_time 유무
+            t = row.get("mfe_time"); return bool(t and str(t).strip())
+
     for market in ("US", "KR"):
         rows = [r for r in closed if str(r["market"]).upper() == market]
         if not rows:
             continue
-        pairs = [(net_of(r), mfe_of(r)) for r in rows]
+        # ★ 2026-07-23: net_capture 는 live-observed MFE(mfe_time 있음)에만 유효.
+        # mfe_pct 가 채워져 있어도 100% 가 일봉 backfill 이면 capture 는 착시다.
+        live_rows = [r for r in rows if is_holding_period_mfe(r)]
+        backfill_dropped = len(rows) - len(live_rows)
+        pairs = [(net_of(r), mfe_of(r)) for r in live_rows]
         pairs = [(n, m) for n, m in pairs if m and m > 0]
         # mfe 출처 커버리지(ledger=라이브배선 / backfill=yfinance) — Phase0→1 전환 가시화.
         src = {"ledger": 0, "backfill": 0, "none": 0}
@@ -207,6 +217,8 @@ def build_report(
                 "avg_mfe_pct": round(mfe_sum / len(pairs), 2),
                 "net_capture_ratio": round(net_sum / mfe_sum, 3) if mfe_sum else None,
                 "mfe_source": src,
+                "backfill_dropped": backfill_dropped,
+                "capture_valid": len(pairs) > 0,
             }
         months: dict[str, list[float]] = defaultdict(list)
         for r in rows:

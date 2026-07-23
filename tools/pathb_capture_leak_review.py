@@ -49,7 +49,13 @@ def _load(since: str, market: str):
             p = json.loads(pj)
         except json.JSONDecodeError:
             continue
-        pnl = p.get("pnl_pct")
+        # net 우선(2026-07-23): plan_json 에 net_after_fx_est/net_est 가 있으면 그걸 쓴다.
+        # leak/capture/손익비를 gross(pnl_pct)로 판정하면 수수료·FX 를 무시한다.
+        pnl = p.get("pnl_pct_net_after_fx_est")
+        if pnl is None:
+            pnl = p.get("pnl_pct_net_est")
+        if pnl is None:
+            pnl = p.get("pnl_pct")
         if pnl is None:
             continue
         fl = p.get("profit_review_ladder_floor")
