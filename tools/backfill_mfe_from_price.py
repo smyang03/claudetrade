@@ -116,6 +116,42 @@ def backfill(con: sqlite3.Connection, table: str, apply: bool) -> dict:
     return {"table": table, "candidates": len(rows), "filled": len(updates), "skip": skip}
 
 
+def propagate_learning_to_canonical(con: sqlite3.Connection, apply: bool) -> dict:
+    """learning.mfe_pct/mae_pct → canonical (canonical 이 NULL 인 것만).
+
+    왜 필요한가 (2026-07-23 데이터 흐름 점검):
+      mfe backfill 소스가 여럿이고(일봉·yfinance·라이브 observed), 일부는 learning만
+      갱신해 canonical 이 뒤처진다. 실측: 6월 US canonical.mfe_pct 45/130 vs learning 130/130.
+      canonical 을 읽는 분석이 편향 부분표본을 보게 된다(대박률 19% vs 실제 35%).
+      두 값은 동일 소스라(둘 다 보유분 74건 전량 일치) 복사가 안전하다 — 재계산 아님.
+    """
+    if not _table_exists(con, "v2_learning_performance") or not _table_exists(con, "v2_canonical_performance"):
+        return {"propagate": "skipped(table missing)"}
+    n = con.execute(
+        "SELECT COUNT(*) FROM v2_canonical_performance c "
+        "WHERE c.closed=1 AND (c.mfe_pct IS NULL OR c.mae_pct IS NULL) "
+        "AND EXISTS (SELECT 1 FROM v2_learning_performance l WHERE l.v2_decision_id=c.v2_decision_id "
+        "AND (l.mfe_pct IS NOT NULL OR l.mae_pct IS NOT NULL))"
+    ).fetchone()[0]
+    if apply and n:
+        con.execute(
+            "UPDATE v2_canonical_performance SET "
+            "mfe_pct=COALESCE(mfe_pct,(SELECT l.mfe_pct FROM v2_learning_performance l WHERE l.v2_decision_id=v2_canonical_performance.v2_decision_id)), "
+            "mae_pct=COALESCE(mae_pct,(SELECT l.mae_pct FROM v2_learning_performance l WHERE l.v2_decision_id=v2_canonical_performance.v2_decision_id)) "
+            "WHERE closed=1 AND (mfe_pct IS NULL OR mae_pct IS NULL) "
+            "AND EXISTS (SELECT 1 FROM v2_learning_performance l WHERE l.v2_decision_id=v2_canonical_performance.v2_decision_id "
+            "AND (l.mfe_pct IS NOT NULL OR l.mae_pct IS NOT NULL))"
+        )
+        con.commit()
+    return {"propagate": n}
+
+
+def _table_exists(con: sqlite3.Connection, table: str) -> bool:
+    return con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1", (table,)
+    ).fetchone() is not None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--db", default=str(DEFAULT_ML_DB))
@@ -130,6 +166,9 @@ def main() -> None:
             print(f"[{r['table']}] SKIP {r['skipped']}")
         else:
             print(f"[{r['table']}] NULL 후보 {r['candidates']} → 채움 {r['filled']}  skip={r['skip']}")
+    # 어느 백필 소스가 learning 을 채웠든 canonical 을 일치시킨다(2026-07-23 데이터 흐름 가드).
+    pr = propagate_learning_to_canonical(con, args.apply)
+    print(f"[propagate learning→canonical] mfe/mae 갭 {pr.get('propagate')}")
     con.close()
     if not args.apply:
         print("\n→ 적용: python tools/backfill_mfe_from_price.py --apply")
