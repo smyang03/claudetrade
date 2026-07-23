@@ -75,6 +75,32 @@ ret5>5 AND NOT MILD_BEAR (470건):
 세션 단위로 쌓는 관측기. 오늘 배포한 tighten shadow와 같은 형태(기록만).
 살아남으면 룰 기반 매수 경로로 승격 검토(운영자), 무너지면 종결. 지금은 착수 금지 — 관측 먼저.
 
+## 5b. 프롬프트 실체 — judge가 강모멘텀을 거르는 구조적 이유
+
+`execution/single_symbol_judge.py` build_single_symbol_judge_prompt 확인:
+1. **기본값은 BUY_READY 금지**: buy_ready 게이트 off면 "Do not use BUY_READY or PROBE_READY",
+   PULLBACK_WAIT/WAIT/REJECT만. PULLBACK_WAIT은 눌림 존 요구.
+2. **PULLBACK_ZONE_RULE**(prompt_contracts.py): "buy_zone_high must sit at least 0.5% BELOW
+   current price. A zone that fills immediately is a chase, not a pullback." → 고점에서 달리는
+   강모멘텀은 눌림 존이 없어 WAIT_RECHECK 강제.
+3. **BUY_READY 게이트**(config): US만 · `MILD_BULL,MODERATE_BULL,AGGRESSIVE`만 허용.
+   내 데이터의 수익 국면 **CAUTIOUS(+0.874)·NEUTRAL(+0.492)이 목록에 없어** 눌림-대기로 강제.
+
+= 프롬프트·config가 "눌림을 기다려라" 철학이라 수익나는 극단 모멘텀 스파이크를 구조적으로 금지.
+단 BUY_READY guide 자체는 이미 "strong momentum, keep stop TIGHT, winners run"으로 옳은
+방향 — 게이트가 너무 좁을 뿐이다.
+
+## 5c. 외부 레퍼런스 — 유사 LLM 트레이딩 시스템은 어떻게 하나
+
+QuantAgent(arxiv 2509.09995) 등 다중에이전트 LLM 트레이딩:
+- Decision Agent: "**Favour strong momentum and decisive price action**(MACD crossover,
+  breakout candle)" — 기계적 눌림 규칙보다 강신호 우선.
+- 고점 extended여도 자동 눌림 대기 안 함. **breakout continuation 또는 pullback 둘 다 유효**.
+- 과매수(RSI>70)면 차단이 아니라 "**tighten stops, scale position size**"(손절 조임·사이즈 축소).
+
+= 우리 데이터(극단모멘텀 수익·확인 과요구가 해침)와 업계 관행이 **일치**한다:
+  강모멘텀은 사되(breakout), extension은 사이즈·손절로 관리하지 **차단하지 않는다.**
+
 ## 6. 이 검토가 답한 것
 
 - "프롬프트/정보로 개선되나" → 정보 교체·완화 전부 악화. 현행 확인기준은 못 살린다.
