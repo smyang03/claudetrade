@@ -179,7 +179,14 @@ def metrics_from_rows(rows: list[dict[str, Any]], value_key: str) -> dict[str, A
     values: list[float] = []
     dates: list[str] = []
     for row in rows:
-        value = _num(row.get(value_key))
+        # net 우선(2026-07-23): gross(pnl_pct)로 라이브 승격을 판정하면 수수료·FX를 무시해
+        # 거짓 레버가 나온다. pnl_pct 요청 시 pnl_pct_net 이 있으면 그걸 쓴다.
+        if value_key == "pnl_pct":
+            value = _num(row.get("pnl_pct_net"))
+            if value is None:
+                value = _num(row.get("pnl_pct"))
+        else:
+            value = _num(row.get(value_key))
         if value is None:
             continue
         values.append(value)
@@ -262,7 +269,7 @@ def _fetch_closed_learning(
     sql = f"""
         SELECT
             session_date, ticker, route, path_type, strategy, origin_action,
-            pnl_pct, mfe_pct, mae_pct, close_reason
+            pnl_pct, pnl_pct_net, mfe_pct, mae_pct, close_reason
         FROM v2_learning_performance
         WHERE {" AND ".join(item.replace(".session_date", "session_date") for item in where)}
     """
@@ -282,7 +289,7 @@ def closed_learning_candidates(
             category="closed_trade",
             metric=overall,
             thresholds=thresholds,
-            basis="v2_learning_performance.pnl_pct",
+            basis="v2_learning_performance.pnl_pct_net(net우선)",
         )
     )
 
@@ -298,7 +305,7 @@ def closed_learning_candidates(
                 category="closed_trade_strategy",
                 metric=metrics_from_rows(group, "pnl_pct"),
                 thresholds=thresholds,
-                basis="v2_learning_performance.pnl_pct",
+                basis="v2_learning_performance.pnl_pct_net(net우선)",
             )
         )
     for route, group in sorted(by_route.items(), key=lambda item: (-len(item[1]), item[0])):
@@ -308,7 +315,7 @@ def closed_learning_candidates(
                 category="closed_trade_route",
                 metric=metrics_from_rows(group, "pnl_pct"),
                 thresholds=thresholds,
-                basis="v2_learning_performance.pnl_pct",
+                basis="v2_learning_performance.pnl_pct_net(net우선)",
             )
         )
     loss_cap_rows = [

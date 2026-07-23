@@ -56,9 +56,11 @@ def load_decisions(market: str = "") -> list[dict]:
 def load_realized() -> dict:
     c = sqlite3.connect(f"file:{ML_DB}?mode=ro", uri=True)
     real = {}
+    # net 우선(2026-07-23): gross(pnl_pct)로 profit_guard kill/rollback(라이브 토글)을
+    # 판정하면 수수료·FX를 무시해 거짓 레버가 나온다. net 있으면 net을 쓴다.
     for r in c.execute(
-        "SELECT path_run_id,pnl_pct,close_reason,market FROM v2_learning_performance "
-        "WHERE closed=1 AND pnl_pct IS NOT NULL"
+        "SELECT path_run_id, COALESCE(pnl_pct_net, pnl_pct) AS rp, close_reason, market "
+        "FROM v2_learning_performance WHERE closed=1 AND pnl_pct IS NOT NULL"
     ):
         if r[0]:
             real[r[0]] = {"rp": r[1], "cr": r[2], "mkt": r[3]}
@@ -100,7 +102,7 @@ def main() -> int:
             v = buckets[era][dec]
             if v:
                 wr = sum(1 for x in v if x > 0) / len(v) * 100
-                print(f"  {era:9} {dec}: n={len(v):3} 실현평균 {statistics.mean(v):+.2f}% 승률 {wr:.0f}%")
+                print(f"  {era:9} {dec}: n={len(v):3} net평균 {statistics.mean(v):+.2f}% 승률 {wr:.0f}%")
 
     print("\n## hold_mode별 outcome (전체)")
     bym = defaultdict(lambda: defaultdict(list))
