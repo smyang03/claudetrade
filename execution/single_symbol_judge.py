@@ -143,10 +143,22 @@ def build_single_symbol_judge_prompt(
         action_line = "Allowed action: BUY_READY, PULLBACK_WAIT, WAIT_RECHECK, REJECT.\n"
         route_line = "Allowed route: plan_a, path_b, wait, reject.\n"
         buy_ready_guide = (
-            "Use BUY_READY for immediate market entry when a good candidate shows strong continuation/"
-            "momentum in a strong regime — do NOT wait for a pullback. For BUY_READY (route=plan_a) include "
-            "sell_target, stop_loss, hold_days, confidence, invalid_if. Keep stop_loss TIGHT (small % below "
-            "current). Losers are cut at the stop; winners are held to run. buy_zone is not required for BUY_READY.\n"
+            # 2026-07-23: BUY_READY 게이트를 국면(regime)이 이미 통과시킨 뒤에만 이 guide가 붙는다.
+            # 여기서 "strong regime"을 다시 요구하면 게이트가 허용한 CAUTIOUS/NEUTRAL 국면에서
+            # judge가 BUY_READY를 안 고르는 게이트-프롬프트 모순이 생긴다(국면 변경 무력화).
+            # 판단 기준은 국면 이름이 아니라 이 후보의 모멘텀 강도다.
+            "Use BUY_READY for immediate market entry when THIS candidate shows strong continuation/"
+            "momentum (regardless of the regime label — the regime is already permitted) — do NOT wait "
+            "for a pullback. This is an asymmetric bet: keep stop_loss TIGHT (small % below current) so "
+            "losers are cut small, and hold winners to run. Most such entries make small gains and a few "
+            "run large; judge the asymmetry of the setup, not the probability that this one wins. "
+            "For BUY_READY (route=plan_a) include sell_target, stop_loss, hold_days, confidence, invalid_if. "
+            "buy_zone is not required for BUY_READY.\n"
+            # 스키마 예시가 PULLBACK_WAIT 하나뿐이라 one-shot 앵커가 눌림 쪽으로 당긴다.
+            # BUY_READY 가 허용된 경우 매수 예시를 함께 보여 앵커를 상쇄한다(2026-07-23).
+            'Example BUY_READY: {"ticker":"NVDA","market":"US","action":"BUY_READY","route":"plan_a",'
+            '"confidence":0.7,"reason":"sustained momentum, strong RVOL","reference_price":202.4,'
+            '"sell_target":214.0,"stop_loss":199.0,"hold_days":2,"invalid_if":"loses VWAP"}\n'
         )
     else:
         action_line = "Allowed action: PULLBACK_WAIT, WAIT_RECHECK, REJECT. Do not use BUY_READY or PROBE_READY.\n"
