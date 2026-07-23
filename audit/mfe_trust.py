@@ -30,7 +30,16 @@ def is_holding_period_mfe(row: dict[str, Any]) -> bool:
     """
     src = str(row.get("mfe_source") or "").strip().lower()
     if src:
-        return "backfill" not in src and "daily" not in src and "yf" not in src
+        # ★ 창 기준 구분: 'window'/'minute'/'live'/'observed' = 우리 보유창 안(유효).
+        #   'daily'/'yf' = 하루/외부 넓은 창(우리 보유 밖 고점 가능, 무효).
+        #   minute_window_backfill 은 'backfill' 이 들어 있어도 유효하다 — 진입~청산 분봉만 봤다.
+        if any(k in src for k in ("window", "minute", "live", "observed")):
+            return True
+        if any(k in src for k in ("daily", "yf")):
+            return False
+        # 그 외 backfill 은 창 불명 → 무효 취급(보수적)
+        if "backfill" in src:
+            return False
     mfe_time = row.get("mfe_time")
     return bool(mfe_time and str(mfe_time).strip())
 
