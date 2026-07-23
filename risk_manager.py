@@ -636,6 +636,76 @@ class RiskManager:
         except Exception:
             return
 
+    def _mark_early_path_tighten_shadow(self, pos: dict, cur_pnl: float) -> None:
+        """적색 30분 마크 건의 손절 차등화 후보를 관측만 한다(주문·리스크 무영향).
+
+        왜 필요한가 (2026-07-23 수익성 분석, 복구된 원장·6월 US measured):
+          손실 엔진 = LOSS_CAP 블록(전부 MFE<1%). 배포한 본전+0.8% 청산은 적색 후
+          그 가격까지 반등하는 건만 잡는다 — 6월 US 손실블록 18건 중 3건(17%)뿐.
+          나머지 83%(MFE 0~0.4%, 단조 하락, ONDS형)는 반등을 안 해 못 잡히고 손절로 죽는다.
+
+        가설: 적색 마크 + "본전+버퍼까지 반등한 적 없음"(단조 하락)이면 손절을 조여
+          이르게 정리한다. 반등건은 이미 위에 있어 조인 손절에 안 닿으므로 꼬리
+          (적색이었지만 이긴 건)를 버리지 않는다 — 메모리가 기각한 '단순 적색 컷'과 다르다.
+
+        검증 불가였던 이유: 30분 마크·이후 MAE 경로가 역사적으로 미수집(mfe_time 갭).
+          그래서 forward로만 판정 가능하다. 이 관측기가 그 입력을 세션 단위로 쌓는다.
+
+        기록만 하고 아무 판정에도 쓰이지 않는다. 전환은 실제 net 대조 후 운영자 승인.
+        """
+        mode = str(os.getenv("EARLY_PATH_TIGHTEN_SHADOW_MODE", "shadow") or "shadow").strip().lower()
+        if mode in {"off", "disabled", "false", "0", "no"}:
+            return
+        mark = pos.get("early_path_mark")
+        if mark is None or float(mark) > 0:
+            return  # 적색(마크<=0) 건만 대상. 미확정·녹색은 제외.
+
+        buffer_pct = max(0.0, _env_float("EARLY_PATH_BREAKEVEN_BUFFER_PCT", 0.005))
+        tighten_pct = _env_float("EARLY_PATH_TIGHTEN_STOP_PCT", -1.0)  # 가상 조인 손절선(%)
+        buffer_pnl = buffer_pct * 100.0
+
+        state = pos.get("early_path_tighten_shadow")
+        if not isinstance(state, dict):
+            # 마크 확정 시점의 기준선을 한 번 박는다.
+            state = {
+                "marked_at": datetime.now(KST).isoformat(timespec="seconds"),
+                "early_path_mark": round(float(mark), 3),
+                "buffer_pct": buffer_pct,
+                "tighten_stop_pct": tighten_pct,
+                "recovered_to_buffer": False,   # 이후 본전+버퍼 도달 여부(=반등건)
+                "post_mark_peak_pnl": round(float(cur_pnl), 3),
+                "post_mark_trough_pnl": round(float(cur_pnl), 3),
+                "tighten_would_fire": False,     # 가상 조인 손절 발동 여부
+                "tighten_fire_pnl": None,
+                "tighten_fire_at": None,
+            }
+            pos["early_path_tighten_shadow"] = state
+
+        # 마크 이후 경로 갱신
+        if float(cur_pnl) > float(state["post_mark_peak_pnl"]):
+            state["post_mark_peak_pnl"] = round(float(cur_pnl), 3)
+        if float(cur_pnl) < float(state["post_mark_trough_pnl"]):
+            state["post_mark_trough_pnl"] = round(float(cur_pnl), 3)
+
+        # 본전+버퍼까지 반등했으면 '반등건' — 배포된 레버가 잡는 부류다.
+        if not state["recovered_to_buffer"] and float(cur_pnl) >= buffer_pnl:
+            state["recovered_to_buffer"] = True
+
+        # 가상 조인 손절: 반등한 적 없고(=단조 하락) 조인 손절선 아래로 처음 내려간 시점 1회 기록.
+        if (not state["tighten_would_fire"]
+                and not state["recovered_to_buffer"]
+                and float(cur_pnl) <= tighten_pct):
+            state["tighten_would_fire"] = True
+            state["tighten_fire_pnl"] = round(float(cur_pnl), 3)
+            state["tighten_fire_at"] = datetime.now(KST).isoformat(timespec="seconds")
+            try:
+                log.info(
+                    f"[초기경로 손절조임 shadow] {pos.get('ticker')} 적색마크 {float(mark):+.2f}%"
+                    f" · 반등없이 {cur_pnl:+.2f}% 도달 → 조인손절({tighten_pct:+.1f}%) 발동지점 — 관측만"
+                )
+            except Exception:
+                pass
+
     def update_prices(self, prices: dict, raw_prices: dict | None = None):
         """prices: KRW 환산 가격 dict / raw_prices: USD(US) 또는 KRW(KR) 원시가격 dict (선택)"""
         for pos in self.positions:
@@ -673,6 +743,7 @@ class RiskManager:
             if _cur_pnl is not None:
                 self._mark_early_peak_exit_shadow(pos, _cur_pnl)
                 self._capture_early_path_mark(pos, _cur_pnl)
+                self._mark_early_path_tighten_shadow(pos, _cur_pnl)
 
             # 수익 보호: +3% 이상이면 TP 도달 이벤트를 기다리지 않고 본전 위 트레일링 전환.
             if (
