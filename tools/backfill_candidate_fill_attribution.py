@@ -217,9 +217,15 @@ def audit(since: str) -> list[tuple]:
     bad: list[tuple] = []
     kinds: Counter = Counter()
     total = 0
+    # ★fills는 since 이후만 로드하므로 검사 대상 행도 since로 맞춘다. 안 그러면 since 이전
+    #  귀속(fills에 없음)이 전부 f=None→"파이프라인 밖" 위반으로 오판된다(2026-07-24 실측:
+    #  since=7/18이면 245건 100% 위반, since=5/01이면 0건 — 순전히 스코프 불일치 착시였다).
+    #  이 착시로 --apply 했으면 멀쩡한 귀속을 대량 해제할 뻔했다.
     for r in a.execute(
         "SELECT candidate_key, market, ticker, session_date, claude_action, route_route, "
-        "no_submit_reason_code, payload_json FROM audit_candidate_rows WHERE filled_count>0"
+        "no_submit_reason_code, payload_json FROM audit_candidate_rows "
+        "WHERE filled_count>0 AND session_date>=?",
+        (str(since or ""),),
     ):
         try:
             payload = json.loads(r["payload_json"]) if r["payload_json"] else {}
