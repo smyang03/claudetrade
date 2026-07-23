@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
+_KST = timezone(timedelta(hours=9))
 
 from minority_report.claude_utils import extract_json, claude_response_meta, response_text, thinking_extra_body
 from minority_report.prompt_contracts import PULLBACK_ZONE_RULE
@@ -111,6 +114,54 @@ def _compact(value: Any, *, max_chars: int = 1200) -> str:
     return text
 
 
+def _parse_ts(value: Any) -> "datetime | None":
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=_KST)
+
+
+def build_price_time_contract(candidate: dict[str, Any], features: dict[str, Any]) -> dict[str, Any]:
+    """단일 canonical 가격·시점 계약 (2026-07-24, Codex 오프라인 검토 P0).
+
+    한 프롬프트에 candidate.price(더 새로움)와 features.current_price(feature 시점)가 섞여
+    Claude가 오래된 VWAP/OR과 새 현재가를 결합해 존재하지 않은 시장 상태를 판단하던 문제.
+    - canonical_price = features.current_price (validator 기준과 일치, feature 시점 가격).
+    - feature_as_of = features.anchor_at (feature 수집 시점), decision_as_of = features.known_at.
+    - data_freshness/price_conflict은 관측 표식 — 여기서 차단하지 않는다(WAIT_DATA enforce는
+      feature_age 5분초과가 72%라 매수를 대량 차단해 별도 shadow 검증 후 전환).
+    """
+    fp = _num((features or {}).get("current_price"), 0.0)
+    cp = _num((candidate or {}).get("price"), 0.0)
+    contract: dict[str, Any] = {}
+    if fp > 0:
+        contract["canonical_price"] = fp
+        contract["price_source"] = "post_open_features.current_price"
+    feature_as_of = _parse_ts((features or {}).get("anchor_at"))
+    decision_as_of = _parse_ts((features or {}).get("known_at"))
+    if feature_as_of is not None:
+        contract["feature_as_of"] = feature_as_of.isoformat(timespec="seconds")
+    if decision_as_of is not None:
+        contract["decision_as_of"] = decision_as_of.isoformat(timespec="seconds")
+    if feature_as_of is not None:
+        ref = decision_as_of or datetime.now(_KST)
+        age = (ref - feature_as_of).total_seconds()
+        if age >= 0:
+            contract["feature_age_sec"] = round(age)
+            stale = _num(os.getenv("JUDGE_FEATURE_AGE_STALE_SEC", "300"), 300.0)
+            contract["data_freshness"] = (
+                "fresh" if age <= stale else ("stale" if age <= stale * 3 else "very_stale")
+            )
+    if fp > 0 and cp > 0:
+        contract["candidate_price"] = cp
+        contract["candidate_price_vs_canonical_pct"] = round((cp / fp - 1.0) * 100.0, 3)
+    return contract
+
+
 def build_single_symbol_judge_prompt(
     *,
     market: str,
@@ -122,9 +173,11 @@ def build_single_symbol_judge_prompt(
 ) -> str:
     market_key = _market_key(market)
     ticker_key = _ticker_key(ticker, market_key)
+    price_time_contract = build_price_time_contract(candidate or {}, features or {})
     payload = _strip_empty_fields({
         "market": market_key,
         "ticker": ticker_key,
+        "price_time_contract": price_time_contract,
         "candidate": candidate or {},
         "post_open_features": features or {},
         "strategy_feasibility": strategy_feasibility or {},
@@ -186,6 +239,11 @@ def build_single_symbol_judge_prompt(
         "For route=path_b or action=PULLBACK_WAIT, include buy_zone_low, buy_zone_high, sell_target, stop_loss, hold_days, confidence, invalid_if, structural_basis, zone_basis.\n"
         "If post-open features are missing/stale, the support zone is unclear, reward/risk is weak, or the setup has faded, use WAIT_RECHECK or REJECT.\n"
         "Use market-native prices: KR in KRW, US in USD.\n"
+        "price_time_contract.canonical_price is THE single current price — set reference_price to it "
+        "and judge target/stop against it. candidate_price may be newer; if candidate_price_vs_canonical_pct "
+        "is large the quote is unsettled. If data_freshness is stale/very_stale, the VWAP/opening-range/"
+        "returns in post_open_features are from feature_as_of and may no longer hold — prefer WAIT_RECHECK "
+        "over acting on a stale structure.\n"
         "If the setup is noisy or needs more evidence, use WAIT_RECHECK with recheck_after_min.\n"
         "If the setup should not be traded today, use REJECT.\n"
         "Input:\n"
@@ -588,6 +646,19 @@ def normalize_single_symbol_judge_result(
             out["audit_reason"] = f"pullback_wait_soft_block:{pullback_soft_block_reason}"
             if not out["reason"]:
                 out["reason"] = f"pullback_wait_soft_block:{pullback_soft_block_reason}"
+    # reference_price ↔ canonical_price 일치 검증 (2026-07-24 Codex P0, shadow 관측·차단 아님).
+    # Claude가 canonical과 다른 가격을 기준으로 삼았으면 시점 혼합 판단일 수 있다. 기록만 한다.
+    try:
+        canon = _num((features or {}).get("current_price"), 0.0)
+        ref = _num(out.get("reference_price"), 0.0)
+        if canon > 0 and ref > 0:
+            dev = (ref / canon - 1.0) * 100.0
+            out["reference_price_vs_canonical_pct"] = round(dev, 3)
+            max_dev = _num(os.getenv("JUDGE_REFERENCE_CANONICAL_MAX_PCT", "0.25"), 0.25)
+            if abs(dev) > max_dev:
+                out["reference_price_canonical_conflict"] = True
+    except Exception:
+        pass
     return out
 
 
