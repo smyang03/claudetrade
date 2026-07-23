@@ -241,7 +241,7 @@ def audit(since: str) -> list[tuple]:
         if problems:
             kinds[" + ".join(problems)] += 1
             bad.append((r["candidate_key"], r["market"], r["ticker"], r["session_date"],
-                        r["claude_action"], rroute, r["no_submit_reason_code"],
+                        r["claude_action"], r["route_route"], r["no_submit_reason_code"],
                         fa.get("v2_decision_id")))
     print(f"  backfill이 쓴 행 {total}건 · 정합성 위반 {len(bad)}건 "
           f"({len(bad)/max(total,1)*100:.1f}%)")
