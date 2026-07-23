@@ -561,11 +561,21 @@ _CANDIDATE_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+# 일부 값은 후보 dict 최상위가 아니라 payload["runtime_gate"] 안에만 있다
+# (cohort_reliability 등 — gate 계산 결과). 그쪽도 소스로 인정한다.
+# 2026-07-23: runtime_gate.cohort_reliability 58% 존재하나 upsert dict 미포함 → audit 0%였다.
+_RUNTIME_GATE_SOURCED = {"cohort_reliability"}
+
+
 def _candidate_extra_value(column: str, row: dict[str, Any]) -> Any:
     value = row[column] if column in row else _MISSING
     payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
     if value is _MISSING and isinstance(payload, dict) and column in payload:
         value = payload.get(column)
+    if value is _MISSING and column in _RUNTIME_GATE_SOURCED:
+        gate = payload.get("runtime_gate") if isinstance(payload.get("runtime_gate"), dict) else {}
+        if column in gate and gate.get(column) not in (None, ""):
+            value = gate.get(column)
     if value is _MISSING:
         for alias in _CANDIDATE_COLUMN_ALIASES.get(column, ()):
             if alias in row:
