@@ -1449,9 +1449,17 @@ class CandidateAuditStore:
                         now,
                     ),
                 )
+                # 2026-07-23: 추가 컬럼 해석은 raw row["payload"]가 아니라 병합된
+                # effective_payload를 기준으로 한다. runtime_gate(trainer_tier 등)는
+                # 이전 write의 저장 payload에만 있고 현재 incoming row에는 없을 수 있어,
+                # raw row를 읽으면 trainer_tier가 통째로 누락됐다(실측: 소스 60,533행
+                # 존재하나 컬럼 0건). effective_payload로 읽으면 저장값과 정합한다.
+                extra_source = row
+                if isinstance(effective_payload, dict):
+                    extra_source = {**row, "payload": effective_payload}
                 extra_updates = {}
                 for column in EXTRA_CANDIDATE_COLUMNS:
-                    value = _candidate_extra_value(column, row)
+                    value = _candidate_extra_value(column, extra_source)
                     if value is not None:
                         extra_updates[column] = value
                 if extra_updates:
