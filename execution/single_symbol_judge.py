@@ -142,7 +142,17 @@ def build_single_symbol_judge_prompt(
     if buy_ready_ok:
         action_line = "Allowed action: BUY_READY, PULLBACK_WAIT, WAIT_RECHECK, REJECT.\n"
         route_line = "Allowed route: plan_a, path_b, wait, reject.\n"
-        buy_ready_guide = (
+        # 2026-07-23(2차): judge는 BUY_READY 플랜이 코드 게이트(validate_immediate_buy_plan)에서
+        # RR·손절폭으로 거부된다는 사실을 몰랐다. 통과 불가능한 플랜을 짜면 강등되어 매수 낭비가
+        # 된다. 게이트 값은 안 바꾸고, judge에게 그 값을 알려 애초에 통과 가능한 플랜을 짜게 한다.
+        min_rr = judge_min_reward_risk(market_key)
+        gate_line = (
+            f"BUY_READY plan gate (system rejects the plan if violated): reward/risk = "
+            f"(sell_target - current) / (current - stop_loss) must be >= {min_rr:g}, and stop_loss "
+            f"must sit within 3% below current (tight). Choose sell_target and stop_loss that clear "
+            f"this — do not propose a plan that will be rejected.\n"
+        )
+        buy_ready_guide = gate_line + (
             # 2026-07-23: BUY_READY 게이트를 국면(regime)이 이미 통과시킨 뒤에만 이 guide가 붙는다.
             # 여기서 "strong regime"을 다시 요구하면 게이트가 허용한 CAUTIOUS/NEUTRAL 국면에서
             # judge가 BUY_READY를 안 고르는 게이트-프롬프트 모순이 생긴다(국면 변경 무력화).
