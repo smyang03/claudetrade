@@ -125,6 +125,70 @@ def _sort_key(row: dict[str, Any]) -> tuple:
     )
 
 
+def _rank_by_ticker(rows: list[dict[str, Any]], *, market_key: str) -> dict[str, int]:
+    ranks: dict[str, int] = {}
+    for rank, row in enumerate(rows or [], start=1):
+        ticker = _ticker_key(row, market_key)
+        if ticker and ticker not in ranks:
+            ranks[ticker] = rank
+    return ranks
+
+
+def _top_tickers(rows: list[dict[str, Any]], *, market_key: str, limit: int) -> list[str]:
+    out: list[str] = []
+    for row in rows or []:
+        ticker = _ticker_key(row, market_key)
+        if ticker and ticker not in out:
+            out.append(ticker)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _shadow_reorder_metrics(
+    *,
+    active_order: list[dict[str, Any]],
+    trainer_order: list[dict[str, Any]],
+    prompt_cap: int,
+    market_key: str,
+) -> dict[str, Any]:
+    cap = max(0, int(prompt_cap or 0))
+    top_limit = max(1, min(cap or 10, 10))
+    active_top = set(_top_tickers(active_order, market_key=market_key, limit=top_limit))
+    trainer_top = set(_top_tickers(trainer_order, market_key=market_key, limit=top_limit))
+    overlap_denominator = max(1, min(top_limit, len(active_top | trainer_top)))
+    active_ranks = _rank_by_ticker(active_order, market_key=market_key)
+    trainer_ranks = _rank_by_ticker(trainer_order, market_key=market_key)
+    rank_deltas: list[dict[str, Any]] = []
+    for ticker, active_rank in active_ranks.items():
+        trainer_rank = trainer_ranks.get(ticker)
+        if trainer_rank is None:
+            continue
+        delta = int(active_rank) - int(trainer_rank)
+        if delta == 0:
+            continue
+        rank_deltas.append(
+            {
+                "ticker": ticker,
+                "active_rank": active_rank,
+                "trainer_rank": trainer_rank,
+                "delta": delta,
+            }
+        )
+    rank_deltas.sort(key=lambda item: (-abs(int(item["delta"])), int(item["trainer_rank"]), str(item["ticker"])))
+    return {
+        "enabled": True,
+        "top_limit": top_limit,
+        "active_top": _top_tickers(active_order, market_key=market_key, limit=top_limit),
+        "trainer_top": _top_tickers(trainer_order, market_key=market_key, limit=top_limit),
+        "top_overlap_count": len(active_top & trainer_top),
+        "top_overlap_ratio": round(len(active_top & trainer_top) / overlap_denominator, 4),
+        "trainer_top_new_tickers": sorted(trainer_top - active_top),
+        "active_top_displaced_tickers": sorted(active_top - trainer_top),
+        "largest_rank_deltas": rank_deltas[:20],
+    }
+
+
 def _excluded_reason(row: dict[str, Any], *, cap_excluded: bool = False) -> str:
     state = str(row.get("trainer_candidate_state") or "").upper()
     if state == "QUARANTINE":
@@ -336,8 +400,9 @@ def build_trainer_prompt_pool(
             scored_by_ticker[key] = scored
 
     scored_pool = list(scored_by_ticker.values())
+    trainer_ordered = sorted(scored_pool, key=_sort_key)
     if reorder_enabled:
-        ordered = sorted(scored_pool, key=_sort_key)
+        ordered = trainer_ordered
     else:
         order_index = {ticker: idx for idx, ticker in enumerate(legacy_order)}
         ordered = sorted(scored_pool, key=lambda row: order_index.get(str(row.get("ticker") or ""), 999999))
@@ -396,6 +461,12 @@ def build_trainer_prompt_pool(
         for row in prompt_pool
         if _is_hard_preopen_pin(row)
     ]
+    shadow_reorder = _shadow_reorder_metrics(
+        active_order=ordered,
+        trainer_order=trainer_ordered,
+        prompt_cap=cap,
+        market_key=market_key,
+    )
     return {
         "version": PROMPT_POOL_VERSION,
         "score_version": TRAINER_SCORE_VERSION,
@@ -413,7 +484,9 @@ def build_trainer_prompt_pool(
             "state_counts": dict(states),
             "legacy_order": legacy_order[:cap],
             "trainer_order": [str(row.get("ticker") or "") for row in prompt_pool],
+            "trainer_shadow_order": _top_tickers(trainer_ordered, market_key=market_key, limit=cap),
             "reorder_enabled": bool(reorder_enabled),
+            "shadow_reorder": shadow_reorder,
             "full_pool_mix": full_pool_mix,
             "prompt_pool_mix": prompt_pool_mix,
             "excluded_pool_mix": excluded_pool_mix,
