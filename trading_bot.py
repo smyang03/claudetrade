@@ -7588,6 +7588,37 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         state = store.get("US" if str(market or "").upper() == "US" else "KR")
         return bool(isinstance(state, dict) and state.get("degraded"))
 
+    def _prefer_minute_complete_evidence(
+        self, market_key: str, ticker_key: str, row_features: dict
+    ) -> dict:
+        """재시작 직후 등 row 증거가 first_observed/결측일 때, 같은 세션의 저장된 더 높은 품질
+        (minute_complete) 스냅샷이 있으면 그것으로 승격한다. 재시작이 진입 게이트의 증거를
+        실명시켜 BUY_READY를 WATCH로 차단하던 문제(2026-07-25 실측)를 방지한다.
+        env 가역: EVIDENCE_MINUTE_COMPLETE_FALLBACK_ENABLED=false 로 끌 수 있다.
+        승격은 기존 _post_open_feature_should_replace(상위 품질만 교체) 계약을 그대로 재사용한다."""
+        try:
+            if not self._runtime_bool("EVIDENCE_MINUTE_COMPLETE_FALLBACK_ENABLED", True):
+                return row_features
+            store = getattr(self, "_last_post_open_features_by_ticker", None)
+            if not isinstance(store, dict):
+                return row_features
+            stored = (store.get(market_key) or {}).get(ticker_key)
+            if not isinstance(stored, dict) or not stored:
+                return row_features
+            session_date = str(self._current_session_date_str(market_key) or "").strip()
+            if session_date and not self._post_open_feature_matches_session(stored, session_date):
+                return row_features
+            if self._post_open_feature_should_replace(dict(row_features or {}), stored):
+                log.info(
+                    f"[evidence 승격 {market_key}] {ticker_key} "
+                    f"{(row_features or {}).get('data_quality') or 'none'}→{stored.get('data_quality')} "
+                    f"(저장 상위품질 증거로 재시작 실명 방지)"
+                )
+                return dict(stored)
+        except Exception as exc:
+            log.debug(f"[evidence 승격 skip] {market_key} {ticker_key}: {exc}")
+        return row_features
+
     def _selection_evidence_payload(
         self,
         market: str,
@@ -7604,6 +7635,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         live_pack = pack.get("live_evidence") if isinstance(pack.get("live_evidence"), dict) else {}
         features = row_map.get("post_open_features") if isinstance(row_map.get("post_open_features"), dict) else {}
         features = dict(features or {})
+        features = self._prefer_minute_complete_evidence(market_key, key, features)
         class_source = "selection_prompt_pool"
 
         if pack:
