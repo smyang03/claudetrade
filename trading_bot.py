@@ -5892,12 +5892,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             stop_loss = float(plan.get("stop_loss", 0) or 0)
         except (TypeError, ValueError):
             return None, None
-        if not (sell_target > price and 0 < stop_loss < price):
+        # 2026-07-25 enforce: stop만 필수(리스크 방어). target은 선택(러너).
+        # stop이 없거나 방향불량이면 진입 안 함(sl=None). target이 없거나 현재가 이하면
+        # tp=None을 반환해 run_cycle이 러너 기본 target으로 처리한다.
+        if not (0 < stop_loss < price):
             return None, None
-        tp = max(0.001, (sell_target / price) - 1.0)
-        sl = max(0.001, 1.0 - (stop_loss / price))
         sl_cap = abs(HARD_RULES["max_single_loss_pct"]) / 100.0
-        return tp, min(sl, sl_cap)
+        sl = min(max(0.001, 1.0 - (stop_loss / price)), sl_cap)
+        tp = max(0.001, (sell_target / price) - 1.0) if sell_target > price else None
+        return tp, sl
 
     def _candidate_action_route_for_ticker(
         self,
@@ -36389,7 +36392,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         _br_meta = self.selection_meta.get("US" if str(market).upper() == "US" else "KR") or {}
                         _br_plan = self._selection_price_target_for_ticker(market, _br_meta.get("price_targets") or {}, ticker)
                         _br_tp, _br_sl = self._buy_ready_tp_sl_pct(_br_plan, float(price))
-                        if _br_tp is not None and _br_sl is not None:
+                        # 2026-07-25 enforce: stop(sl)만 필수(리스크 방어). target(tp) 없으면
+                        # 러너로 진입(볼록 정체성=익절 길게). target 강제가 오히려 볼록성과 모순이라
+                        # judge가 target 누락/소폭목표여도 stop만 있으면 산다. stop까지 없으면 강등(안전).
+                        if _br_sl is not None:
+                            _runner = False
+                            if _br_tp is None:
+                                _br_tp = self._runtime_float("IMMEDIATE_BUY_RUNNER_TP_PCT", 0.10)
+                                _runner = True
                             signal_fired = True
                             strategy_name = "claude_price_a"
                             params = {
@@ -36400,7 +36410,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                                 "buy_ready_immediate": True,
                             }
                             _buy_ready_active = True
-                            log.info(f"[BUY_READY 즉시 {market}] {ticker} tp={_br_tp:.2%} sl={_br_sl:.2%}")
+                            log.info(f"[BUY_READY 즉시 {market}] {ticker} tp={_br_tp:.2%}{'(러너기본)' if _runner else ''} sl={_br_sl:.2%}")
                 _scan_interval_min = self._entry_scan_interval_sec(market) / 60.0
                 if signal_fired:
                     if _soft_watch_candidate:

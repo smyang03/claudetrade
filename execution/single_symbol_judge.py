@@ -409,7 +409,11 @@ def validate_pathb_price_plan(
 
 
 # 즉시매수(BUY_READY) 필수 필드 — 눌림존(buy_zone) 불필요. entry=현재가.
-IMMEDIATE_BUY_REQUIRED_FIELDS = ("sell_target", "stop_loss", "hold_days", "confidence")
+# 2026-07-25 enforce: 즉시매수(BUY_READY)는 볼록 정체성(현재가 진입·짧은 손절·러너)이라
+# sell_target을 필수에서 뺀다(없으면 러너=uncapped, run_cycle이 기본 target 생성). 리스크는
+# stop 하드캡(IMMEDIATE_BUY_MAX_STOP_PCT)이 담당. RR 검증도 제거(볼록은 RR 낮음이 본질).
+# 미국장 실측 근거: judge가 target 누락(SAP)·소폭목표(MBLY RR<1.2)로 전부 강등돼 실주문 0.
+IMMEDIATE_BUY_REQUIRED_FIELDS = ("stop_loss", "hold_days", "confidence")
 
 
 def _shadow_markets() -> set[str]:
@@ -506,8 +510,7 @@ def validate_immediate_buy_plan(
             errors.append(f"missing_{key}")
     if not str(result.get("invalid_if") or "").strip():
         errors.append("missing_invalid_if")
-    if target <= 0:
-        errors.append("sell_target_nonpositive")
+    # sell_target은 선택(러너) — 없어도 강등하지 않는다. 있으면 아래에서 방향만 검증.
     if stop <= 0:
         errors.append("stop_loss_nonpositive")
     if hold_days < 1:
@@ -526,10 +529,10 @@ def validate_immediate_buy_plan(
             max_stop_pct = _num(os.getenv("IMMEDIATE_BUY_MAX_STOP_PCT", "3.0"), 3.0)
             if stop_dist_pct > max_stop_pct:
                 errors.append("stop_loss_too_wide")  # 손절 짧게 원칙 — 넓은 손절 금지
-        if target > current and stop > 0 and stop < current:
-            reward_risk = (target - current) / (current - stop)
-            if reward_risk < min_reward_risk:
-                errors.append("reward_risk_below_min")
+        # RR 검증 제거(2026-07-25 enforce): 볼록 베팅은 RR이 구조적으로 낮은 게 본질.
+        # 리스크는 위 stop 하드캡(max_stop_pct)이 제한하고, 볼록성은 러너에서 나온다.
+        # min_reward_risk는 참고용으로만 남긴다(아래 미사용 방지).
+        _ = min_reward_risk
     if strict:
         quality = str(fp.get("data_quality") or "").strip().lower()
         if quality in PATHB_BAD_DATA_QUALITY:
