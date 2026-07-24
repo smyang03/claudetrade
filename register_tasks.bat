@@ -12,7 +12,8 @@ schtasks /create /tn "claudetrade_token_am" /tr "C:\Users\Unknown\anaconda3\envs
 schtasks /create /tn "claudetrade_token_pm" /tr "C:\Users\Unknown\anaconda3\envs\upbit\python.exe E:\code\claudetrade\refresh_token.py" /sc daily /st 21:50 /f
 
 rem === live stack headless watchdog (restore missing roles every 5 minutes) ===
-schtasks /create /tn "claudetrade_live_stack_watchdog" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File E:\code\claudetrade\tools\start_live_stack_headless.ps1" /sc minute /mo 5 /f
+rem 창 없이(hidden) 실행: wscript가 콘솔 없이 watchdog_hidden.vbs를 돌리고, VBS가 powershell을 window-style 0으로 기동한다(5분마다 콘솔 깜빡임 제거).
+schtasks /create /tn "claudetrade_live_stack_watchdog" /tr "wscript.exe E:\code\claudetrade\tools\watchdog_hidden.vbs" /sc minute /mo 5 /f
 
 rem === 데이터 최신화 ===
 schtasks /create /tn "claudetrade_kr_open"  /tr "C:\Users\Unknown\anaconda3\envs\upbit\python.exe E:\code\claudetrade\update_data.py --market KR" /sc daily /st 08:30 /f
