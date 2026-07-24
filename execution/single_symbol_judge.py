@@ -490,9 +490,17 @@ def validate_immediate_buy_plan(
     hold_days = _num(result.get("hold_days"), 0.0)
     confidence = _num(result.get("confidence"), 0.0)
     strict = bool(features) or bool((risk_context or {}).get("pathb_plan_before_registration_only"))
-    min_reward_risk = judge_min_reward_risk(
-        result.get("market") or (risk_context or {}).get("market") or ""
-    )
+    # 2026-07-25: BUY_READY(즉시매수)만 별도 RR 하한. 볼록 베팅(소폭 목표+짧은 손절)은
+    # RR이 구조적으로 낮은데(실측 judge plan RR 1.06~1.28), 눌림 공용 1.5를 강제하니
+    # BUY_READY가 전부 차단돼 실주문 0이었다. 눌림(PathB) RR 1.5는 검증됐으니 유지하고
+    # 여기만 IMMEDIATE_BUY_MIN_REWARD_RISK로 완화한다(미설정 시 기존 공용값 fallback).
+    _imm_rr = os.getenv("IMMEDIATE_BUY_MIN_REWARD_RISK")
+    if _imm_rr and _num(_imm_rr, 0.0) > 0:
+        min_reward_risk = _num(_imm_rr, 1.5)
+    else:
+        min_reward_risk = judge_min_reward_risk(
+            result.get("market") or (risk_context or {}).get("market") or ""
+        )
     for key in IMMEDIATE_BUY_REQUIRED_FIELDS:
         if result.get(key) in (None, ""):
             errors.append(f"missing_{key}")
