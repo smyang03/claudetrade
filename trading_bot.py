@@ -33692,6 +33692,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         ticker = self._selection_ticker_key(market_key, normalized.get("ticker") or candidate_ticker)
         normalized["ticker"] = ticker
         normalized["market"] = market_key
+        # 2026-07-24 ①canonical 관측배선: judge 결과의 reference↔canonical 편차를 shadow로 기록.
+        # funnel 요약(13필드)엔 없어 "라이브에서 canonical 계약이 판단을 바꿨나"를 판정 못 했다.
+        # 판정 무영향, 기록만 — canonical_price_contract_review.py의 forward 소스가 된다.
+        try:
+            if normalized.get("reference_price_vs_canonical_pct") is not None:
+                self._write_funnel_event("canonical_reference_shadow", market_key, {
+                    "ticker": ticker,
+                    "action": normalized.get("action"),
+                    "reference_price": normalized.get("reference_price"),
+                    "canonical_price": (candidate_features or {}).get("current_price"),
+                    "reference_price_vs_canonical_pct": normalized.get("reference_price_vs_canonical_pct"),
+                    "reference_price_canonical_conflict": bool(normalized.get("reference_price_canonical_conflict")),
+                })
+        except Exception:
+            pass
         if not ticker:
             normalized.update({"valid": False, "action": "WAIT_RECHECK", "route": "wait", "reason": "missing_ticker"})
         now = datetime.now(KST).replace(tzinfo=None)
