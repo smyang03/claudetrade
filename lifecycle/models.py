@@ -64,6 +64,11 @@ class LifecycleEventType(str, Enum):
     PATHB_ZONE_UPDATED = "PATHB_ZONE_UPDATED"
     PROFIT_EVIDENCE_SHADOW = "PROFIT_EVIDENCE_SHADOW"
     TRADE_READY_NO_SUBMIT = "TRADE_READY_NO_SUBMIT"
+    # 세션 마감 catch-all. TRADE_READY가 났는데 종결 이벤트(체결/주문/차단/미제출/
+    # 플랜만료·취소)가 하나도 남지 않은 건을 기록한다. 실측(2026-07-13~24) 26종목 중
+    # 9건(34.6%)이 아무 기록 없이 사라져 "왜 안 샀는가"를 사후에 알 수 없었다.
+    # 관측 전용이며 주문·게이트 판단에는 관여하지 않는다.
+    TRADE_READY_UNRESOLVED = "TRADE_READY_UNRESOLVED"
 
 
 def utc_now_iso() -> str:

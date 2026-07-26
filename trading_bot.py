@@ -9773,6 +9773,122 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.debug(f"[trade_ready no-submit] candidate audit update failed {market_key} {ticker_key}: {exc}")
         return payload
 
+    # TRADE_READY 종결로 인정하는 이벤트. 이 중 하나라도 남아 있으면 "왜 안 샀는가"가
+    # 원장에서 추적 가능하다. FORWARD_*/PROFIT_EVIDENCE_SHADOW/PATHB_SELECTION_RECONCILE는
+    # 사후 측정·shadow라 종결이 아니다.
+    _TRADE_READY_TERMINAL_EVENTS = (
+        "FILLED",
+        "PARTIAL_FILLED",
+        "ORDER_SENT",
+        "ORDER_ACKED",
+        "SAFETY_BLOCKED",
+        "TRADE_READY_NO_SUBMIT",
+        "CLAUDE_PRICE_EXPIRED",
+        "CLAUDE_PRICE_CANCELLED",
+    )
+
+    def _reconcile_trade_ready_terminal(self, market: str) -> dict:
+        """세션 마감 catch-all — 종결 기록이 없는 TRADE_READY를 원장에 남긴다.
+
+        왜 필요한가 (실측 2026-07-13~24, tools/trace_trade_ready_terminal.py):
+          CLAUDE_TRADE_READY 26종목 중 9건(34.6%)이 종결 이벤트 없이 사라졌다.
+            TRADE_READY후_완전침묵 8건 — 플랜 생성도 신호 판정도 차단 기록도 없음
+                                       (7/13 KR 003670·006400·055550·105560,
+                                        7/22 US SMCI·WULF, 7/24 US MBLY·TMUS)
+            플랜생성후_종결없음    1건 — 7/22 KR 215790
+          차단 사유가 원장에 없으면 퍼널 개선 대상을 정할 수 없다. 그래서 사멸을
+          보이게 만든다.
+
+        ⚠️ 관측 전용이다. 주문·게이트·플랜 판단에 일절 관여하지 않으며, 실패해도
+           세션 마감을 막지 않는다(호출부에서 try/except). 같은 세션에 두 번 돌아도
+           이미 기록된 종목은 건너뛴다(멱등).
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        summary = {"market": market_key, "trade_ready": 0, "unresolved": 0, "recorded": 0}
+        v2 = getattr(self, "v2", None)
+        registry = getattr(v2, "registry", None) if v2 is not None else None
+        store = getattr(registry, "store", None) if registry is not None else None
+        if store is None:
+            return summary
+
+        session_date = self._current_session_date_str(market_key)
+        try:
+            events = store.events_for_session(
+                market=market_key,
+                runtime_mode=getattr(self, "_mode", "live"),
+                session_date=session_date,
+            )
+        except Exception as exc:
+            log.warning(f"[trade_ready 종결추적] {market_key} 이벤트 조회 실패: {exc}")
+            return summary
+
+        by_ticker: dict[str, list[dict]] = {}
+        for event in events or []:
+            ticker = str((event or {}).get("ticker") or "").strip()
+            if not ticker:
+                continue
+            by_ticker.setdefault(ticker, []).append(event)
+
+        terminal = set(self._TRADE_READY_TERMINAL_EVENTS)
+        for ticker, seq in by_ticker.items():
+            types = [str(e.get("event_type") or "") for e in seq]
+            if "CLAUDE_TRADE_READY" not in types:
+                continue
+            summary["trade_ready"] += 1
+            if terminal & set(types):
+                continue
+            summary["unresolved"] += 1
+            if "TRADE_READY_UNRESOLVED" in types:
+                continue  # 멱등: 이미 기록됨
+
+            after = [e for e in seq if str(e.get("event_type") or "") != "CLAUDE_TRADE_READY"]
+            tail = after[-1] if after else None
+            plan_seen = bool({"CLAUDE_PRICE_PLAN_CREATED", "CLAUDE_PRICE_WAITING"} & set(types))
+            kind = "plan_created_no_terminal" if plan_seen else "trade_ready_silent"
+            decision_id = ""
+            for event in seq:
+                decision_id = str(event.get("decision_id") or "")
+                if decision_id:
+                    break
+            payload = {
+                "market": market_key,
+                "ticker": ticker,
+                "session_date": session_date,
+                "kind": kind,
+                "observed_event_types": types,
+                "last_event_type": str((tail or {}).get("event_type") or ""),
+                "last_reason_code": str((tail or {}).get("reason_code") or ""),
+                "last_event_at": str((tail or {}).get("created_at") or ""),
+                "stage": "session_close_catch_all",
+                "observation_only": True,
+            }
+            try:
+                self._v2_record_lifecycle_event(
+                    "TRADE_READY_UNRESOLVED",
+                    market_key,
+                    ticker,
+                    decision_id=decision_id,
+                    reason_code=kind.upper(),
+                    payload=payload,
+                )
+                summary["recorded"] += 1
+            except Exception as exc:
+                log.warning(f"[trade_ready 종결추적] {market_key} {ticker} 기록 실패: {exc}")
+
+        if summary["unresolved"]:
+            log.warning(
+                f"[trade_ready 종결추적] {market_key} {session_date}: "
+                f"TRADE_READY {summary['trade_ready']}건 중 "
+                f"종결기록 없음 {summary['unresolved']}건 "
+                f"(신규 기록 {summary['recorded']}건)"
+            )
+        else:
+            log.info(
+                f"[trade_ready 종결추적] {market_key} {session_date}: "
+                f"TRADE_READY {summary['trade_ready']}건 전부 종결 기록됨"
+            )
+        return summary
+
     def _plan_a_no_submit_reason(
         self,
         *,
@@ -40947,6 +41063,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._flush_funnel(market)
         except Exception as _fe:
             log.warning(f"[퍼널 저장 실패] {market}: {_fe}")
+
+        # ── TRADE_READY 종결 catch-all (관측 전용) ────────────────────────────
+        # 종결 이벤트가 하나도 없는 TRADE_READY를 원장에 남긴다. 실측상 34.6%가
+        # 아무 기록 없이 사라져 차단 사유를 사후에 알 수 없었다. 실패해도 마감을
+        # 막지 않는다.
+        try:
+            self._reconcile_trade_ready_terminal(market)
+        except Exception as _tr_unresolved_e:
+            log.warning(f"[trade_ready 종결추적 실패] {market}: {_tr_unresolved_e}")
 
         # ── 포지션 정리: 장 종료 후에는 주문하지 않고 다음 세션 행동만 결정 ─────
         market_positions = [
