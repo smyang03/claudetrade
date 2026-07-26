@@ -122,9 +122,27 @@ def test_headless_live_stack_launcher_covers_all_runtime_roles() -> None:
 
 
 def test_registered_tasks_include_headless_live_stack_watchdog() -> None:
+    """watchdog은 hidden VBS 래퍼를 거쳐 등록된다(2026-07-25 콘솔 깜빡임 제거).
+
+    이전에는 bat이 start_live_stack_headless.ps1을 직접 등록했다. 지금은
+    wscript.exe → watchdog_hidden.vbs → powershell(window-style 0) → ps1 순으로
+    한 단계 간접이 생겼다. 그래서 등록 문자열만 보지 않고, 그 간접이 실제로
+    headless ps1까지 도달하는지 VBS 내용까지 따라가 확인한다 — 래퍼가 엉뚱한
+    스크립트를 가리키면 watchdog은 등록돼 있는데 스택은 안 살아난다.
+    """
     text = (ROOT / "register_tasks.bat").read_text(encoding="utf-8")
 
     assert 'schtasks /delete /tn "claudetrade_kr_update"' in text
     assert 'schtasks /create /tn "claudetrade_live_stack_watchdog"' in text
-    assert "start_live_stack_headless.ps1" in text
     assert "/sc minute /mo 5" in text
+
+    # 등록 대상이 hidden 래퍼인지
+    assert "wscript.exe" in text
+    assert "watchdog_hidden.vbs" in text
+
+    # 래퍼가 실제로 headless 기동 스크립트를 부르는지 (간접 체인 종점 확인)
+    vbs = (ROOT / "tools" / "watchdog_hidden.vbs").read_text(encoding="utf-8")
+    assert "start_live_stack_headless.ps1" in vbs
+    assert "powershell.exe" in vbs
+    # window-style 0 = 숨김. 이 인자가 빠지면 5분마다 콘솔이 깜빡인다.
+    assert ", 0," in vbs

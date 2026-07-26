@@ -81,24 +81,30 @@ class AnalyzeKrPromotionCandidatesTests(unittest.TestCase):
                     filled INTEGER,
                     closed INTEGER,
                     pnl_pct REAL,
+                    pnl_pct_net REAL,
                     mfe_pct REAL,
                     mae_pct REAL,
                     close_reason TEXT
                 )
                 """
             )
+            # pnl_pct_net은 실제 스키마에 있는 컬럼이고, 코드는 net을 우선한다
+            # (analyze_kr_promotion_candidates: "pnl_pct 요청 시 pnl_pct_net 이 있으면 그걸 쓴다").
+            # 픽스처에 net을 빼두면 조회 자체가 OperationalError로 죽는다.
+            # gross와 다른 값(KR 왕복비용 0.21%p 차감)을 넣어 net 우선 선택이 실제로
+            # 동작하는지까지 검증되게 한다 — 같은 값이면 어느 쪽을 읽든 통과해버린다.
             conn.executemany(
                 """
                 INSERT INTO v2_learning_performance (
                     market, runtime_mode, session_date, ticker, status, route,
                     path_type, strategy, origin_action, filled, closed,
-                    pnl_pct, mfe_pct, mae_pct, close_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    pnl_pct, pnl_pct_net, mfe_pct, mae_pct, close_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    ("KR", "live", "2026-05-01", "000001", "closed", "plan_a", "plan_a", "momentum", "BUY_READY", 1, 1, -1.0, 1.0, -2.0, "LOSS_CAP"),
-                    ("KR", "live", "2026-05-02", "000002", "closed", "plan_a", "plan_a", "momentum", "BUY_READY", 1, 1, -0.5, 0.5, -1.5, "LOSS_CAP"),
-                    ("KR", "live", "2026-05-03", "000003", "closed", "path_b", "claude_price", "claude_price", "PULLBACK_WAIT", 1, 1, 0.8, 2.0, -0.4, "TARGET"),
+                    ("KR", "live", "2026-05-01", "000001", "closed", "plan_a", "plan_a", "momentum", "BUY_READY", 1, 1, -1.0, -1.21, 1.0, -2.0, "LOSS_CAP"),
+                    ("KR", "live", "2026-05-02", "000002", "closed", "plan_a", "plan_a", "momentum", "BUY_READY", 1, 1, -0.5, -0.71, 0.5, -1.5, "LOSS_CAP"),
+                    ("KR", "live", "2026-05-03", "000003", "closed", "path_b", "claude_price", "claude_price", "PULLBACK_WAIT", 1, 1, 0.8, 0.59, 2.0, -0.4, "TARGET"),
                 ],
             )
             conn.commit()

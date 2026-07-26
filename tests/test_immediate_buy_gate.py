@@ -61,11 +61,26 @@ class ImmediateBuyGateTests(unittest.TestCase):
         errors = validate_immediate_buy_plan(result, features=feats, risk_context={"market": "US"})
         self.assertIn("stop_loss_too_wide", errors)  # 5% > 3%
 
-    def test_validate_rr_low(self) -> None:
+    def test_validate_low_rr_is_not_blocked(self) -> None:
+        """RR 하한은 2026-07-25 enforce로 제거됐다 — 낮은 RR만으로 강등하지 않는다.
+
+        볼록 베팅(소폭 목표 + 짧은 손절)은 RR이 구조적으로 낮은 게 본질이다.
+        눌림 공용 RR 1.5를 BUY_READY에도 강제하니 실측 judge plan(RR 1.06~1.28)이
+        전부 차단돼 실주문이 0이었다. 리스크는 아래 stop 하드캡이 제한한다.
+        """
         feats = {"current_price": 100.0}
         result = {"sell_target": 101.0, "stop_loss": 98.5, "hold_days": 2, "confidence": 0.7, "invalid_if": "x"}
         errors = validate_immediate_buy_plan(result, features=feats, risk_context={"market": "US"})
-        self.assertIn("reward_risk_below_min", errors)  # RR 0.67 < 1.5
+        self.assertNotIn("reward_risk_below_min", errors)  # RR 0.67이어도 통과
+        self.assertEqual(errors, [])
+
+    def test_risk_is_bounded_by_stop_cap_not_rr(self) -> None:
+        """RR을 뺀 자리를 stop 하드캡이 막는지 — 리스크 통제의 소유권 확인."""
+        feats = {"current_price": 100.0}
+        # RR은 동일하게 낮지만(0.67) 손절이 하드캡을 넘으면 반드시 차단돼야 한다
+        wide = {"sell_target": 101.0, "stop_loss": 96.0, "hold_days": 2, "confidence": 0.7, "invalid_if": "x"}
+        errors = validate_immediate_buy_plan(wide, features=feats, risk_context={"market": "US"})
+        self.assertIn("stop_loss_too_wide", errors)  # 4% > 기본 3%
 
     def test_validate_target_not_above(self) -> None:
         feats = {"current_price": 100.0}
@@ -75,9 +90,23 @@ class ImmediateBuyGateTests(unittest.TestCase):
 
     def test_validate_missing_fields(self) -> None:
         errors = validate_immediate_buy_plan({}, features={"current_price": 100.0}, risk_context={"market": "US"})
-        self.assertIn("missing_sell_target", errors)
         self.assertIn("missing_stop_loss", errors)
         self.assertIn("missing_invalid_if", errors)
+        self.assertIn("missing_hold_days", errors)
+        self.assertIn("missing_confidence", errors)
+
+    def test_sell_target_is_optional(self) -> None:
+        """sell_target 부재는 강등 사유가 아니다(2026-07-25 enforce) — 러너 보유용.
+
+        target을 필수로 두면 러너(상단 미지정) 플랜이 전부 탈락한다. 목표를 정하지
+        않는 것이 볼록 정체성의 일부라 부재 자체를 에러로 보지 않는다.
+        단, 값이 있으면 방향(현재가 초과)은 계속 검증한다 — test_validate_target_not_above.
+        """
+        feats = {"current_price": 100.0}
+        result = {"stop_loss": 98.5, "hold_days": 2, "confidence": 0.7, "invalid_if": "x"}
+        errors = validate_immediate_buy_plan(result, features=feats, risk_context={"market": "US"})
+        self.assertNotIn("missing_sell_target", errors)
+        self.assertEqual(errors, [])
 
     def test_validate_momentum_fade(self) -> None:
         feats = {"current_price": 100.0, "momentum_state": "fade"}

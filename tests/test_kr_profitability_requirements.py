@@ -170,6 +170,7 @@ class KrProfitabilityRequirementsTests(unittest.TestCase):
                     market TEXT, runtime_mode TEXT, session_date TEXT, ticker TEXT,
                     status TEXT, route TEXT, path_type TEXT, strategy TEXT,
                     origin_action TEXT, filled INTEGER, closed INTEGER, pnl_pct REAL,
+                    pnl_pct_net REAL,
                     mfe_pct REAL, mae_pct REAL, close_reason TEXT
                 )
                 """
