@@ -4963,6 +4963,44 @@ def _annotate_us_rel_vol_shadow(rows: list) -> None:
             row["rel_vol_shadow_fraction"] = round(fraction, 4)
         except Exception:
             continue
+    _promote_us_vol_ratio_from_rel_vol(rows)
+
+
+def _promote_us_vol_ratio_from_rel_vol(rows: list) -> None:
+    """US vol_ratio 실값 연결 (US_VOL_RATIO_FROM_REL_VOL, 기본 off).
+
+    US vol_ratio는 1.0 placeholder인데 전략 게이트가 이를 실값처럼 소비해왔다:
+      volatility_breakout(vol_ratio > vol_mult) → 영구 미발동
+      mean_reversion(vol_ratio < vol_limit)     → 거래량 필터 영구 무력화
+      bucket_classifier(vol_ratio >= 2.0)       → volume_surge 태그 영구 부재
+      screen_score(vol_ratio * 4.0)             → 랭킹에서 거래량 항이 상수
+    즉 US 거래량 변별력이 구조적으로 0이었다.
+
+    실측(2026-07-25, ticker_selection_log n=1821, 7/21~24 rel_vol 배선분):
+      rel_vol 상위20% 1d net -0.579% vs 하위20% -2.202% → 격차 +1.623%p
+      3d net은 상위 2개 십분위만 양수(D9 +1.119%, D10 +0.457%)
+      대조군 KR vol_ratio(원래 실값)는 격차 -0.273%p로 역방향 → KR 적용 금지(US 전용)
+
+    실값이 없는 행은 1.0을 유지하되 placeholder 여부를 표기해 소비처가
+    '미상'과 '실측 1.0'을 구분할 수 있게 한다(토글 off여도 표기는 남긴다).
+    """
+    enabled = _env_bool("US_VOL_RATIO_FROM_REL_VOL", False)
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        rel = row.get("rel_vol_shadow")
+        if enabled and rel is not None:
+            try:
+                value = float(rel)
+            except (TypeError, ValueError):
+                value = 0.0
+            if value > 0:
+                row["vol_ratio"] = round(value, 3)
+                row["vol_ratio_source"] = "rel_vol_shadow"
+                row["vol_ratio_placeholder"] = False
+                continue
+        row["vol_ratio_placeholder"] = True
+        row.setdefault("vol_ratio_source", "placeholder")
 
 
 def _us_projected_dollar_volume_shadow_row(
