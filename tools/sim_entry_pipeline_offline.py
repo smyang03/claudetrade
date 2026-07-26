@@ -42,6 +42,7 @@ import sqlite3
 import statistics
 import sys
 from collections import defaultdict
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,10 +59,36 @@ SOFT_GATE_MIN = {"KR": 60, "US": 30}
 
 
 # ── 로딩 ────────────────────────────────────────────────────────────────────
+def _file_in_range(path: str, since: str, until: str) -> bool:
+    """파일명 날짜로 1차 필터. 매일 도는 스케줄 작업이 전체 로그를 재스캔하지 않게 한다.
+
+    파일명은 post_open_features_YYYYMMDD_MKT.jsonl 이지만, US는 파일 날짜와
+    market_session_date가 하루 어긋난다(7/24 세션이 20260725_US 파일에 들어간다).
+    그래서 앞뒤로 하루씩 여유를 두고 자른다 — 정확한 판정은 행 단위 필터가 한다.
+    """
+    name = Path(path).name
+    parts = name.split("_")
+    if len(parts) < 4:
+        return True  # 예상 밖 이름은 버리지 않고 통과시켜 행 필터에 맡긴다
+    raw = parts[3]
+    if len(raw) != 8 or not raw.isdigit():
+        return True
+    stamp = f"{raw[:4]}-{raw[4:6]}-{raw[6:]}"
+    try:
+        day = date.fromisoformat(stamp)
+        lo = date.fromisoformat(since) - timedelta(days=1)
+        hi = date.fromisoformat(until) + timedelta(days=1)
+    except ValueError:
+        return True
+    return lo <= day <= hi
+
+
 def load_series(market: str | None, since: str, until: str) -> dict[tuple, list[dict]]:
     """(session_date, market, ticker) -> elapsed 오름차순 스냅샷 리스트."""
     series: dict[tuple, list[dict]] = defaultdict(list)
-    for path in sorted(glob.glob(str(ROOT / FUNNEL_GLOB))):
+    paths = [p for p in sorted(glob.glob(str(ROOT / FUNNEL_GLOB)))
+             if _file_in_range(p, since, until)]
+    for path in paths:
         with open(path, encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 line = line.strip()

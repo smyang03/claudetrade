@@ -38,6 +38,7 @@ import json
 import random
 import sys
 from collections import defaultdict
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,7 +50,11 @@ if str(ROOT / "tools") not in sys.path:
 import sim_entry_pipeline_offline as sim  # noqa: E402
 
 SHADOW_DIR = ROOT / "data" / "shadow"
+STATE_DIR = ROOT / "state"
+HEARTBEAT_PATH = STATE_DIR / "fade_shadow_observer_heartbeat.json"
 SCHEMA_VERSION = 1
+# market_open_elapsed_min 도입일. 그 이전 스냅샷은 100% 결손이라 시간축 재현이 불가능하다.
+ELAPSED_FIELD_MIN_DATE = "2026-07-13"
 CONTROL_WINDOW_MIN = 10.0   # 대조군 진입 시각 허용 오차
 SEED = 20260726             # 대조군 추출 재현성
 
@@ -169,6 +174,35 @@ def observe(series: dict[tuple, list[dict]], cfg: dict) -> list[dict]:
     return out
 
 
+def write_heartbeat(window: tuple[str, str], records: list[dict], written: int) -> None:
+    """스케줄 실행이 실제로 돌았는지 증명할 하트비트.
+
+    wscript 래퍼의 종료코드는 python의 성공을 반영하지 않는다. 신규 0건일 때
+    원장도 그대로라서, 조용히 실패한 실행과 정상 실행이 구분되지 않는다.
+    그래서 매 실행이 흔적을 남긴다. 실패해도 관측 자체를 막지 않는다.
+    """
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        by_market: dict[str, int] = {}
+        for rec in records:
+            by_market[rec["market"]] = by_market.get(rec["market"], 0) + 1
+        payload = {
+            "process": "shadow_fade_entry_observer",
+            "ran_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "window": {"since": window[0], "until": window[1]},
+            "signals_observed": len(records),
+            "signals_by_market": by_market,
+            "records_written": written,
+            "mode": "shadow",
+            "live_impact": "none",
+        }
+        HEARTBEAT_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception as exc:  # 관측이 하트비트 때문에 죽으면 안 된다
+        print(f"  [경고] 하트비트 기록 실패: {exc}")
+
+
 def existing_keys(path: Path) -> set[str]:
     keys: set[str] = set()
     if not path.exists():
@@ -189,6 +223,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="fade 진입 shadow 관측기 (라이브 미개입)")
     ap.add_argument("--since", default="2026-07-13",
                     help="market_open_elapsed_min 도입 이후만 유효")
+    ap.add_argument("--since-days", type=int, default=0,
+                    help="오늘 기준 N일 전부터. --since보다 우선하며 스케줄 실행용 "
+                         "(고정 날짜에 묶이면 매 실행이 전체 로그를 재스캔한다). "
+                         "기록은 멱등이라 창이 겹쳐도 중복되지 않는다.")
     ap.add_argument("--until", default="2026-12-31")
     ap.add_argument("--session", default="", help="특정 세션만 (YYYY-MM-DD)")
     ap.add_argument("--market", default="", help="KR|US (빈값=둘 다)")
@@ -200,8 +238,16 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    since = args.session or args.since
-    until = args.session or args.until
+    if args.session:
+        since = until = args.session
+    elif args.since_days > 0:
+        # 데이터 하한(elapsed 필드 도입일)보다 이전으로는 내려가지 않는다
+        rolling = (date.today() - timedelta(days=args.since_days)).isoformat()
+        since = max(rolling, ELAPSED_FIELD_MIN_DATE)
+        until = args.until
+    else:
+        since = args.since
+        until = args.until
     market = args.market.upper().strip() or None
 
     series = sim.load_series(market, since, until)
@@ -248,7 +294,9 @@ def main() -> int:
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
         written += len(fresh)
         print(f"  {path.name}: +{len(fresh)}건 (누적 {len(have) + len(fresh)}건)")
+    write_heartbeat((since, until), records, written)
     print(f"\n총 {written}건 기록. 라이브 주문·플랜·게이트에는 개입하지 않았다.")
+    print(f"  하트비트: {HEARTBEAT_PATH.relative_to(ROOT)}")
     print("※ enforce 전환은 forward 표본 누적 후 운영자 판단 사항이다.")
     return 0
 
