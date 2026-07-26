@@ -12,6 +12,26 @@ from phase1_trainer import price_collector
 
 
 class PriceCollectorIncrementalTests(unittest.TestCase):
+    def setUp(self) -> None:
+        """라이브 상태 결합 차단 — 테스트가 실행 위치에 따라 결과가 갈리면 안 된다.
+
+        price_collector._load_core_and_held_tickers()는 상대경로로 라이브 런타임
+        상태를 읽는다:
+            state/profit_strategy_core_live_manifest_{market}.json
+            state/live_broker_truth_snapshot.json
+        각 테스트는 _load_price_priority_tickers만 패치했지 이 함수는 놓쳤다.
+        그래서 저장소 루트에서 돌리면 실제 코어 종목(SCHG·275280·275300)과
+        현재 보유분이 티커맵에 딸려 들어와 fetch 호출이 하나 더 생겼다
+        (실측: call_count 3 != 2). 런타임 파일이 없는 체크아웃에서는 통과해,
+        같은 코드가 머신에 따라 red/green이 갈렸다.
+
+        개별 테스트에 패치를 흩뿌리면 새 테스트가 또 같은 함정에 빠지므로
+        클래스 전체를 격리한다.
+        """
+        patcher = patch.object(price_collector, "_load_core_and_held_tickers", return_value=[])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_has_weekday_between_detects_weekend_only_gap(self) -> None:
         self.assertFalse(
             price_collector._has_weekday_between(

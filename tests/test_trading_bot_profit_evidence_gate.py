@@ -4,7 +4,26 @@ from datetime import datetime, timezone
 import os
 from unittest.mock import patch
 
+import pytest
+
+import runtime.profit_evidence_gate as profit_evidence_gate
 from trading_bot import TradingBot
+
+
+@pytest.fixture(autouse=True)
+def _isolate_live_profit_evidence_snapshot():
+    """라이브 상태 결합 차단 — 테스트가 실행 위치에 따라 결과가 갈리면 안 된다.
+
+    resolve_profit_evidence()는 명시 evidence가 없으면 실제 파일을 읽는다:
+        state/profit_evidence_KR.json / state/profit_evidence_US.json
+    저장소 루트에서 돌리면 실측 61KB짜리 KR 스냅샷에 005930이 들어 있어
+    evidence_source가 'snapshot'으로 잡히고, shadow 예측기까지 도달하지 못한다.
+    "stored evidence 없음"이라는 테스트 전제 자체가 라이브 상태 때문에 깨진 것이라
+    스냅샷을 비워 격리한다. 스냅샷 경로를 쓰는 테스트가 새로 생겨도 같은 함정에
+    빠지지 않도록 파일 전체에 적용한다.
+    """
+    with patch.object(profit_evidence_gate, "load_profit_evidence_snapshot", return_value={}):
+        yield
 
 
 def _bot() -> TradingBot:
