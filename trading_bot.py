@@ -22151,6 +22151,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 f"[history filter] {market_key} removed {len(removed_v2)}: "
                 + ", ".join(f"{t}({r})" for t, r in removed_v2)
             )
+        # 제거 목록을 보존한다 — 여기서 버리면 sub_screener triage가 같은 종목을
+        # 다시 watchlist에 넣는다. 실측(2026-07-13~27) triage 추가분의 83~95%가
+        # 방금 제거된 종목이었고, judge 호출의 26~63%를 그 종목들이 먹었다.
+        # 후보 풀에서 빠진 종목은 장중 피처 수집 대상도 아니라 스냅샷이 0건이고,
+        # judge는 빈 입력을 받아 "No VWAP/opening-range data supplied"로 기권한다.
+        # 즉 구조적으로 플랜이 나올 수 없는 호출에 예산을 쓰고 있었다.
+        self._record_history_filtered_out(market_key, removed_v2)
         log.info(
             f"[history filter] {market_key} candidates {len(candidates)} -> "
             f"valid_or_watch {len(filtered_v2)} (removed {len(removed_v2)})"
@@ -32472,6 +32479,48 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.error(f"[housekeeping 오류] {market}: {_hk_e}", exc_info=True)
         finally:
             self._leave_market_task(market, "housekeeping")
+    def _record_history_filtered_out(self, market: str, removed: object) -> None:
+        """history 필터가 제거한 종목을 세션 단위로 보존한다(triage 재유입 차단용).
+
+        removed는 (ticker, reason) 시퀀스. 세션이 바뀌면 초기화한다.
+        실패해도 후보 흐름을 막지 않는다 — 기록이 없으면 기존 동작(재유입)일 뿐이다.
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            store = getattr(self, "_history_filtered_out", None)
+            if not isinstance(store, dict):
+                store = {}
+                self._history_filtered_out = store
+            session = self._current_session_date_str(market_key)
+            bucket = store.get(market_key)
+            if not isinstance(bucket, dict) or bucket.get("session_date") != session:
+                bucket = {"session_date": session, "tickers": {}}
+                store[market_key] = bucket
+            for entry in list(removed or []):
+                if isinstance(entry, (tuple, list)) and entry:
+                    ticker, reason = str(entry[0]), str(entry[1] if len(entry) > 1 else "")
+                else:
+                    ticker, reason = str(entry), ""
+                key = self._selection_ticker_key(market_key, ticker)
+                if key:
+                    bucket["tickers"][key] = reason
+        except Exception as exc:
+            log.debug(f"[history filter 보존] {market_key} 실패: {exc}")
+
+    def _history_filtered_out_keys(self, market: str) -> dict[str, str]:
+        """이번 세션에 history 필터가 제거한 종목 키 -> 사유."""
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        store = getattr(self, "_history_filtered_out", None)
+        if not isinstance(store, dict):
+            return {}
+        bucket = store.get(market_key)
+        if not isinstance(bucket, dict):
+            return {}
+        if bucket.get("session_date") != self._current_session_date_str(market_key):
+            return {}
+        tickers = bucket.get("tickers")
+        return dict(tickers) if isinstance(tickers, dict) else {}
+
     def _build_sub_screener_exclude_set(self, market: str) -> set[str]:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         exclude: set[str] = set()
@@ -32480,6 +32529,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             key = self._selection_ticker_key(market_key, str(ticker or ""))
             if key:
                 exclude.add(key)
+
+        # history 필터 제거분 — anti_chase_extreme_spike(상한가 추격 배제)와
+        # data_insufficient(사용 가능 히스토리 부족)가 대부분이다. 둘 다 "판정에
+        # 필요한 근거가 없다"는 뜻이라 triage로 되살릴 이유가 없다.
+        # 롤백: SUB_SCREENER_RESPECT_HISTORY_FILTER=false
+        if str(os.getenv("SUB_SCREENER_RESPECT_HISTORY_FILTER", "true")).strip().lower() not in (
+            "0", "false", "no", "off",
+        ):
+            filtered = self._history_filtered_out_keys(market_key)
+            if filtered:
+                exclude.update(filtered.keys())
 
         for ticker in list((getattr(self, "today_tickers", {}) or {}).get(market_key, []) or []):
             add_ticker(ticker)
@@ -34289,6 +34349,18 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             score = (row or {}).get("trainer_prompt_score")
             state = str((row or {}).get("trainer_candidate_state") or "").strip()
             reasons[ticker] = f"sub_screener_triage:{state or 'candidate'} score={score}"
+
+        # 무엇 때문에 걸러졌는지 남긴다 — 재유입 차단이 실제로 동작하는지
+        # 세션마다 확인 가능해야 한다(관측 없이는 효과를 잴 수 없다).
+        blocked_by_history = [
+            t for t in skipped
+            if self._selection_ticker_key(market_key, t) in self._history_filtered_out_keys(market_key)
+        ]
+        if blocked_by_history:
+            log.info(
+                f"[sub_screener triage] {market_key} history 필터 제외종목 재유입 차단 "
+                f"{len(blocked_by_history)}건: {blocked_by_history[:10]}"
+            )
 
         if not added:
             return {"added_tickers": [], "skipped_tickers": skipped, "reason": "all_triage_rows_excluded"}
