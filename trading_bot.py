@@ -32737,6 +32737,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "run_cap_reached",
             "capacity_exhausted",
             "market_open_warmup",
+            # 자격/시간창은 나중에 충족될 수 있으므로 버리지 않고 재큐한다.
+            # 특히 post_open_feature_not_ready는 분봉이 붙으면 바로 해소된다
+            # (실측 자격 최초 도달: KR 개장+16~32분 / US +15~38분).
+            "post_open_feature_not_ready",
+            "early_judge_window_before",
+            # window_after는 재큐하지 않는다 — 시간은 되돌아오지 않는다.
         }
 
     def _queue_early_judge_recheck(
@@ -33564,6 +33570,55 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             guarded.append(row)
         return guarded
 
+    def _early_judge_require_features(self, market: str) -> bool:
+        """피처 자격 게이트 활성 여부. 기본 on, 시장별 override 가능."""
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        raw = os.getenv(f"{market_key}_EARLY_JUDGE_REQUIRE_POST_OPEN_FEATURES")
+        if raw is None or not str(raw).strip():
+            raw = os.getenv("EARLY_JUDGE_REQUIRE_POST_OPEN_FEATURES", "true")
+        return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+    @staticmethod
+    def _early_judge_features_ready(features: Any) -> bool:
+        """judge가 판단할 최소 근거(VWAP 축 + opening range 축)가 있는가.
+
+        둘 다 요구하는 이유: judge 응답이 매번 두 개를 함께 지목한다
+        ("no VWAP, opening range, or pullback structure"). vwap만 있고 OR이 없으면
+        구조적 지지선을 못 잡고, OR만 있고 vwap이 없으면 상대 위치를 못 잰다.
+
+        ⚠️ 원값(vwap/opening_range_high)만 보면 안 된다. 같은 근거가 파생 필드
+        (vwap_distance_pct / opening_range_break)로만 실린 경로가 있어, 원값만
+        요구하면 근거가 있는 후보까지 막는다. 축 단위로 판정한다.
+        """
+        if not isinstance(features, dict):
+            return False
+
+        def _has(*keys: str) -> bool:
+            return any(features.get(k) not in (None, "") for k in keys)
+
+        if not _has("vwap", "vwap_distance_pct"):
+            return False
+        if not _has("opening_range_high", "opening_range_low", "opening_range_break"):
+            return False
+        return True
+
+    def _early_judge_window_skip(self, market: str) -> str:
+        """시장별 생산 구간 밖이면 skip 사유를 반환. 값이 0이면 비활성."""
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        try:
+            elapsed = self._market_open_elapsed_min(market_key)
+        except Exception:
+            return ""
+        if elapsed is None:
+            return ""
+        lo = self._runtime_float(f"{market_key}_EARLY_JUDGE_WINDOW_MIN", 0.0)
+        hi = self._runtime_float(f"{market_key}_EARLY_JUDGE_WINDOW_MAX", 0.0)
+        if lo > 0 and elapsed < lo:
+            return "early_judge_window_before"
+        if hi > 0 and elapsed > hi:
+            return "early_judge_window_after"
+        return ""
+
     def _early_judge_hard_skip_reason(self, market: str, row: dict[str, Any], now: datetime) -> str:
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         ticker = self._selection_ticker_key(market_key, (row or {}).get("ticker") or "")
@@ -33598,6 +33653,32 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         quality = str(features.get("data_quality") or (row or {}).get("post_open_data_quality") or "").strip().lower()
         if quality in {"minute_missing", "missing", "bad", "stale", "invalid", "fail_closed"}:
             return "data_quality_fail_closed"
+        # 피처 자격 게이트(2026-07-27) — ★재호출에만 적용한다.
+        #
+        # 근거: vwap/opening_range가 없으면 judge는 판단 근거가 없어 기권한다.
+        # 응답이 그대로 말한다 — "Market open elapsed 0.0min with first_observed
+        # snapshot: no VWAP, opening range, or pullback structure".
+        # 플랜 산출률 실측: 자격O 첫판정 25.9% / 자격O 재호출 7.6% / 자격X 4.4~5.5%.
+        #
+        # ⚠️ 첫 판정에는 적용하지 않는다. 2026-07-25에 "구조적 feature age가 매수를
+        # 전면차단"하던 것을 advisory로 완화하는 수정이 두 번 들어갔고(290d775, 012956d),
+        # 그 계약이 test_immediate_buy_survives_when_post_open_features_are_missing으로
+        # 고정돼 있다. 첫 기회까지 막으면 그 결정을 뒤집는 것이 된다.
+        # 낭비의 핵심은 첫 판정이 아니라 "이미 한 번 기권한 종목을 근거 없이 또 묻는 것"이다.
+        #
+        # hard_skip은 예산을 차감하지 않고 재큐되므로, 자격이 생기면 다시 평가된다.
+        # 롤백: EARLY_JUDGE_REQUIRE_POST_OPEN_FEATURES=false
+        if ticker and self._early_judge_require_features(market_key):
+            _used = int((self._early_judge_ticker_session_call_count.get(market_key) or {}).get(ticker, 0) or 0)
+            if _used >= 1 and not self._early_judge_features_ready(features):
+                return "post_open_feature_not_ready"
+        # 시간창 게이트 — 시장별로 생산 구간이 다르다(자격O 첫판정 플랜율 실측).
+        #   KR  ≤90분 37.1% → 90~180분 7.1% → 180분+ 0.0%(n=19)
+        #   US  0~30분 5.3% → 30~180분 44.5% → 180분+ 23.8%
+        # 하나의 상수로 묶으면 한쪽이 반드시 손해라 시장별 env로 둔다. 0이면 비활성.
+        window_skip = self._early_judge_window_skip(market_key)
+        if window_skip:
+            return window_skip
         if ticker:
             per_ticker_cap = max(1, self._runtime_int("EARLY_JUDGE_MAX_CALLS_PER_TICKER_PER_SESSION", 2))
             ticker_used = int((self._early_judge_ticker_session_call_count.get(market_key) or {}).get(ticker, 0) or 0)

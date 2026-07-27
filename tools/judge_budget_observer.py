@@ -38,7 +38,7 @@ import argparse
 import glob
 import json
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -96,6 +96,73 @@ def elapsed_of(ts: str, market: str) -> float | None:
     if market == "US" and diff < -200:
         diff += 1440
     return diff
+
+
+def load_feature_timing(market: str) -> dict[str, dict]:
+    """session_date -> 피처 도착 타이밍·품질 분포.
+
+    왜 필요한가: 자격 게이트(어느 호출을 하느냐)와 피처 지연 개선(자격이 언제
+    생기나)은 서로 다른 변화인데, 공급 '개수'만 기록하면 후자의 효과가 원장에
+    남지 않아 두 변화를 분리 측정할 수 없다.
+
+    vwap과 OR을 분리해 기록한다 — 실측상 지연 양상이 시장별로 반대다:
+      KR  OR 최초 중앙 27.2분 (구조적 하한 10분) / VWAP 중앙 6.2분
+      US  OR 최초 중앙 10.0분 (하한 15분) / VWAP 중앙 29.7분, p75 105.9분
+    """
+    first_vwap: dict[str, dict[str, float]] = defaultdict(dict)
+    first_or: dict[str, dict[str, float]] = defaultdict(dict)
+    quality: dict[str, Counter] = defaultdict(Counter)
+    for path in glob.glob(str(ROOT / f"logs/funnel/post_open_features_*_{market}.jsonl")):
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                sess = row.get("market_session_date") or row.get("session_date")
+                elapsed = row.get("market_open_elapsed_min")
+                ticker = str(row.get("ticker") or "")
+                if not sess or elapsed is None or not ticker:
+                    continue
+                try:
+                    value = float(elapsed)
+                except (TypeError, ValueError):
+                    continue
+                sess = str(sess)
+                quality[sess][str(row.get("data_quality") or "unknown")] += 1
+                if row.get("vwap") is not None:
+                    cur = first_vwap[sess].get(ticker)
+                    if cur is None or value < cur:
+                        first_vwap[sess][ticker] = value
+                if row.get("opening_range_high") is not None:
+                    cur = first_or[sess].get(ticker)
+                    if cur is None or value < cur:
+                        first_or[sess][ticker] = value
+
+    def _q(values: list[float], pct: float) -> float | None:
+        if not values:
+            return None
+        values = sorted(values)
+        idx = min(len(values) - 1, int(len(values) * pct))
+        return round(values[idx], 1)
+
+    out: dict[str, dict] = {}
+    for sess in set(first_vwap) | set(first_or) | set(quality):
+        vw = list(first_vwap.get(sess, {}).values())
+        orv = list(first_or.get(sess, {}).values())
+        out[sess] = {
+            "first_vwap_min": min(vw) if vw else None,
+            "median_vwap_min": _q(vw, 0.5),
+            "p75_vwap_min": _q(vw, 0.75),
+            "first_or_min": min(orv) if orv else None,
+            "median_or_min": _q(orv, 0.5),
+            "p75_or_min": _q(orv, 0.75),
+            "data_quality": dict(quality.get(sess, Counter())),
+        }
+    return out
 
 
 def load_eligibility(market: str) -> dict[str, dict[str, float]]:
@@ -176,7 +243,8 @@ def tier_of(market: str, first_time: bool, elapsed: float) -> str:
     return "DROP"
 
 
-def observe_session(market: str, sess: str, elig: dict, calls: list[dict]) -> dict:
+def observe_session(market: str, sess: str, elig: dict, calls: list[dict],
+                    timing: dict | None = None) -> dict:
     supply = elig.get(sess) or {}
     rule = TIER_RULES[market]
     lo, hi = rule["t1"]
@@ -199,6 +267,12 @@ def observe_session(market: str, sess: str, elig: dict, calls: list[dict]) -> di
         comp[tier] += 1
         if c["plan"]:
             plans_by[tier] += 1
+    elig_vals = sorted(supply.values())
+    def _q(pct: float):
+        if not elig_vals:
+            return None
+        return round(elig_vals[min(len(elig_vals) - 1, int(len(elig_vals) * pct))], 1)
+
     return {
         "schema_version": SCHEMA_VERSION,
         "key": f"{sess}|{market}",
@@ -206,7 +280,13 @@ def observe_session(market: str, sess: str, elig: dict, calls: list[dict]) -> di
         "market": market,
         "mode": "observe",
         "live_impact": "none",
-        "supply": {"eligible_total": len(supply), "T1": supply_t1, "T3": supply_t3},
+        "supply": {
+            "eligible_total": len(supply), "T1": supply_t1, "T3": supply_t3,
+            "first_eligible_min": round(elig_vals[0], 1) if elig_vals else None,
+            "median_eligible_min": _q(0.5),
+            "p75_eligible_min": _q(0.75),
+            **(timing or {}),
+        },
         "calls": {"total": len(calls), "by_tier": dict(comp)},
         "plans": {"total": sum(1 for c in calls if c["plan"]), "by_tier": dict(plans_by)},
         "tier_rule": {"t1_min": lo, "t1_max": hi, "t3_min": t3lo, "t3_max": t3hi},
@@ -256,13 +336,14 @@ def main() -> int:
             continue
         elig = load_eligibility(market)
         calls = load_calls(market)
+        timing = load_feature_timing(market)
         sessions = sorted(set(elig) | set(calls))
         for sess in sessions:
             if args.session and sess != args.session:
                 continue
             if not args.session and sess < floor:
                 continue
-            rec = observe_session(market, sess, elig, calls.get(sess) or [])
+            rec = observe_session(market, sess, elig, calls.get(sess) or [], timing.get(sess))
             all_recs.append(rec)
             print("  " + fmt_line(rec))
 
