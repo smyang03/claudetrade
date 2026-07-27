@@ -72,9 +72,49 @@ def _consistent_reward_risk_enabled() -> bool:
     off(기본): risk = buy_zone_low - stop_loss (레거시, 존 바닥 기준).
     on: risk = buy_zone_high - stop_loss (보상과 같은 앵커 = 보수적 fill 일관 기준).
     on일 때 게이트가 정직한 reward/risk로 판정 → shadow/net 검증 후 enforce 전환용.
+
+    ⚠️ PATHB_REWARD_RISK_ANCHOR가 설정되면 그쪽이 우선한다(아래 참조).
     """
     raw = os.getenv("PATHB_CONSISTENT_REWARD_RISK")
     return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _reward_risk_anchor() -> str:
+    """RR 계산 기준점: low | mid | high.
+
+    왜 mid를 추가하는가 (실측 2026-07-28, 7/1 이전 플랜 668건 재계산):
+      앵커  RR중앙  RR≥1.5 통과율   성격
+      low    3.29        98%      게이트가 사실상 무력 — loophole 방치
+      mid    1.46        46%      변별력 있는 구간
+      high   0.76         6%      과잉 차단
+
+    2026-07-01 커밋(d44e99a)이 앵커를 low→high로 바꾼 뒤 실측 결과:
+      존 폭      2.52% → 0.83%   (RR을 맞추려 존을 좁힘)
+      존 도달률    52% → 8%
+      세션당 플랜  12.3 → 1.5
+      Path B 체결 265건(5~6월) → 4건(7월)
+    RR = reward/risk에서 risk = anchor - stop이므로, anchor를 존 상단으로 올리면
+    risk가 커져 RR이 떨어진다. 그걸 되돌리는 유일한 수단이 존을 좁히는 것이라
+    체결 가능성이 구조적으로 사라졌다.
+
+    low로 되돌리면 통과율 98%로 게이트가 형식만 남는다. 실제 체결은 존 어딘가에서
+    나므로 중간점이 기대값에 가장 가깝고, 게이트도 변별력을 유지한다.
+
+    미설정 시 기존 PATHB_CONSISTENT_REWARD_RISK 동작을 그대로 따른다(하위호환).
+    """
+    raw = str(os.getenv("PATHB_REWARD_RISK_ANCHOR") or "").strip().lower()
+    if raw in {"low", "mid", "high"}:
+        return raw
+    return "high" if _consistent_reward_risk_enabled() else "low"
+
+
+def _anchor_price(buy_zone_low: float, buy_zone_high: float) -> float:
+    anchor = _reward_risk_anchor()
+    if anchor == "high":
+        return buy_zone_high
+    if anchor == "mid":
+        return (buy_zone_low + buy_zone_high) / 2.0
+    return buy_zone_low
 
 
 def _deterministic_sell_target_cap_pct() -> float:
@@ -186,10 +226,11 @@ class PricePlan:
             if self.validated_min_reward_risk is not None
             else resolve_min_reward_risk(self.market)
         )
-        if _consistent_reward_risk_enabled():
-            risk = self.buy_zone_high - self.stop_loss
-        else:
-            risk = self.buy_zone_low - self.stop_loss
+        # risk 앵커만 조절한다. reward는 기존대로 buy_zone_high 기준을 유지 —
+        # 존 상단 체결을 가정한 보수적 reward이고, 기존 low/high 두 모드의 계약이
+        # 여기에 고정돼 있다(test_pathb_entry_quality_gates). 앵커 도입이 그 계약을
+        # 건드리면 변경 범위가 불필요하게 커진다.
+        risk = _anchor_price(self.buy_zone_low, self.buy_zone_high) - self.stop_loss
         reward = self.sell_target - self.buy_zone_high
         if risk <= 0:
             errors.append("risk_nonpositive")
