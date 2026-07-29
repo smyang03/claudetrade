@@ -31,6 +31,17 @@ if str(ROOT) not in sys.path:
 
 from lifecycle.event_store import EventStore  # noqa: E402
 import runtime.pathb_runtime as pathb_mod  # noqa: E402
+
+# ★ 실주문 차단 가드 (필수) ─────────────────────────────────────────────
+# 이 시뮬은 라이브와 같은 프로세스 공간에서 PathBRuntime을 실제로 태운다.
+# 장중에 돌리면 진입 판정이 place_order까지 도달할 수 있으므로, 모듈 레벨
+# place_order/cancel_order를 무조건 차단본으로 덮어쓴다. 절대 제거하지 말 것.
+def _sim_blocked_order(*_a, **_k):
+    return {"success": False, "msg": "SIM_ORDER_BLOCKED", "order_no": "", "sim": True}
+
+
+pathb_mod.place_order = _sim_blocked_order
+pathb_mod.cancel_order = _sim_blocked_order
 from runtime.pathb_runtime import PathBControlState, PathBRuntime  # noqa: E402
 
 

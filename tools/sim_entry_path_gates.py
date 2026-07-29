@@ -49,6 +49,18 @@ os.environ.setdefault("CLAUDETRADE_SIM", "1")
 import pandas as pd  # noqa: E402
 import trading_bot  # noqa: E402
 
+# ★ 실주문 차단 가드 (필수) ─────────────────────────────────────────────
+# 이 시뮬은 라이브와 같은 trading_bot 모듈을 실제로 태운다. 진입/청산 경로가
+# place_order까지 도달할 수 있으므로 모듈 레벨 주문 함수를 무조건 차단본으로
+# 덮어쓴다. 절대 제거하지 말 것 — 장중에 돌리면 실주문이 나갈 수 있다.
+def _sim_blocked_order(*_a, **_k):
+    return {"success": False, "msg": "SIM_ORDER_BLOCKED", "order_no": "", "sim": True}
+
+
+for _fn in ("place_order", "cancel_order", "precheck_order"):
+    if hasattr(trading_bot, _fn):
+        setattr(trading_bot, _fn, _sim_blocked_order)
+
 
 class LogCapture(logging.Handler):
     """run_cycle이 남기는 모든 로그를 레벨 무관하게 모은다(debug 포함)."""
@@ -331,6 +343,10 @@ GATE_MARKERS = [
 
 def run_case(*, market, mode, elapsed_min, from_high_pct, trade_ready, buy_ready_route,
              signal_kind="flat", or_state=None, fault="", tickers=1):
+    # signal_kind="orp": US live base 주력 전략을 태우기 위해 OR을 자동 주입한다.
+    # 현재가 100 기준 OR 99~101(폭 1.0%) → close가 or_high 대비 -0.99%로 눌림구간에 든다.
+    if signal_kind == "orp" and or_state is None:
+        or_state = {"high": 101.0, "low": 100.0, "formed": True}
     cap = LogCapture()
     price = 100.0
     day_high = price / (1.0 + from_high_pct / 100.0)
@@ -364,9 +380,11 @@ def main() -> int:
     for mode in ("MILD_BULL", "CAUTIOUS", "DEFENSIVE", "HALT"):
         # 300분 = late session score 게이트(US 270분/KR 300분) 구간.
         # 이 축이 없어서 2026-07-29에 BUY_READY 100% 차단을 놓쳤다.
-        for elapsed in (10.0, 120.0, 300.0, 370.0):
+        # 40분 = ORP 진입창(OR 15분 + 60분) 한가운데이자 고점근접 유예(30분) 밖.
+        # 이 축이 없어 ORP가 82% 차단되던 것을 시나리오 스윕에서 놓쳤다.
+        for elapsed in (10.0, 40.0, 120.0, 300.0, 370.0):
             for fh in (-0.4, -3.0):
-                for sig in ("mean_reversion", "flat"):
+                for sig in ("orp", "flat"):
                     for br in (True, False):
                         scenarios.append(dict(market=args.market, mode=mode,
                                               elapsed_min=elapsed, from_high_pct=fh,
@@ -410,7 +428,7 @@ def main() -> int:
     print("=== 진입 경로별 도달률 (BUY_READY vs 기술신호) ===")
     for label, pred in (
         ("BUY_READY(judge)", lambda sc: sc["buy_ready_route"]),
-        ("기술신호만", lambda sc: not sc["buy_ready_route"] and sc["signal_kind"] == "mean_reversion"),
+        ("기술신호만(ORP)", lambda sc: not sc["buy_ready_route"] and sc["signal_kind"] == "orp"),
         ("신호없음", lambda sc: not sc["buy_ready_route"] and sc["signal_kind"] == "flat"),
     ):
         sub = [(sc, ok) for sc, ok, _ in rows if pred(sc)]

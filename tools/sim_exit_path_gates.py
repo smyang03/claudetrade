@@ -31,6 +31,18 @@ if str(ROOT) not in sys.path:
 
 import trading_bot  # noqa: E402
 
+# ★ 실주문 차단 가드 (필수) ─────────────────────────────────────────────
+# 이 시뮬은 라이브와 같은 trading_bot 모듈을 실제로 태운다. 진입/청산 경로가
+# place_order까지 도달할 수 있으므로 모듈 레벨 주문 함수를 무조건 차단본으로
+# 덮어쓴다. 절대 제거하지 말 것 — 장중에 돌리면 실주문이 나갈 수 있다.
+def _sim_blocked_order(*_a, **_k):
+    return {"success": False, "msg": "SIM_ORDER_BLOCKED", "order_no": "", "sim": True}
+
+
+for _fn in ("place_order", "cancel_order", "precheck_order"):
+    if hasattr(trading_bot, _fn):
+        setattr(trading_bot, _fn, _sim_blocked_order)
+
 
 class LogCapture(logging.Handler):
     def __init__(self) -> None:
