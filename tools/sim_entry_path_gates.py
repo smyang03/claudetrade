@@ -123,9 +123,11 @@ def _make_candles(n: int = 80, base: float = 100.0, *, kind: str = "flat") -> pd
 
 def build_bot(*, market: str, mode: str, elapsed_min: float, trade_ready: bool,
               buy_ready_route: bool, price: float, day_high: float,
-              signal_kind: str, cap: LogCapture) -> object:
+              signal_kind: str, cap: LogCapture, or_state: dict | None = None,
+              fault: str = "", tickers: int = 1) -> object:
     bot = trading_bot.TradingBot.__new__(trading_bot.TradingBot)
     tk = "SIMTK"
+    tks = [tk] if tickers <= 1 else [f"SIMTK{i}" for i in range(1, tickers + 1)]
 
     bot.session_active = True
     bot.current_market = market
@@ -141,19 +143,19 @@ def build_bot(*, market: str, mode: str, elapsed_min: float, trade_ready: bool,
             "phase": "intraday_live",
             "execution_authority": "BUY_SELL_LIVE",
         },
-        "universe_tickers": [tk],
+        "universe_tickers": list(tks),
     }
-    bot.today_tickers = {market: [tk]}
-    bot.today_ticker_reasons = {market: {tk: "sim"}}
+    bot.today_tickers = {market: list(tks)}
+    bot.today_ticker_reasons = {market: {t: "sim" for t in tks}}
     bot.selection_meta = {market: {
-        "trade_ready": [tk] if trade_ready else [],
-        "price_targets": {tk: {
+        "trade_ready": list(tks) if trade_ready else [],
+        "price_targets": {t: {
             "sell_target": price * 1.03,
             "stop_loss": price * 0.985,
             "hold_days": 2,
-        }} if buy_ready_route else {},
+        } for t in tks} if buy_ready_route else {},
     }}
-    bot.trade_ready_tickers = {market: [tk] if trade_ready else []}
+    bot.trade_ready_tickers = {market: list(tks) if trade_ready else []}
     # price_cache_raw는 직전 정상가(float)를 담는다 — outlier 방어(30% 괴리)에서 float 비교됨.
     # 빈 dict로 두면 get(ticker, 0)=0이라 방어 로직을 건너뛴다(시뮬 목적상 안전).
     bot.price_cache = {}
@@ -172,9 +174,12 @@ def build_bot(*, market: str, mode: str, elapsed_min: float, trade_ready: bool,
                   "enable_watch_trigger_shadow"):
         setattr(bot, _flag, False)
     bot.max_est_slippage_bps = 100.0
-    bot._or_high = {}
-    bot._or_low = {}
-    bot._or_formed = {}
+    # opening_range_pullback은 US live base 전략의 주력이다. OR(개장 레인지)이 형성돼야
+    # 발화하므로 시나리오에서 직접 주입한다. 미주입이면 orp_not_formed로 탈락한다.
+    _or = dict(or_state or {})
+    bot._or_high = {t: float(_or['high']) for t in tks} if _or.get('high') else {}
+    bot._or_low = {t: float(_or['low']) for t in tks} if _or.get('low') else {}
+    bot._or_formed = {t: True for t in tks} if _or.get('formed') else {}
     bot._continuation_used = {}
     bot._ticker_no_signal_cycles = {}
     bot._ticker_no_signal_minutes = {}
@@ -230,12 +235,14 @@ def build_bot(*, market: str, mode: str, elapsed_min: float, trade_ready: bool,
     bot._market_elapsed_min = lambda m: float(elapsed_min)
     bot._intraday_session_progress = lambda m: 0.5
     bot._get_ohlcv_cached = lambda t, m: _make_candles(base=price, kind=signal_kind)
-    bot._in_entry_blackout = lambda m: False
-    bot._is_entry_blocked = lambda t: False
-    bot._has_open_position = lambda t, m: False
-    bot._has_pending_order = lambda t, m: False
-    bot._same_day_reentry_state = lambda t, m: {"allowed": True}
-    bot._trade_ready_set = lambda m: ({tk} if trade_ready else set())
+    bot._in_entry_blackout = (lambda m: True) if fault == "blackout" else (lambda m: False)
+    bot._is_entry_blocked = (lambda t: True) if fault == "cooldown" else (lambda t: False)
+    bot._has_open_position = (lambda t, m: True) if fault == "holding" else (lambda t, m: False)
+    bot._has_pending_order = (lambda t, m: True) if fault == "pending" else (lambda t, m: False)
+    bot._same_day_reentry_state = (
+        (lambda t, m: {"allowed": False, "reason": "same_day_reentry"}) if fault == "reentry"
+        else (lambda t, m: {"allowed": True}))
+    bot._trade_ready_set = lambda m: (set(tks) if trade_ready else set())
     bot._is_trade_ready_ticker = lambda m, t: bool(trade_ready)
     bot._watch_only_bucket = lambda m, t: "SOFT"
     bot._watch_only_reason_text = lambda m, t: "sim watch_only"
@@ -276,10 +283,15 @@ def build_bot(*, market: str, mode: str, elapsed_min: float, trade_ready: bool,
     bot._mark_us_order_blocked = noop
     # 브로커/리스크 계층 — 이 시뮬의 판정 범위 밖이므로 통과시킨다.
     # (여기서 막히면 "게이트 지도"를 그릴 수 없고, 실제 라이브에선 별도로 검증된다)
-    bot._entry_allowed_by_broker_state = lambda m: (True, "OK")
+    # ── 하류 게이트 fault 주입 ──────────────────────────────────────
+    bot._entry_allowed_by_broker_state = (
+        (lambda m: (False, "broker_state_untrusted")) if fault == "broker"
+        else (lambda m: (True, "OK")))
     bot._broker_trust_level = lambda m: "trusted"
     bot._ticker_market = lambda t: market
-    bot.risk.can_open = lambda t, rp, sp, market=None: (True, "OK")
+    bot.risk.can_open = (
+        (lambda t, rp, sp, market=None: (False, "max_positions")) if fault == "risk"
+        else (lambda t, rp, sp, market=None: (True, "OK")))
     bot._recommended_strategy_for_ticker = lambda m, t: "momentum"
     bot._notify_signal_state_change = noop
     bot._selection_meta_mark_runtime_filtered = noop
@@ -307,6 +319,8 @@ GATE_MARKERS = [
     ("WATCH_ONLY", "watch_only"),
     ("BUY_READY 즉시", "buy_ready_fired"),
     ("신호 정렬", "reached_order_loop"),
+    ("orp_", "orp_reason"),
+    ("opening_range_pullback", "orp_strategy"),
     ("halt", "halt_mode"),
     ("모드 진입 억제", "mode_block"),
     ("stop cluster", "stop_cluster"),
@@ -316,13 +330,14 @@ GATE_MARKERS = [
 
 
 def run_case(*, market, mode, elapsed_min, from_high_pct, trade_ready, buy_ready_route,
-             signal_kind="flat"):
+             signal_kind="flat", or_state=None, fault="", tickers=1):
     cap = LogCapture()
     price = 100.0
     day_high = price / (1.0 + from_high_pct / 100.0)
     bot = build_bot(market=market, mode=mode, elapsed_min=elapsed_min,
                     trade_ready=trade_ready, buy_ready_route=buy_ready_route,
-                    price=price, day_high=day_high, signal_kind=signal_kind, cap=cap)
+                    price=price, day_high=day_high, signal_kind=signal_kind, cap=cap,
+                    or_state=or_state, fault=fault, tickers=tickers)
     err = ""
     try:
         with patch("trading_bot.get_price", return_value={"price": price, "high": day_high,

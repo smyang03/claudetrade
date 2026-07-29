@@ -60,6 +60,9 @@ class _SimBot:
         self.is_paper = False
         self.token = "token"
         self.price_cache = {}
+        # PathB._current_native_price는 price_cache_raw를 먼저 본다.
+        # 주입하지 않으면 외부 API(Finnhub/Yahoo/KIS)를 실제로 호출하고 실패한다.
+        self.price_cache_raw = {'SIMTK': float(price)}
         self.pending_orders: list[dict] = []
         self.blocked_entries: list[tuple] = []
         self.decision_events: list[dict] = []
@@ -132,7 +135,8 @@ GATES = [
 
 
 def run_case(*, market: str, mode: str, price: float, zone_low: float, zone_high: float,
-             live_enabled: bool = True, with_decision_id: bool = True):
+             live_enabled: bool = True, with_decision_id: bool = True,
+             bypass_market_gate: bool = False):
     cap = LogCapture()
     root = logging.getLogger()
     prev_level = root.level
@@ -148,6 +152,11 @@ def run_case(*, market: str, mode: str, price: float, zone_low: float, zone_high
             store = EventStore(Path(tmp) / "events.db")
             rt = PathBRuntime(bot, is_paper=False, store=store)
             rt.control_store = _Control()
+            # 시장 개장 게이트 우회 — 시뮬은 실제 시계를 쓰므로 장외에는 MARKET_CLOSED로
+            # 진입 스캔이 막힌다(정상 동작이고 WARNING으로 기록된다).
+            # 그 안쪽 진입 로직을 보려면 우회해야 한다.
+            if bypass_market_gate:
+                rt._new_buy_block_state = lambda *a, **k: {'allowed': True}
             # 브로커 truth mock — 없으면 진입 스캔이 BLOCKED_BROKER_TRUTH로 시장 전체 차단된다
             # (그 자체는 WARNING으로 잘 기록되는 안전 설계다. 더 안쪽 게이트를 보려면 통과시킨다.)
             rt.broker_truth = SimpleNamespace(
@@ -165,8 +174,10 @@ def run_case(*, market: str, mode: str, price: float, zone_low: float, zone_high
                     "SIMTK": {
                         "buy_zone_low": zone_low,
                         "buy_zone_high": zone_high,
-                        "sell_target": price * 1.05,
-                        "stop_loss": price * 0.98,
+                        # 플랜 계약: stop_loss < buy_zone_low < buy_zone_high < sell_target
+                        # 현재가 기준으로 잡으면 stop_loss_not_below_buy_zone으로 무효 처리된다.
+                        "sell_target": zone_high * 1.05,
+                        "stop_loss": zone_low * 0.98,
                         "hold_days": 2,
                         "confidence": 0.7,
                     }
