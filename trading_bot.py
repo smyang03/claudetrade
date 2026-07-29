@@ -37154,13 +37154,28 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     if _day_high > 0:
                         _from_high_pct = (float(price) - _day_high) / _day_high * 100
                         _FROM_HIGH_BLOCK = float(os.getenv("FROM_HIGH_BLOCK_PCT", "-2.0"))
-                        if _from_high_pct > _FROM_HIGH_BLOCK:
+                        # 2026-07-29 BUY_READY 예외(운영자 승인): 이 차단은 "고점 대비 2% 이상
+                        # 빠져야 산다"는 눌림매수 규칙이라, 눌림을 폐기하고 즉시 진입하는
+                        # BUY_READY(2026-07-21 도입) 정체성과 정면 충돌한다. BUY_READY로 뽑히는
+                        # 종목은 강모멘텀·OR 고점 부근이라 from_high가 보통 -0.1~-1%다.
+                        # 실측(2026-07-28 US): judge BUY_READY 12건·즉시매수 6회 발동에도 실주문 0.
+                        #   PAY 6회 전부 from_high -0.12~-0.62%로 여기서 탈락(log.debug라 무흔적).
+                        #   7/27 VZ가 체결된 건 개장 22분(=_OPENING_GRACE_MIN 30 안)이었기 때문.
+                        # 바로 아래 entry_priority 게이트와 같은 논리 — 둘 다 리스크 게이트가 아니라
+                        # 진입 스타일 게이트다. 리스크·affordability는 하류에서 그대로 탄다.
+                        # 일반 진입 경로와 extreme-spike 차단은 무변경.
+                        if _from_high_pct > _FROM_HIGH_BLOCK and not _buy_ready_active:
                             log.debug(
                                 f"  [{ticker}] 고점근접 차단: 현재가={float(price):,.0f} "
                                 f"당일고점={_day_high:,.0f} "
                                 f"from_high={_from_high_pct:.2f}% > {_FROM_HIGH_BLOCK}% → 진입 보류"
                             )
                             continue
+                        if _from_high_pct > _FROM_HIGH_BLOCK and _buy_ready_active:
+                            log.info(
+                                f"  [{ticker}] 고점근접 차단 면제(BUY_READY): "
+                                f"from_high={_from_high_pct:.2f}% > {_FROM_HIGH_BLOCK}% — judge 즉시매수 진입 유지"
+                            )
                 # 마감 직전 신규 진입 차단 — 당일 청산 불가 방지
                 _cutoff = (_KR_ENTRY_CUTOFF_FROM_OPEN_MIN if market == "KR"
                            else _US_ENTRY_CUTOFF_FROM_OPEN_MIN)
@@ -37366,12 +37381,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 _late_threshold   = _late_session_min.get(market, 999)
                 if ticker not in _INVERSE_SET and _since_open_late >= _late_threshold:
                     _LATE_SCORE_MIN = float(os.getenv("LATE_SESSION_SCORE_MIN", "0.6"))
-                    if _ep_score < _LATE_SCORE_MIN:
+                    # 2026-07-29 BUY_READY 예외(운영자 승인): entry_priority score는 기술신호
+                    # 품질 점수라 claude_price_a(judge 결정 진입)는 strat=0.000으로 구조적으로 낮다.
+                    # 실측: BUY_READY score=0.240 < 0.6 → US 270분(≈03:00 KST) 이후 100% 차단.
+                    # 바로 위 entry_priority cutoff에는 이미 `and not _buy_ready_active` 예외가 있는데
+                    # 이 게이트에만 빠져 있어 일관성이 없었다(고점근접 차단과 동일한 누락 유형).
+                    # 리스크·affordability·마감직전 컷오프는 하류에서 그대로 탄다.
+                    if _ep_score < _LATE_SCORE_MIN and not _buy_ready_active:
                         log.info(
                             f"  [{ticker}] 장 후반({_since_open_late:.0f}분) "
                             f"score={_ep_score:.3f} < {_LATE_SCORE_MIN} → 진입 보류"
                         )
                         continue
+                    if _ep_score < _LATE_SCORE_MIN and _buy_ready_active:
+                        log.info(
+                            f"  [{ticker}] 장 후반 score 게이트 면제(BUY_READY): "
+                            f"{_since_open_late:.0f}분 score={_ep_score:.3f} < {_LATE_SCORE_MIN} — judge 즉시매수 유지"
+                        )
                 effective_size = max(10, min(100, int(size_pct * size_mult)))
                 if _momentum_atr_size_cap is not None:
                     effective_size = min(effective_size, _momentum_atr_size_cap)
