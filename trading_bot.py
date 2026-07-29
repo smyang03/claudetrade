@@ -11840,6 +11840,65 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 f">={warn_min:.0f} source={source_key} waiting={waiting_count}"
             )
 
+    def _carry_judge_overlay_actions(self, market: str, raw_meta: dict) -> dict:
+        """rescreen이 single_symbol_judge overlay를 지우지 않도록 직전 meta에서 이월한다.
+
+        - 대상은 judge가 만든 action만이다(source_prompt_id == "single_symbol_judge_v1").
+          selection 원본 action은 건드리지 않는다.
+        - created_at 기준 TTL을 넘긴 것은 이월하지 않는다(stale 진입 방지).
+          judge recheck 주기가 5분이므로 기본 20분이면 3~4회 갱신 기회가 있다.
+        - 같은 종목이 양쪽에 있으면 judge 쪽을 우선한다(더 최신 판단).
+        """
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        prev = dict((getattr(self, "selection_meta", {}) or {}).get(market_key) or {})
+        prev_actions = [
+            dict(a) for a in (prev.get("candidate_actions") or [])
+            if isinstance(a, dict)
+            and str(a.get("source_prompt_id") or "") == "single_symbol_judge_v1"
+        ]
+        if not prev_actions:
+            return raw_meta
+
+        ttl_min = self._runtime_float("JUDGE_OVERLAY_CARRY_TTL_MIN", 20.0)
+        now = datetime.now(KST).replace(tzinfo=None)
+        fresh: list[dict] = []
+        for action in prev_actions:
+            created = str(action.get("created_at") or "").strip()
+            if not created:
+                continue
+            try:
+                created_at = datetime.fromisoformat(created)
+            except ValueError:
+                continue
+            if created_at.tzinfo is not None:
+                created_at = created_at.astimezone(KST).replace(tzinfo=None)
+            if (now - created_at).total_seconds() <= ttl_min * 60.0:
+                fresh.append(action)
+        if not fresh:
+            return raw_meta
+
+        meta = dict(raw_meta)
+        carried_keys = {str(a.get("ticker") or "").strip().upper() for a in fresh}
+        existing = [
+            dict(a) for a in (meta.get("candidate_actions") or [])
+            if isinstance(a, dict)
+            and str(a.get("ticker") or "").strip().upper() not in carried_keys
+        ]
+        meta["candidate_actions"] = existing + fresh
+        meta["_candidate_actions_present"] = True
+        if not str(meta.get("_candidate_actions_source") or "").strip():
+            meta["_candidate_actions_source"] = "single_symbol_judge_overlay_carry"
+        # watchlist에 없으면 라우팅 대상에서 빠지므로 함께 이월한다.
+        meta["watchlist"] = list(dict.fromkeys(
+            list(meta.get("watchlist") or []) + [str(a.get("ticker") or "") for a in fresh if a.get("ticker")]
+        ))
+        meta["_judge_overlay_carried"] = sorted(carried_keys)
+        log.info(
+            f"[judge overlay 이월] {market_key} {sorted(carried_keys)} "
+            f"(TTL {ttl_min:.0f}분) — rescreen이 judge 판단을 덮지 않도록 보존"
+        )
+        return meta
+
     def _apply_selection_meta(
         self,
         market: str,
@@ -11850,6 +11909,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     ) -> dict:
         """Persist Claude WATCH/TRADE_READY split while keeping legacy tickers intact."""
         raw_meta = dict(meta_override if meta_override is not None else (get_last_selection_meta() or {}))
+        # 2026-07-29 judge overlay 보존(운영자 승인): selection meta 저장소가 둘로 갈려 있다.
+        #   _LAST_SELECTION_META(모듈 전역, analysts.py) ← selection 함수만 쓴다
+        #   self.selection_meta[market]                 ← single_symbol_judge overlay가 쌓인다
+        # rescreen은 meta_override 없이 이 함수를 부르므로 모듈 전역만 읽어 judge overlay를
+        # 통째로 덮어썼다. 그 결과 judge가 BUY_READY를 내도 다음 rescreen에 사라졌다.
+        # 실측(2026-07-28 US): judge BUY_READY 12건 중 승격 3건뿐이었고, 살아남은 3건은
+        # selection이 원래 알고 있던 종목(ACN·PAY·RGEN)이라 모듈 전역에도 있었기 때문이다.
+        # decision_id 유무와의 상관(9/9)은 인과가 아니라 이 사실의 부산물이었다.
+        if meta_override is None:
+            raw_meta = self._carry_judge_overlay_actions(market, raw_meta)
         meta = dict(raw_meta)
         if not meta.get("watchlist"):
             v2_contract_enabled = self._runtime_bool("CANDIDATE_ACTIONS_V2_ENABLED", False)
