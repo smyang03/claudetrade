@@ -127,6 +127,12 @@ class _SimBot:
     def _v2_record_lifecycle_event(self, *a, **kw) -> None:
         return None
 
+    def _new_buy_block_state(self, market, ticker='', strategy='', profit_evidence=None):
+        # PathBRuntime._new_buy_block_state는 self.bot._new_buy_block_state를 먼저 부른다.
+        # 이게 없으면 PathB 자체 판정(시장 개장/브로커)으로 넘어가 장외에는 MARKET_CLOSED로
+        # 막힌다. 시뮬은 진입 로직 자체를 보는 것이 목적이므로 여기서 통과시킨다.
+        return {'allowed': True, 'blocked': False, 'reason': '', 'scope': '', 'details': {}}
+
 
 class _Control:
     def load(self):
