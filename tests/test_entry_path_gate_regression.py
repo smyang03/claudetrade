@@ -75,6 +75,36 @@ class BuyReadyReachesOrderLoopTests(unittest.TestCase):
                 )
 
 
+class OpeningRangePullbackTests(unittest.TestCase):
+    """★ 2026-07-29 발견분 — ORP(US live base 주력)와 고점근접 차단의 기준점 충돌.
+
+    ORP는 OR 고점 대비 -0.2~-1.0% 눌림에서 발화하는데, 고점근접 차단은 당일 고점 대비
+    -2.0%를 요구한다. ORP의 눌림이 차단선보다 얕아 거의 항상 걸렸다.
+    실측(US post_open 11,502건, 개장 30분 이후): ORP 눌림구간 1,320건 중 82.3%가 차단 대상.
+    """
+
+    OR = {"high": 101.0, "low": 100.0, "formed": True}
+
+    def test_orp_survives_from_high_block_across_entry_window(self) -> None:
+        """설계상 진입창(OR 15분 + 60분) 전체에서 주문 루프에 도달해야 한다."""
+        for elapsed in (16.0, 31.0, 40.0, 60.0, 74.0):
+            with self.subTest(elapsed=elapsed):
+                self.assertTrue(
+                    _reached(mode="MILD_BULL", elapsed_min=elapsed, from_high_pct=-0.6,
+                             market="US", trade_ready=True, signal_kind="flat",
+                             buy_ready_route=False, or_state=self.OR),
+                    f"ORP가 경과 {elapsed:.0f}분에서 주문 루프에 도달하지 못했다",
+                )
+
+    def test_orp_entry_window_still_expires(self) -> None:
+        """진입창(75분)을 넘기면 면제와 무관하게 발화하지 않는다."""
+        self.assertFalse(
+            _reached(mode="MILD_BULL", elapsed_min=80.0, from_high_pct=-0.6,
+                     market="US", trade_ready=True, signal_kind="flat",
+                     buy_ready_route=False, or_state=self.OR)
+        )
+
+
 class RiskGatesStillBlockTests(unittest.TestCase):
     """면제가 리스크·국면 게이트까지 뚫으면 안 된다."""
 

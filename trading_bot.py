@@ -37164,17 +37164,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         # 바로 아래 entry_priority 게이트와 같은 논리 — 둘 다 리스크 게이트가 아니라
                         # 진입 스타일 게이트다. 리스크·affordability는 하류에서 그대로 탄다.
                         # 일반 진입 경로와 extreme-spike 차단은 무변경.
-                        if _from_high_pct > _FROM_HIGH_BLOCK and not _buy_ready_active:
+                        # 2026-07-29 ORP 예외(운영자 승인): opening_range_pullback은 US live base
+                        # 전략의 주력인데, 이 차단과 기준점이 달라 구조적으로 충돌한다.
+                        #   ORP    = OR 고점(개장 15분 고점) 대비 -0.2~-1.0% 눌림에서 발화
+                        #   이 차단 = 당일 고점 대비 -2.0% 이상 빠져야 통과
+                        # ORP가 정의하는 눌림(최대 1.0%)이 차단선(2.0%)보다 얕아 거의 항상 걸린다.
+                        # 실측(US post_open 11,502건, 개장 30분 이후): ORP 눌림구간 1,320건 중
+                        # 82.3%(1,087건)가 이 차단 대상이었다. 진입창도 설계 15~75분 중
+                        # 15~30분(_OPENING_GRACE_MIN)만 온전했다.
+                        # ORP는 자체 눌림 조건(0.2~1.0%)과 OR 폭 조건(0.3~3.0%)을 이미 갖고 있어
+                        # 중복 방어다. 추격이 아니라 눌림 매수이므로 anti-chase 취지와도 어긋나지 않는다.
+                        _orp_exempt = (strategy_name == "opening_range_pullback")
+                        if _from_high_pct > _FROM_HIGH_BLOCK and not _buy_ready_active and not _orp_exempt:
                             log.debug(
                                 f"  [{ticker}] 고점근접 차단: 현재가={float(price):,.0f} "
                                 f"당일고점={_day_high:,.0f} "
                                 f"from_high={_from_high_pct:.2f}% > {_FROM_HIGH_BLOCK}% → 진입 보류"
                             )
                             continue
-                        if _from_high_pct > _FROM_HIGH_BLOCK and _buy_ready_active:
+                        if _from_high_pct > _FROM_HIGH_BLOCK and (_buy_ready_active or _orp_exempt):
                             log.info(
-                                f"  [{ticker}] 고점근접 차단 면제(BUY_READY): "
-                                f"from_high={_from_high_pct:.2f}% > {_FROM_HIGH_BLOCK}% — judge 즉시매수 진입 유지"
+                                f"  [{ticker}] 고점근접 차단 면제"
+                                f"({'BUY_READY' if _buy_ready_active else 'ORP'}): "
+                                f"from_high={_from_high_pct:.2f}% > {_FROM_HIGH_BLOCK}% — "
+                                f"{'judge 즉시매수' if _buy_ready_active else 'OR 눌림 전략'} 진입 유지"
                             )
                 # 마감 직전 신규 진입 차단 — 당일 청산 불가 방지
                 _cutoff = (_KR_ENTRY_CUTOFF_FROM_OPEN_MIN if market == "KR"
