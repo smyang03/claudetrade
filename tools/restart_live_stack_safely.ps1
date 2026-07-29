@@ -29,7 +29,11 @@ function Get-BrokerInventory {
     if (-not (Test-Path -LiteralPath $SnapshotPath)) {
         return @{ trusted = $false; markets = @{} }
     }
-    $payload = Get-Content -LiteralPath $SnapshotPath -Raw | ConvertFrom-Json
+    # Windows PowerShell 5.1의 Get-Content는 BOM 없는 UTF-8을 시스템 ANSI(CP949)로 읽는다.
+    # 브로커 스냅샷에는 한글 종목명이 들어있어(예: "KODEX 모멘텀주") 인코딩을 생략하면
+    # mojibake로 깨지면서 문자열 종료 따옴표까지 소실돼 ConvertFrom-Json이 문법 오류로 죽는다.
+    # 2026-07-28 실측: KR 코어 275280/275300 보유 상태에서 재시작이 봇 정지 전 단계에서 중단됐다.
+    $payload = Get-Content -LiteralPath $SnapshotPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $generatedAt = [string]$payload.generated_at
     $ageSec = [double]::PositiveInfinity
     if ($generatedAt) {
