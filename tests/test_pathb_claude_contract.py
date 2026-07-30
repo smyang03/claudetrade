@@ -95,6 +95,14 @@ def _runtime(bot: _Bot, store: EventStore) -> PathBRuntime:
 
 class PathBClaudeContractTests(unittest.TestCase):
     def setUp(self) -> None:
+        # EARNINGS_WINDOW_BLOCK은 커밋되지 않는 런타임 파일
+        # data/earnings_calendar.json을 runtime.earnings_calendar의 모듈 전역
+        # _MEM_CACHE로 읽는다. 이 파일은 실제 티커 005930을 쓰므로 그 종목
+        # 실적일이 실행일 +-1일에 걸리면 PathB 등록이 보류돼 테스트가 깨진다.
+        # 단독 실행 시엔 전역 캐시가 비어 fail-open으로 통과하고 전체 스위트에서만
+        # 재현되므로 결과가 실행 날짜에 따라 달라진다(2026-07-30 실측: 2건 실패).
+        # 실적 윈도우 자체의 검증은 tests/test_earnings_calendar.py가 전담한다.
+        # test_pathb_runtime.py의 setUp도 같은 이유로 이 게이트를 끈다.
         self._pathb_env = patch.dict(
             "os.environ",
             {
@@ -102,6 +110,7 @@ class PathBClaudeContractTests(unittest.TestCase):
                 "PATHB_KR_LIVE_ENABLED": "true",
                 "PATHB_ENTRY_SCAN_BROKER_TRUTH_REFRESH_ENABLED": "false",
                 "KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK": "false",
+                "EARNINGS_WINDOW_BLOCK_ENABLED": "false",
             },
         )
         self._pathb_env.start()
