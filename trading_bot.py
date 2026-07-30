@@ -20809,6 +20809,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "price": _candidate_row_value(prompt_row, "price", "current_price"),
                         "change_pct": _candidate_row_value(prompt_row, "change_pct", "change_rate"),
                         "volume_ratio": _candidate_row_value(prompt_row, "volume_ratio", "vol_ratio"),
+                        # US vol_ratio는 1.0 placeholder라 이 원장에서 거래량 축을 볼 수 없었다
+                        # (2026-07-30 실측: candidate_audit rel_vol_shadow 커버리지 0%, 반면
+                        # ticker_selection_log는 US 4,622/14,806=31%). 산출은 되는데 전파만 끊겨
+                        # 사후 분석이 selection 원장에서만 가능했다. 관측용 전파(게이트 무변경).
+                        "rel_vol_shadow": _candidate_row_value(prompt_row, "rel_vol_shadow"),
+                        "rel_vol_shadow_avg20": _candidate_row_value(prompt_row, "rel_vol_shadow_avg20"),
+                        "rel_vol_shadow_fraction": _candidate_row_value(prompt_row, "rel_vol_shadow_fraction"),
                         "turnover": _candidate_row_value(prompt_row, "turnover"),
                         "market_type": _candidate_row_value(prompt_row, "market_type", default=""),
                         "liquidity_bucket": _candidate_row_value(prompt_row, "liquidity_bucket", default=""),
@@ -20926,6 +20933,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "price": _candidate_row_value(row, "price", "current_price"),
                         "change_pct": _candidate_row_value(row, "change_pct", "change_rate"),
                         "volume_ratio": _candidate_row_value(row, "volume_ratio", "vol_ratio"),
+                        "rel_vol_shadow": _candidate_row_value(row, "rel_vol_shadow"),
+                        "rel_vol_shadow_avg20": _candidate_row_value(row, "rel_vol_shadow_avg20"),
+                        "rel_vol_shadow_fraction": _candidate_row_value(row, "rel_vol_shadow_fraction"),
                         "turnover": _candidate_row_value(row, "turnover"),
                         "market_type": _candidate_row_value(row, "market_type", default=""),
                         "liquidity_bucket": _candidate_row_value(row, "liquidity_bucket", default=""),
@@ -20996,6 +21006,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "price": _candidate_row_value(row, "price", "current_price"),
                         "change_pct": _candidate_row_value(row, "change_pct", "change_rate"),
                         "volume_ratio": _candidate_row_value(row, "volume_ratio", "vol_ratio"),
+                        "rel_vol_shadow": _candidate_row_value(row, "rel_vol_shadow"),
+                        "rel_vol_shadow_avg20": _candidate_row_value(row, "rel_vol_shadow_avg20"),
+                        "rel_vol_shadow_fraction": _candidate_row_value(row, "rel_vol_shadow_fraction"),
                         "turnover": _candidate_row_value(row, "turnover"),
                         "market_type": _candidate_row_value(row, "market_type", default=""),
                         "liquidity_bucket": _candidate_row_value(row, "liquidity_bucket", default=""),
@@ -21131,6 +21144,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "price": row.get("price") or row.get("current_price"),
                         "change_pct": row.get("change_pct") or row.get("change_rate"),
                         "volume_ratio": row.get("volume_ratio") or row.get("vol_ratio"),
+                        "rel_vol_shadow": row.get("rel_vol_shadow"),
+                        "rel_vol_shadow_avg20": row.get("rel_vol_shadow_avg20"),
+                        "rel_vol_shadow_fraction": row.get("rel_vol_shadow_fraction"),
                         "turnover": row.get("turnover"),
                         "market_type": row.get("market_type") or "",
                         "liquidity_bucket": row.get("liquidity_bucket") or "",

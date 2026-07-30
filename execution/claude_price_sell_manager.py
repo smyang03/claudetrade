@@ -407,9 +407,16 @@ class ClaudePriceSellManager:
         # observe-only MFE/MAE를 CLOSED payload에 실어 학습 sync(v2_learning_performance.mfe_pct)까지
         # 전달한다. Phase 1c가 계산한 값이 여기서 끊겨 학습 원장이 95% NULL이던 배선 버그 수정.
         # ladder 입력(peak_pnl_pct)은 무접촉 — observed_* 별도 키만 흐른다.
+        # 청산은 ORDER_SENT → CLOSED로 끝나고 FILLED를 남기지 않는다. 그래서 매도 슬리피지를
+        # 재려면 CLOSED.price를 체결가로 대용해야 하는데, 그 값이 확정 체결가인지 미확인 추정가인지
+        # 구분할 방법이 없었다(2026-07-30 실측: 매도 196건 중 신뢰 가능 행을 가릴 수 없어
+        # 왕복 실비용이 평균 0.337% / 중앙 0.536%로 0.2%p 벌어졌다). 소스를 명시해 분석이
+        # 확정분만 쓰도록 한다. 트리거·보호 계약은 이 키를 읽지 않는다(관측 전용).
         closed_extra = {
             "close_reason": close_reason,
             "price": float(price or 0),
+            "exit_price_source": "actual_fill" if execution_id else "unconfirmed",
+            "exit_fill_confirmed": bool(execution_id),
             "pnl_pct": float(pnl_pct or 0),
             **cost_meta,
         }
