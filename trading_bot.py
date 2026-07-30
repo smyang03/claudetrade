@@ -3816,6 +3816,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         ticker: str,
         meta: dict,
         mode: str,
+        *,
+        allow_gap_split_release: bool = False,
     ) -> tuple[str, str, dict]:
         """US 당일 +2~5% 중간 모멘텀 함정 구간 trade_ready 강등.
 
@@ -3854,9 +3856,29 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             is_non_gap = gap_pct is not None and gap_pct < gap_split_pct
             evidence["gap_split_non_gap"] = is_non_gap
             evidence["would_release_if_gap_split"] = is_non_gap
-            if is_non_gap and self._runtime_bool(
-                "SELECTION_US_MIDRANGE_TRAP_GAP_SPLIT_ENFORCE", False
+            evidence["gap_split_release_allowed"] = bool(allow_gap_split_release)
+            # 2026-07-30 enforce 전환: 비갭 강등 해제를 Plan A 진입 액션에만 적용한다.
+            # 반사실 실측(funnel 강등 420건 → candidate_counterfactual_paths 조인,
+            # US 왕복 수수료 0.5% 차감한 우리 net 기준):
+            #   해제대상 BUY_READY    n=61  close net 평균 +1.12% 중앙 +1.70% 승률 79.7%
+            #                                60m  net 평균 +0.86%            승률 78.7%
+            #   해제대상 PULLBACK_WAIT n=79  close net 평균 +0.05% 중앙 +0.13% 승률 54.4%
+            #                                60m  net 평균 -0.36%            승률 53.2%
+            #   유지대상(갭>=2%)      n=23  60m  net 평균 -1.02% 승률 21.7% max_dd -2.13%
+            # BUY_READY만 해제 이득이 분명하고 PULLBACK_WAIT는 본전~음수라 PathB 입구는
+            # 계속 막는다. 호출부가 이미 분리돼 있어(ready_candidates 루프 vs
+            # _apply_trap_zone_pullback_guard) 플래그 하나로 갈린다.
+            if (
+                is_non_gap
+                and allow_gap_split_release
+                and self._runtime_bool("SELECTION_US_MIDRANGE_TRAP_GAP_SPLIT_ENFORCE", False)
             ):
+                evidence["gap_split_released"] = True
+                log.info(
+                    f"[함정구간 gap_split 해제] {market_key} {ticker} "
+                    f"change={change_pct:.2f}% gap={gap_pct:.2f}%<{gap_split_pct:.1f}% "
+                    f"— 비갭 강등 해제(Plan A 진입 액션 한정)"
+                )
                 return "", strategy, evidence
             return "us_midrange_momentum_trap", strategy, evidence
         return "", strategy, evidence
@@ -4048,7 +4070,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             key = self._selection_ticker_key(market_key, ticker)
             reason, strategy, evidence = self._selection_mean_reversion_quality_reason(market_key, ticker, meta, mode)
             if not reason:
-                reason, strategy, evidence = self._selection_us_midrange_trap_reason(market_key, ticker, meta, mode)
+                # 이 루프는 Plan A 진입 액션(BUY_READY/PROBE_READY) 강등 경로다.
+                # PULLBACK_WAIT는 _apply_trap_zone_pullback_guard가 따로 처리하며
+                # 거기서는 해제하지 않는다(반사실 net 본전~음수).
+                reason, strategy, evidence = self._selection_us_midrange_trap_reason(
+                    market_key, ticker, meta, mode, allow_gap_split_release=True
+                )
             if not reason:
                 mg_reason, mg_evidence = self._selection_mega_gap_watch_reason(market_key, ticker, meta)
                 if mg_reason:
