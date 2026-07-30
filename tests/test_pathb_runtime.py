@@ -219,11 +219,21 @@ class PathBRuntimeTests(unittest.TestCase):
         # US_MIDDAY_ENTRY_BLOCK은 실제 벽시계(UTC 16시대)에 발동해 KST 01시대 테스트
         # 실행 시 진입 스캔 테스트 8건을 오염시킨다. 게이트 자체 검증은
         # tests/test_pathb_entry_quality_gates.py가 시간 제어로 전담한다.
+        #
+        # EARNINGS_WINDOW_BLOCK도 같은 유형이다(2026-07-30). 이 게이트는 커밋되지 않는
+        # 런타임 파일 data/earnings_calendar.json을 runtime.earnings_calendar의 모듈 전역
+        # _MEM_CACHE로 읽는다. 테스트가 실제 티커(005930/000660, 이 파일에서 224회)를
+        # 쓰기 때문에 그 종목 실적일이 오늘 +-1일에 걸리면 등록이 보류돼 테스트가 깨진다.
+        # 실측: 2026-07-30 실행에서 000660 실적일 07-29, 005930 07-30으로 10건 실패.
+        # 단독 실행 시엔 전역 캐시가 비어 fail-open으로 통과하고 전체 스위트에서만
+        # 재현되며, 결과가 실행 날짜에 따라 달라진다.
+        # 실적 윈도우 자체의 검증은 이 파일의 책임이 아니다.
         self._pathb_env = patch.dict(
             "os.environ",
             {
                 "PATHB_KR_LIVE_ENABLED": "true",
                 "US_MIDDAY_ENTRY_BLOCK_ENABLED": "false",
+                "EARNINGS_WINDOW_BLOCK_ENABLED": "false",
             },
         )
         self._pathb_env.start()
