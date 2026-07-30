@@ -3415,6 +3415,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "volatility_breakout": "vb_fired",
                     "momentum": "mom_fired",
                     "gap_pullback": "gap_fired",
+                    # 2026-07-30: ORP 누락 보정 — 위 매핑(35457)과 동일하게 유지한다.
+                    "opening_range_pullback": "orp_fired",
                 }.get(fired_strategy_)
                 if fired_col:
                     row[fired_col] = True
@@ -35459,6 +35461,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                         "volatility_breakout": "vb_fired",
                         "momentum": "mom_fired",
                         "gap_pullback": "gap_fired",
+                        # 2026-07-30: ORP가 빠져 있어 US 주력 전략의 발화가
+                        # 원장에 남지 않았다. 다른 4종과 동일하게 기록한다.
+                        "opening_range_pullback": "orp_fired",
                     }.get(fired_strategy_)
                     if _fired_col:
                         _row[_fired_col] = True
@@ -41339,6 +41344,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             p for p in list(self.risk.positions)
             if self._ticker_market(p.get("ticker", "")) == market
         ]
+        # 2026-07-30: isolated sleeve(전략이 청산을 소유하는 코어)는 장마감 검토에서 뺀다.
+        # generic hold advisor가 SELL을 내도 실행 경로가 없고, 다음 개장 전에
+        # _clear_isolated_strategy_generic_exit_flags가 pending_next_open_sell을 지운다.
+        # 실측(2026-07-29 KR): 275280·275300에 SELL을 걸고 재시작/개장 재검토에서 다시
+        # 지우는 왕복이 매 세션 반복되며 Claude 호출만 소모했다.
+        # _post_session_position_review는 이미 같은 가드를 갖고 있다(26804).
+        isolated_positions = [p for p in market_positions if self._isolated_strategy_exit_owner(p)]
+        for pos in isolated_positions:
+            log.info(
+                f"[장마감 검토 생략] {market} {pos.get('ticker', '')} "
+                f"isolated_exit_owner={self._isolated_strategy_exit_owner(pos)}"
+            )
+        market_positions = [p for p in market_positions if not self._isolated_strategy_exit_owner(p)]
         carry_positions = []
         from telegram_reporter import send as _tg_send
         # 모든 보유 포지션은 보유일 제한 없이 Claude에게 다음 세션 행동만 묻는다.

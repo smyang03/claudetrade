@@ -42,6 +42,26 @@ def _sim_blocked_order(*_a, **_k):
 
 pathb_mod.place_order = _sim_blocked_order
 pathb_mod.cancel_order = _sim_blocked_order
+
+
+# ★ 라이브 원장 쓰기 차단 가드 (필수) ────────────────────────────────────
+# 2026-07-30: sim_entry_path_gates가 isdb.insert_probe로 라이브 ORP 원장
+# (data/intraday_strategy_log.db)에 SIMTK 1,411행을 남긴 것이 실측으로 확인됐다.
+# 이 도구는 현재 그 경로를 타지 않지만, PathB 하네스가 확장되면 탈 수 있다.
+# 주문만 막고 원장을 막지 않는 실수를 반복하지 않도록 선제 차단한다. 제거 금지.
+def _sim_blocked_probe(*_a, **_k):
+    return 0
+
+
+try:
+    import intraday_strategy_db as _isdb_mod
+
+    for _wfn in ("insert_probe", "update_outcome", "init"):
+        if hasattr(_isdb_mod, _wfn):
+            setattr(_isdb_mod, _wfn, _sim_blocked_probe)
+except Exception:
+    pass
+
 from runtime.pathb_runtime import PathBControlState, PathBRuntime  # noqa: E402
 
 

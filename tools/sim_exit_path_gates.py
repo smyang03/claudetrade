@@ -44,6 +44,32 @@ for _fn in ("place_order", "cancel_order", "precheck_order"):
         setattr(trading_bot, _fn, _sim_blocked_order)
 
 
+# ★ 라이브 원장 쓰기 차단 가드 (필수) ────────────────────────────────────
+# 2026-07-30: sim_entry_path_gates가 isdb.insert_probe로 라이브 ORP 원장
+# (data/intraday_strategy_log.db)에 SIMTK 1,411행을 남긴 것이 실측으로 확인됐다.
+# bot_mode는 페이퍼 봇도 'paper'라 구분 수단이 못 되고, 식별은 SIMTK 티커에만
+# 의존한다. 같은 하네스를 쓰는 이 도구에도 동일 가드를 둔다. 제거 금지.
+def _sim_blocked_probe(*_a, **_k):
+    return 0
+
+
+try:
+    import intraday_strategy_db as _isdb_mod
+
+    for _wfn in ("insert_probe", "update_outcome", "init"):
+        if hasattr(_isdb_mod, _wfn):
+            setattr(_isdb_mod, _wfn, _sim_blocked_probe)
+except Exception:
+    pass
+
+# decisions.db 오염도 같은 원인이었다(2026-07-30 실측: SIMTK 835행).
+# is_simulated=0 / data_source='live'로 남아 사후 필터가 불가능했다.
+trading_bot._ML_DB_ENABLED = False
+for _mlfn in ("_ml_write", "_ml_update_filled", "_ml_update_outcome", "_ml_init_db"):
+    if hasattr(trading_bot, _mlfn):
+        setattr(trading_bot, _mlfn, _sim_blocked_probe)
+
+
 class LogCapture(logging.Handler):
     def __init__(self) -> None:
         super().__init__(level=logging.DEBUG)

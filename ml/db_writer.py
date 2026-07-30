@@ -49,6 +49,18 @@ _DECISIONS_MIGRATIONS = {
     "data_source": "TEXT DEFAULT 'live'",
     "is_simulated": "INTEGER DEFAULT 0",
     "entry_priority_score": "REAL",
+    # opening_range_pullback 진단(2026-07-30 추가).
+    # 배경: mr_*/vb_*/mom_*/gap_* 4종은 진단 컬럼이 있는데 ORP만 없었다.
+    # 그 결과 US live base 전략 중 하나가 발화했는지·어느 조건에서 막혔는지
+    # 사후 추적이 불가능했다. mean_reversion은 mr_rsi_miss로 "임계까지 얼마나
+    # 못 미쳤나"를 실측할 수 있었지만(그래서 ma60 모순을 찾았다) ORP는 그
+    # 수단이 없었다. diagnostics()가 이미 모든 값을 반환하므로 저장만 한다.
+    "orp_fired": "INTEGER",
+    "orp_reason": "TEXT",
+    "orp_elapsed_min": "REAL",
+    "orp_or_range_pct": "REAL",
+    "orp_pullback_depth_pct": "REAL",
+    "orp_vol_ratio": "REAL",
 }
 
 _REQUIRED_SCHEMA_COLUMNS = {
@@ -188,6 +200,8 @@ def write_decision(row: dict) -> int:
         vb_target, vb_close_miss, vb_vol_ok, vb_fired,
         mom_ma_ok, mom_macd_ok, mom_vol_ok, mom_high_ok, mom_fired,
         gap_gap_miss, gap_vol_ok, gap_pullback_ok, gap_fired,
+        orp_fired, orp_reason, orp_elapsed_min,
+        orp_or_range_pct, orp_pullback_depth_pct, orp_vol_ratio,
         diag_json(dict|str), block_reason
 
     decision 값:
@@ -226,6 +240,8 @@ def write_decision(row: dict) -> int:
             vb_target, vb_close_miss, vb_vol_ok, vb_fired,
             mom_ma_ok, mom_macd_ok, mom_vol_ok, mom_high_ok, mom_fired,
             gap_gap_miss, gap_vol_ok, gap_pullback_ok, gap_fired,
+            orp_fired, orp_reason, orp_elapsed_min,
+            orp_or_range_pct, orp_pullback_depth_pct, orp_vol_ratio,
             diag_json, entry_priority_score, decision, strategy_used, block_reason,
             data_source, is_simulated
         ) VALUES (
@@ -234,7 +250,9 @@ def write_decision(row: dict) -> int:
             ?,?,?,?,  ?,?,?,
             ?,?,?,?,
             ?,?,?,?,?,
-            ?,?,?,?,?,  ?,?,?,?,  ?,?
+            ?,?,?,?,
+            ?,?,?,  ?,?,?,
+            ?,?,?,?,?,  ?,?
         )
         """
         params = (
@@ -256,6 +274,9 @@ def write_decision(row: dict) -> int:
             _i(row, "mom_vol_ok"), _i(row, "mom_high_ok"), _i(row, "mom_fired"),
             _f(row, "gap_gap_miss"), _i(row, "gap_vol_ok"),
             _i(row, "gap_pullback_ok"), _i(row, "gap_fired"),
+            _i(row, "orp_fired"), row.get("orp_reason"), _f(row, "orp_elapsed_min"),
+            _f(row, "orp_or_range_pct"), _f(row, "orp_pullback_depth_pct"),
+            _f(row, "orp_vol_ratio"),
             diag, _f(row, "entry_priority_score"),
             row["decision"], row.get("strategy_used"), row.get("block_reason"),
             row.get("data_source", "live"), _i(row, "is_simulated") or 0,

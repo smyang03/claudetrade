@@ -62,6 +62,17 @@ CREATE TABLE IF NOT EXISTS decisions (
     gap_pullback_ok INTEGER,
     gap_fired       INTEGER,
 
+    -- ── OR 눌림(opening_range_pullback) 세부 진단 ──────────────
+    -- 2026-07-30 추가. 다른 4종(mr/vb/mom/gap)은 진단 컬럼이 있었으나 ORP만
+    -- 없어서 US live base 전략 중 하나의 발화·차단 사유를 decisions.db에서
+    -- 추적할 수 없었다. diagnostics()가 반환하는 값을 그대로 저장한다.
+    orp_fired              INTEGER,
+    orp_reason             TEXT,            -- orp_forming|orp_entry_window_expired|...
+    orp_elapsed_min        REAL,            -- 개장 후 경과(분)
+    orp_or_range_pct       REAL,            -- (or_high-or_low)/or_low
+    orp_pullback_depth_pct REAL,            -- (or_high-close)/or_high
+    orp_vol_ratio          REAL,            -- volume / vol_avg20
+
     -- ── 오버플로우 진단 데이터 ─────────────────────────────────
     diag_json       TEXT,                   -- 추가 진단 정보 JSON (선택)
     entry_priority_score REAL,              -- 진입 우선순위 점수 (Phase 1 로그/분석용)

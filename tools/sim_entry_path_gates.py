@@ -23,11 +23,20 @@
     `_buy_ready_immediate_enabled`를 True로 고정했는데 라이브는
     SINGLE_SYMBOL_JUDGE_BUY_READY_MARKETS=US (KR은 SHADOW_MARKETS)다.
     즉 KR 결과는 "KR에도 즉시매수를 켠다면"의 가상치다.
-  - ★ 기술신호 경로(비 BUY_READY)는 아직 발화시키지 못한다.
-    US live base 전략은 opening_range_pullback / mean_reversion 뿐인데
-    (momentum·VB는 disabled, gap_pullback은 운영자 파라미터로 차단),
-    주력인 opening_range_pullback은 분봉(OR) 데이터가 있어야 한다. 하네스는 일봉만 합성한다.
-    → 이 구간은 여전히 검증 사각지대다.
+  - 기술신호 경로(비 BUY_READY)는 태워진다. 2026-07-30 정정 — 이전 주석은
+    "분봉이 없어 ORP를 발화시킬 수 없다"고 적혀 있었으나 사실과 다르다.
+    build_bot이 `_or_high`/`_or_low`/`_or_formed`를 직접 주입하고(191~194행),
+    run_case가 signal_kind="orp"에 or_state 기본값을 채운다(348행).
+    US live base 전략은 opening_range_pullback / mean_reversion 뿐이다
+    (momentum·VB는 disabled, gap_pullback은 운영자 파라미터로 차단).
+  - ★ ORP 도달률을 낮게 읽지 말 것. ORP는 개장 후 or_minutes~(or_minutes+
+    entry_window_min) 구간에서만 발화한다(US: 15~75분, KR: 10~70분).
+    시나리오 경과시간이 10/40/120/300/370분이므로 창 안은 40분 하나뿐이고,
+    "5개 중 1개 통과"는 시간창 설계대로의 결과다. 결함이 아니다.
+  - ★ mean_reversion은 2026-05-12 이후 라이브 발화가 0이다(실측).
+    국면 악화 시 rsi_thr을 낮추는데 ma60_thr=0.95는 고정이라, 임계를 통과할 만큼
+    빠진 종목은 ma60 조건을 만족하지 못한다(US 05-13 이후 RSI+BB 충족 92건 중
+    ma_ok=0). 따라서 이 하네스에서 mean_reversion이 통과해도 라이브 재현이 아니다.
 """
 from __future__ import annotations
 
@@ -60,6 +69,39 @@ def _sim_blocked_order(*_a, **_k):
 for _fn in ("place_order", "cancel_order", "precheck_order"):
     if hasattr(trading_bot, _fn):
         setattr(trading_bot, _fn, _sim_blocked_order)
+
+
+# ★ 라이브 원장 쓰기 차단 가드 (필수) ────────────────────────────────────
+# 2026-07-30 실측으로 확인된 오염: run_cycle이 isdb.insert_probe()를 호출해
+# data/intraday_strategy_log.db(라이브 ORP 관측 원장)에 SIMTK 행을 남겼다.
+# 07-29 13:14~07-30 01:34 사이 1,411행이 실제 세션 날짜로 기록됐고, US 07-29
+# 세션 행수가 3건에서 1,342건으로 부풀어 "ORP 발화 66건"으로 오독됐다
+# (실제 발화는 0건). bot_mode='paper'로 구분은 되지만, 필터를 모르는 분석자가
+# 그대로 집계하면 판정이 뒤집힌다. 주문만 막고 원장 쓰기를 막지 않은 것이
+# 원인이었다. 절대 제거하지 말 것.
+def _sim_blocked_probe(*_a, **_k):
+    return 0
+
+
+try:
+    import intraday_strategy_db as _isdb_mod
+
+    for _wfn in ("insert_probe", "update_outcome", "init"):
+        if hasattr(_isdb_mod, _wfn):
+            setattr(_isdb_mod, _wfn, _sim_blocked_probe)
+except Exception:
+    pass
+
+# decisions.db도 같은 경로로 오염됐다(2026-07-30 실측: SIMTK 835행,
+# 07-29 13:13~07-30 01:34). is_simulated=0 / data_source='live'로 기록돼
+# 플래그로 걸러낼 수도 없었고, 그 결과 "US watch_only가 100%→73.7%로 개선됐다"는
+# 판정이 나왔다 — SIMTK 787행을 제외하면 실제로는 100.0% 그대로였다.
+# _ml_write_eval은 _ML_DB_ENABLED를 먼저 보므로 그 플래그를 내리는 것이 가장 확실하고,
+# import 시점에 바인딩된 이름들도 함께 무력화한다. 제거 금지.
+trading_bot._ML_DB_ENABLED = False
+for _mlfn in ("_ml_write", "_ml_update_filled", "_ml_update_outcome", "_ml_init_db"):
+    if hasattr(trading_bot, _mlfn):
+        setattr(trading_bot, _mlfn, _sim_blocked_probe)
 
 
 class LogCapture(logging.Handler):
