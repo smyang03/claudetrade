@@ -181,9 +181,35 @@ function Sync-CoreLiveManifests {
     }
     & $PythonExe "tools\profit_strategy_materializer.py" "--core-current-sessions"
     if ($LASTEXITCODE -ne 0) {
-        throw "Current-session core live manifest refresh failed"
+        # exit!=0은 실패가 아니라 "코어에 라이브 권한을 주지 않는다"는 정상 판정에서도 난다.
+        # 예) 월 경계의 core_shadow_effective_month_mismatch, 계약 미허용 자산(core_asset_not_allowed).
+        # 이 경우에도 매니페스트 파일 자체는 authority=NO_LIVE_AUTHORITY / status=blocked로 갱신되므로
+        # 코어는 이미 안전하게 막혀 있고, 트레이딩 봇 기동까지 막을 이유가 없다.
+        # 2026-08-01 01:37: 이 throw 때문에 8개 프로세스를 정지한 뒤 기동이 중단돼 봇이 죽은 채 남았다
+        # (watchdog도 같은 지점에서 계속 실패 → 자동 복구 불가). 그래서 아래 조건에서만 계속한다.
+        #   - KR/US 매니페스트가 모두 존재하고 15분 이내로 갱신됐고
+        #   - 둘 다 authority=NO_LIVE_AUTHORITY (권한이 살아있는데 갱신만 실패한 경우는 여전히 throw)
+        $manifestSafe = $true
+        foreach ($mk in @("KR", "US")) {
+            $manifestPath = Join-Path $Root "state\profit_strategy_core_live_manifest_$mk.json"
+            if (-not (Test-Path -LiteralPath $manifestPath)) { $manifestSafe = $false; break }
+            try {
+                $coreManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ([string]$coreManifest.authority -ne "NO_LIVE_AUTHORITY") { $manifestSafe = $false; break }
+                $ageMin = ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse([string]$coreManifest.generated_at).ToUniversalTime()).TotalMinutes
+                if ($ageMin -gt 15) { $manifestSafe = $false; break }
+            } catch {
+                $manifestSafe = $false
+                break
+            }
+        }
+        if (-not $manifestSafe) {
+            throw "Current-session core live manifest refresh failed (manifests missing/stale/still-authorized)"
+        }
+        Write-Output "[CORE AUTHORITY] core blocked (NO_LIVE_AUTHORITY) - manifests fresh, continuing stack startup"
+    } else {
+        Write-Output "[CORE AUTHORITY] current KR/US manifests refreshed after tracker"
     }
-    Write-Output "[CORE AUTHORITY] current KR/US manifests refreshed after tracker"
 }
 
 foreach ($role in $roles) {

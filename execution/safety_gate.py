@@ -97,6 +97,16 @@ class SafetyGate:
         if ctx.equity_daily_pnl_pct is not None:
             details["equity_daily_pnl_pct"] = float(ctx.equity_daily_pnl_pct)
 
+        # 2026-08-01 전체 재구성(운영자 결정): 기존 방식(PathA/PathB/전략 신호) 신규 매수를
+        # 단일 스위치로 차단한다. 이 게이트는 신규 진입 전용이므로 보유분 청산·관리는 영향 없고,
+        # 급락 반등 레인(us_swing micro probe)은 이 게이트를 거치지 않아 계속 동작한다.
+        # 기본 false = 기존 동작. 롤백: LEGACY_NEW_BUY_DISABLED=false.
+        if _env_bool("LEGACY_NEW_BUY_DISABLED", False):
+            return _blocked(
+                "LEGACY_BUY_DISABLED",
+                "legacy entry paths are disabled by operator restructure",
+                {**details, "policy_name": "fallen_rebound_restructure_20260801"},
+            )
         if ctx.order_unknown_blocked:
             return _blocked("ORDER_UNKNOWN_UNRESOLVED", "unresolved ORDER_UNKNOWN blocks new entry", details)
         if not ctx.market_open:
