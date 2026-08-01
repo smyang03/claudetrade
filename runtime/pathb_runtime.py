@@ -5482,7 +5482,7 @@ class PathBRuntime:
             "source_strategy": "claude_price",
             "tp_pct": max(0.001, (plan.sell_target / signal.limit_price) - 1.0),
             "sl_pct": max(0.001, 1.0 - (plan.stop_loss / signal.limit_price)),
-            "max_hold": 1 if bool(self.config.pathb_intraday_only) else int(plan.hold_days),
+            "max_hold": self._resolve_max_hold(plan, market),
             "created_at": datetime.now(KST).isoformat(),
             "session_date": plan.session_date,
             "decision_id": -1,
@@ -7569,6 +7569,28 @@ class PathBRuntime:
             "peak_price": peak_price,
             "mfe_pct": mfe_pct,
         }
+
+    def _resolve_max_hold(self, plan: PricePlan, market: str) -> int:
+        """플랜 hold_days에 시장별 보유일수 하한을 적용한다.
+
+        근거(2026-08-01 실측): 조기컷(early_tier 0.4·breakeven·weak_mfe)을 해제해도
+        max_hold=plan.hold_days(중앙 1~2일)가 상한으로 남아 러너가 형성되지 않는다.
+        시간봉 편향제거 반사실(US n=237)에서 D1~3은 어떤 진입필터로도 흑자가 아니고
+        D5~7에서만 흑자가 된다(x1.0 기준 D3 -69.4 -> D7 -9.7, RR필터 병용 시 D7 +119.2).
+        하한 0(기본)이면 기존 동작과 완전히 동일하다.
+        intraday_only는 상위 계약이므로 그대로 1일을 유지한다.
+        """
+        if bool(self.config.pathb_intraday_only):
+            return 1
+        base = int(plan.hold_days or 1)
+        mk = "US" if str(market or plan.market or "").upper() == "US" else "KR"
+        floor = _env_int(
+            f"PATHB_MIN_HOLD_DAYS_{mk}",
+            _env_int("PATHB_MIN_HOLD_DAYS", 0),
+        )
+        if floor <= 0:
+            return base
+        return max(base, floor)
 
     def _pathb_early_tier_floor(
         self,
@@ -12060,7 +12082,7 @@ class PathBRuntime:
             "source_strategy": "claude_price",
             "tp_pct": max(0.001, (plan.sell_target / price) - 1.0) if price > 0 else 0.025,
             "sl_pct": max(0.001, 1.0 - (plan.stop_loss / price)) if price > 0 else 0.015,
-            "max_hold": 1 if bool(self.config.pathb_intraday_only) else int(plan.hold_days),
+            "max_hold": self._resolve_max_hold(plan, plan.market),
             "session_date": plan.session_date,
             "entry_session_date": plan.session_date,
             "v2_decision_id": plan.decision_id,

@@ -132,6 +132,29 @@ def _deterministic_sell_target_cap_pct() -> float:
     return val if val > 0 else 0.0
 
 
+def _min_reward_pct(market: str) -> float:
+    """목표거리(reward_pct) 하한 % (기본 0 = off = 현행 유지).
+
+    근거(2026-08-01 실측, 시간봉 편향제거 반사실 US n=237): 목표거리가 너무 짧으면
+    왕복비용(US 0.337~0.536%)에 먹히고 너무 길면 도달을 못 한다. 최적출구 기준
+    버킷 성과는 <3% -33.2 / 3-4.5% +56.4 / 4.5-6% +112.1 / >=6% -57.1 이었다.
+    상한은 PATHB_DETERMINISTIC_SELL_TARGET_CAP_PCT(현행 6)가 이미 담당하므로
+    여기서는 하한만 본다. RR>=2.0과 병용 시 D7 +119.2(단독 +70.2).
+    """
+    market_key = str(market or "").upper()
+    for key in (f"PATHB_MIN_REWARD_PCT_{market_key}", "PATHB_MIN_REWARD_PCT"):
+        raw = os.getenv(key)
+        if raw in (None, ""):
+            continue
+        try:
+            parsed = float(str(raw).replace(",", "").strip())
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            return parsed
+    return 0.0
+
+
 def _capped_sell_target(raw: dict[str, Any]) -> float:
     """cap off면 Claude값 그대로(현행), on이면 buy_zone_high 기준 상한으로 min."""
     sell = _as_float(raw.get("sell_target"))
@@ -245,6 +268,14 @@ class PricePlan:
             errors.append("risk_pct_nonpositive")
         if self.reward_pct is not None and self.reward_pct <= 0:
             errors.append("reward_pct_nonpositive")
+        # 목표거리 하한(기본 0=off). 선언된 reward_pct가 없으면 buy_zone_high 기준으로 계산해 본다.
+        min_reward_pct = _min_reward_pct(self.market)
+        if min_reward_pct > 0:
+            effective_reward_pct = self.reward_pct
+            if effective_reward_pct is None and self.buy_zone_high > 0:
+                effective_reward_pct = 100.0 * (self.sell_target / self.buy_zone_high - 1.0)
+            if effective_reward_pct is not None and effective_reward_pct < min_reward_pct:
+                errors.append("reward_pct_below_minimum")
         return errors
 
     @property
