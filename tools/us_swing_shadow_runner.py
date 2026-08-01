@@ -209,6 +209,19 @@ def load_candidate_features(
         & frame["dollar_volume_20d"].ge(15_000_000.0)
         & frame["change_pct"].abs().le(25.0)
     )
+    # 후보 소스 화이트리스트(기본 빈값 = 현행 = 전체 허용).
+    # 근거(2026-08-01 실측): 같은 신호에 실거래 규칙(TP/SL/갭)을 적용하면 소스별로 부호가 갈린다.
+    #   day_losers   n=17 합 +117.9 평균 +6.94 승률 64.7% (갭TP 5건 전부 여기)
+    #   day_gainers  n=28 합  -87.4 평균 -3.12
+    #   most_actives n=20 합 -117.4 평균 -5.87
+    # day_losers 단독 최적(TP+10/SL-20/5일)은 +123.5, 부트5% +20.3·양수 97.1%이고
+    # 최상위 1건(AXTI +50.3) 제외 +67.7, 상위 3건 제외 +32.9로 소수 승자 의존이 아니다.
+    # signals가 걸러지면 handoff(실주문)도 같은 집합을 읽으므로 한 곳에서 양쪽에 적용된다.
+    allowed_raw = str(os.getenv("US_SWING_ALLOWED_SOURCES", "") or "").strip()
+    if allowed_raw:
+        allowed = {part.strip().lower() for part in allowed_raw.split(",") if part.strip()}
+        if allowed:
+            eligible &= frame["candidate_source"].astype(str).str.lower().isin(allowed)
     return frame[eligible].copy(), errors
 
 
@@ -802,6 +815,35 @@ def main() -> int:
             seeds=[int(value) for value in policy.get("seeds", [20260710])],
             top_k=int(policy.get("top_k", 5)),
         )
+        # 2026-08-01 하드필터 5조건 shadow 관측(주문·선정 무영향, 기록만).
+        # 근거: 검증기간 5조건 통과군 +1.152/건(n=980) vs 잔여 +0.16 (discriminator_hunt).
+        # cum3d는 runner 피처에 없어 momentum_5d_pct로 근사(proxy 표기). 실패해도 본 흐름 무영향.
+        try:
+            _hf_rows = []
+            for _r in candidates.to_dict("records"):
+                _chg = float(_r.get("change_pct") or 0.0)
+                _gap = float(_r.get("gap_pct") or 0.0)
+                _flags = {
+                    "drop_ge_4_66": bool(-_chg >= 4.66),
+                    "intraday_ge_3_69": bool(-(_chg - _gap) >= 3.69),
+                    "mom20_le_m5_72": bool(float(_r.get("momentum_20d_pct") or 0.0) <= -5.72),
+                    "from_high20_le_m15_8": bool(float(_r.get("from_high_20d_pct") or 0.0) <= -15.80),
+                    "cum3d_proxy_mom5_le_m5_18": bool(float(_r.get("momentum_5d_pct") or 0.0) <= -5.18),
+                }
+                _hf_rows.append({
+                    "session_date": str(args.session_date),
+                    "ticker": str(_r.get("ticker") or ""),
+                    "candidate_source": str(_r.get("candidate_source") or ""),
+                    "pass_count": int(sum(_flags.values())),
+                    "pass_all": bool(all(_flags.values())),
+                    **_flags,
+                })
+            _hf_path = ROOT / "data" / "shadow" / "us_hard_filter_shadow.jsonl"
+            with open(_hf_path, "a", encoding="utf-8") as _hf:
+                for _row in _hf_rows:
+                    _hf.write(json.dumps(_row, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
         feature_date = str(scored["date"].iloc[0]) if not scored.empty else ""
         breadth_context = load_breadth_context(
             feature_date=feature_date,
