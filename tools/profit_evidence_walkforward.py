@@ -32,6 +32,17 @@ from runtime.profit_evidence_gate import evaluate_profit_evidence  # noqa: E402
 from tools.profit_evidence_db_replay import _load_start_env, _mode_override, _stats  # noqa: E402
 
 
+def _dense_one_hot_encoder() -> OneHotEncoder:
+    # sklearn 1.2+에서 sparse= 가 sparse_output= 으로 개명되고 1.4에서 제거됐다.
+    # 검증(base, 구 sklearn)과 런타임(upbit 3.11, 신 sklearn) 양쪽에서 동작해야 한다
+    # (2026-08-02 upbit env 회귀에서 TypeError 실측).
+    import inspect
+
+    params = inspect.signature(OneHotEncoder.__init__).parameters
+    kwargs = {"sparse_output": False} if "sparse_output" in params else {"sparse": False}
+    return OneHotEncoder(handle_unknown="ignore", **kwargs)
+
+
 NUMERIC_FEATURES = [
     "price",
     "change_pct",
@@ -106,7 +117,7 @@ def _preprocessor() -> ColumnTransformer:
                 Pipeline(
                     [
                         ("imputer", SimpleImputer(strategy="most_frequent")),
-                        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse=False)),
+                        ("onehot", _dense_one_hot_encoder()),
                     ]
                 ),
                 CATEGORICAL_FEATURES,
