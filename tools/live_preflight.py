@@ -5046,7 +5046,12 @@ def _pathb_feature_checks() -> list[CheckResult]:
             broker_trust_level="trusted",
         )
         decision = PathBSafetyGate(cfg).evaluate(ctx, plan=plan)
-        checks.append(CheckResult("pathb.qty_zero_blocks", "PASS" if not decision.passed and decision.reason_code == "INVALID_QTY" else "FAIL", decision.reason_code))
+        # 2026-08-02: LEGACY_NEW_BUY_DISABLED가 켜져 있으면 qty=0 이전에 마스터 스위치가
+        # 먼저 차단한다(INVALID_QTY보다 상위). 차단 자체는 성립하므로 통과로 판정한다.
+        _qty_zero_ok_reasons = {"INVALID_QTY"}
+        if str(os.getenv("LEGACY_NEW_BUY_DISABLED", "")).strip().lower() in {"1", "true", "yes", "y", "on"}:
+            _qty_zero_ok_reasons.add("LEGACY_BUY_DISABLED")
+        checks.append(CheckResult("pathb.qty_zero_blocks", "PASS" if not decision.passed and decision.reason_code in _qty_zero_ok_reasons else "FAIL", decision.reason_code))
 
         adapter.mark_partial_filled(path_run_id, price=52_200, qty=1, execution_id="ord1", runtime_mode="live", brain_snapshot_id="brain1")
         exit_signal = ClaudePriceSellManager(adapter, cfg).check_exit(path_run_id, 50_900)

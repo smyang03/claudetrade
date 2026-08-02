@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -118,11 +119,21 @@ def run_live_smoke(
             )
         )
         if not safety.passed:
+            # 2026-08-02: 전체 재구성의 마스터 스위치(LEGACY_NEW_BUY_DISABLED)가 켜져 있으면
+            # 표준 매수 경로가 게이트 최상단에서 차단되는 것이 "의도된 정상"이다. 이 경우
+            # smoke는 스위치가 실제로 차단함을 확인한 것이므로 통과로 판정한다 — 아니면
+            # guardian이 hard_fail로 BLOCK_START를 걸어 봇 기동 자체가 막힌다(08-02 실측).
+            legacy_block_expected = (
+                safety.reason_code == "LEGACY_BUY_DISABLED"
+                and str(os.getenv("LEGACY_NEW_BUY_DISABLED", "")).strip().lower()
+                in {"1", "true", "yes", "y", "on"}
+            )
             return {
-                "ok": False,
+                "ok": legacy_block_expected,
                 "market": market,
                 "runtime_mode": runtime_mode,
                 "reason": safety.reason_code,
+                "legacy_block_expected": legacy_block_expected,
                 "smoke_context": dict(SMOKE_CONTEXT),
                 "profile": profile.__dict__,
             }
