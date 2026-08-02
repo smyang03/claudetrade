@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "claudetrade-audit": {
+      "command": "python",
+      "args": ["tools/claudetrade_audit_mcp.py"],
+      "env": {}
+    }
+  }
+}
