@@ -47,7 +47,12 @@ def _meta(source: str, mtime: float | None) -> dict:
 def _read_json(path: Path) -> tuple[dict, dict]:
     if not path.exists():
         return {}, _meta(str(path), None)
-    return json.loads(path.read_text(encoding="utf-8")), _meta(str(path), path.stat().st_mtime)
+    mtime = path.stat().st_mtime
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as exc:
+        return {"error": f"read_json_failed: {str(exc)[:160]}"}, _meta(str(path), mtime)
+    return payload if isinstance(payload, dict) else {"error": "json_root_not_object"}, _meta(str(path), mtime)
 
 
 def _ro_connect(path: Path) -> sqlite3.Connection:
@@ -96,12 +101,32 @@ def check_buy_gate() -> dict:
         return str(eff.get(key) or "").strip().lower() in {"1", "true", "yes", "on"}
 
     legacy_blocked = truthy("LEGACY_NEW_BUY_DISABLED")
+    authority = get_us_swing_authority()
+    execution = dict(authority.get("execution_authority") or {})
+    broker, broker_meta = _broker_snapshot()
+    broker_ready = _broker_market_ready(broker, broker_meta, "US")
+    swing_configured = bool(
+        truthy("US_SWING_ORDER_SUBMIT_ENABLED")
+        and str(eff.get("US_SWING_AUTHORITY_MODE") or "").lower() == "micro"
+    )
+    swing_authority_allowed = bool(execution.get("allowed_to_emit_orders"))
+    authority_age = (authority.get("meta") or {}).get("data_age_sec")
+    authority_fresh = authority_age is not None and float(authority_age) <= 900.0
+    swing_live_ready = bool(
+        swing_configured
+        and swing_authority_allowed
+        and authority_fresh
+        and bool(authority.get("submit_enabled"))
+        and bool(authority.get("live_ack_verified"))
+        and broker_ready
+    )
     verdict = {
         "US": {
-            "us_swing_micro": bool(
-                truthy("US_SWING_ORDER_SUBMIT_ENABLED")
-                and str(eff.get("US_SWING_AUTHORITY_MODE") or "").lower() == "micro"
-            ),
+            "us_swing_configured": swing_configured,
+            "us_swing_authority_allowed": swing_authority_allowed,
+            "us_swing_authority_fresh": authority_fresh,
+            "us_swing_broker_truth_ready": broker_ready,
+            "us_swing_live_ready_without_signal": swing_live_ready,
             "pathb": truthy("PATHB_US_LIVE_ENABLED") and not legacy_blocked,
             "legacy_paths_blocked": legacy_blocked,
         },
@@ -112,7 +137,23 @@ def check_buy_gate() -> dict:
         },
         "core_new_signals": bool(str(eff.get("PROFIT_STRATEGY_ENABLED_IDS") or "").strip()),
     }
-    return {"switches": eff, "verdict": verdict, "meta": cfg.get("meta")}
+    return {
+        "switches": eff,
+        "verdict": verdict,
+        "us_swing_authority": {
+            "generated_at": authority.get("generated_at"),
+            "data_age_sec": (authority.get("meta") or {}).get("data_age_sec"),
+            "max_new_per_day": execution.get("max_new_per_day"),
+            "max_open_slots": execution.get("max_open_slots"),
+            "blockers": execution.get("blockers") or [],
+        },
+        "broker_truth": {
+            "generated_at": broker.get("generated_at"),
+            "ready": broker_ready,
+            "meta": broker_meta,
+        },
+        "meta": cfg.get("meta"),
+    }
 
 
 def get_us_swing_authority() -> dict:
@@ -124,13 +165,26 @@ def _broker_snapshot() -> tuple[dict, dict]:
     return _read_json(ROOT / "state" / "live_broker_truth_snapshot.json")
 
 
+def _broker_market_ready(payload: dict, meta: dict, market: str) -> bool:
+    market_payload = dict((payload.get("markets") or {}).get(str(market).upper()) or {})
+    if not market_payload or bool(
+        market_payload.get("missing")
+        or market_payload.get("stale")
+        or str(market_payload.get("error") or "").strip()
+    ):
+        return False
+    age = meta.get("data_age_sec")
+    ttl = float(market_payload.get("ttl_sec") or 180.0)
+    return age is not None and float(age) <= ttl
+
+
 def get_open_positions() -> dict:
     payload, meta = _broker_snapshot()
     markets = payload.get("markets") or {}
     return {
         "generated_at": payload.get("generated_at"),
         "positions": {mk: (markets.get(mk) or {}).get("positions") or [] for mk in ("KR", "US")},
-        "stale": {mk: bool((markets.get(mk) or {}).get("stale")) for mk in ("KR", "US")},
+        "stale": {mk: not _broker_market_ready(payload, meta, mk) for mk in ("KR", "US")},
         "meta": meta,
     }
 
@@ -151,7 +205,22 @@ def get_shadow_performance(market: str = "KR", days: int = 45) -> dict:
         path = ROOT / "data" / "shadow" / "kr_fallen_shadow.jsonl"
         if not path.exists():
             return {"error": "kr shadow ledger missing", "meta": _meta(str(path), None)}
-        rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+        cutoff = datetime.now().date().fromordinal(datetime.now().date().toordinal() - max(0, int(days)))
+        rows = []
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            if not raw.strip():
+                continue
+            try:
+                row = json.loads(raw)
+            except ValueError:
+                continue
+            raw_date = str(row.get("session_date") or "")[:10].replace("/", "-")
+            try:
+                row_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
+            except ValueError:
+                row_date = None
+            if row_date is None or row_date >= cutoff:
+                rows.append(row)
         settled = [r for r in rows if r.get("status") == "SETTLED"]
         passed = [r for r in settled if r.get("pass_all")]
         nets = [float(r.get("net_pct") or 0.0) for r in passed]
@@ -201,12 +270,14 @@ _DB_HEALTH_TARGETS = {
 
 def get_recent_db_health() -> dict:
     out: dict[str, dict] = {}
+    mtimes: list[float] = []
     for name, (rel, probe_sql) in _DB_HEALTH_TARGETS.items():
         path = ROOT / rel
         if not path.exists():
             out[name] = {"exists": False}
             continue
         stat = path.stat()
+        mtimes.append(stat.st_mtime)
         entry: dict = {
             "exists": True,
             "size_mb": round(stat.st_size / 1e6, 1),
@@ -222,7 +293,7 @@ def get_recent_db_health() -> dict:
             except Exception as exc:
                 entry["probe_error"] = str(exc)[:120]
         out[name] = entry
-    return {"databases": out, "meta": _meta("multiple", time.time())}
+    return {"databases": out, "meta": _meta("multiple", max(mtimes) if mtimes else None)}
 
 
 TOOLS: dict[str, dict] = {

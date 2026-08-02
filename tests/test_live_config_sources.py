@@ -675,6 +675,20 @@ class LiveConfigSourceTests(unittest.TestCase):
         self.assertTrue(check.data["policy_match"])
         self.assertFalse(check.data["remediation_required"])
 
+    def test_pathb_market_live_gate_accepts_both_off_when_legacy_master_blocked(self) -> None:
+        check = _pathb_market_live_gate_check(
+            {
+                "LEGACY_NEW_BUY_DISABLED": "true",
+                "PATHB_KR_LIVE_ENABLED": "false",
+                "PATHB_US_LIVE_ENABLED": "false",
+            }
+        )
+
+        self.assertEqual(check.status, "PASS")
+        self.assertTrue(check.data["policy_match"])
+        self.assertFalse(check.data["remediation_required"])
+        self.assertTrue(check.data["legacy_new_buy_blocked"])
+
     def test_pathb_market_live_gate_reports_primary_legacy_precedence(self) -> None:
         check = _pathb_market_live_gate_check(
             {

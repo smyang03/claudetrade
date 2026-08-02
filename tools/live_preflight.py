@@ -1579,32 +1579,44 @@ def _pathb_market_live_gate_check(effective: dict[str, Any]) -> CheckResult:
         market: str(gate_source[market].get("source_value", ""))
         for market in ("KR", "US")
     }
-    # 2026-06-11 운영자 결정: KR PathB 재개 (신규 게이트 체계 하 재검증) — KR-on/US-on 복원.
+    # Legacy 신규매수 마스터 차단이 켜진 현재 운영 모드에서는 PathB live off가
+    # 의도된 정상값이다. 차단이 해제된 기존 운영 모드에서만 KR-on/US-on 정책을
+    # 요구한다. 이 분기를 두지 않으면 현재 개편의 정상 설정을 매번 오탐한다.
     violations: list[str] = []
     kr_live = bool(gate_source["KR"].get("effective"))
     us_live = bool(gate_source["US"].get("effective"))
-    if not kr_live:
-        violations.append("KR Path B live must be enabled")
-    if not us_live:
-        violations.append("US Path B live must be enabled")
+    legacy_buy_blocked = _truthy(effective.get("LEGACY_NEW_BUY_DISABLED"))
+    if legacy_buy_blocked:
+        policy = "legacy-new-buy-blocked: KR/US PathB off expected"
+    else:
+        policy = "KR-on/US-on"
+        if not kr_live:
+            violations.append("KR Path B live must be enabled")
+        if not us_live:
+            violations.append("US Path B live must be enabled")
     policy_match = not violations
     if violations:
         status = "WARN"
-        detail = "Path B market live gates violate KR-on/US-on policy: " + "; ".join(violations)
+        detail = "Path B market live gates violate " + policy + ": " + "; ".join(violations)
     else:
         status = "PASS"
-        detail = "Path B market live gates match KR-on/US-on policy"
+        detail = "Path B market live gates match " + policy
     return CheckResult(
         "config.pathb_market_live_gates",
         status,
         detail,
         {
             "values": pathb_market_gates,
-            "policy": "KR-on/US-on",
+            "policy": policy,
             "policy_match": policy_match,
             "violations": violations,
+            "legacy_new_buy_blocked": legacy_buy_blocked,
             "remediation_required": bool(violations),
-            "operator_action": "set PATHB_KR_LIVE_ENABLED=true and PATHB_US_LIVE_ENABLED=true",
+            "operator_action": (
+                "keep LEGACY_NEW_BUY_DISABLED=true and PathB KR/US off"
+                if legacy_buy_blocked
+                else "set PATHB_KR_LIVE_ENABLED=true and PATHB_US_LIVE_ENABLED=true"
+            ),
             "market_live_gate_source": gate_source,
         },
     )
