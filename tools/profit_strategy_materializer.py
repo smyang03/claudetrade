@@ -440,7 +440,16 @@ def main() -> int:
     # provider degradation stays visible in the signal payload but must not
     # mark the live core lane dead when its separately validated manifest is
     # healthy.  Only failure of the live authority artifact is process-fatal.
-    return 0 if manifest["status"] == "healthy" else 1
+    #
+    # 2026-08-02 재구성 정합: 운영자가 ENABLED_IDS를 비워 코어를 전면 차단한 상태에서는
+    # blocked 매니페스트가 의도된 정상이다. 이때 exit 1을 유지하면 preopen 스케줄러 레인이
+    # 매일 실패로 기록돼(15분 재시도, heartbeat degraded) 진짜 장애를 가린다. ids가 설정돼
+    # 있는데 blocked인 경우(소스 누락·계약 불일치 등)만 여전히 process-fatal.
+    deliberate_full_block = (
+        manifest["status"] == "blocked"
+        and not (manifest.get("operator_contract") or {}).get("enabled_ids")
+    )
+    return 0 if manifest["status"] == "healthy" or deliberate_full_block else 1
 
 
 if __name__ == "__main__":
