@@ -110,12 +110,26 @@ def scan(date_str: str) -> int:
             "entry_price": None, "exit_price": None, "net_pct": None,
         })
     OUT.parent.mkdir(parents=True, exist_ok=True)
+    # 재실행 중복 방지: 같은 (session_date, ticker)가 원장에 있으면 다시 쓰지 않는다
+    # (append 모드라 --date 재실행 시 PENDING 중복행이 쌓여 정산·통계를 오염시키던 결함).
+    existing: set[tuple[str, str]] = set()
+    if OUT.exists():
+        for line in OUT.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                old = json.loads(line)
+            except Exception:
+                continue
+            existing.add((str(old.get("session_date")), str(old.get("ticker"))))
+    new_rows = [r for r in rows if (r["session_date"], r["ticker"]) not in existing]
     with open(OUT, "a", encoding="utf-8") as f:
-        for r in rows:
+        for r in new_rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     n_pass = sum(1 for r in rows if r["pass_all"])
-    print("캐시 내 %s 보유 %d종목 / 낙폭후보 %d건 기록 (8조건 전부 통과 %d건) -> %s" % (
-        d_iso, n_hasday, len(rows), n_pass, OUT))
+    n_dup = len(rows) - len(new_rows)
+    print("캐시 내 %s 보유 %d종목 / 낙폭후보 %d건 기록 (8조건 전부 통과 %d건, 중복 스킵 %d건) -> %s" % (
+        d_iso, n_hasday, len(new_rows), n_pass, n_dup, OUT))
     return 0
 
 
@@ -228,12 +242,19 @@ def main() -> int:
     ap.add_argument("--date", default=datetime.now().strftime("%Y%m%d"))
     ap.add_argument("--settle", action="store_true")
     ap.add_argument("--update-cache", action="store_true")
+    ap.add_argument("--auto", action="store_true",
+                    help="캐시 갱신 -> 당일 스캔 -> 만기 정산 일괄 실행 (스케줄러용)")
     args = ap.parse_args()
+    date_str = str(args.date or "").replace("-", "")  # 스케줄러는 ISO(YYYY-MM-DD)로 넘긴다
+    if args.auto:
+        update_cache()
+        scan(date_str)
+        return settle()
     if args.update_cache:
         return update_cache()
     if args.settle:
         return settle()
-    return scan(args.date)
+    return scan(date_str)
 
 
 if __name__ == "__main__":

@@ -295,6 +295,9 @@ def _job_timeout_sec(job: PreopenJob, default_timeout_sec: int) -> int:
     timeout = max(10, int(default_timeout_sec))
     if job.kind == "swing_shadow":
         return max(timeout, 600)
+    if job.kind == "kr_fallen_shadow":
+        # --auto는 pykrx 캐시 갱신(~10분) 포함
+        return max(timeout, 1200)
     if job.kind == "profit_strategy_materializer":
         return max(timeout, 240)
     if job.kind == "yfinance_shadow":

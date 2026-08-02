@@ -647,6 +647,7 @@
     "PROFIT_PATH_MODEL_PATH_US": "state/models/profit_path_US.json",
     "US_SWING_CHALLENGER_ENABLED": "true",
     "US_SWING_SHADOW_SCHEDULER_ENABLED": "true",
+    "KR_FALLEN_SHADOW_SCHEDULER_ENABLED": "true",
     "US_SWING_PYTHON_EXECUTABLE": "C:/Users/Unknown/anaconda3/envs/upbit/python.exe",
     "US_SWING_AUTHORITY_MODE": "micro",
     "US_SWING_POLICY_PATH": "config/us_swing_accelerated.json",

@@ -199,6 +199,27 @@ class PreopenSchedulerTests(unittest.TestCase):
         self.assertEqual(swing[0].due_at, "2026-05-04T22:20:00+09:00")
         self.assertEqual(swing[0].script, "tools/us_swing_shadow_runner.py")
 
+    def test_kr_fallen_shadow_job_runs_after_close_when_enabled(self) -> None:
+        # KR 마감(15:30) + 40분 = 16:10 이후 발화, --auto 일괄 실행
+        now = datetime(2026, 5, 4, 16, 15, tzinfo=KST)
+        with patch.dict("os.environ", {"KR_FALLEN_SHADOW_SCHEDULER_ENABLED": "true"}), patch(
+            "preopen.scheduler.is_trading_day", return_value=True
+        ):
+            jobs = due_jobs(now_dt=now, markets=["KR"], mode="live")
+        fallen = [job for job in jobs if job.kind == "kr_fallen_shadow"]
+        self.assertEqual(len(fallen), 1)
+        self.assertEqual(fallen[0].due_at, "2026-05-04T16:10:00+09:00")
+        self.assertEqual(fallen[0].script, "tools/kr_fallen_shadow_scan.py")
+        self.assertEqual(fallen[0].args, ("--auto", "--date", "2026-05-04"))
+
+    def test_kr_fallen_shadow_job_absent_without_flag(self) -> None:
+        now = datetime(2026, 5, 4, 16, 15, tzinfo=KST)
+        with patch.dict("os.environ", {}, clear=False), patch(
+            "preopen.scheduler.is_trading_day", return_value=True
+        ):
+            jobs = due_jobs(now_dt=now, markets=["KR"], mode="live")
+        self.assertEqual([job for job in jobs if job.kind == "kr_fallen_shadow"], [])
+
     def test_kr_yfinance_shadow_is_bounded_and_opt_in(self) -> None:
         now = datetime(2026, 5, 4, 9, 21, tzinfo=KST)
         with patch.dict("os.environ", {

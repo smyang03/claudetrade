@@ -316,6 +316,23 @@ def due_jobs(
                     args=("--session-date", session_date),
                 ))
 
+        # KR 급락 반등 shadow 스캔(관측 전용, 주문 없음): 장 마감 후 캐시 갱신->스캔->D5 정산.
+        # pykrx 일봉이 마감 직후 확정되므로 close+40분에 실행한다.
+        if mkt == "KR" and _env_bool("KR_FALLEN_SHADOW_SCHEDULER_ENABLED", False):
+            fallen_due_dt = regular_close_dt(mkt, session_date) + timedelta(minutes=40)
+            fallen_late_by = (now_dt - fallen_due_dt).total_seconds() / 60.0
+            job_id = f"{runtime_mode}:{session_date}:{mkt}:kr_fallen_shadow"
+            if 0 <= fallen_late_by <= max(0, int(outcome_catchup_min)) and (force or job_id not in completed):
+                jobs.append(PreopenJob(
+                    market=mkt,
+                    session_date=session_date,
+                    kind="kr_fallen_shadow",
+                    job_id=job_id,
+                    due_at=fallen_due_dt.isoformat(timespec="seconds"),
+                    script="tools/kr_fallen_shadow_scan.py",
+                    args=("--auto", "--date", session_date),
+                ))
+
         if mkt == "KR" and _env_bool("KR_DISCLOSURE_OBSERVER_ENABLED", False):
             disclosure_due_dt = open_dt - timedelta(minutes=35)
             disclosure_late_by = (now_dt - disclosure_due_dt).total_seconds() / 60.0
