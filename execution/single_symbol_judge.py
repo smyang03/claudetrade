@@ -199,11 +199,16 @@ def build_single_symbol_judge_prompt(
         # RR·손절폭으로 거부된다는 사실을 몰랐다. 통과 불가능한 플랜을 짜면 강등되어 매수 낭비가
         # 된다. 게이트 값은 안 바꾸고, judge에게 그 값을 알려 애초에 통과 가능한 플랜을 짜게 한다.
         min_rr = judge_min_reward_risk(market_key)
+        # 2026-07-31: 손절폭을 하드코딩(3%)하지 않고 검증과 같은 env에서 읽는다.
+        # 하드코딩이던 동안 IMMEDIATE_BUY_MAX_STOP_PCT를 낮춰도 프롬프트가 따라가지 않아
+        # judge가 통과 불가능한 플랜을 계속 짜고 validate 단계에서 강등되기만 했다
+        # (실측: US BUY_READY 46건 중 24건이 실행 clamp -2%에 걸려 재작성됨).
+        max_stop_pct = _num(os.getenv("IMMEDIATE_BUY_MAX_STOP_PCT", "3.0"), 3.0)
         gate_line = (
             f"BUY_READY plan gate (system rejects the plan if violated): reward/risk = "
             f"(sell_target - current) / (current - stop_loss) must be >= {min_rr:g}, and stop_loss "
-            f"must sit within 3% below current (tight). Choose sell_target and stop_loss that clear "
-            f"this — do not propose a plan that will be rejected.\n"
+            f"must sit within {max_stop_pct:g}% below current (tight). Choose sell_target and stop_loss "
+            f"that clear this — do not propose a plan that will be rejected.\n"
         )
         buy_ready_guide = gate_line + (
             # 2026-07-23: BUY_READY 게이트를 국면(regime)이 이미 통과시킨 뒤에만 이 guide가 붙는다.

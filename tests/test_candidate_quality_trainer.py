@@ -415,6 +415,43 @@ class CandidateQualityTrainerTests(unittest.TestCase):
         self.assertEqual(metrics["prompt_pool_mix"]["liquidity_counts"], {"high": 2})
         self.assertEqual(metrics["full_pool_mix"]["high_liquidity_by_board"], {"KOSPI": 2})
 
+    def test_prompt_pool_records_shadow_reorder_without_changing_legacy_order(self) -> None:
+        result = build_trainer_prompt_pool(
+            [
+                {
+                    "ticker": "WEAK",
+                    "market": "US",
+                    "primary_bucket": "unclassified",
+                    "liquidity_bucket": "mid",
+                    "change_pct": 1.0,
+                },
+                {
+                    "ticker": "STRONG",
+                    "market": "US",
+                    "primary_bucket": "momentum_now",
+                    "liquidity_bucket": "high",
+                    "change_pct": 6.0,
+                },
+            ],
+            market="US",
+            target=2,
+            hard_cap=2,
+            reorder_enabled=False,
+        )
+
+        self.assertEqual([row["ticker"] for row in result["prompt_pool"]], ["WEAK", "STRONG"])
+        metrics = result["metrics"]
+        self.assertFalse(metrics["reorder_enabled"])
+        self.assertEqual(metrics["trainer_shadow_order"], ["STRONG", "WEAK"])
+        shadow = metrics["shadow_reorder"]
+        self.assertEqual(shadow["active_top"], ["WEAK", "STRONG"])
+        self.assertEqual(shadow["trainer_top"], ["STRONG", "WEAK"])
+        self.assertEqual(shadow["top_overlap_ratio"], 1.0)
+        self.assertIn(
+            {"ticker": "STRONG", "active_rank": 2, "trainer_rank": 1, "delta": 1},
+            shadow["largest_rank_deltas"],
+        )
+
     def test_prompt_pool_defers_same_day_stopped_after_trainer_reorder(self) -> None:
         result = build_trainer_prompt_pool(
             [

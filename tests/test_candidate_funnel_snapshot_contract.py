@@ -218,6 +218,37 @@ class CandidateFunnelSnapshotContractTests(unittest.TestCase):
         self.assertEqual(payload["candidate_action_routes"][0]["drop_reason"], "already_holding")
         self.assertTrue(payload["universe_filter_bypass"]["bypassed"])
 
+    def test_snapshot_exposes_prompt_pool_shadow_reorder_metrics(self) -> None:
+        class DummyBot:
+            def __init__(self) -> None:
+                self.events: list[tuple[str, str, dict]] = []
+
+            def _write_funnel_event(self, event_type: str, market: str, payload: dict) -> None:
+                self.events.append((event_type, market, payload))
+
+        bot = DummyBot()
+        shadow_reorder = {
+            "active_top": ["WEAK", "STRONG"],
+            "trainer_top": ["STRONG", "WEAK"],
+            "top_overlap_ratio": 1.0,
+        }
+
+        TradingBot._record_candidate_funnel_snapshot(
+            bot,
+            "US",
+            selected=["WEAK", "STRONG"],
+            meta={
+                "watchlist": ["WEAK", "STRONG"],
+                "trade_ready": [],
+                "_prompt_pool_metrics": {"shadow_reorder": shadow_reorder},
+            },
+            stages={"selected": 2},
+        )
+
+        payload = bot.events[0][2]
+        self.assertEqual(payload["prompt_pool_metrics"]["shadow_reorder"], shadow_reorder)
+        self.assertEqual(payload["prompt_pool_shadow_reorder"], shadow_reorder)
+
 
 if __name__ == "__main__":
     unittest.main()
