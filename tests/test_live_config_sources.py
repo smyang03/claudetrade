@@ -312,6 +312,31 @@ class LiveConfigSourceTests(unittest.TestCase):
         effective["PROFIT_STRATEGY_ENABLED_IDS"] += ",US_CONSENSUS_3D_V1"
         self.assertEqual(_profit_strategy_micro_contract_check(effective, "live").status, "FAIL")
 
+    def test_profit_strategy_contract_empty_ids_is_deliberate_but_contract_still_enforced(self) -> None:
+        # 2026-08-01 재구성: ids 비움은 의도된 전면 차단이라 PASS.
+        # 단 조기 PASS로 cap·ACK·authority 검사를 건너뛰면 안 된다 (2026-08-02 Codex 리뷰 P0).
+        effective = {
+            "PROFIT_STRATEGY_MATERIALIZER_ENABLED": "true",
+            "PROFIT_STRATEGY_AUTHORITY_MODE": "micro",
+            "PROFIT_STRATEGY_ORDER_HANDOFF_ENABLED": "true",
+            "PROFIT_STRATEGY_ORDER_SUBMIT_ENABLED": "true",
+            "PROFIT_STRATEGY_ORDER_LIVE_ACK": "I_ACCEPT_LIVE_PROFIT_STRATEGIES",
+            "PROFIT_STRATEGY_KILL_SWITCH": "false",
+            "PROFIT_STRATEGY_ENABLED_IDS": "",
+            "PROFIT_STRATEGY_MAX_ORDER_KRW_KR": "100000",
+            "PROFIT_STRATEGY_MAX_ORDER_KRW_US": "300000",
+            "PROFIT_STRATEGY_MAX_NEW_PER_DAY_KR": "2",
+            "PROFIT_STRATEGY_MAX_NEW_PER_DAY_US": "1",
+            "PROFIT_STRATEGY_MAX_OPEN_SLOTS": "4",
+        }
+        result = _profit_strategy_micro_contract_check(effective, "live")
+        self.assertEqual(result.status, "PASS")
+        self.assertIn("deliberately empty", result.detail)
+        broken_ack = {**effective, "PROFIT_STRATEGY_ORDER_LIVE_ACK": "wrong"}
+        self.assertEqual(_profit_strategy_micro_contract_check(broken_ack, "live").status, "FAIL")
+        over_cap = {**effective, "PROFIT_STRATEGY_MAX_ORDER_KRW_US": "9999999"}
+        self.assertEqual(_profit_strategy_micro_contract_check(over_cap, "live").status, "FAIL")
+
     def test_core_analyst_entry_isolation_requires_dual_source_and_exact_ack(self) -> None:
         exact_ack = "I_ACCEPT_CORE_ANALYST_DIRECTION_ISOLATION"
         config = {
@@ -405,18 +430,31 @@ class LiveConfigSourceTests(unittest.TestCase):
         #   세션당 7건 이상 구간이 거래 95건에 -44.65%.
         # 외부 독립 표본(404신호/56세션)에서도 상한 5가 최적(+0.2448%p)으로 재현됐다.
         #   단 메커니즘은 "많이 사면 나쁘다"가 아니라 "8번째 이후 신호가 나쁘다"다.
-        # KR은 표본 n=38로 판정 불가라 40을 유지한다. 롤백: US_DAILY_ENTRY_CAP=40.
-        self.assertEqual(effective.get("US_DAILY_ENTRY_CAP"), "5")
+        # 2026-07-30 운영자 승인으로 5 -> 8. 2026-07-31 원장 재실측으로 그 값을 확인했다
+        # (lifecycle FILLED/CLOSED, parent_decision_id 조인, decision 단위 268진입/239청산/47세션,
+        #  net = pnl_pct - 0.47%):
+        #   순번별 net 평균은 단조롭지 않다 — 5(+0.061) 7(+0.602) 10(+1.753)은 양수라
+        #   "뒤로 갈수록 나쁘다"가 성립하지 않는다. 확실한 신호는 순번 9뿐이다:
+        #   평균 -2.570 / 승률 0%(n=9), 최악 1건(QCOM -9.74) 제외해도 -1.673.
+        #   세션 크기별로도 일치한다: 7~8건 세션 +0.449(n=67) vs 9건+ -0.806(n=91).
+        #   => 상한 8은 "9번째를 막는다"는 점에서 지지된다. 상한 5는 양수 구간인 7번째를 버린다.
+        # 단 net 평균은 상한 5(-0.314) vs 8(-0.306)로 사실상 동일하다. 상한은 손실 규모
+        # 조절 손잡이지 수익 개선 레버가 아니며, 근본은 239건 평균 -0.32%p로 전체가 음수인 것이다.
+        # KR은 표본 n=38로 판정 불가라 40을 유지한다. 롤백: US_DAILY_ENTRY_CAP=5(또는 40).
+        self.assertEqual(effective.get("US_DAILY_ENTRY_CAP"), "8")
         self.assertEqual(effective.get("PATHB_MAX_POSITIONS"), "15")
         self.assertEqual(effective.get("PATHB_MAX_DAILY_ENTRIES"), "40")
         # 2026-06-11 운영자 변경: 고가주 병목 완화 (70만 → 100만)
         self.assertEqual(effective.get("PATHB_ONE_SHARE_OVER_BUDGET_MAX_KRW"), "1000000")
-        # 2026-06-11 운영자 결정: 신규 게이트 체계 하 KR PathB 재개
-        self.assertEqual(effective.get("PATHB_KR_LIVE_ENABLED"), "true")
+        # 2026-08-01 전체 재구성(운영자 결정): 기존 매수 전면 차단 3중 방벽 —
+        # LEGACY_NEW_BUY_DISABLED=true + PATHB 양 시장 off + PROFIT_STRATEGY_ENABLED_IDS 비움.
+        # 매수는 급락 반등 레인(us_swing micro probe)만. 롤백: 네 값 원복 후 재시작.
+        self.assertEqual(effective.get("LEGACY_NEW_BUY_DISABLED"), "true")
+        self.assertEqual(effective.get("PATHB_KR_LIVE_ENABLED"), "false")
         self.assertEqual(effective.get("KR_CLAUDE_PRICE_LIVE_ENABLED"), "false")
         self.assertEqual(effective.get("KR_CLAUDE_PRICE_NEW_ENTRY_BLOCK"), "false")
         self.assertEqual(effective.get("KR_CONTINUATION_NEW_ENTRY_BLOCK"), "true")
-        self.assertEqual(effective.get("PATHB_US_LIVE_ENABLED"), "true")
+        self.assertEqual(effective.get("PATHB_US_LIVE_ENABLED"), "false")
         self.assertEqual(effective.get("PATHB_INTRADAY_ONLY"), "false")
         self.assertEqual(effective.get("US_PATHB_PREOPEN_EXIT_POLICY_MODE"), "enforce")
         self.assertEqual(effective.get("KR_PATHB_PREOPEN_EXIT_POLICY_MODE"), "enforce")

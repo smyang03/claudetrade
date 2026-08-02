@@ -2279,13 +2279,19 @@ def _profit_strategy_micro_contract_check(effective: dict[str, Any], mode: str) 
     }
     if not enabled:
         return CheckResult("config.profit_strategy_micro_contract", "PASS", "profit strategy materializer disabled", data)
-    if ids - approved or not ids:
+    if ids - approved:
         return CheckResult(
             "config.profit_strategy_micro_contract",
             "FAIL",
-            "profit strategy list contains an unapproved or empty arm set",
+            "profit strategy list contains an unapproved arm",
             data,
         )
+    # 2026-08-01 전체 재구성(운영자 결정): ENABLED_IDS를 비워 코어 신규신호를 전면 차단했다.
+    # materializer는 NO_LIVE_AUTHORITY 매니페스트 생성을 위해 켜둔다 — 빈 집합은 승인 부분집합보다
+    # 강한 차단이므로 FAIL이 아니다. 단 조기 PASS로 빠지면 cap·ACK·authority 검사가 전부
+    # 건너뛰어지므로(2026-08-02 Codex 리뷰 P0) 나머지 계약 검사는 그대로 계속 수행한다.
+    arm_note = "" if ids else " (arm set deliberately empty: restructure 2026-08-01)"
+    data["arm_set_deliberately_empty"] = not ids
     if any(value <= 0 or value > approved_order_caps_krw[market] for market, value in caps.items()) or any(
         value <= 0 or value > 2 for value in daily_caps.values()
     ) or slot_cap <= 0 or slot_cap > 4:
@@ -2296,7 +2302,12 @@ def _profit_strategy_micro_contract_check(effective: dict[str, Any], mode: str) 
             data,
         )
     if str(mode or "").lower() != "live":
-        return CheckResult("config.profit_strategy_micro_contract", "PASS", "profit strategy live contract is live-only", data)
+        return CheckResult(
+            "config.profit_strategy_micro_contract",
+            "PASS",
+            "profit strategy live contract is live-only" + arm_note,
+            data,
+        )
     if authority != "micro" or not handoff or not submit or ack != "I_ACCEPT_LIVE_PROFIT_STRATEGIES":
         return CheckResult(
             "config.profit_strategy_micro_contract",
@@ -2331,7 +2342,7 @@ def _profit_strategy_micro_contract_check(effective: dict[str, Any], mode: str) 
     return CheckResult(
         "config.profit_strategy_micro_contract",
         "PASS",
-        "approved profit strategies have bounded MICRO authority and exact ACK",
+        "approved profit strategies have bounded MICRO authority and exact ACK" + arm_note,
         data,
     )
 
