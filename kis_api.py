@@ -41,8 +41,10 @@ APP_SECRET_US   = os.getenv("KIS_APP_SECRET_US", "").strip() or APP_SECRET
 _IS_PAPER_US_RAW = os.getenv("KIS_IS_PAPER_US", "").strip()
 IS_PAPER_US     = (_IS_PAPER_US_RAW.lower() == "true") if _IS_PAPER_US_RAW else IS_PAPER
 
-AV_KEY       = os.getenv("ALPHA_VANTAGE_KEY", "")
-AV_KEY_2     = os.getenv("ALPHA_VANTAGE_KEY_2", "")
+_AV_ENABLED_RAW = os.getenv("ALPHA_VANTAGE_ENABLED", "true")
+ALPHA_VANTAGE_ENABLED = str(_AV_ENABLED_RAW).strip().lower() not in {"0", "false", "no", "off"}
+AV_KEY       = os.getenv("ALPHA_VANTAGE_KEY", "") if ALPHA_VANTAGE_ENABLED else ""
+AV_KEY_2     = os.getenv("ALPHA_VANTAGE_KEY_2", "") if ALPHA_VANTAGE_ENABLED else ""
 FINNHUB_KEY  = os.getenv("FINNHUB_API_KEY", "").strip() or os.getenv("FINNHUB_KEY", "").strip()
 FMP_KEY      = os.getenv("FMP_API_KEY", "").strip()
 

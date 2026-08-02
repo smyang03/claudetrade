@@ -16,7 +16,9 @@ from logger import get_collector_logger, log_retry
 load_dotenv()
 
 log      = get_collector_logger()
-AV_KEY   = os.getenv("ALPHA_VANTAGE_KEY","")
+_AV_ENABLED_RAW = os.getenv("ALPHA_VANTAGE_ENABLED", "true")
+ALPHA_VANTAGE_ENABLED = str(_AV_ENABLED_RAW).strip().lower() not in {"0", "false", "no", "off"}
+AV_KEY   = os.getenv("ALPHA_VANTAGE_KEY","") if ALPHA_VANTAGE_ENABLED else ""
 KIS_KEY  = os.getenv("KIS_APP_KEY","")
 KIS_SEC  = os.getenv("KIS_APP_SECRET","")
 IS_PAPER = os.getenv("KIS_IS_PAPER","true").lower()=="true"

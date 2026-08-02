@@ -40,7 +40,9 @@ log = get_collector_logger()
 
 # ── 설정 ──────────────────────────────────────────────────────────────────────
 
-AV_KEY      = os.getenv("ALPHA_VANTAGE_KEY", "")
+_AV_ENABLED_RAW = os.getenv("ALPHA_VANTAGE_ENABLED", "true")
+ALPHA_VANTAGE_ENABLED = str(_AV_ENABLED_RAW).strip().lower() not in {"0", "false", "no", "off"}
+AV_KEY      = os.getenv("ALPHA_VANTAGE_KEY", "") if ALPHA_VANTAGE_ENABLED else ""
 FINNHUB_KEY = (
     os.getenv("FINNHUB_API_KEY", "").strip()
     or os.getenv("FINNHUB_KEY", "").strip()

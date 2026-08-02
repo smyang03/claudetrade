@@ -48,6 +48,7 @@ from tools.order_unknown_evidence import (
 from tools.candidate_consensus_status import candidate_consensus_status_path
 
 LIVE_CONFIG_KEYS = {
+    "ALPHA_VANTAGE_ENABLED",
     "ENABLED_MARKETS",
     "KR_FIXED_ORDER_KRW",
     "US_FIXED_ORDER_KRW",

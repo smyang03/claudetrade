@@ -80,9 +80,39 @@ if (Test-Path -LiteralPath $existingBotPidPath) {
         $existingBotRunning = $false
     }
 }
+$existingBrokerSchedulerPid = 0
+$existingBrokerSchedulerRunning = $false
+$existingBrokerSchedulerHealthy = $false
+$brokerSchedulerLockPath = Join-Path $Root "state\broker_truth_scheduler.lock.json"
+$brokerSchedulerHeartbeatPath = Join-Path $Root "state\broker_truth_scheduler_heartbeat.json"
+if (Test-Path -LiteralPath $brokerSchedulerLockPath) {
+    try {
+        $brokerLock = Get-Content -LiteralPath $brokerSchedulerLockPath -Raw | ConvertFrom-Json
+        $existingBrokerSchedulerPid = [int]$brokerLock.pid
+        $brokerProcess = Get-Process -Id $existingBrokerSchedulerPid -ErrorAction SilentlyContinue
+        if ($brokerProcess -and $brokerProcess.Path) {
+            $existingBrokerSchedulerRunning = ((Resolve-Path -LiteralPath $brokerProcess.Path).Path -ieq (Resolve-Path -LiteralPath $PythonExe).Path)
+        }
+        if ($existingBrokerSchedulerRunning -and (Test-Path -LiteralPath $brokerSchedulerHeartbeatPath)) {
+            $brokerHeartbeat = Get-Content -LiteralPath $brokerSchedulerHeartbeatPath -Raw | ConvertFrom-Json
+            $existingBrokerSchedulerHealthy = (
+                [int]$brokerHeartbeat.pid -eq $existingBrokerSchedulerPid -and
+                [bool]$brokerHeartbeat.healthy
+            )
+        }
+    } catch {
+        $existingBrokerSchedulerPid = 0
+        $existingBrokerSchedulerRunning = $false
+        $existingBrokerSchedulerHealthy = $false
+    }
+}
 if (-not $DryRun) {
     if ($existingBotRunning) {
         Write-Output "[BROKER TRUTH] bot already alive pid=$existingBotPid; reuse the running scheduler for role repair"
+    } elseif ($existingBrokerSchedulerRunning -and $existingBrokerSchedulerHealthy) {
+        Write-Output "[BROKER TRUTH] scheduler already alive and healthy pid=$existingBrokerSchedulerPid; reuse it before starting the bot"
+    } elseif ($existingBrokerSchedulerRunning) {
+        throw "Existing broker_truth_scheduler pid=$existingBrokerSchedulerPid owns the lock but is not healthy; refusing a competing force refresh."
     } else {
         & $PythonExe "tools\broker_truth_scheduler.py" "--mode" "live" "--markets" "KR,US" "--once" "--force" "--json"
         if ($LASTEXITCODE -ne 0) {

@@ -132,6 +132,7 @@
     "EARNINGS_WINDOW_BLOCK_DAYS_BEFORE": "1",
     "EARNINGS_WINDOW_BLOCK_DAYS_AFTER": "1",
     "ANTHROPIC_MODEL": "claude-sonnet-5",
+    "ALPHA_VANTAGE_ENABLED": "false",
     "R1_MODEL": "claude-haiku-4-5-20251001",
     "BULL_R1_MODEL": "claude-haiku-4-5-20251001",
     "BEAR_R1_MODEL": "claude-haiku-4-5-20251001",
