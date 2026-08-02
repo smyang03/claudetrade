@@ -11110,6 +11110,19 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             "source_strategy": str(source_strategy or ""),
             "checked_at": datetime.now(KST).isoformat(),
         }
+        # HALT(일일손실·브로커불신)는 모든 신규매수에 우선한다. micro probe 경로는
+        # risk.can_open()을 거치지 않고 place_order 직행이라 이 공통 게이트가 유일한 HALT 방벽이다.
+        if bool(getattr(getattr(self, "risk", None), "halted", False)):
+            return {
+                "allowed": False,
+                "blocked": True,
+                "reason": "RISK_HALTED",
+                "scope": "market",
+                "details": {
+                    **details,
+                    "halt_reason": str(getattr(self.risk, "halt_reason", "") or ""),
+                },
+            }
         if not self._is_order_allowed_now(market_key):
             return {
                 "allowed": False,

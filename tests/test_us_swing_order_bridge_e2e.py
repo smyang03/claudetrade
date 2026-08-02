@@ -115,6 +115,9 @@ class FakeBot:
     def _broker_truth_open_buy_orders(self, market):
         return list(self.broker_open_orders)
 
+    def _broker_truth_market_snapshot(self, market, *, force=False, ttl_sec=None):
+        return {"missing": False, "stale": False, "error": "", "open_orders": list(self.broker_open_orders)}
+
     def _new_buy_block_state(self, market, ticker, strategy, profit_evidence=None):
         return {"allowed": True}
 
@@ -212,3 +215,111 @@ def test_rehearsal_never_calls_submit_path(tmp_path: Path) -> None:
 
     assert result["results"][0]["status"] == "REHEARSAL_READY"
     assert bot.submit_calls == 0
+
+
+def test_stale_broker_snapshot_fails_closed(tmp_path: Path) -> None:
+    # 스냅샷이 stale이면 "주문 있음"으로 간주해 제출을 막는다 (2026-08-02 fail-closed)
+    db_path = tmp_path / "swing.db"
+    _build_db(db_path)
+    bot = FakeBot(db_path)
+    bot._broker_truth_market_snapshot = (
+        lambda market, *, force=False, ttl_sec=None: {
+            "missing": False, "stale": True, "error": "", "open_orders": []
+        }
+    )
+
+    result = _run(bot)
+
+    assert result["results"][0]["reason"] == "pending_order_exists"
+    assert bot.submit_calls == 0
+
+
+def test_stale_snapshot_recovers_via_forced_refresh(tmp_path: Path) -> None:
+    # TTL 경과(stale)만으로 매수가 죽지 않게: 강제 갱신이 성공하면 제출이 진행된다
+    db_path = tmp_path / "swing.db"
+    _build_db(db_path)
+    bot = FakeBot(db_path)
+
+    def snapshot(market, *, force=False, ttl_sec=None):
+        if force:
+            return {"missing": False, "stale": False, "error": "", "open_orders": []}
+        return {"missing": False, "stale": True, "error": "", "open_orders": []}
+
+    bot._broker_truth_market_snapshot = snapshot
+    result = _run(bot)
+
+    assert result["results"][0]["submitted"] is True
+    assert bot.submit_calls == 1
+
+
+def test_broker_snapshot_exception_fails_closed(tmp_path: Path) -> None:
+    db_path = tmp_path / "swing.db"
+    _build_db(db_path)
+    bot = FakeBot(db_path)
+
+    def boom(market, *, force=False, ttl_sec=None):
+        raise RuntimeError("snapshot unavailable")
+
+    bot._broker_truth_market_snapshot = boom
+    result = _run(bot)
+
+    assert result["results"][0]["reason"] == "pending_order_exists"
+    assert bot.submit_calls == 0
+
+
+def _run_with_operator_override_authority(bot: FakeBot) -> dict:
+    # 라이브 경로 재현: forward 블로커 + 운영자 ACK로 _operator_micro_override가 발동한
+    # authority(슬롯 3/일1건). e2e 기본 경로는 evidence 기반 authority(슬롯 1)라 별도 패치.
+    base_authority = {
+        "configured_mode": "micro",
+        "eligible_mode": "shadow",
+        "effective_mode": "shadow",
+        "allowed_to_emit_orders": False,
+        "blockers": ["forward_matured_insufficient"],
+        "warnings": [],
+    }
+
+    original_runtime_value = bot._runtime_value
+
+    def runtime_value(key, default=""):
+        if key == "US_SWING_OPERATOR_MICRO_OVERRIDE_ACK":
+            return "I_ACCEPT_MICRO_WITHOUT_FORWARD"
+        return original_runtime_value(key, default)
+
+    bot._runtime_value = runtime_value
+    with patch(
+        "runtime.us_swing_order_bridge.resolve_handoff_authority",
+        return_value=base_authority,
+    ):
+        return _run(bot)
+
+
+def test_three_open_us_swing_slots_block_fourth_entry(tmp_path: Path) -> None:
+    # 2026-08-02 운영자 결정 슬롯 3: 세 포지션 보유 중이면 네 번째 진입은 차단된다
+    db_path = tmp_path / "swing.db"
+    _build_db(db_path)
+    bot = FakeBot(db_path)
+    bot.risk.positions = [
+        {"market": "US", "ticker": f"HOLD{i}", "source_strategy": "us_swing_5d"}
+        for i in range(3)
+    ]
+
+    result = _run_with_operator_override_authority(bot)
+
+    assert result["results"][0]["reason"] == "strategy_open_slot_cap_reached"
+    assert bot.submit_calls == 0
+
+
+def test_two_open_slots_still_allow_entry_under_slot_cap_three(tmp_path: Path) -> None:
+    db_path = tmp_path / "swing.db"
+    _build_db(db_path)
+    bot = FakeBot(db_path)
+    bot.risk.positions = [
+        {"market": "US", "ticker": f"HOLD{i}", "source_strategy": "us_swing_5d"}
+        for i in range(2)
+    ]
+
+    result = _run_with_operator_override_authority(bot)
+
+    assert result["results"][0]["submitted"] is True
+    assert bot.submit_calls == 1

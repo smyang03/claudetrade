@@ -401,6 +401,29 @@ class NewBuyGateTests(unittest.TestCase):
         self.assertEqual(state["reason"], "ORDER_UNKNOWN_UNRESOLVED")
         self.assertEqual(state["scope"], "market")
 
+    def test_risk_halt_blocks_new_buy_before_everything(self) -> None:
+        # 2026-08-02: micro probe는 risk.can_open()을 우회하므로 이 게이트가 유일한 HALT 방벽
+        bot = self._bot()
+        bot.risk = SimpleNamespace(halted=True, halt_reason="daily_loss")
+        with self._with_now(10, 0), patch.object(trading_bot, "datetime", _FrozenDateTime), patch.dict(
+            market_utils.HARD_RULES, {"no_new_entry_min": 10, "close_before_min": 10}
+        ):
+            state = trading_bot.TradingBot._new_buy_block_state(bot, "US", "AAPL", "MICRO_PROBE")
+
+        self.assertFalse(state["allowed"])
+        self.assertEqual(state["reason"], "RISK_HALTED")
+        self.assertEqual(state["details"]["halt_reason"], "daily_loss")
+
+    def test_no_risk_halt_falls_through_to_normal_gates(self) -> None:
+        bot = self._bot()
+        bot.risk = SimpleNamespace(halted=False, halt_reason="")
+        with self._with_now(15, 31), patch.object(trading_bot, "datetime", _FrozenDateTime), patch.dict(
+            market_utils.HARD_RULES, {"no_new_entry_min": 10, "close_before_min": 10}
+        ):
+            state = trading_bot.TradingBot._new_buy_block_state(bot, "KR")
+
+        self.assertEqual(state["reason"], "MARKET_CLOSED")
+
     def test_second_stop_cluster_blocks_new_buy_by_default(self) -> None:
         bot = self._bot()
         bot._daily_sl_count = {"KR": 2}

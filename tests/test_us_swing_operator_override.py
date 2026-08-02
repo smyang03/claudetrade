@@ -19,7 +19,9 @@ def test_override_accepts_only_forward_maturity_blockers() -> None:
     authority = {"blockers": ["forward_matured_insufficient", "forward_mean_below_hurdle"]}
     result = _operator_micro_override(Bot("I_ACCEPT_MICRO_WITHOUT_FORWARD"), authority, "micro")
     assert result["allowed_to_emit_orders"] is True
-    assert result["max_open_slots"] == 1
+    # 2026-08-02 운영자 결정: 슬롯 3/일1건 (일일 신규 리스크 불변, D5 보유 중첩만 최대 3)
+    assert result["max_open_slots"] == 3
+    assert result["max_new_per_day"] == 1
     assert result["size_multiplier"] == 0.10
     assert result["absolute_order_cap_krw"] == 300_000.0
     assert result["order_cap_source"] == "operator_config_absolute"

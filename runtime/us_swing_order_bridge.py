@@ -85,7 +85,7 @@ def _write_execution_status(
 
 
 def _operator_micro_override(bot: Any, authority: dict[str, Any], configured_mode: str) -> dict[str, Any]:
-    """Permit a one-slot MICRO trial while preserving every non-forward block.
+    """Permit a bounded MICRO trial (slots 3, one new per day) while preserving every non-forward block.
 
     The tracker was silent before its scheduler repair, so an operator may
     explicitly accept missing forward maturity.  Historical, sealed execution,
@@ -114,8 +114,11 @@ def _operator_micro_override(bot: Any, authority: dict[str, Any], configured_mod
         "size_multiplier": 0.10,
         "absolute_order_cap_krw": float(bot._runtime_float("US_SWING_ORDER_MAX_KRW", 250000.0)),
         "order_cap_source": "operator_config_absolute",
+        # 2026-08-02 운영자 결정(토론 합의안): 슬롯 3/일1건. 일일 신규 리스크는 불변이고
+        # D5 보유가 겹치며 최대 3포지션 동시 보유(최악 동시 SL −22.5만원). 일일 확대(3/일)는
+        # day_losers 전환 후 forward ≥30건 + 순성과 양수 확인 후에만 재론한다.
         "max_new_per_day": 1,
-        "max_open_slots": 1,
+        "max_open_slots": 3,
         "operator_forward_override": True,
         "operator_forward_override_blockers": blockers,
         "warnings": [*(authority.get("warnings") or []), "operator_micro_forward_override_active"],
@@ -140,12 +143,37 @@ def _current_us_swing_open_slots(bot: Any) -> int:
     return len(tickers)
 
 
+def _snapshot_unhealthy(snapshot: dict | None) -> bool:
+    return (
+        not snapshot
+        or bool(snapshot.get("missing"))
+        or bool(snapshot.get("stale"))
+        or bool(str(snapshot.get("error", "") or "").strip())
+    )
+
+
 def _has_broker_truth_open_order(bot: Any, ticker: str) -> bool:
+    # fail-closed: 스냅샷 실패·missing·stale·error를 전부 "주문 있음"으로 간주해 신규 제출을 막는다.
+    # _broker_truth_open_buy_orders()는 이 실패들을 빈 목록으로 삼켜 중복 주문 위험이 있으므로
+    # (Codex 리뷰 2026-08-02) 스냅샷 상태를 직접 본다. 단 단순 TTL 경과(stale)로 정상 매수가
+    # 막히지 않게 unhealthy면 1회 강제 갱신 후 재평가한다. 그래도 unhealthy면 진입보다 보호 우선.
     ticker_key = str(ticker or "").upper()
+    snapshot: dict | None
     try:
-        rows = bot._broker_truth_open_buy_orders("US")
-    except Exception:
-        rows = []
+        snapshot = bot._broker_truth_market_snapshot("US", force=False, ttl_sec=60)
+        if _snapshot_unhealthy(snapshot):
+            snapshot = bot._broker_truth_market_snapshot("US", force=True, ttl_sec=60)
+    except Exception as exc:
+        log.warning(f"[US swing handoff] broker snapshot failed {ticker_key}: {exc} — fail-closed")
+        return True
+    if _snapshot_unhealthy(snapshot):
+        log.warning(
+            f"[US swing handoff] broker snapshot unhealthy {ticker_key} "
+            f"(missing={bool((snapshot or {}).get('missing'))} stale={bool((snapshot or {}).get('stale'))} "
+            f"error={str((snapshot or {}).get('error', '') or '')[:80]}) — fail-closed"
+        )
+        return True
+    rows = list((snapshot or {}).get("open_orders", []) or [])
     return any(str(row.get("ticker") or row.get("symbol") or "").upper() == ticker_key for row in rows)
 
 
