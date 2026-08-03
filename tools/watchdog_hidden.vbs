@@ -8,5 +8,10 @@
 ' window-style 0(숨김)으로 기동한다. 실행 컨텍스트(현재 대화형 세션)는 그대로라
 ' 스택이 도는 방식은 기존과 동일하고 깜빡임만 사라진다.
 '   Run(command, 0, False): 0 = 숨김 창, False = 완료를 기다리지 않고 즉시 반환.
+'
+' 2026-08-03 관측성 수정: 기존에는 출력을 전부 버려서, 기동이 반복 실패해도(예:
+' 08-01 월경계·08-02 BLOCK_START) 아무 흔적이 없었다. 이제 매 틱을 타임스탬프와
+' 함께 logs\runtime\watchdog.log에 append한다. 창 없는 동작은 그대로다.
 Set sh = CreateObject("WScript.Shell")
-sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""E:\code\claudetrade\tools\start_live_stack_headless.ps1""", 0, False
+logCmd = "cmd.exe /c ""(echo [watchdog %date% %time%] tick & powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""E:\code\claudetrade\tools\start_live_stack_headless.ps1"") >> ""E:\code\claudetrade\logs\runtime\watchdog.log"" 2>&1"""
+sh.Run logCmd, 0, False

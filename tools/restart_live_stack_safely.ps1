@@ -106,6 +106,34 @@ function Invoke-BrokerTruthChecked {
         return
     }
 
+    # 2026-08-03: 장외(주말·야간)에는 스케줄러가 락은 쥔 채 갱신을 안 해서 스냅샷이
+    # 90초 조건을 절대 못 넘긴다 — 08-02에 두 번 수동 개입(스케줄러 정지→강제갱신)으로
+    # 우회한 것을 자동화한다. 어차피 전체 재시작이 스케줄러를 곧 정지·재기동하므로,
+    # 루프를 먼저 내리고 강제 갱신을 1회 재시도한다.
+    if ($scheduler.running) {
+        Write-Output "[BROKER TRUTH] snapshot stale under running scheduler pid=$($scheduler.pid); stopping loop for a forced refresh (restart will relaunch it)"
+        try {
+            Stop-Process -Id ([int]$scheduler.pid) -Force -ErrorAction Stop
+            Start-Sleep -Milliseconds 800
+        } catch {
+            Write-Output "[BROKER TRUTH] scheduler stop failed: $($_.Exception.Message)"
+        }
+        $ErrorActionPreference = "Continue"
+        try {
+            $refreshOutput = & $PythonExe @(
+                "tools\broker_truth_scheduler.py", "--mode", "live", "--markets", "KR,US",
+                "--once", "--force", "--json"
+            ) 2>&1
+            $refreshExitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorPreference
+        }
+        if ($refreshExitCode -eq 0) {
+            Write-Output "[BROKER TRUTH] forced refresh succeeded after stopping the scheduler loop"
+            return
+        }
+    }
+
     $detail = ($refreshOutput | ForEach-Object { [string]$_ }) -join "`n"
     throw "Broker truth refresh failed and no fresh scheduler snapshot was available: $detail"
 }

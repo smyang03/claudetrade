@@ -465,20 +465,36 @@ def _refresh_token(markets: list[str]) -> GuardianAction:
         return GuardianAction("refresh_token", "FAIL", f"token refresh failed: {exc}", {"markets": markets})
 
 
+def _runtime_python() -> str:
+    """봇·대시보드 기동용 인터프리터 — 호출자 python을 상속하지 않는다.
+
+    2026-08-02 실측: 가디언을 base anaconda로 실행하자 봇이 base로 떠서
+    스택 표준(upbit env 3.11)과 갈라졌다. CLAUDETRADE_PYTHON > 표준 경로 >
+    sys.executable 순으로 고정한다 (start_live_stack_headless.ps1 과 동일 규약).
+    """
+    override = str(os.getenv("CLAUDETRADE_PYTHON", "") or "").strip()
+    if override and Path(override).exists():
+        return override
+    standard = Path(r"C:\Users\Unknown\anaconda3\envs\upbit\python.exe")
+    if standard.exists():
+        return str(standard)
+    return sys.executable
+
+
 def _start_dashboard() -> GuardianAction:
     script = ROOT / "dashboard" / "dashboard_server.py"
     try:
         kwargs: dict[str, Any] = {"cwd": str(ROOT), "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
         if sys.platform.startswith("win"):
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        proc = subprocess.Popen([sys.executable, str(script)], **kwargs)
+        proc = subprocess.Popen([_runtime_python(), str(script)], **kwargs)
         return GuardianAction("start_dashboard", "PASS", "dashboard start requested", {"pid": proc.pid, "script": str(script)})
     except Exception as exc:
         return GuardianAction("start_dashboard", "FAIL", f"dashboard start failed: {exc}", {"script": str(script)})
 
 
 def _start_bot(mode: str) -> GuardianAction:
-    command = [sys.executable, str(ROOT / "trading_bot.py")]
+    command = [_runtime_python(), str(ROOT / "trading_bot.py")]
     if mode == "live":
         command.append("--live")
     try:

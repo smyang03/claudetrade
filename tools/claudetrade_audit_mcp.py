@@ -142,6 +142,7 @@ def check_buy_gate() -> dict:
         "verdict": verdict,
         "us_swing_authority": {
             "generated_at": authority.get("generated_at"),
+            "generated_at_semantics": "last_handoff_execution — 세션 밖에서는 오래된 값이 정상이며 config 미반영을 뜻하지 않는다",
             "data_age_sec": (authority.get("meta") or {}).get("data_age_sec"),
             "max_new_per_day": execution.get("max_new_per_day"),
             "max_open_slots": execution.get("max_open_slots"),
@@ -152,6 +153,14 @@ def check_buy_gate() -> dict:
             "ready": broker_ready,
             "meta": broker_meta,
         },
+        # 파일만으로는 판정 불가한 런타임 의존 조건 — order_ready 단일 불리언 오판 방지
+        "unknown_until_runtime": [
+            "entry_window(개장 5~30분)",
+            "quote_fresh(실시세)",
+            "cash_and_budget(주문 시점 현금·예산)",
+            "fx_rate",
+            "risk_halted(실행 시점 HALT)",
+        ],
         "meta": cfg.get("meta"),
     }
 

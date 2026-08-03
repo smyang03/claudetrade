@@ -72,6 +72,7 @@ def scan(date_str: str) -> int:
         gap = 100 * (b["o"] / prev - 1)
         rng = b["h"] - b["l"]
         v20 = sum(x["v"] for x in w20) / 20
+        ma20 = sum(x["c"] for x in w20) / 20
         hi20 = max(x["h"] for x in w20)
         rets = [100 * (w20[m]["c"] / w20[m - 1]["c"] - 1) for m in range(1, 20)
                 if w20[m - 1]["c"] > 0]
@@ -85,6 +86,10 @@ def scan(date_str: str) -> int:
             "from_high20": 100 * (b["c"] / hi20 - 1) if hi20 > 0 else 0.0,
             "rv20": st.pstdev(rets) if len(rets) > 3 else 99.0,
             "price": b["c"],
+            # 2026-08-03 토론 판정: "MA20 대비 깊은 할인(−25%)+저변동" 규칙이 in-sample
+            # +4.32/건·월별 전부 양수로 유망 — 8조건과 shadow 병렬 판정용 관측 피처.
+            # 조건이 아니라 기록만 한다(음수=할인). 정본: debate_fallen_hold_and_discount_20260803.md
+            "ma20_disc": 100 * (b["c"] / ma20 - 1) if ma20 > 0 else 0.0,
         }
         flags = {
             "drop": -chg >= CONDS_DOC["drop_ge"],
