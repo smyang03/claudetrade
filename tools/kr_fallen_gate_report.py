@@ -124,6 +124,28 @@ def main() -> int:
                     parts.append(f"{reg} {sum(v)/len(v):+.2f}%({len(v)})")
             print(f"{'':12s} 국면별: " + " / ".join(parts))
 
+    # 원장 전체 축 — 규칙 통과와 무관하게 관측·가상정산된 건.
+    # 2026-08-04: 이 구분이 리포트에 없어서 "규칙 정산 0"과 "원장 정산 있음"이 충돌하는
+    # 것처럼 읽혔다(002995 pass_all=False·R2 미통과인데 net +11.75로 SETTLED).
+    # 원장은 관측 전용이고 주문은 kr_fallen_order_bridge가 규칙 통과분만 낸다 —
+    # 두 숫자는 서로 다른 모집단이며, 원장 정산은 실매수가 아니다.
+    all_settled = [
+        float(r["net_pct"]) for r in rows
+        if r.get("status") == "SETTLED" and r.get("net_pct") is not None
+    ]
+    no_rule = [
+        float(r["net_pct"]) for r in rows
+        if r.get("status") == "SETTLED" and r.get("net_pct") is not None
+        and not any(rule_flags(r).values())
+    ]
+    print(
+        f"\n[대조] 원장 전체(규칙 무관, 관측 전용·실매수 아님) 정산 {len(all_settled)}건"
+        + (f" | 평균 {sum(all_settled)/len(all_settled):+.2f}%" if all_settled else "")
+        + f" | 그중 어떤 규칙도 통과 못한 건 {len(no_rule)}건"
+        + (f" (평균 {sum(no_rule)/len(no_rule):+.2f}%)" if no_rule else "")
+    )
+    print("        규칙별 집계는 이 중 해당 규칙 통과분만 센다 — 두 숫자는 모집단이 다르다.")
+
     print("\n(판정은 운영자 — 이 리포트는 집계만 한다. in-sample 참고치와 비교 금지, forward만 본다.)")
     return 0
 
