@@ -26428,7 +26428,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         window = max(1, self._runtime_int("PROFIT_STRATEGY_HORIZON_EXIT_WINDOW_MIN", 15))
         if minutes_to_close < 0 or minutes_to_close > window:
             return []
-        fixed_sources = {"us_swing_5d", "us_consensus_3d", "kr_us_sector_pulse_3d"}
+        fixed_sources = {"us_swing_5d", "us_consensus_3d", "kr_us_sector_pulse_3d", "kr_fallen_5d"}
         output: list[dict] = []
         for pos in list(getattr(self.risk, "positions", []) or []):
             source = str(pos.get("source_strategy") or "").strip().lower()
@@ -34963,6 +34963,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
         return run_us_swing_handoff(self)
 
+    def _maybe_run_kr_fallen_order_handoff(self, market: str) -> dict:
+        """KR 급락 반등 micro 브리지 — 게이트 통과 전까지 기본 OFF (2026-08-04 사전 구현)."""
+        if str(market or "").upper() != "KR":
+            return {"status": "SKIPPED", "reason": "non_kr_market"}
+        if not self._runtime_bool("KR_FALLEN_ORDER_HANDOFF_ENABLED", False):
+            return {"status": "DISABLED", "reason": "handoff_disabled"}
+        from runtime.kr_fallen_order_bridge import run_kr_fallen_handoff
+
+        return run_kr_fallen_handoff(self)
+
     def _maybe_run_profit_strategy_order_handoff(self, market: str) -> dict:
         """Run the explicitly acknowledged MICRO bridge for new strategy sleeves."""
 
@@ -35012,6 +35022,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self._maybe_run_us_swing_order_handoff(market)
         except Exception as _swing_handoff_e:
             log.error(f"[us_swing_handoff error] {market}: {_swing_handoff_e}", exc_info=True)
+        try:
+            self._maybe_run_kr_fallen_order_handoff(market)
+        except Exception as _kr_fallen_e:
+            log.error(f"[kr_fallen_handoff error] {market}: {_kr_fallen_e}", exc_info=True)
         try:
             self._maybe_run_profit_strategy_order_handoff(market)
         except Exception as _profit_handoff_e:

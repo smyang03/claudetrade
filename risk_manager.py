@@ -31,6 +31,8 @@ ISOLATED_STRATEGY_SOURCES = frozenset({
     "us_swing_5d",
     "us_consensus_3d",
     "kr_us_sector_pulse_3d",
+    # 2026-08-04: KR 급락 반등 micro (게이트 통과 전까지 브리지 플래그 off — 포지션 미발생)
+    "kr_fallen_5d",
 })
 
 # Generic advisor state must never own an isolated sleeve.  Keep this list in
@@ -1371,7 +1373,7 @@ class RiskManager:
                 "exit_owner": source,
                 "strategy_stop_price": entry_native * (1.0 - sl_pct),
             }
-        if source == "us_swing_5d" and tp_pct > 0 and current_native >= entry_native * (1.0 + tp_pct):
+        if source in {"us_swing_5d", "kr_fallen_5d"} and tp_pct > 0 and current_native >= entry_native * (1.0 + tp_pct):
             return True, {
                 **pos,
                 "exit_price": current_krw,

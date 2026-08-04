@@ -4,7 +4,7 @@
   "horizon_sessions": 5,
   "cost_pct": 0.5,
   "stress_cost_pct": 0.8,
-  "top_k": 10,
+  "top_k": 5,
   "seeds": [20260710, 20260711, 20260712],
   "historical": {
     "min_oos_sessions": 200,

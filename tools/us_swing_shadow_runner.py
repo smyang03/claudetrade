@@ -809,11 +809,16 @@ def main() -> int:
             )
         finally:
             research_con.close()
+        # 2026-08-04: 랭킹 관측 확장은 정책 파일이 아니라 env로 한다 — 정책 top_k를 바꾸면
+        # historical evidence의 policy hash 계약이 깨져 authority가 차단된다(실측: 08-04
+        # top_k 10 변경이 historical_policy_hash_mismatch 블로커를 만들어 e2e가 잡아냄).
+        # 저장 개수만 늘리는 것은 주문(rank cap=일1건)·authority(rank1 전용 evidence)와 무관.
+        store_top_k = int(os.getenv("US_SWING_STORE_TOP_K", "0") or 0)
         scored, model_version = score_candidates(
             train,
             candidates,
             seeds=[int(value) for value in policy.get("seeds", [20260710])],
-            top_k=int(policy.get("top_k", 5)),
+            top_k=max(int(policy.get("top_k", 5)), store_top_k),
         )
         # 2026-08-01 하드필터 5조건 shadow 관측(주문·선정 무영향, 기록만).
         # 근거: 검증기간 5조건 통과군 +1.152/건(n=980) vs 잔여 +0.16 (discriminator_hunt).
