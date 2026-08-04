@@ -25,6 +25,9 @@ BENCH_TICKER = "069500"  # KODEX200 — 알파·국면 산출용 (사전등록 �
 GATE_MIN_SESSIONS = 15   # 영업일
 GATE_MIN_SETTLED = 15    # 규칙별 정산 건
 GATE_MIN_WEEKS = 2       # 주간 분산
+# 2026-08-04 운영자 결정: R2는 2025 out-of-sample 재현(+6.43/PF5.07/알파+3.62)으로
+# 정산 요건 10건 단축. R1은 같은 검증에서 음수(-1.71/알파-2.49) — 15건 유지.
+GATE_MIN_SETTLED_BY_RULE = {"R2_할인저변동": 10}
 
 
 def _bench_map() -> tuple[list[str], dict[str, float]]:
@@ -105,9 +108,10 @@ def main() -> int:
                 line += f" | 알파(vs KODEX200) {sum(s['alpha'])/len(s['alpha']):+.2f}%"
             wk = {k: round(sum(v)/len(v), 2) for k, v in sorted(s["weeks"].items())}
             line += f" | 주간 {wk}"
+        need = GATE_MIN_SETTLED_BY_RULE.get(rule, GATE_MIN_SETTLED)
         gate_ok = (
             len(sessions) >= GATE_MIN_SESSIONS
-            and n >= GATE_MIN_SETTLED
+            and n >= need
             and len(s["weeks"]) >= GATE_MIN_WEEKS
         )
         print(line + ("  <<GATE 충족>>" if gate_ok else ""))
