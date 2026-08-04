@@ -52,6 +52,27 @@ class GuardianAction:
     data: dict[str, Any] = field(default_factory=dict)
 
 
+def broker_stale_is_only_blocker(hard_fail: list[GuardianFinding]) -> bool:
+    """봇 기동을 막는 hard_fail이 broker snapshot stale뿐인지.
+
+    2026-08-04 실측: 장 사이 시간대에는 broker_truth_scheduler가
+    (--preopen-min 20 밖이라) 갱신하지 않아 스냅샷 TTL이 계속 만료된다.
+    이때 봇이 죽으면 stale이 hard_fail이 되어 게이트가 BLOCK_START로 잠기고
+    가디언이 재기동을 못 한다 — 21:45 종료 후 22분간 복구 불가였다.
+
+    stale만 남은 경우 **봇 기동만** 허용한다. market_gates는 닫힌 채로 두므로
+    봇은 같은 state를 읽어 진입을 계속 차단한다(진입 허용과는 분리된 판정).
+    """
+
+    if not hard_fail:
+        return False
+    for finding in hard_fail:
+        name = str(getattr(finding, "name", "") or "")
+        if not (name.startswith("broker_truth.") and name.endswith("_stale_state")):
+            return False
+    return True
+
+
 def _now_kst() -> datetime:
     return datetime.now(KST) if KST is not None else datetime.now()
 
@@ -811,6 +832,25 @@ def run_guardian_once(
     bot_launch_allowed = not action_fail and any(
         bool((market_gates.get(market) or {}).get("ok")) for market in markets
     )
+    # 2026-08-04 실측 결함: 장 사이 시간대에 봇이 죽으면 스스로 복구하지 못했다.
+    #   broker_truth_scheduler는 --preopen-min 20이라 개장 20분 전부터만 갱신한다.
+    #   그 밖 시간대에는 스냅샷 TTL(180초)이 계속 만료되고, stale이 hard_fail로
+    #   분류되어 두 시장 게이트가 BLOCK_START가 된다 → bot_launch_allowed=False.
+    #   결과: 21:45 봇 종료 후 22분간 재기동 불가(수동 강제 갱신으로 해소).
+    # 봇 기동과 진입 허용을 분리한다. stale이 유일한 blocker면 기동만 허용하고,
+    # market_gates는 닫힌 채로 둔다 — 봇은 같은 state를 읽어 진입을 계속 막는다.
+    # 스냅샷이 갱신되면(개장 전 refresh window) 게이트가 정상적으로 열린다.
+    if not bot_launch_allowed and not action_fail:
+        if broker_stale_is_only_blocker(hard_fail):
+            bot_launch_allowed = True
+            actions.append(
+                GuardianAction(
+                    "bot_launch_stale_exception",
+                    "PASS",
+                    "broker snapshot stale만 남아 봇 기동은 허용(진입 게이트는 닫힌 상태 유지)",
+                    {"blockers": [str(finding.name) for finding in hard_fail]},
+                )
+            )
     active_bot_lock = _active_bot_lock(preflight, mode) if ensure_bot else {}
     current_blockers = [asdict(finding) for finding in hard_fail]
     historical_remediation_items = [
