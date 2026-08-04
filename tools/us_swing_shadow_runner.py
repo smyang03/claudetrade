@@ -20,6 +20,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from runtime.us_swing_authority import evaluate_swing_authority, load_swing_policy
+from runtime.us_swing_execution_contract import (
+    OPERATOR_MICRO_OVERRIDE_ACK,
+    operator_override_active,
+    resolve_execution_contract,
+)
 from runtime.us_swing_order_handoff import ensure_handoff_schema, summarize_forward_evidence
 from tools.build_us_yahoo_point_in_time import BENCHMARKS, build_ticker_frame, _read_price
 from tools.us_daily_alpha_walkforward import YAHOO_FEATURES, load_yahoo_dataset
@@ -152,6 +157,75 @@ def _benchmark_frame(price_dir: Path, *, before_date: str) -> pd.DataFrame:
     return output if output is not None else pd.DataFrame()
 
 
+def _news_flag_state(candidate: dict[str, Any]) -> float:
+    """정보성 이벤트 플래그를 3-state로 읽는다. 1.0=있음 / 0.0=없음 / NaN=unknown.
+
+    후보 snapshot에 키 자체가 없거나 None이면 unknown이다. 이걸 False로 접으면
+    "뉴스 없음"으로 취급되어 fail-open이 된다.
+    """
+
+    if "news_or_earnings_flag" not in candidate:
+        return float("nan")
+    raw = candidate.get("news_or_earnings_flag")
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return float("nan")
+    if isinstance(raw, str):
+        text = raw.strip().lower()
+        if text in {"true", "1", "y", "yes"}:
+            return 1.0
+        if text in {"false", "0", "n", "no"}:
+            return 0.0
+        return float("nan")
+    return 1.0 if bool(raw) else 0.0
+
+
+def news_arm_counterfactual(scored: pd.DataFrame) -> dict[str, Any]:
+    """정보성 이벤트 배제 3-arm의 rank1을 같은 scorer로 비교한다(기록만, enforce 아님).
+
+    arm 정의
+      current         : 현행 — 플래그를 보지 않는다
+      exclude_flagged : flag=True 제외
+      unknown_abstain : flag=True 제외 + flag unknown 제외(fail-closed)
+
+    30세션 paired 표본이 쌓이기 전에는 어떤 arm도 승격하지 않는다.
+    """
+
+    if scored.empty:
+        return {"arms": {}, "rank1_changed": False}
+    frame = scored.sort_values("rank")
+    flag = frame["news_or_earnings_flag"] if "news_or_earnings_flag" in frame.columns else None
+    arms: dict[str, Any] = {}
+
+    def _pick(subset: pd.DataFrame) -> dict[str, Any] | None:
+        if subset.empty:
+            return None
+        row = subset.iloc[0]
+        return {
+            "ticker": str(row["ticker"]),
+            "original_rank": int(row["rank"]),
+            "predicted_net_pct": float(row["predicted_net_pct"]),
+            "candidate_source": str(row.get("candidate_source") or ""),
+        }
+
+    arms["current"] = _pick(frame)
+    if flag is None:
+        arms["exclude_flagged"] = arms["current"]
+        arms["unknown_abstain"] = None
+    else:
+        arms["exclude_flagged"] = _pick(frame[~(flag == 1.0)])
+        arms["unknown_abstain"] = _pick(frame[flag == 0.0])
+    tickers = {name: (value or {}).get("ticker") for name, value in arms.items()}
+    return {
+        "arms": arms,
+        "rank1_changed": len({value for value in tickers.values() if value}) > 1,
+        "flag_counts": {
+            "flagged": int((flag == 1.0).sum()) if flag is not None else 0,
+            "clean": int((flag == 0.0).sum()) if flag is not None else 0,
+            "unknown": int(flag.isna().sum()) if flag is not None else int(len(frame)),
+        },
+    }
+
+
 def load_candidate_features(
     *, snapshot_path: Path, price_dir: Path, session_date: str, vetoes: dict[str, str] | None = None
 ) -> tuple[pd.DataFrame, list[str]]:
@@ -194,7 +268,11 @@ def load_candidate_features(
             {
                 "ticker": ticker,
                 "candidate_source": str(candidate.get("source") or ""),
-                "news_or_earnings_flag": bool(candidate.get("news_or_earnings_flag")),
+                # 2026-08-04: thesis "정보성 하락은 안 산다"의 검증 입력.
+                # bool() 캐스팅은 unknown(키 없음/None)을 False로 만들어 fail-open이 된다.
+                # unknown을 3번째 상태로 살려야 `unknown abstain` arm을 검증할 수 있다.
+                "news_or_earnings_flag": _news_flag_state(candidate),
+                "news_signal_type": str(candidate.get("news_signal_type") or ""),
                 "snapshot_data_quality": str(candidate.get("data_quality") or ""),
                 "veto_reason": veto_map.get(ticker, ""),
             }
@@ -257,8 +335,13 @@ def score_candidates(
     scored["net_rank"] = scored["predicted_net_pct"].rank(pct=True)
     scored["prob_rank"] = scored["probability"].rank(pct=True)
     scored["alpha_score"] = 0.5 * scored["net_rank"] + 0.5 * scored["prob_rank"]
-    scored = scored.sort_values(["alpha_score", "predicted_net_pct"], ascending=False).head(max(1, top_k)).copy()
+    scored = scored.sort_values(["alpha_score", "predicted_net_pct"], ascending=False).copy()
     scored["rank"] = np.arange(1, len(scored) + 1)
+    # top_k로 자르기 전 전체 랭킹을 보관한다. 정보성 이벤트 arm에서 상위가 제외되면
+    # top_k 밖 후보가 rank1로 올라오므로, 잘린 프레임만으로는 arm 비교가 틀린다.
+    full_ranking = scored.copy()
+    scored = scored.head(max(1, top_k)).copy()
+    scored.attrs["full_ranking"] = full_ranking
     identity = f"{train['session_date'].max()}|{len(train)}|{','.join(map(str, seeds))}"
     model_version = "us_swing_5d_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
     return scored, model_version
@@ -340,6 +423,40 @@ def _latest_fx(fx_map: dict[str, float], date: str) -> float | None:
     return float(value) if np.isfinite(value) and float(value) > 100 else None
 
 
+def resolve_shadow_contract(
+    policy: dict[str, Any],
+    *,
+    base_order_budget_krw: float = 500_000.0,
+    authority: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """shadow가 쓸 계약을 실주문과 같은 규칙으로 계산한다.
+
+    shadow runner는 봇과 별도 프로세스로도 돌기 때문에 `os.getenv`로 읽는다.
+    같은 `.env.live` / start-config를 보므로 실주문 경로와 값이 일치한다.
+    """
+
+    configured_max = float(os.getenv("US_SWING_ORDER_MAX_KRW", "250000") or 250000.0)
+    ack = os.getenv("US_SWING_OPERATOR_MICRO_OVERRIDE_ACK", "")
+    if authority is not None:
+        override = operator_override_active(ack=ack, blockers=list(authority.get("blockers") or []))
+    else:
+        override = str(ack or "") == OPERATOR_MICRO_OVERRIDE_ACK
+    # 실행 shadow는 authority가 shadow로 강등돼 있어도 **micro 계약으로 관찰**하는 원장이다
+    # (그게 이 원장의 목적: 승격 판정에 쓸 forward를 미리 쌓는다).
+    # 오버라이드가 붙으면 예산이 micro multiplier 대신 운영자 절대캡으로 바뀐다.
+    effective_mode = "micro"
+    absolute_cap = configured_max if override else 0.0
+    return resolve_execution_contract(
+        policy=policy,
+        effective_mode=effective_mode,
+        configured_max_order_krw=configured_max,
+        base_order_budget_krw=base_order_budget_krw,
+        absolute_order_cap_krw=absolute_cap,
+        allowed_sources_raw=os.getenv("US_SWING_ALLOWED_SOURCES", ""),
+        override_active=override,
+    )
+
+
 def annotate_execution_shadow(
     con: sqlite3.Connection,
     *,
@@ -348,44 +465,50 @@ def annotate_execution_shadow(
     policy: dict[str, Any],
     base_order_budget_krw: float = 500_000.0,
 ) -> dict[str, Any]:
-    """Select the exact MICRO path: one slot, rank1 only, whole shares."""
+    """실주문과 **같은 계약**으로 rank1을 잡는다(예산·슬롯·소스 화이트리스트 공유).
+
+    2026-08-04 이전에는 여기가 5만원/슬롯1 고정이라 실주문(30만원/슬롯3)과 갈라졌다.
+    상세와 실측 사고 기록은 `runtime/us_swing_execution_contract` 참고.
+    """
     ensure_handoff_schema(con)
-    micro = dict((policy.get("authority_caps") or {}).get("micro") or {})
-    multiplier = float(micro.get("size_multiplier") or 0.0)
-    budget = float(base_order_budget_krw) * multiplier
+    contract = resolve_shadow_contract(policy, base_order_budget_krw=base_order_budget_krw)
+    budget = float(contract["budget_krw"])
+    max_open_slots = max(1, int(contract["max_open_slots"]))
+    max_hold = int(contract["max_hold_sessions"])
+    allowed_sources = {str(item).lower() for item in (contract.get("allowed_sources") or [])}
     fx = _latest_fx(fx_map, signal_date)
     evaluated_at = datetime.now(timezone.utc).isoformat()
-    prior = con.execute(
+
+    # 미청산 건을 모두 세어 다중 슬롯을 판정한다(기존에는 직전 1건만 봤다).
+    open_rows = con.execute(
         """SELECT signal_date,execution_shadow_exit_date FROM signals
-           WHERE execution_shadow_eligible=1 AND signal_date<?
-           ORDER BY signal_date DESC LIMIT 1""",
+           WHERE execution_shadow_eligible=1 AND signal_date<? ORDER BY signal_date DESC""",
         (str(signal_date),),
-    ).fetchone()
-    slot_free = True
-    slot_reason = ""
-    if prior:
-        prior_date, actual_exit = str(prior[0]), str(prior[1] or "")
-        if actual_exit:
-            slot_free = str(signal_date) > actual_exit
-            if not slot_free:
-                slot_reason = f"slot_occupied_until:{actual_exit}"
-        else:
-            later_sessions = con.execute(
-                "SELECT COUNT(DISTINCT signal_date) FROM signals WHERE signal_date>? AND signal_date<=?",
-                (prior_date, str(signal_date)),
-            ).fetchone()[0]
-            slot_free = int(later_sessions or 0) >= int(
-                (policy.get("execution_contract") or {}).get("max_hold_sessions", 5)
-            )
-            if not slot_free:
-                slot_reason = f"slot_occupied_pending:{prior_date}"
+    ).fetchall()
+    occupied: list[str] = []
+    for prior_date, actual_exit in open_rows:
+        prior_date = str(prior_date)
+        exit_date = str(actual_exit or "")
+        if exit_date:
+            if str(signal_date) <= exit_date:
+                occupied.append(prior_date)
+            continue
+        later_sessions = con.execute(
+            "SELECT COUNT(DISTINCT signal_date) FROM signals WHERE signal_date>? AND signal_date<=?",
+            (prior_date, str(signal_date)),
+        ).fetchone()[0]
+        if int(later_sessions or 0) < max_hold:
+            occupied.append(prior_date)
+    slot_free = len(occupied) < max_open_slots
+    slot_reason = "" if slot_free else f"slots_full_{len(occupied)}/{max_open_slots}:{','.join(occupied[:3])}"
 
     rows = con.execute(
-        "SELECT ticker,rank,reference_close FROM signals WHERE signal_date=? ORDER BY rank",
+        """SELECT ticker,rank,reference_close,candidate_source FROM signals
+           WHERE signal_date=? ORDER BY rank""",
         (str(signal_date),),
     ).fetchall()
     selected: dict[str, Any] = {}
-    for ticker, rank, reference_close in rows:
+    for ticker, rank, reference_close, candidate_source in rows:
         eligible = 0
         qty = 0
         price_krw = None
@@ -393,7 +516,11 @@ def annotate_execution_shadow(
         if int(rank) == 1:
             reference = float(reference_close) if reference_close is not None else None
             price_krw = reference * fx if reference and fx else None
-            if not slot_free:
+            source = str(candidate_source or "").lower()
+            if allowed_sources and source not in allowed_sources:
+                # 실주문 경로가 거르는 소스는 shadow 표본에도 넣지 않는다.
+                reason = f"source_outside_contract:{source or 'unknown'}"
+            elif not slot_free:
                 reason = slot_reason
             elif not fx:
                 reason = "fx_missing"
@@ -411,7 +538,9 @@ def annotate_execution_shadow(
             """UPDATE signals SET execution_shadow_eligible=?,execution_shadow_reason=?,
                 execution_shadow_qty=?,execution_shadow_budget_krw=?,
                 execution_shadow_entry_proxy_usd=?,execution_shadow_entry_price_krw=?,
-                execution_shadow_fx=?,execution_shadow_policy=?,execution_shadow_evaluated_at=?
+                execution_shadow_fx=?,execution_shadow_policy=?,execution_shadow_evaluated_at=?,
+                execution_shadow_contract_id=?,execution_shadow_max_open_slots=?,
+                execution_shadow_allowed_sources=?
                 WHERE signal_date=? AND ticker=?""",
             (
                 eligible,
@@ -423,6 +552,9 @@ def annotate_execution_shadow(
                 fx,
                 "rank1_skip_v1",
                 evaluated_at,
+                str(contract["contract_id"]),
+                int(max_open_slots),
+                ",".join(sorted(allowed_sources)),
                 str(signal_date),
                 str(ticker),
             ),
@@ -430,10 +562,14 @@ def annotate_execution_shadow(
     con.commit()
     return {
         "policy": "rank1_skip_v1",
+        "contract_id": str(contract["contract_id"]),
+        "contract": contract,
         "budget_krw": budget,
         "fx": fx,
         "slot_free": slot_free,
         "slot_reason": slot_reason,
+        "open_slots_used": len(occupied),
+        "max_open_slots": max_open_slots,
         "selected": selected,
     }
 
@@ -690,7 +826,7 @@ def _block_lcb(values: np.ndarray, *, seed: int = 20260710) -> float | None:
 
 def summarize_forward(con: sqlite3.Connection) -> dict[str, Any]:
     frame = pd.read_sql_query(
-        """SELECT signal_date,ticker,net_krw_pct,breadth_context_state
+        """SELECT signal_date,ticker,rank,candidate_source,net_krw_pct,breadth_context_state
            FROM signals WHERE status='MATURED' AND net_krw_pct IS NOT NULL""",
         con,
     )
@@ -712,6 +848,23 @@ def summarize_forward(con: sqlite3.Connection) -> dict[str, Any]:
             "mean_net_pct": float(state_daily.mean()),
             "profit_factor": float(state_positive / state_negative) if state_negative > 0 else None,
         }
+    # 2026-08-04: 이 집계는 rank1~5 전체 + 소스 화이트리스트 도입 이전 행을 모두 담는다.
+    # 현재 계약(day_losers·rank1)의 forward가 아니므로 소스·rank별로 쪼개 함께 남긴다.
+    # 그대로 두면 -6.33%가 현재 레인의 성적처럼 읽힌다.
+    source_diagnostic: dict[str, Any] = {}
+    for source, group in frame.groupby(frame["candidate_source"].fillna("unknown").replace("", "unknown")):
+        source_values = group["net_krw_pct"].to_numpy(dtype=float)
+        source_positive = float(source_values[source_values > 0].sum())
+        source_negative = float(-source_values[source_values < 0].sum())
+        rank1 = group[group["rank"] == 1]["net_krw_pct"].to_numpy(dtype=float)
+        source_diagnostic[str(source)] = {
+            "signals": int(len(group)),
+            "mean_net_pct": float(source_values.mean()),
+            "win_rate": float((source_values > 0).mean()),
+            "profit_factor": float(source_positive / source_negative) if source_negative > 0 else None,
+            "rank1_signals": int(len(rank1)),
+            "rank1_mean_net_pct": float(rank1.mean()) if len(rank1) else None,
+        }
     return {
         "sessions": int(len(daily)),
         "matured": int(len(frame)),
@@ -720,8 +873,10 @@ def summarize_forward(con: sqlite3.Connection) -> dict[str, Any]:
         "profit_factor": float(positive / negative) if negative > 0 else None,
         "block_lcb_pct": _block_lcb(values),
         "ex_top3_days_pct": float(ordered[3:].mean()) if len(ordered) > 3 else None,
+        "scope_note": "rank1~5 + 소스필터 도입 이전 행 혼합. 현재 계약 forward 아님.",
         "critical_data_errors": [],
         "breadth_context_diagnostic_only": breadth_diagnostic,
+        "candidate_source_diagnostic_only": source_diagnostic,
     }
 
 
@@ -787,6 +942,7 @@ def main() -> int:
     breadth_context: dict[str, Any] = {}
     execution_shadow: dict[str, Any] = {}
     active_execution_shadow: dict[str, Any] = {}
+    news_arms: dict[str, Any] = {"arms": {}, "rank1_changed": False}
     if not args.mature_only:
         snapshot = Path(args.snapshot) if args.snapshot else ROOT / "state" / f"preopen_US_{args.session_date.replace('-', '')}.json"
         veto_path = Path(args.veto_file) if args.veto_file else ROOT / "state" / f"us_swing_veto_{args.session_date.replace('-', '')}.json"
@@ -860,6 +1016,26 @@ def main() -> int:
         generated = write_signals(
             con, signal_date=args.session_date, scored=scored, model_version=model_version
         )
+        # 정보성 하락 배제 3-arm 기록(관찰 전용, 선정에 개입하지 않는다).
+        news_arms = news_arm_counterfactual(scored.attrs.get("full_ranking", scored))
+        try:
+            _arm_path = ROOT / "data" / "shadow" / "us_swing_news_arm_shadow.jsonl"
+            _arm_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(_arm_path, "a", encoding="utf-8") as _arm_file:
+                _arm_file.write(
+                    json.dumps(
+                        {
+                            "session_date": str(args.session_date),
+                            "model_version": model_version,
+                            **news_arms,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+        except OSError as exc:
+            log_note = f"news arm shadow write failed: {exc}"
+            print(log_note, file=sys.stderr)
         execution_shadow = annotate_execution_shadow(
             con,
             signal_date=args.session_date,
@@ -892,6 +1068,38 @@ def main() -> int:
         policy=policy,
         execution_evidence=execution_evidence,
     )
+    # 2026-08-04: 여기 저장되는 authority는 운영자 오버라이드 **적용 전** 값이라
+    # status 파일만 읽으면 실매수 중인 시스템이 allowed_to_emit_orders=false로 보인다.
+    # (실제 08-03 FRMI 38@5.5225가 micro_probe 경로로 체결됐다.)
+    # 검토자가 파일 하나로 실행 권한을 판정할 수 있게 오버라이드 후 상태를 함께 남긴다.
+    _base_authority = authority.to_dict()
+    _override_active = operator_override_active(
+        ack=os.getenv("US_SWING_OPERATOR_MICRO_OVERRIDE_ACK", ""),
+        blockers=_base_authority.get("blockers"),
+    )
+    _contract = resolve_shadow_contract(
+        policy, base_order_budget_krw=500_000.0, authority=_base_authority
+    )
+    effective_authority = {
+        **_base_authority,
+        "operator_override_active": bool(_override_active),
+        "operator_override_source": "US_SWING_OPERATOR_MICRO_OVERRIDE_ACK",
+    }
+    if _override_active:
+        effective_authority.update(
+            {
+                "eligible_mode": "micro_operator_trial",
+                "effective_mode": "micro",
+                "allowed_to_emit_orders": True,
+                "size_multiplier": 0.10,
+                "max_new_per_day": int(_contract["max_new_per_day"]),
+                "max_open_slots": int(_contract["max_open_slots"]),
+                "absolute_order_cap_krw": float(_contract["budget_krw"]),
+                "order_cap_source": "operator_config_absolute",
+                "operator_forward_override": True,
+                "operator_forward_override_blockers": list(_base_authority.get("blockers") or []),
+            }
+        )
     report = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -910,7 +1118,10 @@ def main() -> int:
         "model_forward_diagnostic_only": model_forward,
         "historical_evidence_present": bool(historical),
         "execution_evidence_present": bool(execution_evidence),
-        "authority": authority.to_dict(),
+        "authority": _base_authority,
+        "effective_authority": effective_authority,
+        "execution_contract": _contract,
+        "news_arm_shadow_only": news_arms,
         "order_integration": "WIRED_FAIL_CLOSED_DISABLED; separate handoff, submit, and live-ack locks",
     }
     con.execute(

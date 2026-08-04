@@ -41,6 +41,11 @@ _HANDOFF_COLUMNS = {
     "execution_shadow_exit_reason": "TEXT",
     "execution_shadow_net_krw_pct": "REAL",
     "execution_shadow_pnl_krw": "REAL",
+    # 2026-08-04: 계약(예산·슬롯·소스·TP/SL/보유)이 바뀐 시점을 원장에 남긴다.
+    # 계약이 다른 행을 한 평균에 섞으면 forward 판정이 무효가 된다.
+    "execution_shadow_contract_id": "TEXT",
+    "execution_shadow_max_open_slots": "INTEGER",
+    "execution_shadow_allowed_sources": "TEXT",
 }
 
 
@@ -88,18 +93,56 @@ def _block_lcb(values: np.ndarray, *, seed: int = 20260710) -> float | None:
     return float(np.quantile(means, 0.05))
 
 
-def summarize_forward_evidence(con: sqlite3.Connection) -> dict[str, Any]:
+def current_contract_id(con: sqlite3.Connection) -> str:
+    """원장에 기록된 가장 최근 실행 계약 지문."""
+
+    row = con.execute(
+        """SELECT execution_shadow_contract_id FROM signals
+           WHERE execution_shadow_contract_id IS NOT NULL AND execution_shadow_contract_id<>''
+           ORDER BY signal_date DESC LIMIT 1"""
+    ).fetchone()
+    return str(row[0]) if row and row[0] else ""
+
+
+def summarize_forward_evidence(
+    con: sqlite3.Connection, *, contract_id: str | None = None
+) -> dict[str, Any]:
+    """현재 실행 계약과 **같은 계약**으로 만들어진 행만 forward 근거로 센다.
+
+    2026-08-04 실측: 계약 필터 없이 집계하면 소스 화이트리스트(day_losers) 도입
+    이전 행과 5만원 예산 시절 행이 한 평균에 섞인다. 실제로 정산 2건 평균 -1.80%는
+    SMCI(most_actives, -14.80%) + NVTS(day_losers, +11.21%)의 혼합이었고,
+    SMCI는 현재 계약에서는 후보에도 들어오지 못한다.
+    """
+
     ensure_handoff_schema(con)
+    active_contract = str(contract_id or "").strip() or current_contract_id(con)
+    if active_contract:
+        contract_sql = " AND execution_shadow_contract_id=? "
+        params: tuple[Any, ...] = (active_contract,)
+    else:
+        contract_sql = ""
+        params = ()
     missing_outcomes = con.execute(
-        """SELECT COUNT(*) FROM signals WHERE status='MATURED'
-           AND execution_shadow_eligible=1 AND execution_shadow_net_krw_pct IS NULL"""
+        f"""SELECT COUNT(*) FROM signals WHERE status='MATURED'
+           AND execution_shadow_eligible=1 AND execution_shadow_net_krw_pct IS NULL
+           {contract_sql}""",
+        params,
     ).fetchone()[0]
     critical_errors = ["execution_shadow_matured_outcome_missing"] if missing_outcomes else []
     rows = con.execute(
-        """SELECT signal_date,execution_shadow_net_krw_pct FROM signals
+        f"""SELECT signal_date,execution_shadow_net_krw_pct FROM signals
            WHERE status='MATURED' AND execution_shadow_eligible=1
-             AND execution_shadow_net_krw_pct IS NOT NULL ORDER BY signal_date"""
+             AND execution_shadow_net_krw_pct IS NOT NULL {contract_sql}
+           ORDER BY signal_date""",
+        params,
     ).fetchall()
+    legacy = con.execute(
+        """SELECT COUNT(*) FROM signals WHERE status='MATURED' AND execution_shadow_eligible=1
+             AND execution_shadow_net_krw_pct IS NOT NULL
+             AND COALESCE(execution_shadow_contract_id,'')<>?""",
+        (active_contract,),
+    ).fetchone()[0]
     if not rows:
         observation_sessions = con.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
         return {
@@ -108,6 +151,8 @@ def summarize_forward_evidence(con: sqlite3.Connection) -> dict[str, Any]:
             "observation_sessions": int(observation_sessions or 0),
             "strategy_matched": True,
             "execution_shadow_policy": "rank1_skip_v1",
+            "execution_contract_id": active_contract,
+            "excluded_legacy_contract_matured": int(legacy or 0),
             "critical_data_errors": critical_errors,
         }
     by_date: dict[str, list[float]] = {}
@@ -126,6 +171,8 @@ def summarize_forward_evidence(con: sqlite3.Connection) -> dict[str, Any]:
         "observation_sessions": int(observation_sessions or 0),
         "strategy_matched": True,
         "execution_shadow_policy": "rank1_skip_v1",
+        "execution_contract_id": active_contract,
+        "excluded_legacy_contract_matured": int(legacy or 0),
         "mean_net_pct": float(daily.mean()),
         "profit_factor": float(positive / negative) if negative > 0 else (999.0 if positive > 0 else None),
         "block_lcb_pct": _block_lcb(daily),
