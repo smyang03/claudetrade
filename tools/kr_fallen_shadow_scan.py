@@ -32,6 +32,23 @@ if str(ROOT) not in sys.path:
 
 OUT = ROOT / "data" / "shadow" / "kr_fallen_shadow.jsonl"
 CACHE = ROOT / "data" / "analysis" / "kr_fallen_price_cache.json"
+_CORP_CODES_PATH = ROOT / "data" / "dart_corp_codes.json"
+_corp_codes_cache: dict | None = None
+
+
+def _instrument_type(code: str) -> str:
+    """일반주/우선주/ETF계열 판별. corp_code 조회 실패 시 빈 값(위조 금지)."""
+    global _corp_codes_cache
+    if _corp_codes_cache is None:
+        try:
+            _corp_codes_cache = json.loads(_CORP_CODES_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _corp_codes_cache = {}
+    if not _corp_codes_cache:
+        return ""
+    if code in _corp_codes_cache:
+        return "일반주"
+    return "ETF계열" if str(code).endswith("0") else "우선주"
 UNIVERSE = ROOT / "data" / "analysis" / "kr_fallen_universe.json"
 COST = 0.25
 
@@ -105,6 +122,11 @@ def scan(date_str: str) -> int:
             "scanned_at": datetime.now().isoformat(timespec="seconds"),
             "session_date": d_iso,
             "ticker": code,
+            # 2026-08-05: 상품 유형 태그(게이트 판정 시 코호트 분리용 — 제외 아님).
+            # ETF의 급락은 시장 하락이라 thesis(개별 왜곡)와 다르지만, R2 대역
+            # 실측(2026 n=4, +11.57%, 승률 100%)이 제외를 지지하지 않아 태그만 남긴다.
+            # 판별: DART corp_code 없음 = 비법인(ETF·리츠), 그중 끝자리 0 = ETF 계열.
+            "instrument": _instrument_type(code),
             "pass_all": all(flags.values()),
             "pass_count": int(sum(flags.values())),
             "flags": flags,
