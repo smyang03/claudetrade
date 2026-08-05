@@ -96,6 +96,28 @@ def _open_slots(bot: Any) -> int:
     return count
 
 
+def _today_new_count(bot: Any, session_date: str) -> int:
+    """오늘 진입한 kr_fallen 건수(일일 한도용).
+
+    2026-08-05 사전 점검: 기존에는 슬롯 캡만 있어 "일 1건"이 슬롯=1일 때만
+    우연히 지켜졌다. 슬롯을 3으로 올리면 핸드오프가 진입창(2~20분) 동안
+    사이클마다 돌며 하루 3건까지 낼 수 있었다. 같은 날 진입-청산된 건은
+    포지션 목록에서 빠져 셀 수 없는 한계가 있으나(드묾), 한도 방향으로는
+    슬롯 캡이 이중 방어한다.
+    """
+
+    count = 0
+    for item in [*(getattr(getattr(bot, "risk", None), "positions", []) or []),
+                 *(getattr(bot, "pending_orders", []) or [])]:
+        src = str(item.get("source_strategy") or item.get("strategy_used") or "").lower()
+        if src != SOURCE_STRATEGY:
+            continue
+        entry_day = str(item.get("entry_session_date") or item.get("session_date") or "")
+        if entry_day == str(session_date):
+            count += 1
+    return count
+
+
 def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
     session_date = bot._current_session_date_str("KR")
     live_enabled = bot._runtime_bool("KR_FALLEN_LIVE_ENABLED", False)
@@ -115,6 +137,9 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
     max_slots = int(bot._runtime_int("KR_FALLEN_MAX_OPEN_SLOTS", 1))
     if _open_slots(bot) >= max_slots:
         return _write_status(bot, session_date, {"status": "BLOCKED", "reason": "strategy_open_slot_cap_reached"})
+    max_new = int(bot._runtime_int("KR_FALLEN_MAX_NEW_PER_DAY", 1))
+    if _today_new_count(bot, session_date) >= max_new:
+        return _write_status(bot, session_date, {"status": "BLOCKED", "reason": "daily_new_entry_cap_reached"})
 
     # 직전 영업일 = 원장에서 오늘보다 앞선 가장 최근 세션
     sessions = set()
@@ -130,6 +155,19 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
     if not sessions:
         return _write_status(bot, session_date, {"status": "SKIPPED", "reason": "no_prior_session_candidates"})
     prev_session = max(sessions)
+    # 신호 신선도 가드(2026-08-05 사전 점검). 계약은 "익일 시가" 진입인데,
+    # 마감 후 스캔이 조용히 죽으면 prev_session이 이틀 전 이상으로 밀려
+    # 낡은 신호로 매수하게 된다. 주말·연휴를 감안해 달력 6일까지만 허용한다.
+    try:
+        gap_days = (datetime.strptime(session_date, "%Y-%m-%d")
+                    - datetime.strptime(prev_session, "%Y-%m-%d")).days
+    except ValueError:
+        gap_days = 99
+    if gap_days > int(bot._runtime_int("KR_FALLEN_SIGNAL_MAX_AGE_DAYS", 6)):
+        return _write_status(bot, session_date, {
+            "status": "BLOCKED", "reason": "stale_signal_scan_may_be_dead",
+            "prev_session": prev_session, "gap_days": gap_days,
+        })
     rule_short = str(bot._runtime_value("KR_FALLEN_ACTIVE_RULE", "R2") or "R2")
     candidates = _load_candidates(prev_session, rule_short)
     if not candidates:

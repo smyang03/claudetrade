@@ -27648,6 +27648,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 # (loss_cap·stop_loss·trail_stop)이며 sleeve 계약 청산은 그 범위 밖이다.
                 "strategy_fixed_take_profit",
                 "strategy_catastrophe_stop",
+                # 2026-08-05 KR 브리지 사전 점검에서 발견: D5 만기도 같은 계약 청산인데
+                # 예외 목록에 없어 리뷰에 걸릴 수 있었다. TP/SL/D5는 한 계약이다.
+                "strategy_horizon_exit",
             }
         return reason_key not in {
             "manual_sell",
