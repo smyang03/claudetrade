@@ -128,6 +128,21 @@ def main() -> int:
             and len(s["weeks"]) >= GATE_MIN_WEEKS
         )
         print(line + ("  <<GATE 충족>>" if gate_ok else ""))
+        # 2026-08-05 rv20 개정(6.24->8.0) 사후 검증용 코호트 분리 — 9월 판정 때
+        # "개정으로 새로 들어온 구간(6.24<rv20<=8)"이 타이트 구간과 같은 방향인지 본다.
+        if rule == "R2_할인저변동" and n:
+            tight, relaxed = [], []
+            for r in rows:
+                if not rule_flags(r).get(rule) or r.get("status") != "SETTLED" or r.get("net_pct") is None:
+                    continue
+                rv = (r.get("feats") or {}).get("rv20")
+                (tight if rv is not None and float(rv) <= 6.24 else relaxed).append(float(r["net_pct"]))
+            for sub_label, sub in (("타이트(rv20<=6.24)", tight), ("완화구간(6.24<rv20<=8)", relaxed)):
+                if sub:
+                    print(f"{'':12s} {sub_label}: n={len(sub)} 평균 {sum(sub)/len(sub):+.2f}% "
+                          f"승률 {100*sum(1 for x in sub if x>0)/len(sub):.0f}%")
+                else:
+                    print(f"{'':12s} {sub_label}: n=0")
         # 사전등록 국면 조건(2026-08-04): 승격 규칙은 하락 국면에서도 견뎌야 한다
         if s["regime"]:
             parts = []

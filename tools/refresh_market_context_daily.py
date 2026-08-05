@@ -30,6 +30,8 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:  # 단독 실행 시 tools.* import 보장
+    sys.path.insert(0, str(ROOT))
 ANALYSIS = ROOT / "data" / "analysis"
 
 
@@ -247,10 +249,35 @@ def refresh_us_adv_dec() -> dict:
     return {"file": path.name, "status": "APPENDED", "added": _append_rows(path, existing, rows, _ADV_COLUMNS)}
 
 
+def refresh_execution_shortfall() -> dict:
+    """실행 품질 원장 갱신(P0의 일일 자동화, 2026-08-05).
+
+    수동 실행에만 의존하면 안 돌린 날의 체결이 원장에서 빠진다. 최근 5일
+    로그만 스캔해 신규 체결을 append한다(멱등 — order_no 기준 중복 제거).
+    """
+    import contextlib
+    import io
+    import sys as _sys
+
+    from tools.execution_shortfall_report import main as shortfall_main
+
+    argv_backup = _sys.argv
+    _sys.argv = ["execution_shortfall_report.py", "--days", "5"]
+    buffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buffer):
+            shortfall_main()
+    finally:
+        _sys.argv = argv_backup
+    tail = [l for l in buffer.getvalue().splitlines() if l.startswith("원장 신규")]
+    return {"file": "execution_shortfall_ledger.jsonl", "status": "OK",
+            "detail": tail[-1] if tail else ""}
+
+
 def run_once() -> list[dict]:
     results = []
     for job in (refresh_us_breadth, refresh_kr_breadth, refresh_vix_term,
-                refresh_kr_adv_dec, refresh_us_adv_dec):
+                refresh_kr_adv_dec, refresh_us_adv_dec, refresh_execution_shortfall):
         try:
             results.append(job())
         except Exception as exc:  # 한 소스 실패가 나머지를 막지 않는다
