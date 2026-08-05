@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import date, datetime, timedelta, time as dt_time
 from typing import Optional
 from dotenv import load_dotenv
@@ -25,6 +26,9 @@ KST = ZoneInfo("Asia/Seoul")
 # These sleeves own their exits. Generic Path-A/Claude review must not
 # mutate or close them; core sleeves rebalance through their bridge and the
 # fixed-horizon sleeves use their predeclared horizon/guard exits.
+# [sleeve TP] 로그 스로틀 (2026-08-05 실측: 무스로틀 시 청산 검사 주기마다 초당 ~9건 스팸).
+_SLEEVE_TP_LOG_AT: dict[str, float] = {}
+
 ISOLATED_STRATEGY_SOURCES = frozenset({
     "us_schg_bil_trend_v1",
     "kr_factor_trend_v1",
@@ -1382,11 +1386,17 @@ class RiskManager:
         if source in {"us_swing_5d", "kr_fallen_5d"} and tp_pct > 0 and current_native >= entry_native * (1.0 + tp_pct):
             # 계약 청산 트리거는 반드시 로그로 남긴다. 2026-08-05 사고는 TP 조건이
             # 성립하지 않은 채(옛 가격 $6.09) 조용히 지나간 것이라 흔적이 없었다.
-            log.info(
-                f"[sleeve TP] {pos.get('ticker')} {source} "
-                f"{current_native:g} >= {entry_native * (1.0 + tp_pct):g} "
-                f"(entry {entry_native:g}, tp {tp_pct * 100:.1f}%) → 즉시 청산 후보"
-            )
+            # 단 청산 검사는 사이클마다 돌므로(주문 보류 중이면 특히) 스로틀한다 —
+            # 첫 발화 후 10분에 한 번만. (실측: 무스로틀 시 초당 ~9건 스팸)
+            _tp_log_key = str(pos.get("ticker") or "")
+            _now = time.time()
+            if _now - _SLEEVE_TP_LOG_AT.get(_tp_log_key, 0.0) >= 600:
+                _SLEEVE_TP_LOG_AT[_tp_log_key] = _now
+                log.info(
+                    f"[sleeve TP] {pos.get('ticker')} {source} "
+                    f"{current_native:g} >= {entry_native * (1.0 + tp_pct):g} "
+                    f"(entry {entry_native:g}, tp {tp_pct * 100:.1f}%) → 즉시 청산 후보"
+                )
             return True, {
                 **pos,
                 "exit_price": current_krw,
