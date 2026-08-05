@@ -502,6 +502,9 @@ _DEFAULT_US_TICKERS = ["NVDA", "TSLA", "GOOGL", "AAPL", "NFLX"]
 _STOP_COOLDOWN_MIN = int(os.getenv("STOP_COOLDOWN_MIN", "60"))   # 손절 후 재진입 금지 (20→60: 반복손절 방지)
 _BUY_COOLDOWN_MIN  = int(os.getenv("BUY_COOLDOWN_MIN",  "15"))   # 매수 접수 후 중복 차단
 _TP_COOLDOWN_MIN   = int(os.getenv("TP_COOLDOWN_MIN",   "10"))   # TP 후 재진입 차단
+# WS 틱 무음 경고 임계(2026-08-05 사고). 청산 판정의 1차 경로가 WS 틱이므로
+# 연결만 성공하고 틱이 끊긴 상태를 감지해야 한다.
+_WS_TICK_SILENCE_WARN_SEC = int(os.getenv("WS_TICK_SILENCE_WARN_SEC", "600"))
 _MIN_ENTRY_CONF    = float(os.getenv("MIN_ENTRY_CONF",   "0.4"))  # minimum average analyst confidence
 _STARTUP_GUARD_SEC = float(os.getenv("STARTUP_GUARD_SEC", "60"))  # protect first cycle after session_open
 _ENTRY_SCAN_OPENING_MIN = int(os.getenv("ENTRY_SCAN_OPENING_MIN", "30"))
@@ -949,6 +952,10 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._session_open_index_change: dict[str, Optional[float]] = {"KR": None, "US": None}
         self._active_session_date: dict[str, Optional[date]] = {"KR": None, "US": None}
         self.ws_by_market: dict[str, Optional[KISWebSocket]] = {"KR": None, "US": None}
+        # WS 틱 무음 감지용(2026-08-05 사고). 청산 판정이 틱에 의존하는데
+        # 연결 성공 로그만 있고 틱 수신 여부를 확인할 방법이 없었다.
+        self._last_ws_tick_at: dict[str, float] = {}
+        self._ws_tick_count: dict[str, int] = {}
         self.price_cache = {}
         self.price_cache_raw = {}
         self._ohlcv_cache: dict = {}        # ticker -> DataFrame (일봉 캐시)
@@ -26309,6 +26316,72 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             merged["metadata_contract_violation"] = "missing:" + ",".join(missing)
         return merged
 
+    def _refresh_holding_prices_for_exit(self, market: str) -> dict:
+        """보유 종목 시세를 price_cache에 갱신해 청산 판정 입력을 최신으로 만든다.
+
+        2026-08-05 실측 사고. `RiskManager.update_prices`는 price_cache에 없는
+        종목을 건너뛴다(risk_manager.py:714). 그런데 보유 종목이 price_cache에
+        들어가는 경로는 session_open 1회뿐이고, 장중 갱신은 스캔 대상 ticker
+        루프에서만 일어난다. 보유 종목이 rescreen으로 스캔 목록에서 빠지면
+        가격이 세션 시작 시점에 고정된다.
+
+        설계상 이를 막는 장치는 WS 구독의 보유 종목 강제 합집합
+        (WS 틱 -> _on_tick -> _process_exit_candidates)이지만, WS가 뜨지 않으면
+        방어가 통째로 사라진다(08-04·08-05 WS 로그 0건).
+
+        FRMI 사례: session_open $6.09에 고정 -> 장중 실제 고가 $6.35,
+        TP선 $6.1824를 5분봉 80개 중 58개에서 초과했으나 판정은 계속 False.
+        TP뿐 아니라 SL도 같은 경로라 급락 시 손절이 나가지 않는다.
+        """
+
+        market_key = str(market or "").upper()
+        updated: list[str] = []
+        failed: list[str] = []
+        for pos in list(getattr(getattr(self, "risk", None), "positions", []) or []):
+            ticker = str(pos.get("ticker") or "").strip()
+            if not ticker or self._ticker_market(ticker) != market_key:
+                continue
+            try:
+                price_info = get_price(ticker, self._token_for_market(market_key), market=market_key)
+                raw_price = float((price_info or {}).get("price") or 0.0)
+            except Exception as exc:
+                failed.append(ticker)
+                log.warning(f"[holding price refresh] {market_key} {ticker} 조회 실패: {exc}")
+                continue
+            if raw_price <= 0:
+                failed.append(ticker)
+                continue
+            self.price_cache_raw[ticker] = raw_price
+            self.price_cache[ticker] = self._price_to_krw(raw_price, market_key)
+            updated.append(ticker)
+        if updated or failed:
+            self.risk.update_prices(self.price_cache, self.price_cache_raw)
+            log.info(
+                f"[holding price refresh] {market_key} updated={updated}"
+                + (f" failed={failed}" if failed else "")
+            )
+        # WS 무음 감지 — 청산 판정의 1차 경로가 죽었는지 알린다.
+        # 이 5분 주기 갱신이 안전망이므로 무음이어도 청산은 계속 판정된다.
+        silence = self._ws_tick_silence_sec(market_key)
+        if silence is not None and silence > _WS_TICK_SILENCE_WARN_SEC:
+            log.warning(
+                f"[WS silence] {market_key} 마지막 틱 {int(silence)}초 전 "
+                f"(누적 {int((getattr(self, '_ws_tick_count', None) or {}).get(market_key, 0))}건) — "
+                f"청산 판정은 holding price refresh로 유지 중"
+            )
+        return {"market": market_key, "updated": updated, "failed": failed}
+
+    def _ws_tick_silence_sec(self, market: str) -> float | None:
+        """마지막 WS 틱 이후 경과 초. 세션 중 틱이 한 번도 없으면 None이 아니라 큰 값."""
+
+        market_key = str(market or "").upper()
+        opened_at = float((getattr(self, "_session_open_at", None) or {}).get(market_key) or 0.0)
+        if opened_at <= 0:
+            return None
+        last = float((getattr(self, "_last_ws_tick_at", None) or {}).get(market_key) or 0.0)
+        reference = last if last > 0 else opened_at
+        return max(0.0, time.time() - reference)
+
     def _process_exit_candidates(self):
         if not self._exit_process_lock.acquire(blocking=False):
             log.debug("[exit skip] exit processing already in progress")
@@ -27567,6 +27640,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "pathb_closeall",
                 "daily_loss_stop",
                 "broker_mismatch",
+                # 2026-08-05: isolated sleeve의 사전 확정 계약 청산은 재량 판단 대상이 아니다.
+                # us_swing_5d / kr_fallen_5d는 TP12·SL25·D5를 진입 전에 못박고 그 계약으로
+                # forward 표본을 쌓는다. 여기에 Claude 리뷰가 끼면 (a) 계약과 다른 청산이
+                # 섞여 표본이 무효가 되고, (b) 목표가를 넘겼는데 보류되는 일이 생긴다.
+                # CLAUDE_REVIEW_ALL_AUTOMATED_SELLS의 보호 대상은 Path A 자동매도
+                # (loss_cap·stop_loss·trail_stop)이며 sleeve 계약 청산은 그 범위 밖이다.
+                "strategy_fixed_take_profit",
+                "strategy_catastrophe_stop",
             }
         return reason_key not in {
             "manual_sell",
@@ -32126,6 +32207,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
         self.price_cache_raw[ticker] = raw_price
         self.price_cache[ticker] = self._price_to_krw(raw_price, market)
+        # WS 틱 수신 시각을 남긴다. 2026-08-05 사고 조사에서 WS가 연결·구독까지는
+        # 성공했는데(US 31/31) 이후 틱이 실제로 들어왔는지 로그로 확인할 방법이
+        # 없었다. 청산 판정이 WS 틱에 의존하므로 무음 상태를 감지할 수 있어야 한다.
+        self._last_ws_tick_at[market] = time.time()
+        self._ws_tick_count[market] = int(self._ws_tick_count.get(market, 0)) + 1
         self.risk.update_prices(self.price_cache, self.price_cache_raw)
         # Track intraday high/low for signal diagnostics.
         if raw_price > self._intraday_high.get(ticker, 0):
@@ -35555,6 +35641,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             f"[{market} 사이클 {now_str}] 모드:{mode} size:{size_pct}% | "
             f"tickers:{tickers} | positions:{self._position_count_by_market(market)}"
         )
+        # 보유 종목 시세를 리스크 엔진에 먼저 반영한다(청산 판정 입력).
+        # 2026-08-05 실측 사고: 보유 종목이 스캔 목록에서 빠지면 price_cache가
+        # session_open 시점 값에 고정되고, update_prices가 그 종목을 건너뛰어
+        # TP/SL 판정이 옛 가격으로 이뤄진다. FRMI는 $6.09에 멈춘 채 장중 실제
+        # $6.35(TP선 $6.1824 초과)를 찍었지만 청산 후보가 생성되지 않았다.
+        self._refresh_holding_prices_for_exit(market)
         # 분석가 평균 confidence 계산 — 신뢰도 낮으면 신규 진입 차단
         log.info(f"[runtime gates {market}] source=run_cycle {self._runtime_gate_state_text(market)}")
         _judgments = self.today_judgment.get("judgments", {})
