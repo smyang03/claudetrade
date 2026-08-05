@@ -38,6 +38,19 @@ _SELL_RE = re.compile(
     r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}).*\[LIVE SELL\] "
     r"(?P<ticker>\S+) (?P<qty>[\d,]+)@(?P<px>[\d,.]+) \| 주문번호=(?P<no>\S+)"
 )
+# 2026-08-06 실측 결함: 체결이 즉시 확인되지 않으면 매도가 [LIVE SELL PENDING]으로
+# 남고 가격이 로그에 없다(브로커 truth가 나중에 확정). FRMI TP 청산이 이 경로여서
+# 원장에서 통째로 빠졌다. 확정 로그(close_position)에서 손익률을 주워 보완한다.
+# 체결가는 진입가와 손익률로 역산하지 않는다 — KRW net(FX 포함)이라 USD 체결가와
+# 다르다. 대신 realized_pnl_pct로 기록하고 shortfall은 미측정으로 둔다.
+_SELL_PENDING_RE = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}).*\[LIVE SELL PENDING\] "
+    r"(?P<ticker>\S+) order_no=(?P<no>\S+)"
+)
+_CLOSE_RE = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}).*close_position:\d+ \| "
+    r"\[(?P<reason>[a-z_]+)\] (?P<ticker>\S+) (?P<pnl_krw>[+-][\d,]+) \((?P<pnl_pct>[+-][\d.]+)%\)"
+)
 
 
 def _num(text: str) -> float:
@@ -65,7 +78,30 @@ def scan_logs(days: int) -> list[dict]:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        pending_sells: dict[str, dict] = {}
         for line in text.splitlines():
+            # 확정 청산 로그 — PENDING으로 나간 매도의 실현 손익을 여기서 얻는다.
+            close_m = _CLOSE_RE.match(line)
+            if close_m:
+                cg = close_m.groupdict()
+                held = pending_sells.pop(cg["ticker"], None)
+                if held:
+                    market = "US" if _is_us_ticker(cg["ticker"]) else "KR"
+                    rows.append({
+                        "order_no": held["no"], "side": "SELL", "ticker": cg["ticker"],
+                        "market": market, "qty": 0, "fill_px": 0.0,
+                        "source": "", "ts": cg["ts"],
+                        "session_date": _us_session_date(cg["ts"]) if market == "US" else cg["ts"][:10],
+                        "exit_reason": cg["reason"],
+                        "realized_pnl_pct": float(cg["pnl_pct"]),
+                        "realized_pnl_krw": _num(cg["pnl_krw"]),
+                        "fill_px_unavailable": "pending_path_no_price_in_log",
+                    })
+                continue
+            pend_m = _SELL_PENDING_RE.match(line)
+            if pend_m:
+                pending_sells[pend_m.group("ticker")] = pend_m.groupdict()
+                continue
             m = _BUY_RE.match(line)
             side = "BUY"
             if not m:
@@ -147,6 +183,10 @@ def main() -> int:
     for f in sorted(fills, key=lambda x: x["ts"]):
         open_px = opens.get((f["ticker"], f["session_date"]))
         shortfall = None
+        # 체결가가 없는 행(PENDING 경로 확정분)은 shortfall 미측정 — 0으로 계산하면
+        # -100%가 되어 통계를 오염시킨다. 실현 손익만 기록한다.
+        if f.get("fill_px_unavailable"):
+            open_px = None
         if open_px and open_px > 0:
             raw = 100 * (f["fill_px"] / open_px - 1)
             # BUY: 시가보다 싸게 = 유리(음수). SELL: 시가보다 비싸게 = 유리(양수 -> 부호 뒤집어 통일).
@@ -154,10 +194,16 @@ def main() -> int:
         row = {**f, "open_px": open_px, "shortfall_pct_vs_open": shortfall,
                "convention": "음수=시뮬(시가 체결) 가정보다 유리"}
         enriched.append(row)
-        print(f"{f['session_date']:<11}{f['side']:<5}{f['ticker']:<8}{f['qty']:>5} "
-              f"{f['fill_px']:>10,.4f} "
-              + (f"{open_px:>10,.4f} {shortfall:>+9.3f}%" if shortfall is not None else f"{'?':>10} {'?':>10}")
-              + f"  {f['source']}")
+        if f.get("fill_px_unavailable"):
+            print(f"{f['session_date']:<11}{f['side']:<5}{f['ticker']:<8}{'':>5} "
+                  f"{'가격없음':>10} {'':>10} {'미측정':>10}"
+                  f"  실현 {f.get('realized_pnl_pct'):+.2f}% ({f.get('realized_pnl_krw'):+,.0f}원) "
+                  f"{f.get('exit_reason','')}")
+        else:
+            print(f"{f['session_date']:<11}{f['side']:<5}{f['ticker']:<8}{f['qty']:>5} "
+                  f"{f['fill_px']:>10,.4f} "
+                  + (f"{open_px:>10,.4f} {shortfall:>+9.3f}%" if shortfall is not None else f"{'?':>10} {'?':>10}")
+                  + f"  {f['source']}")
         if f["order_no"] not in known:
             with open(LEDGER, "a", encoding="utf-8") as handle:
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")

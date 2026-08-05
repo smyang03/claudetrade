@@ -270,6 +270,12 @@ def check_sync_coverage(ml_db: Path, event_db: Path, now: datetime, window_days:
         closed_ids = {r[0] for r in ev.execute(
             "SELECT DISTINCT decision_id FROM lifecycle_events WHERE event_type='CLOSED' AND session_date>=?",
             (cutoff_date,)) if r[0]}
+    # isolated sleeve(us_swing_5d / kr_fallen_5d) 청산은 Claude decision 파이프라인
+    # 밖에서 일어나므로 v2_learning_performance에 대응 행이 존재할 수 없다.
+    # 성과는 전용 원장(us_swing_shadow.db, kr_fallen_shadow.jsonl)이 추적한다.
+    # 이 커버리지에 포함하면 구조적으로 매칭 불가능한 건을 세어 영구 FAIL이 된다.
+    # (2026-08-06: sleeve CLOSED 소급 주입 후 실측으로 확인)
+    closed_ids = {cid for cid in closed_ids if not str(cid).startswith("sleeve_")}
     with _connect_ro(ml_db) as ml:
         # 학습행 session_date=진입일, CLOSED 창=청산일. 오버나이트/멀티데이 홀드는 진입일<청산일이라
         # 학습행에도 청산일 cutoff를 걸면 창 경계 청산이 가짜 미스매치가 된다(false-positive FAIL).
