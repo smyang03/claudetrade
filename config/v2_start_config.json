@@ -756,7 +756,8 @@
     "IMMEDIATE_BUY_MAX_STOP_PCT": "2.0",
     "JUDGE_FEATURE_AGE_STALE_SEC": "900",
     "IMMEDIATE_BUY_MIN_REWARD_RISK": "1.2",
-    "LEGACY_NEW_BUY_DISABLED": "true"
+    "LEGACY_NEW_BUY_DISABLED": "true",
+    "SECTOR_MAP_ENABLED": "true"
   },
   "updated_at": "2026-06-09T21:27:06+09:00",
   "updated_by": "dashboard_order_size_control"

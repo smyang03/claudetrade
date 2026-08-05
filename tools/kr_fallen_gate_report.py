@@ -52,12 +52,25 @@ def market_fwd5(session_date: str, bdates: list[str], bench: dict[str, float]) -
     return 100 * (x / e - 1) if e else None
 
 
+# R2 rv20 임계 (2026-08-05 운영자 승인 개정: 6.24 -> 8.0).
+# forward 정산 0건 상태의 사전 개정이다(골대 이동 아님 — 데이터 도착 전).
+# 근거 스윕(양 캐시, 원장 계약과 동일 규약: next open / TP12 / SL25 우선 / D5 / 비용 0.45%):
+#   2025 독립연도: <=6.24 n=18 +6.38 알파+4.28  ->  <=8.0 n=20 +7.09 PF6.40 알파+4.97
+#   2026:          <=6.24 n=135 +6.79 알파+6.40  ->  <=8.0 n=266 +5.75 PF3.37 알파+4.84
+#   증분(6.24<rv20<=8.0)만: 2026 n=131 +4.67/승률71%/알파+3.23, 2025 n=2 +13.47 — 양 연도 양수.
+#   10 초과부터 급감(무제한 증분 +3.30/알파+1.42, 2025 무제한은 PF 5.38->2.88 붕괴) — 10은 불가.
+# 6.24는 절벽이 아니라 보수적 지점이었다. 원장 feats에 rv20이 저장되므로
+# 6.24 이하 코호트는 사후 분리 분석이 항상 가능하다.
+R2_RV20_LE = 8.0
+R2_DISC_LE = -25.0
+
+
 def rule_flags(row: dict) -> dict[str, bool]:
     feats = row.get("feats") or {}
     r1 = bool(row.get("pass_all"))
     disc = feats.get("ma20_disc")
     rv20 = feats.get("rv20")
-    r2 = disc is not None and rv20 is not None and float(disc) <= -25.0 and float(rv20) <= 6.24
+    r2 = disc is not None and rv20 is not None and float(disc) <= R2_DISC_LE and float(rv20) <= R2_RV20_LE
     return {"R1_8조건": r1, "R2_할인저변동": r2, "R3_합집합": r1 or r2}
 
 

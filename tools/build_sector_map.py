@@ -57,6 +57,82 @@ def recent_tickers(market: str, since: str) -> list[str]:
     return sorted({str(r[0]).strip() for r in rows if str(r[0] or "").strip()})
 
 
+# KSIC(한국표준산업분류) 2자리 대분류 → 캡용 섹터 버킷.
+# 다양성 캡(KR 2종목/섹터)의 입력이므로 정밀 분류보다 동질 위험 묶음이 목적이다.
+_KSIC_SECTOR_BUCKETS: tuple[tuple[range, str], ...] = (
+    (range(1, 4), "농림어업"),
+    (range(5, 9), "광업"),
+    (range(10, 13), "식품·담배"),
+    (range(13, 16), "섬유·의복"),
+    (range(16, 19), "목재·종이·인쇄"),
+    (range(19, 21), "석유·화학"),
+    (range(21, 22), "제약·바이오"),
+    (range(22, 24), "고무·비금속"),
+    (range(24, 26), "금속"),
+    (range(26, 27), "전자·반도체"),
+    (range(27, 28), "의료·정밀기기"),
+    (range(28, 29), "전기장비"),
+    (range(29, 30), "기계"),
+    (range(30, 32), "자동차·운송장비"),
+    (range(32, 35), "기타제조"),
+    (range(35, 40), "전기가스·환경"),
+    (range(41, 43), "건설"),
+    (range(45, 48), "유통"),
+    (range(49, 53), "운수·물류"),
+    (range(55, 57), "숙박·음식"),
+    (range(58, 64), "정보통신·SW"),
+    (range(64, 67), "금융·보험"),
+    (range(68, 69), "부동산"),
+    (range(70, 74), "전문과학기술"),
+    (range(74, 77), "사업지원"),
+    (range(84, 100), "기타"),
+)
+
+
+def _ksic_to_sector(induty_code: str) -> str:
+    digits = "".join(ch for ch in str(induty_code or "") if ch.isdigit())
+    if len(digits) < 2:
+        return ""
+    division = int(digits[:2])
+    for bucket, name in _KSIC_SECTOR_BUCKETS:
+        if division in bucket:
+            return name
+    return "기타"
+
+
+def _make_kr_dart_fetcher():
+    import requests
+
+    key = ""
+    env_path = ROOT / ".env.live"
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("DART_API_KEY="):
+                key = line.split("=", 1)[1].strip()
+                break
+    if not key:
+        raise RuntimeError("DART_API_KEY not found in .env.live")
+    corp_codes = json.loads((ROOT / "data" / "dart_corp_codes.json").read_text(encoding="utf-8"))
+    session = requests.Session()
+
+    def fetch(ticker: str) -> tuple[str, str]:
+        corp = corp_codes.get(str(ticker).strip())
+        if not corp:
+            return "", ""
+        resp = session.get(
+            "https://opendart.fss.or.kr/api/company.json",
+            params={"crtfc_key": key, "corp_code": corp},
+            timeout=10,
+        )
+        payload = resp.json()
+        if str(payload.get("status")) != "000":
+            return "", ""
+        induty = str(payload.get("induty_code") or "").strip()
+        return _ksic_to_sector(induty), f"KSIC:{induty}" if induty else ""
+
+    return fetch
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="티커→섹터 매핑 캐시 생성")
     ap.add_argument("--market", default="US", choices=["US", "KR"])
@@ -66,30 +142,43 @@ def main() -> int:
     ap.add_argument("--sleep", type=float, default=0.15)
     args = ap.parse_args()
 
-    if args.market != "US":
-        print("KR은 yfinance 섹터 품질이 낮아 별도 매핑이 필요하다. 지금은 US만 지원한다.")
-        return 2
-
-    import yfinance as yf
-
     data = load_map()
     known = data.get(args.market) or {}
     targets = recent_tickers(args.market, args.since)
+    if args.market == "KR":
+        # 2026-08-05: KR은 yfinance 섹터 품질이 낮아 DART 기업개황(induty_code,
+        # 표준산업분류 KSIC)으로 만든다. 키는 이미 라이브에서 사용 중이고
+        # corp_code 매핑(data/dart_corp_codes.json)도 매일 갱신된다.
+        # 급락 레인 유니버스(641)를 대상에 합친다 — 캡의 실수요처가 그쪽이다.
+        try:
+            universe = json.loads((ROOT / "data" / "analysis" / "kr_fallen_universe.json").read_text(encoding="utf-8"))
+            targets = sorted(set(targets) | {str(t).strip() for t in universe if str(t).strip()})
+        except (OSError, ValueError):
+            pass
     todo = [t for t in targets if args.refresh or not known.get(t)]
     if args.limit:
         todo = todo[: args.limit]
     print(f"[{args.market}] 대상 {len(targets)} / 조회 필요 {len(todo)}")
 
     ok = 0
-    for i, ticker in enumerate(todo, 1):
-        sector = ""
-        industry = ""
-        try:
+    if args.market == "KR":
+        fetch = _make_kr_dart_fetcher()
+        source = "dart_company_induty_ksic"
+    else:
+        import yfinance as yf
+
+        def fetch(ticker: str) -> tuple[str, str]:
             info = yf.Ticker(ticker).info or {}
-            sector = str(info.get("sector") or "").strip()
-            industry = str(info.get("industry") or "").strip()
+            return (str(info.get("sector") or "").strip(),
+                    str(info.get("industry") or "").strip())
+
+        source = "yfinance_info"
+
+    for i, ticker in enumerate(todo, 1):
+        try:
+            sector, industry = fetch(ticker)
         except Exception:
-            sector = ""
+            sector, industry = "", ""
         if sector:
             known[ticker] = {"sector": sector, "industry": industry}
             ok += 1
@@ -101,7 +190,7 @@ def main() -> int:
     data["_meta"][args.market] = {
         "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "count": len(known),
-        "source": "yfinance_info",
+        "source": source,
     }
     MAP_PATH.parent.mkdir(parents=True, exist_ok=True)
     MAP_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
