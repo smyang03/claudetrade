@@ -139,6 +139,48 @@ LEARNING_FIELDS = [
 ]
 
 
+# D형 확장(2026-08-05): 파일 기반 파이프라인의 침묵 정지.
+# 기존 D형 탐지는 DB 이벤트만 봐서, 판정 입력이 되는 CSV/JSON이 몇 주 멈춰도
+# 아무도 깃발을 들지 않았다. 실측 사고:
+#   - us_breadth_proxy_daily.csv가 2026-07-09에서 정지 → load_breadth_context가
+#     매 세션 MISSING 반환(정산 50건 중 45건). 국면 분해가 diagnostic에서조차 불가.
+#   - kr_breadth / adv_dec / vix_term은 25일 정지 상태로 발견됨.
+# 값이 없으면 조용히 기본값으로 대체되는 구조라 결과만 보고는 알 수 없다.
+# (path, warn_days, fail_days, note)
+DATA_PIPELINE_FILES: tuple[tuple[str, float, float, str], ...] = (
+    ("data/analysis/us_breadth_proxy_daily.csv", 4, 10, "US breadth 국면 판정 입력(us_swing)"),
+    ("data/analysis/kr_breadth_proxy_daily.csv", 4, 10, "KR breadth 국면 판정 입력"),
+    ("data/analysis/us_adv_dec_breadth_daily.csv", 4, 14, "US 등락비율 보조 입력"),
+    ("data/analysis/kr_adv_dec_breadth_daily.csv", 4, 14, "KR 등락비율 보조 입력"),
+    ("data/analysis/vix_term_daily.csv", 4, 14, "VIX term 국면 보조 입력"),
+    ("data/earnings_calendar.json", 2, 5, "실적 이벤트(정보성 하락 배제 입력)"),
+    ("data/analysis/kr_fallen_price_cache.json", 3, 7, "KR 급락 레인 스캔·정산 캐시"),
+)
+
+
+def check_data_pipeline_freshness(now: datetime) -> list[dict[str, Any]]:
+    """판정 입력으로 쓰이는 파일이 조용히 멈췄는지 본다(D형 확장)."""
+
+    checks: list[dict[str, Any]] = []
+    for rel, warn_days, fail_days, note in DATA_PIPELINE_FILES:
+        path = ROOT / rel
+        if not path.exists():
+            checks.append({
+                "check": f"데이터 파이프라인 {rel}",
+                "kind": "freshness",
+                "status": FAIL,
+                "detail": "파일 없음",
+                "note": note,
+            })
+            continue
+        latest = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        checks.append(evaluate_freshness(
+            f"데이터 파이프라인 {rel}", latest, now,
+            warn_days=warn_days, fail_days=fail_days, note=note,
+        ))
+    return checks
+
+
 def check_learning_fields(ml_db: Path, now: datetime, window_days: int) -> list[dict[str, Any]]:
     """A형: 채워져야 할 필드가 최근 창에서 비기 시작했나."""
     checks: list[dict[str, Any]] = []
@@ -181,6 +223,7 @@ def run_integrity_check(ml_db: Path, event_db: Path, audit_db: Path, window_days
     now = _now_utc()
     checks: list[dict[str, Any]] = []
     checks += check_job_freshness(ml_db, event_db, audit_db, now)
+    checks += check_data_pipeline_freshness(now)
     checks += check_learning_fields(ml_db, now, window_days)
     checks += check_sync_coverage(ml_db, event_db, now, window_days)
     n_fail = sum(1 for c in checks if c["status"] == FAIL)
