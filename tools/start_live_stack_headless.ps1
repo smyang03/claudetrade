@@ -62,7 +62,11 @@ $roles = @(
     @{ Name = "broker_truth_scheduler"; PidFile = "state\broker_truth_scheduler.lock.json"; Args = @("tools\broker_truth_scheduler.py", "--mode", "live", "--markets", "KR,US", "--loop", "--interval-sec", "30", "--refresh-interval-min", "2", "--failure-retry-min", "2", "--preopen-min", "20", "--postclose-min", "15", "--ttl-sec", "180", "--no-refresh-on-start") },
     @{ Name = "preopen_scheduler"; PidFile = "state\preopen_scheduler.lock.json"; Args = @("tools\preopen_scheduler.py", "--mode", "live", "--markets", "KR,US", "--loop", "--interval-sec", "60") },
     @{ Name = "counterfactual_pipeline"; PidFile = ""; Args = @("tools\run_counterfactual_pipeline.py", "--phase", "due", "--market", "KR,US", "--loop", "--interval-sec", "300", "--json") },
-    @{ Name = "integrity_check"; PidFile = ""; Args = @("tools\integrity_check.py", "--watch", "--interval-sec", "600", "--telegram-alert") }
+    @{ Name = "integrity_check"; PidFile = ""; Args = @("tools\integrity_check.py", "--watch", "--interval-sec", "600", "--telegram-alert") },
+    # 2026-08-05: breadth/VIX/등락비율 5개 파일의 상시 생산자. 이 파일들은 07-10 일회성
+    # 스크립트로 만들어진 뒤 갱신 주체가 없어 25일 정체됐다(신선도 게이트가 탐지).
+    # 6시간 주기·멱등(없는 날짜만 append)이라 중복 실행 위험이 없다.
+    @{ Name = "market_context_refresher"; PidFile = ""; Args = @("tools\refresh_market_context_daily.py", "--loop", "--interval-sec", "21600") }
 )
 
 # Break the cold-start dependency cycle only when the bot is actually absent.
