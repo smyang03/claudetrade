@@ -181,6 +181,70 @@ def check_data_pipeline_freshness(now: datetime) -> list[dict[str, Any]]:
     return checks
 
 
+def check_sleeve_contract_exits(now: datetime) -> list[dict[str, Any]]:
+    """계약 청산선을 넘겼는데 아직 보유 중인 sleeve 포지션을 잡는다.
+
+    2026-08-05 실측 사고 회귀 감시. FRMI(us_swing_5d, TP12)가 목표가를 넘긴 채
+    장 마감까지 청산되지 않았는데 어디에도 흔적이 없었다 — 조용한 실패였다.
+    원인(보유 종목 시세 미갱신)은 고쳤지만, 같은 계열이 다시 생기면
+    사람이 파헤치기 전에 여기서 깃발이 서야 한다.
+
+    TP/SL을 넘긴 상태는 체결 지연·장 마감 등으로 잠시 존재할 수 있으므로
+    WARN으로 올린다(FAIL은 오탐이 잦다). 반복되면 사람이 본다.
+    """
+
+    path = ROOT / "state" / "live_open_positions.json"
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [{
+            "check": "sleeve 계약 청산 감시",
+            "kind": "contract",
+            "status": WARN,
+            "detail": f"포지션 파일 읽기 실패: {exc}",
+            "note": str(path),
+        }]
+    rows = payload if isinstance(payload, list) else (payload.get("positions") or [])
+    breaches: list[str] = []
+    watched = 0
+    for pos in rows:
+        source = str(pos.get("source_strategy") or "").strip().lower()
+        if source not in {"us_swing_5d", "kr_fallen_5d"}:
+            continue
+        watched += 1
+        is_us = pos.get("display_currency") == "USD"
+        entry = float(pos.get("display_avg_price") or 0) if is_us else float(pos.get("entry") or 0)
+        cur = float(pos.get("display_current_price") or 0) if is_us else float(pos.get("current_price") or 0)
+        if entry <= 0 or cur <= 0:
+            continue
+        tp_pct = float(pos.get("tp_pct") or 0)
+        sl_pct = float(pos.get("sl_pct") or 0)
+        ticker = str(pos.get("ticker") or "?")
+        if tp_pct > 0 and cur >= entry * (1.0 + tp_pct):
+            breaches.append(f"{ticker} TP초과 보유({cur:g} >= {entry * (1 + tp_pct):g})")
+        elif sl_pct > 0 and cur <= entry * (1.0 - sl_pct):
+            breaches.append(f"{ticker} SL이탈 보유({cur:g} <= {entry * (1 - sl_pct):g})")
+    if not watched:
+        return []
+    if breaches:
+        return [{
+            "check": "sleeve 계약 청산 감시",
+            "kind": "contract",
+            "status": WARN,
+            "detail": "; ".join(breaches),
+            "note": "계약선을 넘겼는데 미청산 — 체결 지연이 아니면 청산 경로 점검",
+        }]
+    return [{
+        "check": "sleeve 계약 청산 감시",
+        "kind": "contract",
+        "status": OK,
+        "detail": f"{watched}건 계약선 이내",
+        "note": "us_swing_5d / kr_fallen_5d TP·SL 계약 준수",
+    }]
+
+
 def check_learning_fields(ml_db: Path, now: datetime, window_days: int) -> list[dict[str, Any]]:
     """A형: 채워져야 할 필드가 최근 창에서 비기 시작했나."""
     checks: list[dict[str, Any]] = []
@@ -224,6 +288,7 @@ def run_integrity_check(ml_db: Path, event_db: Path, audit_db: Path, window_days
     checks: list[dict[str, Any]] = []
     checks += check_job_freshness(ml_db, event_db, audit_db, now)
     checks += check_data_pipeline_freshness(now)
+    checks += check_sleeve_contract_exits(now)
     checks += check_learning_fields(ml_db, now, window_days)
     checks += check_sync_coverage(ml_db, event_db, now, window_days)
     n_fail = sum(1 for c in checks if c["status"] == FAIL)

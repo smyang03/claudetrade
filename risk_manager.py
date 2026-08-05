@@ -748,12 +748,18 @@ class RiskManager:
                 self._mark_early_path_tighten_shadow(pos, _cur_pnl)
 
             # 수익 보호: +3% 이상이면 TP 도달 이벤트를 기다리지 않고 본전 위 트레일링 전환.
+            # 단 isolated sleeve는 제외한다(2026-08-05 운영자 결정: TP 되면 그냥 판다).
+            # us_swing_5d / kr_fallen_5d는 TP12·SL25·D5를 진입 전에 못박고 그 계약으로
+            # forward 표본을 쌓는다. 일반 트레일링이 끼면 계약에 없는 청산선이 생기고
+            # (실측: FRMI에 +3%에서 tp_triggered=True, trail_sl_usd=5.904가 심겼다)
+            # 트레일링이 걸린 건과 안 걸린 건이 같은 contract_id로 섞여 표본이 오염된다.
             if (
                 AUTO_PROFIT_TRAILING_ENABLED
                 and _cur_pnl is not None
                 and _cur_pnl >= AUTO_TRAIL_TRIGGER_PCT
                 and not pos.get("trailing")
                 and not protected
+                and not isolated_strategy_source(pos)
                 and pos["current_price"] > 0
             ):
                 trail_pct = max(0.005, min(0.08, _auto_trail_pct_for_market("US" if is_us else self.market)))
@@ -1374,6 +1380,13 @@ class RiskManager:
                 "strategy_stop_price": entry_native * (1.0 - sl_pct),
             }
         if source in {"us_swing_5d", "kr_fallen_5d"} and tp_pct > 0 and current_native >= entry_native * (1.0 + tp_pct):
+            # 계약 청산 트리거는 반드시 로그로 남긴다. 2026-08-05 사고는 TP 조건이
+            # 성립하지 않은 채(옛 가격 $6.09) 조용히 지나간 것이라 흔적이 없었다.
+            log.info(
+                f"[sleeve TP] {pos.get('ticker')} {source} "
+                f"{current_native:g} >= {entry_native * (1.0 + tp_pct):g} "
+                f"(entry {entry_native:g}, tp {tp_pct * 100:.1f}%) → 즉시 청산 후보"
+            )
             return True, {
                 **pos,
                 "exit_price": current_krw,
