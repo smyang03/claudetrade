@@ -36,14 +36,15 @@ if str(ROOT) not in sys.path:
 
 DB = ROOT / "data" / "analysis" / "us_swing_shadow.db"
 SPY = ROOT / "data" / "price" / "us" / "us_SPY.csv"
+IWM = ROOT / "data" / "price" / "us" / "us_IWM.csv"
 POLICY = ROOT / "config" / "us_swing_accelerated.json"
 SHORTFALL = ROOT / "data" / "shadow" / "execution_shortfall_ledger.jsonl"
 SECTOR_MAP = ROOT / "data" / "sector_map.json"
 TARGET_N = 30
 
 
-def _spy_series() -> pd.Series:
-    frame = pd.read_csv(SPY, usecols=[0, 4], names=["date", "close"], header=0)
+def _bench_series(path: Path) -> pd.Series:
+    frame = pd.read_csv(path, usecols=[0, 4], names=["date", "close"], header=0)
     frame["date"] = frame["date"].astype(str)
     return frame.set_index("date")["close"].astype(float)
 
@@ -111,20 +112,7 @@ def main() -> int:
     lcb = _block_lcb(nets)
     print(f"[3] 세션 블록 LCB(5%): {lcb:+.3f}%" if lcb is not None else "[3] LCB: 표본<5 미산출")
 
-    # [4] SPY 동일구간 알파 — 진입일~청산일 SPY 수익률 차감
-    spy = _spy_series()
-    alphas = []
-    for _, row in settled.iterrows():
-        d_in = str(row["entry_date"] or "")[:10]
-        d_out = str(row["execution_shadow_exit_date"] or "")[:10]
-        if d_in in spy.index and d_out in spy.index and spy[d_in] > 0:
-            alphas.append(float(row["execution_shadow_net_krw_pct"]) - 100 * (spy[d_out] / spy[d_in] - 1))
-    if alphas:
-        arr = np.asarray(alphas)
-        print(f"[4] SPY 알파: 평균 {arr.mean():+.3f}% (측정 {len(arr)}/{len(settled)}건, "
-              f"양수 {100 * (arr > 0).mean():.0f}%)")
-    else:
-        print("[4] SPY 알파: SPY 봉 매칭 실패 — us_SPY.csv 갱신 확인 필요")
+    _alpha_regime_view(settled)
 
     ordered = np.sort(nets)[::-1]
     top3_share = 100 * ordered[:3].sum() / nets.sum() if nets.sum() > 0 else float("nan")
@@ -153,10 +141,46 @@ def main() -> int:
 
     print("[보조] breadth 분해:", settled.groupby("breadth_context_state")["execution_shadow_net_krw_pct"]
           .agg(["count", "mean"]).round(2).to_dict("index"))
+    print("[보조] source 분해:", settled.groupby("candidate_source")["execution_shadow_net_krw_pct"]
+          .agg(["count", "mean"]).round(2).to_dict("index"))
     _sector_distribution(settled)
     _cross_check_real_fills()
     _observation_views(contract)
     return 0
+
+
+def _alpha_regime_view(settled: pd.DataFrame) -> None:
+    """[4] 동일구간 알파 — 사전등록(2026-08-04) 정본은 IWM 대비, SPY는 보조 축.
+
+    [4b] 국면 분해는 같은 보유창의 IWM 수익률로 나눈다(KR 리포트의 ±1% 규약과 동일).
+    """
+    regime_nets: dict[str, list[float]] = {}
+    for label, path in (("IWM(정본)", IWM), ("SPY(보조)", SPY)):
+        try:
+            bench = _bench_series(path)
+        except OSError:
+            print(f"[4] {label} 알파: 가격 CSV 없음 — {path.name} 갱신 확인 필요")
+            continue
+        alphas = []
+        for _, row in settled.iterrows():
+            d_in = str(row["entry_date"] or "")[:10]
+            d_out = str(row["execution_shadow_exit_date"] or "")[:10]
+            if d_in in bench.index and d_out in bench.index and bench[d_in] > 0:
+                mkt = 100 * (bench[d_out] / bench[d_in] - 1)
+                alphas.append(float(row["execution_shadow_net_krw_pct"]) - mkt)
+                if label.startswith("IWM"):
+                    regime = "상승" if mkt > 1 else ("하락" if mkt < -1 else "횡보")
+                    regime_nets.setdefault(regime, []).append(float(row["execution_shadow_net_krw_pct"]))
+        if alphas:
+            arr = np.asarray(alphas)
+            print(f"[4] {label} 알파: 평균 {arr.mean():+.3f}% (측정 {len(arr)}/{len(settled)}건, "
+                  f"양수 {100 * (arr > 0).mean():.0f}%)")
+        else:
+            print(f"[4] {label} 알파: 봉 매칭 실패 — {path.name} 갱신 확인 필요")
+    if regime_nets:
+        parts = [f"{reg} {sum(v)/len(v):+.2f}%({len(v)})"
+                 for reg in ("상승", "횡보", "하락") if (v := regime_nets.get(reg))]
+        print("[4b] 국면별 net(IWM 보유창 ±1%):", " / ".join(parts))
 
 
 def _sector_distribution(settled: pd.DataFrame) -> None:
@@ -182,18 +206,24 @@ def _observation_views(contract: str) -> None:
 
     con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
     try:
-        # [A1] rank1~3 paired — 계약 코호트의 모델 원장(net_krw_pct) 기준 동일 잣대 비교
+        # [A1] rank1~5 paired — 계약 코호트의 모델 원장(net_krw_pct) 기준 동일 잣대 비교.
+        # 2026-08-07: rank4~5까지 확장 — 엣지가 rank1에만 있는지(선별 집중도)가 판정 축.
         frame = pd.read_sql_query(
             """SELECT rank, net_krw_pct FROM signals
                WHERE COALESCE(execution_shadow_contract_id,'')=? AND net_krw_pct IS NOT NULL
-                 AND rank<=3""",
+                 AND rank<=5""",
             con, params=(contract,),
         )
         if len(frame):
             view = frame.groupby("rank")["net_krw_pct"].agg(["count", "mean"]).round(3)
-            print("[A1] rank1~3 forward(계약 코호트):", view.to_dict("index"))
+            print("[A1] rank1~5 forward(계약 코호트):", view.to_dict("index"))
+            r1 = frame[frame["rank"] == 1]["net_krw_pct"]
+            rest = frame[frame["rank"] > 1]["net_krw_pct"]
+            if len(r1) and len(rest):
+                print(f"[A1b] rank1 vs rank2~5: {r1.mean():+.2f}%(n={len(r1)}) vs "
+                      f"{rest.mean():+.2f}%(n={len(rest)}) — 격차가 좁으면 모델 변별력 없음")
         else:
-            print("[A1] rank1~3 forward: 정산 대기 (rank2·3도 원장에서 자동 정산됨)")
+            print("[A1] rank1~5 forward: 정산 대기 (rank2~5도 원장에서 자동 정산됨)")
 
         # [A2] 차단된 rank1의 사후 성적 — 허들이 번 돈/까먹은 돈
         blocked = pd.read_sql_query(
@@ -290,6 +320,51 @@ def _observation_views(contract: str) -> None:
         blocked_n = sum(1 for _, _, b in hits if b)
         print(f"[A7] profit_path 교차: 판정 {len(hits)}건 중 모델이 차단했을 건 {blocked_n}건 "
               f"(GBM과의 이견율 — 30건 시점에 이견 건 성과 비교)")
+
+    _gap_through_view(contract)
+
+
+def _gap_through_view(contract: str) -> None:
+    """[A8] 갭스루 분해 — exit_reason별 계약 경계(TP/SL) 대비 초과 gross.
+
+    2026-08-07 관측 축 사전 고정: 수익 본체가 오버나이트 갭(new_edge_prospect P2)
+    이므로, TP 초과분(갭 보너스)과 SL 미달분(갭 스루 초과손실)을 같은 자로 잰다.
+    gross USD 기준(FX 제외) — 경계는 USD 가격에 걸리므로 net_krw로 재면 FX가 섞인다.
+    """
+    try:
+        policy = json.loads(POLICY.read_text(encoding="utf-8"))
+        tp = 100 * float(policy["execution_contract"]["take_profit_pct"])
+        sl = 100 * float(policy["execution_contract"]["catastrophe_stop_pct"])
+    except (OSError, KeyError, ValueError):
+        tp, sl = 12.0, 25.0
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    try:
+        rows = con.execute(
+            """SELECT execution_shadow_exit_reason, execution_shadow_entry_fill_usd,
+                      execution_shadow_exit_price
+               FROM signals
+               WHERE COALESCE(execution_shadow_contract_id,'')=?
+                 AND execution_shadow_exit_reason IS NOT NULL
+                 AND execution_shadow_entry_fill_usd>0 AND execution_shadow_exit_price>0""",
+            (contract,),
+        ).fetchall()
+    finally:
+        con.close()
+    groups: dict[str, list[float]] = {}
+    for reason, entry, exit_px in rows:
+        gross = 100 * (float(exit_px) / float(entry) - 1)
+        key = str(reason or "?").upper()
+        if key.startswith("TP"):
+            groups.setdefault("TP초과(갭보너스)", []).append(gross - tp)
+        elif key.startswith("SL"):
+            groups.setdefault("SL미달(갭스루)", []).append(gross - (-sl))
+        else:
+            groups.setdefault(key, []).append(gross)
+    if groups:
+        print(f"[A8] 갭스루 분해(gross USD, 경계 TP+{tp:.0f}/SL-{sl:.0f}):",
+              {k: f"n={len(v)} 평균{sum(v)/len(v):+.2f}%p" for k, v in sorted(groups.items())})
+    else:
+        print("[A8] 갭스루 분해: 계약 코호트 청산 없음 (TP/SL 도달 시 자동 축적)")
 
 
 def _cross_check_real_fills() -> None:

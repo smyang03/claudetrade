@@ -13,6 +13,7 @@ spec §5-1(2026-08-03 운영자 승인): shadow 원장의 정산 건을 세 규�
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LEDGER = ROOT / "data" / "shadow" / "kr_fallen_shadow.jsonl"
 CACHE = ROOT / "data" / "analysis" / "kr_fallen_price_cache.json"
+EXEC_STATUS = ROOT / "state" / "kr_fallen_execution_status.json"
 BENCH_TICKER = "069500"  # KODEX200 — 알파·국면 산출용 (사전등록 문서 기준)
 
 GATE_MIN_SESSIONS = 15   # 영업일
@@ -84,6 +86,75 @@ def rule_flags(row: dict) -> dict[str, bool]:
     r2 = disc is not None and rv20 is not None and float(disc) <= R2_DISC_LE and float(rv20) <= R2_RV20_LE
     r4 = disc is not None and gap is not None and float(gap) <= R4_GAP_LE and float(disc) <= R4_DISC_LE
     return {"R1_8조건": r1, "R2_할인저변동": r2, "R3_합집합": r1 or r2, "R4_갭할인": r4}
+
+
+def _ranking_view(rows: list[dict]) -> None:
+    """[랭킹] 선택 vs 미선택 — 다발일 랭킹 규칙(할인깊은순)의 forward 검증.
+
+    2026-08-07 관측 축 사전 고정: kr_fallen_order_bridge와 동일 규약(규칙 통과분을
+    ma20_disc 오름차순, 1순위만 주문)을 원장에 소급 적용한 가상 선택이다. 실제
+    제출 여부(진입창·슬롯·일1건)와 무관하게 "랭킹 1순위 vs 나머지"의 가상정산
+    성적만 비교한다 — 08-06처럼 후보 26개에서 1개를 고르는 날, 그 고르기가
+    성과를 만드는지 원장이 답하게 한다.
+    """
+    try:
+        short = str(json.loads(EXEC_STATUS.read_text(encoding="utf-8")).get("active_rule") or "R2")
+    except (OSError, ValueError):
+        short = "R2"
+    active = {"R1": "R1_8조건", "R2": "R2_할인저변동", "R3": "R3_합집합", "R4": "R4_갭할인"}.get(short, "R2_할인저변동")
+    # 활성 규칙(실주문 랭킹) + R4(후보 다발 관측 규칙) 두 축으로 본다.
+    for rule in dict.fromkeys((active, "R4_갭할인")):
+        by_session: dict[str, list[dict]] = defaultdict(list)
+        for r in rows:
+            if rule_flags(r).get(rule):
+                by_session[r["session_date"]].append(r)
+        picked, passed_over, multi_days = [], [], 0
+        for _, cands in sorted(by_session.items()):
+            cands.sort(key=lambda r: (r.get("feats") or {}).get("ma20_disc") or 0.0)
+            if len(cands) > 1:
+                multi_days += 1
+            for i, r in enumerate(cands):
+                if r.get("status") != "SETTLED" or r.get("net_pct") is None:
+                    continue
+                (picked if i == 0 else passed_over).append(float(r["net_pct"]))
+        label = f"[랭킹] {rule}" + (" (활성·실주문 랭킹)" if rule == active else " (관측)")
+        if picked or passed_over:
+            fmt = lambda v: f"n={len(v)} 평균 {sum(v)/len(v):+.2f}%" if v else "n=0"
+            print(f"{label}: 1순위 {fmt(picked)} vs 미선택 {fmt(passed_over)} | 다발일 {multi_days}일")
+        else:
+            print(f"{label}: 정산 표본 없음 (다발일 {multi_days}일 관측 중)")
+
+
+def _gap_through_view(rows: list[dict]) -> None:
+    """[갭스루] exit_kind별 계약 경계 대비 초과손익 — 오버나이트 갭의 양면 실측.
+
+    2026-08-07 관측 축 사전 고정: 수익 본체가 오버나이트 갭(new_edge_prospect P2)
+    이므로 TP 초과분(갭 보너스)과 SL 미달분(갭 스루 초과손실)을 같은 자로 잰다.
+    경계는 각 행의 exit_rule(TP12_SL25_D5_cost0.25)에서 파싱 — 계약이 바뀌어도
+    행 단위로 정확하다.
+    """
+    groups: dict[str, list[float]] = defaultdict(list)
+    for r in rows:
+        if r.get("status") != "SETTLED" or r.get("net_pct") is None:
+            continue
+        m = re.search(r"TP(\d+(?:\.\d+)?)_SL(\d+(?:\.\d+)?).*?cost(\d+(?:\.\d+)?)",
+                      str(r.get("exit_rule") or ""))
+        if not m:
+            continue
+        tp, sl, cost = (float(x) for x in m.groups())
+        net = float(r["net_pct"])
+        kind = str(r.get("exit_kind") or "?").lower()
+        if kind.startswith("tp"):
+            groups["TP초과(갭보너스)"].append(net - (tp - cost))
+        elif kind.startswith("sl"):
+            groups["SL미달(갭스루)"].append(net - (-sl - cost))
+        else:
+            groups[f"{kind}(net)"].append(net)
+    if groups:
+        print("[갭스루] 계약 경계 대비:",
+              {k: f"n={len(v)} 평균{sum(v)/len(v):+.2f}%p" for k, v in sorted(groups.items())})
+    else:
+        print("[갭스루] 정산 표본 없음 (TP/SL 도달 시 자동 축적)")
 
 
 def main() -> int:
@@ -163,6 +234,9 @@ def main() -> int:
                 if v:
                     parts.append(f"{reg} {sum(v)/len(v):+.2f}%({len(v)})")
             print(f"{'':12s} 국면별: " + " / ".join(parts))
+
+    _ranking_view(rows)
+    _gap_through_view(rows)
 
     # 원장 전체 축 — 규칙 통과와 무관하게 관측·가상정산된 건.
     # 2026-08-04: 이 구분이 리포트에 없어서 "규칙 정산 0"과 "원장 정산 있음"이 충돌하는
