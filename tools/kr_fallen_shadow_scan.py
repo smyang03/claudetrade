@@ -36,6 +36,52 @@ _CORP_CODES_PATH = ROOT / "data" / "dart_corp_codes.json"
 _corp_codes_cache: dict | None = None
 
 
+_disclosure_cache: dict | None = None
+_earnings_cache: dict | None = None
+
+
+def _info_event_flags(code: str, session_date: str) -> dict:
+    """정보성 이벤트 태그 (2026-08-06, A6 — 관측 전용, 조건 아님).
+
+    thesis "정보성 하락은 안 산다"가 KR 레인 코드에 없다. 수집기 2종
+    (kr_disclosure_observer·earnings kr_by_code)은 이미 매일 돌고 있으므로
+    신호일 기준 당일/전일 이벤트 유무를 원장에 태그만 한다.
+    차단 여부는 태그된 첫 후보가 나타났을 때 운영자가 결정한다.
+    조회 실패 시 빈 값(위조 금지 — 없음과 미확인을 구분).
+    """
+    global _disclosure_cache, _earnings_cache
+    if _disclosure_cache is None:
+        try:
+            _disclosure_cache = json.loads((ROOT / "data" / "kr_disclosure_observer.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _disclosure_cache = {}
+    if _earnings_cache is None:
+        try:
+            _earnings_cache = json.loads((ROOT / "data" / "earnings_calendar.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _earnings_cache = {}
+    if not _disclosure_cache and not _earnings_cache:
+        return {}
+    window = {session_date}
+    try:
+        prev = datetime.strptime(session_date, "%Y-%m-%d") - timedelta(days=3)  # 주말 포함 여유
+        window |= {(prev + timedelta(days=n)).strftime("%Y-%m-%d") for n in range(0, 3)}
+    except ValueError:
+        pass
+    disc_hits = [
+        str(item.get("report_name") or "")[:30]
+        for item in ((_disclosure_cache.get("by_code") or {}).get(code) or [])
+        if str(item.get("date") or "") in window
+    ]
+    earn = (_earnings_cache.get("kr_by_code") or {}).get(code) or {}
+    earn_hit = str(earn.get("date") or "") in window
+    return {
+        "disclosure_recent": bool(disc_hits),
+        "disclosure_names": disc_hits[:3],
+        "earnings_recent": earn_hit,
+    }
+
+
 def _instrument_type(code: str) -> str:
     """일반주/우선주/ETF계열 판별. corp_code 조회 실패 시 빈 값(위조 금지)."""
     global _corp_codes_cache
@@ -127,6 +173,7 @@ def scan(date_str: str) -> int:
             # 실측(2026 n=4, +11.57%, 승률 100%)이 제외를 지지하지 않아 태그만 남긴다.
             # 판별: DART corp_code 없음 = 비법인(ETF·리츠), 그중 끝자리 0 = ETF 계열.
             "instrument": _instrument_type(code),
+            **_info_event_flags(code, d_iso),
             "pass_all": all(flags.values()),
             "pass_count": int(sum(flags.values())),
             "flags": flags,

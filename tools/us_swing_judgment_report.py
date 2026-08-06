@@ -99,6 +99,7 @@ def main() -> int:
     if settled.empty:
         print("정산 표본 없음 — 이하 지표는 표본 축적 후 산출된다. (배선 점검용 실행 완료)")
         _cross_check_real_fills()
+        _observation_views(contract)
         return 0
 
     nets = settled["execution_shadow_net_krw_pct"].to_numpy(float)
@@ -154,6 +155,7 @@ def main() -> int:
           .agg(["count", "mean"]).round(2).to_dict("index"))
     _sector_distribution(settled)
     _cross_check_real_fills()
+    _observation_views(contract)
     return 0
 
 
@@ -168,6 +170,126 @@ def _sector_distribution(settled: pd.DataFrame) -> None:
         sector = (entry or {}).get("sector") if isinstance(entry, dict) else ""
         counts[sector or "?"] = counts.get(sector or "?", 0) + 1
     print("[보조] 섹터 분포:", dict(sorted(counts.items(), key=lambda kv: -kv[1])))
+
+
+def _observation_views(contract: str) -> None:
+    """관측 뷰 A1~A4·A7 (2026-08-06 마스터 플랜).
+
+    설계 발견을 그대로 반영한다 — shadow DB는 rank1~5 전 행과 차단 건까지 이미
+    정산하고 있으므로 신규 기록 없이 뷰만 얹는다. 30건 판정일에 "확대 형태·
+    허들·창·신호 다양성"까지 같은 날 답하기 위한 사전 축적이다.
+    """
+
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    try:
+        # [A1] rank1~3 paired — 계약 코호트의 모델 원장(net_krw_pct) 기준 동일 잣대 비교
+        frame = pd.read_sql_query(
+            """SELECT rank, net_krw_pct FROM signals
+               WHERE COALESCE(execution_shadow_contract_id,'')=? AND net_krw_pct IS NOT NULL
+                 AND rank<=3""",
+            con, params=(contract,),
+        )
+        if len(frame):
+            view = frame.groupby("rank")["net_krw_pct"].agg(["count", "mean"]).round(3)
+            print("[A1] rank1~3 forward(계약 코호트):", view.to_dict("index"))
+        else:
+            print("[A1] rank1~3 forward: 정산 대기 (rank2·3도 원장에서 자동 정산됨)")
+
+        # [A2] 차단된 rank1의 사후 성적 — 허들이 번 돈/까먹은 돈
+        blocked = pd.read_sql_query(
+            """SELECT handoff_reason, net_krw_pct FROM signals
+               WHERE COALESCE(execution_shadow_contract_id,'')=? AND rank=1
+                 AND handoff_status='BLOCKED'""",
+            con, params=(contract,),
+        )
+        if len(blocked):
+            done = blocked.dropna(subset=["net_krw_pct"])
+            print(f"[A2] 차단 rank1: {len(blocked)}건 (정산 {len(done)}건"
+                  + (f", 평균 {done['net_krw_pct'].mean():+.2f}% — 양수면 허들이 그만큼 놓친 것" if len(done) else "")
+                  + f") 사유: {blocked['handoff_reason'].value_counts().to_dict()}")
+        else:
+            print("[A2] 차단 rank1: 아직 없음")
+    finally:
+        con.close()
+
+    # [A3] 진입창 세분 — 실행 원장의 체결 시각을 개장 후 분(minute) 버킷으로
+    if SHORTFALL.exists():
+        rows = []
+        for line in SHORTFALL.read_text(encoding="utf-8").splitlines():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if r.get("side") != "BUY" or r.get("source") not in ("us_swing_5d", "kr_fallen_5d"):
+                continue
+            if r.get("shortfall_pct_vs_open") is None:
+                continue
+            ts = str(r.get("ts") or "")
+            try:
+                hh, mm = int(ts[11:13]), int(ts[14:16])
+            except ValueError:
+                continue
+            open_min = (22 * 60 + 30) if r.get("market") == "US" else (9 * 60)
+            minutes = (hh * 60 + mm) - open_min
+            if minutes < 0:
+                minutes += 24 * 60
+            bucket = "0-15분" if minutes <= 15 else ("15-30분" if minutes <= 30 else "30분+")
+            rows.append((bucket, float(r["shortfall_pct_vs_open"])))
+        if rows:
+            agg: dict[str, list[float]] = {}
+            for bucket, value in rows:
+                agg.setdefault(bucket, []).append(value)
+            print("[A3] 진입창 세분(shortfall, 음수=유리):",
+                  {k: f"n={len(v)} 평균{sum(v)/len(v):+.3f}%" for k, v in sorted(agg.items())})
+        else:
+            print("[A3] 진입창 세분: 측정 가능한 체결 없음")
+
+    # [A4] 할인 깊이 — 신호일 MA20 대비 이탈을 가격 CSV에서 오프라인 산출
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    try:
+        sigs = pd.read_sql_query(
+            """SELECT signal_date, ticker, net_krw_pct FROM signals
+               WHERE COALESCE(execution_shadow_contract_id,'')=? AND rank=1""",
+            con, params=(contract,),
+        )
+    finally:
+        con.close()
+    discs = []
+    price_dir = ROOT / "data" / "price" / "us"
+    for _, row in sigs.iterrows():
+        path = price_dir / f"us_{row['ticker']}.csv"
+        if not path.exists():
+            continue
+        try:
+            bars = pd.read_csv(path, usecols=[0, 4], names=["date", "close"], header=0)
+        except (OSError, ValueError):
+            continue
+        bars["date"] = bars["date"].astype(str)
+        upto = bars[bars["date"] <= str(row["signal_date"])].tail(20)
+        if len(upto) < 20 or float(upto["close"].mean()) <= 0:
+            continue
+        disc = 100 * (float(upto["close"].iloc[-1]) / float(upto["close"].mean()) - 1)
+        discs.append((row["ticker"], str(row["signal_date"]), round(disc, 1), row["net_krw_pct"]))
+    if discs:
+        print("[A4] rank1 할인깊이(MA20 대비, 시장중립 신호 후보):",
+              [(t, d, f"{disc:+.1f}%") for t, d, disc, _ in discs[-5:]])
+
+    # [A7-lite] profit_path 모델 판정 교차 — 봇이 이미 남기는 PROFIT_EVIDENCE 로그 활용
+    hits = []
+    for path in sorted((ROOT / "logs" / "system").glob("live_trading_*.log"))[-10:]:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if "[PROFIT_EVIDENCE shadow]" in line and "us_swing_5d" in line:
+                would_block = "would_block=" in line and "would_block=none" not in line.lower()
+                ticker = line.split("us_swing_5d")[0].strip().split()[-1]
+                hits.append((line[:10], ticker, would_block))
+    if hits:
+        blocked_n = sum(1 for _, _, b in hits if b)
+        print(f"[A7] profit_path 교차: 판정 {len(hits)}건 중 모델이 차단했을 건 {blocked_n}건 "
+              f"(GBM과의 이견율 — 30건 시점에 이견 건 성과 비교)")
 
 
 def _cross_check_real_fills() -> None:
@@ -185,10 +307,17 @@ def _cross_check_real_fills() -> None:
             buys[row["ticker"]] = row
         elif row.get("side") == "SELL" and row.get("ticker") in buys:
             buy = buys.pop(row["ticker"])
-            gross = 100 * (float(row["fill_px"]) / float(buy["fill_px"]) - 1)
-            trades.append((row["ticker"], buy["session_date"], row["session_date"], gross))
+            # PENDING 경로 매도는 체결가가 없다(fill_px=0) — 실현 손익(KRW net)으로 대체.
+            if float(row.get("fill_px") or 0) > 0:
+                gross = 100 * (float(row["fill_px"]) / float(buy["fill_px"]) - 1)
+                label = f"{gross:+.2f}%(gross)"
+            elif row.get("realized_pnl_pct") is not None:
+                label = f"{float(row['realized_pnl_pct']):+.2f}%(net,KRW)"
+            else:
+                label = "체결가없음"
+            trades.append((row["ticker"], buy["session_date"], row["session_date"], label))
     print("[교차] 실체결 왕복(us_swing_5d):",
-          [f"{t} {a}->{b} {g:+.2f}%(gross)" for t, a, b, g in trades] or "아직 없음",
+          [f"{t} {a}->{b} {label}" for t, a, b, label in trades] or "아직 없음",
           f"| 보유중 {sorted(buys)}" if buys else "")
 
 

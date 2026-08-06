@@ -34006,7 +34006,34 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             or ""
         )
 
+    def _idle_path_low_freq_skip(self, kind: str) -> bool:
+        """유휴 경로 Claude 호출 저빈도 모드 (2026-08-06 운영자 승인 b안).
+
+        실측: judge 68 + analysts 84 + tune ~30 = 일 ~180건이 매수 차단된
+        경로(PathB live off, legacy 3중 차단)를 위해 돌고 있었다.
+        완전 정지가 아니라 주 1회(월요일) 샘플링으로 관측 연속성을 남긴다.
+
+        자동 복원: PathB live 플래그가 하나라도 켜지면 이 모드는 무시된다 —
+        "재개했는데 judge가 안 도는" 사고를 구조적으로 방지한다.
+        롤백: IDLE_PATH_LOW_FREQ_MODE=false 한 줄.
+        """
+
+        if not self._runtime_bool("IDLE_PATH_LOW_FREQ_MODE", False):
+            return False
+        if self._runtime_bool("PATHB_KR_LIVE_ENABLED", False) or self._runtime_bool("PATHB_US_LIVE_ENABLED", False):
+            return False
+        if datetime.now(KST).weekday() == 0:  # 월요일은 관측 샘플링
+            return False
+        now_ts = time.time()
+        last = getattr(self, "_idle_low_freq_log_at", 0.0)
+        if now_ts - last >= 3600:
+            self._idle_low_freq_log_at = now_ts
+            log.info(f"[idle low-freq] {kind} 스킵 중 (주 1회 샘플링, PathB 켜면 자동 복원)")
+        return True
+
     def _single_symbol_judge_call(self, market: str, candidate: Any) -> dict[str, Any]:
+        if self._idle_path_low_freq_skip("single_symbol_judge"):
+            return {}
         if isinstance(candidate, dict):
             row = dict(candidate.get("row") or candidate)
             features = dict(candidate.get("features") or row.get("post_open_features") or {})
@@ -39717,6 +39744,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         self._record_cycle_latency(market, _cycle_started_at, stage="run_cycle", reason="completed")
         self._leave_market_task(market, "run_cycle")
     def run_tuning(self, market: str):
+        if self._idle_path_low_freq_skip("run_tuning"):
+            return
         if not self._enter_market_task(market, "run_tuning"):
             return
         if not self.session_active:
@@ -40535,6 +40564,11 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     def _reinvoke_analysts(self, market: str, trigger: str):
         """이상 신호 감지 시 분석가 3명 긴급 재호출 → 판단·합의 갱신"""
+        # 저빈도 모드에서도 개장 갱신·수동 요청은 통과시킨다 — 모드(consensus)가
+        # 리스크 게이트·텔레그램 보고의 입력이라 완전히 끊으면 안 된다.
+        if trigger not in {"market_open_refresh", "dashboard", "manual"} and \
+                self._idle_path_low_freq_skip(f"reinvoke_analysts:{trigger}"):
+            return
         if not self.is_claude_reinvoke_enabled():
             raise RuntimeError("Claude 재판단 기능이 OFF 상태입니다.")
         # 장 외 시간 reinvoke 차단 (수동 명령 제외)

@@ -23,7 +23,7 @@ import hashlib
 import json
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -181,6 +181,102 @@ def check_data_pipeline_freshness(now: datetime) -> list[dict[str, Any]]:
     return checks
 
 
+def collect_sleeve_mfe_paths() -> None:
+    """A5 (2026-08-06): sleeve 포지션의 MFE 경로 필드를 청산 전에 보존한다.
+
+    실측된 최강 판별력 — 진입 후 고점 선행 승률 4% vs 저점 선행 61% — 의 원료인
+    peak_pnl_at/trough_pnl_at 필드가 포지션 청산과 함께 사라진다. 이 수집기가
+    watch 주기(600s)마다 sleeve 포지션의 경로 필드를 upsert해 두면, 청산 후에도
+    마지막 상태가 남아 "조기고점 정리" counterfactual의 표본이 된다.
+
+    관측 전용 — 트레이딩 DB는 읽기만 하고 별도 jsonl에만 쓴다.
+    한계(문서화): 진입 후 10분 내 청산되는 건은 캡처를 놓칠 수 있다.
+    """
+
+    positions_path = ROOT / "state" / "live_open_positions.json"
+    out_path = ROOT / "data" / "shadow" / "sleeve_mfe_path.jsonl"
+    try:
+        payload = json.loads(positions_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    rows = payload if isinstance(payload, list) else (payload.get("positions") or [])
+    sleeves = [p for p in rows
+               if str(p.get("source_strategy") or "").lower() in {"us_swing_5d", "kr_fallen_5d"}]
+    if not sleeves:
+        return
+    fields = ("ticker", "source_strategy", "entry_session_date", "display_avg_price",
+              "display_current_price", "peak_pnl_pct", "peak_pnl_at",
+              "trough_pnl_pct", "trough_pnl_at", "observed_mfe_pct", "observed_mae_pct",
+              "observed_peak_at", "observed_low_at", "position_id", "order_no")
+    try:
+        existing: dict[str, str] = {}
+        if out_path.exists():
+            for line in out_path.read_text(encoding="utf-8").splitlines():
+                try:
+                    row = json.loads(line)
+                    existing[str(row.get("_key"))] = line
+                except ValueError:
+                    continue
+        for pos in sleeves:
+            key = f"{pos.get('ticker')}|{pos.get('entry_session_date')}|{pos.get('order_no') or pos.get('position_id')}"
+            snap = {"_key": key, "_captured_at": _now_utc().isoformat(timespec="seconds"),
+                    **{f: pos.get(f) for f in fields}}
+            existing[key] = json.dumps(snap, ensure_ascii=False)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text("".join(v + "\n" for v in existing.values()), encoding="utf-8")
+    except OSError:
+        return
+
+
+# C1 (2026-08-06): 원장 성장 감시 — 신선도 게이트의 사각 보완.
+# 파일이 매일 touch돼도 내용이 늘지 않으면(생산 정지) 못 잡던 것을 잡는다.
+# 실측 배경: 새벽 스크리너 "0종목"을 게이트가 정상으로 보던 오탐/진탐 구분 불가.
+# (name, kind, locator, min_recent, window_days, note)
+LEDGER_GROWTH_CHECKS: tuple[tuple[str, str, str, int, int, str], ...] = (
+    ("us_swing 신호 원장", "sqlite",
+     "data/analysis/us_swing_shadow.db|SELECT COUNT(DISTINCT signal_date) FROM signals WHERE signal_date >= ?",
+     2, 7, "US 세션마다 신호가 쌓여야 한다"),
+    ("뉴스 3-arm 원장", "jsonl_dates",
+     "data/shadow/us_swing_news_arm_shadow.jsonl|session_date",
+     2, 7, "US 세션마다 arm 기록이 쌓여야 한다"),
+)
+
+
+def check_ledger_growth(now: datetime) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    for name, kind, locator, min_recent, window_days, note in LEDGER_GROWTH_CHECKS:
+        cutoff = (now - timedelta(days=window_days)).strftime("%Y-%m-%d")
+        count = None
+        try:
+            if kind == "sqlite":
+                db_rel, query = locator.split("|", 1)
+                with _connect_ro(ROOT / db_rel) as con:
+                    count = int(con.execute(query, (cutoff,)).fetchone()[0])
+            elif kind == "jsonl_dates":
+                file_rel, date_key = locator.split("|", 1)
+                path = ROOT / file_rel
+                if path.exists():
+                    dates = set()
+                    for line in path.read_text(encoding="utf-8").splitlines():
+                        try:
+                            value = str(json.loads(line).get(date_key) or "")
+                        except ValueError:
+                            continue
+                        if value >= cutoff:
+                            dates.add(value)
+                    count = len(dates)
+                else:
+                    count = 0
+        except Exception as exc:
+            checks.append({"check": f"원장 성장 {name}", "kind": "growth", "status": WARN,
+                           "detail": f"측정 실패: {exc}", "note": note})
+            continue
+        status = OK if count is not None and count >= min_recent else WARN
+        checks.append({"check": f"원장 성장 {name}", "kind": "growth", "status": status,
+                       "detail": f"최근 {window_days}일 {count}건 (기준 {min_recent}+)", "note": note})
+    return checks
+
+
 def check_sleeve_contract_exits(now: datetime) -> list[dict[str, Any]]:
     """계약 청산선을 넘겼는데 아직 보유 중인 sleeve 포지션을 잡는다.
 
@@ -294,7 +390,9 @@ def run_integrity_check(ml_db: Path, event_db: Path, audit_db: Path, window_days
     checks: list[dict[str, Any]] = []
     checks += check_job_freshness(ml_db, event_db, audit_db, now)
     checks += check_data_pipeline_freshness(now)
+    checks += check_ledger_growth(now)
     checks += check_sleeve_contract_exits(now)
+    collect_sleeve_mfe_paths()  # A5 관측 수집(판정 아님) — watch 주기마다 경로 보존
     checks += check_learning_fields(ml_db, now, window_days)
     checks += check_sync_coverage(ml_db, event_db, now, window_days)
     n_fail = sum(1 for c in checks if c["status"] == FAIL)
