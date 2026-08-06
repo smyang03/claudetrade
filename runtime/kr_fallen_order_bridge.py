@@ -58,7 +58,58 @@ def _write_status(bot: Any, session_date: str, result: dict[str, Any]) -> dict[s
         os.replace(tmp, path)
     except Exception as exc:
         log.error(f"[KR fallen handoff] status write failed: {exc}")
+    _append_history(payload)
     return result
+
+
+def _append_history(payload: dict[str, Any]) -> None:
+    """상태 전이만 이력 원장에 append (2026-08-06).
+
+    status 파일은 매 호출마다 덮어써서 마지막 결과만 남는다. 브리지는 진입창
+    (개장 2~20분) 동안 엔트리 스캔 주기(2분)마다 호출되므로, 창이 끝나면
+    창 안에서 무슨 판정이 있었는지가 사라진다 — 실제로 08-06 첫 가동일에
+    파일 mtime만 보고 "창 안에 호출됐는지 불명"으로 오독했다.
+
+    첫 실주문 이후에는 "왜 안 샀는가"(후보 없음 / 게이트 차단 / 예산 부족)를
+    사후에 복원할 수 있어야 한다. 같은 (status, reason)이 연속되면 건너뛰어
+    2분마다 같은 줄이 쌓이는 것을 막는다.
+    """
+
+    try:
+        path = get_runtime_path("data", "shadow", "kr_fallen_handoff_history.jsonl")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        result = payload.get("last_result") or {}
+        session = str(payload.get("session_date") or "")
+        signature = (
+            session,
+            str(result.get("status") or ""),
+            str(result.get("reason") or ""),
+            json.dumps(result.get("results") or [], ensure_ascii=False, sort_keys=True),
+        )
+        if path.exists():
+            last_line = ""
+            with open(path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    if line.strip():
+                        last_line = line
+            if last_line:
+                try:
+                    prev = json.loads(last_line)
+                    prev_result = prev.get("last_result") or {}
+                    prev_sig = (
+                        str(prev.get("session_date") or ""),
+                        str(prev_result.get("status") or ""),
+                        str(prev_result.get("reason") or ""),
+                        json.dumps(prev_result.get("results") or [], ensure_ascii=False, sort_keys=True),
+                    )
+                    if prev_sig == signature:
+                        return
+                except ValueError:
+                    pass
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        log.warning(f"[KR fallen handoff] history append failed: {exc}")
 
 
 def _rule_key(short: str) -> str:
