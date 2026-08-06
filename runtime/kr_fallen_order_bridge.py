@@ -113,7 +113,7 @@ def _append_history(payload: dict[str, Any]) -> None:
 
 
 def _rule_key(short: str) -> str:
-    return {"R1": "R1_8조건", "R2": "R2_할인저변동", "R3": "R3_합집합"}.get(short.upper(), "R2_할인저변동")
+    return {"R1": "R1_8조건", "R2": "R2_할인저변동", "R3": "R3_합집합", "R4": "R4_갭할인"}.get(short.upper(), "R2_할인저변동")
 
 
 def _load_candidates(prev_session: str, rule_short: str) -> list[dict]:

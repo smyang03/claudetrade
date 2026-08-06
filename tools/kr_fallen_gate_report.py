@@ -64,14 +64,26 @@ def market_fwd5(session_date: str, bdates: list[str], bench: dict[str, float]) -
 R2_RV20_LE = 8.0
 R2_DISC_LE = -25.0
 
+# R4 (2026-08-06 운영자 승인, 사전등록 — forward 정산 0건 상태의 신규 관측 규칙).
+# 갭 과잉반응 레인: 갭하락 4%p 이상 AND MA20 할인 15% 이상. rv 조건 없음.
+# 근거(양 캐시, 원장 계약 동일 규약): R2 순증분만으로
+#   2026 n=309 +5.51%/승률76%/알파+3.69, 2025 독립 n=62 +5.33%/승률85%/알파+2.73.
+# 갭 단독은 2025 알파 소멸, close_pos 보조는 역효과 — 갭과 할인이 둘 다 필요.
+# rv가 없어 R2가 침묵하는 전 종목 고변동기(폭락 주간)에도 후보가 나온다.
+# 브리지 active_rule은 R2 유지 — R4 실주문은 게이트 통과 + 운영자 승인 후.
+R4_GAP_LE = -4.0
+R4_DISC_LE = -15.0
+
 
 def rule_flags(row: dict) -> dict[str, bool]:
     feats = row.get("feats") or {}
     r1 = bool(row.get("pass_all"))
     disc = feats.get("ma20_disc")
     rv20 = feats.get("rv20")
+    gap = feats.get("gap")
     r2 = disc is not None and rv20 is not None and float(disc) <= R2_DISC_LE and float(rv20) <= R2_RV20_LE
-    return {"R1_8조건": r1, "R2_할인저변동": r2, "R3_합집합": r1 or r2}
+    r4 = disc is not None and gap is not None and float(gap) <= R4_GAP_LE and float(disc) <= R4_DISC_LE
+    return {"R1_8조건": r1, "R2_할인저변동": r2, "R3_합집합": r1 or r2, "R4_갭할인": r4}
 
 
 def main() -> int:
@@ -106,7 +118,7 @@ def main() -> int:
                     regime = "상승" if mkt > 1 else ("하락" if mkt < -1 else "횡보")
                     s["regime"][regime].append(net)
 
-    for rule in ("R1_8조건", "R2_할인저변동", "R3_합집합"):
+    for rule in ("R1_8조건", "R2_할인저변동", "R3_합집합", "R4_갭할인"):
         s = stats.get(rule) or {"cand": 0, "settled": [], "weeks": {}, "alpha": [], "regime": {}}
         nets = s["settled"]
         n = len(nets)
