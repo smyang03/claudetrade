@@ -125,7 +125,24 @@ def _operator_micro_override(bot: Any, authority: dict[str, Any], configured_mod
     }
 
 
-def _current_us_swing_open_slots(bot: Any) -> int:
+def _us_swing_attribution_manifest(con: sqlite3.Connection) -> frozenset[str]:
+    """실제 제출 이력(handoff SUBMITTED)이 있는 티커 집합.
+
+    2026-08-07: 재시작·브로커 주입으로 포지션의 source_strategy가 사라지면
+    슬롯 계산에서 빠져 과다 노출이 된다(fail-open). 제출 원장을 truth로
+    귀속을 복원한다. 무귀속 US 포지션 전면 차단은 쓰지 않는다 — 코어 승격
+    보유(SCHG류)까지 막는 전역 지뢰가 된다(A1 셧다운 교훈).
+    """
+    try:
+        rows = con.execute(
+            "SELECT DISTINCT ticker FROM signals WHERE handoff_status='SUBMITTED'"
+        ).fetchall()
+    except sqlite3.Error:
+        return frozenset()
+    return frozenset(str(t or "").upper() for (t,) in rows if t)
+
+
+def _current_us_swing_open_slots(bot: Any, manifest: frozenset[str] = frozenset()) -> int:
     tickers: set[str] = set()
     sources = [
         *(getattr(getattr(bot, "risk", None), "positions", []) or []),
@@ -135,10 +152,14 @@ def _current_us_swing_open_slots(bot: Any) -> int:
         if str(item.get("market") or "").upper() != "US":
             continue
         source = str(item.get("source_strategy") or item.get("strategy_used") or "").lower()
-        if source != "us_swing_5d":
-            continue
         ticker = str(item.get("ticker") or "").upper()
-        if ticker:
+        if not ticker:
+            continue
+        if source == "us_swing_5d":
+            tickers.add(ticker)
+        elif not source and ticker in manifest:
+            # 귀속 소실 복원: 우리가 제출한 이력이 있는 무귀속 보유는 슬롯을 점유한다.
+            log.warning(f"[US swing handoff] {ticker} 무귀속 보유를 제출 이력으로 us_swing 슬롯에 귀속(fail-closed)")
             tickers.add(ticker)
     return len(tickers)
 
@@ -224,7 +245,9 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
         if raw_submit_enabled and not ack_ok:
             log.error("[US swing handoff] submit switch ignored: live acknowledgement missing")
         bot._sync_runtime_with_broker()
-        current_open_slots = _current_us_swing_open_slots(bot)
+        current_open_slots = _current_us_swing_open_slots(
+            bot, manifest=_us_swing_attribution_manifest(con)
+        )
         results: list[dict[str, Any]] = []
         for signal in signals:
             ticker = str(signal.get("ticker") or "").upper()

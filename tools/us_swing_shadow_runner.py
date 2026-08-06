@@ -454,6 +454,11 @@ def resolve_shadow_contract(
         absolute_order_cap_krw=absolute_cap,
         allowed_sources_raw=os.getenv("US_SWING_ALLOWED_SOURCES", ""),
         override_active=override,
+        # 실주문 핸드오프(order bridge)와 같은 env 키·기본값 — 값이 다르면 계약이 갈라진다.
+        min_probability=float(os.getenv("US_SWING_ORDER_MIN_PROB", "0.55") or 0.55),
+        min_predicted_net_pct=float(os.getenv("US_SWING_ORDER_MIN_PREDICTED_NET_PCT", "0.25") or 0.25),
+        hurdles_enforced=str(os.getenv("US_SWING_ORDER_ABSOLUTE_HURDLES_ENFORCED", "false")).strip().lower()
+        in ("1", "true", "yes", "y", "on"),
     )
 
 
@@ -480,10 +485,15 @@ def annotate_execution_shadow(
     evaluated_at = datetime.now(timezone.utc).isoformat()
 
     # 미청산 건을 모두 세어 다중 슬롯을 판정한다(기존에는 직전 1건만 봤다).
+    # 2026-08-07: 현재 계약(contract_id) 행만 센다 — 구계약 shadow 행이 슬롯을
+    # 점유해 실주문(FRMI 08-03 체결)이 표본에서 빠지는 사고의 재발 방지.
+    # 브로커에 실재하는 포지션의 슬롯은 실주문 경로(order bridge)가 따로 센다.
     open_rows = con.execute(
         """SELECT signal_date,execution_shadow_exit_date FROM signals
-           WHERE execution_shadow_eligible=1 AND signal_date<? ORDER BY signal_date DESC""",
-        (str(signal_date),),
+           WHERE execution_shadow_eligible=1 AND signal_date<?
+             AND COALESCE(execution_shadow_contract_id,'')=?
+           ORDER BY signal_date DESC""",
+        (str(signal_date), str(contract["contract_id"])),
     ).fetchall()
     occupied: list[str] = []
     for prior_date, actual_exit in open_rows:
@@ -502,13 +512,16 @@ def annotate_execution_shadow(
     slot_free = len(occupied) < max_open_slots
     slot_reason = "" if slot_free else f"slots_full_{len(occupied)}/{max_open_slots}:{','.join(occupied[:3])}"
 
+    hurdles_enforced = bool(contract.get("hurdles_enforced"))
+    min_probability = float(contract.get("min_probability") or 0.0)
+    min_predicted_net = float(contract.get("min_predicted_net_pct") or 0.0)
     rows = con.execute(
-        """SELECT ticker,rank,reference_close,candidate_source FROM signals
-           WHERE signal_date=? ORDER BY rank""",
+        """SELECT ticker,rank,reference_close,candidate_source,probability,predicted_net_pct
+           FROM signals WHERE signal_date=? ORDER BY rank""",
         (str(signal_date),),
     ).fetchall()
     selected: dict[str, Any] = {}
-    for ticker, rank, reference_close, candidate_source in rows:
+    for ticker, rank, reference_close, candidate_source, probability, predicted_net in rows:
         eligible = 0
         qty = 0
         price_krw = None
@@ -517,9 +530,19 @@ def annotate_execution_shadow(
             reference = float(reference_close) if reference_close is not None else None
             price_krw = reference * fx if reference and fx else None
             source = str(candidate_source or "").lower()
+            # 절대 허들 — 실주문 핸드오프(evaluate_swing_handoff)와 같은 판정·같은 사유 문자열.
+            # 차단 건은 execution 코호트에서 빠지고 counterfactual([A2] 뷰)로만 관측된다.
+            hurdle_reason = ""
+            if hurdles_enforced:
+                if probability is None or float(probability) < min_probability:
+                    hurdle_reason = "probability_below_hurdle"
+                elif predicted_net is None or float(predicted_net) < min_predicted_net:
+                    hurdle_reason = "predicted_net_below_hurdle"
             if allowed_sources and source not in allowed_sources:
                 # 실주문 경로가 거르는 소스는 shadow 표본에도 넣지 않는다.
                 reason = f"source_outside_contract:{source or 'unknown'}"
+            elif hurdle_reason:
+                reason = hurdle_reason
             elif not slot_free:
                 reason = slot_reason
             elif not fx:

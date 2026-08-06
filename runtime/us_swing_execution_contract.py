@@ -84,12 +84,20 @@ def resolve_execution_contract(
     absolute_order_cap_krw: float = 0.0,
     allowed_sources_raw: Any = "",
     override_active: bool = False,
+    min_probability: float = 0.55,
+    min_predicted_net_pct: float = 0.25,
+    hurdles_enforced: bool = False,
 ) -> dict[str, Any]:
     """실주문과 shadow가 공유하는 계약을 계산한다.
 
     예산 규칙은 `runtime/us_swing_order_bridge._write_execution_status`와 동일하다.
       절대캡이 있으면  budget = min(configured_max, absolute_cap)
       없으면            budget = min(configured_max, base_budget x size_multiplier)
+
+    2026-08-07 확장(정산 0건 상태의 사전 수정): 절대 허들(min_probability /
+    min_predicted_net_pct)도 계약의 일부다. 실주문 핸드오프는 이 값으로 차단하는데
+    shadow가 무시하면 판정 코호트가 실주문과 갈라진다(ULS·LCID 실측 사고 —
+    live 차단·shadow 편입). 기본값은 order bridge의 env 기본값과 동일해야 한다.
     """
 
     mode = str(effective_mode or "shadow").lower()
@@ -127,6 +135,9 @@ def resolve_execution_contract(
         "take_profit_pct": _number(contract.get("take_profit_pct"), 0.12),
         "catastrophe_stop_pct": _number(contract.get("catastrophe_stop_pct"), 0.25),
         "max_hold_sessions": int(_number(contract.get("max_hold_sessions"), 5)),
+        "min_probability": _number(min_probability, 0.55),
+        "min_predicted_net_pct": _number(min_predicted_net_pct, 0.25),
+        "hurdles_enforced": bool(hurdles_enforced),
         "operator_override_active": bool(override_active),
     }
     payload["contract_id"] = contract_id(payload)
@@ -144,6 +155,11 @@ def contract_id(payload: Mapping[str, Any]) -> str:
         "take_profit_pct": round(_number(payload.get("take_profit_pct")), 6),
         "catastrophe_stop_pct": round(_number(payload.get("catastrophe_stop_pct")), 6),
         "max_hold_sessions": int(_number(payload.get("max_hold_sessions"))),
+        # 2026-08-07: 허들도 거래 집합을 정의하므로 지문에 포함한다.
+        # 값이 바뀌면 코호트를 섞지 않는다 — id가 바뀌는 것이 의도다.
+        "min_probability": round(_number(payload.get("min_probability"), 0.55), 6),
+        "min_predicted_net_pct": round(_number(payload.get("min_predicted_net_pct"), 0.25), 6),
+        "hurdles_enforced": bool(payload.get("hurdles_enforced")),
     }
     blob = json.dumps(material, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
