@@ -423,6 +423,31 @@ def _latest_fx(fx_map: dict[str, float], date: str) -> float | None:
     return float(value) if np.isfinite(value) and float(value) > 100 else None
 
 
+def _record_pool_size(session_date: str, *, pool_n: int, scored_n: int) -> None:
+    """세션 후보 풀 크기 기록 — "후보 수=신호"(2026-08-07 F2 발견) forward 검증 축.
+
+    signals 테이블은 top_k(10)로 잘려 풀 크기를 복원할 수 없어 별도 원장에 남긴다.
+    pool_n=eligibility 통과(소스 필터 포함, veto 전), scored_n=veto 후 채점 대상.
+    세션당 1행 멱등. 슬롯·일한도 변경 판단은 게이트+운영자 — 여기는 기록만.
+    """
+    path = ROOT / "data" / "shadow" / "us_swing_pool_size.jsonl"
+    try:
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    if json.loads(line).get("session_date") == str(session_date):
+                        return
+                except ValueError:
+                    continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"session_date": str(session_date),
+                                     "pool_n": int(pool_n), "scored_n": int(scored_n)},
+                                    ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 def resolve_shadow_contract(
     policy: dict[str, Any],
     *,
@@ -981,10 +1006,13 @@ def main() -> int:
             for row in vetoed.to_dict("records")
         ]
         candidates = candidates[candidates["veto_reason"].astype(str).eq("")].copy()
+        _record_pool_size(args.session_date, pool_n=candidates_n, scored_n=len(candidates))
         research_con = sqlite3.connect(args.research_db)
         try:
             train = load_yahoo_dataset(
-                research_con, horizon=5, cost_pct=float(policy.get("cost_pct", 0.50))
+                research_con, horizon=5, cost_pct=float(policy.get("cost_pct", 0.50)),
+                # as-of 계약(2026-08-07): 봉인 교재에선 no-op, 교재 최신화 시 lookahead 차단.
+                as_of=args.session_date,
             )
         finally:
             research_con.close()

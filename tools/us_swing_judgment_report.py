@@ -322,6 +322,48 @@ def _observation_views(contract: str) -> None:
               f"(GBM과의 이견율 — 30건 시점에 이견 건 성과 비교)")
 
     _gap_through_view(contract)
+    _capacity_view(contract)
+
+
+def _capacity_view(contract: str) -> None:
+    """[A9] 세션 후보 수 분해 — "후보 수=신호"(2026-08-07 F2 발견) forward 검증 축.
+
+    풀 크기는 runner가 남기는 us_swing_pool_size.jsonl(top_k 절단 없음)에서 읽고,
+    성과는 계약 코호트의 rank1 정산과 조인한다. 오프라인 단조성(1~2개 +0.22 <
+    6개+ +2.03)이 forward에서 재현되는지 판정일에 이 축이 답한다.
+    """
+    pool_path = ROOT / "data" / "shadow" / "us_swing_pool_size.jsonl"
+    pools: dict[str, int] = {}
+    if pool_path.exists():
+        for line in pool_path.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+                pools[str(row.get("session_date"))] = int(row.get("scored_n") or 0)
+            except (ValueError, TypeError):
+                continue
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    try:
+        settled = con.execute(
+            """SELECT signal_date, execution_shadow_net_krw_pct FROM signals
+               WHERE COALESCE(execution_shadow_contract_id,'')=? AND rank=1
+                 AND execution_shadow_net_krw_pct IS NOT NULL""",
+            (contract,),
+        ).fetchall()
+    finally:
+        con.close()
+    if not pools:
+        print("[A9] 후보수 분해: 풀 기록 없음 (다음 runner 실행부터 자동 축적)")
+        return
+    nets_by = {str(d): float(v) for d, v in settled}
+    parts = []
+    for name, lo, hi in (("1~2개", 1, 2), ("3~5개", 3, 5), ("6개+", 6, 10 ** 6)):
+        days = [d for d, n in pools.items() if lo <= n <= hi]
+        nets = [nets_by[d] for d in days if d in nets_by]
+        label = f"{name} {len(days)}일"
+        if nets:
+            label += f" 정산 {len(nets)} 평균 {sum(nets)/len(nets):+.2f}%"
+        parts.append(label)
+    print("[A9] 후보수 분해(veto 후 풀):", " | ".join(parts))
 
 
 def _gap_through_view(contract: str) -> None:

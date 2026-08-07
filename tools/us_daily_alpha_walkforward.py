@@ -112,7 +112,17 @@ def load_yahoo_dataset(
     horizon: int = 3,
     stored_cost_pct: float = 0.50,
     cost_pct: float = 0.50,
+    as_of: str | None = None,
+    purge_sessions: int = 5,
 ) -> pd.DataFrame:
+    """교재 로드. as_of를 주면 학습 as-of 계약을 강제한다 (2026-08-07 사전 등록).
+
+    계약: train.session_date < as_of 이고, as_of 직전 purge_sessions 영업일 구간의
+    행은 제외한다 — 그 행들의 forward 라벨(horizon일)이 as_of 이후 데이터를 포함해
+    lookahead가 되기 때문이다. 영업일->달력일은 x2 보수 근사(휴일 포함 상회).
+    현재 봉인 교재(~2026-04-02)에서는 결과가 불변(no-op)이며, 교재를 최신화하는
+    순간부터 이 계약이 발동한다. 라이브 채점 경로는 반드시 as_of=signal_date로 호출.
+    """
     if horizon not in {1, 3, 5}:
         raise ValueError("horizon must be 1, 3, or 5")
     columns = ["session_date", "ticker", *YAHOO_FEATURES, f"gross_krw_{horizon}d_pct", f"net_krw_{horizon}d_pct"]
@@ -120,6 +130,11 @@ def load_yahoo_dataset(
         f"SELECT {','.join(columns)} FROM us_yahoo_point_in_time WHERE net_krw_{horizon}d_pct IS NOT NULL ORDER BY session_date,ticker",
         con,
     )
+    if as_of:
+        cutoff = pd.Timestamp(str(as_of)[:10]) - pd.Timedelta(days=2 * max(int(purge_sessions), horizon))
+        frame = frame[pd.to_datetime(frame["session_date"].astype(str)) < cutoff]
+        if frame.empty:
+            raise ValueError(f"as_of={as_of} 적용 후 학습 표본 없음 — 교재/컷오프 확인")
     for column in YAHOO_FEATURES:
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
     frame["gross_return_pct"] = pd.to_numeric(frame[f"gross_krw_{horizon}d_pct"], errors="coerce")

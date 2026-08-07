@@ -125,6 +125,33 @@ def _ranking_view(rows: list[dict]) -> None:
             print(f"{label}: 정산 표본 없음 (다발일 {multi_days}일 관측 중)")
 
 
+def _capacity_view(rows: list[dict]) -> None:
+    """[용량] 세션 후보 수 버킷별 성과 — "후보 수 = 신호" 오프라인 발견의 forward 검증 축.
+
+    2026-08-07 관측 축 사전 고정: 2년 오프라인(F7)에서 R2∪R4 후보가 많은 날일수록
+    후보당 수익이 컸고(10개+ +6.76/+8.11 양 연도) 단독 후보일은 2026 음수(−3.18)였다.
+    forward에서 같은 단조성이 재현되는지 이 축이 판정한다. 슬롯·일한도 변경은
+    게이트 통과 + concurrent_loss_budget + 운영자 결정으로만.
+    """
+    by_session: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        flags = rule_flags(r)
+        if flags["R2_할인저변동"] or flags["R4_갭할인"]:
+            by_session[r["session_date"]].append(r)
+    buckets = (("1개", 1, 1), ("2~9개", 2, 9), ("10개+", 10, 10 ** 6))
+    parts = []
+    for name, lo, hi in buckets:
+        sessions = [v for v in by_session.values() if lo <= len(v) <= hi]
+        nets = [float(r["net_pct"]) for v in sessions for r in v
+                if r.get("status") == "SETTLED" and r.get("net_pct") is not None]
+        label = f"{name} 일수 {len(sessions)}"
+        if nets:
+            label += (f" 정산 {len(nets)} 평균 {sum(nets)/len(nets):+.2f}% "
+                      f"승률 {100*sum(1 for x in nets if x>0)/len(nets):.0f}%")
+        parts.append(label)
+    print("[용량] R2∪R4 후보수 버킷:", " | ".join(parts))
+
+
 def _gap_through_view(rows: list[dict]) -> None:
     """[갭스루] exit_kind별 계약 경계 대비 초과손익 — 오버나이트 갭의 양면 실측.
 
@@ -237,6 +264,7 @@ def main() -> int:
 
     _ranking_view(rows)
     _gap_through_view(rows)
+    _capacity_view(rows)
 
     # 원장 전체 축 — 규칙 통과와 무관하게 관측·가상정산된 건.
     # 2026-08-04: 이 구분이 리포트에 없어서 "규칙 정산 0"과 "원장 정산 있음"이 충돌하는
