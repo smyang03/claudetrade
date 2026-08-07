@@ -448,6 +448,50 @@ def _record_pool_size(session_date: str, *, pool_n: int, scored_n: int) -> None:
         pass
 
 
+def _record_market_width(session_date: str) -> None:
+    """시장 전체 낙폭 폭 기록 (관측 전용, 주문·채점 경로 무접촉).
+
+    2026-08-08: 수집기 컷(상위 ~10)이 풀 크기 신호(F2)의 천장이라, 야후 스크리너
+    count=100으로 "오늘 시장 전체의 적격 낙폭주 수"를 별도 원장에 남긴다.
+    이 값은 신호·주문 어디에도 입력되지 않는다 — 사냥철 강도 관측 전용.
+    실패는 조용히 스킵(관측 결측이 파이프라인을 막으면 안 된다).
+    """
+    path = ROOT / "data" / "shadow" / "us_market_width.jsonl"
+    try:
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    if json.loads(line).get("session_date") == str(session_date):
+                        return
+                except ValueError:
+                    continue
+        import requests
+
+        resp = requests.get(
+            "https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved",
+            params={"scrIds": "day_losers", "count": 100},
+            headers={"User-Agent": "Mozilla/5.0"}, timeout=15,
+        )
+        quotes = (resp.json().get("finance", {}).get("result") or [{}])[0].get("quotes", [])
+        n5 = n5_eligible = 0
+        for q in quotes:
+            chg = q.get("regularMarketChangePercent")
+            px = q.get("regularMarketPrice")
+            vol = q.get("regularMarketVolume") or 0
+            if chg is None or px is None or chg > -5:
+                continue
+            n5 += 1
+            if px >= 5 and px * vol >= 15e6:
+                n5_eligible += 1
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "session_date": str(session_date), "screener_rows": len(quotes),
+                "losers_le_minus5": n5, "eligible_le_minus5": n5_eligible,
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def resolve_shadow_contract(
     policy: dict[str, Any],
     *,
@@ -1007,6 +1051,7 @@ def main() -> int:
         ]
         candidates = candidates[candidates["veto_reason"].astype(str).eq("")].copy()
         _record_pool_size(args.session_date, pool_n=candidates_n, scored_n=len(candidates))
+        _record_market_width(args.session_date)
         research_con = sqlite3.connect(args.research_db)
         try:
             train = load_yahoo_dataset(
