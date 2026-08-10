@@ -76,8 +76,21 @@ R2_DISC_LE = -25.0
 R4_GAP_LE = -4.0
 R4_DISC_LE = -15.0
 
+# R5 (2026-08-11 신규 관측 등록, design_tp_capture_lane) — R4의 할인 조건을 조인 형태.
+# 근거(T1 TP 적중 구조 탐색, 이상치 1건 제거 후, 계약 라벨·양 연도 분리):
+#   R5  갭<=-4 & 할인<=-20        n=292 TP 61.3% net +6.94% 승률 83% (2025 +6.58 / 2026 +6.98)
+#   R5V R5 AND rv20<=8           n=209 TP 58.9% net +7.45% 승률 85% (2025 +7.20 / 2026 +7.49)
+#   대조: R2 +6.05 / R4 +6.18 — 둘 다 앞선다.
+# **R4 임계는 바꾸지 않는다**(게이트 카운트 진행 중 — 임계 변경은 골대 이동).
+# R5는 병렬 관측 규칙으로 정산을 따로 쌓고, R4 게이트 판정 이후 승격 후보가 된다.
+# active_rule 기본값은 여전히 R2(Phase 1) — 이 상수 추가로 실주문은 바뀌지 않는다.
+R5_GAP_LE = -4.0
+R5_DISC_LE = -20.0
+R5V_RV20_LE = 8.0
 
-RULE_KEY_BY_SHORT = {"R1": "R1_8조건", "R2": "R2_할인저변동", "R3": "R3_합집합", "R4": "R4_갭할인"}
+
+RULE_KEY_BY_SHORT = {"R1": "R1_8조건", "R2": "R2_할인저변동", "R3": "R3_합집합",
+                     "R4": "R4_갭할인", "R5": "R5_갭깊은할인", "R5V": "R5V_갭깊은할인저변동"}
 
 
 def parse_active_rules(raw: str) -> tuple[str, ...]:
@@ -108,7 +121,10 @@ def rule_flags(row: dict) -> dict[str, bool]:
     gap = feats.get("gap")
     r2 = disc is not None and rv20 is not None and float(disc) <= R2_DISC_LE and float(rv20) <= R2_RV20_LE
     r4 = disc is not None and gap is not None and float(gap) <= R4_GAP_LE and float(disc) <= R4_DISC_LE
-    return {"R1_8조건": r1, "R2_할인저변동": r2, "R3_합집합": r1 or r2, "R4_갭할인": r4}
+    r5 = disc is not None and gap is not None and float(gap) <= R5_GAP_LE and float(disc) <= R5_DISC_LE
+    r5v = r5 and rv20 is not None and float(rv20) <= R5V_RV20_LE
+    return {"R1_8조건": r1, "R2_할인저변동": r2, "R3_합집합": r1 or r2, "R4_갭할인": r4,
+            "R5_갭깊은할인": r5, "R5V_갭깊은할인저변동": r5v}
 
 
 def _ranking_view(rows: list[dict]) -> None:
@@ -248,7 +264,8 @@ def main() -> int:
                     regime = "상승" if mkt > 1 else ("하락" if mkt < -1 else "횡보")
                     s["regime"][regime].append(net)
 
-    for rule in ("R1_8조건", "R2_할인저변동", "R3_합집합", "R4_갭할인"):
+    for rule in ("R1_8조건", "R2_할인저변동", "R3_합집합", "R4_갭할인",
+                 "R5_갭깊은할인", "R5V_갭깊은할인저변동"):
         s = stats.get(rule) or {"cand": 0, "settled": [], "weeks": {}, "alpha": [], "regime": {}}
         nets = s["settled"]
         n = len(nets)
