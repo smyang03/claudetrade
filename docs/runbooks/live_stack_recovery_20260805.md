@@ -59,6 +59,29 @@ python tools/broker_truth_scheduler.py --mode live --markets KR,US --once --forc
   (`mcp get_effective_config` 또는 `logs/config/` 최신 파일) → 첫 사이클에서
   `[holding price refresh]` 로그 확인.
 
+## 4-1. env(.env.live / start-config)를 바꿨다 — 재시작 대상 판정
+
+**규칙: 재시작 대상 = 그 env를 읽는 프로세스 + 그것을 스폰하는 부모 전부.**
+
+2026-08-10 실측 사고: 절대 허들 폐지(C안) 후 봇은 재시작했지만, shadow runner를
+스폰하는 `preopen_scheduler`(08-06부터 상주)가 옛 env를 들고 있어 그날 밤 shadow가
+구 계약으로 기록됐다 — 판정 코호트가 조용히 실주문과 갈라졌다. 코드 변경은 서브프로세스가
+매번 새로 읽지만, **env는 부모 프로세스의 환경을 상속**한다.
+
+env 변경 후 재시작 체크리스트:
+- [ ] `trading_bot.py --live` (봇 본체)
+- [ ] `tools/preopen_scheduler.py` (US swing runner·KR 스캔 스폰 부모)
+- [ ] 그 env를 읽는 다른 상주 사이드카(broker_truth_scheduler 등, 해당 키를 쓸 때만)
+- [ ] 확인: `python tools/integrity_check.py | grep drift` → 계약 지문 일치(FAIL이면 미반영)
+
+```powershell
+# preopen_scheduler 재기동 (종료 후 새 env로)
+Stop-Process -Id <PID> -Force -Confirm:$false
+Start-Process "C:\Users\Unknown\anaconda3\envs\upbit\python.exe" `
+  -ArgumentList @('tools\preopen_scheduler.py','--mode','live','--markets','KR,US','--loop','--interval-sec','60') `
+  -WorkingDirectory "E:\code\claudetrade" -WindowStyle Hidden
+```
+
 ## 5. 사이드카가 구코드로 돈다 (코드 배포 후)
 
 봇만 재시작하면 가디언·integrity_check는 구코드다. 각각 종료하면 watchdog이

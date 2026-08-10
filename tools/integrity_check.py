@@ -22,12 +22,15 @@ import argparse
 import hashlib
 import json
 import sqlite3
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:  # 스크립트 직접 실행 시 runtime/ 패키지 임포트용
+    sys.path.insert(0, str(ROOT))
 DEFAULT_ML_DB = ROOT / "data" / "ml" / "decisions.db"
 DEFAULT_EVENT_DB = ROOT / "data" / "v2_event_store.db"
 DEFAULT_AUDIT_DB = ROOT / "data" / "audit" / "candidate_audit.db"
@@ -341,6 +344,80 @@ def check_sleeve_contract_exits(now: datetime) -> list[dict[str, Any]]:
     }]
 
 
+def check_contract_env_drift(now: datetime) -> list[dict[str, Any]]:
+    """shadow 원장의 계약 지문이 현재 live 설정과 어긋나는지 감시.
+
+    2026-08-10 실측 사고: 절대 허들 폐지(C안) 후 봇은 재시작했지만 shadow runner를
+    **스폰하는 부모**(preopen_scheduler)가 옛 env를 들고 있어, 그날 밤 shadow가
+    구 계약(허들 true)으로 기록됐다 — 판정 코호트가 조용히 실주문과 갈라졌다.
+    교훈: env 변경 시 재시작 대상은 "그 env를 읽는 프로세스 + 그걸 스폰하는 부모 전부".
+    사람이 기억하는 대신 여기서 깃발이 서게 한다.
+
+    비교: 현재 live 설정(.env.live + start-config env_overrides)으로 계산한 기대
+    contract_id  vs  signals 테이블 최신 세션의 execution_shadow_contract_id.
+    """
+
+    try:
+        from runtime.us_swing_execution_contract import resolve_execution_contract
+    except Exception as exc:  # pragma: no cover - import 실패는 환경 문제
+        return [{"check": "US swing 계약 env drift", "kind": "drift", "status": WARN,
+                 "detail": f"계약 모듈 로드 실패: {exc}", "note": ""}]
+
+    def _live_env() -> dict[str, str]:
+        env: dict[str, str] = {}
+        env_path = ROOT / ".env.live"
+        if env_path.exists():
+            for line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                env[key.strip()] = value.strip()
+        cfg_path = ROOT / "config" / "v2_start_config.json"
+        if cfg_path.exists():
+            try:
+                overrides = json.loads(cfg_path.read_text(encoding="utf-8")).get("env_overrides") or {}
+                env.update({str(k): str(v) for k, v in overrides.items()})
+            except ValueError:
+                pass
+        return env
+
+    try:
+        env = _live_env()
+        policy = json.loads((ROOT / "config" / "us_swing_accelerated.json").read_text(encoding="utf-8"))
+        configured_max = float(env.get("US_SWING_ORDER_MAX_KRW", "250000") or 250000.0)
+        truthy = {"1", "true", "yes", "y", "on"}
+        expected = resolve_execution_contract(
+            policy=policy, effective_mode="micro",
+            configured_max_order_krw=configured_max, base_order_budget_krw=500_000.0,
+            absolute_order_cap_krw=configured_max,
+            allowed_sources_raw=env.get("US_SWING_ALLOWED_SOURCES", ""),
+            override_active=True,
+            min_probability=float(env.get("US_SWING_ORDER_MIN_PROB", "0.55") or 0.55),
+            min_predicted_net_pct=float(env.get("US_SWING_ORDER_MIN_PREDICTED_NET_PCT", "0.25") or 0.25),
+            hurdles_enforced=str(env.get("US_SWING_ORDER_ABSOLUTE_HURDLES_ENFORCED", "false")).lower() in truthy,
+        )["contract_id"]
+        with _connect_ro(ROOT / "data" / "analysis" / "us_swing_shadow.db") as con:
+            row = con.execute(
+                """SELECT signal_date, COALESCE(execution_shadow_contract_id,'') FROM signals
+                   WHERE COALESCE(execution_shadow_contract_id,'')<>''
+                   ORDER BY signal_date DESC LIMIT 1"""
+            ).fetchone()
+    except Exception as exc:
+        return [{"check": "US swing 계약 env drift", "kind": "drift", "status": WARN,
+                 "detail": f"측정 실패: {exc}", "note": ""}]
+
+    if not row:
+        return [{"check": "US swing 계약 env drift", "kind": "drift", "status": OK,
+                 "detail": "shadow 계약 기록 없음(표본 대기)", "note": ""}]
+    session, actual = str(row[0]), str(row[1])
+    status = OK if actual == expected else FAIL
+    detail = (f"최신 {session} shadow={actual} / live 기대={expected}"
+              + ("" if status == OK else " — runner 스폰 부모(preopen_scheduler) 재시작 필요 가능성"))
+    return [{"check": "US swing 계약 env drift", "kind": "drift", "status": status,
+             "detail": detail, "note": "env 변경 시 스폰 부모까지 재시작"}]
+
+
 def check_learning_fields(ml_db: Path, now: datetime, window_days: int) -> list[dict[str, Any]]:
     """A형: 채워져야 할 필드가 최근 창에서 비기 시작했나."""
     checks: list[dict[str, Any]] = []
@@ -392,6 +469,7 @@ def run_integrity_check(ml_db: Path, event_db: Path, audit_db: Path, window_days
     checks += check_data_pipeline_freshness(now)
     checks += check_ledger_growth(now)
     checks += check_sleeve_contract_exits(now)
+    checks += check_contract_env_drift(now)
     collect_sleeve_mfe_paths()  # A5 관측 수집(판정 아님) — watch 주기마다 경로 보존
     checks += check_learning_fields(ml_db, now, window_days)
     checks += check_sync_coverage(ml_db, event_db, now, window_days)
