@@ -126,3 +126,57 @@ def test_extreme_gap_up_guard(tmp_path: Path) -> None:
     result = _run(bot, [_row("A", "2026-08-04", -30.0, 5.0, price=10000.0)], quote_price=11200.0)
     assert result["results"][0]["reason"] == "extreme_gap_up_tp_room_gone"
     assert not bot.submits
+
+
+def _row_gap(ticker: str, session: str, gap: float, disc: float, rv20: float = 12.0,
+             price: float = 10000.0) -> dict:
+    r = _row(ticker, session, disc, rv20, price=price)
+    r["feats"]["gap"] = gap
+    return r
+
+
+def test_union_rule_r2_plus_r4_keeps_discount_priority(tmp_path: Path) -> None:
+    # 2026-08-10 합집합 설계: R2+R4 활성 시 두 규칙 후보가 한 풀에서 할인깊은순
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_ACTIVE_RULE"] = "R2+R4"
+    rows = [
+        _row_gap("GAPPY", "2026-08-04", gap=-5.0, disc=-16.0, rv20=12.0),  # R4만 충족
+        _row("DEEP", "2026-08-04", -32.0, 5.0),                            # R2 충족·할인 최심
+    ]
+    result = _run(bot, rows)
+    assert result["status"] == "EVALUATED"
+    assert result["rule"] == "R2+R4"
+    assert len(bot.submits) == 1
+    assert bot.submits[0]["ticker"] == "DEEP"          # 랭킹(할인깊은순) 불변
+    assert result["results"][0]["matched"] == ["R2"]   # 판정 분해용 매칭 태그
+
+
+def test_union_rule_r4_only_candidate_enters(tmp_path: Path) -> None:
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_ACTIVE_RULE"] = "R2+R4"
+    rows = [
+        _row_gap("GAPPY", "2026-08-04", gap=-5.0, disc=-16.0, rv20=12.0),  # R2 미달·R4 충족
+        _row("VOLATILE", "2026-08-04", -40.0, 12.0),                       # 둘 다 미달
+    ]
+    result = _run(bot, rows)
+    assert result["status"] == "EVALUATED"
+    assert len(bot.submits) == 1 and bot.submits[0]["ticker"] == "GAPPY"
+    assert bot.submits[0]["selected_reason"] == "kr_fallen_r4"  # 설정 라벨이 아니라 충족 규칙
+
+
+def test_single_rule_backward_compat_unchanged(tmp_path: Path) -> None:
+    # 기본 "R2"에서 R4-only 후보는 여전히 제외 — 현행 동작 불변(후방 호환 고정)
+    bot = FakeBot(tmp_path)
+    result = _run(bot, [_row_gap("GAPPY", "2026-08-04", gap=-5.0, disc=-16.0, rv20=12.0)])
+    assert result["status"] == "SKIPPED" and result["reason"] == "no_rule_candidates"
+    assert not bot.submits
+
+
+def test_invalid_active_rule_fails_closed(tmp_path: Path) -> None:
+    # 설계 D3: 무효 토큰은 조용한 R2 폴백이 아니라 ERROR + 무주문
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_ACTIVE_RULE"] = "R2+R9"
+    result = _run(bot, [_row("DEEP", "2026-08-04", -32.0, 5.0)])
+    assert result["status"] == "ERROR"
+    assert str(result["reason"]).startswith("invalid_active_rule")
+    assert not bot.submits

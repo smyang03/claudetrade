@@ -185,6 +185,29 @@ def main() -> int:
             check("SL 리뷰 면제", not TradingBot._auto_sell_review_required("strategy_catastrophe_stop"))
             check("D5 만기 리뷰 면제", not TradingBot._auto_sell_review_required("strategy_horizon_exit"))
 
+        print("[5] 합집합 규칙 R2+R4 (2026-08-10 v2 사다리 Phase 2 사전 리허설)")
+        bot = StubBot(tmp)
+        bot.values["KR_FALLEN_ACTIVE_RULE"] = "R2+R4"
+        r4_row = _row("999990", PREV, disc=-16.0, rv20=12.0)
+        r4_row["feats"]["gap"] = -5.0  # R4만 충족(고변동이라 R2 미달)
+        out = _run(bot, [r4_row, _row("999991", PREV, disc=-32.0, rv20=5.0)])
+        check("합집합 rule 라벨", out.get("rule") == "R2+R4", f"rule={out.get('rule')}")
+        check("할인깊은순 유지(R2 최심 우선)", bot.submits and bot.submits[0].get("ticker") == "999991")
+        check("matched 태그 기록", (out.get("results") or [{}])[0].get("matched") == ["R2"])
+
+        bot = StubBot(tmp)
+        bot.values["KR_FALLEN_ACTIVE_RULE"] = "R2+R4"
+        out = _run(bot, [r4_row])
+        check("R4 단독 후보 진입 + 충족규칙 사유", bot.submits
+              and bot.submits[0].get("selected_reason") == "kr_fallen_r4",
+              f"reason={(bot.submits or [{}])[0].get('selected_reason')}")
+
+        bot = StubBot(tmp)
+        bot.values["KR_FALLEN_ACTIVE_RULE"] = "R2+R9"
+        out = _run(bot, [_row("999992", PREV, disc=-32.0, rv20=5.0)])
+        check("무효 토큰 fail-closed(ERROR·무주문)", out.get("status") == "ERROR"
+              and not bot.submits, f"status={out.get('status')}")
+
     failures = [name for name, ok, _ in RESULTS if not ok]
     print()
     print(f"결과: {len(RESULTS) - len(failures)}/{len(RESULTS)} PASS"

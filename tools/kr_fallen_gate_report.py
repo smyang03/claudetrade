@@ -77,6 +77,29 @@ R4_GAP_LE = -4.0
 R4_DISC_LE = -15.0
 
 
+RULE_KEY_BY_SHORT = {"R1": "R1_8조건", "R2": "R2_할인저변동", "R3": "R3_합집합", "R4": "R4_갭할인"}
+
+
+def parse_active_rules(raw: str) -> tuple[str, ...]:
+    """active_rule 문자열 -> 정규 규칙 키 목록. "R2" / "R2+R4" / "R2,R4" 허용.
+
+    2026-08-10 합집합 설계(design_kr_union_rule): 무효 토큰은 ValueError —
+    호출자가 fail-closed로 처리한다(조용한 R2 폴백 금지, 전환 오타가 소리 없이
+    구식 레인을 돌리는 지뢰 방지). 브리지와 [랭킹] 뷰가 이 파서 하나를 공유한다.
+    """
+    tokens = [t.strip().upper() for t in str(raw or "").replace("+", ",").split(",") if t.strip()]
+    if not tokens:
+        raise ValueError("active_rule 비어 있음")
+    keys: list[str] = []
+    for token in tokens:
+        if token not in RULE_KEY_BY_SHORT:
+            raise ValueError(f"알 수 없는 규칙 토큰: {token}")
+        key = RULE_KEY_BY_SHORT[token]
+        if key not in keys:
+            keys.append(key)
+    return tuple(keys)
+
+
 def rule_flags(row: dict) -> dict[str, bool]:
     feats = row.get("feats") or {}
     r1 = bool(row.get("pass_all"))
@@ -98,15 +121,24 @@ def _ranking_view(rows: list[dict]) -> None:
     성과를 만드는지 원장이 답하게 한다.
     """
     try:
-        short = str(json.loads(EXEC_STATUS.read_text(encoding="utf-8")).get("active_rule") or "R2")
+        raw = str(json.loads(EXEC_STATUS.read_text(encoding="utf-8")).get("active_rule") or "R2")
     except (OSError, ValueError):
-        short = "R2"
-    active = {"R1": "R1_8조건", "R2": "R2_할인저변동", "R3": "R3_합집합", "R4": "R4_갭할인"}.get(short, "R2_할인저변동")
-    # 활성 규칙(실주문 랭킹) + R4(후보 다발 관측 규칙) 두 축으로 본다.
-    for rule in dict.fromkeys((active, "R4_갭할인")):
+        raw = "R2"
+    try:
+        active_keys = parse_active_rules(raw)
+    except ValueError:
+        print(f"[랭킹] active_rule 무효({raw}) — R2 기준으로 표시 (브리지는 fail-closed 상태)")
+        active_keys = (RULE_KEY_BY_SHORT["R2"],)
+    active_label = "+".join(k.split("_")[0] for k in active_keys)
+    # 활성 규칙(실주문 랭킹, 합집합 가능) + R4(후보 다발 관측 규칙) 두 축으로 본다.
+    axes: list[tuple[str, tuple[str, ...]]] = [(active_label, active_keys)]
+    if "R4_갭할인" not in active_keys:
+        axes.append(("R4_갭할인", ("R4_갭할인",)))
+    for rule, keys in axes:
         by_session: dict[str, list[dict]] = defaultdict(list)
         for r in rows:
-            if rule_flags(r).get(rule):
+            flags = rule_flags(r)
+            if any(flags.get(k) for k in keys):
                 by_session[r["session_date"]].append(r)
         picked, passed_over, multi_days = [], [], 0
         for _, cands in sorted(by_session.items()):
@@ -117,7 +149,7 @@ def _ranking_view(rows: list[dict]) -> None:
                 if r.get("status") != "SETTLED" or r.get("net_pct") is None:
                     continue
                 (picked if i == 0 else passed_over).append(float(r["net_pct"]))
-        label = f"[랭킹] {rule}" + (" (활성·실주문 랭킹)" if rule == active else " (관측)")
+        label = f"[랭킹] {rule}" + (" (활성·실주문 랭킹)" if rule == active_label else " (관측)")
         if picked or passed_over:
             fmt = lambda v: f"n={len(v)} 평균 {sum(v)/len(v):+.2f}%" if v else "n=0"
             print(f"{label}: 1순위 {fmt(picked)} vs 미선택 {fmt(passed_over)} | 다발일 {multi_days}일")

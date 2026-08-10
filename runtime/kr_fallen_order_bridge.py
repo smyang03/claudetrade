@@ -7,9 +7,10 @@
   KR_FALLEN_LIVE_ACK=I_ACCEPT_LIVE_KR_FALLEN
 
 설계 (us_swing 브리지 미러, 캘리브레이션 규약 준수):
-- 후보: 직전 세션의 shadow 원장(kr_fallen_shadow.jsonl)에서 활성 규칙
-  (KR_FALLEN_ACTIVE_RULE ∈ R1/R2/R3, 기본 R2 — 게이트 승자 확정 시 설정) 충족분.
-  규칙 판정은 tools.kr_fallen_gate_report.rule_flags 재사용(정의 단일화).
+- 후보: 직전 세션의 shadow 원장(kr_fallen_shadow.jsonl)에서 활성 규칙 충족분.
+  KR_FALLEN_ACTIVE_RULE은 단일("R2") 또는 **합집합("R2+R4", 2026-08-10 v2 사다리
+  Phase 2용 사전 구현 — 전환은 게이트+운영자 승인)**. 무효 토큰은 fail-closed(ERROR).
+  규칙 판정·파서는 tools.kr_fallen_gate_report 재사용(정의 단일화).
 - 진입: 개장 후 KR_FALLEN_MIN_OPEN_MIN(2)~MAX(20)분 창 — "익일 시가" 규약의 최근접 실행.
   극단 갭업 가드: 현재가가 신호일 종가 +10% 이상이면 스킵(TP 여지 소진 — 규약 이탈 아님,
   안 사는 쪽 보수 처리).
@@ -32,7 +33,7 @@ from kis_api import get_price
 from logger import get_trading_logger
 from preopen.scheduler import regular_open_dt
 from runtime_paths import get_runtime_path
-from tools.kr_fallen_gate_report import rule_flags
+from tools.kr_fallen_gate_report import parse_active_rules, rule_flags
 
 log = get_trading_logger()
 
@@ -112,14 +113,15 @@ def _append_history(payload: dict[str, Any]) -> None:
         log.warning(f"[KR fallen handoff] history append failed: {exc}")
 
 
-def _rule_key(short: str) -> str:
-    return {"R1": "R1_8조건", "R2": "R2_할인저변동", "R3": "R3_합집합", "R4": "R4_갭할인"}.get(short.upper(), "R2_할인저변동")
+def _load_candidates(prev_session: str, rule_keys: tuple[str, ...]) -> list[dict]:
+    """활성 규칙(합집합 가능) 통과 후보 로드 — 2026-08-10 design_kr_union_rule.
 
-
-def _load_candidates(prev_session: str, rule_short: str) -> list[dict]:
+    합집합 의미: 규칙 키 중 하나라도 충족하면 후보다(같은 행 중복 없음).
+    각 행에 `_matched_rules`(충족 규칙 short 목록)를 붙여 판정 시 R4∖R2
+    순증분 분해를 이력에서 직접 복원할 수 있게 한다.
+    """
     if not LEDGER.exists():
         return []
-    key = _rule_key(rule_short)
     out = []
     for line in LEDGER.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -130,9 +132,12 @@ def _load_candidates(prev_session: str, rule_short: str) -> list[dict]:
             continue
         if row.get("session_date") != prev_session:
             continue
-        if rule_flags(row).get(key):
+        flags = rule_flags(row)
+        matched = [key.split("_")[0] for key in rule_keys if flags.get(key)]
+        if matched:
+            row["_matched_rules"] = matched
             out.append(row)
-    # 우선순위: ma20 할인 깊은 순 (R2 계열의 실측 우선순위)
+    # 우선순위: ma20 할인 깊은 순 (E5 실측 — 랭킹 변경 근거 없음, 현행 유지)
     out.sort(key=lambda r: (r.get("feats") or {}).get("ma20_disc") or 0.0)
     return out
 
@@ -219,11 +224,20 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
             "status": "BLOCKED", "reason": "stale_signal_scan_may_be_dead",
             "prev_session": prev_session, "gap_days": gap_days,
         })
-    rule_short = str(bot._runtime_value("KR_FALLEN_ACTIVE_RULE", "R2") or "R2")
-    candidates = _load_candidates(prev_session, rule_short)
+    rule_raw = str(bot._runtime_value("KR_FALLEN_ACTIVE_RULE", "R2") or "R2")
+    try:
+        rule_keys = parse_active_rules(rule_raw)
+    except ValueError as exc:
+        # fail-closed + loud (설계 D3): 조용한 R2 폴백 금지 — 오타가 소리 없이
+        # 구식 레인을 돌리는 지뢰가 된다. 아침 status 파일에서 즉시 보인다.
+        log.error(f"[KR fallen handoff] active_rule 무효 — fail-closed: {exc}")
+        return _write_status(bot, session_date, {"status": "ERROR",
+                                                 "reason": f"invalid_active_rule:{rule_raw}"})
+    rule_label = "+".join(key.split("_")[0] for key in rule_keys)
+    candidates = _load_candidates(prev_session, rule_keys)
     if not candidates:
         return _write_status(bot, session_date, {"status": "SKIPPED", "reason": "no_rule_candidates",
-                                                 "prev_session": prev_session, "rule": rule_short})
+                                                 "prev_session": prev_session, "rule": rule_label})
 
     cap_krw = float(bot._runtime_float("KR_FALLEN_ORDER_MAX_KRW", 300000.0))
     results: list[dict] = []
@@ -253,23 +267,27 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
                             "reason": f"common_buy_gate:{gate.get('reason') or 'blocked'}"})
             continue
         mode = str((getattr(bot, "today_judgment", {}) or {}).get("consensus", {}).get("mode", "CAUTIOUS"))
+        # 사유에는 설정 라벨이 아니라 **충족 규칙**을 남긴다 (판정 시 R4∖R2 분해용, 설계 D4)
+        matched = list(row.get("_matched_rules") or [])
+        matched_tag = "_".join(m.lower() for m in matched) or rule_label.replace("+", "_").lower()
         ok = bot._submit_micro_probe_buy_order(
             market="KR", ticker=ticker, name=ticker, qty=qty,
             raw_price=price, risk_price_krw=price,
             tp_pct=0.12, sl_pct=0.25, max_hold=5, mode=mode,
-            selected_reason=f"kr_fallen_{rule_short.lower()}",
+            selected_reason=f"kr_fallen_{matched_tag}",
             source_strategy=SOURCE_STRATEGY,
             entry_priority_score=abs(float((row.get("feats") or {}).get("ma20_disc") or 0.0)),
             tsdb_id=-1, isdb_id=0,
             signal_at=str(row.get("scanned_at") or ""),
             signal_row=dict(row.get("feats") or {}),
-            probe_meta={"reason": f"kr_fallen_{rule_short.lower()}", "original_qty": qty,
+            probe_meta={"reason": f"kr_fallen_{matched_tag}", "original_qty": qty,
                         "adjusted_qty": qty, "original_order_cost_krw": qty * price,
                         "adjusted_order_cost_krw": qty * price, "order_budget_krw": budget,
                         "min_effective_order_krw": 0.0, "oversize_ratio": 1.0},
         )
-        results.append({"ticker": ticker, "status": "SUBMITTED" if ok else "SUBMIT_FAILED", "qty": qty, "price": price})
+        results.append({"ticker": ticker, "status": "SUBMITTED" if ok else "SUBMIT_FAILED",
+                        "qty": qty, "price": price, "matched": matched})
         if ok:
             break  # 일1건
-    return _write_status(bot, session_date, {"status": "EVALUATED", "rule": rule_short,
+    return _write_status(bot, session_date, {"status": "EVALUATED", "rule": rule_label,
                                              "prev_session": prev_session, "results": results})
