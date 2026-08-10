@@ -323,6 +323,46 @@ def _observation_views(contract: str) -> None:
 
     _gap_through_view(contract)
     _capacity_view(contract)
+    _tp_capture_view()
+
+
+def _tp_capture_view() -> None:
+    """[A10] TP 포획 조건(ATR 하한) forward 관측 — 2026-08-11 사전등록 레인.
+
+    오프라인 실측: 조건 통과 코호트 net +2.71%/TP 55% vs 모델 rank1 +0.12%/TP 31%.
+    forward에서 같은 우위가 재현되는지 이 뷰가 판정한다(조건 통과분 vs 미통과분,
+    그리고 실제 진입한 rank1 대비). 조건 성과는 실주문이 아니라 관측이다.
+    """
+    path = ROOT / "data" / "shadow" / "us_tp_capture_shadow.jsonl"
+    if not path.exists():
+        print("[A10] TP 포획 조건: 원장 없음 (다음 runner 실행부터 축적)")
+        return
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            continue
+    if not rows:
+        print("[A10] TP 포획 조건: 기록 없음")
+        return
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    try:
+        nets = {(str(d), str(t)): float(v) for d, t, v in con.execute(
+            "SELECT signal_date,ticker,net_krw_pct FROM signals WHERE net_krw_pct IS NOT NULL")}
+    finally:
+        con.close()
+    ready = [r for r in rows if r.get("threshold_p75_past_only") is not None]
+    passed = [r for r in ready if r.get("passed")]
+    sessions = {str(r.get("session_date")) for r in ready}
+    parts = []
+    for label, group in (("조건 통과", passed), ("미통과", [r for r in ready if not r.get("passed")])):
+        vals = [nets[(str(r["session_date"]), str(r["ticker"]))] for r in group
+                if (str(r["session_date"]), str(r["ticker"])) in nets]
+        parts.append(f"{label} {len(group)}건"
+                     + (f"(정산 {len(vals)} 평균 {sum(vals)/len(vals):+.2f}%)" if vals else ""))
+    print(f"[A10] TP 포획 조건(ATR past-only 상위25%): 세션 {len(sessions)} | " + " | ".join(parts)
+          + ("" if ready else " — 임계 산출까지 이력 150건 필요"))
 
 
 def _capacity_view(contract: str) -> None:

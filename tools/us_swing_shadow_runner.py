@@ -448,6 +448,52 @@ def _record_pool_size(session_date: str, *, pool_n: int, scored_n: int) -> None:
         pass
 
 
+def _record_tp_capture(session_date: str, candidates: "pd.DataFrame") -> None:
+    """TP 포획 조건(ATR 하한) 관측 원장 — 2026-08-11 design_tp_capture_lane.
+
+    실측(T1): ATR 상위 25% 코호트가 TP 적중 55%·계약 net +2.71%(양 기간 재현)로
+    모델 rank1(+0.12%)을 크게 앞선다. 임계는 **past-only 확장창**(이 원장에 쌓인
+    과거 atr_pct만)으로 산출해 lookahead를 만들지 않는다.
+
+    주문 경로 무접촉 — 조건 통과 여부만 기록하고, 성과는 판정 시 signals의
+    net_krw_pct와 (session_date, ticker)로 조인해 검증한다.
+    """
+    path = ROOT / "data" / "shadow" / "us_tp_capture_shadow.jsonl"
+    try:
+        history: list[float] = []
+        seen_session = False
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if str(row.get("session_date")) == str(session_date):
+                    seen_session = True
+                value = row.get("atr_pct")
+                if isinstance(value, (int, float)) and value == value:
+                    history.append(float(value))
+        if seen_session:
+            return
+        threshold = float(np.quantile(history, 0.75)) if len(history) >= 150 else None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as handle:
+            for row in candidates.to_dict("records"):
+                atr = row.get("atr_pct")
+                atr = float(atr) if atr is not None and atr == atr else None
+                handle.write(json.dumps({
+                    "session_date": str(session_date),
+                    "ticker": str(row.get("ticker") or ""),
+                    "candidate_source": str(row.get("candidate_source") or row.get("source") or ""),
+                    "atr_pct": atr,
+                    "threshold_p75_past_only": threshold,
+                    "passed": bool(threshold is not None and atr is not None and atr >= threshold),
+                    "history_n": len(history),
+                }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def _record_market_width(session_date: str) -> None:
     """시장 전체 낙폭 폭 기록 (관측 전용, 주문·채점 경로 무접촉).
 
@@ -1052,6 +1098,7 @@ def main() -> int:
         candidates = candidates[candidates["veto_reason"].astype(str).eq("")].copy()
         _record_pool_size(args.session_date, pool_n=candidates_n, scored_n=len(candidates))
         _record_market_width(args.session_date)
+        _record_tp_capture(args.session_date, candidates)
         research_con = sqlite3.connect(args.research_db)
         try:
             train = load_yahoo_dataset(
