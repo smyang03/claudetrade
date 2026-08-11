@@ -494,6 +494,66 @@ def _record_tp_capture(session_date: str, candidates: "pd.DataFrame") -> None:
         pass
 
 
+def _record_premarket(session_date: str, candidates: "pd.DataFrame") -> None:
+    """프리마켓 스냅샷 관측 원장 — 2026-08-11 신설(주문·채점 경로 무접촉).
+
+    runner 실행 시각(22:20 KST = 09:20 ET)은 개장 10분 전으로 프리마켓 유동성이
+    가장 붙는 구간이다. 후보 풀의 프리마켓 마지막가·누적 거래량을 남겨, 정산 후
+    (session_date, ticker)로 signals와 조인해 세 가지를 검증한다:
+      ① 갭 가드 3%(US_SWING_ORDER_MAX_ABS_GAP_PCT)의 실측 근거 — 지금은 없다
+      ② 급락 다음날 되돌림이 개장 전에 얼마나 끝나는가(= 우리 진입이 늦은가)
+      ③ U7(진입 시점)이 분봉 부족으로 판정 불가였던 문제의 대체 데이터원
+
+    KIS를 쓰지 않는다(라이브 시세 경로와 분리 — 08-04 레이트리밋 사고 원칙).
+    yfinance 벌크 1회, 실패는 조용히 스킵(관측 결측이 파이프라인을 막으면 안 된다).
+    """
+    path = ROOT / "data" / "shadow" / "us_premarket_shadow.jsonl"
+    try:
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    if json.loads(line).get("session_date") == str(session_date):
+                        return
+                except ValueError:
+                    continue
+        tickers = [str(t).upper() for t in candidates.get("ticker", []) if str(t).strip()]
+        if not tickers:
+            return
+        import datetime as _dt
+
+        import yfinance as yf
+
+        data = yf.download(tickers, period="1d", interval="5m", prepost=True,
+                           progress=False, threads=False, group_by="ticker")
+        rows = []
+        for ticker in tickers:
+            try:
+                frame = data[ticker] if len(tickers) > 1 else data
+                frame = frame.dropna(subset=["Close"])
+                if frame.empty:
+                    continue
+                frame.index = frame.index.tz_convert("America/New_York")
+                pre = frame[frame.index.time < _dt.time(9, 30)]
+                if pre.empty:
+                    continue
+                rows.append({
+                    "session_date": str(session_date), "ticker": ticker,
+                    "premarket_last": round(float(pre["Close"].iloc[-1]), 4),
+                    "premarket_volume": int(pre["Volume"].sum()),
+                    "premarket_bars": int(len(pre)),
+                    "captured_at": datetime.now(timezone.utc).isoformat(),
+                })
+            except Exception:
+                continue
+        if rows:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as handle:
+                for row in rows:
+                    handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def _record_market_width(session_date: str) -> None:
     """시장 전체 낙폭 폭 기록 (관측 전용, 주문·채점 경로 무접촉).
 
@@ -1099,6 +1159,7 @@ def main() -> int:
         _record_pool_size(args.session_date, pool_n=candidates_n, scored_n=len(candidates))
         _record_market_width(args.session_date)
         _record_tp_capture(args.session_date, candidates)
+        _record_premarket(args.session_date, candidates)
         research_con = sqlite3.connect(args.research_db)
         try:
             train = load_yahoo_dataset(
