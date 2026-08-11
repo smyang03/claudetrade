@@ -494,6 +494,18 @@ def record_handoff_result(
 ) -> None:
     ensure_handoff_schema(con)
     status = "SUBMITTED" if submitted else decision.status
+    # 2026-08-11 관측 손실 수정: 창 종료 후 스캔의 entry_window_expired가 창 안의
+    # 실질 차단 사유(chase·hurdle 등)를 덮어쓰지 못한다 (AXON 08-07·STEP 08-10 실측).
+    # expired는 "창 안에 한 번도 평가되지 못했다"일 때만 기록되는 사유로 남긴다.
+    # 실질 사유끼리의 last-write-wins는 유지한다(창 안 후행 사유가 선행을 덮는 건 정당).
+    if decision.reason == "entry_window_expired":
+        row = con.execute(
+            "SELECT COALESCE(handoff_reason,'') FROM signals WHERE signal_date=? AND ticker=?",
+            (decision.signal_date, decision.ticker),
+        ).fetchone()
+        existing_reason = str(row[0]) if row else ""
+        if existing_reason and existing_reason != "entry_window_expired":
+            return
     con.execute(
         """
         UPDATE signals SET handoff_status=?,handoff_reason=?,handoff_attempted_at=?,

@@ -249,8 +249,23 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
             bot, manifest=_us_swing_attribution_manifest(con)
         )
         results: list[dict[str, Any]] = []
+        window_end_min = float(bot._runtime_int("US_SWING_ORDER_MAX_OPEN_MIN", 30))
+        elapsed_since_open_min = (
+            datetime.now(KST) - regular_open_dt("US", session_date)
+        ).total_seconds() / 60.0
         for signal in signals:
             ticker = str(signal.get("ticker") or "").upper()
+            # 2026-08-11: 창 종료 후에는 어떤 경로로도 submit에 도달하지 못한다(창 체크가
+            # budget/submit보다 앞). 이미 실질 사유가 기록된 신호를 밤새 재평가하며 KIS를
+            # 폴링하고 expired로 덮어쓰는 것을 여기서 끊는다 (STEP 08-10: 22:30~04:56 폴링 실측).
+            if elapsed_since_open_min > window_end_min and str(signal.get("handoff_reason") or ""):
+                results.append({
+                    "status": "SKIPPED",
+                    "reason": "window_closed_prior_reason_kept",
+                    "ticker": ticker,
+                    "prior_reason": str(signal.get("handoff_reason") or ""),
+                })
+                continue
             try:
                 quote = get_price(
                     ticker,

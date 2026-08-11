@@ -154,3 +154,52 @@ def test_handoff_state_is_persisted_and_submitted_signal_is_not_reloaded() -> No
     assert load_handoff_signals(con, session_date="2026-07-10") == []
     row = con.execute("SELECT handoff_status,handoff_order_no FROM signals").fetchone()
     assert row == ("SUBMITTED", "O1")
+
+
+def test_entry_window_expired_never_overwrites_substantive_reason() -> None:
+    """2026-08-11 관측 손실 수정: 창 안 실질 사유(chase 등)는 창 종료 후
+    entry_window_expired 재기록에 덮이지 않는다 (AXON 08-07·STEP 08-10 실측)."""
+    con = sqlite3.connect(":memory:")
+    con.execute(
+        """CREATE TABLE signals(
+            signal_date TEXT,ticker TEXT,rank INTEGER,predicted_net_pct REAL,probability REAL,
+            reference_close REAL,status TEXT,net_krw_pct REAL
+        )"""
+    )
+    con.execute(
+        "INSERT INTO signals VALUES (?,?,?,?,?,?,?,?)",
+        ("2026-07-10", "TEST", 1, 1.0, 0.6, 100.0, "PENDING", None),
+    )
+    ensure_handoff_schema(con)
+    signals = load_handoff_signals(con, session_date="2026-07-10")
+    # 창 안: chase 초과로 실질 차단 사유 기록
+    chase = _evaluate(
+        signal=signals[0],
+        quote={"price": 102.0, "open": 100.0, "prev_close": 100.0, "volume": 1000},
+    )
+    assert chase.reason == "price_chase_above_contract"
+    record_handoff_result(con, decision=chase)
+    # 창 종료 후: expired 재기록 시도는 무시된다
+    opened = datetime(2026, 7, 10, 13, 30, tzinfo=timezone.utc)
+    expired = _evaluate(signal=signals[0], now=opened + timedelta(minutes=90))
+    assert expired.reason == "entry_window_expired"
+    record_handoff_result(con, decision=expired)
+    row = con.execute("SELECT handoff_status,handoff_reason FROM signals").fetchone()
+    assert row == ("BLOCKED", "price_chase_above_contract")
+    # 창 안에 한 번도 평가되지 못한 신호(진짜 miss)에는 expired가 기록된다
+    con.execute(
+        "INSERT INTO signals(signal_date,ticker,rank,predicted_net_pct,probability,"
+        "reference_close,status,net_krw_pct) VALUES (?,?,?,?,?,?,?,?)",
+        ("2026-07-13", "MISS", 1, 1.0, 0.6, 100.0, "PENDING", None),
+    )
+    missed = _evaluate(
+        signal=_signal(signal_date="2026-07-13", ticker="MISS"),
+        now=opened + timedelta(days=3, minutes=90),
+        regular_open=opened + timedelta(days=3),
+    )
+    assert missed.reason == "entry_window_expired"
+    record_handoff_result(con, decision=missed)
+    row = con.execute(
+        "SELECT handoff_status,handoff_reason FROM signals WHERE ticker='MISS'"
+    ).fetchone()
+    assert row == ("BLOCKED", "entry_window_expired")

@@ -238,7 +238,20 @@ def update_cache() -> int:
                 bars.append({"d": str(idx)[:10], "o": o, "h": h, "l": l, "c": c,
                              "v": v, "amt": amt})
         if bars:
-            old = {x["d"]: x for x in cache.get(code, [])}
+            cached = cache.get(code, [])
+            # 2026-08-12 수정주가 경계 가드: 액면분할·감자 후 재조회분은 소급 조정된
+            # 가격이라 구캐시와 스케일이 다르다(083660 ×13 실측). 겹치는 날짜의 종가가
+            # 5% 넘게 어긋나면 구캐시 전체를 버리고 이번 조회 기준으로 다시 쌓는다.
+            # 거래정지 재개 폭락(032980류)은 실제 시세로 겹침이 일치해 여기 걸리지 않는다.
+            fresh_by_date = {x["d"]: x for x in bars}
+            for x in cached:
+                f = fresh_by_date.get(x["d"])
+                if f and x.get("c") and abs(f["c"] / x["c"] - 1.0) > 0.05:
+                    print("  [기준가 경계] %s %s 캐시 %.1f vs 재조회 %.1f — 구캐시 폐기" % (
+                        code, x["d"], x["c"], f["c"]), flush=True)
+                    cached = []
+                    break
+            old = {x["d"]: x for x in cached}
             for x in bars:
                 old[x["d"]] = x
             cache[code] = sorted(old.values(), key=lambda x: x["d"])
