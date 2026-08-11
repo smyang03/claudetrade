@@ -494,6 +494,64 @@ def _record_tp_capture(session_date: str, candidates: "pd.DataFrame") -> None:
         pass
 
 
+def _record_candidate_age(session_date: str, candidates: "pd.DataFrame") -> None:
+    """후보 관측 연령 원장 — 2026-08-11 B2 최대 발견의 forward 배선.
+
+    실측(candidate_audit 33만 행, US 급락 −5%↓ 3일 수익):
+      D0(처음 보는 종목) +0.16% / D1-3 +3.77% / D4-10 +6.24% / D10+ **+9.97%**
+    유동성 통제 후에도 모든 계층에서 단조 증가 — 공선성으로 설명되지 않는다.
+    우리 후보의 88%가 D0인데 이 정보를 지금 전혀 쓰지 않는다.
+
+    `candidate_registry_first`(5,371행, 인덱스 있음 — 조회 ~0.05초)에서 최초 관측일을
+    읽어 연령(일)을 기록한다. 주문·채점 경로 무접촉, 실패는 조용히 스킵.
+    """
+    path = ROOT / "data" / "shadow" / "us_candidate_age_shadow.jsonl"
+    audit_db = ROOT / "data" / "audit" / "candidate_audit.db"
+    try:
+        if not audit_db.exists():
+            return
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    if json.loads(line).get("session_date") == str(session_date):
+                        return
+                except ValueError:
+                    continue
+        tickers = [str(t).upper() for t in candidates.get("ticker", []) if str(t).strip()]
+        if not tickers:
+            return
+        con = sqlite3.connect(f"file:{audit_db}?mode=ro", uri=True, timeout=20)
+        try:
+            con.execute("PRAGMA busy_timeout=15000")
+            marks = ",".join("?" * len(tickers))
+            rows = con.execute(
+                f"""SELECT ticker, MIN(first_seen_at) FROM candidate_registry_first
+                    WHERE runtime_mode='live' AND market='US' AND ticker IN ({marks})
+                    GROUP BY ticker""", tickers).fetchall()
+        finally:
+            con.close()
+        first = {str(t).upper(): str(ts or "")[:10] for t, ts in rows}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as handle:
+            for ticker in tickers:
+                seen = first.get(ticker, "")
+                age = None
+                if seen:
+                    try:
+                        age = (pd.Timestamp(str(session_date)) - pd.Timestamp(seen)).days
+                    except (ValueError, TypeError):
+                        age = None
+                handle.write(json.dumps({
+                    "session_date": str(session_date), "ticker": ticker,
+                    "first_seen_date": seen or None, "age_days": age,
+                    "bucket": ("unknown" if age is None else
+                               "D0" if age <= 0 else "D1-3" if age <= 3 else
+                               "D4-10" if age <= 10 else "D10+"),
+                }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def _record_premarket(session_date: str, candidates: "pd.DataFrame") -> None:
     """프리마켓 스냅샷 관측 원장 — 2026-08-11 신설(주문·채점 경로 무접촉).
 
@@ -1160,6 +1218,7 @@ def main() -> int:
         _record_market_width(args.session_date)
         _record_tp_capture(args.session_date, candidates)
         _record_premarket(args.session_date, candidates)
+        _record_candidate_age(args.session_date, candidates)
         research_con = sqlite3.connect(args.research_db)
         try:
             train = load_yahoo_dataset(

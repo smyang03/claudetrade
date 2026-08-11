@@ -324,6 +324,44 @@ def _observation_views(contract: str) -> None:
     _gap_through_view(contract)
     _capacity_view(contract)
     _tp_capture_view()
+    _candidate_age_view()
+
+
+def _candidate_age_view() -> None:
+    """[A11] 후보 관측 연령 forward 관측 — 2026-08-11 B2 최대 발견.
+
+    오프라인(33만 행): D0 +0.16% / D1-3 +3.77% / D4-10 +6.24% / D10+ +9.97%
+    (유동성 통제 후에도 단조). forward에서 같은 단조성이 재현되는지 이 뷰가 판정한다.
+    """
+    path = ROOT / "data" / "shadow" / "us_candidate_age_shadow.jsonl"
+    if not path.exists():
+        print("[A11] 후보 연령: 원장 없음 (다음 runner 실행부터 축적)")
+        return
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            continue
+    if not rows:
+        print("[A11] 후보 연령: 기록 없음")
+        return
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    try:
+        nets = {(str(d), str(t)): float(v) for d, t, v in con.execute(
+            "SELECT signal_date,ticker,net_krw_pct FROM signals WHERE net_krw_pct IS NOT NULL")}
+    finally:
+        con.close()
+    parts = []
+    for bucket in ("D0", "D1-3", "D4-10", "D10+", "unknown"):
+        group = [r for r in rows if r.get("bucket") == bucket]
+        if not group:
+            continue
+        vals = [nets[(str(r["session_date"]), str(r["ticker"]))] for r in group
+                if (str(r["session_date"]), str(r["ticker"])) in nets]
+        parts.append(f"{bucket} {len(group)}건"
+                     + (f"(정산 {len(vals)} 평균 {sum(vals)/len(vals):+.2f}%)" if vals else ""))
+    print(f"[A11] 후보 연령 분해(세션 {len({r['session_date'] for r in rows})}): " + " | ".join(parts))
 
 
 def _tp_capture_view() -> None:
