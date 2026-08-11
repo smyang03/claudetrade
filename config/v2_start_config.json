@@ -654,7 +654,7 @@
     "US_SWING_STORE_TOP_K": "10",
     "KR_FALLEN_ORDER_HANDOFF_ENABLED": "true",
     "KR_FALLEN_LIVE_ENABLED": "true",
-    "KR_FALLEN_ACTIVE_RULE": "R2",
+    "KR_FALLEN_ACTIVE_RULE": "R2+R4",
     "US_SWING_PYTHON_EXECUTABLE": "C:/Users/Unknown/anaconda3/envs/upbit/python.exe",
     "US_SWING_AUTHORITY_MODE": "micro",
     "US_SWING_POLICY_PATH": "config/us_swing_accelerated.json",
