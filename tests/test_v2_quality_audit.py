@@ -33,21 +33,40 @@ class V2QualityAuditTests(unittest.TestCase):
                 prompt_version="v2",
                 brain_snapshot_id="brain_us",
             )
-            for _ in range(2):
-                store.append(
-                    LifecycleEvent(
-                        event_type="FILLED",
-                        market="US",
-                        runtime_mode="live",
-                        session_date="2026-05-04",
-                        ticker="NVDA",
-                        decision_id=closed_id,
-                        execution_id="buy1",
-                        position_id="pos1",
-                        prompt_version="v2",
-                        brain_snapshot_id="brain_us",
-                        payload={"side": "buy", "qty": 1, "price": 100},
+            store.append(
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-05-04",
+                    ticker="NVDA",
+                    decision_id=closed_id,
+                    execution_id="buy1",
+                    position_id="pos1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={"side": "buy", "qty": 1, "price": 100},
+                )
+            )
+            # append는 2026-08-13부터 같은 체결의 FILLED를 쓰기 시점에 dedupe한다.
+            # 읽기측 정리는 그 이전 레거시 중복(실측 288그룹)을 위해 여전히 필요하므로,
+            # 레거시 이중 기록을 직접 INSERT로 재현해 검증한다.
+            with store.connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO lifecycle_events (
+                        event_uuid, event_type, market, runtime_mode, session_date,
+                        ticker, decision_id, execution_id, position_id,
+                        prompt_version, brain_snapshot_id, occurred_at, reason_code,
+                        data_quality, payload_json, created_at
                     )
+                    SELECT 'evt_legacy_dup', event_type, market, runtime_mode, session_date,
+                           ticker, decision_id, execution_id, position_id,
+                           prompt_version, brain_snapshot_id, occurred_at, reason_code,
+                           data_quality, payload_json, created_at
+                    FROM lifecycle_events WHERE event_type='FILLED' AND decision_id=?
+                    """,
+                    (closed_id,),
                 )
             store.append(
                 LifecycleEvent(
