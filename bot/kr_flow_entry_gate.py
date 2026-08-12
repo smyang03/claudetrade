@@ -43,10 +43,15 @@ def evaluate_flow_entry_gate(flow_record: dict[str, Any] | None, mode: str) -> d
     decision: off | allow | allow_no_flow | would_skip | skip
       - off            : 게이트 비활성(no-op)
       - allow          : 수급 신뢰 + 순매도 아님 → 진입 허용
-      - allow_no_flow  : 수급 결손/untrusted → fail-open(허용)
+      - allow_no_flow  : 수급 결손/untrusted/날짜 미매칭 → fail-open(허용)
       - would_skip     : shadow에서 flow-negative(실제 차단 안 함, 관측만)
       - skip           : enforce에서 flow-negative(실제 진입 차단)
     block(bool): 실제 진입을 막아야 하는가(enforce + flow-negative일 때만 True)
+
+    날짜 가드(2026-08-13): flow_date_matched가 True가 아니면 차단하지 않는다.
+    API output[0] 폴백이 다른 날짜의 비영(非零) 수급을 돌려주면 trusted=True인 채
+    엉뚱한 날 데이터로 차단할 수 있다 — 실측 발생 0건(239판정 전량 매칭)이지만
+    구조적으로 막는다. 결손과 같은 fail-open 경로라 진입을 죽이지 않는다.
     """
     mode = normalize_mode(mode)
     rec = flow_record or {}
@@ -74,6 +79,10 @@ def evaluate_flow_entry_gate(flow_record: dict[str, Any] | None, mode: str) -> d
         out["reason"] = "flow_untrusted_or_missing"
         return out
     if combined < 0:
+        if rec.get("flow_date_matched") is not True:
+            out["decision"] = "allow_no_flow"
+            out["reason"] = "flow_date_unmatched"
+            return out
         out["reason"] = "flow_negative_combined"
         if mode == "enforce":
             out["decision"] = "skip"

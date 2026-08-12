@@ -31,15 +31,41 @@ class FlowEntryGateEvalTests(unittest.TestCase):
         self.assertFalse(v["block"])
 
     def test_negative_flow_shadow_would_skip_no_block(self) -> None:
-        v = evaluate_flow_entry_gate({"foreign": -100, "institution": -50, "flow_values_trusted": True}, "shadow")
+        v = evaluate_flow_entry_gate(
+            {"foreign": -100, "institution": -50, "flow_values_trusted": True, "flow_date_matched": True},
+            "shadow",
+        )
         self.assertEqual(v["decision"], "would_skip")
         self.assertFalse(v["block"])
         self.assertEqual(v["combined_net"], -150)
 
     def test_negative_flow_enforce_blocks(self) -> None:
-        v = evaluate_flow_entry_gate({"foreign": -100, "institution": -50, "flow_values_trusted": True}, "enforce")
+        v = evaluate_flow_entry_gate(
+            {"foreign": -100, "institution": -50, "flow_values_trusted": True, "flow_date_matched": True},
+            "enforce",
+        )
         self.assertEqual(v["decision"], "skip")
         self.assertTrue(v["block"])
+
+    def test_negative_flow_unmatched_date_fails_open(self) -> None:
+        # 날짜 미매칭이면 trusted여도 차단하지 않는다(엉뚱한 날 수급으로 차단 금지)
+        v = evaluate_flow_entry_gate(
+            {"foreign": -100, "institution": -50, "flow_values_trusted": True, "flow_date_matched": False},
+            "enforce",
+        )
+        self.assertEqual(v["decision"], "allow_no_flow")
+        self.assertEqual(v["reason"], "flow_date_unmatched")
+        self.assertFalse(v["block"])
+
+    def test_negative_flow_missing_date_matched_fails_open(self) -> None:
+        # flow_date_matched 키 자체가 없는 레코드(구버전 캐시)도 차단하지 않는다
+        v = evaluate_flow_entry_gate(
+            {"foreign": -100, "institution": -50, "flow_values_trusted": True},
+            "shadow",
+        )
+        self.assertEqual(v["decision"], "allow_no_flow")
+        self.assertEqual(v["reason"], "flow_date_unmatched")
+        self.assertFalse(v["block"])
 
     def test_positive_flow_allows(self) -> None:
         v = evaluate_flow_entry_gate({"foreign": 100, "institution": -10, "flow_values_trusted": True}, "enforce")

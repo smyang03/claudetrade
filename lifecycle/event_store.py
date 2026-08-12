@@ -19,6 +19,13 @@ NON_STATUS_EVENT_TYPES = {
     "PROFIT_EVIDENCE_SHADOW",
 }
 
+# 같은 체결의 이중 기록 차단 대상. FILLED만 dedupe한다 —
+# PARTIAL_FILLED는 한 주문(execution_id)에 여러 번이 정상이라 제외.
+# 실측(2026-08-13): 서로 다른 emit 지점 2곳이 같은 체결에 FILLED를 각각 기록해
+# 중복 288그룹(2026-04~07) 발생. event_uuid는 emit별 난수라 멱등성이 없어
+# (event_type, decision_id, execution_id) 파생 키로 쓰기 시점에 막는다.
+FILL_DEDUPE_EVENT_TYPES = {"FILLED"}
+
 
 class ClosingConnection(sqlite3.Connection):
     def __exit__(self, exc_type, exc_value, traceback) -> bool:
@@ -239,6 +246,78 @@ class EventStore:
             )
             return int(cur.lastrowid)
 
+    @staticmethod
+    def _find_duplicate_fill(conn: sqlite3.Connection, evt: LifecycleEvent) -> sqlite3.Row | None:
+        """(event_type, decision_id, execution_id) 파생 멱등키로 기존 체결 이벤트를 찾는다.
+
+        execution_id가 없으면 같은 체결인지 판별할 수 없으므로 dedupe하지 않는다
+        (오탐으로 정상 이벤트를 버리는 것이 중복보다 나쁘다).
+        """
+        if evt.event_type not in FILL_DEDUPE_EVENT_TYPES:
+            return None
+        if not evt.decision_id or not evt.execution_id:
+            return None
+        return conn.execute(
+            """
+            SELECT event_id, payload_json FROM lifecycle_events
+            WHERE event_type=? AND decision_id=? AND execution_id=?
+            ORDER BY event_id LIMIT 1
+            """,
+            (evt.event_type, evt.decision_id, evt.execution_id),
+        ).fetchone()
+
+    def _append_one(self, conn: sqlite3.Connection, evt: LifecycleEvent) -> int:
+        duplicate = self._find_duplicate_fill(conn, evt)
+        if duplicate is not None:
+            # 이중 기록 차단. 두 emit 지점의 payload가 상보적일 수 있어(실측:
+            # 한쪽 order_no만·다른쪽 price만) 기존 행에 없는 키만 보충한다.
+            try:
+                existing_payload = json.loads(duplicate["payload_json"] or "{}")
+            except json.JSONDecodeError:
+                existing_payload = {}
+            merged = {**(evt.payload or {}), **existing_payload}
+            if merged != existing_payload:
+                conn.execute(
+                    "UPDATE lifecycle_events SET payload_json=? WHERE event_id=?",
+                    (json.dumps(merged, ensure_ascii=False, sort_keys=True), int(duplicate["event_id"])),
+                )
+            return int(duplicate["event_id"])
+        cur = conn.execute(
+            """
+            INSERT INTO lifecycle_events (
+                event_uuid, event_type, market, runtime_mode, session_date,
+                ticker, decision_id, execution_id, position_id,
+                prompt_version, brain_snapshot_id, occurred_at, reason_code,
+                data_quality, payload_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                evt.event_uuid,
+                evt.event_type,
+                evt.market,
+                evt.runtime_mode,
+                evt.session_date,
+                evt.ticker,
+                evt.decision_id,
+                evt.execution_id,
+                evt.position_id,
+                evt.prompt_version,
+                evt.brain_snapshot_id,
+                evt.occurred_at,
+                evt.reason_code,
+                evt.data_quality,
+                json.dumps(evt.payload, ensure_ascii=False, sort_keys=True),
+                utc_now_iso(),
+            ),
+        )
+        if evt.event_type not in NON_STATUS_EVENT_TYPES:
+            conn.execute(
+                "UPDATE v2_decisions SET status=?, updated_at=? WHERE decision_id=?",
+                (evt.event_type, utc_now_iso(), evt.decision_id),
+            )
+        return int(cur.lastrowid)
+
     def append(self, event: LifecycleEvent) -> int:
         evt = event.normalized()
         if not evt.decision_id:
@@ -248,86 +327,14 @@ class EventStore:
         if not evt.brain_snapshot_id:
             raise ValueError("brain_snapshot_id is required for lifecycle events")
         with self.connect() as conn:
-            cur = conn.execute(
-                """
-                INSERT INTO lifecycle_events (
-                    event_uuid, event_type, market, runtime_mode, session_date,
-                    ticker, decision_id, execution_id, position_id,
-                    prompt_version, brain_snapshot_id, occurred_at, reason_code,
-                    data_quality, payload_json, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    evt.event_uuid,
-                    evt.event_type,
-                    evt.market,
-                    evt.runtime_mode,
-                    evt.session_date,
-                    evt.ticker,
-                    evt.decision_id,
-                    evt.execution_id,
-                    evt.position_id,
-                    evt.prompt_version,
-                    evt.brain_snapshot_id,
-                    evt.occurred_at,
-                    evt.reason_code,
-                    evt.data_quality,
-                    json.dumps(evt.payload, ensure_ascii=False, sort_keys=True),
-                    utc_now_iso(),
-                ),
-            )
-            if evt.event_type not in NON_STATUS_EVENT_TYPES:
-                conn.execute(
-                    """
-                    UPDATE v2_decisions
-                    SET status=?, updated_at=?
-                    WHERE decision_id=?
-                    """,
-                    (evt.event_type, utc_now_iso(), evt.decision_id),
-                )
-            return int(cur.lastrowid)
+            return self._append_one(conn, evt)
 
     def append_many(self, events: Iterable[LifecycleEvent]) -> list[int]:
         ids: list[int] = []
         with self.connect() as conn:
             for event in events:
                 evt = event.normalized()
-                cur = conn.execute(
-                    """
-                    INSERT INTO lifecycle_events (
-                        event_uuid, event_type, market, runtime_mode, session_date,
-                        ticker, decision_id, execution_id, position_id,
-                        prompt_version, brain_snapshot_id, occurred_at, reason_code,
-                        data_quality, payload_json, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        evt.event_uuid,
-                        evt.event_type,
-                        evt.market,
-                        evt.runtime_mode,
-                        evt.session_date,
-                        evt.ticker,
-                        evt.decision_id,
-                        evt.execution_id,
-                        evt.position_id,
-                        evt.prompt_version,
-                        evt.brain_snapshot_id,
-                        evt.occurred_at,
-                        evt.reason_code,
-                        evt.data_quality,
-                        json.dumps(evt.payload, ensure_ascii=False, sort_keys=True),
-                        utc_now_iso(),
-                    ),
-                )
-                ids.append(int(cur.lastrowid))
-                if evt.event_type not in NON_STATUS_EVENT_TYPES:
-                    conn.execute(
-                        "UPDATE v2_decisions SET status=?, updated_at=? WHERE decision_id=?",
-                        (evt.event_type, utc_now_iso(), evt.decision_id),
-                    )
+                ids.append(self._append_one(conn, evt))
         return ids
 
     def create_decision(

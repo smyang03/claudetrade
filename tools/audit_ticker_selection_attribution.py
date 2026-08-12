@@ -393,8 +393,10 @@ def _classify_row(
     ticker = _ticker_key(market, row.get("ticker"))
     trade_ready = _int(row.get("trade_ready"))
     execution_decision_id = str(row.get("execution_decision_id") or "").strip()
+    execution_reason = str(row.get("execution_reason") or "").strip()
     issues: list[str] = []
-    if not execution_decision_id:
+    # legacy_unattributed_final: 미귀속 확정 마킹(운영자 승인 2026-08-13) — 결손으로 세지 않는다
+    if not execution_decision_id and execution_reason != "legacy_unattributed_final":
         issues.append("missing_execution_decision_id")
     if trade_ready == 0:
         issues.append("watch_only_traded")

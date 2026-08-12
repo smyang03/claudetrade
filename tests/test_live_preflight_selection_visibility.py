@@ -112,20 +112,28 @@ def test_ticker_selection_attribution_check_reports_missing_execution_ids(tmp_pa
                 ticker TEXT,
                 trade_ready INTEGER,
                 traded INTEGER,
-                execution_decision_id TEXT
+                execution_decision_id TEXT,
+                execution_reason TEXT
             )
             """
         )
         conn.execute(
             """
             INSERT INTO ticker_selection_log
-            VALUES ('live', 'KR', '2026-06-04', '005930', 0, 1, '')
+            VALUES ('live', 'KR', '2026-06-04', '005930', 0, 1, '', '')
             """
         )
         conn.execute(
             """
             INSERT INTO ticker_selection_log
-            VALUES ('live', 'US', '2026-06-04', 'NVDA', 1, 1, 'dec_us_nvda')
+            VALUES ('live', 'US', '2026-06-04', 'NVDA', 1, 1, 'dec_us_nvda', 'order_sent')
+            """
+        )
+        # 미귀속 확정 마킹(legacy_unattributed_final)은 결손으로 세지 않는다
+        conn.execute(
+            """
+            INSERT INTO ticker_selection_log
+            VALUES ('live', 'KR', '2026-05-11', '018880', 1, 1, '', 'legacy_unattributed_final')
             """
         )
 
@@ -134,7 +142,9 @@ def test_ticker_selection_attribution_check_reports_missing_execution_ids(tmp_pa
 
     check = checks[0]
     assert check.status == "WARN"
-    assert check.data["traded_rows"] == 2
+    assert check.data["traded_rows"] == 3
     assert check.data["missing_execution_decision_id_rows"] == 1
     assert check.data["watch_only_traded_rows"] == 1
+    assert check.data["legacy_unattributed_rows"] == 1
     assert "missing_execution_decision_id=1" in check.detail
+    assert "legacy_unattributed_rows=1" in check.detail

@@ -5778,13 +5778,21 @@ def _ticker_selection_attribution_checks(mode: str) -> list[CheckResult]:
         columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(ticker_selection_log)")}
         if "execution_decision_id" not in columns:
             return [CheckResult("ticker_selection.execution_attribution", "WARN", "execution_decision_id column missing")]
+        # legacy_unattributed_final: 재구성(2026-08-01) 이전 레거시 매수 경로의 미귀속
+        # 확정 건(2026-04~05, 23건). 운영자 승인(2026-08-13)으로 결손 경보에서 제외한다.
+        reason_expr = "COALESCE(execution_reason, '')" if "execution_reason" in columns else "''"
         rows = conn.execute(
-            """
+            f"""
             SELECT market,
                    COUNT(*) AS traded_rows,
                    SUM(CASE WHEN COALESCE(trade_ready, 0)=0 THEN 1 ELSE 0 END) AS watch_only_traded_rows,
-                   SUM(CASE WHEN execution_decision_id IS NULL OR TRIM(execution_decision_id)='' THEN 1 ELSE 0 END) AS missing_execution_decision_id_rows,
+                   SUM(CASE WHEN (execution_decision_id IS NULL OR TRIM(execution_decision_id)='')
+                            AND {reason_expr}!='legacy_unattributed_final'
+                            THEN 1 ELSE 0 END) AS missing_execution_decision_id_rows,
                    SUM(CASE WHEN execution_decision_id IS NOT NULL AND TRIM(execution_decision_id)!='' THEN 1 ELSE 0 END) AS linked_execution_decision_id_rows,
+                   SUM(CASE WHEN (execution_decision_id IS NULL OR TRIM(execution_decision_id)='')
+                            AND {reason_expr}='legacy_unattributed_final'
+                            THEN 1 ELSE 0 END) AS legacy_unattributed_rows,
                    MIN(date) AS min_date,
                    MAX(date) AS max_date
             FROM ticker_selection_log
@@ -5804,14 +5812,17 @@ def _ticker_selection_attribution_checks(mode: str) -> list[CheckResult]:
     traded_total = 0
     missing_total = 0
     watch_only_traded_total = 0
+    legacy_unattributed_total = 0
     for row in rows:
         traded_rows = int(row[1] or 0)
         watch_only_rows = int(row[2] or 0)
         missing_rows = int(row[3] or 0)
         linked_rows = int(row[4] or 0)
+        legacy_rows = int(row[5] or 0)
         traded_total += traded_rows
         missing_total += missing_rows
         watch_only_traded_total += watch_only_rows
+        legacy_unattributed_total += legacy_rows
         markets.append(
             {
                 "market": str(row[0] or ""),
@@ -5819,15 +5830,17 @@ def _ticker_selection_attribution_checks(mode: str) -> list[CheckResult]:
                 "watch_only_traded_rows": watch_only_rows,
                 "missing_execution_decision_id_rows": missing_rows,
                 "linked_execution_decision_id_rows": linked_rows,
-                "min_date": row[5] or "",
-                "max_date": row[6] or "",
+                "legacy_unattributed_rows": legacy_rows,
+                "min_date": row[6] or "",
+                "max_date": row[7] or "",
             }
         )
 
     status = "PASS" if missing_total == 0 and watch_only_traded_total == 0 else "WARN"
     detail = (
         f"traded_rows={traded_total} missing_execution_decision_id={missing_total} "
-        f"watch_only_traded_rows={watch_only_traded_total}"
+        f"watch_only_traded_rows={watch_only_traded_total} "
+        f"legacy_unattributed_rows={legacy_unattributed_total}"
     )
     data = {
         "path": str(path),
@@ -5836,6 +5849,7 @@ def _ticker_selection_attribution_checks(mode: str) -> list[CheckResult]:
         "traded_rows": traded_total,
         "missing_execution_decision_id_rows": missing_total,
         "watch_only_traded_rows": watch_only_traded_total,
+        "legacy_unattributed_rows": legacy_unattributed_total,
     }
     if status == "WARN":
         data.update(
