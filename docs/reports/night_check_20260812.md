@@ -72,11 +72,17 @@ rank1 차단 시 rank2 폴백 같은 레버는 전략 변경 → 사전등록+�
 ## 6. 운영자 결정 대기 항목
 
 1. ~~봇 재시작~~ — **완료(08-12 00:52, §2)**
-2. **R4 게이트 15→10 단축** — R2 전례(2025 독립연도 재현 보유) 동일 논리, ~2주 단축.
-   단 현 forward가 음수라 **실패 판정도 빨라지는 방향 중립 레버**임을 명시
-3. AXON·STEP 원장 사유 정정 여부 — 증거는 본 보고서 §2 (AXON 라벨은 "허들 차단 — 하위 가드 미평가")
-4. PathB stale 4건(07-22 WAITING 잔재, 주문 불능·무해) — 정리 도구는 report 전용이라 DB 정정은 별도 승인
-5. 백업 중복 삭제 — candidate_audit.db.bak 07-23자 3개(~17.7GB). 디스크 여유 252GB라 급하지 않음
+2. ~~R4 게이트 15→10 단축~~ — **완료(08-12 운영자 승인·적용)**: `kr_fallen_gate_report.py`
+   GATE_MIN_SETTLED_BY_RULE에 R4_갭할인=10 추가 + 사전등록 문서에 개정 행 기록(forward
+   3건 −2.21% 음수 상태의 결정임을 명시 — 방향 중립, 15영업일·2주 분산 불변). 리포트 실측 확인
+3. ~~AXON·STEP 원장 사유 정정~~ — **완료(08-12 운영자 승인)**: us_swing_shadow.db signals
+   rowid 103 AXON → `probability_below_hurdle`(허들 차단 — 하위 가드 미평가, vocab에 주석
+   컬럼이 없어 이 문서가 주석 정본), rowid 112 STEP → `price_chase_above_contract`. 전후 행 실측
+4. ~~PathB stale 4건~~ — **완료(08-12 운영자 승인)**: KR 215790 WAITING(07-22)→EXPIRED,
+   US ARM·FUN·MUSA ORDER_ACKED(06-10~11)→CANCELLED(cancel_reason=stale_no_broker_exposure).
+   prior_status는 plan.remediation에 보존. 재검증 stale_active.count=0
+5. ~~백업 중복 삭제~~ — **완료(08-12)**: 07-23자 3개 17.69GB 삭제.
+   **07-24자 bak(6.28GB)는 승인 범위 밖이라 보존**
 
 ## 7. 오늘(08-12) 일정
 

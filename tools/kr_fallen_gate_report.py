@@ -29,7 +29,9 @@ GATE_MIN_SETTLED = 15    # 규칙별 정산 건
 GATE_MIN_WEEKS = 2       # 주간 분산
 # 2026-08-04 운영자 결정: R2는 2025 out-of-sample 재현(+6.43/PF5.07/알파+3.62)으로
 # 정산 요건 10건 단축. R1은 같은 검증에서 음수(-1.71/알파-2.49) — 15건 유지.
-GATE_MIN_SETTLED_BY_RULE = {"R2_할인저변동": 10}
+# 2026-08-12 운영자 결정: R4도 10건 단축 — R2와 동일 논리(2025 독립연도 재현 +5.33/알파+2.73).
+# 방향 중립 레버: 현 forward 3건 -2.21%라 실패 판정도 같이 앞당겨진다. 15영업일·2주 분산 불변.
+GATE_MIN_SETTLED_BY_RULE = {"R2_할인저변동": 10, "R4_갭할인": 10}
 
 
 def _bench_map() -> tuple[list[str], dict[str, float]]:
@@ -239,7 +241,9 @@ def main() -> int:
     rows = [json.loads(x) for x in LEDGER.read_text(encoding="utf-8").splitlines() if x.strip()]
     sessions = sorted({r["session_date"] for r in rows})
     print(f"원장 {len(rows)}행 / 관측 세션 {len(sessions)}일 ({sessions[0]} ~ {sessions[-1]})")
-    print(f"게이트 기준: {GATE_MIN_SESSIONS}영업일 AND 규칙별 정산 {GATE_MIN_SETTLED}건 AND {GATE_MIN_WEEKS}개 주간 분산\n")
+    overrides = ", ".join(f"{k}={v}건" for k, v in GATE_MIN_SETTLED_BY_RULE.items())
+    print(f"게이트 기준: {GATE_MIN_SESSIONS}영업일 AND 규칙별 정산 {GATE_MIN_SETTLED}건"
+          f"(단축: {overrides}) AND {GATE_MIN_WEEKS}개 주간 분산\n")
 
     bdates, bench = _bench_map()
     stats: dict[str, dict] = {}
