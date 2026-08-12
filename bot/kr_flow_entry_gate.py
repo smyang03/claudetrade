@@ -49,7 +49,7 @@ def evaluate_flow_entry_gate(flow_record: dict[str, Any] | None, mode: str) -> d
     block(bool): 실제 진입을 막아야 하는가(enforce + flow-negative일 때만 True)
 
     날짜 가드(2026-08-13): flow_date_matched가 True가 아니면 차단하지 않는다.
-    API output[0] 폴백이 다른 날짜의 비영(非零) 수급을 돌려주면 trusted=True인 채
+    API output[0] 폴백이 다른 날짜의 0이 아닌 수급을 돌려주면 trusted=True인 채
     엉뚱한 날 데이터로 차단할 수 있다 — 실측 발생 0건(239판정 전량 매칭)이지만
     구조적으로 막는다. 결손과 같은 fail-open 경로라 진입을 죽이지 않는다.
     """
