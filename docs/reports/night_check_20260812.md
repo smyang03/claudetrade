@@ -89,6 +89,11 @@ rank1 차단 시 rank2 폴백 같은 레버는 전략 변경 → 사전등록+�
 - 09:02 KR 합집합 첫 가동 → **SKIP 예상 확인됨**(08-11 스캔 10건 전부 R2/R4 미충족 — feats 실측)
 - 22:20 runner: 후보 연령 원장 첫 자동 기록 + TP 포획 history 141(임계는 150 도달 시 08-13~14 자동)
 - 22:30 US 창: MXL 보유 중(슬롯 1/3) — rank1 신규 신호 평가
-- B5 조각(R2/R4 코호트 KOSPI/KOSDAQ 분해): 스크립트 준비됨, pykrx 시장목록 API 심야 불응으로
-  아침 실행 대기 (`scratchpad/b5_market_split.py`)
+- ~~B5 조각(R2/R4 코호트 KOSPI/KOSDAQ 분해)~~ — **완료(08-12 오전, 운영자 승인)**.
+  pykrx 시장목록이 주간에도 빈 응답이라 로컬 실측 기록(ticker_selection_log +
+  audit_candidate_rows의 market_type, 커버리지 96%)으로 분류 교체. 결과: **풀 전체의
+  KOSDAQ 열위(B2-9)가 규칙 통과분 안에선 역전 — 배제·차등 근거 없음.** R4는 양 시장 동등
+  (2026 KOSDAQ +5.20% vs KOSPI +4.43% / 2025 +3.75 vs +3.87), R5V 동등 이상. 신규 관측:
+  R2가 KOSPI에서 양 연도 일관 음수(2026 −0.53/PF 0.90, 2025 −0.21/PF 0.94 vs KOSDAQ
+  +1.69/+3.40) — 관측만 기록(조건 변경은 사다리 밖 재론 금지)
 - ~08-15 MXL D5 만기 경로 확인(TP 78.58 / SL 52.62 / isolated_exit_owner=us_swing_5d 실측)
