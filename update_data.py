@@ -12,6 +12,7 @@ import argparse
 from contextlib import contextmanager
 import json
 import os
+import subprocess
 import sys
 import uuid
 from datetime import date, datetime, timedelta
@@ -22,6 +23,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 from logger import get_trading_logger
 from runtime_paths import get_runtime_path
 
+try:
+    import psutil  # type: ignore
+except ImportError:  # pragma: no cover
+    psutil = None
+
 log = get_trading_logger()
 
 
@@ -30,10 +36,38 @@ class UpdateAlreadyRunning(RuntimeError):
 
 
 def _pid_alive(pid: int) -> bool:
-    if int(pid or 0) <= 0:
+    """PID 생존 확인 — Windows에서 os.kill(pid, 0)은 절대 쓰지 않는다.
+
+    사고(2026-08-13): Windows의 os.kill(pid, 0)은 프로브가 아니라
+    TerminateProcess(pid, 0)다 — "확인"이 대상 프로세스를 즉사시킨다.
+    실측 피해 2건: ① pytest가 자기 lock pid를 확인하다 자살(전체 스위트 3연속
+    93% 지점 사망), ② stale lock(죽은 pid)을 확인할 때마다 그 번호를 재사용한
+    무고한 프로세스가 저격당하고, 저격 후 "살아있음"으로 오판해 update를 건너뜀.
+    psutil 우선, Windows 폴백은 tasklist(읽기 전용)만 쓴다.
+    """
+    pid = int(pid or 0)
+    if pid <= 0:
         return False
+    if pid == os.getpid():
+        return True
+    if psutil is not None:
+        try:
+            return bool(psutil.pid_exists(pid))
+        except Exception:
+            return False
+    if sys.platform.startswith("win"):
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return str(pid) in (result.stdout or "")
+        except Exception:
+            return False
     try:
-        os.kill(int(pid), 0)
+        os.kill(pid, 0)
         return True
     except OSError:
         return False
