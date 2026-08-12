@@ -638,6 +638,9 @@ def _record_market_width(session_date: str) -> None:
         )
         quotes = (resp.json().get("finance", {}).get("result") or [{}])[0].get("quotes", [])
         n5 = n5_eligible = 0
+        # 2026-08-12: 집계만으론 "컷 10 밖 후보의 사후 성과"를 영영 물을 수 없어
+        # 종목별 행을 함께 남긴다(관측 전용 유지 — 신호·주문 어디에도 입력되지 않는다).
+        ticker_rows: list[dict] = []
         for q in quotes:
             chg = q.get("regularMarketChangePercent")
             px = q.get("regularMarketPrice")
@@ -645,12 +648,21 @@ def _record_market_width(session_date: str) -> None:
             if chg is None or px is None or chg > -5:
                 continue
             n5 += 1
-            if px >= 5 and px * vol >= 15e6:
+            eligible = bool(px >= 5 and px * vol >= 15e6)
+            if eligible:
                 n5_eligible += 1
+            ticker_rows.append({
+                "ticker": str(q.get("symbol") or ""),
+                "chg_pct": round(float(chg), 2),
+                "price": round(float(px), 4),
+                "dollar_vol": round(float(px) * float(vol), 0),
+                "eligible": eligible,
+            })
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps({
                 "session_date": str(session_date), "screener_rows": len(quotes),
                 "losers_le_minus5": n5, "eligible_le_minus5": n5_eligible,
+                "tickers": ticker_rows,
             }, ensure_ascii=False) + "\n")
     except Exception:
         pass
