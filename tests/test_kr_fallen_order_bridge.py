@@ -180,3 +180,74 @@ def test_invalid_active_rule_fails_closed(tmp_path: Path) -> None:
     assert result["status"] == "ERROR"
     assert str(result["reason"]).startswith("invalid_active_rule")
     assert not bot.submits
+
+
+def _run_with_blind(bot: FakeBot, ledger_rows: list[dict], blind_rows: list[dict],
+                    quote_price: float = 9500.0):
+    ledger = bot.tmp / "ledger.jsonl"
+    blind = bot.tmp / "blind.jsonl"
+    ledger.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in ledger_rows), encoding="utf-8")
+    blind.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in blind_rows), encoding="utf-8")
+    opened = datetime.now(KST) - timedelta(minutes=10)
+    with patch.object(bridge, "LEDGER", ledger), patch.object(bridge, "BLIND_LEDGER", blind), patch(
+        "runtime.kr_fallen_order_bridge.regular_open_dt", return_value=opened
+    ), patch(
+        "runtime.kr_fallen_order_bridge.get_price", return_value={"price": quote_price}
+    ), patch(
+        "runtime.kr_fallen_order_bridge.get_runtime_path",
+        side_effect=lambda *parts, **_: bot.tmp.joinpath(*parts),
+    ):
+        return bridge.run_kr_fallen_handoff(bot)
+
+
+def _blind_row(ticker: str, session: str, gap: float, disc: float) -> dict:
+    r = _row_gap(ticker, session, gap=gap, disc=disc, rv20=12.0)
+    r["observe_only"] = True
+    r["capture_path"] = "blindspot_gap_disc"
+    return r
+
+
+def test_blindspot_ignored_when_flag_off(tmp_path: Path) -> None:
+    # 2026-08-13 사각 편입: 스위치 off(기본)면 사각 원장은 후보로 읽지 않는다
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_ACTIVE_RULE"] = "R2+R4"
+    result = _run_with_blind(bot, [], [_blind_row("BLIND", "2026-08-04", gap=-5.0, disc=-16.0)])
+    assert result["status"] == "SKIPPED" and result["reason"] == "no_prior_session_candidates"
+    assert not bot.submits
+
+
+def test_blindspot_enters_with_r4b_attribution_when_enabled(tmp_path: Path) -> None:
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_ACTIVE_RULE"] = "R2+R4"
+    bot.values["KR_FALLEN_BLINDSPOT_ENTRY_ENABLED"] = True
+    result = _run_with_blind(bot, [], [_blind_row("BLIND", "2026-08-04", gap=-5.0, disc=-16.0)])
+    assert result["status"] == "EVALUATED"
+    assert result["rule"].endswith("+blind")
+    assert len(bot.submits) == 1 and bot.submits[0]["ticker"] == "BLIND"
+    # 귀속: 본 원장 경유(kr_fallen_r4)와 분리되는 r4b 태그
+    assert bot.submits[0]["selected_reason"] == "kr_fallen_r4b"
+
+
+def test_blindspot_same_ticker_main_ledger_wins(tmp_path: Path) -> None:
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_ACTIVE_RULE"] = "R2+R4"
+    bot.values["KR_FALLEN_BLINDSPOT_ENTRY_ENABLED"] = True
+    main = [_row_gap("DUP", "2026-08-04", gap=-5.0, disc=-16.0, rv20=12.0)]
+    blind = [_blind_row("DUP", "2026-08-04", gap=-5.0, disc=-16.0)]
+    result = _run_with_blind(bot, main, blind)
+    assert result["status"] == "EVALUATED"
+    assert len(bot.submits) == 1
+    assert bot.submits[0]["selected_reason"] == "kr_fallen_r4"  # 본 원장 우선 → r4b 아님
+
+
+def test_blindspot_merged_pool_keeps_discount_priority(tmp_path: Path) -> None:
+    # 통합 정렬은 할인 깊은 순 하나 — 사각이 더 깊으면 1순위
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_ACTIVE_RULE"] = "R2+R4"
+    bot.values["KR_FALLEN_BLINDSPOT_ENTRY_ENABLED"] = True
+    main = [_row("DEEP", "2026-08-04", -26.0, 5.0)]  # R2 충족, 할인 -26
+    blind = [_blind_row("DEEPER", "2026-08-04", gap=-6.0, disc=-31.0)]
+    result = _run_with_blind(bot, main, blind)
+    assert result["status"] == "EVALUATED"
+    assert bot.submits[0]["ticker"] == "DEEPER"
+    assert bot.submits[0]["selected_reason"] == "kr_fallen_r4b"

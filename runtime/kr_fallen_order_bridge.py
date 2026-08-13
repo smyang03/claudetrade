@@ -40,6 +40,9 @@ log = get_trading_logger()
 LIVE_ACK = "I_ACCEPT_LIVE_KR_FALLEN"
 SOURCE_STRATEGY = "kr_fallen_5d"
 LEDGER = Path(__file__).resolve().parents[1] / "data" / "shadow" / "kr_fallen_shadow.jsonl"
+# 사각(장중 회복형 R4) 관측 원장 — 2026-08-13 편입 승인(proposal_kr_fallen_blindspot_
+# inclusion_20260813). KR_FALLEN_BLINDSPOT_ENTRY_ENABLED=true일 때만 후보로 읽는다.
+BLIND_LEDGER = Path(__file__).resolve().parents[1] / "data" / "shadow" / "kr_fallen_blindspot_shadow.jsonl"
 
 
 def _write_status(bot: Any, session_date: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -113,30 +116,53 @@ def _append_history(payload: dict[str, Any]) -> None:
         log.warning(f"[KR fallen handoff] history append failed: {exc}")
 
 
-def _load_candidates(prev_session: str, rule_keys: tuple[str, ...]) -> list[dict]:
+def _load_candidates(
+    prev_session: str,
+    rule_keys: tuple[str, ...],
+    *,
+    include_blindspot: bool = False,
+) -> list[dict]:
     """활성 규칙(합집합 가능) 통과 후보 로드 — 2026-08-10 design_kr_union_rule.
 
     합집합 의미: 규칙 키 중 하나라도 충족하면 후보다(같은 행 중복 없음).
     각 행에 `_matched_rules`(충족 규칙 short 목록)를 붙여 판정 시 R4∖R2
     순증분 분해를 이력에서 직접 복원할 수 있게 한다.
+
+    사각 편입(2026-08-13 승인): include_blindspot=True면 사각 원장의 같은 세션
+    행도 동일 rule_flags로 평가해 합류한다. 귀속은 `R4b`처럼 소문자 b를 붙여
+    본 원장 경유분과 분리 집계한다. 같은 종목이 양쪽에 있으면 본 원장 우선.
+    정렬은 통합 후 할인 깊은 순 하나로 유지(E5 검증 랭킹의 일관 적용).
     """
-    if not LEDGER.exists():
-        return []
-    out = []
-    for line in LEDGER.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if row.get("session_date") != prev_session:
-            continue
-        flags = rule_flags(row)
-        matched = [key.split("_")[0] for key in rule_keys if flags.get(key)]
-        if matched:
-            row["_matched_rules"] = matched
-            out.append(row)
+    def _rows_from(path: Path, *, blind: bool) -> list[dict]:
+        if not path.exists():
+            return []
+        rows = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if row.get("session_date") != prev_session:
+                continue
+            flags = rule_flags(row)
+            matched = [key.split("_")[0] for key in rule_keys if flags.get(key)]
+            if not matched:
+                continue
+            if blind:
+                row["_matched_rules"] = [m + "b" for m in matched]
+                row["_capture_path"] = "blindspot"
+            else:
+                row["_matched_rules"] = matched
+            rows.append(row)
+        return rows
+
+    out = _rows_from(LEDGER, blind=False)
+    if include_blindspot:
+        seen = {str(r.get("ticker")) for r in out}
+        out.extend(r for r in _rows_from(BLIND_LEDGER, blind=True)
+                   if str(r.get("ticker")) not in seen)
     # 우선순위: ma20 할인 깊은 순 (E5 실측 — 랭킹 변경 근거 없음, 현행 유지)
     out.sort(key=lambda r: (r.get("feats") or {}).get("ma20_disc") or 0.0)
     return out
@@ -197,10 +223,16 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
     if _today_new_count(bot, session_date) >= max_new:
         return _write_status(bot, session_date, {"status": "BLOCKED", "reason": "daily_new_entry_cap_reached"})
 
-    # 직전 영업일 = 원장에서 오늘보다 앞선 가장 최근 세션
+    # 직전 영업일 = 원장에서 오늘보다 앞선 가장 최근 세션.
+    # 사각 편입 시 사각 원장 세션도 포함한다 — 본 원장이 비고 사각만 있는 날의
+    # 신호를 놓치지 않기 위함(신선도 가드는 그대로 적용).
+    include_blind = bot._runtime_bool("KR_FALLEN_BLINDSPOT_ENTRY_ENABLED", False)
+    ledger_paths = [LEDGER, BLIND_LEDGER] if include_blind else [LEDGER]
     sessions = set()
-    if LEDGER.exists():
-        for line in LEDGER.read_text(encoding="utf-8").splitlines():
+    for ledger_path in ledger_paths:
+        if not ledger_path.exists():
+            continue
+        for line in ledger_path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 try:
                     d = json.loads(line).get("session_date")
@@ -234,7 +266,9 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
         return _write_status(bot, session_date, {"status": "ERROR",
                                                  "reason": f"invalid_active_rule:{rule_raw}"})
     rule_label = "+".join(key.split("_")[0] for key in rule_keys)
-    candidates = _load_candidates(prev_session, rule_keys)
+    if include_blind:
+        rule_label += "+blind"
+    candidates = _load_candidates(prev_session, rule_keys, include_blindspot=include_blind)
     if not candidates:
         return _write_status(bot, session_date, {"status": "SKIPPED", "reason": "no_rule_candidates",
                                                  "prev_session": prev_session, "rule": rule_label})
