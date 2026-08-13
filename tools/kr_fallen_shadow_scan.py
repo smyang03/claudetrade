@@ -96,6 +96,14 @@ def _instrument_type(code: str) -> str:
         return "일반주"
     return "ETF계열" if str(code).endswith("0") else "우선주"
 UNIVERSE = ROOT / "data" / "analysis" / "kr_fallen_universe.json"
+# 사각 관측 원장(2026-08-13 운영자 승인): R4 형태(gap<=-4 & disc<=-15)인데 당일
+# 종가낙폭이 drop_ge(5.27%) 미만이라 본 원장에 안 잡히는 "장중 회복형"을 별도
+# 파일로 기록만 한다. 브리지·게이트·정산 통계는 본 원장(OUT)만 읽으므로 구조적
+# 격리다. 외부 백테스트(네이버, 2026-01~08): 사각 105건 +5.69%/건 — 내부 원장으로
+# 재확인될 때까지 observe_only. 편입은 별도 승인.
+BLIND_OUT = ROOT / "data" / "shadow" / "kr_fallen_blindspot_shadow.jsonl"
+BLIND_GAP_LE = -4.0
+BLIND_DISC_LE = -15.0
 COST = 0.25
 
 CONDS_DOC = {
@@ -109,6 +117,7 @@ def scan(date_str: str) -> int:
     d_iso = day.strftime("%Y-%m-%d")
     cache = json.loads(CACHE.read_text(encoding="utf-8"))
     rows = []
+    blind_rows = []
     n_hasday = 0
     for code, bars in cache.items():
         if not bars or len(bars) < 25:
@@ -126,13 +135,17 @@ def scan(date_str: str) -> int:
         if prev <= 0:
             continue
         chg = 100 * (b["c"] / prev - 1)
-        if not (-29.7 <= chg <= -CONDS_DOC["drop_ge"]) or b["c"] < CONDS_DOC["price_ge"]:
+        gap = 100 * (b["o"] / prev - 1) if b["o"] > 0 else 0.0
+        drop_capture = -29.7 <= chg <= -CONDS_DOC["drop_ge"]
+        # 사각 후보: 갭은 R4 대역인데 종가낙폭이 drop_ge 미만(장중 회복형).
+        # disc 조건은 ma20 계산 후 최종 판정한다. 하한가 잠김·거래정지(o<=0)는 제외.
+        blind_candidate = (not drop_capture) and chg > -29.7 and b["o"] > 0 and gap <= BLIND_GAP_LE
+        if (not drop_capture and not blind_candidate) or b["c"] < CONDS_DOC["price_ge"]:
             continue
         w20 = bars[idx - 20:idx]
         amt20 = sum(x["amt"] for x in w20) / 20
         if amt20 < 1e9:
             continue
-        gap = 100 * (b["o"] / prev - 1)
         rng = b["h"] - b["l"]
         v20 = sum(x["v"] for x in w20) / 20
         ma20 = sum(x["c"] for x in w20) / 20
@@ -164,7 +177,7 @@ def scan(date_str: str) -> int:
             "rv20": feats["rv20"] <= CONDS_DOC["rv20_le"],
             "price": feats["price"] >= CONDS_DOC["price_ge"],
         }
-        rows.append({
+        row = {
             "scanned_at": datetime.now().isoformat(timespec="seconds"),
             "session_date": d_iso,
             "ticker": code,
@@ -182,13 +195,34 @@ def scan(date_str: str) -> int:
             "entry_rule": "next_open",
             "exit_rule": "TP12_SL25_D5_cost0.25",
             "entry_price": None, "exit_price": None, "net_pct": None,
-        })
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    # 재실행 중복 방지: 같은 (session_date, ticker)가 원장에 있으면 다시 쓰지 않는다
-    # (append 모드라 --date 재실행 시 PENDING 중복행이 쌓여 정산·통계를 오염시키던 결함).
+        }
+        if drop_capture:
+            rows.append(row)
+        elif feats["ma20_disc"] <= BLIND_DISC_LE:
+            # 사각 관측 행 — 본 원장과 다른 파일에만 기록(브리지·게이트 격리)
+            row["observe_only"] = True
+            row["capture_path"] = "blindspot_gap_disc"
+            blind_rows.append(row)
+    n_new, n_dup = _append_dedupe(OUT, rows)
+    n_blind_new, n_blind_dup = _append_dedupe(BLIND_OUT, blind_rows)
+    n_pass = sum(1 for r in rows if r["pass_all"])
+    print("캐시 내 %s 보유 %d종목 / 낙폭후보 %d건 기록 (8조건 전부 통과 %d건, 중복 스킵 %d건) -> %s" % (
+        d_iso, n_hasday, n_new, n_pass, n_dup, OUT))
+    print("사각 관측(observe_only) %d건 기록 (중복 스킵 %d건) -> %s" % (
+        n_blind_new, n_blind_dup, BLIND_OUT))
+    return 0
+
+
+def _append_dedupe(path: Path, rows: list) -> tuple[int, int]:
+    """(session_date, ticker) 중복을 건너뛰며 append. (신규, 중복) 건수 반환.
+
+    재실행 중복 방지: append 모드라 --date 재실행 시 PENDING 중복행이 쌓여
+    정산·통계를 오염시키던 결함의 재발 방지(본 원장·사각 원장 공통).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
     existing: set[tuple[str, str]] = set()
-    if OUT.exists():
-        for line in OUT.read_text(encoding="utf-8").splitlines():
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             try:
@@ -197,14 +231,10 @@ def scan(date_str: str) -> int:
                 continue
             existing.add((str(old.get("session_date")), str(old.get("ticker"))))
     new_rows = [r for r in rows if (r["session_date"], r["ticker"]) not in existing]
-    with open(OUT, "a", encoding="utf-8") as f:
+    with open(path, "a", encoding="utf-8") as f:
         for r in new_rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    n_pass = sum(1 for r in rows if r["pass_all"])
-    n_dup = len(rows) - len(new_rows)
-    print("캐시 내 %s 보유 %d종목 / 낙폭후보 %d건 기록 (8조건 전부 통과 %d건, 중복 스킵 %d건) -> %s" % (
-        d_iso, n_hasday, len(new_rows), n_pass, n_dup, OUT))
-    return 0
+    return len(new_rows), len(rows) - len(new_rows)
 
 
 def update_cache() -> int:
@@ -266,10 +296,16 @@ def update_cache() -> int:
 
 
 def settle() -> int:
-    if not OUT.exists():
-        print("shadow 원장 없음")
+    rc = _settle_file(OUT, label="본 원장")
+    _settle_file(BLIND_OUT, label="사각 관측")
+    return rc
+
+
+def _settle_file(path: Path, *, label: str) -> int:
+    if not path.exists():
+        print("%s 없음: %s" % (label, path))
         return 0
-    lines = [json.loads(x) for x in OUT.read_text(encoding="utf-8").splitlines() if x.strip()]
+    lines = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
     cache = json.loads(CACHE.read_text(encoding="utf-8"))
     changed = 0
     for r in lines:
@@ -312,15 +348,15 @@ def settle() -> int:
         r["status"] = "SETTLED"
         changed += 1
     if changed:
-        with open(OUT, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             for r in lines:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
     settled = [r for r in lines if r.get("status") == "SETTLED" and r.get("pass_all")]
     if settled:
         v = [r["net_pct"] for r in settled]
-        print("8조건 통과 만기 %d건: 평균 %.3f%% 승률 %.1f%%" % (
-            len(v), sum(v) / len(v), 100 * sum(1 for x in v if x > 0) / len(v)))
-    print("갱신 %d건" % changed)
+        print("[%s] 8조건 통과 만기 %d건: 평균 %.3f%% 승률 %.1f%%" % (
+            label, len(v), sum(v) / len(v), 100 * sum(1 for x in v if x > 0) / len(v)))
+    print("[%s] 갱신 %d건" % (label, changed))
     return 0
 
 
