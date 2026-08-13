@@ -793,11 +793,51 @@ def fetch_us_daily_yfinance(ticker: str, start_dt: pd.Timestamp, end_dt: pd.Time
     return df.sort_values("date").reset_index(drop=True)
 
 
+def _last_completed_us_session_date(now_et: datetime | None = None) -> pd.Timestamp:
+    """마지막으로 마감이 확정된 미국 세션 날짜(ET 16:05 이후에만 당일 인정)."""
+    from zoneinfo import ZoneInfo
+
+    now = now_et or datetime.now(ZoneInfo("America/New_York"))
+    day = now.date()
+    if now.hour < 16 or (now.hour == 16 and now.minute < 5):
+        day = day - timedelta(days=1)
+    return pd.Timestamp(day)
+
+
+def _drop_incomplete_us_bars(df: pd.DataFrame, now_et: datetime | None = None) -> pd.DataFrame:
+    """마감 전 세션의 진행 중 일봉 제거.
+
+    사고(2026-08-13): 프리장/장중에 수집이 돌면 yfinance가 진행 중 당일 봉을
+    돌려주고, 한 번 CSV에 쓰이면 freshness 스킵 + dedupe(first-wins)에 의해
+    영구 고착됐다(FRVO 기준종가 +11.7% 오염 -> rank1 차단, 당일 2/10 오염).
+    봉 날짜가 마지막 마감 확정 세션보다 미래면 버린다. 조기폐장일은 16:05까지
+    보수적으로 미확정 취급(하루 늦게 반영될 뿐 오염은 없음).
+    """
+    if df is None or df.empty or "date" not in df.columns:
+        return df
+    limit = _last_completed_us_session_date(now_et)
+    dates = pd.to_datetime(df["date"], errors="coerce")
+    try:
+        dates = dates.dt.tz_localize(None)
+    except TypeError:
+        pass
+    kept = df[dates <= limit]
+    dropped = len(df) - len(kept)
+    if dropped:
+        print(f"    (미완성 봉 {dropped}건 제외 — 마감 확정 세션 {limit.date()}까지만 기록)")
+    return kept
+
+
 def collect_us_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
     """
     미국 주가 증분 수집 — yfinance 우선 (장기 히스토리)
     US_TICKERS 목록 + 기존 price/us/ 디렉터리 CSV 모두 처리.
     기존 CSV가 있으면 시작일 소급 + 최신화를 동시에 수행.
+
+    2026-08-13 오염 수리 3종:
+      1) 마감 전 세션의 진행 중 봉은 기록하지 않는다(_drop_incomplete_us_bars).
+      2) "이미 최신"이어도 말단 7일은 항상 재수신해 교체한다(과거 고착 봉 자기 치유).
+      3) 병합 시 신규 데이터가 기존 행을 이긴다(concat 순서 — dedupe는 first-wins).
     """
     print(f"\n[미국 주가] {start_dt.date()} ~ {end_dt.date()}")
 
@@ -869,21 +909,33 @@ def collect_us_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
                 already_fresh = expected_last is not None and ex_max.normalize() >= expected_last
                 already_covers = ex_min <= start_dt + timedelta(days=5)
                 if already_fresh and already_covers:
-                    print(f"  [{ticker}] 이미 최신 — 스킵")
+                    # 스킵하지 않고 말단 7일만 재수신 — 과거에 굳은 미완성 봉을
+                    # 확정 종가로 교체한다(신규 우선 병합).
+                    tail_start = max(pd.Timestamp(start_dt), ex_max - timedelta(days=7))
+                    df_tail = _drop_incomplete_us_bars(fetch_us_daily_yfinance(ticker, tail_start, end_dt))
+                    time.sleep(0.15)
+                    if df_tail is not None and not df_tail.empty:
+                        combined = pd.concat([df_tail, existing])
+                        _save(path, combined, start_dt, end_dt, f"{name}({ticker})")
+                        print(f"  [{ticker}] 최신 — 말단 재수신 교체 완료")
+                    else:
+                        print(f"  [{ticker}] 이미 최신 — 스킵(말단 재수신 결과 없음)")
                     continue
 
             print(f"  [{ticker}] yfinance 조회 중...")
-            df_new = fetch_us_daily_yfinance(ticker, start_dt, end_dt)
+            df_new = _drop_incomplete_us_bars(fetch_us_daily_yfinance(ticker, start_dt, end_dt))
             time.sleep(0.3)
 
-            if not df_new.empty:
+            if df_new is not None and not df_new.empty:
                 existing_df = None
                 if path.exists():
                     loaded_df, load_result = load_price_csv_frame(path, "US", ticker)
                     if loaded_df is not None and load_result.status == "ok":
                         existing_df = loaded_df.copy()
                         existing_df["date"] = pd.to_datetime(existing_df["date"], errors="coerce")
-                combined = pd.concat([existing_df, df_new]) if existing_df is not None and not existing_df.empty else df_new
+                # 신규 데이터를 앞에 둔다 — normalize의 dedupe가 first-wins라
+                # 재수신한 확정 봉이 기존(미완성 가능) 행을 교체한다.
+                combined = pd.concat([df_new, existing_df]) if existing_df is not None and not existing_df.empty else df_new
                 _save(path, combined, start_dt, end_dt, f"{name}({ticker})")
             else:
                 print(f"  WARN  {name}({ticker}) 데이터 없음")

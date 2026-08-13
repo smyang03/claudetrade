@@ -383,6 +383,69 @@ def write_signals(
     return written
 
 
+def verify_reference_closes(
+    con: sqlite3.Connection, *, signal_date: str, tolerance_pct: float = 1.0
+) -> dict[str, Any]:
+    """기록 직후 전 랭크의 reference_close를 독립 소스(yfinance)와 대조해 오염 마킹.
+
+    사고(2026-08-13): 가격 CSV의 미완성 봉 고착으로 FRVO 기준종가가 +11.7% 어긋난
+    채 rank1이 됐다(주문은 독립 전일종가 가드가 차단, 당일 2/10 오염). 수집기 수리와
+    별개의 이중 방어 — 불일치 종목은 data_quality='reference_contaminated'로 남긴다.
+    랭킹·주문 개입 없음(코호트 통계 분리용). CSV와 같은 기준(auto_adjust=True).
+    실패는 조용히 스킵(관측 결측이 파이프라인을 막으면 안 된다).
+    """
+    out: dict[str, Any] = {"checked": 0, "contaminated": [], "error": ""}
+    try:
+        rows = con.execute(
+            "SELECT ticker, feature_date, reference_close FROM signals "
+            "WHERE signal_date=? AND reference_close IS NOT NULL",
+            (str(signal_date),),
+        ).fetchall()
+        if not rows:
+            return out
+        import yfinance as yf
+
+        feature_date = str(rows[0][1])
+        start = pd.Timestamp(feature_date)
+        data = yf.download(
+            [str(r[0]) for r in rows], start=start.strftime("%Y-%m-%d"),
+            end=(start + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+            interval="1d", auto_adjust=True, progress=False, threads=True,
+        )
+        closes = data.get("Close") if data is not None else None
+        if closes is None or closes.empty:
+            out["error"] = "independent_source_empty"
+            return out
+        for ticker, fdate, ref in rows:
+            ticker = str(ticker)
+            try:
+                series = closes[ticker] if ticker in getattr(closes, "columns", []) else closes
+                actual = float(series.dropna().iloc[-1])
+            except Exception:
+                continue
+            if not (actual > 0 and ref):
+                continue
+            out["checked"] += 1
+            deviation_pct = (float(ref) / actual - 1.0) * 100.0
+            if abs(deviation_pct) > float(tolerance_pct):
+                con.execute(
+                    "UPDATE signals SET data_quality='reference_contaminated' "
+                    "WHERE signal_date=? AND ticker=?",
+                    (str(signal_date), ticker),
+                )
+                out["contaminated"].append(
+                    {"ticker": ticker, "reference_close": float(ref),
+                     "independent_close": actual, "deviation_pct": round(deviation_pct, 2)}
+                )
+        if out["contaminated"]:
+            con.commit()
+            print(f"[reference verify] 오염 {len(out['contaminated'])}건 마킹: "
+                  + ", ".join(f"{c['ticker']}({c['deviation_pct']:+.1f}%)" for c in out["contaminated"]))
+    except Exception as exc:
+        out["error"] = str(exc)[:120]
+    return out
+
+
 def _fx_map_from_research_db(path: Path) -> dict[str, float]:
     if not path.exists():
         return {}
@@ -1291,6 +1354,8 @@ def main() -> int:
         generated = write_signals(
             con, signal_date=args.session_date, scored=scored, model_version=model_version
         )
+        # 2026-08-13 이중 방어: 기록 직후 전 랭크 기준종가 독립 대조(오염 마킹만, 개입 없음)
+        verify_reference_closes(con, signal_date=args.session_date)
         # 정보성 하락 배제 3-arm 기록(관찰 전용, 선정에 개입하지 않는다).
         news_arms = news_arm_counterfactual(scored.attrs.get("full_ranking", scored))
         try:
