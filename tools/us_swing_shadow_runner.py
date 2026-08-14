@@ -731,6 +731,210 @@ def _record_market_width(session_date: str) -> None:
         pass
 
 
+def _record_wide_net_shadow(
+    session_date: str,
+    *,
+    pool: pd.DataFrame,
+    pool_rank1: dict[str, Any] | None,
+    train: pd.DataFrame,
+    seeds: list[int],
+    price_dir: Path,
+    cost_pct: float,
+    tp_pct: float,
+    sl_pct: float,
+) -> None:
+    """넓은 그물 병렬 채점 관측 (2026-08-15 운영자 승인) — 주문·선정 무접촉, 기록만.
+
+    질문: 수집기 컷(~10) 밖의 적격 급락주까지 풀에 넣으면 모델이 더 좋은 rank1을
+    뽑는가(그물 폭 F2 축의 직접 A/B). 시장폭 원장(us_market_width.jsonl)의 적격
+    종목 전수를 본 채점과 **같은 train/seeds**로 채점해 '넓은 그물 rank1'을 별도
+    원장에 기록하고, 이전 세션 행은 두 rank1을 같은 계약(다음 시가 진입,
+    TP/SL/D5, 동일 비용, 동시터치 SL 우선)으로 짝지어 가상 정산한다.
+    실패는 조용히 스킵 — 관측 결측이 파이프라인을 막으면 안 된다.
+    """
+    path = ROOT / "data" / "shadow" / "us_wide_net_shadow.jsonl"
+    try:
+        import yfinance as yf
+
+        rows: list[dict[str, Any]] = []
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    try:
+                        rows.append(json.loads(line))
+                    except ValueError:
+                        pass
+
+        # 1) 이전 PENDING 행 가상 정산 (두 rank1 동일 방법 — 공정 짝비교)
+        changed = False
+        pending = [r for r in rows if r.get("status") == "PENDING" and r.get("session_date") < session_date]
+        if pending:
+            tickers = sorted({t for r in pending for t in (
+                (r.get("wide_rank1") or {}).get("ticker"), (r.get("pool_rank1") or {}).get("ticker"))
+                if t})
+            bars_raw = yf.download(tickers, period="1mo", interval="1d",
+                                   auto_adjust=True, progress=False, threads=True)
+
+            def _settle_one(ticker: str, sess: str):
+                try:
+                    if len(tickers) > 1:
+                        o = bars_raw["Open"][ticker].dropna()
+                        h = bars_raw["High"][ticker].dropna()
+                        lo = bars_raw["Low"][ticker].dropna()
+                        c = bars_raw["Close"][ticker].dropna()
+                    else:
+                        o = bars_raw["Open"].squeeze().dropna()
+                        h = bars_raw["High"].squeeze().dropna()
+                        lo = bars_raw["Low"].squeeze().dropna()
+                        c = bars_raw["Close"].squeeze().dropna()
+                    dates = [d.strftime("%Y-%m-%d") for d in o.index]
+                    after = [i for i, d in enumerate(dates) if d > sess]
+                    if not after:
+                        return None
+                    e = float(o.iloc[after[0]])
+                    if e <= 0:
+                        return None
+                    tp_price, sl_price = e * (1 + tp_pct), e * (1 - sl_pct)
+                    win = after[:5]
+                    for idx in win:
+                        if float(lo.iloc[idx]) <= sl_price:
+                            return round(-sl_pct * 100 - cost_pct, 3)
+                        if float(h.iloc[idx]) >= tp_price:
+                            return round(tp_pct * 100 - cost_pct, 3)
+                    if len(win) < 5:
+                        return None  # 만기 전
+                    return round((float(c.iloc[win[-1]]) / e - 1) * 100 - cost_pct, 3)
+                except Exception:
+                    return None
+
+            for r in pending:
+                wt = (r.get("wide_rank1") or {}).get("ticker")
+                pt = (r.get("pool_rank1") or {}).get("ticker")
+                wn = _settle_one(wt, r["session_date"]) if wt else None
+                pn = _settle_one(pt, r["session_date"]) if pt else None
+                if wn is not None and (pn is not None or not pt):
+                    r["wide_net_pct"], r["pool_net_pct"] = wn, pn
+                    r["status"] = "SETTLED"
+                    changed = True
+
+        # 2) 오늘 세션 기록 (멱등)
+        if not any(r.get("session_date") == session_date for r in rows):
+            width_row = None
+            width_path = ROOT / "data" / "shadow" / "us_market_width.jsonl"
+            if width_path.exists():
+                for line in width_path.read_text(encoding="utf-8").splitlines():
+                    if line.strip():
+                        try:
+                            w = json.loads(line)
+                            if w.get("session_date") == session_date and w.get("tickers"):
+                                width_row = w
+                                break
+                        except ValueError:
+                            continue
+            if width_row is not None and pool_rank1:
+                pool_tickers = {str(t).upper() for t in pool["ticker"].astype(str)}
+                eligible = [str(t["ticker"]).upper() for t in width_row["tickers"]
+                            if t.get("eligible") and str(t.get("ticker") or "").strip()]
+                wide_adds = [t for t in eligible if t not in pool_tickers]
+                wide_frame = _build_wide_features(wide_adds, price_dir=price_dir, session_date=session_date)
+                need = [*YAHOO_FEATURES, "ticker", "candidate_source", "close", "date"]
+                pool_part = pool[[c for c in need if c in pool.columns]].copy()
+                combined = pd.concat([pool_part, wide_frame], ignore_index=True) if not wide_frame.empty else pool_part
+                scored_wide, _ = score_candidates(train, combined, seeds=seeds, top_k=3)
+                top = scored_wide.iloc[0].to_dict() if not scored_wide.empty else {}
+                wide_r1 = {
+                    "ticker": str(top.get("ticker") or ""),
+                    "source": str(top.get("candidate_source") or ""),
+                    "probability": float(top.get("probability") or 0.0),
+                    "predicted_net_pct": float(top.get("predicted_net_pct") or 0.0),
+                    "ref_close": float(top.get("close") or 0.0),
+                }
+                rows.append({
+                    "session_date": session_date,
+                    "pool_n": int(len(pool)),
+                    "eligible_n": int(len(eligible)),
+                    "wide_added_n": int(len(wide_frame)),
+                    "wide_rank1": wide_r1,
+                    "pool_rank1": pool_rank1,
+                    "rank1_changed": bool(wide_r1["ticker"] and wide_r1["ticker"] != pool_rank1.get("ticker")),
+                    "contract": f"next_open_TP{int(tp_pct*100)}_SL{int(sl_pct*100)}_D5_cost{cost_pct}",
+                    "status": "PENDING",
+                })
+                changed = True
+                print(f"[wide net] eligible {len(eligible)} (풀 밖 +{len(wide_frame)}) → "
+                      f"wide rank1 {wide_r1['ticker']}({wide_r1['source']}) vs pool rank1 {pool_rank1.get('ticker')}"
+                      f"{' [교체]' if rows[-1]['rank1_changed'] else ' [동일]'}")
+
+        if changed:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                for r in rows:
+                    handle.write(json.dumps(r, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        print(f"[wide net] 관측 스킵: {str(exc)[:120]}", file=sys.stderr)
+
+
+def _build_wide_features(tickers: list[str], *, price_dir: Path, session_date: str) -> pd.DataFrame:
+    """그물 밖 종목의 피처 프레임 — 본 채점과 동일 규약(build_ticker_frame + 벤치마크).
+
+    yfinance auto_adjust=True(수집기와 동일 기준), date < session_date 필터로
+    진행 중 봉 배제(무-lookahead). 벤치마크 feature_date와 다른 stale 행은 제외.
+    """
+    if not tickers:
+        return pd.DataFrame()
+    import yfinance as yf
+
+    benchmark = _benchmark_frame(price_dir, before_date=session_date)
+    if benchmark.empty:
+        return pd.DataFrame()
+    bench_date = str(benchmark["date"].dropna().astype(str).max())
+    raw = yf.download(tickers, period="9mo", interval="1d", auto_adjust=True,
+                      progress=False, threads=True)
+    out: list[dict[str, Any]] = []
+    for ticker in tickers:
+        try:
+            if len(tickers) > 1:
+                df = pd.DataFrame({
+                    "date": raw["Close"][ticker].dropna().index.strftime("%Y-%m-%d"),
+                    "open": raw["Open"][ticker].dropna().values,
+                    "high": raw["High"][ticker].dropna().values,
+                    "low": raw["Low"][ticker].dropna().values,
+                    "close": raw["Close"][ticker].dropna().values,
+                    "volume": raw["Volume"][ticker].dropna().values,
+                })
+            else:
+                sq = raw.dropna()
+                df = pd.DataFrame({
+                    "date": sq.index.strftime("%Y-%m-%d"),
+                    "open": sq["Open"].squeeze().values,
+                    "high": sq["High"].squeeze().values,
+                    "low": sq["Low"].squeeze().values,
+                    "close": sq["Close"].squeeze().values,
+                    "volume": sq["Volume"].squeeze().values,
+                })
+            if len(df) < 80:
+                continue
+            features = build_ticker_frame(df)
+            features = features[features["date"].astype(str) < str(session_date)].merge(
+                benchmark, on="date", how="left")
+            if features.empty:
+                continue
+            row = features.iloc[-1].to_dict()
+            if str(row.get("date") or "") != bench_date:
+                continue
+            for window in (5, 20, 60):
+                mom = row.get(f"momentum_{window}d_pct")
+                qqq = row.get(f"qqq_momentum_{window}d_pct")
+                row[f"relative_strength_qqq_{window}d_pct"] = (
+                    mom - qqq if pd.notna(mom) and pd.notna(qqq) else np.nan)
+            row["ticker"] = ticker
+            row["candidate_source"] = "wide_net"
+            out.append(row)
+        except Exception:
+            continue
+    return pd.DataFrame(out)
+
+
 def resolve_shadow_contract(
     policy: dict[str, Any],
     *,
@@ -1356,6 +1560,30 @@ def main() -> int:
         )
         # 2026-08-13 이중 방어: 기록 직후 전 랭크 기준종가 독립 대조(오염 마킹만, 개입 없음)
         verify_reference_closes(con, signal_date=args.session_date)
+        # 2026-08-15 넓은 그물 A/B 관측 (운영자 승인): 컷 밖 적격 급락주까지 같은
+        # 모델로 채점해 wide rank1 vs 현 rank1을 짝지어 가상 정산 — 주문·선정 무접촉.
+        _r1 = scored[scored["rank"] == 1]
+        _pool_rank1 = None
+        if not _r1.empty:
+            _row = _r1.iloc[0].to_dict()
+            _pool_rank1 = {
+                "ticker": str(_row.get("ticker") or ""),
+                "source": str(_row.get("candidate_source") or ""),
+                "probability": float(_row.get("probability") or 0.0),
+                "predicted_net_pct": float(_row.get("predicted_net_pct") or 0.0),
+                "ref_close": float(_row.get("close") or 0.0),
+            }
+        _record_wide_net_shadow(
+            args.session_date,
+            pool=candidates,
+            pool_rank1=_pool_rank1,
+            train=train,
+            seeds=[int(value) for value in policy.get("seeds", [20260710])],
+            price_dir=price_dir,
+            cost_pct=float(policy.get("cost_pct", 0.50)),
+            tp_pct=float((policy.get("execution_contract") or {}).get("take_profit_pct", 0.12)),
+            sl_pct=float((policy.get("execution_contract") or {}).get("catastrophe_stop_pct", 0.25)),
+        )
         # 정보성 하락 배제 3-arm 기록(관찰 전용, 선정에 개입하지 않는다).
         news_arms = news_arm_counterfactual(scored.attrs.get("full_ranking", scored))
         try:
