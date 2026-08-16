@@ -225,10 +225,16 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
             execution_path=execution_path,
         )
         authority = _operator_micro_override(bot, research_authority, configured_mode)
+        # rank2 폴백 (2026-08-16 운영자 승인, proposal_rank2_fallback_20260812):
+        # rank1이 **종목 고유 가드**로 죽은 날에만 rank2를 평가한다. 일공통 차단
+        # (창 종료·슬롯·일한도·권한)은 이월 금지 — 그날은 사는 날이 아니기 때문이다.
+        # 켜져 있어도 rank1이 통과하면 rank2는 평가조차 되지 않는다(아래 break).
+        fallback_on = bot._runtime_bool("US_SWING_RANK2_FALLBACK_ENABLED", False)
+        base_limit = max(1, int(authority.get("max_new_per_day") or 1))
         signals = load_handoff_signals(
             con,
             session_date=session_date,
-            limit=max(1, int(authority.get("max_new_per_day") or 1)),
+            limit=base_limit + 1 if fallback_on else base_limit,
         )
         if not signals:
             return _write_execution_status(
@@ -253,8 +259,38 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
         elapsed_since_open_min = (
             datetime.now(KST) - regular_open_dt("US", session_date)
         ).total_seconds() / 60.0
+        # rank2 폴백 이월 사유(종목 고유). 이 목록 밖 사유는 그날 전체가 사는 날이
+        # 아니라는 뜻이므로 이월하지 않는다.
+        fallback_carry_reasons = {
+            "price_chase_above_contract",
+            "open_gap_outside_contract",
+            "open_fade_below_contract",
+            "provider_fresh_quote_incomplete",
+            "independent_prev_close_missing",
+            "independent_reference_mismatch",
+            "already_holding",
+            "pending_order_exists",
+            "same_day_reentry_blocked",
+        }
         for signal in signals:
             ticker = str(signal.get("ticker") or "").upper()
+            signal_rank = int(signal.get("rank") or 0)
+            if signal_rank > base_limit:
+                if not fallback_on:
+                    continue
+                prior = [r for r in results if int(r.get("rank") or 0) <= base_limit]
+                carried = any(
+                    str(r.get("reason") or "") in fallback_carry_reasons for r in prior
+                )
+                if not carried:
+                    results.append({
+                        "status": "SKIPPED",
+                        "reason": "rank2_fallback_not_triggered",
+                        "ticker": ticker,
+                        "rank": signal_rank,
+                        "prior_reasons": [str(r.get("reason") or "") for r in prior],
+                    })
+                    continue
             # 2026-08-11: 창 종료 후에는 어떤 경로로도 submit에 도달하지 못한다(창 체크가
             # budget/submit보다 앞). 이미 실질 사유가 기록된 신호를 밤새 재평가하며 KIS를
             # 폴링하고 expired로 덮어쓰는 것을 여기서 끊는다 (STEP 08-10: 22:30~04:56 폴링 실측).
@@ -348,7 +384,12 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
                     sl_pct=bot._runtime_float("US_SWING_ORDER_SL_DECIMAL", 0.25),
                     max_hold=5,
                     mode=mode,
-                    selected_reason=f"us_swing_5d_rank_{decision.rank}",
+                    # rank2 폴백 경유분은 태그로 분리(반증 기준 "폴백 정산 10건" 집계용)
+                    selected_reason=(
+                        f"us_swing_5d_rank_{decision.rank}_fallback"
+                        if signal_rank > base_limit
+                        else f"us_swing_5d_rank_{decision.rank}"
+                    ),
                     source_strategy="us_swing_5d",
                     entry_priority_score=float(signal.get("probability") or 0.0),
                     tsdb_id=-1,

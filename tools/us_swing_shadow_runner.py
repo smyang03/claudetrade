@@ -731,6 +731,75 @@ def _record_market_width(session_date: str) -> None:
         pass
 
 
+SECTOR_ETFS = ("XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLI", "XLB", "XLU", "XLRE", "XLC")
+
+
+def _record_sector_context(session_date: str, candidates: "pd.DataFrame") -> None:
+    """섹터 컨텍스트 관측 (2026-08-16 운영자 승인) — 주문·선정 무접촉, 기록만.
+
+    발견(08-16 실측, day_losers 정산 57건): 신호일 XLK 방향이 성과와 갈린다 —
+    상승일 +3.17%/건(n=26) vs 하락일 −0.61%(n=31), **양월 재현**(7월 +8.73 vs
+    +0.83, 8월 +2.71 vs −1.79), VIX와 교락 없음(중앙 15.9 동일). brain 이슈패턴
+    P047/P051("섹터 미스매치·역풍 진입")이 반복 지목한 축과 독립적으로 일치.
+
+    기록만 한다 — 신호·주문 어디에도 입력되지 않는다. 판정은 세션당 1행을
+    (session_date, ticker)로 signals의 net_krw_pct와 조인해 사후에 한다.
+    섹터 전체를 남기는 이유: 지금 XLK만 보이지만 종목별 소속 섹터로 나중에
+    "자기 섹터 역풍" 축을 복원하려면 11개가 다 필요하다. 실패는 조용히 스킵.
+    """
+    path = ROOT / "data" / "shadow" / "us_sector_context.jsonl"
+    try:
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    try:
+                        if json.loads(line).get("session_date") == str(session_date):
+                            return
+                    except ValueError:
+                        continue
+        import yfinance as yf
+
+        start = (pd.Timestamp(session_date) - pd.Timedelta(days=12)).strftime("%Y-%m-%d")
+        raw = yf.download(list(SECTOR_ETFS), start=start,
+                          end=(pd.Timestamp(session_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+                          interval="1d", auto_adjust=True, progress=False, threads=True)
+        closes = raw["Close"]
+        sectors: dict[str, Any] = {}
+        for etf in SECTOR_ETFS:
+            try:
+                series = closes[etf].dropna()
+                # signal_date 이전 마지막 마감 세션 = 신호 피처의 기준일
+                series = series[series.index.strftime("%Y-%m-%d") < str(session_date)]
+                if len(series) < 6:
+                    continue
+                sectors[etf] = {
+                    "ret_1d_pct": round(float(series.iloc[-1] / series.iloc[-2] - 1) * 100, 3),
+                    "ret_5d_pct": round(float(series.iloc[-1] / series.iloc[-6] - 1) * 100, 3),
+                }
+            except Exception:
+                continue
+        if not sectors:
+            return
+        up = sum(1 for v in sectors.values() if v["ret_1d_pct"] > 0)
+        payload = {
+            "session_date": str(session_date),
+            "feature_basis": "last_close_before_session",
+            "sectors": sectors,
+            "sectors_up_1d": up,
+            "sectors_n": len(sectors),
+            "breadth_ratio": round(up / len(sectors), 3),
+            "candidate_n": int(len(candidates)),
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        xlk = sectors.get("XLK", {}).get("ret_1d_pct")
+        print(f"[sector ctx] {session_date} XLK {xlk:+.2f}% | 상승섹터 {up}/{len(sectors)}"
+              if xlk is not None else f"[sector ctx] {session_date} 상승섹터 {up}/{len(sectors)}")
+    except Exception as exc:
+        print(f"[sector ctx] 관측 스킵: {str(exc)[:120]}", file=sys.stderr)
+
+
 def _record_wide_net_shadow(
     session_date: str,
     *,
@@ -1496,6 +1565,7 @@ def main() -> int:
         _record_pool_size(args.session_date, pool_n=candidates_n, scored_n=len(candidates))
         _record_market_width(args.session_date)
         _record_tp_capture(args.session_date, candidates)
+        _record_sector_context(args.session_date, candidates)
         _record_premarket(args.session_date, candidates)
         _record_candidate_age(args.session_date, candidates)
         research_con = sqlite3.connect(args.research_db)
