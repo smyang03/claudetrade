@@ -34,6 +34,11 @@ ROLE_NEEDLES: dict[str, str] = {
     "core_shadow_tracker": "core_shadow_tracker.py",
     "counterfactual_pipeline": "run_counterfactual_pipeline.py",
     "integrity_check": "integrity_check.py",
+    # 2026-08-16 사고: 이 항목이 없어 재시작마다 인스턴스가 누적됐다(실측 5개 —
+    # 08-12·08-13x3·08-16). 이 도구는 락이 없고 launcher가 매번 새로 띄우므로
+    # 정지 목록 누락이 곧 중복 실행이다. 갱신 자체는 멱등 append라 데이터 오염은
+    # 없었지만, 같은 파일에 동시 쓰기·중복 API 호출·프로세스 누수가 발생한다.
+    "market_context_refresher": "refresh_market_context_daily.py",
 }
 
 # 프로세스가 죽은 뒤에만 지운다. 살아있는 프로세스의 lock을 지우면 중복 기동을 부른다.
