@@ -5,7 +5,10 @@ shadow 원장(`tools/us_swing_shadow_runner.py`)과 실주문 경로
 
 2026-08-04 실측 사고 기록 — 두 원장이 서로 다른 계약으로 돌고 있었다.
   - shadow: 50,000원(500,000 x micro 0.1) / 슬롯 1
-  - 실주문: 300,000원(US_SWING_ORDER_MAX_KRW 절대캡) / 슬롯 3 / 일 1건
+  - 실주문: **1,000,000원**(US_SWING_ORDER_MAX_KRW 절대캡) / 슬롯 3 / 일 1건
+    금액 이력: 30만(~08-13) -> 50만(08-14) -> 100만(08-17, 운영자 결정).
+    최악 동시 SL(-25%) = 상한 x 슬롯3 x 0.25 = **75만원**. 한도 정본은
+    docs/reports/preregistered_falsification_criteria_20260804.md.
 결과로 forward 표본이 실거래와 다른 집합이 됐다.
   - 07-24 WEX, 07-27 AXTI(rank1 day_losers, +20.90%)가
     `micro_budget_cannot_buy_one_share`로 배제 — 주당 $35 이상이 원천 제외되어
