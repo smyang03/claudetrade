@@ -96,16 +96,29 @@ def scan(days: int) -> list[dict]:
 
 
 def existing_keys() -> set[tuple[str, str]]:
+    """이미 기록된 CLOSED 식별키.
+
+    2026-08-17: 라이브 청산 경로가 CLOSED를 직접 발행하기 시작했다(운영자 승인).
+    라이브 발행 시각과 로그 타임스탬프는 초 단위로 다를 수 있으므로 occurred_at만
+    비교하면 같은 청산을 두 번 넣는다. (ticker, session_date) 키를 함께 반환해
+    세션 단위로도 멱등을 보장한다. 같은 세션에 같은 종목을 두 번 청산하는 계약은
+    없다(sleeve는 D5 단일 보유).
+    """
     if not EVENT_DB.exists():
         return set()
     con = sqlite3.connect(f"file:{EVENT_DB}?mode=ro", uri=True, timeout=10)
     try:
         rows = con.execute(
-            "SELECT ticker, occurred_at FROM lifecycle_events WHERE event_type='CLOSED'"
+            "SELECT ticker, occurred_at, session_date FROM lifecycle_events WHERE event_type='CLOSED'"
         ).fetchall()
     finally:
         con.close()
-    return {(str(t), str(o)) for t, o in rows}
+    keys: set[tuple[str, str]] = set()
+    for ticker, occurred_at, session_date in rows:
+        keys.add((str(ticker), str(occurred_at)))
+        if session_date:
+            keys.add((str(ticker), f"session:{session_date}"))
+    return keys
 
 
 def backfill_sleeve_closed(days: int = 0, *, dry_run: bool = False, verbose: bool = True) -> dict:
@@ -122,7 +135,11 @@ def backfill_sleeve_closed(days: int = 0, *, dry_run: bool = False, verbose: boo
 
     closes = scan(days)
     known = existing_keys()
-    todo = [c for c in closes if (c["ticker"], c["occurred_at"]) not in known]
+    todo = [
+        c for c in closes
+        if (c["ticker"], c["occurred_at"]) not in known
+        and (c["ticker"], f"session:{c['session_date']}") not in known
+    ]
 
     _say(f"sleeve 계약 청산 로그 {len(closes)}건 | 이미 기록됨 {len(closes) - len(todo)} | 주입 대상 {len(todo)}")
     for c in todo:

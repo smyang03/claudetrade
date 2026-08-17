@@ -1155,11 +1155,14 @@ def build_claude_decision_facts(
         "missing_execution_matches": 0,
     }
 
-    audit_conn = _source_conn(Path(candidate_audit_db), "candidate_audit_db", summary)
-    selection_conn = _source_conn(Path(selection_db), "selection_db", summary)
-    ml_conn = _source_conn(Path(ml_db), "ml_db", summary)
-    event_conn = _source_conn(Path(event_db), "event_db", summary)
+    # 2026-08-17: 커넥션 4개를 try 밖에서 만들면 생성 도중 예외가 났을 때 앞서 열린
+    # 커넥션이 finally에 닿지 못하고 샌다(Windows에서 임시 DB 삭제 실패로 드러남).
+    audit_conn = selection_conn = ml_conn = event_conn = None
     try:
+        audit_conn = _source_conn(Path(candidate_audit_db), "candidate_audit_db", summary)
+        selection_conn = _source_conn(Path(selection_db), "selection_db", summary)
+        ml_conn = _source_conn(Path(ml_db), "ml_db", summary)
+        event_conn = _source_conn(Path(event_db), "event_db", summary)
         audit_rows = _load_audit_rows(
             audit_conn,
             start_date=start_date,

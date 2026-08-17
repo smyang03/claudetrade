@@ -18575,6 +18575,57 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             },
         )
 
+    SLEEVE_SOURCE_STRATEGIES = ("us_swing_5d", "kr_fallen_5d")
+
+    def _record_sleeve_closed_event(self, cand: dict, market: str, reason: str, ex: dict) -> None:
+        """isolated sleeve 계약 청산을 CLOSED lifecycle 이벤트로 즉시 기록한다.
+
+        sleeve(us_swing_5d·kr_fallen_5d)는 Claude decision을 거치지 않아 decision_id가
+        없다. backfill 도구와 **동일한 합성 ID 규약**(sleeve_{market}_{TICKER}_{YYYYMMDD})을
+        써서 두 경로가 같은 건을 가리키게 한다 — 대시보드·canonical 매칭이 그대로 동작하고,
+        backfill은 같은 (ticker, session_date, close_reason)을 다시 넣지 않는다.
+
+        기록 계층 전용이다. 주문·청산 판단에는 어떤 영향도 주지 않는다.
+        """
+        source = str(
+            cand.get("source_strategy")
+            or cand.get("strategy_used")
+            or cand.get("strategy")
+            or ""
+        ).lower()
+        if source not in self.SLEEVE_SOURCE_STRATEGIES:
+            return
+        v2 = getattr(self, "v2", None)
+        if v2 is None or not getattr(v2, "enabled", False):
+            return
+        ticker = str(ex.get("ticker") or cand.get("ticker") or "").strip()
+        if not ticker:
+            return
+        market_key = "US" if str(market or "").upper() == "US" else "KR"
+        ticker_key = ticker.upper() if market_key == "US" else ticker
+        session_date = str(self._current_session_date_str(market_key) or "")[:10]
+        v2.record_event(
+            "CLOSED",
+            market_key,
+            ticker_key,
+            decision_id=f"sleeve_{market_key}_{ticker_key}_{session_date.replace('-', '')}",
+            reason_code=f"CLOSED_{str(reason or 'unknown').upper()}",
+            payload={
+                "pnl_pct": float(ex.get("pnl_pct", 0) or 0),
+                "pnl_krw": float(ex.get("pnl_krw", 0) or ex.get("realized_pnl_krw", 0) or 0),
+                "close_reason": str(reason or ""),
+                "qty": int(ex.get("qty", 0) or 0),
+                "exit_price": float(ex.get("exit_price", 0) or 0),
+                "source_strategy": source,
+                "emitted_by": "live_exit_path",
+                "sleeve_contract": True,
+            },
+        )
+        log.info(
+            f"[sleeve CLOSED] {market_key} {ticker_key} {reason} "
+            f"{float(ex.get('pnl_pct', 0) or 0):+.2f}% -> lifecycle 기록"
+        )
+
     def _record_premature_fixed_stop_shadow(self, cand: dict, market: str, reason: str, ex: Optional[dict] = None) -> None:
         if str(market or "").upper() != "KR" or str(reason or "") != "stop_loss":
             return
@@ -30117,6 +30168,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 final_exit_reason=reason,
                 clear_pending=False,
             )
+        # sleeve 계약 청산 CLOSED 발행 (2026-08-17 운영자 승인 — 08-06 "계약 동결" 해제).
+        # 이전에는 라이브가 CLOSED를 남기지 않아 정본 원장(v2_canonical_performance)이
+        # 비었고, tools/backfill_sleeve_closed_events.py로 사후 주입해 왔다(DIRTY 등급).
+        # 청산 자체를 절대 막지 않도록 전 구간을 감싼다 — 기록 실패는 경고만 남긴다.
+        try:
+            self._record_sleeve_closed_event(cand, market, reason, ex)
+        except Exception as _sleeve_closed_exc:
+            log.warning(f"[sleeve CLOSED] 발행 실패 {market} {cand.get('ticker')}: {_sleeve_closed_exc}")
         self._record_premature_fixed_stop_shadow(cand, market, reason, ex)
         try:
             proceeds_krw = float(ex.get("exit_price", 0) or 0) * int(ex.get("qty", 0) or 0)
