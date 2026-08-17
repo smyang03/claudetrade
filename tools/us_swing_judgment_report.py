@@ -499,6 +499,10 @@ def _cross_check_real_fills() -> None:
         except ValueError:
             continue
         if str(row.get("source") or "") == "us_swing_5d" and row.get("side") == "BUY":
+            # 2026-08-17: 접수만 되고 체결 확정이 없는 주문(DIOD 08-14)은 보유가 아니다.
+            # 이 가드가 없으면 미체결 건이 "보유중"으로 영구히 남는다.
+            if str(row.get("fill_status") or "") == "SUBMITTED_UNCONFIRMED":
+                continue
             buys[row["ticker"]] = row
         elif row.get("side") == "SELL" and row.get("ticker") in buys:
             buy = buys.pop(row["ticker"])

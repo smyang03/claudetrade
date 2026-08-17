@@ -550,7 +550,14 @@ def _record_tp_capture(session_date: str, candidates: "pd.DataFrame") -> None:
                     "candidate_source": str(row.get("candidate_source") or row.get("source") or ""),
                     "atr_pct": atr,
                     "threshold_p75_past_only": threshold,
-                    "passed": bool(threshold is not None and atr is not None and atr >= threshold),
+                    # 2026-08-17 수리: 임계 미산출(이력<150) 구간을 False로 적으면
+                    # "조건 미달"과 "판정 불가"가 한 값에 섞여, 판정 시 미통과 코호트에
+                    # 평가조차 못 한 행이 들어간다(실측: 160행 중 158행이 판정 불가인데
+                    # 전부 미통과로 기록돼 있었다). 판정 불가는 null로 남긴다.
+                    "passed": (
+                        None if (threshold is None or atr is None)
+                        else bool(atr >= threshold)
+                    ),
                     "history_n": len(history),
                 }, ensure_ascii=False) + "\n")
     except Exception:

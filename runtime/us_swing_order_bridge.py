@@ -115,8 +115,10 @@ def _operator_micro_override(bot: Any, authority: dict[str, Any], configured_mod
         "absolute_order_cap_krw": float(bot._runtime_float("US_SWING_ORDER_MAX_KRW", 250000.0)),
         "order_cap_source": "operator_config_absolute",
         # 2026-08-02 운영자 결정(토론 합의안): 슬롯 3/일1건. 일일 신규 리스크는 불변이고
-        # D5 보유가 겹치며 최대 3포지션 동시 보유(최악 동시 SL −22.5만원). 일일 확대(3/일)는
-        # day_losers 전환 후 forward ≥30건 + 순성과 양수 확인 후에만 재론한다.
+        # D5 보유가 겹치며 최대 3포지션 동시 보유. 일일 확대(3/일)는 day_losers 전환 후
+        # forward ≥30건 + 순성과 양수 확인 후에만 재론한다.
+        # 최악 동시 SL = 주문상한 × 3 × 25%. 2026-08-14 주문상한 30만→50만 인상으로
+        # 22.5만원 → **37.5만원**(KIS 총자산 약 7.7%)이 됐다. 상한을 바꿀 때 이 값도 같이 고친다.
         "max_new_per_day": 1,
         "max_open_slots": 3,
         "operator_forward_override": True,

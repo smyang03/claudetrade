@@ -793,7 +793,7 @@ def fetch_us_daily_yfinance(ticker: str, start_dt: pd.Timestamp, end_dt: pd.Time
     return df.sort_values("date").reset_index(drop=True)
 
 
-def _last_completed_us_session_date(now_et: datetime | None = None) -> pd.Timestamp:
+def _last_completed_us_session_date(now_et: "datetime | None" = None) -> pd.Timestamp:
     """마지막으로 마감이 확정된 미국 세션 날짜(ET 16:05 이후에만 당일 인정)."""
     from zoneinfo import ZoneInfo
 
@@ -804,7 +804,7 @@ def _last_completed_us_session_date(now_et: datetime | None = None) -> pd.Timest
     return pd.Timestamp(day)
 
 
-def _drop_incomplete_us_bars(df: pd.DataFrame, now_et: datetime | None = None) -> pd.DataFrame:
+def _drop_incomplete_us_bars(df: pd.DataFrame, now_et: "datetime | None" = None) -> pd.DataFrame:
     """마감 전 세션의 진행 중 일봉 제거.
 
     사고(2026-08-13): 프리장/장중에 수집이 돌면 yfinance가 진행 중 당일 봉을
