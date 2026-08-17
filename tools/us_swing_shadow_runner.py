@@ -46,6 +46,32 @@ _BREADTH_COLUMNS = {
 def ensure_schema(con: sqlite3.Connection) -> None:
     con.executescript(
         """
+        -- 2026-08-17 운영자 지시: 그날 본 **모든 후보**를 남긴다.
+        -- signals는 컷(top_k) 통과분만 담아서, 나중에 "컷 밖에 뭐가 있었나 / 비적격
+        -- 판정이 옳았나"를 재검토할 수 없었다. 이 테이블은 스크리너가 잡은 급락
+        -- 전 종목을 적격·비적격 불문하고 세션별로 보존한다(채점분은 점수까지).
+        -- 주문·선정 경로와 무관한 기록 전용 — 전략과 방향은 그대로다.
+        CREATE TABLE IF NOT EXISTS candidate_pool_all (
+            session_date TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            chg_pct REAL,               -- 신호일 등락률
+            price REAL,
+            dollar_vol REAL,            -- 거래대금(유동성 필터 근거)
+            eligible INTEGER,           -- 유동성·가격 필터 통과 여부
+            in_pool INTEGER,            -- 수집기 컷(top_k) 안에 들었는지
+            scored INTEGER,             -- 모델 채점 여부
+            rank INTEGER,               -- 전체 랭킹(채점분)
+            probability REAL,
+            predicted_net_pct REAL,
+            alpha_score REAL,
+            ref_close REAL,
+            candidate_source TEXT,
+            recorded_at TEXT NOT NULL,
+            PRIMARY KEY (session_date, ticker)
+        );
+        CREATE INDEX IF NOT EXISTS idx_pool_all_session ON candidate_pool_all(session_date);
+        CREATE INDEX IF NOT EXISTS idx_pool_all_ticker ON candidate_pool_all(ticker);
+
         CREATE TABLE IF NOT EXISTS signals (
             signal_date TEXT NOT NULL,
             ticker TEXT NOT NULL,
@@ -511,6 +537,84 @@ def _record_pool_size(session_date: str, *, pool_n: int, scored_n: int) -> None:
         pass
 
 
+def _record_candidate_pool_all(
+    con: "sqlite3.Connection",
+    session_date: str,
+    width_row: dict | None,
+    scored_all: list[dict],
+    pool_tickers: set[str],
+) -> int:
+    """그날 스크리너가 잡은 **모든 후보**를 세션별로 보존한다 (2026-08-17 운영자 지시).
+
+    signals에는 컷 통과분만 남아 "컷 밖에 무엇이 있었는지, 비적격 판정이 옳았는지"를
+    사후에 재검토할 수 없었다. 여기에는 급락 전 종목을 적격·비적격 불문하고 남기고,
+    모델이 채점한 건은 점수·랭킹까지 붙인다.
+
+    기록 전용이다 — 선정·주문 로직은 이 테이블을 읽지 않는다(전략·방향 불변).
+    멱등: 같은 (session_date, ticker)는 덮어쓴다.
+    """
+    if not session_date:
+        return 0
+    scored_by_ticker = {str(r.get("ticker") or "").upper(): r for r in scored_all or []}
+    universe: dict[str, dict] = {}
+    for item in ((width_row or {}).get("tickers") or []):
+        key = str(item.get("ticker") or "").strip().upper()
+        if key:
+            universe[key] = item
+    for key in scored_by_ticker:
+        universe.setdefault(key, {})
+    if not universe:
+        return 0
+
+    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    payload = []
+    for ticker, meta in universe.items():
+        scored = scored_by_ticker.get(ticker)
+        payload.append((
+            session_date, ticker,
+            _null_or_float(meta.get("chg_pct")),
+            _null_or_float(meta.get("price")),
+            _null_or_float(meta.get("dollar_vol")),
+            1 if meta.get("eligible") else 0,
+            1 if ticker in pool_tickers else 0,
+            1 if scored else 0,
+            int(scored.get("rank") or 0) if scored else None,
+            _null_or_float(scored.get("probability")) if scored else None,
+            _null_or_float(scored.get("predicted_net_pct")) if scored else None,
+            _null_or_float(scored.get("alpha_score")) if scored else None,
+            _null_or_float(scored.get("ref_close")) if scored else None,
+            str((scored or {}).get("source") or meta.get("candidate_source") or ""),
+            stamp,
+        ))
+    con.executemany(
+        """INSERT INTO candidate_pool_all (
+               session_date, ticker, chg_pct, price, dollar_vol, eligible, in_pool,
+               scored, rank, probability, predicted_net_pct, alpha_score, ref_close,
+               candidate_source, recorded_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(session_date, ticker) DO UPDATE SET
+               chg_pct=excluded.chg_pct, price=excluded.price, dollar_vol=excluded.dollar_vol,
+               eligible=excluded.eligible, in_pool=excluded.in_pool, scored=excluded.scored,
+               rank=excluded.rank, probability=excluded.probability,
+               predicted_net_pct=excluded.predicted_net_pct, alpha_score=excluded.alpha_score,
+               ref_close=excluded.ref_close, candidate_source=excluded.candidate_source,
+               recorded_at=excluded.recorded_at""",
+        payload,
+    )
+    con.commit()
+    return len(payload)
+
+
+def _null_or_float(value) -> float | None:
+    try:
+        if value is None:
+            return None
+        result = float(value)
+        return result if result == result else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _record_tp_capture(session_date: str, candidates: "pd.DataFrame") -> None:
     """TP 포획 조건(ATR 하한) 관측 원장 — 2026-08-11 design_tp_capture_lane.
 
@@ -810,6 +914,7 @@ def _record_sector_context(session_date: str, candidates: "pd.DataFrame") -> Non
 def _record_wide_net_shadow(
     session_date: str,
     *,
+    con: "sqlite3.Connection" = None,
     pool: pd.DataFrame,
     pool_rank1: dict[str, Any] | None,
     train: pd.DataFrame,
@@ -925,6 +1030,29 @@ def _record_wide_net_shadow(
                     "predicted_net_pct": float(top.get("predicted_net_pct") or 0.0),
                     "ref_close": float(top.get("close") or 0.0),
                 }
+                # 2026-08-17 운영자 지시: 적격 후보 **전량**을 종목별로 남긴다.
+                # rank1 요약만 저장하면 나중에 "그때 그 종목이 몇 점이었고 실제로
+                # 어떻게 됐나"를 복원할 수 없어 A/B 판정 자체가 불가능하다.
+                # score_candidates가 top_k로 자르기 전 full_ranking을 이미 보관하므로
+                # 새 계산 없이 그대로 펼친다(주문 경로 무접촉).
+                full = scored_wide.attrs.get("full_ranking")
+                if full is None or getattr(full, "empty", True):
+                    full = scored_wide
+                scored_all = []
+                for item in full.to_dict("records"):
+                    ticker_key = str(item.get("ticker") or "").upper()
+                    if not ticker_key:
+                        continue
+                    scored_all.append({
+                        "ticker": ticker_key,
+                        "rank": int(item.get("rank") or 0),
+                        "source": str(item.get("candidate_source") or ""),
+                        "in_pool": ticker_key in pool_tickers,
+                        "probability": round(float(item.get("probability") or 0.0), 6),
+                        "predicted_net_pct": round(float(item.get("predicted_net_pct") or 0.0), 6),
+                        "alpha_score": round(float(item.get("alpha_score") or 0.0), 6),
+                        "ref_close": round(float(item.get("close") or 0.0), 6),
+                    })
                 rows.append({
                     "session_date": session_date,
                     "pool_n": int(len(pool)),
@@ -933,10 +1061,21 @@ def _record_wide_net_shadow(
                     "wide_rank1": wide_r1,
                     "pool_rank1": pool_rank1,
                     "rank1_changed": bool(wide_r1["ticker"] and wide_r1["ticker"] != pool_rank1.get("ticker")),
+                    "scored_all": scored_all,
+                    "scored_all_n": len(scored_all),
                     "contract": f"next_open_TP{int(tp_pct*100)}_SL{int(sl_pct*100)}_D5_cost{cost_pct}",
                     "status": "PENDING",
                 })
                 changed = True
+                # 전 후보 DB 보존(운영자 지시 2026-08-17) — 기록 실패가 관측을 막지 않는다.
+                if con is not None:
+                    try:
+                        saved = _record_candidate_pool_all(
+                            con, session_date, width_row, scored_all, pool_tickers)
+                        print(f"[pool all] {session_date} 후보 {saved}건 DB 보존"
+                              f"(적격 {len(eligible)} · 채점 {len(scored_all)})")
+                    except Exception as exc:
+                        print(f"[pool all] 기록 실패: {exc}")
                 print(f"[wide net] eligible {len(eligible)} (풀 밖 +{len(wide_frame)}) → "
                       f"wide rank1 {wide_r1['ticker']}({wide_r1['source']}) vs pool rank1 {pool_rank1.get('ticker')}"
                       f"{' [교체]' if rows[-1]['rank1_changed'] else ' [동일]'}")
@@ -1652,6 +1791,7 @@ def main() -> int:
             }
         _record_wide_net_shadow(
             args.session_date,
+            con=con,
             pool=candidates,
             pool_rank1=_pool_rank1,
             train=train,
