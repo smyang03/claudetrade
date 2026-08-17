@@ -347,6 +347,33 @@ def main() -> int:
     return 0
 
 
+def _executed_net_by_ticker(tickers: set[str]) -> dict[str, float]:
+    """실제 진입분의 정산 net(정본). KR sleeve는 kr_fallen_5d 계약으로 청산된다."""
+    if not tickers:
+        return {}
+    db = ROOT / "data" / "ml" / "decisions.db"
+    if not db.exists():
+        return {}
+    out: dict[str, float] = {}
+    try:
+        import sqlite3
+        from contextlib import closing as _closing
+        with _closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)) as con:
+            marks = ",".join("?" for _ in tickers)
+            for ticker, net, gross in con.execute(
+                f"""SELECT ticker, pnl_pct_net, pnl_pct FROM v2_canonical_performance
+                    WHERE closed=1 AND market='KR' AND runtime_mode='live'
+                      AND ticker IN ({marks}) ORDER BY first_closed_at""",
+                tuple(sorted(tickers)),
+            ):
+                value = net if net is not None else gross
+                if value is not None:
+                    out.setdefault(str(ticker), float(value))
+    except Exception:
+        return {}
+    return out
+
+
 def _execution_attribution_view() -> None:
     """실제 주문이 나간 건을 충족 규칙별로 센다 — R4b(사각 편입) 반증 집계 (2026-08-17 신설).
 
@@ -374,13 +401,21 @@ def _execution_attribution_view() -> None:
             status = str(item.get("status") or "")
             if status == "SUBMITTED":
                 tag = "+".join(item.get("matched") or []) or "미표기"
-                submitted[tag].append(f"{row.get('session_date','')}:{item.get('ticker','')}")
+                submitted[tag].append((str(item.get("ticker") or "").upper(),
+                                       str(row.get("session_date") or "")))
             elif status in {"BLOCKED", "SUBMIT_FAILED"}:
                 blocked_reasons[str(item.get("reason") or "unknown")] += 1
     if submitted:
+        # 반증 기준은 "R4b 실거래 10건 net<=0"이므로 접수 건수만으로는 판정할 수 없다.
+        # 제출분의 실제 정산 net을 canonical에서 찾아 함께 센다(2026-08-17 보강).
+        settled = _executed_net_by_ticker({t for entries in submitted.values() for t, _ in entries})
         for tag, entries in sorted(submitted.items()):
-            print(f"        {tag:10s} {len(entries):3d}건  {', '.join(entries[:6])}"
-                  + (" …" if len(entries) > 6 else ""))
+            nets = [settled[t] for t, _ in entries if t in settled]
+            label = f"{tag:10s} 접수 {len(entries):3d}건 · 정산 {len(nets):2d}건"
+            if nets:
+                label += f" · 평균 net {sum(nets)/len(nets):+.2f}% · 승률 {100*sum(1 for x in nets if x>0)/len(nets):.0f}%"
+            print(f"        {label}  " + ", ".join(f"{t}({d})" for t, d in entries[:5])
+                  + (" …" if len(entries) > 5 else ""))
     else:
         print("        실주문 0건 — 아직 어떤 규칙으로도 KR 진입이 없다.")
     if blocked_reasons:

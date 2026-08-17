@@ -17273,82 +17273,149 @@ def _strategy_business_days(start: date, end: date) -> int:
     return days
 
 
-def _strategy_filled_entries(signal_dates: dict[str, str]) -> dict[str, str]:
-    """FILLED 이벤트가 있는 티커 → 체결 시각. 미체결(진입 실패) 구분의 truth.
+def _strategy_filled_entries(order_map: dict[str, str], mode: str) -> dict[str, dict]:
+    """브로커 확정 체결(FILLED) — **주문번호로 정확히 귀속**한다.
 
-    같은 티커를 과거에 다른 전략으로 산 이력이 있으므로(MXL 05-19 claude_price 등)
-    반드시 해당 신호일 이후 이벤트만 본다. 티커 단독 매칭은 과거 거래를 끌어온다.
+    2026-08-17 2차 수리: 종목+날짜 추정으로 매칭하면 같은 티커를 다른 전략이
+    거래했을 때 잘못 붙고(5월 MXL claude_price 실측), paper/live 이벤트도 섞인다.
+    signals.handoff_order_no == lifecycle_events.execution_id가 유일한 정확 키다.
+    runtime_mode도 함께 걸러 모드 혼입을 막는다.
     """
-    if not signal_dates:
+    if not order_map:
         return {}
-    out: dict[str, str] = {}
+    out: dict[str, dict] = {}
     try:
         path = _v2_event_store_db_path()
         if not path.exists():
             return {}
         con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
         try:
-            marks = ",".join("?" for _ in signal_dates)
+            marks = ",".join("?" for _ in order_map)
             rows = con.execute(
-                f"""SELECT ticker, created_at FROM lifecycle_events
-                    WHERE event_type='FILLED' AND ticker IN ({marks})
+                f"""SELECT execution_id, ticker, event_id, created_at, runtime_mode
+                    FROM lifecycle_events
+                    WHERE event_type='FILLED' AND execution_id IN ({marks})
                     ORDER BY created_at""",
-                tuple(sorted(signal_dates)),
+                tuple(sorted(order_map)),
             ).fetchall()
         finally:
             con.close()
-        for ticker, created_at in rows:
-            key = str(ticker or "").upper()
-            stamp = str(created_at or "")
-            signal_date = signal_dates.get(key, "")
-            if not signal_date or stamp[:10] < signal_date:
+        runtime_mode = _normalize_mode(mode)
+        for execution_id, ticker, event_id, created_at, row_mode in rows:
+            if _normalize_mode(row_mode) != runtime_mode:
                 continue
-            out.setdefault(key, stamp)
+            key = str(order_map.get(str(execution_id or ""), "") or "").upper()
+            if not key or key != str(ticker or "").upper():
+                continue
+            out.setdefault(key, {
+                "order_no": str(execution_id or ""),
+                "filled_at": str(created_at or "")[:19],
+                "fill_event_id": event_id,
+            })
     except Exception as exc:
         log.debug(f"[strategy] filled lookup failed: {exc}")
     return out
 
 
-def _strategy_canonical_nets(signal_dates: dict[str, str]) -> dict[str, dict]:
-    """정본 실현 net(수수료·FX 반영). 청산행(closed=1) 중 해당 신호일 이후 건만 인정한다."""
-    if not signal_dates or not DECISIONS_DB_PATH.exists():
+def _strategy_canonical_nets(rows: list[dict], mode: str) -> dict[str, dict]:
+    """정본 실현 성과 — sleeve decision_id로 정확히 귀속하고 **품질 등급을 함께 노출**한다.
+
+    2026-08-17 2차 수리:
+    - runtime_mode 필터(모드 혼입 차단)
+    - `sleeve_{market}_{TICKER}_{YYYYMMDD}` decision_id 우선 매칭(같은 티커의 과거
+      다른 전략 거래와 확실히 분리 — 5월 MXL claude_price 실측)
+    - pnl_pct_net이 비어 있으면 **net으로 승격하지 않는다.** DIRTY 백필분은
+      `is_net=False`로 표시해 화면이 gross/브로커 실현값과 정본 net을 구분하게 한다.
+    """
+    if not rows or not DECISIONS_DB_PATH.exists():
         return {}
+    runtime_mode = _normalize_mode(mode)
+    tickers = sorted({r["ticker"] for r in rows})
     out: dict[str, dict] = {}
     try:
         con = sqlite3.connect(f"file:{DECISIONS_DB_PATH}?mode=ro", uri=True, timeout=5)
         try:
-            marks = ",".join("?" for _ in signal_dates)
-            rows = con.execute(
-                f"""SELECT ticker, session_date, first_closed_at, pnl_pct, pnl_pct_net, pnl_krw_net, net_basis
+            marks = ",".join("?" for _ in tickers)
+            fetched = con.execute(
+                f"""SELECT ticker, session_date, v2_decision_id, first_closed_at,
+                           pnl_pct, pnl_pct_net, pnl_krw_net, quality_grade,
+                           learning_allowed, runtime_mode
                     FROM v2_canonical_performance
                     WHERE closed=1 AND ticker IN ({marks})
                     ORDER BY first_closed_at""",
-                tuple(sorted(signal_dates)),
+                tuple(tickers),
             ).fetchall()
         finally:
             con.close()
-        for ticker, session_date, closed_at, pnl_pct, pnl_pct_net, pnl_krw_net, net_basis in rows:
-            key = str(ticker or "").upper()
-            value = pnl_pct_net if pnl_pct_net is not None else pnl_pct
-            if value is None:
-                continue
-            signal_date = signal_dates.get(key, "")
-            closed_day = str(closed_at or "")[:10]
-            if not signal_date or not closed_day or closed_day < signal_date:
-                continue
-            if key in out:
-                continue
-            out[key] = {
-                "net_pct": round(float(value), 3),
-                "net_krw": float(pnl_krw_net) if pnl_krw_net is not None else None,
-                "closed_at": str(closed_at or "")[:19],
-                "session_date": str(session_date or "")[:10],
-                "basis": "pnl_pct_net" if pnl_pct_net is not None else "pnl_pct",
-                "net_basis": str(net_basis or ""),
-            }
     except Exception as exc:
         log.debug(f"[strategy] canonical lookup failed: {exc}")
+        return {}
+
+    by_decision: dict[str, tuple] = {}
+    fallback: dict[str, list[tuple]] = {}
+    for row in fetched:
+        if _normalize_mode(row[9]) != runtime_mode:
+            continue
+        decision_id = str(row[2] or "")
+        if decision_id:
+            by_decision[decision_id] = row
+        fallback.setdefault(str(row[0] or "").upper(), []).append(row)
+
+    for item in rows:
+        ticker = item["ticker"]
+        signal_date = item.get("signal_date", "")
+        matched = None
+        match_basis = ""
+        # 1순위: sleeve decision_id(정확) — 청산 세션일은 신호일 이후이므로 후보를 훑는다
+        for decision_id, row in by_decision.items():
+            if not decision_id.startswith("sleeve_"):
+                continue
+            parts = decision_id.split("_")
+            if len(parts) >= 4 and parts[2].upper() == ticker and str(row[1] or "")[:10] >= signal_date:
+                matched, match_basis = row, "sleeve_decision_id"
+                break
+        # 2순위: 신호일 이후 최초 청산(느슨 — 근거를 함께 남긴다)
+        if matched is None:
+            for row in fallback.get(ticker, []):
+                if str(row[1] or "")[:10] >= signal_date:
+                    matched, match_basis = row, "ticker_session_date_fallback"
+                    break
+        if matched is None:
+            continue
+        net_value = matched[5]
+        out[ticker] = {
+            "net_pct": round(float(net_value), 3) if net_value is not None else (
+                round(float(matched[4]), 3) if matched[4] is not None else None),
+            "is_net": net_value is not None,
+            "net_krw": float(matched[6]) if matched[6] is not None else None,
+            "closed_at": str(matched[3] or "")[:19],
+            "session_date": str(matched[1] or "")[:10],
+            "decision_id": str(matched[2] or ""),
+            "quality_grade": str(matched[7] or ""),
+            "learning_allowed": int(matched[8] or 0),
+            "match_basis": match_basis,
+        }
     return out
+
+
+def _strategy_configured_order_cap() -> float:
+    """현재 **설정 정본**의 US swing 주문상한.
+
+    us_swing_status.json은 마지막 러너 시점 스냅샷이라 설정을 바꾼 뒤 러너가 돌기
+    전까지 옛 금액을 들고 있다(2026-08-17: 설정 100만인데 상태파일 50만). 관제 화면이
+    옛 값을 보여주면 운영자가 장 전에 잘못된 위험을 읽는다. 대시보드는 start-config를
+    상속하지 않으므로 파일에서 직접 읽는다.
+    """
+    try:
+        value = os.getenv("US_SWING_ORDER_MAX_KRW", "")
+        if not value:
+            overrides = json.loads(
+                (BASE_DIR / "config" / "v2_start_config.json").read_text(encoding="utf-8")
+            ).get("env_overrides") or {}
+            value = str(overrides.get("US_SWING_ORDER_MAX_KRW", "") or "")
+        return float(value) if value else 0.0
+    except Exception:
+        return 0.0
 
 
 def _strategy_cohort(mode: str = "live") -> dict:
@@ -17358,6 +17425,11 @@ def _strategy_cohort(mode: str = "live") -> dict:
         "settled": 0, "holding": 0, "not_filled": 0, "pending_sync": 0,
         "settled_nets": [], "fingerprints": [], "blocks": [], "error": "",
     }
+    if _normalize_mode(mode) != "live":
+        # us_swing_shadow.db·us_swing_status·kr_fallen 원장은 전부 live 러너 산출물이라
+        # 모드 구분이 없다. paper 화면에 live 실거래를 그대로 보여주면 안 된다(2026-08-17).
+        empty["error"] = "이 화면의 원장은 live 전용입니다 — paper 데이터는 없습니다"
+        return empty
     if not US_SWING_SHADOW_DB_PATH.exists():
         empty["error"] = "us_swing_shadow.db 없음"
         return empty
@@ -17367,7 +17439,7 @@ def _strategy_cohort(mode: str = "live") -> dict:
             rows = con.execute(
                 """SELECT signal_date, ticker, COALESCE(execution_shadow_contract_id,''),
                           handoff_status, handoff_reason, handoff_quote_price, handoff_qty,
-                          candidate_source, probability
+                          candidate_source, probability, COALESCE(handoff_order_no,'')
                    FROM signals
                    WHERE handoff_status='SUBMITTED' AND COALESCE(execution_shadow_contract_id,'')<>''
                    ORDER BY signal_date"""
@@ -17384,11 +17456,16 @@ def _strategy_cohort(mode: str = "live") -> dict:
         empty["error"] = f"코호트 조회 실패: {exc}"
         return empty
 
-    signal_dates: dict[str, str] = {}
+    order_map: dict[str, str] = {}          # 주문번호 -> 티커 (정확 귀속 키)
+    signal_rows: list[dict] = []
     for row in rows:
-        signal_dates[str(row[1] or "").upper()] = str(row[0] or "")[:10]
-    filled = _strategy_filled_entries(signal_dates)
-    canonical = _strategy_canonical_nets(signal_dates)
+        ticker = str(row[1] or "").upper()
+        order_no = str(row[9] or "").strip()
+        if order_no:
+            order_map[order_no] = ticker
+        signal_rows.append({"ticker": ticker, "signal_date": str(row[0] or "")[:10]})
+    filled = _strategy_filled_entries(order_map, mode)
+    canonical = _strategy_canonical_nets(signal_rows, mode)
     held = {
         str(pos.get("ticker") or "").upper()
         for pos in _strategy_broker_positions("US", mode)
@@ -17398,10 +17475,12 @@ def _strategy_cohort(mode: str = "live") -> dict:
     counts = {"settled": 0, "holding": 0, "not_filled": 0, "pending_sync": 0}
     settled_nets: list[float] = []
     fingerprints: dict[str, int] = {}
-    for signal_date, ticker, contract_id, status, reason, quote_price, qty, source, probability in rows:
+    for (signal_date, ticker, contract_id, status, reason, quote_price, qty,
+         source, probability, order_no) in rows:
         key = str(ticker or "").upper()
         fingerprints[str(contract_id)] = fingerprints.get(str(contract_id), 0) + 1
-        entry_at = filled.get(key, "")
+        fill = filled.get(key) or {}
+        entry_at = str(fill.get("filled_at") or "")
         net = canonical.get(key)
         if not entry_at:
             state = "NOT_FILLED"
@@ -17420,7 +17499,11 @@ def _strategy_cohort(mode: str = "live") -> dict:
             "contract_id": str(contract_id or "")[:8],
             "state": state,
             "net_pct": (net or {}).get("net_pct"),
-            "net_basis": (net or {}).get("basis", ""),
+            "is_net": bool((net or {}).get("is_net")),
+            "quality_grade": (net or {}).get("quality_grade", ""),
+            "learning_allowed": (net or {}).get("learning_allowed"),
+            "match_basis": (net or {}).get("match_basis", ""),
+            "order_no": str(order_no or ""),
             "entry_at": entry_at[:19],
             "quote_price": float(quote_price or 0) or None,
             "qty": int(qty or 0) or None,
@@ -17593,6 +17676,16 @@ def api_strategy_summary():
         for row in cohort["rows"] if row.get("entry_at")
     }
 
+    local_positions: dict[str, dict] = {}
+    try:
+        raw_local = json.loads(
+            (BASE_DIR / "state" / f"{_normalize_mode(mode)}_open_positions.json").read_text(encoding="utf-8")
+        )
+        for item in (raw_local if isinstance(raw_local, list) else raw_local.get("positions") or []):
+            local_positions[str(item.get("ticker") or "").upper()] = item
+    except Exception:
+        local_positions = {}
+
     tp_pct = float(contract.get("take_profit_pct") or 0.12) * 100
     sl_pct = float(contract.get("catastrophe_stop_pct") or 0.25) * 100
     max_hold = int(contract.get("max_hold_sessions") or 5)
@@ -17614,18 +17707,31 @@ def api_strategy_summary():
         }
         if ticker in cohort_tickers:
             entry_date = entry_dates.get(ticker, "")
-            elapsed = 0
-            if entry_date:
-                try:
-                    elapsed = _strategy_business_days(_parse_date(entry_date), today) + 1
-                except Exception:
-                    elapsed = 0
+            # 보유일수는 **봇이 세는 held_days가 truth**다. 화면이 KST date.today()로
+            # 자체 계산하면 US 밤장 시작 전에 이미 하루가 지난 것으로 세어 하루 앞선다
+            # (2026-08-17 실측: 봇 held_days=2인데 화면 D4). 청산 판단은 봇이 하므로
+            # 화면이 다른 숫자를 보여주면 안 된다. 봇 값이 없을 때만 근사 계산한다.
+            local = local_positions.get(ticker) or {}
+            held = local.get("held_days")
+            if held is not None:
+                elapsed = int(held) + 1
+                elapsed_source = "bot_held_days"
+            else:
+                elapsed, elapsed_source = 0, "unavailable"
+                if entry_date:
+                    try:
+                        session_today = _session_trade_date(str(payload.get("market") or "US"))
+                        elapsed = _strategy_business_days(_parse_date(entry_date), session_today) + 1
+                        elapsed_source = "dashboard_estimate"
+                    except Exception:
+                        elapsed = 0
             payload.update({
                 "tp_price": round(avg * (1 + tp_pct / 100), 4) if avg > 0 else None,
                 "sl_price": round(avg * (1 - sl_pct / 100), 4) if avg > 0 else None,
                 "entry_date": entry_date,
                 "d_elapsed": elapsed,
-                "max_hold": max_hold,
+                "d_elapsed_source": elapsed_source,
+                "max_hold": int(local.get("max_hold") or max_hold),
                 "to_tp_pp": round(tp_pct - float(pos.get("pnl_pct") or 0), 2),
                 "to_sl_pp": round(float(pos.get("pnl_pct") or 0) + sl_pct, 2),
             })
@@ -17639,8 +17745,10 @@ def api_strategy_summary():
     kr_summary = ((markets.get("KR") or {}).get("account_summary") or {})
     us_summary = ((markets.get("US") or {}).get("account_summary") or {})
     usd_krw = float(status.get("execution_shadow", {}).get("fx") or 0)
+    # KR 잔고는 US 주문에 쓸 수 없다 — 합산 표시는 과대 표시다(2026-08-17 지적).
     us_cash_krw = float(us_summary.get("orderable_cash", 0) or 0) * usd_krw
-    cash_krw = float(kr_summary.get("orderable_cash", 0) or 0) + us_cash_krw
+    kr_cash_krw = float(kr_summary.get("orderable_cash", 0) or 0)
+    cash_krw = kr_cash_krw + us_cash_krw
 
     settled_nets = cohort.get("settled_nets") or []
     payload = {
@@ -17649,6 +17757,11 @@ def api_strategy_summary():
         "snapshot_at": str(snapshot.get("generated_at") or ""),
         "contract": {
             "contract_id": str(contract.get("contract_id") or "")[:8],
+            "configured_order_krw": _strategy_configured_order_cap(),
+            "order_krw_stale": (
+                _strategy_configured_order_cap() > 0
+                and abs(_strategy_configured_order_cap() - float(contract.get("budget_krw") or 0)) > 1
+            ),
             "tp_pct": round(tp_pct, 2),
             "sl_pct": round(sl_pct, 2),
             "max_hold": max_hold,
@@ -17673,6 +17786,11 @@ def api_strategy_summary():
         "non_contract": non_contract,
         "capacity": {
             "cash_krw": round(cash_krw),
+            "us_cash_krw": round(us_cash_krw),
+            "kr_cash_krw": round(kr_cash_krw),
+            "us_exposure_if_full_krw": round(
+                (_strategy_configured_order_cap() or float(contract.get("budget_krw") or 0))
+                * int(authority.get("max_open_slots") or 0)),
             "us_slots_used": len([p for p in open_contracts if p.get("market") == "US"]),
             "us_slots_max": int(authority.get("max_open_slots") or 0),
             "new_per_day": int(authority.get("max_new_per_day") or 0),
@@ -17794,9 +17912,12 @@ function stgCls(v) {
 }
 function renderStrategy(d) {
   const c = d.contract || {};
-  document.getElementById('stg-contract-line').textContent =
+  const capKrw = c.configured_order_krw || c.order_krw || 0;
+  document.getElementById('stg-contract-line').innerHTML =
     'TP +' + stgNum(c.tp_pct, 0) + '% / SL −' + stgNum(c.sl_pct, 0) + '% / D' + (c.max_hold || 5) +
-    ' · 건당 ' + Math.round((c.order_krw || 0) / 10000) + '만원 · 지문 ' + (c.contract_id || '—');
+    ' · 건당 ' + Math.round(capKrw / 10000) + '만원 · 지문 ' + (c.contract_id || '—') +
+    (c.order_krw_stale ? ' <span class="warn">· 러너 상태파일은 아직 ' +
+      Math.round((c.order_krw || 0) / 10000) + '만원(다음 러너에 갱신)</span>' : '');
   document.getElementById('stg-stamp').textContent =
     '브로커 스냅샷 ' + (d.snapshot_at || '—') + ' · 러너 ' + (c.generated_at || '—').slice(0, 19) +
     ' · 권한 ' + (c.effective_mode || '—') + ' · 슬롯 ' + (c.max_open_slots || 0) + ' · 일 ' + (c.max_new_per_day || 0) + '건';
@@ -17831,9 +17952,10 @@ function renderStrategy(d) {
   // 용량
   const cap = d.capacity || {};
   document.getElementById('stg-capacity').innerHTML =
-    '<div class="stg-card"><div class="lab">가용 현금</div><div class="val">' +
-    Math.round((cap.cash_krw || 0) / 10000) + '<span style="font-size:15px;color:var(--muted)">만원</span></div>' +
-    '<div class="sub">환율 ' + stgNum(cap.usd_krw, 1) + '</div></div>' +
+    '<div class="stg-card"><div class="lab">US 주문가능</div><div class="val">' +
+    Math.round((cap.us_cash_krw || 0) / 10000) + '<span style="font-size:15px;color:var(--muted)">만원</span></div>' +
+    '<div class="sub">KR ' + Math.round((cap.kr_cash_krw || 0) / 10000) + '만원은 US에 못 씀 · 3슬롯 최대 ' +
+    Math.round((cap.us_exposure_if_full_krw || 0) / 10000) + '만원</div></div>' +
     '<div class="stg-card"><div class="lab">US 슬롯</div><div class="val">' + (cap.us_slots_used || 0) +
     '<span style="font-size:15px;color:var(--muted)"> / ' + (cap.us_slots_max || 0) + '</span></div>' +
     '<div class="sub">신규 일 ' + (cap.new_per_day || 0) + '건</div></div>' +
@@ -17883,9 +18005,12 @@ function renderStrategy(d) {
         '<td style="font-family:var(--mono)">' + r.ticker + '</td>' +
         '<td class="dim" style="font-family:var(--mono);font-size:11px">' + r.contract_id + '</td>' +
         '<td><span class="pill ' + lab[1] + '">' + lab[0] + '</span></td>' +
-        '<td class="n ' + stgCls(r.net_pct) + '">' + (r.net_pct === null || r.net_pct === undefined ? '—' : stgSigned(r.net_pct) + '%') + '</td>' +
+        '<td class="n ' + stgCls(r.net_pct) + '">' + (r.net_pct === null || r.net_pct === undefined ? '—' :
+          stgSigned(r.net_pct) + '%' + (r.is_net ? '' : '<span class="warn" title="정본 net 컬럼이 비어 브로커 실현/gross 값을 표시">*</span>')) + '</td>' +
         '<td class="dim" style="font-size:11px">' + (r.state === 'PENDING_SYNC' ? 'CLOSED 이벤트 미발행 — 정본 동기화 대기' :
-          (r.state === 'NOT_FILLED' ? '주문 제출됐으나 미체결' : (r.net_basis || ''))) + '</td></tr>';
+          (r.state === 'NOT_FILLED' ? '주문 제출됐으나 미체결' :
+           (r.quality_grade ? r.quality_grade + (r.is_net ? ' · net' : ' · net 미인증') +
+            (r.match_basis === 'ticker_session_date_fallback' ? ' · 귀속 추정' : '') : ''))) + '</td></tr>';
     }).join('') + '</tbody></table>';
 
   // KR 게이트
@@ -17920,7 +18045,11 @@ function renderStrategy(d) {
     '값 출처 — 계약·권한: state/us_swing_status.json · 코호트: us_swing_shadow.db(handoff SUBMITTED ∩ 계약 지문) · ' +
     '체결 여부: v2_event_store FILLED · net 정본: v2_canonical_performance(수수료·FX 반영) · ' +
     '보유·현금: 브로커 truth 스냅샷 · KR 게이트: kr_fallen_shadow.jsonl(kr_fallen_gate_report 규칙 재사용)<br>' +
-    'net은 정본에 기록된 건만 표시합니다. gross나 shadow 값으로 대체하지 않습니다.';
+    'net은 정본에 기록된 건만 표시합니다. gross나 shadow 값으로 대체하지 않습니다.<br>' +
+    '<b>*</b> 표시 = v2_canonical_performance의 pnl_pct_net이 비어 브로커 실현/gross 값을 보여주는 건입니다(현재 sleeve 청산은 ' +
+    '라이브가 CLOSED를 발행하지 않아 소급 주입분이라 quality_grade=DIRTY·learning_allowed=0). 자동 학습·판정에 쓰기 전 정본화가 필요합니다.<br>' +
+    '체결·정산 귀속은 signals.handoff_order_no ↔ lifecycle FILLED.execution_id, canonical은 sleeve decision_id로 매칭합니다(추정 매칭은 행에 표기).<br>' +
+    '이 화면의 원장은 모두 live 전용입니다 — paper 모드에서는 데이터를 표시하지 않습니다.';
 }
 function loadStrategy() {
   fetch('/api/strategy/summary?mode=' + (typeof CURRENT_MODE !== 'undefined' ? CURRENT_MODE : 'live'))
