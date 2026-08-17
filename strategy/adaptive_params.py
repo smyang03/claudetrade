@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import contextlib
 import sqlite3
 from pathlib import Path
 from typing import Optional
@@ -74,7 +75,7 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 def _query_canonical_perf(market: str, like: str, days: int) -> tuple[int, int, bool]:
     """Query live closed performance from V2 canonical execution truth."""
     try:
-        with sqlite3.connect(str(_DB), timeout=5) as conn:
+        with contextlib.closing(sqlite3.connect(str(_DB), timeout=5)) as conn:
             if not _table_exists(conn, "v2_canonical_performance"):
                 return 0, 0, False
             columns = _table_columns(conn, "v2_canonical_performance")
@@ -112,7 +113,7 @@ def _query_perf(market: str, like: str, source_filter: str, days: int) -> tuple[
     adaptive overlay가 실제 손익을 바로 반영할 수 있다.
     """
     try:
-        with sqlite3.connect(str(_DB), timeout=5) as conn:
+        with contextlib.closing(sqlite3.connect(str(_DB), timeout=5)) as conn:
             rows = conn.execute(
                 f"""
                 SELECT CASE

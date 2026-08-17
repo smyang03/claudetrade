@@ -323,7 +323,7 @@ def _fetch_pathb_run_profit_review(path_run_ids: list[str]) -> dict[str, dict]:
     try:
         import sqlite3
         placeholders = ",".join("?" for _ in path_run_ids)
-        with sqlite3.connect(str(db_path), timeout=3) as conn:
+        with contextlib.closing(sqlite3.connect(str(db_path), timeout=3)) as conn:
             rows = conn.execute(
                 f"SELECT path_run_id, plan_json FROM v2_path_runs WHERE path_run_id IN ({placeholders})",
                 path_run_ids,
@@ -5494,7 +5494,7 @@ def _ml_db_digest(market: str) -> dict:
             f"{gap_clause}"
         )
         live_safe_params = [market, *live_sources, *gap_params]
-        with sqlite3.connect(db_path) as conn:
+        with contextlib.closing(sqlite3.connect(db_path)) as conn:
             digest["enabled"] = True
             digest["known_gap_ranges"] = known_ranges
             digest["total_all"] = int(conn.execute("SELECT COUNT(*) FROM decisions WHERE market=?", (market,)).fetchone()[0] or 0)

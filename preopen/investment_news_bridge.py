@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import contextlib
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -199,7 +200,7 @@ def _query_news_rows(
          LIMIT ?
     """
     params.append(max(1, min(int(limit or 200), 500)))
-    with sqlite3.connect(_read_only_uri(db_path), uri=True) as conn:
+    with contextlib.closing(sqlite3.connect(_read_only_uri(db_path), uri=True)) as conn:
         conn.row_factory = sqlite3.Row
         return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
