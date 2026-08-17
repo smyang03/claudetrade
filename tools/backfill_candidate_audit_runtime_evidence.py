@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from contextlib import closing
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -244,7 +245,7 @@ def build_runtime_evidence_backfill_plan(
     eligible: list[dict[str, Any]] = []
     conflicts: list[dict[str, Any]] = []
     scanned = 0
-    with _connect(db_path, readonly=True) as conn:
+    with closing(_connect(db_path, readonly=True)) as conn:
         cols = _columns(conn)
         missing_schema = sorted(
             {
@@ -318,7 +319,7 @@ def apply_runtime_evidence_backfill(db_path: Path, plan: dict[str, Any]) -> int:
     if not rows:
         return 0
     now = _utc_now()
-    with _connect(db_path, readonly=False) as conn:
+    with closing(_connect(db_path, readonly=False)) as conn, conn:
         cols = _columns(conn)
         applied = 0
         for item in rows:
