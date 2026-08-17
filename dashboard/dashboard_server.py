@@ -17257,7 +17257,7 @@ STRATEGY_CORE_TICKERS = {"SCHG", "275280", "275300"}
 # 라이브 DB에 read 커넥션을 반복해서 여는 것을 막기 위해 응답을 통째로 캐시한다.
 _STRATEGY_SUMMARY_TTL_SEC = 60
 _STRATEGY_SUMMARY_LOCK = threading.Lock()
-_STRATEGY_SUMMARY_CACHE: dict[str, Any] = {"cached_at": 0.0, "payload": None}
+_STRATEGY_SUMMARY_CACHE: dict[str, dict] = {}  # mode별 분리 — paper/live 응답이 섞이면 안 된다
 
 
 def _strategy_business_days(start: date, end: date) -> int:
@@ -17351,7 +17351,7 @@ def _strategy_canonical_nets(signal_dates: dict[str, str]) -> dict[str, dict]:
     return out
 
 
-def _strategy_cohort() -> dict:
+def _strategy_cohort(mode: str = "live") -> dict:
     """실주문이 나간 계약 건(handoff SUBMITTED ∩ 계약 지문)만 판정 코호트로 센다."""
     empty = {
         "target": STRATEGY_COHORT_TARGET_N, "count": 0, "rows": [],
@@ -17391,7 +17391,7 @@ def _strategy_cohort() -> dict:
     canonical = _strategy_canonical_nets(signal_dates)
     held = {
         str(pos.get("ticker") or "").upper()
-        for pos in _strategy_broker_positions("US")
+        for pos in _strategy_broker_positions("US", mode)
     }
 
     out_rows: list[dict] = []
@@ -17449,8 +17449,8 @@ def _strategy_cohort() -> dict:
     }
 
 
-def _strategy_broker_positions(market: str) -> list[dict]:
-    snapshot = _load_broker_truth_snapshot_cached("live") or {}
+def _strategy_broker_positions(market: str, mode: str = "live") -> list[dict]:
+    snapshot = _load_broker_truth_snapshot_cached(_normalize_mode(mode)) or {}
     markets = snapshot.get("markets") or {}
     entry = markets.get(str(market or "").upper()) or {}
     positions = entry.get("positions")
@@ -17569,10 +17569,12 @@ def _strategy_kr_gate() -> dict:
 
 @app.route("/api/strategy/summary")
 def api_strategy_summary():
+    mode = _request_mode()
     now_ts = _time.time()
     with _STRATEGY_SUMMARY_LOCK:
-        cached = _STRATEGY_SUMMARY_CACHE.get("payload")
-        cached_at = float(_STRATEGY_SUMMARY_CACHE.get("cached_at") or 0.0)
+        entry = _STRATEGY_SUMMARY_CACHE.get(mode) or {}
+        cached = entry.get("payload")
+        cached_at = float(entry.get("cached_at") or 0.0)
     if cached and (now_ts - cached_at) < _STRATEGY_SUMMARY_TTL_SEC:
         payload = dict(cached)
         payload["cache_age_sec"] = int(now_ts - cached_at)
@@ -17581,11 +17583,11 @@ def api_strategy_summary():
     status = _strategy_us_swing_status()
     contract = (status.get("execution_contract") or {})
     authority = (status.get("effective_authority") or {})
-    cohort = _strategy_cohort()
+    cohort = _strategy_cohort(mode)
 
     cohort_tickers = {row["ticker"] for row in cohort["rows"]}
-    us_positions = _strategy_broker_positions("US")
-    kr_positions = _strategy_broker_positions("KR")
+    us_positions = _strategy_broker_positions("US", mode)
+    kr_positions = _strategy_broker_positions("KR", mode)
     entry_dates = {
         row["ticker"]: row["entry_at"][:10]
         for row in cohort["rows"] if row.get("entry_at")
@@ -17632,7 +17634,7 @@ def api_strategy_summary():
             payload["core"] = ticker in STRATEGY_CORE_TICKERS
             non_contract.append(payload)
 
-    snapshot = _load_broker_truth_snapshot_cached("live") or {}
+    snapshot = _load_broker_truth_snapshot_cached(mode) or {}
     markets = snapshot.get("markets") or {}
     kr_summary = ((markets.get("KR") or {}).get("account_summary") or {})
     us_summary = ((markets.get("US") or {}).get("account_summary") or {})
@@ -17680,8 +17682,7 @@ def api_strategy_summary():
         "cache_age_sec": 0,
     }
     with _STRATEGY_SUMMARY_LOCK:
-        _STRATEGY_SUMMARY_CACHE["payload"] = payload
-        _STRATEGY_SUMMARY_CACHE["cached_at"] = _time.time()
+        _STRATEGY_SUMMARY_CACHE[mode] = {"payload": payload, "cached_at": _time.time()}
     return jsonify(payload)
 
 
