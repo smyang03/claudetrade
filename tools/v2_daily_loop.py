@@ -18,6 +18,7 @@ from lifecycle.quality import forward_measurement_complete as quality_forward_me
 from research.v2_policy_optimizer import OptimizerConfig, build_policy_optimization_report
 from research.v2_simulation_report import build_simulation_report
 from review.daily_review import DailyReviewWriter
+from tools.backfill_sleeve_closed_events import backfill_sleeve_closed
 from tools.sync_v2_learning_performance import sync_v2_learning_performance
 from tools.v2_forward_measurer import measure_forward_pending
 
@@ -76,6 +77,16 @@ def run_daily_loop(
         )
     forward = _aggregate_forward_results(forward_by_session)
     forward_measured = _aggregate_forward_results(forward_measured_by_session)
+    # sleeve 계약 청산(us_swing_5d·kr_fallen_5d)은 라이브 경로가 CLOSED 이벤트를
+    # 발행하지 않는다(2026-08-06 확인, 계약 동결 결정으로 라이브 코드는 그대로 둔다).
+    # sync는 이벤트를 canonical로 옮길 뿐 만들지 않으므로, 여기서 로그 기반으로 먼저
+    # 주입해야 그날 sync가 정본 net을 채운다. **청산 당일에 돌아야** 한다 — 며칠 뒤
+    # 수동 주입은 sync의 세션 범위 밖이라 정본에 안 들어간다(CVI·MXL 실측, 08-17).
+    # 멱등(같은 ticker+occurred_at 스킵)이라 매일 호출해도 안전하다.
+    try:
+        sleeve_closed_backfill = backfill_sleeve_closed(dry_run=dry_run, verbose=False)
+    except Exception as exc:  # 관측 보강이 일일 루프를 막으면 안 된다
+        sleeve_closed_backfill = {"error": str(exc)}
     learning_sync: dict[str, Any] = {}
     sync_start_date = forward_sessions[0] if forward_sessions else session
     for mkt in markets:
@@ -123,6 +134,7 @@ def run_daily_loop(
         "forward_measured_by_session": forward_measured_by_session,
         "forward_measured": forward_measured,
         "learning_sync": learning_sync,
+        "sleeve_closed_backfill": sleeve_closed_backfill,
         "learning_sync_aggregate": learning_sync_aggregate,
         "daily_reviews": reviews,
         "simulation_report": simulation_paths,

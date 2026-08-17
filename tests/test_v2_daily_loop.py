@@ -200,3 +200,35 @@ class V2DailyLoopTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SleeveClosedBackfillWiringTests(unittest.TestCase):
+    """sleeve 청산 CLOSED 자동 주입 배선 (2026-08-17).
+
+    라이브 청산 경로가 CLOSED를 발행하지 않아 정본 net(v2_canonical_performance)이
+    비어 있었다. sync는 이벤트를 옮길 뿐 만들지 않으므로, 일일 루프가 sync **직전에**
+    로그 기반 주입을 돌려야 그날 정본이 채워진다. 이 배선이 사라지면 판정 원장에
+    조용히 구멍이 생기므로(CVI·MXL 실측) 호출 자체를 고정한다.
+    """
+
+    def test_daily_loop_calls_sleeve_backfill_before_sync(self) -> None:
+        import inspect
+
+        from tools import v2_daily_loop
+
+        source = inspect.getsource(v2_daily_loop.run_daily_loop)
+        self.assertIn("backfill_sleeve_closed(", source)
+        self.assertLess(
+            source.index("backfill_sleeve_closed("),
+            source.index("sync_v2_learning_performance("),
+            "backfill은 sync보다 먼저 실행돼야 그날 정본에 반영된다",
+        )
+
+    def test_backfill_helper_is_idempotent_and_reports_summary(self) -> None:
+        from tools.backfill_sleeve_closed_events import backfill_sleeve_closed
+
+        summary = backfill_sleeve_closed(dry_run=True, verbose=False)
+        for key in ("scanned", "already", "pending", "written", "dry_run"):
+            self.assertIn(key, summary)
+        self.assertTrue(summary["dry_run"])
+        self.assertEqual(summary["written"], 0)

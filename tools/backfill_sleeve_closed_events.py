@@ -108,22 +108,31 @@ def existing_keys() -> set[tuple[str, str]]:
     return {(str(t), str(o)) for t, o in rows}
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Backfill sleeve CLOSED lifecycle events")
-    parser.add_argument("--days", type=int, default=0, help="최근 N일 로그만 (0=전체)")
-    parser.add_argument("--dry-run", action="store_true")
-    args = parser.parse_args()
+def backfill_sleeve_closed(days: int = 0, *, dry_run: bool = False, verbose: bool = True) -> dict:
+    """로그의 sleeve 계약 청산을 CLOSED 이벤트로 주입하고 결과 요약을 돌려준다.
 
-    closes = scan(args.days)
+    2026-08-17: v2_daily_loop이 매일 호출한다. sync는 세션 범위 필터가 있어서
+    **청산 당일에 CLOSED가 만들어져야** 그날 sync가 canonical로 옮긴다. 며칠 지나
+    수동으로 넣으면 범위 밖이라 정본에 안 들어간다(CVI 08-10·MXL 08-14 실측).
+    멱등이므로 매일 돌아도 안전하다.
+    """
+    def _say(msg: str) -> None:
+        if verbose:
+            print(msg)
+
+    closes = scan(days)
     known = existing_keys()
     todo = [c for c in closes if (c["ticker"], c["occurred_at"]) not in known]
 
-    print(f"sleeve 계약 청산 로그 {len(closes)}건 | 이미 기록됨 {len(closes) - len(todo)} | 주입 대상 {len(todo)}")
+    _say(f"sleeve 계약 청산 로그 {len(closes)}건 | 이미 기록됨 {len(closes) - len(todo)} | 주입 대상 {len(todo)}")
     for c in todo:
-        print(f"  {c['ts_kst']}  {c['market']} {c['ticker']:<6} {c['reason']:<28} "
-              f"{c['pnl_pct']:+.2f}% ({c['pnl_krw']:+,.0f}원)")
-    if args.dry_run or not todo:
-        return 0
+        _say(f"  {c['ts_kst']}  {c['market']} {c['ticker']:<6} {c['reason']:<28} "
+             f"{c['pnl_pct']:+.2f}% ({c['pnl_krw']:+,.0f}원)")
+    summary = {"scanned": len(closes), "already": len(closes) - len(todo),
+               "pending": len(todo), "written": 0, "dry_run": bool(dry_run),
+               "tickers": [c["ticker"] for c in todo]}
+    if dry_run or not todo:
+        return summary
 
     store = EventStore(EVENT_DB)
     written = 0
@@ -151,7 +160,17 @@ def main() -> int:
         )
         store.append(event)
         written += 1
-    print(f"주입 완료 {written}건 -> {EVENT_DB}")
+    _say(f"주입 완료 {written}건 -> {EVENT_DB}")
+    summary["written"] = written
+    return summary
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Backfill sleeve CLOSED lifecycle events")
+    parser.add_argument("--days", type=int, default=0, help="최근 N일 로그만 (0=전체)")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+    backfill_sleeve_closed(args.days, dry_run=args.dry_run)
     return 0
 
 
