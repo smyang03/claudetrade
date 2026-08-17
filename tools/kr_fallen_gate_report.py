@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -341,8 +341,52 @@ def main() -> int:
     )
     print("        규칙별 집계는 이 중 해당 규칙 통과분만 센다 — 두 숫자는 모집단이 다르다.")
 
+    _execution_attribution_view()
+
     print("\n(판정은 운영자 — 이 리포트는 집계만 한다. in-sample 참고치와 비교 금지, forward만 본다.)")
     return 0
+
+
+def _execution_attribution_view() -> None:
+    """실제 주문이 나간 건을 충족 규칙별로 센다 — R4b(사각 편입) 반증 집계 (2026-08-17 신설).
+
+    필요한 이유: 사각 편입(2026-08-13 승인)의 반증 기준은 "R4b 실거래 10건 net<=0"인데,
+    위의 규칙별 집계는 **메인 원장의 가상정산**만 센다. 사각 원장 105행은 2~8월 백필이라
+    forward가 아니고 게이트 집계에서 정당하게 제외되지만, 그 결과 R4b로 실제 진입한 건을
+    세는 곳이 어디에도 없었다. 여기서 handoff 이력(주문 truth)을 규칙 귀속으로 집계한다.
+    """
+    history = ROOT / "data" / "shadow" / "kr_fallen_handoff_history.jsonl"
+    print("\n[실거래 귀속] 주문이 실제 나간 건 (handoff 이력 기준)")
+    if not history.exists():
+        print("        이력 없음:", history.name)
+        return
+    submitted: dict[str, list[str]] = defaultdict(list)
+    blocked_reasons: Counter = Counter()
+    for line in history.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        last = row.get("last_result") or {}
+        for item in last.get("results") or []:
+            status = str(item.get("status") or "")
+            if status == "SUBMITTED":
+                tag = "+".join(item.get("matched") or []) or "미표기"
+                submitted[tag].append(f"{row.get('session_date','')}:{item.get('ticker','')}")
+            elif status in {"BLOCKED", "SUBMIT_FAILED"}:
+                blocked_reasons[str(item.get("reason") or "unknown")] += 1
+    if submitted:
+        for tag, entries in sorted(submitted.items()):
+            print(f"        {tag:10s} {len(entries):3d}건  {', '.join(entries[:6])}"
+                  + (" …" if len(entries) > 6 else ""))
+    else:
+        print("        실주문 0건 — 아직 어떤 규칙으로도 KR 진입이 없다.")
+    if blocked_reasons:
+        top = ", ".join(f"{k} {v}" for k, v in blocked_reasons.most_common(5))
+        print(f"        차단 사유 상위: {top}")
+    print("        반증 기준(2026-08-13 승인): R4b 실거래 10건 net<=0이면 사각 편입 off.")
 
 
 if __name__ == "__main__":

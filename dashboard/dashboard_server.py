@@ -10722,6 +10722,7 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 def _header_html(active_page: str) -> str:
     pages = [
         ("/",          "오늘 현황"),
+        ("/strategy",  "전략 관제"),
         ("/pathb",     "B플랜 실시간"),
         ("/preopen",   "장전 후보"),
         ("/candidate-audit", "후보 감사"),
@@ -17235,6 +17236,710 @@ def page_logs():
         + _header_html("/logs")
         + COMMON_JS_BLOCK
         + PAGE_LOGS_HTML
+        + "</body></html>"
+    )
+    return render_template_string(html)
+
+
+# ── 전략 관제 (계약 진행 · 판정 표본) ──────────────────────────────
+# 기존 화면은 보유·주문·후보 축이라 "지금 어떤 계약이 걸려 있고 판정이 얼마나
+# 찼나"를 볼 곳이 없었다. 값은 전부 기존 원장에서 읽기만 한다(신규 수집 없음).
+# net 정본은 v2_canonical_performance(수수료·FX 반영)이며, 없는 건은 gross로
+# 메꾸지 않고 PENDING_SYNC로 노출한다 — 판정 화면을 오염시키지 않기 위해서다.
+
+US_SWING_SHADOW_DB_PATH = BASE_DIR / "data" / "analysis" / "us_swing_shadow.db"
+DECISIONS_DB_PATH = BASE_DIR / "data" / "ml" / "decisions.db"
+US_SWING_STATUS_JSON_PATH = BASE_DIR / "state" / "us_swing_status.json"
+KR_FALLEN_SHADOW_LEDGER = BASE_DIR / "data" / "shadow" / "kr_fallen_shadow.jsonl"
+STRATEGY_COHORT_TARGET_N = 30
+STRATEGY_CORE_TICKERS = {"SCHG", "275280", "275300"}
+# 이 화면 값 중 분 단위로 변하는 것은 없다(브로커 스냅샷이 더 느리게 갱신된다).
+# 라이브 DB에 read 커넥션을 반복해서 여는 것을 막기 위해 응답을 통째로 캐시한다.
+_STRATEGY_SUMMARY_TTL_SEC = 60
+_STRATEGY_SUMMARY_LOCK = threading.Lock()
+_STRATEGY_SUMMARY_CACHE: dict[str, Any] = {"cached_at": 0.0, "payload": None}
+
+
+def _strategy_business_days(start: date, end: date) -> int:
+    """주말만 제외한 경과 영업일. 공휴일 캘린더는 봇 소유라 화면은 추정하지 않는다."""
+    if end <= start:
+        return 0
+    days = 0
+    cursor = start
+    while cursor < end:
+        cursor += timedelta(days=1)
+        if cursor.weekday() < 5:
+            days += 1
+    return days
+
+
+def _strategy_filled_entries(signal_dates: dict[str, str]) -> dict[str, str]:
+    """FILLED 이벤트가 있는 티커 → 체결 시각. 미체결(진입 실패) 구분의 truth.
+
+    같은 티커를 과거에 다른 전략으로 산 이력이 있으므로(MXL 05-19 claude_price 등)
+    반드시 해당 신호일 이후 이벤트만 본다. 티커 단독 매칭은 과거 거래를 끌어온다.
+    """
+    if not signal_dates:
+        return {}
+    out: dict[str, str] = {}
+    try:
+        path = _v2_event_store_db_path()
+        if not path.exists():
+            return {}
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+        try:
+            marks = ",".join("?" for _ in signal_dates)
+            rows = con.execute(
+                f"""SELECT ticker, created_at FROM lifecycle_events
+                    WHERE event_type='FILLED' AND ticker IN ({marks})
+                    ORDER BY created_at""",
+                tuple(sorted(signal_dates)),
+            ).fetchall()
+        finally:
+            con.close()
+        for ticker, created_at in rows:
+            key = str(ticker or "").upper()
+            stamp = str(created_at or "")
+            signal_date = signal_dates.get(key, "")
+            if not signal_date or stamp[:10] < signal_date:
+                continue
+            out.setdefault(key, stamp)
+    except Exception as exc:
+        log.debug(f"[strategy] filled lookup failed: {exc}")
+    return out
+
+
+def _strategy_canonical_nets(signal_dates: dict[str, str]) -> dict[str, dict]:
+    """정본 실현 net(수수료·FX 반영). 청산행(closed=1) 중 해당 신호일 이후 건만 인정한다."""
+    if not signal_dates or not DECISIONS_DB_PATH.exists():
+        return {}
+    out: dict[str, dict] = {}
+    try:
+        con = sqlite3.connect(f"file:{DECISIONS_DB_PATH}?mode=ro", uri=True, timeout=5)
+        try:
+            marks = ",".join("?" for _ in signal_dates)
+            rows = con.execute(
+                f"""SELECT ticker, session_date, first_closed_at, pnl_pct, pnl_pct_net, pnl_krw_net, net_basis
+                    FROM v2_canonical_performance
+                    WHERE closed=1 AND ticker IN ({marks})
+                    ORDER BY first_closed_at""",
+                tuple(sorted(signal_dates)),
+            ).fetchall()
+        finally:
+            con.close()
+        for ticker, session_date, closed_at, pnl_pct, pnl_pct_net, pnl_krw_net, net_basis in rows:
+            key = str(ticker or "").upper()
+            value = pnl_pct_net if pnl_pct_net is not None else pnl_pct
+            if value is None:
+                continue
+            signal_date = signal_dates.get(key, "")
+            closed_day = str(closed_at or "")[:10]
+            if not signal_date or not closed_day or closed_day < signal_date:
+                continue
+            if key in out:
+                continue
+            out[key] = {
+                "net_pct": round(float(value), 3),
+                "net_krw": float(pnl_krw_net) if pnl_krw_net is not None else None,
+                "closed_at": str(closed_at or "")[:19],
+                "session_date": str(session_date or "")[:10],
+                "basis": "pnl_pct_net" if pnl_pct_net is not None else "pnl_pct",
+                "net_basis": str(net_basis or ""),
+            }
+    except Exception as exc:
+        log.debug(f"[strategy] canonical lookup failed: {exc}")
+    return out
+
+
+def _strategy_cohort() -> dict:
+    """실주문이 나간 계약 건(handoff SUBMITTED ∩ 계약 지문)만 판정 코호트로 센다."""
+    empty = {
+        "target": STRATEGY_COHORT_TARGET_N, "count": 0, "rows": [],
+        "settled": 0, "holding": 0, "not_filled": 0, "pending_sync": 0,
+        "settled_nets": [], "fingerprints": [], "blocks": [], "error": "",
+    }
+    if not US_SWING_SHADOW_DB_PATH.exists():
+        empty["error"] = "us_swing_shadow.db 없음"
+        return empty
+    try:
+        con = sqlite3.connect(f"file:{US_SWING_SHADOW_DB_PATH}?mode=ro", uri=True, timeout=5)
+        try:
+            rows = con.execute(
+                """SELECT signal_date, ticker, COALESCE(execution_shadow_contract_id,''),
+                          handoff_status, handoff_reason, handoff_quote_price, handoff_qty,
+                          candidate_source, probability
+                   FROM signals
+                   WHERE handoff_status='SUBMITTED' AND COALESCE(execution_shadow_contract_id,'')<>''
+                   ORDER BY signal_date"""
+            ).fetchall()
+            blocks = con.execute(
+                """SELECT signal_date, ticker, handoff_reason
+                   FROM signals
+                   WHERE handoff_status='BLOCKED' AND COALESCE(handoff_reason,'')<>''
+                   ORDER BY signal_date DESC LIMIT 6"""
+            ).fetchall()
+        finally:
+            con.close()
+    except Exception as exc:
+        empty["error"] = f"코호트 조회 실패: {exc}"
+        return empty
+
+    signal_dates: dict[str, str] = {}
+    for row in rows:
+        signal_dates[str(row[1] or "").upper()] = str(row[0] or "")[:10]
+    filled = _strategy_filled_entries(signal_dates)
+    canonical = _strategy_canonical_nets(signal_dates)
+    held = {
+        str(pos.get("ticker") or "").upper()
+        for pos in _strategy_broker_positions("US")
+    }
+
+    out_rows: list[dict] = []
+    counts = {"settled": 0, "holding": 0, "not_filled": 0, "pending_sync": 0}
+    settled_nets: list[float] = []
+    fingerprints: dict[str, int] = {}
+    for signal_date, ticker, contract_id, status, reason, quote_price, qty, source, probability in rows:
+        key = str(ticker or "").upper()
+        fingerprints[str(contract_id)] = fingerprints.get(str(contract_id), 0) + 1
+        entry_at = filled.get(key, "")
+        net = canonical.get(key)
+        if not entry_at:
+            state = "NOT_FILLED"
+        elif key in held:
+            state = "HOLDING"
+        elif net:
+            state = "SETTLED"
+        else:
+            state = "PENDING_SYNC"
+        if state == "SETTLED" and net:
+            settled_nets.append(float(net["net_pct"]))
+        counts[state.lower()] = counts.get(state.lower(), 0) + 1
+        out_rows.append({
+            "signal_date": str(signal_date or "")[:10],
+            "ticker": key,
+            "contract_id": str(contract_id or "")[:8],
+            "state": state,
+            "net_pct": (net or {}).get("net_pct"),
+            "net_basis": (net or {}).get("basis", ""),
+            "entry_at": entry_at[:19],
+            "quote_price": float(quote_price or 0) or None,
+            "qty": int(qty or 0) or None,
+            "source": str(source or ""),
+            "probability": round(float(probability or 0), 3) or None,
+            "reason": str(reason or ""),
+        })
+
+    return {
+        "target": STRATEGY_COHORT_TARGET_N,
+        "count": len(out_rows),
+        "rows": out_rows,
+        "settled": counts.get("settled", 0),
+        "holding": counts.get("holding", 0),
+        "not_filled": counts.get("not_filled", 0),
+        "pending_sync": counts.get("pending_sync", 0),
+        "settled_nets": settled_nets,
+        "fingerprints": [
+            {"id": fid[:8], "count": n} for fid, n in sorted(fingerprints.items())
+        ],
+        "blocks": [
+            {"signal_date": str(d or "")[:10], "ticker": str(t or "").upper(), "reason": str(r or "")}
+            for d, t, r in blocks
+        ],
+        "error": "",
+    }
+
+
+def _strategy_broker_positions(market: str) -> list[dict]:
+    snapshot = _load_broker_truth_snapshot_cached("live") or {}
+    markets = snapshot.get("markets") or {}
+    entry = markets.get(str(market or "").upper()) or {}
+    positions = entry.get("positions")
+    return positions if isinstance(positions, list) else []
+
+
+def _strategy_us_swing_status() -> dict:
+    try:
+        return json.loads(US_SWING_STATUS_JSON_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _strategy_kr_gate() -> dict:
+    """KR 급락 레인 사전등록 게이트 진행도. 계산은 kr_fallen_gate_report 정본을 재사용한다."""
+    result = {"rules": [], "sessions": 0, "need_sessions": 0, "error": "", "active_rule": ""}
+    if not KR_FALLEN_SHADOW_LEDGER.exists():
+        result["error"] = "kr_fallen_shadow.jsonl 없음"
+        return result
+    try:
+        from tools.kr_fallen_gate_report import (  # noqa: PLC0415
+            GATE_MIN_SESSIONS, GATE_MIN_SETTLED, GATE_MIN_SETTLED_BY_RULE, GATE_MIN_WEEKS,
+            rule_flags,
+        )
+    except Exception as exc:
+        result["error"] = f"게이트 규칙 로드 실패: {exc}"
+        return result
+
+    try:
+        rows = [
+            json.loads(line)
+            for line in KR_FALLEN_SHADOW_LEDGER.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except Exception as exc:
+        result["error"] = f"원장 읽기 실패: {exc}"
+        return result
+
+    sessions = sorted({str(r.get("session_date") or "") for r in rows if r.get("session_date")})
+    stats: dict[str, dict] = {}
+    for row in rows:
+        try:
+            flags = rule_flags(row)
+        except Exception:
+            continue
+        for rule, hit in flags.items():
+            if not hit:
+                continue
+            bucket = stats.setdefault(rule, {"cand": 0, "settled": [], "weeks": set()})
+            bucket["cand"] += 1
+            if row.get("status") == "SETTLED" and row.get("net_pct") is not None:
+                net = float(row["net_pct"])
+                bucket["settled"].append(net)
+                try:
+                    week = datetime.strptime(str(row["session_date"]), "%Y-%m-%d").strftime("%G-W%V")
+                    bucket["weeks"].add(week)
+                except Exception:
+                    pass
+
+    for rule in ("R2_할인저변동", "R4_갭할인"):
+        bucket = stats.get(rule) or {"cand": 0, "settled": [], "weeks": set()}
+        nets = bucket["settled"]
+        need = int(GATE_MIN_SETTLED_BY_RULE.get(rule, GATE_MIN_SETTLED))
+        mean = round(sum(nets) / len(nets), 2) if nets else None
+        wins = sum(1 for x in nets if x > 0)
+        gain = sum(x for x in nets if x > 0)
+        loss = -sum(x for x in nets if x <= 0)
+        result["rules"].append({
+            "rule": rule,
+            "candidates": bucket["cand"],
+            "settled": len(nets),
+            "need_settled": need,
+            "mean_pct": mean,
+            "win_rate": round(100 * wins / len(nets), 0) if nets else None,
+            "profit_factor": (round(gain / loss, 2) if loss > 0 else None) if nets else None,
+            "weeks": len(bucket["weeks"]),
+            "need_weeks": int(GATE_MIN_WEEKS),
+            "gate_ok": bool(
+                len(sessions) >= int(GATE_MIN_SESSIONS)
+                and len(nets) >= need
+                and len(bucket["weeks"]) >= int(GATE_MIN_WEEKS)
+            ),
+        })
+    # R4b(사각 편입) 반증 집계 — 위 규칙별 수치는 메인 원장의 가상정산이라
+    # 실제 주문이 어떤 규칙으로 나갔는지는 handoff 이력에만 있다(2026-08-17 배선).
+    executed: dict[str, int] = {}
+    history_path = BASE_DIR / "data" / "shadow" / "kr_fallen_handoff_history.jsonl"
+    try:
+        for line in history_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            last = (json.loads(line) or {}).get("last_result") or {}
+            for item in last.get("results") or []:
+                if str(item.get("status") or "") != "SUBMITTED":
+                    continue
+                tag = "+".join(item.get("matched") or []) or "미표기"
+                executed[tag] = executed.get(tag, 0) + 1
+    except Exception:
+        executed = {}
+    result["executed_by_rule"] = executed
+    result["sessions"] = len(sessions)
+    result["need_sessions"] = int(GATE_MIN_SESSIONS)
+    active = str(os.getenv("KR_FALLEN_ACTIVE_RULE", "") or "")
+    if not active:
+        # 대시보드 프로세스는 start-config env_overrides를 상속하지 않는다(봇만 로드).
+        try:
+            overrides = json.loads(
+                (BASE_DIR / "config" / "v2_start_config.json").read_text(encoding="utf-8")
+            ).get("env_overrides") or {}
+            active = str(overrides.get("KR_FALLEN_ACTIVE_RULE", "") or "")
+        except Exception:
+            active = ""
+    result["active_rule"] = active
+    return result
+
+
+@app.route("/api/strategy/summary")
+def api_strategy_summary():
+    now_ts = _time.time()
+    with _STRATEGY_SUMMARY_LOCK:
+        cached = _STRATEGY_SUMMARY_CACHE.get("payload")
+        cached_at = float(_STRATEGY_SUMMARY_CACHE.get("cached_at") or 0.0)
+    if cached and (now_ts - cached_at) < _STRATEGY_SUMMARY_TTL_SEC:
+        payload = dict(cached)
+        payload["cache_age_sec"] = int(now_ts - cached_at)
+        return jsonify(payload)
+
+    status = _strategy_us_swing_status()
+    contract = (status.get("execution_contract") or {})
+    authority = (status.get("effective_authority") or {})
+    cohort = _strategy_cohort()
+
+    cohort_tickers = {row["ticker"] for row in cohort["rows"]}
+    us_positions = _strategy_broker_positions("US")
+    kr_positions = _strategy_broker_positions("KR")
+    entry_dates = {
+        row["ticker"]: row["entry_at"][:10]
+        for row in cohort["rows"] if row.get("entry_at")
+    }
+
+    tp_pct = float(contract.get("take_profit_pct") or 0.12) * 100
+    sl_pct = float(contract.get("catastrophe_stop_pct") or 0.25) * 100
+    max_hold = int(contract.get("max_hold_sessions") or 5)
+    today = date.today()
+
+    open_contracts: list[dict] = []
+    non_contract: list[dict] = []
+    for pos in us_positions + kr_positions:
+        ticker = str(pos.get("ticker") or "").upper()
+        avg = float(pos.get("avg_price") or 0)
+        payload = {
+            "ticker": ticker,
+            "name": str(pos.get("name") or ""),
+            "market": str(pos.get("market") or ""),
+            "qty": pos.get("qty"),
+            "avg_price": avg,
+            "current_price": float(pos.get("current_price") or 0),
+            "pnl_pct": round(float(pos.get("pnl_pct") or 0), 2),
+        }
+        if ticker in cohort_tickers:
+            entry_date = entry_dates.get(ticker, "")
+            elapsed = 0
+            if entry_date:
+                try:
+                    elapsed = _strategy_business_days(_parse_date(entry_date), today) + 1
+                except Exception:
+                    elapsed = 0
+            payload.update({
+                "tp_price": round(avg * (1 + tp_pct / 100), 4) if avg > 0 else None,
+                "sl_price": round(avg * (1 - sl_pct / 100), 4) if avg > 0 else None,
+                "entry_date": entry_date,
+                "d_elapsed": elapsed,
+                "max_hold": max_hold,
+                "to_tp_pp": round(tp_pct - float(pos.get("pnl_pct") or 0), 2),
+                "to_sl_pp": round(float(pos.get("pnl_pct") or 0) + sl_pct, 2),
+            })
+            open_contracts.append(payload)
+        else:
+            payload["core"] = ticker in STRATEGY_CORE_TICKERS
+            non_contract.append(payload)
+
+    snapshot = _load_broker_truth_snapshot_cached("live") or {}
+    markets = snapshot.get("markets") or {}
+    kr_summary = ((markets.get("KR") or {}).get("account_summary") or {})
+    us_summary = ((markets.get("US") or {}).get("account_summary") or {})
+    usd_krw = float(status.get("execution_shadow", {}).get("fx") or 0)
+    us_cash_krw = float(us_summary.get("orderable_cash", 0) or 0) * usd_krw
+    cash_krw = float(kr_summary.get("orderable_cash", 0) or 0) + us_cash_krw
+
+    settled_nets = cohort.get("settled_nets") or []
+    payload = {
+        "ok": True,
+        "generated_at": datetime.now(KST).isoformat(timespec="seconds"),
+        "snapshot_at": str(snapshot.get("generated_at") or ""),
+        "contract": {
+            "contract_id": str(contract.get("contract_id") or "")[:8],
+            "tp_pct": round(tp_pct, 2),
+            "sl_pct": round(sl_pct, 2),
+            "max_hold": max_hold,
+            "order_krw": float(contract.get("budget_krw") or 0),
+            "max_open_slots": int(authority.get("max_open_slots") or 0),
+            "max_new_per_day": int(authority.get("max_new_per_day") or 0),
+            "effective_mode": str(authority.get("effective_mode") or ""),
+            "signal_date": str(status.get("signal_date") or ""),
+            "generated_at": str(status.get("generated_at") or ""),
+        },
+        "cohort": {
+            k: v for k, v in cohort.items() if k != "settled_nets"
+        },
+        "cohort_stats": {
+            "settled_mean_pct": round(sum(settled_nets) / len(settled_nets), 2) if settled_nets else None,
+            "settled_win_rate": (
+                round(100 * sum(1 for x in settled_nets if x > 0) / len(settled_nets), 0)
+                if settled_nets else None
+            ),
+        },
+        "open_contracts": open_contracts,
+        "non_contract": non_contract,
+        "capacity": {
+            "cash_krw": round(cash_krw),
+            "us_slots_used": len([p for p in open_contracts if p.get("market") == "US"]),
+            "us_slots_max": int(authority.get("max_open_slots") or 0),
+            "new_per_day": int(authority.get("max_new_per_day") or 0),
+            "usd_krw": usd_krw,
+        },
+        "kr_gate": _strategy_kr_gate(),
+        "cache_age_sec": 0,
+    }
+    with _STRATEGY_SUMMARY_LOCK:
+        _STRATEGY_SUMMARY_CACHE["payload"] = payload
+        _STRATEGY_SUMMARY_CACHE["cached_at"] = _time.time()
+    return jsonify(payload)
+
+
+PAGE_STRATEGY_HTML = """
+<style>
+.stg-wrap { padding: 20px 24px 60px; max-width: 1180px; margin: 0 auto; }
+.stg-head { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:6px; }
+.stg-head h2 { font-size:18px; font-weight:700; }
+.stg-sub { color:var(--muted); font-size:12px; font-family:var(--mono); }
+.stg-block { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:18px; margin-top:16px; }
+.stg-block h3 { font-size:14px; font-weight:600; margin-bottom:14px; display:flex; align-items:center; gap:8px; }
+.stg-block h3 .tag { font-family:var(--mono); font-size:10px; color:var(--bg); background:var(--cyan); padding:2px 6px; border-radius:3px; letter-spacing:.06em; }
+.stg-note { color:var(--muted); font-size:11.5px; margin-left:auto; font-family:var(--mono); font-weight:400; }
+.stg-grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
+.stg-card { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:13px; }
+.stg-card .lab { font-family:var(--mono); font-size:10px; letter-spacing:.09em; color:var(--muted); text-transform:uppercase; }
+.stg-card .val { font-family:var(--mono); font-size:25px; font-weight:600; margin-top:6px; letter-spacing:-.02em; }
+.stg-card .sub { font-size:11.5px; color:var(--muted); margin-top:3px; }
+.pos { color:var(--green); } .neg { color:var(--red); } .warn { color:var(--yellow); } .dim { color:var(--muted); }
+.ctr { border-top:1px solid var(--border); padding-top:14px; margin-top:14px; }
+.ctr:first-of-type { border-top:0; padding-top:0; margin-top:0; }
+.ctr-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+.ctr-tick { font-family:var(--mono); font-weight:600; font-size:15px; }
+.ctr-meta { font-family:var(--mono); font-size:11px; color:var(--muted); }
+.ctr-pnl { margin-left:auto; font-family:var(--mono); font-size:15px; font-weight:600; }
+.rng { position:relative; height:30px; }
+.rng-track { position:absolute; left:0; right:0; top:11px; height:9px; border-radius:5px; background:var(--surface2); overflow:hidden; }
+.rng-loss { position:absolute; top:0; bottom:0; left:0; background:rgba(239,68,68,.22); }
+.rng-gain { position:absolute; top:0; bottom:0; right:0; background:rgba(16,185,129,.22); }
+.rng-zero { position:absolute; top:6px; bottom:6px; width:1px; background:var(--muted); }
+.rng-mark { position:absolute; top:5px; width:3px; height:21px; border-radius:2px; background:var(--text); box-shadow:0 0 0 2px var(--surface); }
+.rng-scale { display:flex; justify-content:space-between; font-family:var(--mono); font-size:10px; color:var(--muted); margin-top:3px; }
+.days { display:flex; gap:3px; margin-top:11px; }
+.day { flex:1; height:5px; border-radius:2px; background:var(--surface2); }
+.day.done { background:var(--blue); } .day.today { background:var(--yellow); }
+.ticks { display:flex; gap:3px; margin:8px 0 5px; }
+.tick { flex:1; height:9px; border-radius:2px; background:var(--surface2); }
+.tick.good { background:var(--green); } .tick.bad { background:var(--red); }
+.tick.hold { background:var(--blue); } .tick.sync { background:var(--yellow); } .tick.miss { background:var(--muted); }
+.stg-tbl { width:100%; border-collapse:collapse; font-size:12.5px; }
+.stg-tbl th { font-family:var(--mono); font-size:10px; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); text-align:left; padding:7px 8px; border-bottom:1px solid var(--border); font-weight:500; }
+.stg-tbl td { padding:7px 8px; border-bottom:1px solid var(--border); }
+.stg-tbl td.n { font-family:var(--mono); text-align:right; }
+.stg-tbl tr:last-child td { border-bottom:0; }
+.pill { font-family:var(--mono); font-size:10px; padding:2px 7px; border-radius:999px; border:1px solid var(--border); white-space:nowrap; }
+.pill.good { color:var(--green); border-color:rgba(16,185,129,.45); }
+.pill.hold { color:var(--blue); border-color:rgba(59,130,246,.45); }
+.pill.sync { color:var(--yellow); border-color:rgba(245,158,11,.45); }
+.pill.miss { color:var(--muted); }
+.rail { margin-top:10px; }
+.rail-top { display:flex; align-items:baseline; gap:8px; margin-bottom:5px; font-size:12.5px; }
+.rail-val { margin-left:auto; font-family:var(--mono); font-size:12px; color:var(--muted); }
+.rail-track { height:7px; border-radius:4px; background:var(--surface2); overflow:hidden; }
+.rail-fill { height:100%; background:var(--blue); }
+.rail-fill.warn { background:var(--yellow); }
+.stg-foot { color:var(--muted); font-size:11px; margin-top:14px; line-height:1.7; font-family:var(--mono); }
+.stg-empty { color:var(--muted); font-size:12.5px; padding:10px 0; }
+</style>
+
+<div class="stg-wrap">
+  <div class="stg-head">
+    <h2>전략 관제</h2>
+    <span class="stg-sub" id="stg-contract-line">계약 로딩…</span>
+  </div>
+  <div class="stg-sub" id="stg-stamp"></div>
+
+  <div class="stg-block">
+    <h3><span class="tag">A</span> 지금 걸려 있는 것<span class="stg-note" id="stg-a-note"></span></h3>
+    <div id="stg-open"></div>
+    <div class="stg-grid" style="margin-top:16px" id="stg-capacity"></div>
+    <div id="stg-noncontract" style="margin-top:14px"></div>
+  </div>
+
+  <div class="stg-block">
+    <h3><span class="tag">B</span> 판정이 얼마나 찼나<span class="stg-note" id="stg-b-note"></span></h3>
+    <div id="stg-cohort"></div>
+  </div>
+
+  <div class="stg-block">
+    <h3><span class="tag">B</span> KR 급락 레인 게이트<span class="stg-note" id="stg-kr-note"></span></h3>
+    <div id="stg-krgate"></div>
+  </div>
+
+  <div class="stg-block">
+    <h3>최근 진입 차단·실패</h3>
+    <div id="stg-blocks"></div>
+  </div>
+
+  <div class="stg-foot" id="stg-sources"></div>
+</div>
+
+<script>
+const STG_STATE_LABEL = {
+  SETTLED: ['정산', 'good'], HOLDING: ['보유중', 'hold'],
+  PENDING_SYNC: ['정산·정본대기', 'sync'], NOT_FILLED: ['미체결', 'miss'],
+};
+function stgNum(v, digits) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  return Number(v).toFixed(digits === undefined ? 2 : digits);
+}
+function stgSigned(v, digits) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  const s = Number(v).toFixed(digits === undefined ? 2 : digits);
+  return (Number(v) > 0 ? '+' : '') + s;
+}
+function stgCls(v) {
+  if (v === null || v === undefined || isNaN(v)) return 'dim';
+  return Number(v) > 0 ? 'pos' : (Number(v) < 0 ? 'neg' : 'dim');
+}
+function renderStrategy(d) {
+  const c = d.contract || {};
+  document.getElementById('stg-contract-line').textContent =
+    'TP +' + stgNum(c.tp_pct, 0) + '% / SL −' + stgNum(c.sl_pct, 0) + '% / D' + (c.max_hold || 5) +
+    ' · 건당 ' + Math.round((c.order_krw || 0) / 10000) + '만원 · 지문 ' + (c.contract_id || '—');
+  document.getElementById('stg-stamp').textContent =
+    '브로커 스냅샷 ' + (d.snapshot_at || '—') + ' · 러너 ' + (c.generated_at || '—').slice(0, 19) +
+    ' · 권한 ' + (c.effective_mode || '—') + ' · 슬롯 ' + (c.max_open_slots || 0) + ' · 일 ' + (c.max_new_per_day || 0) + '건';
+
+  // A. 진행 중인 계약
+  const open = d.open_contracts || [];
+  document.getElementById('stg-a-note').textContent = open.length ? open.length + '건 진행 중' : '진행 중 계약 없음';
+  document.getElementById('stg-open').innerHTML = open.length ? open.map(function (p) {
+    const span = (c.sl_pct || 25) + (c.tp_pct || 12);
+    const zero = 100 * (c.sl_pct || 25) / span;
+    const mark = Math.max(0, Math.min(100, 100 * ((c.sl_pct || 25) + p.pnl_pct) / span));
+    const days = [];
+    for (let i = 0; i < (p.max_hold || 5); i++) {
+      days.push('<span class="day ' + (i + 1 < p.d_elapsed ? 'done' : (i + 1 === p.d_elapsed ? 'today' : '')) + '"></span>');
+    }
+    return '<div class="ctr">' +
+      '<div class="ctr-head"><span class="ctr-tick">' + p.ticker + '</span>' +
+      '<span class="ctr-meta">' + (p.name || '') + ' · ' + p.qty + '주 · 진입 ' + stgNum(p.avg_price, 3) +
+      ' → ' + stgNum(p.current_price, 3) + ' · ' + (p.entry_date || '') + '</span>' +
+      '<span class="ctr-pnl ' + stgCls(p.pnl_pct) + '">' + stgSigned(p.pnl_pct) + '%</span></div>' +
+      '<div class="rng"><div class="rng-track"><div class="rng-loss" style="width:' + zero + '%"></div>' +
+      '<div class="rng-gain" style="width:' + (100 - zero) + '%"></div></div>' +
+      '<div class="rng-zero" style="left:' + zero + '%"></div>' +
+      '<div class="rng-mark" style="left:' + mark + '%"></div></div>' +
+      '<div class="rng-scale"><span>SL −' + stgNum(c.sl_pct, 0) + '% (' + stgNum(p.sl_price, 2) + ')</span>' +
+      '<span>0</span><span>TP +' + stgNum(c.tp_pct, 0) + '% (' + stgNum(p.tp_price, 2) + ')</span></div>' +
+      '<div class="days">' + days.join('') + '</div>' +
+      '<div class="stg-sub" style="margin-top:6px">D' + p.d_elapsed + ' / D' + p.max_hold +
+      ' · TP까지 ' + stgNum(p.to_tp_pp) + '%p · SL까지 ' + stgNum(p.to_sl_pp) + '%p</div></div>';
+  }).join('') : '<div class="stg-empty">진행 중인 계약이 없습니다.</div>';
+
+  // 용량
+  const cap = d.capacity || {};
+  document.getElementById('stg-capacity').innerHTML =
+    '<div class="stg-card"><div class="lab">가용 현금</div><div class="val">' +
+    Math.round((cap.cash_krw || 0) / 10000) + '<span style="font-size:15px;color:var(--muted)">만원</span></div>' +
+    '<div class="sub">환율 ' + stgNum(cap.usd_krw, 1) + '</div></div>' +
+    '<div class="stg-card"><div class="lab">US 슬롯</div><div class="val">' + (cap.us_slots_used || 0) +
+    '<span style="font-size:15px;color:var(--muted)"> / ' + (cap.us_slots_max || 0) + '</span></div>' +
+    '<div class="sub">신규 일 ' + (cap.new_per_day || 0) + '건</div></div>' +
+    '<div class="stg-card"><div class="lab">코호트</div><div class="val">' + ((d.cohort || {}).count || 0) +
+    '<span style="font-size:15px;color:var(--muted)"> / ' + ((d.cohort || {}).target || 30) + '</span></div>' +
+    '<div class="sub">정산 ' + ((d.cohort || {}).settled || 0) + ' · 보유 ' + ((d.cohort || {}).holding || 0) + '</div></div>';
+
+  // 계약 밖 보유
+  const nc = d.non_contract || [];
+  document.getElementById('stg-noncontract').innerHTML = nc.length ?
+    '<table class="stg-tbl"><thead><tr><th>계약 밖 보유</th><th>시장</th><th></th><th class="n">평가손익</th></tr></thead><tbody>' +
+    nc.map(function (p) {
+      return '<tr><td><span style="font-family:var(--mono)">' + p.ticker + '</span> <span class="dim">' + (p.name || '') + '</span></td>' +
+        '<td class="dim">' + (p.market || '') + '</td>' +
+        '<td>' + (p.core ? '<span class="pill">코어 · 청산 금지</span>' : '') + '</td>' +
+        '<td class="n ' + stgCls(p.pnl_pct) + '">' + stgSigned(p.pnl_pct) + '%</td></tr>';
+    }).join('') + '</tbody></table>' : '';
+
+  // B. 코호트
+  const co = d.cohort || {}, st = d.cohort_stats || {};
+  const rows = co.rows || [];
+  const ticks = [];
+  for (let i = 0; i < (co.target || 30); i++) {
+    const r = rows[i];
+    let cls = '';
+    if (r) {
+      if (r.state === 'SETTLED') cls = (r.net_pct > 0 ? 'good' : 'bad');
+      else if (r.state === 'HOLDING') cls = 'hold';
+      else if (r.state === 'PENDING_SYNC') cls = 'sync';
+      else cls = 'miss';
+    }
+    ticks.push('<span class="tick ' + cls + '"></span>');
+  }
+  document.getElementById('stg-b-note').textContent =
+    (co.count || 0) + ' / ' + (co.target || 30) + ' · 지문 ' +
+    (co.fingerprints || []).map(function (f) { return f.id + '(' + f.count + ')'; }).join(' ');
+  document.getElementById('stg-cohort').innerHTML =
+    '<div class="ticks">' + ticks.join('') + '</div>' +
+    '<div class="stg-sub">정산 ' + (co.settled || 0) + ' · 보유 ' + (co.holding || 0) +
+    ' · 정본대기 ' + (co.pending_sync || 0) + ' · 미체결 ' + (co.not_filled || 0) +
+    (st.settled_mean_pct !== null && st.settled_mean_pct !== undefined ?
+      ' · 정산 평균 net ' + stgSigned(st.settled_mean_pct) + '% (승률 ' + stgNum(st.settled_win_rate, 0) + '%)' : '') + '</div>' +
+    '<table class="stg-tbl" style="margin-top:12px"><thead><tr><th>신호일</th><th>종목</th><th>지문</th><th>상태</th><th class="n">net(정본)</th><th>비고</th></tr></thead><tbody>' +
+    rows.map(function (r) {
+      const lab = STG_STATE_LABEL[r.state] || [r.state, ''];
+      return '<tr><td class="dim">' + r.signal_date + '</td>' +
+        '<td style="font-family:var(--mono)">' + r.ticker + '</td>' +
+        '<td class="dim" style="font-family:var(--mono);font-size:11px">' + r.contract_id + '</td>' +
+        '<td><span class="pill ' + lab[1] + '">' + lab[0] + '</span></td>' +
+        '<td class="n ' + stgCls(r.net_pct) + '">' + (r.net_pct === null || r.net_pct === undefined ? '—' : stgSigned(r.net_pct) + '%') + '</td>' +
+        '<td class="dim" style="font-size:11px">' + (r.state === 'PENDING_SYNC' ? 'CLOSED 이벤트 미발행 — 정본 동기화 대기' :
+          (r.state === 'NOT_FILLED' ? '주문 제출됐으나 미체결' : (r.net_basis || ''))) + '</td></tr>';
+    }).join('') + '</tbody></table>';
+
+  // KR 게이트
+  const kg = d.kr_gate || {};
+  const exec = kg.executed_by_rule || {};
+  const execKeys = Object.keys(exec);
+  document.getElementById('stg-kr-note').textContent =
+    kg.error ? kg.error : ('관측 ' + (kg.sessions || 0) + ' / ' + (kg.need_sessions || 0) + '영업일 · 활성 ' + (kg.active_rule || '—') +
+      ' · 실주문 ' + (execKeys.length ? execKeys.map(function (k) { return k + ' ' + exec[k] + '건'; }).join(', ') : '0건'));
+  document.getElementById('stg-krgate').innerHTML = (kg.rules || []).length ? (kg.rules || []).map(function (r) {
+    const pct = r.need_settled ? Math.min(100, 100 * r.settled / r.need_settled) : 0;
+    return '<div class="rail"><div class="rail-top"><span>' + r.rule + '</span>' +
+      '<span class="rail-val">정산 ' + r.settled + ' / ' + r.need_settled + ' · 주간분산 ' + r.weeks + '/' + r.need_weeks +
+      (r.gate_ok ? ' · <span class="pos">게이트 충족</span>' : '') + '</span></div>' +
+      '<div class="rail-track"><div class="rail-fill ' + (r.gate_ok ? '' : 'warn') + '" style="width:' + pct + '%"></div></div>' +
+      '<div class="stg-sub" style="margin-top:5px">후보 ' + r.candidates + '건 · 평균 ' +
+      (r.mean_pct === null ? '—' : '<span class="' + stgCls(r.mean_pct) + '">' + stgSigned(r.mean_pct) + '%</span>') +
+      (r.win_rate === null ? '' : ' · 승률 ' + stgNum(r.win_rate, 0) + '%') +
+      (r.profit_factor === null || r.profit_factor === undefined ? '' : ' · PF ' + stgNum(r.profit_factor)) + '</div></div>';
+  }).join('') : '<div class="stg-empty">' + (kg.error || '게이트 원장 없음') + '</div>';
+
+  // 차단 이력
+  const bl = (d.cohort || {}).blocks || [];
+  document.getElementById('stg-blocks').innerHTML = bl.length ?
+    '<table class="stg-tbl"><thead><tr><th>신호일</th><th>종목</th><th>차단 사유</th></tr></thead><tbody>' +
+    bl.map(function (b) {
+      return '<tr><td class="dim">' + b.signal_date + '</td><td style="font-family:var(--mono)">' + b.ticker +
+        '</td><td class="dim">' + b.reason + '</td></tr>';
+    }).join('') + '</tbody></table>' : '<div class="stg-empty">기록 없음</div>';
+
+  document.getElementById('stg-sources').innerHTML =
+    '값 출처 — 계약·권한: state/us_swing_status.json · 코호트: us_swing_shadow.db(handoff SUBMITTED ∩ 계약 지문) · ' +
+    '체결 여부: v2_event_store FILLED · net 정본: v2_canonical_performance(수수료·FX 반영) · ' +
+    '보유·현금: 브로커 truth 스냅샷 · KR 게이트: kr_fallen_shadow.jsonl(kr_fallen_gate_report 규칙 재사용)<br>' +
+    'net은 정본에 기록된 건만 표시합니다. gross나 shadow 값으로 대체하지 않습니다.';
+}
+function loadStrategy() {
+  fetch('/api/strategy/summary?mode=' + (typeof CURRENT_MODE !== 'undefined' ? CURRENT_MODE : 'live'))
+    .then(function (r) { return r.json(); })
+    .then(function (d) { if (d && d.ok) renderStrategy(d); })
+    .catch(function (e) { console.error('strategy load failed', e); });
+}
+loadStrategy();
+setInterval(loadStrategy, 300000);
+</script>
+"""
+
+
+@app.route("/strategy")
+def page_strategy():
+    html = (
+        _head("전략 관제")
+        + _header_html("/strategy")
+        + COMMON_JS_BLOCK
+        + PAGE_STRATEGY_HTML
         + "</body></html>"
     )
     return render_template_string(html)
