@@ -65,8 +65,8 @@ def _num(text: str) -> float:
     return float(str(text).replace(",", ""))
 
 
-def confirmed_fill_orders() -> set[str]:
-    """브로커 확정 체결(FILLED 이벤트)의 주문번호 집합.
+def confirmed_fill_orders() -> set[tuple[str, str]]:
+    """브로커 확정 체결(FILLED 이벤트)의 (종목, 주문번호) 집합.
 
     접수 로그와 대조할 유일한 truth다. 이벤트 저장소를 못 읽으면 빈 집합을
     돌려주고, 호출부는 그때 '판정 불가'로 남긴다 — 미확인을 체결로 승격하지
@@ -74,26 +74,28 @@ def confirmed_fill_orders() -> set[str]:
     """
     if not EVENT_STORE.exists():
         return set()
-    orders: set[str] = set()
+    orders: set[tuple[str, str]] = set()
     try:
         import sqlite3
 
         con = sqlite3.connect(f"file:{EVENT_STORE}?mode=ro", uri=True, timeout=10)
         try:
             rows = con.execute(
-                "SELECT payload_json FROM lifecycle_events WHERE event_type='FILLED'"
+                "SELECT ticker, payload_json FROM lifecycle_events WHERE event_type='FILLED'"
             ).fetchall()
         finally:
             con.close()
     except Exception:
         return set()
-    for (payload,) in rows:
+    for ticker, payload in rows:
         try:
             order_no = str((json.loads(payload) or {}).get("order_no") or "").strip()
         except (ValueError, TypeError):
             continue
         if order_no:
-            orders.add(order_no)
+            # 주문번호만으로 대조하면 KR/US 번호 체계가 겹칠 때 오판한다.
+            # 종목까지 묶어 (ticker, order_no)로 식별한다.
+            orders.add((str(ticker or "").upper(), order_no))
     return orders
 
 
@@ -226,7 +228,7 @@ def _reconcile_ledger(confirmed: set[str]) -> int:
             out.append(line)
             continue
         if row.get("side") == "BUY" and not row.get("fill_status"):
-            if str(row.get("order_no") or "") in confirmed:
+            if (str(row.get("ticker") or "").upper(), str(row.get("order_no") or "")) in confirmed:
                 row["fill_status"] = "FILLED"
             else:
                 row["fill_status"] = "SUBMITTED_UNCONFIRMED"
@@ -259,7 +261,7 @@ def main() -> int:
         if not confirmed:
             row["fill_status"] = "UNKNOWN_NO_EVENT_SOURCE"
             continue
-        if row["order_no"] in confirmed:
+        if (str(row.get("ticker") or "").upper(), row["order_no"]) in confirmed:
             row["fill_status"] = "FILLED"
         else:
             # 접수는 됐으나 브로커 체결 확정이 없다(지정가 미달·취소·만료).
