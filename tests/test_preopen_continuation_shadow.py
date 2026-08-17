@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import closing
 import sqlite3
 import io
 import sys
@@ -252,7 +253,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
 
         self.assertEqual(result["written"], 2)
         self.assertEqual(result["eligible_count"], 1)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             rows = {
                 row["ticker"]: row
@@ -297,7 +298,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
 
         self.assertEqual(first["written"], 2)
         self.assertEqual(second["written"], 2)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("SELECT ticker, eligible, exclusion_reason FROM preopen_candidates ORDER BY ticker").fetchall()
             run_count = conn.execute("SELECT COUNT(*) FROM preopen_shadow_runs WHERE step='collect'").fetchone()[0]
@@ -325,7 +326,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
 
         self.assertEqual(live_eval["status"], "skipped")
         self.assertEqual(paper_eval["status"], "skipped")
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             candidates = conn.execute(
                 "SELECT runtime_mode, name FROM preopen_candidates WHERE ticker='AAA' ORDER BY runtime_mode"
@@ -353,7 +354,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
         cs.record_feature_snapshots("US", session_date="2026-06-04", offset_min=30, db_path=self.db_path)
         cs.record_feature_snapshots("KR", session_date="2026-06-05", offset_min=30, db_path=self.db_path)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             candidates = conn.execute(
                 "SELECT market, COUNT(*) AS c FROM preopen_candidates GROUP BY market ORDER BY market"
@@ -389,7 +390,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
 
         self.assertEqual(live_eval["status"], "called")
         self.assertEqual(paper_eval["status"], "called")
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
@@ -411,7 +412,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
         result = cs.record_feature_snapshots("US", session_date="2026-06-04", offset_min=30, db_path=self.db_path)
 
         self.assertEqual(result["sampled"], 1)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             feature = conn.execute(
                 "SELECT * FROM preopen_feature_snapshots WHERE ticker='AAA' AND offset_min=30"
@@ -458,7 +459,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
             cs.record_feature_snapshots("US", session_date="2026-06-04", offset_min=30, db_path=self.db_path)
             cs.record_feature_snapshots("US", session_date="2026-06-04", offset_min=390, db_path=self.db_path)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             outcome = conn.execute("SELECT * FROM preopen_outcomes WHERE ticker='AAA'").fetchone()
 
@@ -484,7 +485,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
         self.assertEqual(result["snapshots"], 6)
         self.assertEqual(result["sampled"], 3)
         self.assertEqual(result["missing"], 3)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             features = conn.execute(
                 "SELECT ticker, offset_min, snapshot_status, return_from_open_pct FROM preopen_feature_snapshots ORDER BY ticker, offset_min"
@@ -551,7 +552,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "skipped")
         self.assertEqual(result["skip_reason"], "no_claude")
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             check = conn.execute("SELECT * FROM preopen_claude_checks").fetchone()
 
@@ -577,7 +578,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
 
         self.assertEqual(first["status"], "skipped")
         self.assertEqual(second["status"], "skipped")
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             attempts = [
                 row[0]
                 for row in conn.execute(
@@ -611,7 +612,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
         self.assertTrue(result["parse_ok"])
         self.assertIsNotNone(result["retry_of_check_id"])
         self.assertEqual(credit.call_count, 2)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             checks = conn.execute("SELECT status, attempt_no, retry_of_check_id, parse_ok FROM preopen_claude_checks ORDER BY id").fetchall()
             decision = conn.execute("SELECT decision, case_id FROM preopen_claude_decisions").fetchone()
@@ -640,7 +641,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
         cs.record_feature_snapshots("US", session_date="2026-06-04", offset_min=30, db_path=self.db_path)
         selection_db = self.root / "source" / "ticker_selection_log.db"
         selection_db.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(selection_db) as conn:
+        with closing(sqlite3.connect(selection_db)) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE ticker_selection_log (
@@ -671,7 +672,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
 
         self.assertGreaterEqual(result["updated"], 1)
         self.assertEqual(before, after)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             outcome = conn.execute("SELECT * FROM preopen_outcomes WHERE ticker='AAA'").fetchone()
 
@@ -686,7 +687,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
         cs.record_feature_snapshots("US", session_date="2026-06-04", offset_min=30, db_path=self.db_path)
         ml_db = self.root / "source" / "decisions.db"
         ml_db.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(ml_db) as conn:
+        with closing(sqlite3.connect(ml_db)) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE v2_learning_performance (
@@ -719,7 +720,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
 
         self.assertGreaterEqual(result["updated"], 1)
         self.assertEqual(before, after)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.row_factory = sqlite3.Row
             outcome = conn.execute("SELECT * FROM preopen_outcomes WHERE ticker='AAA'").fetchone()
 
@@ -732,7 +733,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
     def test_source_db_connection_is_read_only(self) -> None:
         source_db = self.root / "source" / "readonly_source.db"
         source_db.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(source_db) as conn:
+        with closing(sqlite3.connect(source_db)) as conn, conn:
             conn.execute("CREATE TABLE sample (id INTEGER)")
 
         with cs._readonly_db(source_db) as conn:
@@ -798,7 +799,7 @@ class PreopenContinuationShadowTests(unittest.TestCase):
     def test_wrong_schema_db_returns_safe_status_instead_of_raising(self) -> None:
         wrong_db = self.root / "data" / "wrong_schema.db"
         wrong_db.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(wrong_db) as conn:
+        with closing(sqlite3.connect(wrong_db)) as conn, conn:
             conn.execute("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)")
 
         result = cs.run_eval("US", session_date="2026-06-04", db_path=wrong_db, dry_run=True)

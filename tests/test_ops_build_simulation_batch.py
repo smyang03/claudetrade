@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 
@@ -33,7 +34,7 @@ def _write_daily_price(root: Path, market: str, ticker: str, rows: list[tuple[st
 
 
 def _event_db(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE v2_path_runs (
@@ -88,7 +89,7 @@ def _event_db(path: Path) -> None:
 
 
 def _candidate_db(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE candidate_counterfactual_paths (
@@ -372,7 +373,7 @@ def test_us_counterfactual_trigger_after_kst_midnight_uses_trigger_day_end(tmp_p
     price_root = tmp_path / "price"
     runtime_root = tmp_path / "runtime"
     _candidate_db(candidate_db)
-    with sqlite3.connect(candidate_db) as conn:
+    with closing(sqlite3.connect(candidate_db)) as conn, conn:
         conn.execute(
             """
             INSERT INTO candidate_counterfactual_paths (
@@ -449,7 +450,7 @@ def test_price_window_missing_is_reported_with_requested_coverage(tmp_path: Path
     price_root = tmp_path / "price"
     runtime_root = tmp_path / "runtime"
     _candidate_db(candidate_db)
-    with sqlite3.connect(candidate_db) as conn:
+    with closing(sqlite3.connect(candidate_db)) as conn, conn:
         conn.execute(
             """
             INSERT INTO candidate_counterfactual_paths (

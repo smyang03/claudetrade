@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from tools.audit_ticker_selection_attribution import apply_exact_backfill, audit
 
 def _create_selection_db(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE ticker_selection_log (
@@ -110,7 +111,7 @@ def _create_selection_db(path: Path) -> None:
 
 def _create_ml_db(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE v2_learning_performance (
@@ -291,7 +292,7 @@ def test_apply_exact_backfill_updates_only_trade_ready_exact_rows(tmp_path: Path
     assert result["applied_count"] == 1
     assert result["skipped_count"] == 0
     assert Path(result["backup_path"]).exists()
-    with sqlite3.connect(selection_db) as conn:
+    with closing(sqlite3.connect(selection_db)) as conn, conn:
         rows = {
             row[0]: row
             for row in conn.execute(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 
@@ -26,7 +27,7 @@ def test_recent_selection_feedback_uses_distinct_ticker_date_basis(tmp_path: Pat
                 selection_meta={"trade_ready": ["005930"]},
             )
 
-        with sqlite3.connect(tsdb.DB_PATH) as conn:
+        with closing(sqlite3.connect(tsdb.DB_PATH)) as conn, conn:
             conn.execute(
                 """
                 UPDATE ticker_selection_log

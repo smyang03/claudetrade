@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from tools import ops_next_wave_policy_simulation
 
 
 def _init_perf_db(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE v2_learning_performance (
@@ -31,7 +32,7 @@ def _init_perf_db(path: Path) -> None:
 
 
 def _init_event_db(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE lifecycle_events (
@@ -71,7 +72,7 @@ def test_kr_policy_simulation_reports_loss_avoidance(tmp_path: Path) -> None:
     event_db = tmp_path / "event.db"
     _init_perf_db(perf_db)
     _init_event_db(event_db)
-    with sqlite3.connect(perf_db) as conn:
+    with closing(sqlite3.connect(perf_db)) as conn, conn:
         conn.executemany(
             """
             INSERT INTO v2_learning_performance (
@@ -109,7 +110,7 @@ def test_us_unfilled_audit_separates_closed_without_fill_event(tmp_path: Path) -
     event_db = tmp_path / "event.db"
     _init_perf_db(perf_db)
     _init_event_db(event_db)
-    with sqlite3.connect(event_db) as conn:
+    with closing(sqlite3.connect(event_db)) as conn, conn:
         conn.execute(
             """
             INSERT INTO v2_path_runs (

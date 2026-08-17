@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from runtime.rehearsal.context import create_rehearsal_context, install_write_gu
 
 def _make_news_db(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.executescript(
             """
             CREATE TABLE news_items (
@@ -105,7 +106,7 @@ def test_investment_news_db_rows_convert_to_preopen_news_payload(tmp_path: Path)
 def test_investment_news_bridge_matches_empty_ticker_rows_by_candidate_name(tmp_path: Path) -> None:
     db = tmp_path / "investment_news.db"
     _make_news_db(db)
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn, conn:
         conn.execute(
             """
             INSERT INTO news_items (

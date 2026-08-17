@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from tools import audit_closed_without_fill
 
 
 def _init_perf_db(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE v2_learning_performance (
@@ -45,7 +46,7 @@ def _init_perf_db(path: Path) -> None:
 
 
 def _init_event_db(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE lifecycle_events (
@@ -87,7 +88,7 @@ def test_closed_without_fill_audit_reports_repairable_distortion(tmp_path: Path)
     event_db = tmp_path / "event.db"
     _init_perf_db(perf_db)
     _init_event_db(event_db)
-    with sqlite3.connect(perf_db) as conn:
+    with closing(sqlite3.connect(perf_db)) as conn, conn:
         conn.executemany(
             """
             INSERT INTO v2_learning_performance (
@@ -127,7 +128,7 @@ def test_closed_without_fill_audit_reports_repairable_distortion(tmp_path: Path)
                 ),
             ],
         )
-    with sqlite3.connect(event_db) as conn:
+    with closing(sqlite3.connect(event_db)) as conn, conn:
         conn.executemany(
             """
             INSERT INTO v2_path_runs (

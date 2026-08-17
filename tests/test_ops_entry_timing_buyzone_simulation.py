@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from tools import ops_entry_timing_buyzone_simulation
 
 
 def _init_event_db(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE lifecycle_events (
@@ -45,7 +46,7 @@ def _init_event_db(path: Path) -> None:
 
 
 def _init_candidate_db(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE candidate_counterfactual_paths (
@@ -113,7 +114,7 @@ def test_entry_timing_buyzone_simulation_reports_delay_and_zone_policy(tmp_path:
         "actual_exit_price": 112,
         "pnl_pct": 3.7037037037,
     }
-    with sqlite3.connect(event_db) as conn:
+    with closing(sqlite3.connect(event_db)) as conn, conn:
         conn.execute(
             """
             INSERT INTO v2_path_runs (
@@ -165,7 +166,7 @@ def test_entry_timing_buyzone_simulation_reports_delay_and_zone_policy(tmp_path:
             ],
         )
 
-    with sqlite3.connect(candidate_db) as conn:
+    with closing(sqlite3.connect(candidate_db)) as conn, conn:
         values = [
             ("immediate", -2.0),
             ("wait_30m", 1.0),

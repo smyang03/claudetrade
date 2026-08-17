@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -350,7 +351,7 @@ class ClaudeTradeQualityReworkTests(unittest.TestCase):
                     },
                 }
             )
-            with sqlite3.connect(path) as conn:
+            with closing(sqlite3.connect(path)) as conn, conn:
                 columns = {row[1] for row in conn.execute("PRAGMA table_info(audit_candidate_rows)")}
                 row = conn.execute(
                     "SELECT schema_version, legacy_auto_ready_promoted, soft_gates FROM audit_candidate_rows"

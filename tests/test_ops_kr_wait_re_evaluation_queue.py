@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from tools import ops_kr_wait_re_evaluation_queue
 
 
 def _init_db(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE candidate_counterfactual_paths (
@@ -104,7 +105,7 @@ def _insert_candidate(
         freshness=freshness,
         bucket=bucket,
     )
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             INSERT INTO candidate_counterfactual_paths (

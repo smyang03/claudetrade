@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 
@@ -7,7 +8,7 @@ import ticker_selection_db as tsdb
 
 
 def _columns(db_path: str) -> set[str]:
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn, conn:
         return {r[1] for r in conn.execute("PRAGMA table_info(ticker_selection_log)")}
 
 
@@ -27,7 +28,7 @@ def test_legacy_db_migrates_atr_pct_column(tmp_path: Path) -> None:
     tsdb.DB_PATH = db_path
     try:
         # 구버전 스키마(atr_pct 없음) 모사
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE ticker_selection_log (
@@ -65,14 +66,14 @@ def test_update_atr_pct_writes_once_and_coalesces(tmp_path: Path) -> None:
 
         # 최초 기록
         tsdb.update_atr_pct(row_id, 0.072)
-        with sqlite3.connect(tsdb.DB_PATH) as conn:
+        with closing(sqlite3.connect(tsdb.DB_PATH)) as conn, conn:
             assert conn.execute(
                 "SELECT atr_pct FROM ticker_selection_log WHERE id=?", (row_id,)
             ).fetchone()[0] == 0.072
 
         # COALESCE: 기존 값 있으면 덮어쓰지 않음
         tsdb.update_atr_pct(row_id, 0.099)
-        with sqlite3.connect(tsdb.DB_PATH) as conn:
+        with closing(sqlite3.connect(tsdb.DB_PATH)) as conn, conn:
             assert conn.execute(
                 "SELECT atr_pct FROM ticker_selection_log WHERE id=?", (row_id,)
             ).fetchone()[0] == 0.072
@@ -111,7 +112,7 @@ def test_atr_blocked_reason_and_value_feed_ops_review(tmp_path: Path) -> None:
             signal_at="2026-06-10T09:40:00", atr_pct=0.085,
         )
         # forward outcome 채워짐 (forward_updater 모사)
-        with sqlite3.connect(tsdb.DB_PATH) as conn:
+        with closing(sqlite3.connect(tsdb.DB_PATH)) as conn, conn:
             conn.execute(
                 "UPDATE ticker_selection_log SET max_runup_3d=6.5 WHERE id=?", (row_id,)
             )

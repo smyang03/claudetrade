@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from tools import ops_us_high_price_simulation
 
 
 def _init_event_db(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE lifecycle_events (
@@ -55,7 +56,7 @@ def _init_event_db(path: Path) -> None:
 
 
 def _init_perf_db(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE v2_learning_performance (
@@ -140,7 +141,7 @@ def test_build_us_high_price_simulation_is_read_only_and_reports_candidate(tmp_p
         "sell_target": 104,
         "stop_loss": 97,
     }
-    with sqlite3.connect(event_db) as conn:
+    with closing(sqlite3.connect(event_db)) as conn, conn:
         conn.execute(
             """
             INSERT INTO lifecycle_events (

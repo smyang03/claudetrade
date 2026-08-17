@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 from unittest.mock import patch
@@ -20,7 +21,7 @@ def _runtime_path(root: Path):
 def test_candidate_audit_outcome_check_reports_daily_pending_freshness(tmp_path: Path) -> None:
     db_path = tmp_path / "data" / "audit" / "candidate_audit.db"
     db_path.parent.mkdir(parents=True)
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE audit_candidate_outcomes (
@@ -45,7 +46,7 @@ def test_candidate_audit_outcome_check_reports_daily_pending_freshness(tmp_path:
             """
         )
 
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn, conn:
         # 세션 날짜가 7일 초과로 오래된 pending → stale 적체로 WARN
         conn.execute("CREATE TABLE audit_candidate_rows (candidate_key TEXT, session_date TEXT)")
         conn.execute("INSERT INTO audit_candidate_rows VALUES ('cand_daily', '2026-05-19')")
@@ -71,7 +72,7 @@ def test_candidate_audit_outcome_check_passes_with_fresh_daily_pending(tmp_path:
     db_path = tmp_path / "data" / "audit" / "candidate_audit.db"
     db_path.parent.mkdir(parents=True)
     today = datetime.now().date().isoformat()
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE audit_candidate_outcomes (
@@ -102,7 +103,7 @@ def test_candidate_audit_outcome_check_passes_with_fresh_daily_pending(tmp_path:
 def test_ticker_selection_attribution_check_reports_missing_execution_ids(tmp_path: Path) -> None:
     db_path = tmp_path / "data" / "ticker_selection_log.db"
     db_path.parent.mkdir(parents=True)
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE ticker_selection_log (
