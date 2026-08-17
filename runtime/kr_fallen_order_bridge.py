@@ -277,6 +277,16 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
     results: list[dict] = []
     for row in candidates:
         ticker = str(row["ticker"])
+        # 2026-08-17: 교차전략 동일티커 중복매수 차단(US 브리지의 already_holding과 대칭).
+        # 슬롯 계산은 자기 source만 세므로, 코어·PathA 등 다른 전략이 이미 들고 있는
+        # 티커를 이 레인이 또 사면 브로커 평균단가 한 포지션에 두 전략의 lot이 섞여
+        # 청산 소유권이 깨진다(코어는 청산 금지, 이 레인은 D5 청산 — 서로 모순).
+        if bot._has_open_position(ticker, "KR"):
+            results.append({"ticker": ticker, "status": "BLOCKED", "reason": "already_holding_any_strategy"})
+            continue
+        if bot._has_pending_order(ticker, "KR"):
+            results.append({"ticker": ticker, "status": "BLOCKED", "reason": "pending_order_exists"})
+            continue
         try:
             quote = get_price(ticker, bot._token_for_market("KR"), market="KR")
         except Exception as exc:

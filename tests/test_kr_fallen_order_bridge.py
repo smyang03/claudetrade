@@ -60,6 +60,15 @@ class FakeBot:
     def _new_buy_block_state(self, market, ticker, strategy, source_strategy=""):
         return {"allowed": True}
 
+    def _has_open_position(self, ticker, market):
+        return any(
+            str(p.get("ticker") or "") == ticker and float(p.get("qty", 0) or 0) > 0
+            for p in self.risk.positions
+        )
+
+    def _has_pending_order(self, ticker, market):
+        return any(str(o.get("ticker") or "") == ticker for o in self.pending_orders)
+
     def _submit_micro_probe_buy_order(self, **kwargs):
         self.submits.append(kwargs)
         return True
@@ -251,3 +260,26 @@ def test_blindspot_merged_pool_keeps_discount_priority(tmp_path: Path) -> None:
     assert result["status"] == "EVALUATED"
     assert bot.submits[0]["ticker"] == "DEEPER"
     assert bot.submits[0]["selected_reason"] == "kr_fallen_r4b"
+
+
+def test_blocks_ticker_already_held_by_another_strategy(tmp_path: Path) -> None:
+    """교차전략 동일티커 중복매수 차단 (2026-08-17).
+
+    슬롯 계산은 자기 source만 세므로, 코어처럼 다른 전략이 든 티커를 이 레인이
+    또 사면 한 브로커 포지션에 두 전략의 lot이 섞여 청산 소유권이 깨진다.
+    """
+    bot = FakeBot(tmp_path)
+    bot.risk.positions = [{"ticker": "HELD", "qty": 3, "market": "KR"}]
+    result = _run(bot, [_row("HELD", "2026-08-04", -30.0, 5.0)])
+    assert result["status"] == "EVALUATED"
+    assert bot.submits == []
+    assert result["results"][0]["reason"] == "already_holding_any_strategy"
+
+
+def test_blocks_ticker_with_pending_order(tmp_path: Path) -> None:
+    bot = FakeBot(tmp_path)
+    bot.pending_orders = [{"ticker": "WAITING", "market": "KR"}]
+    result = _run(bot, [_row("WAITING", "2026-08-04", -30.0, 5.0)])
+    assert result["status"] == "EVALUATED"
+    assert bot.submits == []
+    assert result["results"][0]["reason"] == "pending_order_exists"
