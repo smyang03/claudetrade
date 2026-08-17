@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
@@ -33,7 +34,7 @@ class ExternalDataStore:
         return conn
 
     def init_schema(self) -> None:
-        with self.connect() as conn:
+        with closing(self.connect()) as conn, conn:
             conn.executescript(
                 """
                 PRAGMA journal_mode=WAL;
@@ -149,7 +150,7 @@ class ExternalDataStore:
         error: str = "",
         fetched_at: str,
     ) -> None:
-        with self.connect() as conn:
+        with closing(self.connect()) as conn, conn:
             conn.execute(
                 """
                 INSERT INTO external_api_runs (
@@ -172,7 +173,7 @@ class ExternalDataStore:
 
     def upsert_dart_disclosures(self, rows: Iterable[dict[str, Any]]) -> int:
         count = 0
-        with self.connect() as conn:
+        with closing(self.connect()) as conn, conn:
             for row in rows:
                 conn.execute(
                     """
@@ -200,7 +201,7 @@ class ExternalDataStore:
 
     def upsert_public_krx_listed(self, rows: Iterable[dict[str, Any]]) -> int:
         count = 0
-        with self.connect() as conn:
+        with closing(self.connect()) as conn, conn:
             for row in rows:
                 conn.execute(
                     """
@@ -226,7 +227,7 @@ class ExternalDataStore:
 
     def upsert_public_stock_quotes(self, rows: Iterable[dict[str, Any]]) -> int:
         count = 0
-        with self.connect() as conn:
+        with closing(self.connect()) as conn, conn:
             for row in rows:
                 conn.execute(
                     """
@@ -258,7 +259,7 @@ class ExternalDataStore:
 
     def upsert_public_securities_products(self, rows: Iterable[dict[str, Any]]) -> int:
         count = 0
-        with self.connect() as conn:
+        with closing(self.connect()) as conn, conn:
             for row in rows:
                 conn.execute(
                     """
@@ -291,7 +292,7 @@ class ExternalDataStore:
 
     def upsert_fred_observations(self, rows: Iterable[dict[str, Any]]) -> int:
         count = 0
-        with self.connect() as conn:
+        with closing(self.connect()) as conn, conn:
             for row in rows:
                 conn.execute(
                     """
@@ -316,7 +317,7 @@ class ExternalDataStore:
 
     def table_counts(self) -> dict[str, int]:
         tables = ["external_api_runs", *DATA_TABLES]
-        with self.connect() as conn:
+        with closing(self.connect()) as conn, conn:
             return {
                 table: int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
                 for table in tables
@@ -335,7 +336,7 @@ class ExternalDataStore:
             }
         if initialize:
             self.init_schema()
-        with self.connect() as conn:
+        with closing(self.connect()) as conn, conn:
             existing = {
                 str(row["name"])
                 for row in conn.execute(

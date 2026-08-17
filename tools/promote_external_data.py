@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from contextlib import closing
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -23,7 +24,7 @@ def _now_slug() -> str:
 def _failed_api_runs(path: Path) -> int:
     if not path.exists():
         return 0
-    with sqlite3.connect(str(path)) as conn:
+    with closing(sqlite3.connect(str(path))) as conn:
         tables = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if "external_api_runs" not in tables:
             return 0
@@ -49,9 +50,8 @@ def _sqlite_backup(source: Path, target: Path) -> None:
     target.unlink(missing_ok=True)
     target.with_name(target.name + "-wal").unlink(missing_ok=True)
     target.with_name(target.name + "-shm").unlink(missing_ok=True)
-    with sqlite3.connect(str(source)) as src:
-        with sqlite3.connect(str(target)) as dst:
-            src.backup(dst)
+    with closing(sqlite3.connect(str(source))) as src,             closing(sqlite3.connect(str(target))) as dst:
+        src.backup(dst)
 
 
 def _delta_rows(before: dict[str, int], after: dict[str, int]) -> dict[str, int]:

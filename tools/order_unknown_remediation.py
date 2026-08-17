@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from contextlib import closing
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -90,7 +91,7 @@ def _scan_rows(
         ORDER BY updated_at DESC
         LIMIT 200
     """
-    with _connect_readonly(db_path) as conn:
+    with closing(_connect_readonly(db_path)) as conn:
         return [dict(row) for row in conn.execute(query, params).fetchall()]
 
 
@@ -148,7 +149,7 @@ def _plan_updates(item: dict[str, Any]) -> dict[str, Any]:
 def apply_remediation(db_path: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     applied: list[dict[str, Any]] = []
     now = _utc_now_iso()
-    with _connect_write(db_path) as conn:
+    with closing(_connect_write(db_path)) as conn, conn:
         for item in rows:
             if not bool(item.get("remediation_allowed")):
                 continue
