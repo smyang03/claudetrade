@@ -17804,6 +17804,45 @@ def api_strategy_summary():
     return jsonify(payload)
 
 
+@app.route("/api/strategy/live")
+def api_strategy_live():
+    """전략 관제의 계약 바 실시간 갱신용 경량 시세 (2026-08-19).
+
+    전체 요약(60초 캐시)과 분리해 **계약 종목 시세만** 15초 TTL로 준다.
+    오늘현황 페이지와 같은 공유 시세 캐시(_dashboard_realtime_quotes)를 쓰므로
+    추가 KIS 부하는 계약 3종 × 15초 = 무시 수준이다. 판정·주문과 무관한 표시 전용.
+    """
+    mode = _request_mode()
+    if _normalize_mode(mode) != "live":
+        return jsonify({"ok": True, "quotes": {}})
+    with _STRATEGY_SUMMARY_LOCK:
+        entry = _STRATEGY_SUMMARY_CACHE.get("live") or {}
+        payload = entry.get("payload") or {}
+    contracts = payload.get("open_contracts") or []
+    if not contracts:
+        return jsonify({"ok": True, "quotes": {}})
+    by_market: dict[str, list] = {}
+    for c in contracts:
+        by_market.setdefault(str(c.get("market") or "US").upper(), []).append(c)
+    quotes_out: dict[str, dict] = {}
+    for market, items in by_market.items():
+        tickers = [str(c.get("ticker") or "") for c in items]
+        quotes = _dashboard_realtime_quotes(market, tickers, "live", ttl_sec=15)
+        for c in items:
+            t = str(c.get("ticker") or "").upper()
+            q = quotes.get(t) or {}
+            price = _num_or_zero(q.get("price"))
+            avg = _num_or_zero(c.get("avg_price"))
+            if price > 0 and avg > 0:
+                quotes_out[t] = {
+                    "price": round(price, 4),
+                    "pnl_pct": round(100 * (price / avg - 1), 2),
+                    "age_sec": q.get("age_sec", 0),
+                }
+    return jsonify({"ok": True, "quotes": quotes_out,
+                    "ts": datetime.now(KST).isoformat(timespec="seconds")})
+
+
 PAGE_STRATEGY_HTML = """
 <style>
 .stg-wrap { padding: 20px 24px 60px; max-width: 1180px; margin: 0 auto; }
@@ -17912,6 +17951,7 @@ function stgCls(v) {
 }
 function renderStrategy(d) {
   const c = d.contract || {};
+  window.__stgContract = c;
   const capKrw = c.configured_order_krw || c.order_krw || 0;
   document.getElementById('stg-contract-line').innerHTML =
     'TP +' + stgNum(c.tp_pct, 0) + '% / SL −' + stgNum(c.sl_pct, 0) + '% / D' + (c.max_hold || 5) +
@@ -17937,11 +17977,11 @@ function renderStrategy(d) {
       '<div class="ctr-head"><span class="ctr-tick">' + p.ticker + '</span>' +
       '<span class="ctr-meta">' + (p.name || '') + ' · ' + p.qty + '주 · 진입 ' + stgNum(p.avg_price, 3) +
       ' → ' + stgNum(p.current_price, 3) + ' · ' + (p.entry_date || '') + '</span>' +
-      '<span class="ctr-pnl ' + stgCls(p.pnl_pct) + '">' + stgSigned(p.pnl_pct) + '%</span></div>' +
+      '<span class="ctr-pnl ' + stgCls(p.pnl_pct) + '" id="pnl-' + p.ticker + '">' + stgSigned(p.pnl_pct) + '%</span></div>' +
       '<div class="rng"><div class="rng-track"><div class="rng-loss" style="width:' + zero + '%"></div>' +
       '<div class="rng-gain" style="width:' + (100 - zero) + '%"></div></div>' +
       '<div class="rng-zero" style="left:' + zero + '%"></div>' +
-      '<div class="rng-mark" style="left:' + mark + '%"></div></div>' +
+      '<div class="rng-mark" id="mark-' + p.ticker + '" style="left:' + mark + '%;transition:left 0.8s ease"></div></div>' +
       '<div class="rng-scale"><span>SL −' + stgNum(c.sl_pct, 0) + '% (' + stgNum(p.sl_price, 2) + ')</span>' +
       '<span>0</span><span>TP +' + stgNum(c.tp_pct, 0) + '% (' + stgNum(p.tp_price, 2) + ')</span></div>' +
       '<div class="days">' + days.join('') + '</div>' +
@@ -18057,8 +18097,29 @@ function loadStrategy() {
     .then(function (d) { if (d && d.ok) renderStrategy(d); })
     .catch(function (e) { console.error('strategy load failed', e); });
 }
+window.__stgContract = null;
+function applyLiveQuotes(d) {
+  const c = window.__stgContract || {};
+  const span = (c.sl_pct || 25) + (c.tp_pct || 12);
+  Object.entries(d.quotes || {}).forEach(function (pair) {
+    const t = pair[0], q = pair[1];
+    const pnlEl = document.getElementById('pnl-' + t);
+    const markEl = document.getElementById('mark-' + t);
+    if (!pnlEl || !markEl) return;
+    pnlEl.textContent = stgSigned(q.pnl_pct) + '%';
+    pnlEl.className = 'ctr-pnl ' + stgCls(q.pnl_pct);
+    markEl.style.left = Math.max(0, Math.min(100, 100 * ((c.sl_pct || 25) + q.pnl_pct) / span)) + '%';
+  });
+}
+function loadStrategyLive() {
+  fetch('/api/strategy/live?mode=' + (typeof CURRENT_MODE !== 'undefined' ? CURRENT_MODE : 'live'))
+    .then(function (r) { return r.json(); })
+    .then(function (d) { if (d && d.ok) applyLiveQuotes(d); })
+    .catch(function () {});
+}
 loadStrategy();
 setInterval(loadStrategy, 300000);
+setInterval(loadStrategyLive, 15000);
 </script>
 """
 
