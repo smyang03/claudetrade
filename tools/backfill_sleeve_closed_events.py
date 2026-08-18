@@ -168,6 +168,11 @@ def backfill_sleeve_closed(days: int = 0, *, dry_run: bool = False, verbose: boo
             payload={
                 "pnl_pct": c["pnl_pct"],
                 "pnl_krw": c["pnl_krw"],
+                # close_position 로그의 손익률은 KRW 실현 net(수수료·FX 반영) — B3 실측.
+                # sync가 pnl_pct_net 정본 컬럼으로 옮긴다(2026-08-18 배선).
+                "pnl_pct_net": c["pnl_pct"],
+                "pnl_krw_net": c["pnl_krw"],
+                "net_source": "broker_realized_krw",
                 "close_reason": c["reason"],
                 "backfilled_by": "tools/backfill_sleeve_closed_events.py",
                 "backfill_note": "sleeve 계약 청산은 라이브 경로가 CLOSED를 발행하지 않아 로그에서 소급 주입",

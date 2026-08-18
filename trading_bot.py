@@ -18613,6 +18613,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             payload={
                 "pnl_pct": float(ex.get("pnl_pct", 0) or 0),
                 "pnl_krw": float(ex.get("pnl_krw", 0) or ex.get("realized_pnl_krw", 0) or 0),
+                # close_position의 pnl_pct는 KRW 실현 손익률로 수수료·FX가 이미 반영된
+                # net이다(B3 실측: FRMI gross +12.81 vs 기록 +12.32 = 왕복비용 0.49%p).
+                # sync가 이 키를 pnl_pct_net 정본 컬럼으로 옮긴다(2026-08-18 배선).
+                # 수수료·FX 분해값은 KIS가 주지 않아 비운다 — 총비용 반영 net만 인증.
+                "pnl_pct_net": float(ex.get("pnl_pct", 0) or 0),
+                "pnl_krw_net": float(ex.get("pnl_krw", 0) or ex.get("realized_pnl_krw", 0) or 0),
+                "net_source": "broker_realized_krw",
                 "close_reason": str(reason or ""),
                 "qty": int(ex.get("qty", 0) or 0),
                 "exit_price": float(ex.get("exit_price", 0) or 0),
