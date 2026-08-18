@@ -1108,25 +1108,27 @@ def _build_wide_features(tickers: list[str], *, price_dir: Path, session_date: s
     out: list[dict[str, Any]] = []
     for ticker in tickers:
         try:
+            # 2026-08-18 수리: 컬럼별 dropna는 결측 위치가 컬럼마다 다르면 길이가
+            # 어긋나 ValueError → except가 종목을 **조용히 스킵**한다(08-13 백필에서
+            # LQDA 실측 — 라이브 관측도 같은 경로). 인덱스로 정렬한 뒤 행 단위로
+            # 결측을 버려 OHLCV 정합을 보장한다.
             if len(tickers) > 1:
-                df = pd.DataFrame({
-                    "date": raw["Close"][ticker].dropna().index.strftime("%Y-%m-%d"),
-                    "open": raw["Open"][ticker].dropna().values,
-                    "high": raw["High"][ticker].dropna().values,
-                    "low": raw["Low"][ticker].dropna().values,
-                    "close": raw["Close"][ticker].dropna().values,
-                    "volume": raw["Volume"][ticker].dropna().values,
-                })
+                sub = pd.concat(
+                    {c: raw[c][ticker] for c in ("Open", "High", "Low", "Close", "Volume")},
+                    axis=1,
+                ).dropna()
             else:
-                sq = raw.dropna()
-                df = pd.DataFrame({
-                    "date": sq.index.strftime("%Y-%m-%d"),
-                    "open": sq["Open"].squeeze().values,
-                    "high": sq["High"].squeeze().values,
-                    "low": sq["Low"].squeeze().values,
-                    "close": sq["Close"].squeeze().values,
-                    "volume": sq["Volume"].squeeze().values,
-                })
+                sub = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
+                sub.columns = [str(c[0]) if isinstance(c, tuple) else str(c) for c in sub.columns]
+                sub = sub.dropna()
+            df = pd.DataFrame({
+                "date": sub.index.strftime("%Y-%m-%d"),
+                "open": sub["Open"].values,
+                "high": sub["High"].values,
+                "low": sub["Low"].values,
+                "close": sub["Close"].values,
+                "volume": sub["Volume"].values,
+            })
             if len(df) < 80:
                 continue
             features = build_ticker_frame(df)

@@ -324,6 +324,7 @@ def _observation_views(contract: str) -> None:
     _gap_through_view(contract)
     _capacity_view(contract)
     _tp_capture_view()
+    _tp_ladder_counterfactual_view()
     _candidate_age_view()
 
 
@@ -401,6 +402,78 @@ def _tp_capture_view() -> None:
                      + (f"(정산 {len(vals)} 평균 {sum(vals)/len(vals):+.2f}%)" if vals else ""))
     print(f"[A10] TP 포획 조건(ATR past-only 상위25%): 세션 {len(sessions)} | " + " | ".join(parts)
           + ("" if ready else " — 임계 산출까지 이력 150건 필요"))
+
+
+def _tp_ladder_counterfactual_view() -> None:
+    """[A11] TP 상향 counterfactual — 30건 판정일 즉답용 (2026-08-18 배선).
+
+    사전등록 미결(design_tp_capture_lane §5-1): 고변동 코호트 그리드에서 TP15 +3.67% /
+    TP20 +4.00%가 현행 TP12(+2.71%)를 양 기간 앞섰고, "레인 도입/판정 시점에 함께
+    결정"으로 보류됐다. 판정일에 우리 실거래 코호트로 같은 질문에 답하려면 보유 중
+    고점(MFE)이 필요하다 — integrity_check가 sleeve_mfe_path.jsonl에 상시 수집 중.
+
+    근사 규약(명시): TP{t} 도달(peak>=t) 시 그 건의 counterfactual net ≈ t − 0.5(비용).
+    갭 보너스·FX 변동은 무시하므로 보수적 하한이다. 미도달 건은 실제 net 유지.
+    MFE 수집 이전 정산분(FRMI 등)은 "미관측"으로 표시하고 집계에서 뺀다.
+    """
+    path = ROOT / "data" / "shadow" / "sleeve_mfe_path.jsonl"
+    if not path.exists():
+        print("[A11] TP 사다리: MFE 원장 없음")
+        return
+    peaks: dict[str, dict] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if str(row.get("source_strategy") or "") != "us_swing_5d":
+            continue
+        key = str(row.get("ticker") or "").upper()
+        peak = row.get("peak_pnl_pct")
+        if peak is None:
+            continue
+        prev = peaks.get(key)
+        if prev is None or float(peak) > float(prev.get("peak_pnl_pct") or 0):
+            peaks[key] = row
+
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    try:
+        settled = con.execute(
+            """SELECT ticker, signal_date, execution_shadow_net_krw_pct, execution_shadow_exit_reason
+               FROM signals
+               WHERE execution_shadow_eligible=1 AND execution_shadow_net_krw_pct IS NOT NULL
+               ORDER BY signal_date"""
+        ).fetchall()
+    finally:
+        con.close()
+
+    lines = []
+    base, cf15, cf20 = [], [], []
+    for ticker, signal_date, net, exit_reason in settled:
+        key = str(ticker or "").upper()
+        peak_row = peaks.get(key)
+        if peak_row is None:
+            lines.append(f"    {signal_date} {key:6s} net {float(net):+7.2f}%  peak 미관측(수집 이전)")
+            continue
+        peak = float(peak_row.get("peak_pnl_pct") or 0)
+        net_f = float(net)
+        base.append(net_f)
+        cf15.append(15.0 - 0.5 if peak >= 15.0 else net_f)
+        cf20.append(20.0 - 0.5 if peak >= 20.0 else net_f)
+        lines.append(f"    {signal_date} {key:6s} net {net_f:+7.2f}%  peak {peak:+6.2f}%  "
+                     f"TP15 {'도달' if peak >= 15 else '미달'} · TP20 {'도달' if peak >= 20 else '미달'}")
+    print("[A11] TP 사다리 counterfactual (근사: 도달 시 t−0.5, 갭보너스 무시 — 보수 하한):")
+    for text in lines:
+        print(text)
+    if base:
+        print(f"    관측 {len(base)}건 합계: 현행 {sum(base):+.2f}% | TP15였다면 {sum(cf15):+.2f}% | TP20였다면 {sum(cf20):+.2f}%")
+    holding = {k: v for k, v in peaks.items()}
+    if holding:
+        tops = ", ".join(f"{k} peak {float(v.get('peak_pnl_pct') or 0):+.2f}%" for k, v in sorted(holding.items()))
+        print(f"    (참고) MFE 수집 중: {tops}")
+    print("    판정 규약: 30건 시점에 TP15/TP20 합계가 현행을 넘으면 사전등록 결정(§5-1)을 발동한다.")
 
 
 def _capacity_view(contract: str) -> None:
