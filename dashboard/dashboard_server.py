@@ -17827,7 +17827,7 @@ def api_strategy_live():
     quotes_out: dict[str, dict] = {}
     for market, items in by_market.items():
         tickers = [str(c.get("ticker") or "") for c in items]
-        quotes = _dashboard_realtime_quotes(market, tickers, "live", ttl_sec=15)
+        quotes = _dashboard_realtime_quotes(market, tickers, "live", ttl_sec=2)
         for c in items:
             t = str(c.get("ticker") or "").upper()
             q = quotes.get(t) or {}
@@ -18134,7 +18134,21 @@ function loadStrategyLive() {
 }
 loadStrategy();
 setInterval(loadStrategy, 300000);
-setInterval(loadStrategyLive, 15000);
+(function () {
+  let liveTimer = null;
+  function startLive() {
+    if (liveTimer) return;
+    liveTimer = setInterval(loadStrategyLive, 1000);
+  }
+  function stopLive() {
+    if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') { loadStrategyLive(); startLive(); }
+    else stopLive();
+  });
+  startLive();
+})();
 </script>
 """
 
