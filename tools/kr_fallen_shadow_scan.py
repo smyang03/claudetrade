@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics as st
 import sys
 from datetime import datetime, timedelta
@@ -213,6 +214,88 @@ def scan(date_str: str) -> int:
     return 0
 
 
+SHORT_RATIO_OUT = ROOT / "data" / "shadow" / "kr_short_ratio.jsonl"
+
+
+def record_short_ratio() -> int:
+    """공매도 비중 관측 기록 (2026-08-18 운영자 승인 "심어" — 주문·규칙 무접촉).
+
+    검증 실측(정산 58건): 비중 상위가 반등 우위 — 알파 통제 +2.06% vs 하위 −1.68%,
+    同세션 3/4 우세, p≈0.025. US(FINRA)와 **부호 반대**(KR은 모델 없는 규칙 기반이라
+    공선 문제 없음). 사전등록 반증: forward 정산 30건에서 상위−하위 알파 차 ≤0 → 폐기.
+
+    시점 규약: KRX 공매도 통계는 T일 저녁 공표라 15:40 스캔 시점엔 당일치가 없을 수
+    있다 → 매 실행마다 원장(본+사각)의 **최근 7세션 중 미기록분**을 소급 채운다.
+    진입은 T+1 시가이므로 T일 데이터 사용은 lookahead가 아니다.
+    KRX 자격증명은 .env에서 직접 읽는다(스케줄러 env는 .env.live 상속이라 없음).
+    """
+    try:
+        for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
+            if line.startswith(("KRX_ID=", "KRX_PW=")):
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key, value.strip())
+        from pykrx import stock as _krx_stock
+
+        want: dict[str, set] = {}
+        for path in (OUT, BLIND_OUT):
+            if not path.exists():
+                continue
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                d = str(row.get("session_date") or "")
+                if d:
+                    want.setdefault(d, set()).add(str(row.get("ticker") or ""))
+        targets = sorted(want)[-7:]
+        done: set = set()
+        if SHORT_RATIO_OUT.exists():
+            for line in SHORT_RATIO_OUT.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    try:
+                        r = json.loads(line)
+                        done.add((str(r.get("session_date")), str(r.get("ticker"))))
+                    except ValueError:
+                        continue
+        written = 0
+        stamp = datetime.now().isoformat(timespec="seconds")
+        with open(SHORT_RATIO_OUT, "a", encoding="utf-8") as handle:
+            for d in targets:
+                missing = [t for t in want[d] if (d, t) not in done]
+                if not missing:
+                    continue
+                ratio_map: dict[str, float] = {}
+                for mkt in ("KOSPI", "KOSDAQ"):
+                    try:
+                        df = _krx_stock.get_shorting_volume_by_ticker(d.replace("-", ""), market=mkt)
+                        col = next((c for c in df.columns if "비중" in str(c)), None)
+                        if col is None:
+                            continue
+                        for ticker, row in df.iterrows():
+                            ratio_map[str(ticker)] = float(row[col])
+                    except Exception:
+                        continue
+                if not ratio_map:
+                    continue  # 미공표 세션 — 다음 실행에서 재시도
+                for t in missing:
+                    value = ratio_map.get(t)
+                    handle.write(json.dumps({
+                        "session_date": d, "ticker": t,
+                        "short_ratio_pct": value,  # None = 그날 공매도 집계에 없음(=0 근사)
+                        "captured_at": stamp,
+                    }, ensure_ascii=False) + "\n")
+                    written += 1
+        if written:
+            print(f"[short ratio] 관측 기록 {written}건 -> {SHORT_RATIO_OUT.name}")
+        return written
+    except Exception as exc:  # 관측 결측이 스캔을 막으면 안 된다
+        print(f"[short ratio] 기록 실패(스캔 무영향): {exc}")
+        return 0
+
+
 def _append_dedupe(path: Path, rows: list) -> tuple[int, int]:
     """(session_date, ticker) 중복을 건너뛰며 append. (신규, 중복) 건수 반환.
 
@@ -372,6 +455,7 @@ def main() -> int:
     if args.auto:
         update_cache()
         scan(date_str)
+        record_short_ratio()
         return settle()
     if args.update_cache:
         return update_cache()
