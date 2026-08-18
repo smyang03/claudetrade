@@ -17897,6 +17897,11 @@ PAGE_STRATEGY_HTML = """
 .rail-fill.warn { background:var(--yellow); }
 .stg-foot { color:var(--muted); font-size:11px; margin-top:14px; line-height:1.7; font-family:var(--mono); }
 .stg-empty { color:var(--muted); font-size:12.5px; padding:10px 0; }
+@keyframes stgFlash { 0% { background: rgba(6,182,212,.25); } 100% { background: transparent; } }
+.stg-flash { animation: stgFlash 0.9s ease; border-radius: 4px; }
+.stg-live-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--green);
+  margin-right:5px; animation: stgPulse 2s infinite; }
+@keyframes stgPulse { 0%,100% { opacity:1; } 50% { opacity:.25; } }
 </style>
 
 <div class="stg-wrap">
@@ -18106,10 +18111,20 @@ function applyLiveQuotes(d) {
     const pnlEl = document.getElementById('pnl-' + t);
     const markEl = document.getElementById('mark-' + t);
     if (!pnlEl || !markEl) return;
-    pnlEl.textContent = stgSigned(q.pnl_pct) + '%';
-    pnlEl.className = 'ctr-pnl ' + stgCls(q.pnl_pct);
+    const txt = stgSigned(q.pnl_pct) + '%';
+    if (pnlEl.textContent !== txt) {
+      pnlEl.textContent = txt;
+      pnlEl.classList.remove('stg-flash'); void pnlEl.offsetWidth;
+      pnlEl.classList.add('stg-flash');
+    }
+    pnlEl.className = pnlEl.className.replace(/pos|neg|dim/g, '').trim();
+    pnlEl.classList.add(stgCls(q.pnl_pct));
     markEl.style.left = Math.max(0, Math.min(100, 100 * ((c.sl_pct || 25) + q.pnl_pct) / span)) + '%';
   });
+  const note = document.getElementById('stg-a-note');
+  if (note && d.ts) {
+    note.innerHTML = '<span class="stg-live-dot"></span>LIVE ' + String(d.ts).slice(11, 19) + ' 갱신';
+  }
 }
 function loadStrategyLive() {
   fetch('/api/strategy/live?mode=' + (typeof CURRENT_MODE !== 'undefined' ? CURRENT_MODE : 'live'))
