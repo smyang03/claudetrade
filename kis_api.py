@@ -5967,6 +5967,7 @@ class KISWebSocket:
         self.running: bool = False
         self.started_at: str = ""
         self.last_error: str = ""
+        self._closing: bool = False
 
     def _get_ws_key(self):
         profile = get_kis_market_profile(self.market)
@@ -6117,13 +6118,32 @@ class KISWebSocket:
             if msg.startswith("{"):
                 try:
                     rdic = json.loads(msg)
+                    header = rdic.get("header") or {}
                     body = rdic.get("body") or {}
                     output = body.get("output") or {}
+                    tr_id = str(header.get("tr_id") or "")
+                    # KIS 앱레벨 PINGPONG은 그대로 echo해야 한다 — 무응답 시
+                    # 서버가 유휴 연결을 끊는다(개장 전 연결이 개장 때 죽어있던 원인 후보).
+                    if tr_id == "PINGPONG":
+                        try:
+                            ws.send(msg)
+                        except Exception as e:
+                            log.warning(f"[KIS WS] {self.market} PINGPONG 응답 실패: {e}")
+                        return
                     # AES key/iv 수신 (체결통보 구독 확인 시)
                     if output.get("iv") and output.get("key"):
                         self._notice_iv  = output["iv"]
                         self._notice_key = output["key"]
                         log.info("[KIS WS] 체결통보 AES key/iv 수신 완료")
+                    # 구독 응답 코드 — 거절이 조용히 묻히지 않게 남긴다
+                    if tr_id:
+                        rt_cd = str(body.get("rt_cd") or "")
+                        msg1 = str(body.get("msg1") or "").strip()
+                        tr_key = str(header.get("tr_key") or "")
+                        if rt_cd not in ("", "0"):
+                            log.warning(f"[KIS WS] 구독 거절 {tr_id} {tr_key}: rt_cd={rt_cd} msg={msg1}")
+                        else:
+                            log.info(f"[KIS WS] 구독 응답 {tr_id} {tr_key}: rt_cd={rt_cd or '-'} msg={msg1}")
                 except Exception:
                     pass
                 return
@@ -6186,9 +6206,14 @@ class KISWebSocket:
         def on_error(ws, error):
             self.last_error = str(error or "")[:240]
             self.running = False
+            log.warning(f"[KIS WS] {self.market} 연결 오류: {self.last_error}")
 
         def on_close(ws, *args):
             self.running = False
+            if getattr(self, "_closing", False):
+                log.info(f"[KIS WS] {self.market} 연결 종료 (의도된 stop)")
+            else:
+                log.warning(f"[KIS WS] {self.market} 연결이 서버/네트워크에 의해 끊김 close_args={args}")
 
         self.ws = websocket.WebSocketApp(
             _ws_url(self.market),
@@ -6203,6 +6228,7 @@ class KISWebSocket:
             self.started_at = datetime.now().isoformat(timespec="seconds")
 
     def stop(self):
+        self._closing = True
         try:
             if self.ws:
                 self.ws.close()

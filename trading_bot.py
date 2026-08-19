@@ -26429,7 +26429,37 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 f"(누적 {int((getattr(self, '_ws_tick_count', None) or {}).get(market_key, 0))}건) — "
                 f"청산 판정은 holding price refresh로 유지 중"
             )
+            self._maybe_restart_silent_ws(market_key, silence)
         return {"market": market_key, "updated": updated, "failed": failed}
+
+    def _maybe_restart_silent_ws(self, market: str, silence: float) -> None:
+        """장중 WS 무음이 이어지면 WS를 재기동한다.
+
+        2026-08-18/19 실측: 전날부터 떠 있던 프로세스는 세션오픈 WS 재생성 후에도
+        아침 틱이 0건(서버측 유휴 단절 추정). on_close가 조용히 죽는 구조라
+        여기서 무음을 근거로 재기동한다. 정규장 밖·개장 직후에는 손대지 않는다.
+        """
+        market_key = str(market or "").upper()
+        elapsed = self._market_open_elapsed_min(market_key)
+        if elapsed is None or elapsed < 2.0 or elapsed > 390.0:
+            return
+        if not hasattr(self, "_ws_silence_restart_at"):
+            self._ws_silence_restart_at: dict[str, float] = {}
+        cooldown = float(os.getenv("WS_SILENCE_RESTART_COOLDOWN_SEC", "900"))
+        now = time.time()
+        if now - float(self._ws_silence_restart_at.get(market_key) or 0.0) < cooldown:
+            return
+        self._ws_silence_restart_at[market_key] = now
+        prev = (getattr(self, "ws_by_market", None) or {}).get(market_key)
+        tickers = list(getattr(prev, "tickers", []) or [])
+        try:
+            self._start_ws_for_market(market_key, tickers)
+            log.warning(
+                f"[WS silence restart] {market_key} 무음 {int(silence)}초 — WS 재기동 "
+                f"(구독 {len(tickers)}종목 승계, cooldown {int(cooldown)}초)"
+            )
+        except Exception as exc:
+            log.warning(f"[WS silence restart] {market_key} 재기동 실패: {exc}")
 
     def _ws_tick_silence_sec(self, market: str) -> float | None:
         """마지막 WS 틱 이후 경과 초. 세션 중 틱이 한 번도 없으면 None이 아니라 큰 값."""
@@ -42337,8 +42367,12 @@ def main(is_paper: bool = True):
     if "US" in enabled_markets:
         schedule.every().day.at("21:20").do(_supplement_collect, "US")   # US VIX/DXY
         schedule.every().day.at("21:30").do(_screener_collect, "US")
-    def _midnight_token_refresh():
-        """KIS 토큰 자정 무효화 대응 — 00:01에 강제 갱신 후 브로커 상태 복구"""
+    def _midnight_token_refresh(attempt: int = 0):
+        """KIS 토큰 자정 무효화 대응 — 00:01에 강제 갱신 후 브로커 상태 복구.
+
+        발급 rate limit(EGW00133) 등으로 실패하면 90초 후 재시도한다(최대 3회).
+        2026-08-19 실측: 00:01 실패 후 재시도가 없어 다음 재시작까지 옛 토큰으로 운행했다.
+        """
         try:
             # 공유 자격증명이면 US는 KR 토큰을 재사용하므로 US를 따로 force 발급하지 않는다.
             # KIS 발급 1분 1회 제한(EGW00133)으로 KR/US 동시 force 발급은 충돌한다.
@@ -42347,9 +42381,14 @@ def main(is_paper: bool = True):
                 force = not (shared_us and _mkt == "US")
                 bot._token_for_market(_mkt, force_refresh=force)
             bot._sync_runtime_with_broker()
-            log.info("[자정 토큰 갱신] 완료")
+            log.info("[자정 토큰 갱신] 완료" + (f" (재시도 {attempt}회차)" if attempt else ""))
         except Exception as e:
-            log.warning(f"[자정 토큰 갱신] 실패: {e}")
+            log.warning(f"[자정 토큰 갱신] 실패(attempt={attempt}): {e}")
+            if attempt < 3:
+                _t = threading.Timer(90.0, _midnight_token_refresh, kwargs={"attempt": attempt + 1})
+                _t.daemon = True
+                _t.start()
+                log.info(f"[자정 토큰 갱신] 90초 후 재시도 예약 (attempt={attempt + 1})")
     schedule.every().day.at("00:01").do(_midnight_token_refresh)
     if "KR" in enabled_markets:
         schedule.every().day.at("08:40").do(_repo_health_check, "KR_PREOPEN")
