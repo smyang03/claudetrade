@@ -5968,6 +5968,10 @@ class KISWebSocket:
         self.started_at: str = ""
         self.last_error: str = ""
         self._closing: bool = False
+        # 재연결 계측 — 계측 강등 구간을 원장에 남기기 위한 근거(판정 표본 신뢰도)
+        self.disconnect_count: int = 0
+        self.downtime_sec: float = 0.0
+        self._down_since: float = 0.0
 
     def _get_ws_key(self):
         profile = get_kis_market_profile(self.market)
@@ -6091,6 +6095,11 @@ class KISWebSocket:
             self.running = True
             if not self.started_at:
                 self.started_at = datetime.now().isoformat(timespec="seconds")
+            if self._down_since:
+                gap = max(0.0, time.time() - self._down_since)
+                self.downtime_sec += gap
+                self._down_since = 0.0
+                log.warning(f"[KIS WS] {self.market} 재연결 성공 — 단절 {gap:.0f}초 만에 복구")
             # KR 실시간 시세 구독 (KR 세션만)
             if self.market == "KR":
                 for t in self.tickers:
@@ -6215,14 +6224,65 @@ class KISWebSocket:
             else:
                 log.warning(f"[KIS WS] {self.market} 연결이 서버/네트워크에 의해 끊김 close_args={args}")
 
-        self.ws = websocket.WebSocketApp(
-            _ws_url(self.market),
-            on_open=on_open,
-            on_message=on_message,
-            on_error=on_error,
-            on_close=on_close,
-        )
-        threading.Thread(target=self.ws.run_forever, daemon=True).start()
+        def _build_app():
+            return websocket.WebSocketApp(
+                _ws_url(self.market),
+                on_open=on_open,
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close,
+            )
+
+        self.ws = _build_app()
+
+        def _supervise():
+            """끊기면 즉시 재연결한다 (websocket-client 0.58은 reconnect 인자가 없다).
+
+            2026-08-19 US 실측: 서버가 약 38분마다 연결을 강제 종료(WinError 10054).
+            무음 감지(600초)만으로 복구하면 세션의 33%가 REST 폴백으로 강등되고,
+            그 구간에서 TP/SL 틱 감지를 잃는다 — 판정 표본이 아래로 편향된다.
+            여기서 즉시 다시 붙어 강등을 수 초로 줄인다. on_open이 재구독을 수행한다.
+            """
+            attempt = 0
+            base = float(os.getenv("KIS_WS_RECONNECT_BASE_SEC", "1") or 1)
+            cap = float(os.getenv("KIS_WS_RECONNECT_MAX_SEC", "30") or 30)
+            max_attempt = int(os.getenv("KIS_WS_RECONNECT_MAX_ATTEMPT", "50") or 50)
+            while not self._closing:
+                started = time.time()
+                try:
+                    self.ws.run_forever()
+                except Exception as exc:
+                    log.warning(f"[KIS WS] {self.market} run_forever 예외: {exc}")
+                if self._closing:
+                    break
+                lasted = time.time() - started
+                self.disconnect_count += 1
+                self._down_since = time.time()
+                # 오래 붙어 있다 끊긴 경우는 새 장애로 보고 백오프를 초기화한다.
+                if lasted >= float(os.getenv("KIS_WS_HEALTHY_SEC", "60") or 60):
+                    attempt = 0
+                attempt += 1
+                if attempt > max_attempt:
+                    log.error(
+                        f"[KIS WS] {self.market} 재연결 {max_attempt}회 연속 실패 — 중단. "
+                        f"청산 판정은 REST 폴백으로 유지된다"
+                    )
+                    break
+                delay = min(base * (2 ** (attempt - 1)), cap)
+                log.warning(
+                    f"[KIS WS] {self.market} 재연결 시도 {attempt} ({delay:.0f}초 후, "
+                    f"직전 연결 유지 {lasted:.0f}초)"
+                )
+                time.sleep(delay)
+                if self._closing:
+                    break
+                try:
+                    self._ws_key = self._get_ws_key()  # 승인키 만료 대비 갱신
+                except Exception as exc:
+                    log.warning(f"[KIS WS] {self.market} 승인키 갱신 실패(기존 키로 시도): {exc}")
+                self.ws = _build_app()
+
+        threading.Thread(target=_supervise, daemon=True).start()
         self.running = True
         if not self.started_at:
             self.started_at = datetime.now().isoformat(timespec="seconds")

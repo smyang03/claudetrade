@@ -26430,7 +26430,36 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 f"청산 판정은 holding price refresh로 유지 중"
             )
             self._maybe_restart_silent_ws(market_key, silence)
+        self._drain_ws_downtime_to_ledger(market_key)
         return {"market": market_key, "updated": updated, "failed": failed}
+
+    def _drain_ws_downtime_to_ledger(self, market: str) -> None:
+        """자동 재연결로 복구된 단절 누적을 원장에 옮긴다.
+
+        재연결이 빨라지면 무음 임계(600초)를 넘지 않아 _maybe_restart_silent_ws가
+        안 돌고, 그러면 짧은 단절이 기록 없이 사라진다. 짧아도 누적되면 틱 감지
+        결손이므로 임계 이상 쌓였을 때 남긴다.
+        """
+        try:
+            market_key = str(market or "").upper()
+            ws = (getattr(self, "ws_by_market", None) or {}).get(market_key)
+            if ws is None:
+                return
+            total = float(getattr(ws, "downtime_sec", 0.0) or 0.0)
+            if not hasattr(self, "_ws_downtime_drained"):
+                self._ws_downtime_drained: dict[str, float] = {}
+            drained = float(self._ws_downtime_drained.get(market_key) or 0.0)
+            pending = total - drained
+            threshold = float(os.getenv("WS_DOWNTIME_LEDGER_MIN_SEC", "30") or 30)
+            if pending < threshold:
+                return
+            self._ws_downtime_drained[market_key] = total
+            self._record_instrument_degradation(
+                market_key, kind="ws_reconnect_downtime", duration_sec=pending,
+                detail=f"auto_reconnect disconnects={int(getattr(ws, 'disconnect_count', 0) or 0)}",
+            )
+        except Exception as exc:
+            log.debug(f"[instrument health] downtime drain 실패: {exc}")
 
     def _maybe_restart_silent_ws(self, market: str, silence: float) -> None:
         """장중 WS 무음이 이어지면 WS를 재기동한다.

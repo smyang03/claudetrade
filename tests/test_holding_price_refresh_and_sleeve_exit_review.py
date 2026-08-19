@@ -36,6 +36,7 @@ class _Risk:
 class _Bot:
     _refresh_holding_prices_for_exit = TradingBot._refresh_holding_prices_for_exit
     _ws_tick_silence_sec = TradingBot._ws_tick_silence_sec
+    _drain_ws_downtime_to_ledger = TradingBot._drain_ws_downtime_to_ledger
 
     def __init__(self, positions):
         self.risk = _Risk(positions)
