@@ -42367,12 +42367,10 @@ def main(is_paper: bool = True):
     if "US" in enabled_markets:
         schedule.every().day.at("21:20").do(_supplement_collect, "US")   # US VIX/DXY
         schedule.every().day.at("21:30").do(_screener_collect, "US")
-    def _midnight_token_refresh(attempt: int = 0):
-        """KIS 토큰 자정 무효화 대응 — 00:01에 강제 갱신 후 브로커 상태 복구.
+    _midnight_retry_state = {"count": 0}
 
-        발급 rate limit(EGW00133) 등으로 실패하면 90초 후 재시도한다(최대 3회).
-        2026-08-19 실측: 00:01 실패 후 재시도가 없어 다음 재시작까지 옛 토큰으로 운행했다.
-        """
+    def _do_midnight_token_refresh(attempt: int = 0) -> bool:
+        """KIS 토큰 강제 갱신 + 브로커 상태 복구. 성공 여부를 반환한다."""
         try:
             # 공유 자격증명이면 US는 KR 토큰을 재사용하므로 US를 따로 force 발급하지 않는다.
             # KIS 발급 1분 1회 제한(EGW00133)으로 KR/US 동시 force 발급은 충돌한다.
@@ -42382,13 +42380,29 @@ def main(is_paper: bool = True):
                 bot._token_for_market(_mkt, force_refresh=force)
             bot._sync_runtime_with_broker()
             log.info("[자정 토큰 갱신] 완료" + (f" (재시도 {attempt}회차)" if attempt else ""))
+            return True
         except Exception as e:
             log.warning(f"[자정 토큰 갱신] 실패(attempt={attempt}): {e}")
-            if attempt < 3:
-                _t = threading.Timer(90.0, _midnight_token_refresh, kwargs={"attempt": attempt + 1})
-                _t.daemon = True
-                _t.start()
-                log.info(f"[자정 토큰 갱신] 90초 후 재시도 예약 (attempt={attempt + 1})")
+            return False
+
+    def _midnight_token_refresh_retry():
+        """자정 갱신 실패 재시도 — schedule 잡이라 메인 루프 스레드에서만 돈다."""
+        _midnight_retry_state["count"] += 1
+        ok = _do_midnight_token_refresh(attempt=_midnight_retry_state["count"])
+        if ok or _midnight_retry_state["count"] >= 3:
+            return schedule.CancelJob
+
+    def _midnight_token_refresh():
+        """KIS 토큰 자정 무효화 대응 — 00:01에 강제 갱신 후 브로커 상태 복구.
+
+        발급 rate limit(EGW00133) 등으로 실패하면 90초 주기 schedule 잡으로
+        재시도한다(최대 3회, 메인 스레드 유지 — 브로커 동기화 동시성 회피).
+        2026-08-19 실측: 00:01 실패 후 재시도가 없어 다음 재시작까지 옛 토큰으로 운행했다.
+        """
+        if not _do_midnight_token_refresh(attempt=0):
+            _midnight_retry_state["count"] = 0
+            schedule.every(90).seconds.do(_midnight_token_refresh_retry)
+            log.info("[자정 토큰 갱신] 90초 주기 재시도 등록 (최대 3회)")
     schedule.every().day.at("00:01").do(_midnight_token_refresh)
     if "KR" in enabled_markets:
         schedule.every().day.at("08:40").do(_repo_health_check, "KR_PREOPEN")
