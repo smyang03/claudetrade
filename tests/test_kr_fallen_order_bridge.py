@@ -283,3 +283,52 @@ def test_blocks_ticker_with_pending_order(tmp_path: Path) -> None:
     assert result["status"] == "EVALUATED"
     assert bot.submits == []
     assert result["results"][0]["reason"] == "pending_order_exists"
+
+
+def _rows_n(n, session="2026-08-04"):
+    return [_row(f"T{i:03d}", session, -30.0 - i, 5.0) for i in range(n)]
+
+
+def test_phase3_off_keeps_single_entry(tmp_path: Path) -> None:
+    """Phase 3 장전(2026-08-19): 기본 OFF에서는 현행 일1건 완전 불변."""
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_ACTIVE_RULE"] = "R2"
+    result = _run(bot, _rows_n(12))
+    assert len(bot.submits) == 1
+    assert result["phase3"] == {"enabled": False, "k": 12, "daily_cap": 1, "submitted_now": 1}
+
+
+def test_phase3_on_k2_allows_two(tmp_path: Path) -> None:
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_PHASE3_CAPACITY_ENABLED"] = True
+    result = _run(bot, _rows_n(2))
+    assert len(bot.submits) == 2
+    assert result["phase3"]["daily_cap"] == 2
+
+
+def test_phase3_on_k10_allows_three(tmp_path: Path) -> None:
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_PHASE3_CAPACITY_ENABLED"] = True
+    result = _run(bot, _rows_n(12))
+    assert len(bot.submits) == 3
+    assert result["phase3"]["daily_cap"] == 3
+
+
+def test_phase3_on_k1_stays_single(tmp_path: Path) -> None:
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_PHASE3_CAPACITY_ENABLED"] = True
+    result = _run(bot, _rows_n(1))
+    assert len(bot.submits) == 1
+    assert result["phase3"]["daily_cap"] == 1
+
+
+def test_phase3_slot_cap_three_enforced(tmp_path: Path) -> None:
+    """동시 보유 ≤3 (사전등록): 기보유 2 + 신규 → 1건만 추가."""
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_PHASE3_CAPACITY_ENABLED"] = True
+    bot.risk.positions = [
+        {"ticker": "H1", "qty": 1, "source_strategy": "kr_fallen_5d"},
+        {"ticker": "H2", "qty": 1, "source_strategy": "kr_fallen_5d"},
+    ]
+    result = _run(bot, _rows_n(12))
+    assert len(bot.submits) == 1  # 슬롯 3 - 보유 2 = 1

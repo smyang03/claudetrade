@@ -216,11 +216,19 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
         return _write_status(bot, session_date, {"status": "SKIPPED", "reason": "outside_entry_window",
                                                  "minutes_since_open": round(minutes, 1)})
 
-    max_slots = int(bot._runtime_int("KR_FALLEN_MAX_OPEN_SLOTS", 1))
+    # Phase 3 용량 스케줄 (2026-08-19 사전 장전 — 기본 OFF, 발동은 게이트 통과+운영자 승인).
+    # 사전등록 사다리(design_kr_lane_v2 §3, preregistered_falsification_criteria):
+    #   당일 규칙 통과 후보 k=1 → 1건 / k=2~9 → 2건 / k=10+ → 3건, 동시 보유 ≤3.
+    # 게이트 통과 "후에" 구현하면 수확기 며칠을 흘린다 — 미리 만들어 재워둔다.
+    phase3 = bot._runtime_bool("KR_FALLEN_PHASE3_CAPACITY_ENABLED", False)
+    max_slots = int(bot._runtime_int(
+        "KR_FALLEN_MAX_OPEN_SLOTS_PHASE3" if phase3 else "KR_FALLEN_MAX_OPEN_SLOTS",
+        3 if phase3 else 1))
     if _open_slots(bot) >= max_slots:
         return _write_status(bot, session_date, {"status": "BLOCKED", "reason": "strategy_open_slot_cap_reached"})
-    max_new = int(bot._runtime_int("KR_FALLEN_MAX_NEW_PER_DAY", 1))
-    if _today_new_count(bot, session_date) >= max_new:
+    max_new = 3 if phase3 else int(bot._runtime_int("KR_FALLEN_MAX_NEW_PER_DAY", 1))
+    today_new = _today_new_count(bot, session_date)
+    if today_new >= max_new:
         return _write_status(bot, session_date, {"status": "BLOCKED", "reason": "daily_new_entry_cap_reached"})
 
     # 직전 영업일 = 원장에서 오늘보다 앞선 가장 최근 세션.
@@ -274,7 +282,15 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
                                                  "prev_session": prev_session, "rule": rule_label})
 
     cap_krw = float(bot._runtime_float("KR_FALLEN_ORDER_MAX_KRW", 300000.0))
+    # 실효 일일 진입 한도: OFF=1(현행 불변) / ON=사전등록 사다리 k→(1,2,3)
+    k_candidates = len(candidates)
+    if phase3:
+        daily_cap = 1 if k_candidates <= 1 else (2 if k_candidates <= 9 else 3)
+    else:
+        daily_cap = int(bot._runtime_int("KR_FALLEN_MAX_NEW_PER_DAY", 1))
+    remaining = max(0, daily_cap - today_new)
     results: list[dict] = []
+    submitted_now = 0
     for row in candidates:
         ticker = str(row["ticker"])
         # 2026-08-17: 교차전략 동일티커 중복매수 차단(US 브리지의 already_holding과 대칭).
@@ -332,6 +348,15 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
         results.append({"ticker": ticker, "status": "SUBMITTED" if ok else "SUBMIT_FAILED",
                         "qty": qty, "price": price, "matched": matched})
         if ok:
-            break  # 일1건
+            submitted_now += 1
+            # 잔여 일일 한도 소진 → 종료 (OFF면 remaining=1이라 현행 일1건과 동일)
+            if submitted_now >= remaining:
+                break
+            # 동시 보유 슬롯도 제출분 반영해 재확인 (사전등록: 동시 ≤3)
+            if _open_slots(bot) + submitted_now >= max_slots:
+                results.append({"status": "STOPPED", "reason": "slot_cap_would_exceed"})
+                break
     return _write_status(bot, session_date, {"status": "EVALUATED", "rule": rule_label,
-                                             "prev_session": prev_session, "results": results})
+                                             "prev_session": prev_session, "results": results,
+                                             "phase3": {"enabled": phase3, "k": k_candidates,
+                                                        "daily_cap": daily_cap, "submitted_now": submitted_now}})
