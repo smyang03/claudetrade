@@ -26458,8 +26458,65 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 f"[WS silence restart] {market_key} 무음 {int(silence)}초 — WS 재기동 "
                 f"(구독 {len(tickers)}종목 승계, cooldown {int(cooldown)}초)"
             )
+            self._record_instrument_degradation(
+                market_key, kind="ws_tick_silence", duration_sec=silence,
+                detail=f"restart_ok subs={len(tickers)}",
+            )
         except Exception as exc:
             log.warning(f"[WS silence restart] {market_key} 재기동 실패: {exc}")
+            self._record_instrument_degradation(
+                market_key, kind="ws_tick_silence", duration_sec=silence,
+                detail=f"restart_failed:{exc}",
+            )
+
+    def _record_instrument_degradation(
+        self, market: str, *, kind: str, duration_sec: float, detail: str = ""
+    ) -> None:
+        """계측 품질 저하 구간을 원장에 남긴다 — 판정 표본의 신뢰도 검증용.
+
+        30건 코호트의 품질은 그 30번 동안의 배관 품질을 넘을 수 없다. WS가 죽어
+        틱 감지가 REST 폴백(수분 주기)으로 강등된 구간에서는 TP/SL 터치를 놓칠 수
+        있고, 그러면 코호트에 전략의 실제 성과보다 나쁜 값이 기록된다(08-13 CSV
+        오염과 같은 계열). 여기서 남긴 구간을 보유기간과 조인하면 판정 때
+        "계측 정상 구간만"으로 재검증할 수 있다. 지금 안 남기면 로그 롤오버 후
+        복원이 불가능하다.
+
+        보유 포지션이 없으면 판정에 영향이 없으므로 기록하지 않는다.
+        실패해도 절대 매매를 막지 않는다(광범위 except).
+        """
+        try:
+            market_key = str(market or "").upper()
+            held = [
+                str(p.get("ticker") or "").strip()
+                for p in list(getattr(getattr(self, "risk", None), "positions", []) or [])
+                if str(p.get("ticker") or "").strip()
+                and self._ticker_market(str(p.get("ticker") or "").strip()) == market_key
+            ]
+            if not held:
+                return
+            now = datetime.now(KST)
+            started_at = now - timedelta(seconds=max(0.0, float(duration_sec or 0.0)))
+            ledger = get_runtime_path("data", "shadow", "instrument_health_events.jsonl")
+            ledger.parent.mkdir(parents=True, exist_ok=True)
+            with ledger.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({
+                    "schema_version": "instrument_health_event_v1",
+                    "market": market_key,
+                    "session_date": self._current_session_date_str(market_key),
+                    "kind": kind,
+                    "started_at": started_at.isoformat(timespec="seconds"),
+                    "ended_at": now.isoformat(timespec="seconds"),
+                    "duration_sec": round(float(duration_sec or 0.0), 1),
+                    "affected_holdings": held,
+                    "exit_path_during": "rest_holding_price_refresh",
+                    "detail": detail,
+                }, ensure_ascii=False) + "\n")
+            log.warning(
+                f"[instrument health] {market_key} {kind} {int(duration_sec)}초 기록 — "
+                f"보유 {held} 판정 정밀도 강등 구간"
+            )
+        except Exception as exc:
+            log.debug(f"[instrument health] 기록 실패: {exc}")
 
     def _ws_tick_silence_sec(self, market: str) -> float | None:
         """마지막 WS 틱 이후 경과 초. 세션 중 틱이 한 번도 없으면 None이 아니라 큰 값."""
