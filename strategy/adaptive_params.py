@@ -288,6 +288,10 @@ def _diff_params(base: dict, final: dict) -> str:
     return ", ".join(changes) if changes else "변경 없음"
 
 
+# (strategy, market) -> 마지막으로 INFO로 남긴 로그 서명. 무변화 반복 억제용.
+_LAST_LOG_SIGNATURE: dict[tuple[str, str], tuple] = {}
+
+
 # ── 메인 진입점 ───────────────────────────────────────────────────────────────
 
 def adaptive_params(
@@ -337,14 +341,28 @@ def adaptive_params(
     p = _guardrail(p, base_p)
 
     # 로그: base / perf source / 최종 변경사항
-    log.info(
+    #
+    # 2026-08-21: 무변화 반복을 DEBUG로 강등한다. 08-20 실측에서 이 한 줄이
+    # live_trading 로그 31,659줄 중 20,628줄(65%)을 차지했고, 사이클마다 같은
+    # 문장을 다시 찍어 실제 사건(주문·차단·에러)을 파묻었다. 억제 기준은
+    # "같은 내용을 이미 INFO로 남겼는가"이지 "diff가 없는가"가 아니다 —
+    # 모드·conf·파라미터가 바뀌면 diff가 '변경 없음'이어도 한 번은 INFO로 남는다.
+    diff = _diff_params(base_p, p)
+    signature = (
+        strategy, market, mode, round(float(conf or 0.0), 2),
+        _fmt_params(base_p), _fmt_params(p), diff,
+        str(perf.get("win_rate", "-")), str(perf.get("source", "-")), str(perf.get("n", 0)),
+    )
+    emit = log.info if _LAST_LOG_SIGNATURE.get((strategy, market)) != signature else log.debug
+    _LAST_LOG_SIGNATURE[(strategy, market)] = signature
+    emit(
         "[adaptive] %s/%s mode=%s conf=%.2f | "
         "base=[%s] | perf=WR%s%%(%s,n=%s) | final=[%s] | diff: %s",
         strategy, market, mode, conf,
         _fmt_params(base_p),
         perf.get("win_rate", "-"), perf.get("source", "-"), perf.get("n", 0),
         _fmt_params(p),
-        _diff_params(base_p, p),
+        diff,
     )
 
     return p
