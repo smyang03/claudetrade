@@ -995,6 +995,8 @@ _US_QUOTE_CODE_MAP = {
 
 _US_EXCHANGE_CACHE: dict[str, str] = {}
 _US_DAILYPRICE_FALLBACK = set()
+# 캐시된 EXCD로 KIS가 빈 응답을 준 티커. 프로세스당 1회만 재-probe한다(무한 재시도 차단).
+_US_EXCHANGE_SELF_HEAL_TRIED: set[str] = set()
 _load_exchange_cache()  # data/exchange_cache.json → _US_EXCHANGE_CACHE
 
 
@@ -1101,6 +1103,76 @@ def _get_us_quote_codes(ticker: str, token: str) -> tuple[str, str]:
     return order_exch, _US_QUOTE_CODE_MAP[order_exch]
 
 
+def _self_heal_us_exchange(ticker: str, token: str, failed_quote_exch: str):
+    """캐시된 EXCD로 KIS가 빈 응답을 줄 때 거래소 코드를 재판별해 캐시를 교정한다.
+
+    2026-08-21 실측(WMT): KIS는 `rt_cd=0 정상처리`를 주면서 output 필드를 전부 빈
+    문자열로 돌려준다 — 오류가 아니라 "그 거래소엔 그 종목이 없다"는 뜻이다.
+
+        WMT / EXCD=NYS → last='' base='' rsym=''        (빈 응답)
+        WMT / EXCD=NAS → last='103.6850' rsym='DNASWMT'  (정상)
+
+    월마트는 **실제로 NYSE 상장**이고 Finnhub도 NYSE라고 알려준다. 그런데 KIS 내부
+    심볼은 DNASWMT다. `_get_ovrs_excg_cd`가 Finnhub(3순위)를 무검증으로 캐시에 박기
+    때문에 현실과 맞는 값이 KIS에서는 빈 응답이 되는 구조적 불일치가 생긴다.
+    08-20~21 실측 62건이 전부 이 경로였다(Finnhub 폴백이 받아줘 조용히 묻혔다).
+
+    가드 3가지:
+      - 프로세스당 티커별 1회만 시도한다. 상폐 등으로 어느 거래소에도 없는 종목이
+        매 사이클 3회씩 REST를 더 치는 것을 막는다(_US_DAILYPRICE_FALLBACK과 같은 패턴).
+      - 하드코딩 맵(_US_EXCHANGE_MAP) 종목은 건드리지 않는다. 사람이 검증한 override를
+        덮으면 다음 조회에서 하드코딩이 다시 이겨 진동한다 — 그건 사람이 고칠 일이다.
+      - probe가 실패하면 None을 돌려 기존 Finnhub 폴백 경로를 그대로 탄다.
+
+    반환: 교정 성공 시 재조회한 가격 dict, 실패/스킵이면 None.
+    """
+    normalized = str(ticker or "").upper()
+    if not token or not normalized:
+        return None
+    if normalized in _US_EXCHANGE_SELF_HEAL_TRIED:
+        return None
+    if _hardcoded_us_exchange_code(normalized):
+        log.warning(
+            f"[exchange_resolve] {normalized} KIS 빈 응답(EXCD={failed_quote_exch})인데 "
+            "하드코딩 맵 종목이라 자동 교정하지 않는다 — _US_EXCHANGE_MAP 확인 필요"
+        )
+        _US_EXCHANGE_SELF_HEAL_TRIED.add(normalized)
+        return None
+
+    _US_EXCHANGE_SELF_HEAL_TRIED.add(normalized)
+    before = _US_EXCHANGE_CACHE.get(normalized)
+    try:
+        resolved = _probe_us_exchange_code(normalized, token)
+    except Exception as exc:
+        log.warning(
+            f"[exchange_resolve] {normalized} KIS 빈 응답(EXCD={failed_quote_exch}) — "
+            f"재판별도 실패({exc}). Finnhub 폴백 유지"
+        )
+        return None
+
+    if _US_QUOTE_CODE_MAP.get(resolved) == failed_quote_exch:
+        log.warning(
+            f"[exchange_resolve] {normalized} 재판별 결과가 같다({resolved}) — 교정 불가"
+        )
+        return None
+
+    _US_EXCHANGE_CACHE[normalized] = resolved
+    try:
+        _save_exchange_cache()
+    except Exception as exc:
+        log.warning(f"[exchange_resolve] {normalized} 캐시 저장 실패: {exc}")
+    log.warning(
+        f"[exchange_resolve] {normalized} 캐시 교정 {before}→{resolved} "
+        f"(KIS가 EXCD={failed_quote_exch}에 빈 응답). "
+        "WS 구독 심볼은 다음 세션 재구독 때 반영된다"
+    )
+    try:
+        return _get_price_us_kis(normalized, token)
+    except Exception as exc:
+        log.warning(f"[exchange_resolve] {normalized} 교정 후 재조회 실패: {exc}")
+        return None
+
+
 def _get_price_us_kis(ticker: str, token: str) -> dict:
     _, quote_exch = _get_us_quote_codes(ticker, token)
     resp = _kis_get(
@@ -1157,6 +1229,9 @@ def _get_price_us_kis(ticker: str, token: str) -> dict:
             log.warning(f"KIS US 현재가 OHLC 보정 실패 [{ticker}]: {e}")
 
     if price <= 0:
+        healed = _self_heal_us_exchange(ticker, token, quote_exch)
+        if healed is not None:
+            return healed
         raise ValueError(f"KIS US price=0 [{ticker}] EXCD={quote_exch} — Finnhub 폴백 전환")
 
     return {
@@ -3629,15 +3704,26 @@ def _place_order_kr(ticker, qty, price, side, token):
 
 
 # 미국 거래소 코드 매핑. 미확인 종목을 기본 NASD로 보내지 않고 명시적으로 막는다.
+#
+# ⚠️ 기준은 **KIS가 그 종목을 어느 EXCD로 서비스하는가**이지 실제 상장 거래소가 아니다.
+# 둘은 어긋날 수 있다. 2026-08-21 실측 — 월마트는 실제 NYSE 상장이고 Finnhub도 NYSE라고
+# 하지만, KIS는 `rsym=DNASWMT`로 NASDAQ에 물려 있다:
+#     WMT / EXCD=NYS → rt_cd=0 "정상처리"인데 last='' base='' rsym=''  (빈 응답)
+#     WMT / EXCD=NAS → last='103.6850' rsym='DNASWMT'
+# 이 맵은 캐시보다 우선하고 캐시 파일까지 덮으므로(_get_ovrs_excg_cd 1번 분기),
+# 여기 값이 틀리면 exchange_cache.json을 손으로 고쳐도 되돌아간다.
+# 값을 넣거나 고칠 때는 반드시 KIS 현재가를 실제로 찔러 rsym을 확인할 것.
 _US_EXCHANGE_MAP = {
     "NASD": [
         "AAPL", "ADBE", "AMD", "AMZN", "AVGO", "COST", "CSCO", "GOOG",
         "GOOGL", "INTC", "META", "MSFT", "NFLX", "NVDA", "PEP", "PLTR",
         "QCOM", "QQQ", "SBUX", "SMCI", "SNOW", "TSLA", "TXN", "UBER",
         "ARM", "BRZE", "CORT", "PAYS", "SRPT",
+        # 2026-08-21 교정: NYSE 상장이지만 KIS는 NAS로 서비스한다(rsym=DNASWMT 실측).
+        "WMT",
     ],
     "NYSE": ["BRK.B","JPM","BAC","WFC","GS","MS","C","USB","BLK","AXP",
-             "XOM","CVX","COP","SLB","WMT","HD","MCD","NKE","PG","KO",
+             "XOM","CVX","COP","SLB","HD","MCD","NKE","PG","KO",
              "PFE","JNJ","MRK","ABT","UNH","V","MA","HIMS",
              "LLY","ABBV","CAT","GE","NOK","CRM","ORCL"],
     "AMEX": ["SPY","IWM","GLD","SLV","USO"],
