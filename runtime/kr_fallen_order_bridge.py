@@ -221,15 +221,6 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
     #   당일 규칙 통과 후보 k=1 → 1건 / k=2~9 → 2건 / k=10+ → 3건, 동시 보유 ≤3.
     # 게이트 통과 "후에" 구현하면 수확기 며칠을 흘린다 — 미리 만들어 재워둔다.
     phase3 = bot._runtime_bool("KR_FALLEN_PHASE3_CAPACITY_ENABLED", False)
-    max_slots = int(bot._runtime_int(
-        "KR_FALLEN_MAX_OPEN_SLOTS_PHASE3" if phase3 else "KR_FALLEN_MAX_OPEN_SLOTS",
-        3 if phase3 else 1))
-    if _open_slots(bot) >= max_slots:
-        return _write_status(bot, session_date, {"status": "BLOCKED", "reason": "strategy_open_slot_cap_reached"})
-    max_new = 3 if phase3 else int(bot._runtime_int("KR_FALLEN_MAX_NEW_PER_DAY", 1))
-    today_new = _today_new_count(bot, session_date)
-    if today_new >= max_new:
-        return _write_status(bot, session_date, {"status": "BLOCKED", "reason": "daily_new_entry_cap_reached"})
 
     # 직전 영업일 = 원장에서 오늘보다 앞선 가장 최근 세션.
     # 사각 편입 시 사각 원장 세션도 포함한다 — 본 원장이 비고 사각만 있는 날의
@@ -280,6 +271,28 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
     if not candidates:
         return _write_status(bot, session_date, {"status": "SKIPPED", "reason": "no_rule_candidates",
                                                  "prev_session": prev_session, "rule": rule_label})
+
+    # 슬롯·일한도 검사는 후보 조회 "뒤"에 온다 (2026-08-20 수리).
+    # 이전에는 앞에 있어서, 후보가 0건인 날도 slot_cap으로 기록됐다 —
+    # 08-20 실측: 후보 0건(사각 1건은 이미 보유)인데 상태가 slot_cap으로 남아
+    # "슬롯이 병목"이라는 오진을 유발했다. 진짜 상태(공급 부족)를 가리면 안 된다.
+    max_slots = int(bot._runtime_int(
+        "KR_FALLEN_MAX_OPEN_SLOTS_PHASE3" if phase3 else "KR_FALLEN_MAX_OPEN_SLOTS",
+        3 if phase3 else 1))
+    if _open_slots(bot) >= max_slots:
+        return _write_status(bot, session_date, {
+            "status": "BLOCKED", "reason": "strategy_open_slot_cap_reached",
+            "prev_session": prev_session, "rule": rule_label,
+            "candidate_count": len(candidates),
+        })
+    max_new = 3 if phase3 else int(bot._runtime_int("KR_FALLEN_MAX_NEW_PER_DAY", 1))
+    today_new = _today_new_count(bot, session_date)
+    if today_new >= max_new:
+        return _write_status(bot, session_date, {
+            "status": "BLOCKED", "reason": "daily_new_entry_cap_reached",
+            "prev_session": prev_session, "rule": rule_label,
+            "candidate_count": len(candidates),
+        })
 
     cap_krw = float(bot._runtime_float("KR_FALLEN_ORDER_MAX_KRW", 300000.0))
     # 실효 일일 진입 한도: OFF=1(현행 불변) / ON=사전등록 사다리 k→(1,2,3)
