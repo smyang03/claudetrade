@@ -155,6 +155,81 @@ def _dollar_volume_by_ticker(con: sqlite3.Connection, session_date: str) -> dict
     return out
 
 
+def _max_daily_return_21d(ticker: str, session_date: str) -> float | None:
+    """MAX = 신호일 직전 21거래일 중 최대 일간 상승률(%). 가격 CSV에서 계산.
+
+    Path A의 anti-chase가 쓰는 max_daily_ret_21d와 같은 개념이지만, 스윙 브리지는
+    Path A 후보 dict에 접근하지 않으므로 여기서 직접 만든다. no-lookahead:
+    session_date **미만** 바만 사용한다.
+    """
+    try:
+        path = get_runtime_path("data", "price", "us", f"us_{str(ticker).upper()}.csv")
+        if not path.exists():
+            return None
+        import csv
+
+        rows = []
+        with path.open(encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh):
+                date = str(row.get("date") or "")[:10]
+                if date and date < str(session_date):
+                    try:
+                        rows.append((date, float(row.get("close") or 0.0)))
+                    except (TypeError, ValueError):
+                        continue
+        rows.sort()
+        closes = [c for _, c in rows[-21:] if c > 0]
+        if len(closes) < 6:
+            return None
+        gains = [(closes[i] / closes[i - 1] - 1) * 100 for i in range(1, len(closes))]
+        return max(gains) if gains else None
+    except Exception:
+        return None
+
+
+def _apply_max_lottery_floor(
+    bot: Any, session_date: str, signals: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """MAX(복권형) 하한 — 저MAX 급락주는 반전이 약하다.
+
+    2026-08-20 리서치(227세션 백테스트, 밴드 표본 n=137):
+      MAX 3분위가 단조 증가 — 하위 +0.38% / 중위 +4.43% / 상위 +6.00%
+      ATR을 통제해도 살아남는다: ATR중상 ∩ MAX하위 −0.13% vs MAX상위 +6.30%
+      (클러스터t 5.97, 승 74%). 반대로 MAX 통제 시 ATR 차이는 2.1%p로 축소.
+      → MAX가 진짜 변수이고 ATR은 그림자. ATR 축은 별도로 기각됨.
+    밴드 + MAX>=8: 클러스터t 2.63 → 4.61, 합계 −4%, 빈도 60%→48%.
+
+    문헌: 복권 수요가 패자 가격을 더 왜곡 → 더 큰 반전(MAX 효과 / lottery demand).
+
+    fail-open: MAX를 못 구한 종목은 통과시킨다(가격 CSV 결손이 매매를 막지 않게).
+    """
+    if not bot._runtime_bool("US_SWING_MAX_FLOOR_ENABLED", False):
+        return signals, {"applied": False, "reason": "disabled"}
+    floor = float(bot._runtime_float("US_SWING_MAX_FLOOR_PCT", 8.0))
+    kept, dropped, unknown = [], [], []
+    for signal in signals:
+        ticker = str(signal.get("ticker") or "").upper()
+        value = _max_daily_return_21d(ticker, session_date)
+        if value is None:
+            unknown.append(ticker)
+            kept.append(signal)
+            continue
+        (kept if value >= floor else dropped).append(
+            signal if value >= floor else {"ticker": ticker, "max_pct": round(value, 1)}
+        )
+    meta = {"applied": True, "floor_pct": floor,
+            "dropped": [d.get("ticker") for d in dropped],
+            "unknown": unknown}
+    if unknown:
+        log.warning(f"[US swing handoff] MAX 계산 불가 {unknown} — fail-open 통과")
+    if not kept:
+        log.info(f"[US swing handoff] MAX 하한({floor:.0f}%) 통과 후보 없음 — 배제 {meta['dropped']}")
+        return [], meta
+    if dropped:
+        log.info(f"[US swing handoff] MAX 하한({floor:.0f}%) 배제 {meta['dropped']}")
+    return kept, meta
+
+
 def _apply_dollar_volume_band(
     bot: Any, con: sqlite3.Connection, session_date: str, signals: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -345,7 +420,18 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
                 research_authority=research_authority,
                 execution_authority=authority,
             )
-        if band_meta.get("applied"):
+        # MAX 하한은 밴드 뒤에 온다(검정 순서와 동일: 밴드 위에 얹은 축).
+        signals, max_meta = _apply_max_lottery_floor(bot, session_date, signals)
+        if max_meta.get("applied") and not signals:
+            return _write_execution_status(
+                bot,
+                session_date=session_date,
+                result={"status": "SKIPPED", "reason": "max_floor_no_candidate",
+                        "authority": authority, "dvol_band": band_meta, "max_floor": max_meta},
+                research_authority=research_authority,
+                execution_authority=authority,
+            )
+        if band_meta.get("applied") or max_meta.get("applied"):
             # 밴드 통과분은 원 랭크가 3·7일 수 있다. 아래 랭크 게이트(rank2 폴백용)가
             # 이를 "폴백 후보"로 오인하지 않도록 밴드 내 순위를 따로 붙인다.
             # 원 rank는 귀속 태그(us_swing_5d_rank_N)에 그대로 쓰이므로 보존한다.

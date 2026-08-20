@@ -330,7 +330,13 @@ def evaluate_handoff(
             authority_mode=mode,
             details={**base_details, "current_open_slots": int(current_open_slots or 0), "max_open_slots": max_slots},
         )
-    if int(signal.get("rank") or 0) <= 0 or int(signal.get("rank") or 0) > max_new:
+    # 2026-08-20 수리: 거래대금 밴드/MAX 재선택이 붙으면 고른 종목의 원 rank가 3·7일 수 있다.
+    # 원 rank로 이 게이트를 걸면 재선택이 통째로 무력화된다(08-20 실측: 밴드가 MXL rank3을
+    # 골랐는데 여기서 rank_outside_authority_cap으로 차단 → 그날 진입 0건).
+    # 브리지가 붙인 밴드 내 순위(_band_position)를 우선 쓰고, 없으면 원 rank로 동작(하위호환).
+    # 원 rank는 귀속 태그(us_swing_5d_rank_N)에 그대로 쓰이므로 여기서만 대체한다.
+    gate_rank = int(signal.get("_band_position") or signal.get("rank") or 0)
+    if gate_rank <= 0 or gate_rank > max_new:
         return _decision("BLOCKED", "rank_outside_authority_cap", signal=signal, authority_mode=mode, details=base_details)
     probability = _number(signal.get("probability"))
     predicted_net = _number(signal.get("predicted_net_pct"))
