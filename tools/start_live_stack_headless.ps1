@@ -166,9 +166,33 @@ function Wait-BrokerTruthSchedulerReady([int]$ProcessId) {
     if ($DryRun) { return }
     $lockPath = Join-Path $Root "state\broker_truth_scheduler.lock.json"
     $heartbeatPath = Join-Path $Root "state\broker_truth_scheduler_heartbeat.json"
+    # 2026-08-21: 여기서는 "프로세스가 사라졌는가"만 본다.
+    #
+    # 이전에는 Test-ClaudeTradePythonPid로 경로까지 대조하고 실패하면 첫 iteration에
+    # 즉시 throw했다. 그런데 스폰 직후에는 Get-Process가 성공해도 $process.Path가
+    # 아직 비어 있는 창이 있어 살아있는 프로세스를 "exited"로 오판한다 —
+    # 08-20 재시작 5회 중 2회가 이 오탐으로 실패했다(매니페스트 미기록·부분 기동).
+    #
+    # 공유 헬퍼는 일부러 건드리지 않는다. 그쪽을 이름 기반으로 완화하면 stale pid와
+    # PID 재사용이 겹칠 때 중복 탐지(아래 $runningPid)가 무관한 python을 우리 것으로
+    # 오인해 기동 자체를 건너뛴다 — 08-13 중복 실행 사고의 거울상이 된다.
+    # 진짜 권위 검사는 아래 lock.pid·heartbeat.pid 일치이고, 루프가 80x250ms=20초로
+    # 유계라 죽은 프로세스여도 최악 20초 뒤 말미 throw로 끝난다.
+    $deadStreak = 0
     for ($attempt = 0; $attempt -lt 80; $attempt++) {
-        if (-not (Test-ClaudeTradePythonPid $ProcessId)) {
-            throw "broker_truth_scheduler exited before acquiring writer authority pid=$ProcessId"
+        $alive = $true
+        try {
+            Get-Process -Id $ProcessId -ErrorAction Stop | Out-Null
+        } catch {
+            $alive = $false
+        }
+        if ($alive) {
+            $deadStreak = 0
+        } else {
+            $deadStreak++
+            if ($deadStreak -ge 3) {
+                throw "broker_truth_scheduler exited before acquiring writer authority pid=$ProcessId"
+            }
         }
         try {
             $lock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
