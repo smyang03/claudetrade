@@ -62,11 +62,27 @@ def _write_status(bot: Any, session_date: str, result: dict[str, Any]) -> dict[s
         os.replace(tmp, path)
     except Exception as exc:
         log.error(f"[KR fallen handoff] status write failed: {exc}")
-    _append_history(payload)
+    # 2026-08-21: 상태 전이를 로그에도 남긴다. 이전에는 정상 경로 로그가 하나도
+    # 없어서(에러 3줄이 전부), 로그만 보면 KR 레인이 그날 무엇을 했는지 알 수
+    # 없었다 — status 파일과 history jsonl을 따로 열어야 했다. US 브리지는
+    # 밴드 재선택까지 INFO로 남긴다. 그 비대칭을 없앤다.
+    # 전이일 때만 찍는다(_append_history와 같은 기준) — 진입창 동안 2분마다
+    # 같은 줄이 쌓이면 adaptive_params와 같은 로그 스팸이 된다.
+    if _append_history(payload):
+        detail = ", ".join(
+            f"{key}={result[key]}"
+            for key in ("prev_session", "rule", "candidate_count", "minutes_since_open")
+            if key in result
+        )
+        log.info(
+            f"[KR fallen handoff] {result.get('status') or '?'} "
+            f"reason={result.get('reason') or '-'}"
+            + (f" | {detail}" if detail else "")
+        )
     return result
 
 
-def _append_history(payload: dict[str, Any]) -> None:
+def _append_history(payload: dict[str, Any]) -> bool:
     """상태 전이만 이력 원장에 append (2026-08-06).
 
     status 파일은 매 호출마다 덮어써서 마지막 결과만 남는다. 브리지는 진입창
@@ -77,6 +93,9 @@ def _append_history(payload: dict[str, Any]) -> None:
     첫 실주문 이후에는 "왜 안 샀는가"(후보 없음 / 게이트 차단 / 예산 부족)를
     사후에 복원할 수 있어야 한다. 같은 (status, reason)이 연속되면 건너뛰어
     2분마다 같은 줄이 쌓이는 것을 막는다.
+
+    Returns:
+        실제로 append 했으면 True(= 상태 전이). 중복 억제·실패면 False.
     """
 
     try:
@@ -107,13 +126,15 @@ def _append_history(payload: dict[str, Any]) -> None:
                         json.dumps(prev_result.get("results") or [], ensure_ascii=False, sort_keys=True),
                     )
                     if prev_sig == signature:
-                        return
+                        return False
                 except ValueError:
                     pass
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        return True
     except Exception as exc:
         log.warning(f"[KR fallen handoff] history append failed: {exc}")
+        return False
 
 
 def _load_candidates(
