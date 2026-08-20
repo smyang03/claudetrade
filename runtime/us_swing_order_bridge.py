@@ -466,15 +466,23 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
             "pending_order_exists",
             "same_day_reentry_blocked",
         }
+        # 2026-08-20 수리: 폴백 이월 판정도 원 rank를 읽고 있었다. 밴드가 rank3을 1순위로
+        # 고르면 prior 목록이 비어 폴백이 통째로 죽는다(08-20 실측: MXL이 price_chase로
+        # 죽었는데 FSLY가 rank2_fallback_not_triggered로 평가조차 안 됨).
+        # 게이트를 통과한 "그날의 1순위"를 티커로 추적해 prior를 정확히 잡는다.
+        primary_tickers: set[str] = set()
         for signal in signals:
             ticker = str(signal.get("ticker") or "").upper()
             signal_rank = int(signal.get("rank") or 0)
             # 밴드 재선택 시에는 밴드 내 순위로 게이트한다(원 rank는 귀속용으로 보존).
             gate_rank = int(signal.get("_band_position") or signal_rank)
+            if gate_rank <= base_limit:
+                primary_tickers.add(ticker)
             if gate_rank > base_limit:
                 if not fallback_on:
                     continue
-                prior = [r for r in results if int(r.get("rank") or 0) <= base_limit]
+                prior = [r for r in results
+                         if str(r.get("ticker") or "").upper() in primary_tickers]
                 carried = any(
                     str(r.get("reason") or "") in fallback_carry_reasons for r in prior
                 )
