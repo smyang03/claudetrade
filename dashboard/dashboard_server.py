@@ -17366,8 +17366,21 @@ def _strategy_canonical_nets(rows: list[dict], mode: str) -> dict[str, dict]:
         signal_date = item.get("signal_date", "")
         matched = None
         match_basis = ""
-        # 1순위: sleeve decision_id(정확) — 청산 세션일은 신호일 이후이므로 후보를 훑는다
-        for decision_id, row in by_decision.items():
+        # 0순위: 진입 decision_id(가장 정확). 2026-08-21부터 sleeve 청산이 진입
+        # decision_id를 이어받는다(`dec_{YYYYMMDD}_{MARKET}_{TICKER}_{hash}`).
+        # 합성 ID는 **청산일** 기준이라 `>= signal_date` 부등호로 훑어야 했지만,
+        # 진입 ID는 신호일과 정확히 일치하므로 재매수 종목도 라운드가 안 섞인다.
+        entry_prefix = f"dec_{str(signal_date or '').replace('-', '')}_"
+        if len(entry_prefix) > 5:
+            for decision_id, row in by_decision.items():
+                if not decision_id.startswith(entry_prefix):
+                    continue
+                parts = decision_id.split("_")
+                if len(parts) >= 5 and parts[3].upper() == str(ticker).upper():
+                    matched, match_basis = row, "entry_decision_id"
+                    break
+        # 1순위: sleeve 합성 decision_id(정확) — 청산 세션일은 신호일 이후이므로 후보를 훑는다
+        for decision_id, row in (by_decision.items() if matched is None else []):
             if not decision_id.startswith("sleeve_"):
                 continue
             parts = decision_id.split("_")

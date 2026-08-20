@@ -18580,10 +18580,15 @@ class TradingBot(MarketUtilsMixin, StateMixin):
     def _record_sleeve_closed_event(self, cand: dict, market: str, reason: str, ex: dict) -> None:
         """isolated sleeve 계약 청산을 CLOSED lifecycle 이벤트로 즉시 기록한다.
 
-        sleeve(us_swing_5d·kr_fallen_5d)는 Claude decision을 거치지 않아 decision_id가
-        없다. backfill 도구와 **동일한 합성 ID 규약**(sleeve_{market}_{TICKER}_{YYYYMMDD})을
-        써서 두 경로가 같은 건을 가리키게 한다 — 대시보드·canonical 매칭이 그대로 동작하고,
-        backfill은 같은 (ticker, session_date, close_reason)을 다시 넣지 않는다.
+        sleeve(us_swing_5d·kr_fallen_5d)는 Claude decision을 거치지 않지만, 진입 자체는
+        FILLED 이벤트로 decision_id와 함께 기록된다(예: dec_20260820_US_MXL_d477a053).
+        2026-08-21 수리: **진입 decision_id를 이어받는다.** 이전에는 무조건 합성
+        ID(sleeve_{market}_{TICKER}_{YYYYMMDD})를 써서 진입행과 연결이 끊겼고,
+        그 결과 진입행은 영원히 closed=0("보유중"), 청산행은 filled=0 — 양쪽 모두
+        DIRTY(CLOSED_WITHOUT_FILL)로 남았다. 30건 판정에서 품질 게이트에 걸린다.
+
+        진입 ID를 못 찾을 때만 합성 ID로 폴백한다 — backfill 도구와 같은 규약이라
+        두 경로가 같은 건을 가리키고, 대시보드의 합성 패턴 매칭도 그대로 동작한다.
 
         기록 계층 전용이다. 주문·청산 판단에는 어떤 영향도 주지 않는다.
         """
@@ -18604,11 +18609,34 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         market_key = "US" if str(market or "").upper() == "US" else "KR"
         ticker_key = ticker.upper() if market_key == "US" else ticker
         session_date = str(self._current_session_date_str(market_key) or "")[:10]
+        # 진입 decision_id 이어받기. 조회가 실패해도 청산 기록 자체는 막지 않는다 —
+        # 합성 ID 폴백이 있으므로 최악은 수리 이전과 같은 상태다.
+        entry_decision_id = ""
+        try:
+            store = getattr(getattr(v2, "registry", None), "store", None)
+            if store is not None:
+                entry_decision_id = str(
+                    store.open_entry_decision_id(
+                        market=market_key,
+                        runtime_mode=str(getattr(self, "_mode", "live") or "live"),
+                        ticker=ticker_key,
+                    )
+                    or ""
+                )
+        except Exception as exc:
+            log.warning(f"[sleeve CLOSED] 진입 decision_id 조회 실패 {ticker_key}: {exc}")
+        if entry_decision_id:
+            log.info(f"[sleeve CLOSED] {ticker_key} 진입 decision_id 이어받음: {entry_decision_id}")
+        else:
+            log.warning(f"[sleeve CLOSED] {ticker_key} 진입 decision_id 없음 — 합성 ID 폴백")
         v2.record_event(
             "CLOSED",
             market_key,
             ticker_key,
-            decision_id=f"sleeve_{market_key}_{ticker_key}_{session_date.replace('-', '')}",
+            decision_id=(
+                entry_decision_id
+                or f"sleeve_{market_key}_{ticker_key}_{session_date.replace('-', '')}"
+            ),
             reason_code=f"CLOSED_{str(reason or 'unknown').upper()}",
             payload={
                 "pnl_pct": float(ex.get("pnl_pct", 0) or 0),

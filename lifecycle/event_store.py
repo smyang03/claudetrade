@@ -563,6 +563,47 @@ class EventStore:
             ).fetchall()
         return [self._event_row_to_dict(row) for row in rows]
 
+    def open_entry_decision_id(
+        self,
+        *,
+        market: str,
+        runtime_mode: str,
+        ticker: str,
+    ) -> str:
+        """아직 청산되지 않은 진입(FILLED)의 decision_id. 없으면 "".
+
+        2026-08-21: sleeve(us_swing_5d·kr_fallen_5d)는 D5 보유라 진입일과 청산일이
+        다르다. 기존 조회 API는 전부 session_date로 묶여 있어 청산 시점에 진입행을
+        찾지 못했고, 그래서 청산이 합성 ID를 쓸 수밖에 없었다 — 진입행은 영원히
+        closed=0, 청산행은 filled=0으로 남아 양쪽이 DIRTY가 된다.
+
+        마지막 CLOSED **이후**의 FILLED만 본다. 같은 티커를 재매수한 경우
+        (08-14 청산 → 08-20 재진입한 MXL) 과거 라운드의 진입을 잡지 않기 위함이다.
+        """
+        ticker_value = str(ticker or "").strip().upper() if market == "US" else str(ticker or "").strip()
+        with self.connect() as conn:
+            closed = conn.execute(
+                """
+                SELECT MAX(event_id) AS last_id
+                FROM lifecycle_events
+                WHERE market=? AND runtime_mode=? AND ticker=? AND event_type='CLOSED'
+                """,
+                (market, runtime_mode, ticker_value),
+            ).fetchone()
+            last_closed_id = int((closed["last_id"] if closed else 0) or 0)
+            row = conn.execute(
+                """
+                SELECT decision_id
+                FROM lifecycle_events
+                WHERE market=? AND runtime_mode=? AND ticker=? AND event_type='FILLED'
+                  AND event_id > ? AND decision_id IS NOT NULL AND decision_id != ''
+                ORDER BY event_id DESC
+                LIMIT 1
+                """,
+                (market, runtime_mode, ticker_value, last_closed_id),
+            ).fetchone()
+        return str(row["decision_id"]) if row else ""
+
     def events_for_session(
         self,
         *,
