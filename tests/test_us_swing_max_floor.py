@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import codecs
 import csv
 import unittest
 from pathlib import Path
@@ -30,10 +31,17 @@ class _Bot:
 SD = "2026-08-20"
 
 
-def _write_csv(root: Path, ticker: str, closes: list[float]) -> None:
+def _write_csv(root: Path, ticker: str, closes: list[float], *, bom: bool = True) -> None:
+    """픽스처는 기본으로 BOM을 단다 — 실제 data/price/us CSV가 전부 그렇다.
+
+    2026-08-20 사고: 픽스처만 BOM 없이 써서 모든 테스트가 통과했는데
+    라이브에서는 MAX 하한이 100% fail-open이었다(DictReader 첫 키가 '﻿date').
+    픽스처가 프로덕션 파일과 다르면 테스트는 버그를 영원히 통과시킨다.
+    """
     p = root / "data" / "price" / "us"
     p.mkdir(parents=True, exist_ok=True)
-    with (p / f"us_{ticker}.csv").open("w", encoding="utf-8", newline="") as fh:
+    enc = "utf-8-sig" if bom else "utf-8"
+    with (p / f"us_{ticker}.csv").open("w", encoding=enc, newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["date", "open", "high", "low", "close", "volume"])
         for i, c in enumerate(closes):
@@ -95,7 +103,7 @@ class MaxFloorTests(unittest.TestCase):
             root = Path(tmp)
             p = root / "data" / "price" / "us"
             p.mkdir(parents=True, exist_ok=True)
-            with (p / "us_FUT.csv").open("w", encoding="utf-8", newline="") as fh:
+            with (p / "us_FUT.csv").open("w", encoding="utf-8-sig", newline="") as fh:
                 w = csv.writer(fh)
                 w.writerow(["date", "open", "high", "low", "close", "volume"])
                 for i in range(24):                       # 과거는 완만
@@ -115,6 +123,32 @@ class MaxFloorTests(unittest.TestCase):
                     _Bot(floor=8.0), SD, [{"ticker": "EXACT", "rank": 1}]
                 )
             self.assertEqual([s["ticker"] for s in kept], ["EXACT"])
+
+    def test_bom_csv_is_parsed(self):
+        """BOM 회귀 — 라이브 CSV와 동일한 조건에서 MAX가 실제로 계산돼야 한다.
+
+        2026-08-20: encoding="utf-8"로 열던 시절 이 값이 None이었고,
+        그 결과 밴드 통과 후보 전원이 fail-open으로 흘렀다.
+        """
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_csv(root, "BOMY", [100] * 20 + [120, 121, 122, 123, 124], bom=True)
+            raw = (root / "data" / "price" / "us" / "us_BOMY.csv").read_bytes()
+            self.assertTrue(raw.startswith(codecs.BOM_UTF8), "픽스처가 BOM을 달아야 의미가 있다")
+            with self._patched(tmp):
+                value = bridge._max_daily_return_21d("BOMY", SD)
+            self.assertIsNotNone(value, "BOM CSV에서 MAX가 None이면 하한이 무력화된다")
+            self.assertGreater(value, 8.0)
+
+    def test_bomless_csv_still_parsed(self):
+        """BOM 없는 CSV도 계속 읽혀야 한다(수집기가 바뀌어도 깨지지 않게)."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_csv(root, "PLAIN", [100] * 20 + [120, 121, 122, 123, 124], bom=False)
+            with self._patched(tmp):
+                value = bridge._max_daily_return_21d("PLAIN", SD)
+            self.assertIsNotNone(value)
+            self.assertGreater(value, 8.0)
 
 
 if __name__ == "__main__":

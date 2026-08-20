@@ -169,7 +169,11 @@ def _max_daily_return_21d(ticker: str, session_date: str) -> float | None:
         import csv
 
         rows = []
-        with path.open(encoding="utf-8", newline="") as fh:
+        # utf-8-sig 필수: data/price/us CSV는 전부 BOM을 달고 있다(2026-08-20 실측 200/200).
+        # 평범한 utf-8로 열면 DictReader의 첫 키가 '﻿date'가 되어 row.get("date")가
+        # None이 되고, 전 행이 걸러져 항상 None을 돌려준다 = MAX 하한이 100% fail-open.
+        # kis_api._us_avg_daily_volume은 이미 utf-8-sig를 쓴다 — 그쪽에 맞춘다.
+        with path.open(encoding="utf-8-sig", newline="") as fh:
             for row in csv.DictReader(fh):
                 date = str(row.get("date") or "")[:10]
                 if date and date < str(session_date):
