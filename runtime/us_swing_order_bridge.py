@@ -131,6 +131,88 @@ def _operator_micro_override(bot: Any, authority: dict[str, Any], configured_mod
     }
 
 
+def _dollar_volume_by_ticker(con: sqlite3.Connection, session_date: str) -> dict[str, float]:
+    """급락일 거래대금(백만달러) — candidate_pool_all에 러너가 기록한 값.
+
+    러너(22:20)가 브리지(22:35)보다 먼저 도므로 당일 값이 존재한다.
+    결손이면 빈 dict을 돌려주고 호출부가 fail-open(현행 rank1)으로 간다.
+    """
+    try:
+        rows = con.execute(
+            "SELECT ticker, dollar_vol FROM candidate_pool_all WHERE session_date=?",
+            (str(session_date),),
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    out: dict[str, float] = {}
+    for ticker, dvol in rows:
+        try:
+            value = float(dvol or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            out[str(ticker or "").upper()] = value / 1e6
+    return out
+
+
+def _apply_dollar_volume_band(
+    bot: Any, con: sqlite3.Connection, session_date: str, signals: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """거래대금 밴드 재선택 — 밴드 안에서 최상위 랭크를 고른다.
+
+    2026-08-20 발견(228세션 백테스트, 계약 동일 TP12/SL25/D5·비용0.5%):
+      현행 rank1 무조건 = 평균 +0.03% (t=0.04)  ← 사실상 무엣지
+      밴드 재선택(100~500M)  = 평균 +3.67% (t=4.80), 승 64%, 진입빈도 61% 유지
+    반분할(전반 t+4.47 / 후반 t+2.67)·경계 민감도(100~400·100~600·150~500 모두 t>3.8)
+    모두 통과. 배제군은 전 구간 음수(<100M −2.04 / 500~1000M −1.21 / ≥1000M −1.27).
+
+    문헌 근거: 단기 반전은 유동성 공급의 대가다. 거래대금이 과소면 투매가 아니라
+    조용한 흘러내림(프리미엄 없음), 과대면 뉴스 주도 펀더멘털 재평가라 되돌아오지
+    않는다(NBER w30917 Reversals and the Returns to Liquidity Provision 등).
+
+    fail-open: 거래대금을 하나도 못 읽으면 현행 동작(rank1)으로 간다 — 관측 결손이
+    매매를 멈추면 안 된다. 다만 소리내어 남기고 사유를 상태에 붙인다.
+    """
+    if not bot._runtime_bool("US_SWING_DVOL_BAND_ENABLED", False):
+        return signals, {"applied": False, "reason": "disabled"}
+    lo = float(bot._runtime_float("US_SWING_DVOL_BAND_MIN_M", 100.0))
+    hi = float(bot._runtime_float("US_SWING_DVOL_BAND_MAX_M", 500.0))
+    dvol = _dollar_volume_by_ticker(con, session_date)
+    if not dvol:
+        log.warning(
+            "[US swing handoff] 거래대금 밴드 skip — candidate_pool_all 결손 "
+            f"(session={session_date}) → 현행 rank1로 fail-open"
+        )
+        return signals, {"applied": False, "reason": "dollar_volume_unavailable",
+                         "band_min_m": lo, "band_max_m": hi}
+    in_band, out_band = [], []
+    for signal in signals:
+        ticker = str(signal.get("ticker") or "").upper()
+        value = dvol.get(ticker)
+        entry = {"ticker": ticker, "rank": int(signal.get("rank") or 0),
+                 "dollar_vol_m": round(value, 1) if value is not None else None}
+        (in_band if (value is not None and lo <= value < hi) else out_band).append(entry)
+        if value is not None and lo <= value < hi:
+            continue
+    kept = [s for s in signals
+            if (dvol.get(str(s.get("ticker") or "").upper()) is not None
+                and lo <= dvol[str(s.get("ticker") or "").upper()] < hi)]
+    meta = {"applied": True, "band_min_m": lo, "band_max_m": hi,
+            "in_band": in_band, "out_band": out_band}
+    if not kept:
+        log.info(
+            f"[US swing handoff] 거래대금 밴드({lo:.0f}~{hi:.0f}M) 통과 후보 없음 — "
+            f"밖 {[(e['ticker'], e['dollar_vol_m']) for e in out_band]}"
+        )
+        return [], meta
+    log.info(
+        f"[US swing handoff] 거래대금 밴드 재선택: "
+        f"{[(e['ticker'], e['rank'], e['dollar_vol_m']) for e in in_band]} "
+        f"(밖 {[(e['ticker'], e['dollar_vol_m']) for e in out_band]})"
+    )
+    return kept, meta
+
+
 def _us_swing_attribution_manifest(con: sqlite3.Connection) -> frozenset[str]:
     """실제 제출 이력(handoff SUBMITTED)이 있는 티커 집합.
 
@@ -237,10 +319,13 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
         # 켜져 있어도 rank1이 통과하면 rank2는 평가조차 되지 않는다(아래 break).
         fallback_on = bot._runtime_bool("US_SWING_RANK2_FALLBACK_ENABLED", False)
         base_limit = max(1, int(authority.get("max_new_per_day") or 1))
+        pick_limit = base_limit + 1 if fallback_on else base_limit
+        # 밴드가 켜지면 풀 전체에서 재선택해야 하므로 넓게 읽는다(정책 top_k=10).
+        band_on = bot._runtime_bool("US_SWING_DVOL_BAND_ENABLED", False)
         signals = load_handoff_signals(
             con,
             session_date=session_date,
-            limit=base_limit + 1 if fallback_on else base_limit,
+            limit=10 if band_on else pick_limit,
         )
         if not signals:
             return _write_execution_status(
@@ -250,6 +335,23 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
                 research_authority=research_authority,
                 execution_authority=authority,
             )
+        signals, band_meta = _apply_dollar_volume_band(bot, con, session_date, signals)
+        if band_meta.get("applied") and not signals:
+            return _write_execution_status(
+                bot,
+                session_date=session_date,
+                result={"status": "SKIPPED", "reason": "dvol_band_no_candidate",
+                        "authority": authority, "dvol_band": band_meta},
+                research_authority=research_authority,
+                execution_authority=authority,
+            )
+        if band_meta.get("applied"):
+            # 밴드 통과분은 원 랭크가 3·7일 수 있다. 아래 랭크 게이트(rank2 폴백용)가
+            # 이를 "폴백 후보"로 오인하지 않도록 밴드 내 순위를 따로 붙인다.
+            # 원 rank는 귀속 태그(us_swing_5d_rank_N)에 그대로 쓰이므로 보존한다.
+            for position, signal in enumerate(signals, start=1):
+                signal["_band_position"] = position
+            signals = signals[:pick_limit]
         raw_submit_enabled = bot._runtime_bool("US_SWING_ORDER_SUBMIT_ENABLED", False)
         live_ack = str(bot._runtime_value("US_SWING_ORDER_LIVE_ACK", "") or "")
         ack_ok = bool(bot.is_paper) or live_ack == "I_ACCEPT_LIVE_US_SWING"
@@ -281,7 +383,9 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
         for signal in signals:
             ticker = str(signal.get("ticker") or "").upper()
             signal_rank = int(signal.get("rank") or 0)
-            if signal_rank > base_limit:
+            # 밴드 재선택 시에는 밴드 내 순위로 게이트한다(원 rank는 귀속용으로 보존).
+            gate_rank = int(signal.get("_band_position") or signal_rank)
+            if gate_rank > base_limit:
                 if not fallback_on:
                     continue
                 prior = [r for r in results if int(r.get("rank") or 0) <= base_limit]
