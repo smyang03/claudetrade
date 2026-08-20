@@ -294,14 +294,16 @@ def _run_with_operator_override_authority(bot: FakeBot) -> dict:
         return _run(bot)
 
 
-def test_three_open_us_swing_slots_block_fourth_entry(tmp_path: Path) -> None:
-    # 2026-08-02 운영자 결정 슬롯 3: 세 포지션 보유 중이면 네 번째 진입은 차단된다
+def test_five_open_us_swing_slots_block_sixth_entry(tmp_path: Path) -> None:
+    # 2026-08-20 운영자 결정(B안) 슬롯 5: 다섯 포지션 보유 중이면 여섯 번째 진입은 차단된다.
+    # (기존 슬롯 3 계약에서 개정 — D5 보유 x 일1건의 정상상태 동시보유가 5개라
+    #  슬롯 3이 진입률을 0.6건/일로 깎고 있었다.)
     db_path = tmp_path / "swing.db"
     _build_db(db_path)
     bot = FakeBot(db_path)
     bot.risk.positions = [
         {"market": "US", "ticker": f"HOLD{i}", "source_strategy": "us_swing_5d"}
-        for i in range(3)
+        for i in range(5)
     ]
 
     result = _run_with_operator_override_authority(bot)
@@ -310,13 +312,14 @@ def test_three_open_us_swing_slots_block_fourth_entry(tmp_path: Path) -> None:
     assert bot.submit_calls == 0
 
 
-def test_two_open_slots_still_allow_entry_under_slot_cap_three(tmp_path: Path) -> None:
+def test_four_open_slots_still_allow_entry_under_slot_cap_five(tmp_path: Path) -> None:
+    # 슬롯 5 계약: 네 개 보유 중이면 다섯 번째는 통과해야 한다(구 계약이면 여기서 막혔다).
     db_path = tmp_path / "swing.db"
     _build_db(db_path)
     bot = FakeBot(db_path)
     bot.risk.positions = [
         {"market": "US", "ticker": f"HOLD{i}", "source_strategy": "us_swing_5d"}
-        for i in range(2)
+        for i in range(4)
     ]
 
     result = _run_with_operator_override_authority(bot)

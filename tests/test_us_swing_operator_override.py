@@ -20,7 +20,9 @@ def test_override_accepts_only_forward_maturity_blockers() -> None:
     result = _operator_micro_override(Bot("I_ACCEPT_MICRO_WITHOUT_FORWARD"), authority, "micro")
     assert result["allowed_to_emit_orders"] is True
     # 2026-08-02 운영자 결정: 슬롯 3/일1건 (일일 신규 리스크 불변, D5 보유 중첩만 최대 3)
-    assert result["max_open_slots"] == 3
+    # 2026-08-20 개정(B안): 슬롯 3 -> 5. D5 보유 x 일1건의 정상상태 동시보유가 5개라
+    # 슬롯 3이 진입률을 0.6건/일로 깎고 있었다(실측 0.54). 일1건은 불변.
+    assert result["max_open_slots"] == 5
     assert result["max_new_per_day"] == 1
     assert result["size_multiplier"] == 0.10
     assert result["absolute_order_cap_krw"] == 300_000.0

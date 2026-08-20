@@ -117,10 +117,14 @@ def _operator_micro_override(bot: Any, authority: dict[str, Any], configured_mod
         # 2026-08-02 운영자 결정(토론 합의안): 슬롯 3/일1건. 일일 신규 리스크는 불변이고
         # D5 보유가 겹치며 최대 3포지션 동시 보유. 일일 확대(3/일)는 day_losers 전환 후
         # forward ≥30건 + 순성과 양수 확인 후에만 재론한다.
-        # 최악 동시 SL = 주문상한 × 3 × 25%. 2026-08-14 주문상한 30만→50만 인상으로
-        # 22.5만원 → **37.5만원**(KIS 총자산 약 7.7%)이 됐다. 상한을 바꿀 때 이 값도 같이 고친다.
+        # 2026-08-20 운영자 결정(B안): 슬롯 3→5, 주문상한 100만→76만. 일1건은 불변.
+        #   D5 보유 x 일1건의 정상상태 동시보유가 5개라 슬롯 3이 진입률을 0.6건/일로
+        #   깎고 있었다(실측 0.54건/일). 투입 300만→380만(+27%), 표본 +85%.
+        # 최악 동시 SL = 주문상한 × 슬롯 × 25%.
+        #   08-14 30만→50만(37.5만) → 08-17 100만·슬롯3(75만) → **08-20 76만·슬롯5 = 95만**
+        #   (KIS 총자산 약 18.4%). 상한이나 슬롯을 바꿀 때 이 값도 같이 고친다.
         "max_new_per_day": 1,
-        "max_open_slots": 3,
+        "max_open_slots": 5,
         "operator_forward_override": True,
         "operator_forward_override_blockers": blockers,
         "warnings": [*(authority.get("warnings") or []), "operator_micro_forward_override_active"],
