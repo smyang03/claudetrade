@@ -51,8 +51,9 @@ AI의 사고 방식은 **트레이너이자 개발자**다. 시장·전략·분�
 
 **두 실행 경로 (Path A / Path B)**
 - Path A: `trading_bot.py`의 `TradingBot` — Claude selection → 전략 신호 → 주문.
-- Path B: `runtime/pathb_runtime.py`의 `PathBRuntime` — Claude 가격 플랜 기반 진입/청산. KR/US 모두 live 활성(`PATHB_KR_LIVE_ENABLED`, `PATHB_US_LIVE_ENABLED`).
+- Path B: `runtime/pathb_runtime.py`의 `PathBRuntime` — Claude 가격 플랜 기반 진입/청산. **2026-08-01 재구성으로 KR/US 모두 신규 진입 off**(`PATHB_KR_LIVE_ENABLED`/`PATHB_US_LIVE_ENABLED=false`). 기존 보유 관리·청산 경로는 살아 있다.
 - 두 경로는 `runtime/action_routing.py`의 `RouteDecision`으로 합류한다. **selection 품질 문제와 execution/risk 문제를 한 패치에서 섞지 않는다.**
+- **현재 실제로 신규 매수를 내는 레인은 sleeve 2종뿐이다** — `us_swing_5d`(`runtime/us_swing_order_bridge.py`), `kr_fallen_5d`(`runtime/kr_fallen_order_bridge.py`). 계약 TP12/SL25/D5, 출구는 `isolated_exit_owner`가 쥔다.
 
 **환경 로딩 순서 (live 설정이 두 곳에서 결정됨)**
 1. `--live`면 `.env.live`, 아니면 `.env.paper` 로드(없으면 `.env` fallback).
@@ -73,7 +74,9 @@ AI의 사고 방식은 **트레이너이자 개발자**다. 시장·전략·분�
 
 아래 값은 **운영자에게 먼저 알리기 전 어떤 경로(코드·config·자동 수정)로도 무단 변경 금지.** 소스는 `.env.live` + `config/v2_start_config.json`(env_overrides) 두 곳이 일치해야 반영된다.
 - `CLAUDE_REVIEW_ALL_AUTOMATED_SELLS=true` — false면 Path A 자동매도(loss_cap·stop_loss·trail_stop)가 Claude 판단 없이 즉시 실행된다.
-- `PATHB_KR_LIVE_ENABLED`/`PATHB_US_LIVE_ENABLED=true`, `PATHB_INTRADAY_ONLY=false`(multi-day hold 허용).
+- `PATHB_KR_LIVE_ENABLED`/`PATHB_US_LIVE_ENABLED=false` — **08-01 재구성의 의도된 차단이다.**
+  "문서가 true라고 하니 되돌린다"는 판단 금지. 재활성은 운영자 지시로만.
+  `PATHB_INTRADAY_ONLY=false`(multi-day hold 허용)는 그대로.
 - `PATHB_KR_EXIT_POLICY` — KR PathB 자동매도 소유권. `.env.live`와 start-config 동시변경,
   재시작 후 새 PID effective-config 실측 없이는 enforce/rollback 완료로 보지 않는다.
 - `PATHB_ZONE_FILL_MODE_US` — US PathB 진입가 소유권. `enforce_wait`은 상단 추격을
@@ -84,7 +87,16 @@ AI의 사고 방식은 **트레이너이자 개발자**다. 시장·전략·분�
 - `PROFIT_STRATEGY_CORE_ANALYST_ENTRY_POLICY`/`PROFIT_STRATEGY_CORE_ANALYST_ENTRY_LIVE_ACK` —
   코어 2종만 analyst 방향 차단과 분리한다. 전역 override가 아니며 두 소스 일치·정확한 ACK·재시작 후
   effective-config 실측이 모두 있어야 `isolated`로 인정한다.
-- 고정 주문금액 50만원 / 최대 포지션 PathB 15·시장별(KR·US) 각 20 / 일일 진입 40 / 최소 confidence 0.5 / 재진입 쿨다운 60분 / 장 초반 soft gate(KR 0~60분·US 0~30분, size×0.5).
+- **실제 매수 레인(sleeve) 금액·용량** — 지금 자금이 나가는 건 여기뿐이다.
+  - `US_SWING_ORDER_MAX_KRW=760000`(08-20 개정, 그 전 100만) / `KR_FALLEN_ORDER_MAX_KRW` 기본 30만.
+  - **슬롯·일한도는 env가 아니라 코드 상수다** — `runtime/us_swing_execution_contract.py`의
+    `OPERATOR_TRIAL_MAX_OPEN_SLOTS=5` / `OPERATOR_TRIAL_MAX_NEW_PER_DAY=1`.
+    effective-config 스냅샷에 안 잡히니 값 확인은 그 파일을 직접 읽는다.
+  - KR fallen: `KR_FALLEN_PHASE3_CAPACITY_ENABLED=true`면 슬롯 3·일한도는 후보수 k 사다리
+    (k≤1→1건 / k 2~9→2건 / k 10+→3건), OFF면 슬롯 1·일 1건.
+- 비활성/레거시 경로 값(참고): 고정 주문금액 50만원(`KR_FIXED_ORDER_KRW`/`US_FIXED_ORDER_KRW`,
+  PathB US는 20만) / 최대 포지션 PathB 15·시장별(KR·US) 각 20 / 일일 진입 KR 40·**US 8** /
+  최소 confidence 0.5 / 재진입 쿨다운 60분 / 장 초반 soft gate(KR 0~60분·US 0~30분, size×0.5).
 - 슬리피지 캡 KR 1.003 · US 1.002, protective hold 최소 거리 KR 0.5% · US 0.3%.
 
 ## 데이터·로그 계약
