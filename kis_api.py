@@ -3717,15 +3717,18 @@ _US_EXCHANGE_MAP = {
     "NASD": [
         "AAPL", "ADBE", "AMD", "AMZN", "AVGO", "COST", "CSCO", "GOOG",
         "GOOGL", "INTC", "META", "MSFT", "NFLX", "NVDA", "PEP", "PLTR",
-        "QCOM", "QQQ", "SBUX", "SMCI", "SNOW", "TSLA", "TXN", "UBER",
+        "QCOM", "QQQ", "SBUX", "SMCI", "TSLA", "TXN",
         "ARM", "BRZE", "CORT", "PAYS", "SRPT",
         # 2026-08-21 교정: NYSE 상장이지만 KIS는 NAS로 서비스한다(rsym=DNASWMT 실측).
         "WMT",
     ],
+    # 2026-08-21 전수 감사(69종목): SNOW·UBER는 실제 NYSE 상장인데 맵이 NASD로 잘못
+    # 들고 있었다(KIS 실측 rsym=DNYSSNOW·DNYSUBER). WMT와 방향이 반대인 단순 오기다.
     "NYSE": ["BRK.B","JPM","BAC","WFC","GS","MS","C","USB","BLK","AXP",
              "XOM","CVX","COP","SLB","HD","MCD","NKE","PG","KO",
              "PFE","JNJ","MRK","ABT","UNH","V","MA","HIMS",
-             "LLY","ABBV","CAT","GE","NOK","CRM","ORCL"],
+             "LLY","ABBV","CAT","GE","NOK","CRM","ORCL",
+             "SNOW","UBER"],
     "AMEX": ["SPY","IWM","GLD","SLV","USO"],
 }
 

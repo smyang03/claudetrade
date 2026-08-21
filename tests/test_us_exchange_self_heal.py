@@ -87,6 +87,24 @@ class ExchangeSelfHealTests(unittest.TestCase):
         self.assertEqual(kis_api._hardcoded_us_exchange_code("WMT"), "NASD")
         self.assertEqual(kis_api._US_QUOTE_CODE_MAP["NASD"], "NAS")
 
+    def test_snow_uber_are_nyse(self):
+        """2026-08-21 전수 감사(69종목) 회귀 — 맵이 NASD로 잘못 들고 있던 2건.
+
+        WMT와 방향이 반대다: 실제 NYSE 상장이고 KIS도 NYSE로 서비스하는데
+        (rsym=DNYSSNOW·DNYSUBER) 맵만 NASD였다. 단순 오기.
+        """
+        self.assertEqual(kis_api._hardcoded_us_exchange_code("SNOW"), "NYSE")
+        self.assertEqual(kis_api._hardcoded_us_exchange_code("UBER"), "NYSE")
+
+    def test_hardcoded_map_has_no_duplicate_tickers(self):
+        """같은 티커가 두 거래소에 걸치면 _hardcoded_us_exchange_code가 dict 순서에
+        따라 임의로 답한다 — 교정할 때 옮기지 않고 추가만 하면 생기는 사고다."""
+        seen = {}
+        for exch, tickers in kis_api._US_EXCHANGE_MAP.items():
+            for t in tickers:
+                self.assertNotIn(t, seen, f"{t}가 {seen.get(t)}와 {exch}에 중복")
+                seen[t] = exch
+
     def test_self_heal_is_attempted_once_per_process(self):
         """어느 거래소에도 없는 종목이 매 사이클 REST를 더 치면 안 된다."""
         kis_api._US_EXCHANGE_CACHE["GONE"] = "NYSE"
