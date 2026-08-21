@@ -41657,6 +41657,44 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         except Exception:
             pass
 
+    def _send_premarket_digest(self):
+        """프리마켓 보유 시세를 텔레그램으로 주기 발송 (2026-08-21, **표시 전용**).
+
+        ⚠️ 이 값은 어떤 판단·기록·원장에도 흘러가지 않는다. TP/SL/D5는 정규장 기준이다.
+
+        schedule 루프에서 5분마다 호출되지만 실제 발송은 여기서 판정한다:
+          - 프리마켓(ET 04:00~09:30 평일)이 아니면 즉시 반환 — 시세 조회도 안 한다.
+          - 발송 간격은 PREMARKET_DIGEST_INTERVAL_MIN(기본 30분).
+          - PREMARKET_DIGEST_ENABLED=false면 완전히 끈다.
+        fail-silent: 실패는 WARNING 한 줄. 매매 경로와 무관하므로 아무것도 막지 않는다.
+        """
+        try:
+            if not self._runtime_bool("PREMARKET_DIGEST_ENABLED", True):
+                return
+            from interface.premarket_snapshot import (
+                format_premarket,
+                is_premarket,
+                premarket_positions,
+            )
+
+            if not is_premarket():
+                return
+            interval = max(5, int(self._runtime_int("PREMARKET_DIGEST_INTERVAL_MIN", 30)))
+            now = datetime.now(KST)
+            last = getattr(self, "_premarket_digest_last_at", None)
+            if last is not None and (now - last).total_seconds() < interval * 60:
+                return
+            payload = premarket_positions(self, mode=str(getattr(self, "_mode", "live") or "live"))
+            if not payload.get("active"):
+                return
+            from telegram_reporter import send as _tg_send
+
+            _tg_send(format_premarket(payload))
+            self._premarket_digest_last_at = now
+            log.info(f"[premarket] 텔레그램 발송 {len(payload.get('rows') or [])}종목")
+        except Exception as exc:
+            log.warning(f"[premarket] 텔레그램 발송 실패: {exc}")
+
     def _heartbeat(self):
         """1시간마다 로그 + 변화 없어도 강제 텔레그램 전송"""
         if not self.session_active:
@@ -42551,6 +42589,11 @@ def main(is_paper: bool = True):
 
     # 1시간마다 상태 보고 (세션 중일 때만 실제 전송)
     schedule.every(60).minutes.do(bot._heartbeat)
+
+    # 프리마켓 보유 시세 알림 (2026-08-21, 표시 전용).
+    # 새 스레드를 만들지 않는다 — 기존 schedule 루프에 얹는다(자정 토큰 Timer 사고 교훈).
+    # 실제 발송 여부는 _send_premarket_digest 안에서 시간대·간격으로 판정한다.
+    schedule.every(5).minutes.do(bot._send_premarket_digest)
     log.info("schedules registered")
     # ── 봇 시작 시 이미 진행 중인 세션이 있으면 즉시 session_open ──────────────
     now_kst = datetime.now(KST)

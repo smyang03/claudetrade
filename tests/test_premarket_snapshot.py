@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 from zoneinfo import ZoneInfo
@@ -149,6 +150,57 @@ class TelegramRoutingTests(unittest.TestCase):
 
         self.assertIn("/premarket", V2_TELEGRAM_COMMANDS)
 
+
+
+class DigestScheduleTests(unittest.TestCase):
+    """텔레그램 자동 발송 — 시간대·간격·스위치 가드."""
+
+    def _bot(self, **over):
+        import trading_bot as tb
+
+        bot = SimpleNamespace()
+        bot._mode = "live"
+        bot._runtime_bool = lambda k, d=False: over.get(k, d)
+        bot._runtime_int = lambda k, d=0: over.get(k, d)
+        bot._send_premarket_digest = tb.TradingBot._send_premarket_digest.__get__(bot)
+        return bot
+
+    def test_disabled_switch_skips_everything(self):
+        bot = self._bot(PREMARKET_DIGEST_ENABLED=False)
+        with mock.patch.object(pm, "is_premarket") as gate:
+            bot._send_premarket_digest()
+        gate.assert_not_called()
+
+    def test_outside_premarket_does_not_send(self):
+        bot = self._bot(PREMARKET_DIGEST_ENABLED=True, PREMARKET_DIGEST_INTERVAL_MIN=30)
+        with mock.patch.object(pm, "is_premarket", return_value=False), \
+                mock.patch("telegram_reporter.send") as send:
+            bot._send_premarket_digest()
+        send.assert_not_called()
+
+    def test_interval_throttles_repeat_sends(self):
+        bot = self._bot(PREMARKET_DIGEST_ENABLED=True, PREMARKET_DIGEST_INTERVAL_MIN=30)
+        payload = {"active": True, "reason": "", "as_of": "2026-08-21T21:00:00+09:00",
+                   "rows": [{"ticker": "AXTI", "avg_price": 82.09, "premarket_price": 75.35,
+                             "premarket_chg_pct": 3.05, "premarket_pnl_pct": -8.21}]}
+        with mock.patch.object(pm, "is_premarket", return_value=True), \
+                mock.patch.object(pm, "premarket_positions", return_value=payload), \
+                mock.patch("telegram_reporter.send") as send:
+            bot._send_premarket_digest()
+            bot._send_premarket_digest()
+            bot._send_premarket_digest()
+        self.assertEqual(send.call_count, 1, "간격 안에는 한 번만 보내야 한다")
+
+    def test_send_failure_is_swallowed(self):
+        bot = self._bot(PREMARKET_DIGEST_ENABLED=True, PREMARKET_DIGEST_INTERVAL_MIN=30)
+        with mock.patch.object(pm, "is_premarket", return_value=True), \
+                mock.patch.object(pm, "premarket_positions", side_effect=RuntimeError("boom")):
+            bot._send_premarket_digest()  # 예외가 밖으로 나오면 실패
+
+    def test_command_passes_commander_whitelist(self):
+        """V2_TELEGRAM_COMMANDS 등록만으로는 부족하다 — commander 화이트리스트도 통과해야."""
+        text = (Path(__file__).resolve().parents[1] / "telegram_commander.py").read_text(encoding="utf-8")
+        self.assertIn('"/premarket"', text)
 
 if __name__ == "__main__":
     unittest.main()

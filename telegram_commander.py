@@ -967,6 +967,9 @@ def _handle(text: str, bot) -> str:
     if cmd in (
         "/health", "/picks", "/errors", "/brain_pending", "/halt", "/resume", "/panic",
         "/buy_capacity", "/capacity",
+        # 2026-08-21: 프리마켓(표시 전용). V2_TELEGRAM_COMMANDS 등록만으로는 부족하다 —
+        # 이 화이트리스트를 통과해야 handle_v2_command까지 온다.
+        "/premarket", "/pre",
         "/pathb_status", "/pathb_on", "/pathb_off", "/pathb_kill", "/pathb_closeall",
     ):
         try:
