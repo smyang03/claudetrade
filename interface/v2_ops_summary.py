@@ -41,6 +41,8 @@ V2_TELEGRAM_COMMANDS: tuple[str, ...] = (
     "/monitor",
     "/picks",
     "/positions",
+    "/premarket",
+    "/pre",
     "/errors",
     "/halt",
     "/resume",

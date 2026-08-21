@@ -88,6 +88,12 @@ def _ko_control_reason(value: Any) -> str:
 
 def handle_v2_command(text: str, bot: Any, *, market_override: str | None = None) -> str:
     cmd = str(text or "").strip().split()[0].lower()
+    # 프리마켓은 ops summary가 필요 없다 — 무거운 집계 전에 먼저 처리한다.
+    # 표시 전용이라 어떤 판단·기록에도 흘러가지 않는다(premarket_snapshot 독스트링 참조).
+    if cmd in {"/premarket", "/pre"}:
+        from interface.premarket_snapshot import format_premarket, premarket_positions
+        mode = str(getattr(bot, "_mode", "live") or "live")
+        return format_premarket(premarket_positions(bot, mode=mode))
     summary = build_v2_ops_summary(bot=bot)
     if cmd in {"/health", "/monitor"}:
         return _format_health(summary)

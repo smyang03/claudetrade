@@ -3079,7 +3079,39 @@ def _positions_from_truth_market_with_meta(market: str, mode: str) -> tuple[Opti
             "price_source": "broker_truth_snapshot",
             "currency": "USD" if market_key == "US" else "KRW",
         })
+    _attach_premarket(positions, market_key, mode)
     return positions, meta
+
+
+def _attach_premarket(positions: list, market_key: str, mode: str) -> None:
+    """US 프리마켓 시간대면 카드에 프리마켓 시세를 덧붙인다 (2026-08-21, **표시 전용**).
+
+    ⚠️ 이 필드는 화면에만 쓴다. 어떤 판단·기록·원장에도 흘러가지 않는다 —
+    TP/SL/D5는 전부 정규장 기준이다. positions는 화면 렌더링용으로만 소비되며
+    저장 경로가 없다(_positions_from_truth_market_with_meta 호출부 확인 완료).
+
+    텔레그램 /premarket과 **같은 함수**를 쓴다(interface.premarket_snapshot).
+    각자 조회하면 두 화면의 값이 어긋나는 날이 온다. 60초 캐시도 그쪽에 있다.
+    fail-silent: 실패하면 필드가 없을 뿐 카드는 정상 표시된다.
+    """
+    if market_key != "US" or not positions:
+        return
+    try:
+        from interface.premarket_snapshot import premarket_positions
+
+        payload = premarket_positions(None, mode=_normalize_mode(mode))
+        if not payload.get("active"):
+            return
+        by_ticker = {str(r.get("ticker") or "").upper(): r for r in payload.get("rows") or []}
+        for pos in positions:
+            row = by_ticker.get(str(pos.get("ticker") or "").upper())
+            if not row:
+                continue
+            pos["premarket_price"] = row.get("premarket_price")
+            pos["premarket_chg_pct"] = row.get("premarket_chg_pct")
+            pos["premarket_pnl_pct"] = row.get("premarket_pnl_pct")
+    except Exception as exc:
+        log.debug(f"[premarket] 대시보드 부착 생략: {exc}")
 
 
 def _load_broker_positions_fast(market: str, mode: str = "paper"):
@@ -12538,6 +12570,16 @@ async function loadMonitorTickers() {
     const priceMetaHtml = priceMetaBits.length
       ? `<div style="font-size:10px;color:#94a3b8;margin-top:4px">${priceMetaBits.join(' · ')}</div>`
       : '';
+    // 프리마켓(2026-08-21) — 표시 전용. 정규장이면 필드 자체가 없어 이 블록이 통째로 빠진다.
+    const preP = Number(t.premarket_price || 0);
+    const preChg = t.premarket_chg_pct;
+    const prePnl = t.premarket_pnl_pct;
+    const premarketHtml = preP > 0
+      ? `<div style="font-size:10px;color:#fbbf24;margin-top:3px">🌅 프리마켓 $${preP.toFixed(2)}`
+        + (Number.isFinite(Number(preChg)) ? ` (${Number(preChg) >= 0 ? '+' : ''}${Number(preChg).toFixed(2)}%)` : '')
+        + (Number.isFinite(Number(prePnl)) ? ` · 손익 ${Number(prePnl) >= 0 ? '+' : ''}${Number(prePnl).toFixed(2)}%` : '')
+        + '</div>'
+      : '';
     const buyPath = t.buy_path || '';
     const pathbPlan = t.pathb_plan || {};
     const zoneLow = Number(pathbPlan.buy_zone_low || 0);
@@ -12580,6 +12622,7 @@ async function loadMonitorTickers() {
       <div style="font-size:10px;color:#475569;margin-top:2px">${t.last_ts}${t.last_reason ? ' · ' + t.last_reason : ''}</div>
       ${statusHtml}
       ${priceMetaHtml}
+      ${premarketHtml}
       ${pathHtml}
       ${sellSignalHtml}
       ${skipHtmlFinal}
