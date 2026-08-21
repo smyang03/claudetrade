@@ -95,7 +95,8 @@ AI의 사고 방식은 **트레이너이자 개발자**다. 시장·전략·분�
     같은 키를 읽고, effective-config 스냅샷으로 실효값을 확인할 수 있다.
   - US swing: `US_SWING_ORDER_MAX_KRW=760000` / `US_SWING_MAX_OPEN_SLOTS=5` /
     `US_SWING_MAX_NEW_PER_DAY=1`. **최악 동시 SL = 76만 × 5 × 25% = 95만.**
-  - KR fallen: `KR_FALLEN_ORDER_MAX_KRW=300000` / `KR_FALLEN_MAX_OPEN_SLOTS=1` /
+  - KR fallen: `KR_FALLEN_ORDER_MAX_KRW=220000`(08-21 개정, 그 전 30만) /
+    **최악 동시 SL = 22만 × 3 × 25% = 16.5만.** `KR_FALLEN_MAX_OPEN_SLOTS=1` /
     `KR_FALLEN_MAX_OPEN_SLOTS_PHASE3=3` / `KR_FALLEN_MAX_NEW_PER_DAY=1`.
     `KR_FALLEN_PHASE3_CAPACITY_ENABLED=true`면 슬롯 3, 일한도는 후보수 k 사다리
     (k≤1→1건 / k 2~9→2건 / k 10+→3건). **사다리 자체는 사전등록 설계라 env로 빼지 않는다**
