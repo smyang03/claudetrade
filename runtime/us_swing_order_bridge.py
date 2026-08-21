@@ -123,8 +123,11 @@ def _operator_micro_override(bot: Any, authority: dict[str, Any], configured_mod
         # 최악 동시 SL = 주문상한 × 슬롯 × 25%.
         #   08-14 30만→50만(37.5만) → 08-17 100만·슬롯3(75만) → **08-20 76만·슬롯5 = 95만**
         #   (KIS 총자산 약 18.4%). 상한이나 슬롯을 바꿀 때 이 값도 같이 고친다.
-        "max_new_per_day": 1,
-        "max_open_slots": 5,
+        # 2026-08-21: env로 승격. 같은 값이 execution_contract.py의 상수에도 있어
+        # (shadow·integrity_check 경로) 한쪽만 고치면 실주문과 shadow 계약이 갈라진다.
+        # 두 경로가 같은 env 키를 보게 한다. 기본값은 현행과 동일(1건/5슬롯).
+        "max_new_per_day": int(bot._runtime_int("US_SWING_MAX_NEW_PER_DAY", 1)),
+        "max_open_slots": int(bot._runtime_int("US_SWING_MAX_OPEN_SLOTS", 5)),
         "operator_forward_override": True,
         "operator_forward_override_blockers": blockers,
         "warnings": [*(authority.get("warnings") or []), "operator_micro_forward_override_active"],

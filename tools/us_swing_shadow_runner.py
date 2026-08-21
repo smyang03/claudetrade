@@ -1188,6 +1188,9 @@ def resolve_shadow_contract(
         min_predicted_net_pct=float(os.getenv("US_SWING_ORDER_MIN_PREDICTED_NET_PCT", "0.25") or 0.25),
         hurdles_enforced=str(os.getenv("US_SWING_ORDER_ABSOLUTE_HURDLES_ENFORCED", "false")).strip().lower()
         in ("1", "true", "yes", "y", "on"),
+        # 실주문 브리지(us_swing_order_bridge)와 같은 env 키·기본값이어야 계약이 갈라지지 않는다.
+        max_open_slots_override=int(os.getenv("US_SWING_MAX_OPEN_SLOTS", "5") or 5),
+        max_new_per_day_override=int(os.getenv("US_SWING_MAX_NEW_PER_DAY", "1") or 1),
     )
 
 

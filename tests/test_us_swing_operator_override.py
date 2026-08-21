@@ -14,6 +14,11 @@ class Bot:
     def _runtime_float(self, key: str, default=0.0):
         return self.max_order_krw if key == "US_SWING_ORDER_MAX_KRW" else default
 
+    def _runtime_int(self, key: str, default=0):
+        # 2026-08-21 슬롯·일한도 env 승격. 스텁은 기본값(5슬롯/일1건)을 그대로 돌려줘
+        # 이 테스트가 검사하는 override 동작이 승격 전과 동일함을 보장한다.
+        return default
+
 
 def test_override_accepts_only_forward_maturity_blockers() -> None:
     authority = {"blockers": ["forward_matured_insufficient", "forward_mean_below_hurdle"]}

@@ -96,6 +96,8 @@ def resolve_execution_contract(
     min_probability: float = 0.55,
     min_predicted_net_pct: float = 0.25,
     hurdles_enforced: bool = False,
+    max_open_slots_override: int = OPERATOR_TRIAL_MAX_OPEN_SLOTS,
+    max_new_per_day_override: int = OPERATOR_TRIAL_MAX_NEW_PER_DAY,
 ) -> dict[str, Any]:
     """실주문과 shadow가 공유하는 계약을 계산한다.
 
@@ -117,9 +119,14 @@ def resolve_execution_contract(
     max_new_per_day = int(_number(mode_caps.get("max_new_per_day"), 0))
 
     if override_active:
-        # 오버라이드는 micro 계약을 슬롯 3 / 일 1건으로 확장한다.
-        max_open_slots = OPERATOR_TRIAL_MAX_OPEN_SLOTS
-        max_new_per_day = OPERATOR_TRIAL_MAX_NEW_PER_DAY
+        # 오버라이드는 micro 계약을 운영자 결정 슬롯/일한도로 확장한다.
+        # 2026-08-21: 호출부가 env 값을 넘길 수 있게 파라미터로 승격했다. 기본값은
+        # 기존 상수 그대로라 인자를 안 넘기면 동작이 동일하다.
+        # os.getenv를 여기서 읽지 않는 이유: 이 함수는 실주문·shadow·오프라인 시뮬이
+        # 공유하는 **순수 함수**다. 내부에서 env를 읽으면 경로마다 다른 값을 볼 수 있고
+        # (ULS·LCID 코호트 분기 사고 유형) 테스트가 env에 오염된다.
+        max_open_slots = int(max_open_slots_override)
+        max_new_per_day = int(max_new_per_day_override)
 
     configured = _number(configured_max_order_krw, 0.0)
     absolute = _number(absolute_order_cap_krw, 0.0)

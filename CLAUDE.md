@@ -88,12 +88,21 @@ AI의 사고 방식은 **트레이너이자 개발자**다. 시장·전략·분�
   코어 2종만 analyst 방향 차단과 분리한다. 전역 override가 아니며 두 소스 일치·정확한 ACK·재시작 후
   effective-config 실측이 모두 있어야 `isolated`로 인정한다.
 - **실제 매수 레인(sleeve) 금액·용량** — 지금 자금이 나가는 건 여기뿐이다.
-  - `US_SWING_ORDER_MAX_KRW=760000`(08-20 개정, 그 전 100만) / `KR_FALLEN_ORDER_MAX_KRW` 기본 30만.
-  - **슬롯·일한도는 env가 아니라 코드 상수다** — `runtime/us_swing_execution_contract.py`의
-    `OPERATOR_TRIAL_MAX_OPEN_SLOTS=5` / `OPERATOR_TRIAL_MAX_NEW_PER_DAY=1`.
-    effective-config 스냅샷에 안 잡히니 값 확인은 그 파일을 직접 읽는다.
-  - KR fallen: `KR_FALLEN_PHASE3_CAPACITY_ENABLED=true`면 슬롯 3·일한도는 후보수 k 사다리
-    (k≤1→1건 / k 2~9→2건 / k 10+→3건), OFF면 슬롯 1·일 1건.
+  - **2026-08-21부터 전부 env다**(`.env.live` + start-config 두 소스). 그 전에는 슬롯·일한도가
+    코드 하드코딩이었고, 그것도 **실주문(`us_swing_order_bridge` dict 리터럴)과
+    shadow(`us_swing_execution_contract` 상수) 두 군데**에 같은 값이 따로 있어
+    한쪽만 고치면 계약이 갈라졌다. 지금은 세 경로(실주문·shadow·integrity_check)가
+    같은 키를 읽고, effective-config 스냅샷으로 실효값을 확인할 수 있다.
+  - US swing: `US_SWING_ORDER_MAX_KRW=760000` / `US_SWING_MAX_OPEN_SLOTS=5` /
+    `US_SWING_MAX_NEW_PER_DAY=1`. **최악 동시 SL = 76만 × 5 × 25% = 95만.**
+  - KR fallen: `KR_FALLEN_ORDER_MAX_KRW=300000` / `KR_FALLEN_MAX_OPEN_SLOTS=1` /
+    `KR_FALLEN_MAX_OPEN_SLOTS_PHASE3=3` / `KR_FALLEN_MAX_NEW_PER_DAY=1`.
+    `KR_FALLEN_PHASE3_CAPACITY_ENABLED=true`면 슬롯 3, 일한도는 후보수 k 사다리
+    (k≤1→1건 / k 2~9→2건 / k 10+→3건). **사다리 자체는 사전등록 설계라 env로 빼지 않는다**
+    — env로 우회 가능하면 사전등록이 무의미해진다.
+  - ⚠️ **슬롯·금액을 바꿀 때는 실제 예수금부터 확인한다.** 08-21 실측: KR 예수금 66만이라
+    슬롯 3(30만×3=90만)은 현금상 2건이 한계다. 백테스트 수치만 보고 용량을 정하지 않는다
+    (D7 기각과 같은 산수).
 - 비활성/레거시 경로 값(참고): 고정 주문금액 50만원(`KR_FIXED_ORDER_KRW`/`US_FIXED_ORDER_KRW`,
   PathB US는 20만) / 최대 포지션 PathB 15·시장별(KR·US) 각 20 / 일일 진입 KR 40·**US 8** /
   최소 confidence 0.5 / 재진입 쿨다운 60분 / 장 초반 soft gate(KR 0~60분·US 0~30분, size×0.5).

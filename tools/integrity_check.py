@@ -396,6 +396,9 @@ def check_contract_env_drift(now: datetime) -> list[dict[str, Any]]:
             min_probability=float(env.get("US_SWING_ORDER_MIN_PROB", "0.55") or 0.55),
             min_predicted_net_pct=float(env.get("US_SWING_ORDER_MIN_PREDICTED_NET_PCT", "0.25") or 0.25),
             hurdles_enforced=str(env.get("US_SWING_ORDER_ABSOLUTE_HURDLES_ENFORCED", "false")).lower() in truthy,
+            # 실주문 브리지·shadow 러너와 같은 env 키·기본값 (2026-08-21 env 승격)
+            max_open_slots_override=int(env.get("US_SWING_MAX_OPEN_SLOTS", "5") or 5),
+            max_new_per_day_override=int(env.get("US_SWING_MAX_NEW_PER_DAY", "1") or 1),
         )["contract_id"]
         with _connect_ro(ROOT / "data" / "analysis" / "us_swing_shadow.db") as con:
             row = con.execute(
