@@ -3164,6 +3164,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         reasons: list[str] = []
         min_prev = int(os.getenv("SCREEN_DEGRADED_MIN_PREV", "10"))
         collapse_ratio = float(os.getenv("SCREEN_DEGRADED_MIN_RATIO", "0.50"))
+        # 소스별 붕괴 검사의 최소 표본. 2026-08-21 실측으로 3 -> 8.
+        # 08-20~21 degraded 53건 중 47건(89%)이 3~4종목짜리 소수 거래소 단독 사유였다
+        # (ASE:0/3 35건, NGM:1/4 11건, NGM:0/4 1건). 급락 종목은 날마다 달라서 3종목
+        # 소스가 0이 되는 건 정상 변동인데 붕괴로 읽혔고, 그때마다 이전 스냅샷 후보
+        # 평균 41개(풀의 39%)가 낡은 채로 섞였다.
+        # 진짜 붕괴 6건은 예외 없이 count_collapse(fresh 27~38 vs 78)와 동반되므로
+        # 소수 소스를 빼도 그쪽이 잡는다 — 안전망이 이중이다.
+        min_source_prev = int(os.getenv("SCREEN_DEGRADED_MIN_SOURCE_PREV", "8"))
         if not fresh:
             reasons.append("empty_response")
         if previous and len(previous) >= min_prev:
@@ -3181,7 +3189,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 prev_source = self._screen_count_by_field(previous, ("source", "exchange", "market_type"))
                 fresh_source = self._screen_count_by_field(fresh, ("source", "exchange", "market_type"))
                 for source, prev_count in prev_source.items():
-                    if source == "UNKNOWN" or prev_count < 3:
+                    if source == "UNKNOWN" or prev_count < min_source_prev:
                         continue
                     current_count = fresh_source.get(source, 0)
                     if current_count == 0 or current_count < max(1, int(prev_count * collapse_ratio)):
