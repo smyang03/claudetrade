@@ -368,3 +368,71 @@ if gate_rank <= 0 or gate_rank > max_new:
 현행 실질 계약은 "일 1건"이 아니라 **"슬롯 5까지 밴드 순서대로"**다.
 
 오늘 밤 추가 진입은 없다 — us_swing 5종(AXTI·FRVO·MXL·SEI·AVAV)으로 슬롯이 찼다.
+
+---
+
+## 10. 주말 점검 (2026-08-22) — 판정 배선 결함 2건 발견
+
+월요일 장 대비 점검 중 **30건 판정을 무력화하는 결함 2건**이 나왔다.
+
+### 결함 A — `ORDER_SENT`가 한 번도 발행되지 않는다 → 코호트 전건 DIRTY
+
+`lifecycle/quality.py:20`
+```python
+if "FILLED" in event_types and "ORDER_SENT" not in event_types:
+    reasons.append("FILLED_WITHOUT_ORDER_SENT")   # -> DIRTY, learning_allowed=False
+```
+
+08-01 이후 이벤트 분포에 **`ORDER_SENT`가 0건**이다(FORWARD_MEASURED 78 · CLAUDE_TRADE_READY 15
+· FILLED 11 · CLOSED 5 · ORDER_SENT **0**). PathB 쪽엔 상태 문자열로만 쓰이고 lifecycle
+이벤트로는 아무도 기록하지 않는다.
+
+결과: **코호트 10건 전부 `FILLED_WITHOUT_ORDER_SENT`로 DIRTY, `learning_allowed=0`.**
+FRMI·CVI·MXL·FA·WIX·FRVO·AXTI·MXL·SEI·AVAV — 예외 없다.
+
+> 08-21 새벽 `3800170`(sleeve decision_id 상속)은 `CLOSED_WITHOUT_FILL`을 실제로 없앴다
+> (WIX가 진입 ID를 이어받았다). 그러나 **`FILLED_WITHOUT_ORDER_SENT`는 별개 조건**이라
+> 여전히 DIRTY다. "DIRTY가 해소된다"고 본 것은 절반만 맞았다.
+
+**30건이 다 차도 학습·판정에 쓸 수 있는 건이 0건이다.**
+
+수리 방향: 주문 제출 시점(`_submit_micro_probe_buy_order`, kr_fallen 브리지)에 `ORDER_SENT`
+lifecycle 이벤트를 발행한다. **기록 계층 전용 — 매매 로직 무관.** 과거 10건은 backfill
+주입 또는 판정 시 이 사유 예외 처리 중 선택이 필요하다.
+
+### 결함 B — 판정 리포트가 지문별로만 세어 누적을 못 본다
+
+`tools/us_swing_judgment_report.py` 실행 결과:
+```
+[1] 표본: 정산 0 / 30  (보유중 2건: VOYG, SEI)
+[교차] 실체결 왕복: AXTI·FRMI·CVI·MXL·FA·WIX 6건 | 보유중 AVAV·AXTI·FRVO·MXL·SEI
+```
+
+현 계약 지문(`feb335657cc32286`) 기준으로만 세어 **0/30**이 나온다. 그런데 사전등록
+규약(08-16)은 **"30건 판정 카운트는 코호트 정의 2항(실주문 전건 포함) 그대로 이어간다.
+판정 리포트는 지문별 코호트를 분해 병기한다"**이다 — **누적이 정본이고 지문은 분해 병기**다.
+
+리포트는 분해만 하고 누적을 안 센다. 지문이 바뀔 때마다 0으로 돌아가므로 **이대로면
+30건 도달을 영원히 표시하지 못한다.**
+
+### 코호트 숫자 세 개가 돌아다닌다 — 정본 확정 필요
+
+| 소스 | 값 | 성격 |
+|---|---|---|
+| lifecycle FILLED(08-03~) | **10건** (정산 5 / 진행 5) | 실체결만, 차단분 제외 |
+| `[MICRO_PROBE 성과 US]` 로그 | 6건 정산 +229,626원 | **7월 포함** 집계 |
+| 판정 리포트 | **0 / 30** | 현 지문만 |
+
+정산 5건 합계는 **+167,136원**(FRMI +36,898 · CVI +1,623 · MXL +37,053 · FA −3,955 ·
+WIX +95,517), 4승 1패. 세션 중 "11/30·12/30"이라 한 것은 기준일을 안 맞춘 오류다.
+
+⚠️ 사전등록 2항은 **"live가 차단한 건도 코호트에 포함"**(ULS·LCID 선례)이므로 10건도
+하한이다. 리포트가 VOYG(08-20 rank1, 밴드 밖 차단)를 표본에 넣은 것이 그 규약의 반영이다.
+
+### 그 외 점검 (이상 없음)
+
+- **현금**: KR 예수금 664,134원(22만×3=66만 가능) / US 달러현금 $559.81≈78만(주문상한 76만,
+  여유 $14). US는 빠듯하나 **슬롯 5/5라 FRVO 청산 전엔 어차피 진입 불가**하고 청산 대금이
+  들어오면 해소된다. 조치 불요. (사전등록 §반대근거 ⑤ "US 현금 여유 사실상 0"이 실현된 것)
+- **D5 만기 재계산**: 진입일 포함 5거래일, **주말 제외**. FRVO 08-24(월) · AXTI 08-25(화)
+  · MXL 08-26(수) · SEI·AVAV 08-27(목). 08-21 밤 FRVO를 08-22로 계산해 반복 오보한 것을 정정.
