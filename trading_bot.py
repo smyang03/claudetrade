@@ -25664,6 +25664,60 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         if pending_orders_changed or filled:
             self.pending_orders = remaining
             self._save_pending_orders()
+    def _emit_order_sent_event(self, order: dict, market: str, ticker_key: str) -> None:
+        """매수 주문 접수 시 ORDER_SENT lifecycle 이벤트를 남긴다 (2026-08-22).
+
+        왜 필요한가 — `lifecycle/quality.py:20`이 **FILLED은 있는데 ORDER_SENT가 없으면
+        DIRTY**로 판정한다. 그런데 이 이벤트를 발행하는 코드가 한 곳도 없었다
+        (08-01 이후 lifecycle 이벤트 분포: FILLED 11 · CLOSED 5 · **ORDER_SENT 0**).
+        그래서 코호트 10건이 예외 없이 `FILLED_WITHOUT_ORDER_SENT` → learning_allowed=0 —
+        **30건이 다 차도 학습·판정에 쓸 수 있는 건이 0건**이었다.
+
+        `_add_pending_order`에 붙이는 이유: us_swing(micro_probe)·kr_fallen·PathA가
+        모두 이 한 곳을 지난다. 주문 경로마다 따로 넣으면 하나를 빠뜨린다.
+
+        기록 계층 전용이다. 반환값이 없고 예외를 밖으로 내지 않으므로 주문 흐름에
+        어떤 영향도 주지 않는다.
+        """
+        try:
+            if getattr(self, "v2", None) is None:
+                return
+            order_no = str(order.get("order_no", "") or "").strip()
+            if not order_no or not ticker_key:
+                return
+            # 같은 주문번호로 두 번 부르지 않는다(_add_pending_order는 갱신 시에도 호출된다).
+            seen = getattr(self, "_order_sent_emitted", None)
+            if seen is None:
+                seen = set()
+                self._order_sent_emitted = seen
+            key = f"{market}:{order_no}"
+            if key in seen:
+                return
+            seen.add(key)
+            decision_id = str(
+                order.get("v2_decision_id", "")
+                or self._v2_decision_id_for_ticker(market, ticker_key)
+                or ""
+            )
+            self._v2_record_lifecycle_event(
+                "ORDER_SENT",
+                market,
+                ticker_key,
+                decision_id=decision_id,
+                execution_id=str(order.get("v2_execution_id", "") or order_no),
+                payload={
+                    "order_no": order_no,
+                    "qty": int(order.get("qty", 0) or 0),
+                    "price_native": float(order.get("raw_price", 0) or 0),
+                    "strategy": str(order.get("strategy", "") or ""),
+                    "source_strategy": str(order.get("source_strategy", "") or ""),
+                    "entry_route": str(order.get("entry_route", "") or ""),
+                    "emitted_by": "add_pending_order",
+                },
+            )
+        except Exception as exc:
+            log.warning(f"[ORDER_SENT] 기록 실패 {market} {ticker_key}: {exc}")
+
     def _add_pending_order(self, order: dict):
         market = order.get("market", "KR")
         ticker = order.get("ticker", "")
@@ -25671,6 +25725,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         ticker_key = ticker.upper() if market == "US" else ticker
         order["market"] = market
         self._normalize_order_attribution(order)
+        self._emit_order_sent_event(order, market, ticker_key)
         order_no = str(order.get("order_no", "") or "").strip()
         if order_no:
             next_orders = []

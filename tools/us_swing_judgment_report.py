@@ -80,23 +80,45 @@ def main() -> int:
                ORDER BY signal_date DESC LIMIT 1"""
         ).fetchone()
         contract = str(row[0]) if row and row[0] else ""
+    # 2026-08-22 수리: 지문별로만 세던 것을 **누적 정본 + 지문 분해 병기**로 바꾼다.
+    #
+    # 사전등록 규약(08-16, 주문금액 변경 시 코호트 정의 보충):
+    #   "30건 판정 카운트는 코호트 정의 2항(실주문 전건 포함) 그대로 이어간다.
+    #    판정 리포트는 지문별 코호트를 분해 병기한다."
+    # 즉 **누적이 정본이고 지문은 분해**인데, 이전 구현은 현재 지문만 필터링해서
+    # 지문이 바뀔 때마다 표본이 0으로 돌아갔다(08-22 실측: 실체결 왕복 6건인데 "정산 0/30").
+    # 지문은 08-14 이후 세 번 바뀌었고(50만→100만→76만), 이대로면 30건 도달을 영원히
+    # 표시하지 못한다.
+    #
+    # --contract-id를 명시하면 그 지문만 보는 기존 동작을 유지한다(분해 확인용).
+    contract_filter = "AND COALESCE(execution_shadow_contract_id,'')=?" if args.contract_id else ""
+    params = (args.contract_id,) if args.contract_id else ()
     frame = pd.read_sql_query(
-        """SELECT signal_date, ticker, candidate_source, entry_date, execution_shadow_exit_date,
+        f"""SELECT signal_date, ticker, candidate_source, entry_date, execution_shadow_exit_date,
                   execution_shadow_exit_reason, execution_shadow_net_krw_pct, execution_shadow_qty,
-                  breadth_context_state
+                  breadth_context_state, COALESCE(execution_shadow_contract_id,'') AS contract_id
            FROM signals
            WHERE execution_shadow_eligible=1
-             AND COALESCE(execution_shadow_contract_id,'')=?
+             {contract_filter}
            ORDER BY signal_date""",
-        con, params=(contract,),
+        con, params=params,
     )
     con.close()
 
     settled = frame[frame["execution_shadow_net_krw_pct"].notna()].copy()
     pending = frame[frame["execution_shadow_net_krw_pct"].isna()]
-    print(f"=== US swing forward 판정 리포트 (contract {contract or '미기록'}) ===")
+    scope = f"contract {args.contract_id}" if args.contract_id else "누적(전 지문)"
+    print(f"=== US swing forward 판정 리포트 ({scope}) ===")
     print(f"[1] 표본: 정산 {len(settled)} / {TARGET_N}  (보유중 {len(pending)}건: "
           f"{', '.join(pending['ticker'].tolist()) or '-'})")
+    if not args.contract_id and not frame.empty:
+        # 지문 분해 병기 — 규약이 요구하는 형태. 금액·슬롯이 다른 구간을 섞어 읽지 않게 한다.
+        print("    [지문 분해] " + " | ".join(
+            f"{cid[:8] or '미기록'}: 정산 {int(g['execution_shadow_net_krw_pct'].notna().sum())}"
+            f"/{len(g)}"
+            for cid, g in frame.groupby("contract_id", dropna=False)
+        ))
+        print(f"    현재 실행 지문: {contract or '미기록'}")
     if settled.empty:
         print("정산 표본 없음 — 이하 지표는 표본 축적 후 산출된다. (배선 점검용 실행 완료)")
         _cross_check_real_fills()
