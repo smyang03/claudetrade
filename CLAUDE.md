@@ -95,6 +95,14 @@ AI의 사고 방식은 **트레이너이자 개발자**다. 시장·전략·분�
     같은 키를 읽고, effective-config 스냅샷으로 실효값을 확인할 수 있다.
   - US swing: `US_SWING_ORDER_MAX_KRW=760000` / `US_SWING_MAX_OPEN_SLOTS=5` /
     `US_SWING_MAX_NEW_PER_DAY=1`. **최악 동시 SL = 76만 × 5 × 25% = 95만.**
+  - ⚠️ **`US_SWING_MAX_NEW_PER_DAY`는 "하루 최대 건수"가 아니다**(2026-08-22 운영자 결정 A안).
+    `us_swing_order_handoff.py`가 이 값을 **"밴드 내 순위가 N 이하인가"**로 쓴다. 진입한
+    종목이 다음 사이클에서 후보 목록에서 빠지면 그 다음 종목이 1순위로 승격해 또 통과한다.
+    → **실질 계약은 "슬롯 5까지 밴드 순서대로 순차 진입"이다.** 08-21 실측: SEI 22:44 체결
+    직후 AVAV가 1순위가 되어 22:46에 추가 진입(하루 2건).
+    **리스크 한도는 변하지 않는다** — 최악 손실을 정하는 것은 슬롯(5)이지 일한도가 아니다.
+    일한도는 "슬롯을 며칠에 걸쳐 채우나"의 속도 문제일 뿐이다.
+    실제 제약은 **현금**이다(08-22 실측: 달러현금 13.8만원 → 76만 주문 1건도 불가).
   - KR fallen: `KR_FALLEN_ORDER_MAX_KRW=220000`(08-21 개정, 그 전 30만) /
     **최악 동시 SL = 22만 × 3 × 25% = 16.5만.** `KR_FALLEN_MAX_OPEN_SLOTS=1` /
     `KR_FALLEN_MAX_OPEN_SLOTS_PHASE3=3` / `KR_FALLEN_MAX_NEW_PER_DAY=1`.
