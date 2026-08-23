@@ -166,16 +166,44 @@ try {
     Write-Output "[CHECKPOINT] $($backup.backup_dir)"
 
     Invoke-PythonChecked -Arguments @("tools\stop_live_stack.py", "--timeout", "15", "--json")
-    & .\tools\start_live_stack_headless.ps1
-    if ($LASTEXITCODE -ne 0) {
-        throw "Live stack startup failed after checkpoint $($backup.backup_dir)"
+
+    # 2026-08-24 수리: 기동을 **실제로 떴는지 확인하며 재시도**한다.
+    #
+    # start_live_stack_headless.ps1은 전역 뮤텍스로 재진입을 막는다(07-21 중복 세트 사고
+    # 수리). 다른 인스턴스가 뮤텍스를 쥐고 있으면 "[SKIP] 다른 기동 인스턴스가 진행 중"을
+    # 찍고 **아무것도 안 띄운 채 exit 0**으로 끝난다. 그러면 아래 $LASTEXITCODE 검사를
+    # 통과해버리고, 스택은 내려간 상태로 남는다.
+    #
+    # 08-24 00:36 실측: 정지 창에서 `claudetrade_live_stack_watchdog` 스케줄 태스크가
+    # 발동해 뮤텍스를 선점 → 재시작의 기동이 SKIP → PID 원장 없음 → throw.
+    # **스택이 완전히 내려간 채로 남았다**(수동 기동으로 복구). 장 시작 전이었다면 사고다.
+    #
+    # 원장 존재를 성공 기준으로 삼고, 뮤텍스 창(짧다)이 닫힐 때까지 재시도한다.
+    $manifestPath = Join-Path $Root "state\headless_live_stack_pids.json"
+    $startAttempts = 3
+    for ($attempt = 1; $attempt -le $startAttempts; $attempt++) {
+        & .\tools\start_live_stack_headless.ps1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Live stack startup failed after checkpoint $($backup.backup_dir)"
+        }
+        if (Test-Path -LiteralPath $manifestPath) { break }
+        if ($attempt -lt $startAttempts) {
+            # 문자열 리터럴은 ASCII만 쓴다. 이 파일은 BOM이 없어서 Windows PowerShell 5.1이
+            # CP949로 읽는데, 문자열 안의 비ASCII가 깨지면 닫는 따옴표까지 소실돼 파서가
+            # 블록 전체를 못 닫는다(2026-08-24 실측: 한글 문자열 추가 후 파스 에러).
+            # 한국어 설명은 주석에만 둔다 — 이 파일의 기존 규약이 그렇다(문자열 내 비ASCII 0건).
+            Write-Output "[RETRY] startup was skipped (another instance likely holds the mutex) - attempt $attempt/$startAttempts, retrying in 20s"
+            Start-Sleep -Seconds 20
+        }
     }
 
     Invoke-BrokerTruthChecked
     $after = Get-BrokerInventory (Join-Path $Root "state\live_broker_truth_snapshot.json")
-    $manifestPath = Join-Path $Root "state\headless_live_stack_pids.json"
     if (-not (Test-Path -LiteralPath $manifestPath)) {
-        throw "Restart completed without PID manifest. Checkpoint: $($backup.backup_dir)"
+        # 여기 문자열도 ASCII만 (위 주석 참고).
+        throw ("Restart completed without PID manifest after $startAttempts attempts " +
+               "(startup kept getting skipped - check claudetrade_live_stack_watchdog task " +
+               "or another running start instance). Checkpoint: $($backup.backup_dir)")
     }
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
     $dead = @()

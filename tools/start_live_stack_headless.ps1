@@ -28,7 +28,16 @@ try {
     $MutexHeld = $true
 }
 if (-not $MutexHeld) {
-    Write-Output "[SKIP] 다른 기동 인스턴스가 진행 중 — 중복 기동을 건너뛴다."
+    # ⚠️ 이 경로는 **아무것도 안 띄우고 exit 0**이다. 호출자는 종료코드로 성공/실패를
+    # 구분할 수 없으므로 반드시 manifest(state\headless_live_stack_pids.json) 존재로
+    # 확인해야 한다. 2026-08-24 00:36 실측: 재시작의 정지 창에서
+    # claudetrade_live_stack_watchdog 태스크가 뮤텍스를 선점 → 재시작의 기동이 이 경로로
+    # 빠져 **스택이 내려간 채로 남았다.** restart_live_stack_safely.ps1이 재시도로 대응한다.
+    #
+    # 문자열은 ASCII만 쓴다 — 이 파일은 BOM이 없어 PowerShell 5.1이 CP949로 읽고,
+    # 문자열 안의 비ASCII가 깨지면 닫는 따옴표까지 소실돼 파서가 죽는다.
+    # 한국어 설명은 주석에 둔다(tests/test_powershell_scripts_parse.py가 고정).
+    Write-Output "[SKIP] another startup instance is in progress - skipping duplicate start (nothing was started)"
     exit 0
 }
 
