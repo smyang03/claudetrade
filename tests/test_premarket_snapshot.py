@@ -64,8 +64,10 @@ class TimeGateTests(unittest.TestCase):
 
 class SnapshotTests(unittest.TestCase):
     def setUp(self):
-        pm._CACHE["at"] = None
-        pm._CACHE["payload"] = None
+        # 2026-08-23: 캐시가 모드별 슬롯 dict로 바뀌었다(P2-11). 슬롯 하나를 비우는 게
+        # 아니라 전체를 비운다 — 픽스처가 프로덕션 구조와 어긋나면 캐시가 남은 채로
+        # 테스트가 통과한다.
+        pm._CACHE.clear()
 
     def test_builds_rows_from_truth_snapshot(self):
         with mock.patch.object(pm, "is_premarket", return_value=True), \

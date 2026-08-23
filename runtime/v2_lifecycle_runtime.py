@@ -317,9 +317,19 @@ class V2LifecycleRuntime:
         position_id: str = "",
         reason_code: str = "",
         payload: dict | None = None,
-    ) -> None:
+    ) -> bool:
+        """이벤트를 원장에 남긴다. 성공 여부를 돌려준다(2026-08-23).
+
+        반환값을 추가한 이유: 호출자가 "한 번 불렀으니 기록됐다"고 가정하고 중복 방지
+        키를 심는 곳이 있었다(trading_bot._emit_order_sent_event). 이 함수는 append
+        실패를 warning만 남기고 삼키므로, 실패해도 호출자는 성공으로 알았고 ORDER_SENT가
+        영구 누락됐다. 기존 호출자는 반환값을 무시하므로 동작이 바뀌지 않는다.
+
+        True  = 기록 완료, 또는 기록 대상이 아님(v2 비활성 — 재시도해도 의미 없음)
+        False = 기록되어야 했는데 실패(decision_id 결손 / append 예외) — 재시도 여지 있음
+        """
         if not self.enabled or self.registry is None:
-            return
+            return True
         resolved_decision_id = decision_id or self.decision_id_for_ticker(market, ticker)
         if not resolved_decision_id and str(event_type or "").upper() in {
             "ORDER_SENT",
@@ -353,7 +363,7 @@ class V2LifecycleRuntime:
                 payload=fallback_payload,
             )
         if not resolved_decision_id:
-            return
+            return False
         try:
             enriched_payload = self._enrich_route_attribution(
                 event_type,
@@ -378,8 +388,10 @@ class V2LifecycleRuntime:
                 reason_code=reason_code or None,
                 payload=enriched_payload,
             )
+            return True
         except Exception as exc:
             log.warning(f"[V2 lifecycle] append failed {event_type} {market} {ticker}: {exc}")
+            return False
 
     def record_profit_evidence_shadow(
         self,

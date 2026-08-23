@@ -136,5 +136,65 @@ class SleeveClosedLiveEmitTests(unittest.TestCase):
         self.assertEqual(v2.events[0]["decision_id"], "sleeve_US_MXL_20260818")
 
 
+class DelayedFillCloseTests(unittest.TestCase):
+    """지연 체결 청산 경로도 CLOSED를 발행한다 (2026-08-23, Codex 리뷰 P1-5).
+
+    브로커가 매도를 접수만 하고 즉시 체결 확인이 없으면 직접 청산 경로는 pending으로
+    빠져나가고, 나중에 `_close_position_from_pending_sell`이 포지션을 닫는다. 이 경로에는
+    CLOSED 발행이 없어서 정본 원장에 진입행만 남고 영원히 "보유중"·DIRTY가 됐다.
+    지금까지 안 물린 건 sleeve 청산이 전부 즉시 확인이었기 때문이다 — 잠재 결함이었다.
+    """
+
+    @staticmethod
+    def _pending_bot(v2, *, closed_result):
+        bot = SimpleNamespace()
+        bot.v2 = v2
+        bot._mode = "live"
+        bot.SLEEVE_SOURCE_STRATEGIES = TradingBot.SLEEVE_SOURCE_STRATEGIES
+        bot._current_session_date_str = lambda market: "2026-08-18"
+        bot._price_to_krw = lambda price, market: float(price) * 1400.0
+        bot._session_closed_tickers = {}
+        bot.risk = SimpleNamespace(close_position=lambda *a, **kw: closed_result)
+        bot.decision_events = []
+        bot._record_decision_event = lambda *a, **kw: bot.decision_events.append(kw)
+        bot._note_recent_sell_proceeds = lambda *a, **kw: None
+        bot._record_sleeve_closed_event = TradingBot._record_sleeve_closed_event.__get__(bot)
+        bot._close_position_from_pending_sell = (
+            TradingBot._close_position_from_pending_sell.__get__(bot)
+        )
+        return bot
+
+    def test_full_close_emits_closed(self) -> None:
+        v2 = _FakeV2()
+        closed = {"ticker": "MXL", "pnl_pct": 12.46, "pnl": 37053, "qty": 8,
+                  "exit_price": 105_000.0, "source_strategy": "us_swing_5d"}
+        bot = self._pending_bot(v2, closed_result=closed)
+        result = bot._close_position_from_pending_sell(
+            {"ticker": "MXL", "qty": 8, "source_strategy": "us_swing_5d", "entry": 93_646.0},
+            "US", qty=8, price_native=75.0, reason="strategy_fixed_take_profit",
+            order_no="123", broker_fill_source="broker_fills", resolution="filled",
+            broker_fill_confirmed=True,
+        )
+        self.assertIsNotNone(result)
+        closed_events = [e for e in v2.events if e["event_type"] == "CLOSED"]
+        self.assertEqual(len(closed_events), 1)
+        self.assertEqual(closed_events[0]["payload"]["pnl_pct"], 12.46)
+
+    def test_partial_close_does_not_emit_closed(self) -> None:
+        """부분 청산은 CLOSED가 아니다 — 포지션이 아직 열려 있다."""
+        v2 = _FakeV2()
+        closed = {"ticker": "MXL", "pnl_pct": 3.0, "pnl": 1000, "qty": 3,
+                  "exit_price": 105_000.0, "source_strategy": "us_swing_5d"}
+        bot = self._pending_bot(v2, closed_result=closed)
+        bot.risk.close_position_qty = lambda *a, **kw: closed
+        bot._close_position_from_pending_sell(
+            {"ticker": "MXL", "qty": 8, "source_strategy": "us_swing_5d", "entry": 93_646.0},
+            "US", qty=3, price_native=75.0, reason="strategy_fixed_take_profit",
+            order_no="123", broker_fill_source="broker_fills", resolution="partial",
+            broker_fill_confirmed=True,
+        )
+        self.assertEqual([e for e in v2.events if e["event_type"] == "CLOSED"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

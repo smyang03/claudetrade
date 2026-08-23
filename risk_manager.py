@@ -293,6 +293,20 @@ class RiskManager:
         rate = FEE_RATES.get(self.market, FEE_RATES["KR"])[side]
         return amount * rate
 
+    def _entry_side_fee(self, entry_price: float, qty: int) -> float:
+        """이 lot의 매수 수수료 — **손익 보고값 전용** (2026-08-23 수리, Codex 리뷰 P2-7).
+
+        open_position은 매수 수수료를 현금(self.cash)과 daily_pnl에서 이미 빼지만,
+        `entry`에는 원가만 담기므로 close 쪽 `pnl = gross - sell_fee`에는 매수측이
+        빠져 있었다. 그 값이 그대로 pnl_pct_net·broker_realized_krw로 인증돼
+        US는 건당 약 0.25%p, KR은 약 0.015%p씩 net이 과대계상됐다.
+        판정 기준은 우리 실제 net이므로 왕복을 뺀 값만 net으로 쓴다.
+
+        cash/daily_pnl/total_fee는 **건드리지 않는다** — 그쪽은 이미 정확하다.
+        여기서 또 빼면 매수 수수료를 두 번 차감하게 된다.
+        """
+        return self._fee("buy", float(entry_price or 0) * int(qty or 0))
+
     def equity(self) -> float:
         pos_val = sum(p["qty"] * p["current_price"] for p in self.positions)
         return self.cash + pos_val
@@ -1701,12 +1715,15 @@ class RiskManager:
             entry = float(pos.get("entry", 0) or 0)
             gross_pnl = (exit_price - entry) * close_qty
             sell_fee = self._fee("sell", exit_price * close_qty)
-            pnl = gross_pnl - sell_fee
+            buy_fee = self._entry_side_fee(entry, close_qty)
+            pnl = gross_pnl - sell_fee - buy_fee
             cost_basis = entry * close_qty
             pnl_pct = (pnl / cost_basis * 100) if cost_basis else 0.0
             self.cash += exit_price * close_qty - sell_fee
             self.total_fee += sell_fee
-            self.daily_pnl += pnl
+            # daily_pnl은 매수 수수료를 open_position에서 이미 뺐다 — 여기서 pnl(왕복 차감)을
+            # 더하면 이중 차감이 된다. 매도측만 반영한다.
+            self.daily_pnl += gross_pnl - sell_fee
             if remaining_qty > 0:
                 pos["qty"] = remaining_qty
             else:
@@ -1721,6 +1738,9 @@ class RiskManager:
                 "pnl": pnl,
                 "pnl_krw": pnl,
                 "pnl_pct": pnl_pct,
+                "buy_fee_krw": buy_fee,
+                "sell_fee_krw": sell_fee,
+                "fee_pct_round_trip": ((buy_fee + sell_fee) / cost_basis * 100) if cost_basis else 0.0,
                 "reason": reason,
                 "order_no": str((exit_meta or {}).get("order_no") or (exit_meta or {}).get("pending_sell_order_no") or ""),
                 "partial_close": remaining_qty > 0,
@@ -1774,7 +1794,8 @@ class RiskManager:
 
             gross_pnl  = (exit_price - pos["entry"]) * pos["qty"]
             sell_fee   = self._fee("sell", exit_price * pos["qty"])
-            pnl        = gross_pnl - sell_fee
+            buy_fee    = self._entry_side_fee(pos["entry"], pos["qty"])
+            pnl        = gross_pnl - sell_fee - buy_fee
             cost_basis = pos["entry"] * pos["qty"]
             pnl_pct    = (pnl / cost_basis * 100) if cost_basis else 0.0
             self.cash += exit_price * pos["qty"] - sell_fee
@@ -1788,6 +1809,9 @@ class RiskManager:
                 "exit_price": exit_price,
                 "pnl": pnl,
                 "pnl_pct": pnl_pct,
+                "buy_fee_krw": buy_fee,
+                "sell_fee_krw": sell_fee,
+                "fee_pct_round_trip": ((buy_fee + sell_fee) / cost_basis * 100) if cost_basis else 0.0,
                 "reason": reason,
                 "order_no": str((exit_meta or {}).get("order_no") or (exit_meta or {}).get("pending_sell_order_no") or ""),
                 **(exit_meta or {}),

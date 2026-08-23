@@ -98,6 +98,7 @@ def resolve_execution_contract(
     hurdles_enforced: bool = False,
     max_open_slots_override: int = OPERATOR_TRIAL_MAX_OPEN_SLOTS,
     max_new_per_day_override: int = OPERATOR_TRIAL_MAX_NEW_PER_DAY,
+    selection_policy: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """실주문과 shadow가 공유하는 계약을 계산한다.
 
@@ -109,6 +110,13 @@ def resolve_execution_contract(
     min_predicted_net_pct)도 계약의 일부다. 실주문 핸드오프는 이 값으로 차단하는데
     shadow가 무시하면 판정 코호트가 실주문과 갈라진다(ULS·LCID 실측 사고 —
     live 차단·shadow 편입). 기본값은 order bridge의 env 기본값과 동일해야 한다.
+
+    2026-08-23 확장 (Codex 리뷰 P1-3): **후보 선별 정책(거래대금 밴드·MAX 하한)도
+    계약의 일부다.** 08-20부터 실주문은 밴드/MAX로 재선별한 종목을 사는데 shadow는
+    여전히 원 rank1을 평가해, 같은 날 다른 종목을 재는 상태였다(08-20 shadow=VOYG /
+    live=MXL). 선별 정책이 바뀌면 거래 집합이 바뀌므로 지문도 바뀌어야 한다 —
+    선별이 다른 구간을 한 평균에 섞지 않기 위해서다.
+    `selection_policy`를 넘기지 않으면 payload·지문 모두 이전과 동일하다(하위호환).
     """
 
     mode = str(effective_mode or "shadow").lower()
@@ -156,6 +164,8 @@ def resolve_execution_contract(
         "hurdles_enforced": bool(hurdles_enforced),
         "operator_override_active": bool(override_active),
     }
+    if selection_policy:
+        payload["selection_policy"] = dict(selection_policy)
     payload["contract_id"] = contract_id(payload)
     return payload
 
@@ -177,5 +187,12 @@ def contract_id(payload: Mapping[str, Any]) -> str:
         "min_predicted_net_pct": round(_number(payload.get("min_predicted_net_pct"), 0.25), 6),
         "hurdles_enforced": bool(payload.get("hurdles_enforced")),
     }
+    # 2026-08-23: 선별 정책(밴드·MAX)이 있으면 지문에 포함한다. 없으면 키 자체를 넣지
+    # 않는다 — 기존 지문(afc07db8·feb33565 등)이 그대로 재현돼야 이력이 안 끊긴다.
+    selection = payload.get("selection_policy")
+    if selection:
+        material["selection_policy"] = json.loads(
+            json.dumps(selection, sort_keys=True, ensure_ascii=False, default=str)
+        )
     blob = json.dumps(material, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]

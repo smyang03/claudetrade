@@ -61,6 +61,33 @@ class OrderSentEmitTests(unittest.TestCase):
             bot._emit_order_sent_event({"order_no": "SAME", "qty": 1}, "US", "SEI")
         self.assertEqual(len(bot.events), 1)
 
+    def test_failed_record_does_not_burn_dedupe_key(self):
+        """기록이 실패하면 중복키를 심지 않는다 — 다음 갱신에서 재시도해야 한다.
+
+        2026-08-23 (Codex 리뷰 P2-14): 이전에는 record 호출 **앞에서** seen.add를 했다.
+        v2 record_event는 append 실패를 warning만 남기고 삼키므로, DB 잠금이 한 번만
+        나도 키만 남고 이벤트는 없는 상태가 된다. _add_pending_order는 주문 갱신 때
+        다시 호출되는데 그때 즉시 return하므로 ORDER_SENT가 **영구 누락**되고, 그
+        체결은 FILLED_WITHOUT_ORDER_SENT = DIRTY가 된다(08-22에 고친 그 결함의 재발 경로).
+        """
+        bot = _Bot()
+        attempts: list[str] = []
+
+        def _failing(event_type, market, ticker, **kw):
+            attempts.append(ticker)
+            return False  # 명시적 실패 신호
+
+        bot._v2_record_lifecycle_event = _failing
+        for _ in range(3):
+            bot._emit_order_sent_event({"order_no": "LOCKED", "qty": 1}, "US", "SEI")
+        self.assertEqual(len(attempts), 3, "실패한 주문번호는 다음 호출에서 재시도돼야 한다")
+
+        # 재시도가 성공하면 그때부터 중복 방지가 걸린다.
+        bot._v2_record_lifecycle_event = _Bot._v2_record_lifecycle_event.__get__(bot)
+        bot._emit_order_sent_event({"order_no": "LOCKED", "qty": 1}, "US", "SEI")
+        bot._emit_order_sent_event({"order_no": "LOCKED", "qty": 1}, "US", "SEI")
+        self.assertEqual(len(bot.events), 1)
+
     def test_no_order_no_is_skipped(self):
         bot = _Bot()
         bot._emit_order_sent_event({"order_no": "", "qty": 1}, "US", "SEI")

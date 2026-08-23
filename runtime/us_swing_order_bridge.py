@@ -185,6 +185,15 @@ def _max_daily_return_21d(ticker: str, session_date: str) -> float | None:
                     except (TypeError, ValueError):
                         continue
         rows.sort()
+        # ⚠️ 미해결 불일치 (2026-08-23, Codex 리뷰 P2-12 — **고치지 말 것, 재산출 대기**)
+        #   여기: 종가 21개 → 일간수익 **20개**
+        #   Path A 공통 계산기(bot/pool_quality_features.py:38): lookback+1 = 종가 22개 →
+        #   수익 21개. 같은 이름(max_daily_ret_21d)인데 창이 하루 다르다.
+        # 이름·Path A 정합성만 보면 22개가 맞다. 그러나 **기준은 22가 아니라 08-20
+        # 검증에 실제로 쓴 계산**이고, 그 연구 스크립트가 저장소에 없어 어느 쪽인지
+        # 확정할 수 없다(리서치 규율 메모 참조). 창을 바꾸면 MAX>=8 하한의 통과·탈락이
+        # 달라져 라이브 선별이 검증 없이 이동한다.
+        # → 두 정의(20/21 수익)로 밴드 표본 성과를 재산출한 뒤 운영자 승인으로 확정한다.
         closes = [c for _, c in rows[-21:] if c > 0]
         if len(closes) < 6:
             return None
@@ -293,6 +302,86 @@ def _apply_dollar_volume_band(
         f"(밖 {[(e['ticker'], e['dollar_vol_m']) for e in out_band]})"
     )
     return kept, meta
+
+
+class EnvRuntimeConfig:
+    """`bot._runtime_*` 대체 — bot 인스턴스가 없는 경로(shadow 러너·오프라인 도구)용.
+
+    2026-08-23 (Codex 리뷰 P1-3). `_apply_dollar_volume_band` / `_apply_max_lottery_floor`는
+    첫 인자에서 `_runtime_bool` / `_runtime_float`만 쓴다. 같은 인터페이스를 env로 채우면
+    **선별 코드를 복제하지 않고** shadow가 라이브와 같은 함수를 그대로 돌릴 수 있다.
+    선별 로직을 두 벌 두면 08-20처럼 조용히 갈라진다(us_swing_order_bridge 하드코딩 vs
+    us_swing_execution_contract 상수 사고와 같은 계열).
+
+    라이브 브리지는 start-config env_overrides가 적용된 os.environ을 보고, shadow 러너는
+    같은 부모에서 스폰돼 같은 환경을 상속한다(resolve_shadow_contract도 이미 os.getenv를
+    쓴다 — 같은 규약).
+    """
+
+    @staticmethod
+    def _runtime_value(key: str, default: Any = "") -> Any:
+        raw = os.getenv(key, "")
+        return raw if str(raw).strip() != "" else default
+
+    def _runtime_bool(self, key: str, default: bool = False) -> bool:
+        raw = str(self._runtime_value(key, "")).strip().lower()
+        if raw == "":
+            return bool(default)
+        return raw in ("1", "true", "yes", "y", "on")
+
+    def _runtime_float(self, key: str, default: float = 0.0) -> float:
+        try:
+            return float(self._runtime_value(key, default))
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _runtime_int(self, key: str, default: int = 0) -> int:
+        try:
+            return int(float(self._runtime_value(key, default)))
+        except (TypeError, ValueError):
+            return int(default)
+
+
+def resolve_selection_policy(config: Any) -> dict[str, Any]:
+    """계약 지문에 들어갈 선별 정책 스냅샷. 라이브·shadow가 같은 키를 읽는다."""
+    band_on = bool(config._runtime_bool("US_SWING_DVOL_BAND_ENABLED", False))
+    max_on = bool(config._runtime_bool("US_SWING_MAX_FLOOR_ENABLED", False))
+    policy: dict[str, Any] = {"dvol_band_enabled": band_on, "max_floor_enabled": max_on}
+    if band_on:
+        policy["dvol_band_min_m"] = round(float(config._runtime_float("US_SWING_DVOL_BAND_MIN_M", 100.0)), 4)
+        policy["dvol_band_max_m"] = round(float(config._runtime_float("US_SWING_DVOL_BAND_MAX_M", 500.0)), 4)
+    if max_on:
+        policy["max_floor_pct"] = round(float(config._runtime_float("US_SWING_MAX_FLOOR_PCT", 8.0)), 4)
+    return policy
+
+
+def apply_contract_selection(
+    config: Any,
+    con: sqlite3.Connection,
+    session_date: str,
+    signals: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    """계약 선별(거래대금 밴드 → MAX 하한)을 적용하고 밴드 내 순위를 붙인다.
+
+    **라이브 실주문과 shadow 원장이 공유하는 단일 구현이다.** 반환값은
+    (통과 후보, band_meta, max_meta). 빈 결과를 어떻게 기록할지는 호출부가 정한다
+    (라이브는 SKIPPED 상태 파일, shadow는 전 행 ineligible 사유).
+
+    순서는 검정 순서와 같다 — MAX는 밴드 **위에** 얹은 축이다.
+    """
+    signals, band_meta = _apply_dollar_volume_band(config, con, session_date, signals)
+    if band_meta.get("applied") and not signals:
+        return [], band_meta, {"applied": False, "reason": "not_evaluated_band_empty"}
+    signals, max_meta = _apply_max_lottery_floor(config, session_date, signals)
+    if max_meta.get("applied") and not signals:
+        return [], band_meta, max_meta
+    if band_meta.get("applied") or max_meta.get("applied"):
+        # 밴드 통과분은 원 랭크가 3·7일 수 있다. 랭크 게이트(rank2 폴백용)가 이를
+        # "폴백 후보"로 오인하지 않도록 밴드 내 순위를 따로 붙인다.
+        # 원 rank는 귀속 태그(us_swing_5d_rank_N)에 그대로 쓰이므로 보존한다.
+        for position, signal in enumerate(signals, start=1):
+            signal["_band_position"] = position
+    return signals, band_meta, max_meta
 
 
 def _us_swing_attribution_manifest(con: sqlite3.Connection) -> frozenset[str]:
@@ -417,7 +506,9 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
                 research_authority=research_authority,
                 execution_authority=authority,
             )
-        signals, band_meta = _apply_dollar_volume_band(bot, con, session_date, signals)
+        # 선별(밴드 → MAX)은 shadow 원장과 **같은 함수**를 쓴다 (2026-08-23, P1-3 수리).
+        # 여기 로직을 인라인으로 두면 shadow와 갈라진다 — 실제로 08-20에 갈라졌다.
+        signals, band_meta, max_meta = apply_contract_selection(bot, con, session_date, signals)
         if band_meta.get("applied") and not signals:
             return _write_execution_status(
                 bot,
@@ -427,8 +518,6 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
                 research_authority=research_authority,
                 execution_authority=authority,
             )
-        # MAX 하한은 밴드 뒤에 온다(검정 순서와 동일: 밴드 위에 얹은 축).
-        signals, max_meta = _apply_max_lottery_floor(bot, session_date, signals)
         if max_meta.get("applied") and not signals:
             return _write_execution_status(
                 bot,
@@ -439,11 +528,6 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
                 execution_authority=authority,
             )
         if band_meta.get("applied") or max_meta.get("applied"):
-            # 밴드 통과분은 원 랭크가 3·7일 수 있다. 아래 랭크 게이트(rank2 폴백용)가
-            # 이를 "폴백 후보"로 오인하지 않도록 밴드 내 순위를 따로 붙인다.
-            # 원 rank는 귀속 태그(us_swing_5d_rank_N)에 그대로 쓰이므로 보존한다.
-            for position, signal in enumerate(signals, start=1):
-                signal["_band_position"] = position
             signals = signals[:pick_limit]
         raw_submit_enabled = bot._runtime_bool("US_SWING_ORDER_SUBMIT_ENABLED", False)
         live_ack = str(bot._runtime_value("US_SWING_ORDER_LIVE_ACK", "") or "")
@@ -595,10 +679,17 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
                     sl_pct=bot._runtime_float("US_SWING_ORDER_SL_DECIMAL", 0.25),
                     max_hold=5,
                     mode=mode,
-                    # rank2 폴백 경유분은 태그로 분리(반증 기준 "폴백 정산 10건" 집계용)
+                    # rank2 폴백 경유분은 태그로 분리(반증 기준 "폴백 정산 10건" 집계용).
+                    #
+                    # 2026-08-23 수리 (Codex 리뷰 P2-13): 판정 기준을 원 rank(signal_rank)에서
+                    # **게이트가 실제로 본 순위**(gate_rank = 밴드 내 순위)로 바꾼다.
+                    # 밴드/MAX가 원 rank3을 밴드 1순위로 승격시켜 정상 제출한 경우에도
+                    # 원 rank로 재면 3 > 1이라 `_fallback` 태그가 붙어, 밴드의 **주 후보**가
+                    # 폴백 반증 표본(10건)에 섞인다 — 폴백 성과와 중단 조건이 오염된다.
+                    # 08-20 MXL(원 rank3, 밴드 1순위)이 실제 사례다.
                     selected_reason=(
                         f"us_swing_5d_rank_{decision.rank}_fallback"
-                        if signal_rank > base_limit
+                        if gate_rank > base_limit
                         else f"us_swing_5d_rank_{decision.rank}"
                     ),
                     source_strategy="us_swing_5d",

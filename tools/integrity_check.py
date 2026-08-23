@@ -382,6 +382,22 @@ def check_contract_env_drift(now: datetime) -> list[dict[str, Any]]:
                 pass
         return env
 
+    def _expected_selection_policy(env: dict, truthy: set) -> dict:
+        """`runtime.us_swing_order_bridge.resolve_selection_policy`와 같은 키·기본값.
+
+        여기서는 os.environ이 아니라 `.env.live` + start-config를 읽은 env dict를 본다
+        (이 검사의 목적이 "설정 정본과 실제 기록이 같은가"이므로).
+        """
+        band_on = str(env.get("US_SWING_DVOL_BAND_ENABLED", "false")).strip().lower() in truthy
+        max_on = str(env.get("US_SWING_MAX_FLOOR_ENABLED", "false")).strip().lower() in truthy
+        policy: dict = {"dvol_band_enabled": band_on, "max_floor_enabled": max_on}
+        if band_on:
+            policy["dvol_band_min_m"] = round(float(env.get("US_SWING_DVOL_BAND_MIN_M", "100") or 100.0), 4)
+            policy["dvol_band_max_m"] = round(float(env.get("US_SWING_DVOL_BAND_MAX_M", "500") or 500.0), 4)
+        if max_on:
+            policy["max_floor_pct"] = round(float(env.get("US_SWING_MAX_FLOOR_PCT", "8") or 8.0), 4)
+        return policy
+
     try:
         env = _live_env()
         policy = json.loads((ROOT / "config" / "us_swing_accelerated.json").read_text(encoding="utf-8"))
@@ -399,6 +415,9 @@ def check_contract_env_drift(now: datetime) -> list[dict[str, Any]]:
             # 실주문 브리지·shadow 러너와 같은 env 키·기본값 (2026-08-21 env 승격)
             max_open_slots_override=int(env.get("US_SWING_MAX_OPEN_SLOTS", "5") or 5),
             max_new_per_day_override=int(env.get("US_SWING_MAX_NEW_PER_DAY", "1") or 1),
+            # 선별 정책도 계약 지문에 들어간다 (2026-08-23, P1-3). 여기서 빼면
+            # 이 드리프트 검사가 정상 상태를 매번 drift로 오인한다.
+            selection_policy=_expected_selection_policy(env, truthy),
         )["contract_id"]
         with _connect_ro(ROOT / "data" / "analysis" / "us_swing_shadow.db") as con:
             row = con.execute(

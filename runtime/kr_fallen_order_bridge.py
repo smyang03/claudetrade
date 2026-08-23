@@ -306,23 +306,29 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
             "prev_session": prev_session, "rule": rule_label,
             "candidate_count": len(candidates),
         })
-    max_new = 3 if phase3 else int(bot._runtime_int("KR_FALLEN_MAX_NEW_PER_DAY", 1))
-    today_new = _today_new_count(bot, session_date)
-    if today_new >= max_new:
-        return _write_status(bot, session_date, {
-            "status": "BLOCKED", "reason": "daily_new_entry_cap_reached",
-            "prev_session": prev_session, "rule": rule_label,
-            "candidate_count": len(candidates),
-        })
-
-    cap_krw = float(bot._runtime_float("KR_FALLEN_ORDER_MAX_KRW", 300000.0))
     # 실효 일일 진입 한도: OFF=1(현행 불변) / ON=사전등록 사다리 k→(1,2,3)
+    #
+    # 2026-08-23 수리 (Codex 리뷰 P1-4): 상단 게이트가 사다리가 아니라 **고정값 3**과
+    # 비교하고 있었다. Phase 3 ON + 후보 k가 2~9(사다리 상한 2)인 날 오늘 이미 2건
+    # 진입했으면 today_new(2) >= 3이 거짓이라 여기를 통과하고, 루프의 remaining은 0인데
+    # 종료 검사가 **제출 뒤**에 있어 3건째 주문이 실제로 나간다 = 사전등록 일2건 위반.
+    # → 게이트와 루프가 같은 daily_cap 하나만 보도록 통일한다(사다리를 먼저 계산).
     k_candidates = len(candidates)
     if phase3:
         daily_cap = 1 if k_candidates <= 1 else (2 if k_candidates <= 9 else 3)
     else:
         daily_cap = int(bot._runtime_int("KR_FALLEN_MAX_NEW_PER_DAY", 1))
-    remaining = max(0, daily_cap - today_new)
+    today_new = _today_new_count(bot, session_date)
+    if today_new >= daily_cap:
+        return _write_status(bot, session_date, {
+            "status": "BLOCKED", "reason": "daily_new_entry_cap_reached",
+            "prev_session": prev_session, "rule": rule_label,
+            "candidate_count": len(candidates),
+            "daily_cap": daily_cap, "today_new": today_new,
+        })
+
+    cap_krw = float(bot._runtime_float("KR_FALLEN_ORDER_MAX_KRW", 300000.0))
+    remaining = daily_cap - today_new  # 위 게이트를 통과했으므로 >=1이 보장된다
     results: list[dict] = []
     submitted_now = 0
     for row in candidates:
@@ -386,8 +392,14 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
             # 잔여 일일 한도 소진 → 종료 (OFF면 remaining=1이라 현행 일1건과 동일)
             if submitted_now >= remaining:
                 break
-            # 동시 보유 슬롯도 제출분 반영해 재확인 (사전등록: 동시 ≤3)
-            if _open_slots(bot) + submitted_now >= max_slots:
+            # 동시 보유 슬롯 재확인 (사전등록: 동시 ≤3)
+            #
+            # 2026-08-23 수리 (Codex 리뷰 P2-6): `+ submitted_now`는 **이중 가산**이었다.
+            # _submit_micro_probe_buy_order는 True를 돌려주기 전에 _add_pending_order로
+            # 주문을 pending_orders에 넣고(trading_bot.py:14592), _open_slots는 positions와
+            # pending_orders를 **둘 다** 센다. 같은 주문이 두 번 세어져 빈 슬롯 3개·k>=10인
+            # 날에도 2건에서 멈췄다 = Phase 3 용량의 불필요한 축소.
+            if _open_slots(bot) >= max_slots:
                 results.append({"status": "STOPPED", "reason": "slot_cap_would_exceed"})
                 break
     return _write_status(bot, session_date, {"status": "EVALUATED", "rule": rule_label,

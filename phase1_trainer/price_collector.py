@@ -880,6 +880,14 @@ def collect_us_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
 
             if not existing.empty:
                 existing = existing.sort_values("date")
+                # 2026-08-23 수리 (Codex 리뷰 P2-10): **기존 CSV에 이미 굳은 미완성 봉도
+                # 여기서 떨군다.** 이전에는 새로 받은 프레임(df_tail·df_new)만 세척하고
+                # existing은 그대로 concat해서, 재수신 결과에 오늘 봉이 없으면(=드롭됐으면)
+                # dedupe(first-wins)가 옛 미완성 행을 도로 살렸다. 같은 세션 안에서
+                # 두 번 수집하면 self-heal이 무력화되고 no-lookahead가 깨진다.
+                # 여기서 떨구면 ex_max도 함께 내려가 freshness 판정까지 정상화된다.
+                existing = _drop_incomplete_us_bars(existing)
+            if not existing.empty:
                 ex_min, ex_max = existing["date"].min(), existing["date"].max()
                 gap_audit = _audit_csv_date_gaps(existing, "US")
                 gap_ranges = _gap_ranges(gap_audit["gaps"])
@@ -933,6 +941,8 @@ def collect_us_incremental(start_dt: pd.Timestamp, end_dt: pd.Timestamp):
                     if loaded_df is not None and load_result.status == "ok":
                         existing_df = loaded_df.copy()
                         existing_df["date"] = pd.to_datetime(existing_df["date"], errors="coerce")
+                        # 기존 CSV의 미완성 봉도 제거 (2026-08-23, P2-10 — 위와 같은 이유).
+                        existing_df = _drop_incomplete_us_bars(existing_df)
                 # 신규 데이터를 앞에 둔다 — normalize의 dedupe가 first-wins라
                 # 재수신한 확정 봉이 기존(미완성 가능) 행을 교체한다.
                 combined = pd.concat([df_new, existing_df]) if existing_df is not None and not existing_df.empty else df_new

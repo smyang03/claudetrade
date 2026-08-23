@@ -25,6 +25,11 @@ from runtime.us_swing_execution_contract import (
     operator_override_active,
     resolve_execution_contract,
 )
+from runtime.us_swing_order_bridge import (
+    EnvRuntimeConfig,
+    apply_contract_selection,
+    resolve_selection_policy,
+)
 from runtime.us_swing_order_handoff import ensure_handoff_schema, summarize_forward_evidence
 from tools.build_us_yahoo_point_in_time import BENCHMARKS, build_ticker_frame, _read_price
 from tools.us_daily_alpha_walkforward import YAHOO_FEATURES, load_yahoo_dataset
@@ -1191,6 +1196,9 @@ def resolve_shadow_contract(
         # 실주문 브리지(us_swing_order_bridge)와 같은 env 키·기본값이어야 계약이 갈라지지 않는다.
         max_open_slots_override=int(os.getenv("US_SWING_MAX_OPEN_SLOTS", "5") or 5),
         max_new_per_day_override=int(os.getenv("US_SWING_MAX_NEW_PER_DAY", "1") or 1),
+        # 후보 선별(거래대금 밴드·MAX 하한)도 계약이다 — 지문에 포함한다(2026-08-23, P1-3).
+        # 이 값이 실주문과 다르면 지문이 갈라져 한 평균에 섞이지 않는다.
+        selection_policy=resolve_selection_policy(EnvRuntimeConfig()),
     )
 
 
@@ -1252,13 +1260,43 @@ def annotate_execution_shadow(
            FROM signals WHERE signal_date=? ORDER BY rank""",
         (str(signal_date),),
     ).fetchall()
+    # ── 계약 선별 (2026-08-23 수리, Codex 리뷰 P1-3) ────────────────────────────
+    # 08-20부터 실주문은 거래대금 밴드·MAX 하한으로 **재선별**한 종목을 산다. 그런데 이
+    # 원장은 여전히 원 rank1만 적격으로 찍고 있었다 → 같은 날 서로 다른 종목을 평가했다
+    # (08-20 실측: shadow=VOYG(rank1) / live=MXL(rank3, 밴드 1순위)).
+    # 사전등록 코호트 정의 1항이 "실주문과 동일 계약 전체로 선정된 건만"이므로, 판정
+    # 리포트가 우리가 쓰지 않는 전략을 재고 있던 셈이다.
+    # → 브리지와 **같은 함수**를 호출한다. 선별이 꺼져 있으면(env off / 데이터 결손)
+    #   fail-open으로 rank1이 그대로 뽑혀 이전 동작과 동일하다.
+    pool = [{"ticker": str(row[0] or "").upper(), "rank": int(row[1] or 0)} for row in rows]
+    try:
+        picked, band_meta, max_meta = apply_contract_selection(
+            EnvRuntimeConfig(), con, str(signal_date), list(pool)
+        )
+    except Exception as exc:  # 선별 실패가 원장 기록 자체를 막지 않는다
+        picked = list(pool)
+        band_meta = {"applied": False, "reason": f"selection_error:{str(exc)[:80]}"}
+        max_meta = {"applied": False}
+    selection_applied = bool(band_meta.get("applied") or max_meta.get("applied"))
+    skip_reason = ""
+    if selection_applied and not picked:
+        skip_reason = "max_floor_no_candidate" if max_meta.get("applied") else "dvol_band_no_candidate"
+    if selection_applied:
+        contract_ticker = str(picked[0]["ticker"]).upper() if picked else ""
+        default_reason = skip_reason or "not_contract_selection"
+        policy_label = "contract_selection_v1"
+    else:
+        contract_ticker = next((item["ticker"] for item in pool if item["rank"] == 1), "")
+        default_reason = "rank_outside_micro_contract"
+        policy_label = "rank1_skip_v1"
+
     selected: dict[str, Any] = {}
     for ticker, rank, reference_close, candidate_source, probability, predicted_net in rows:
         eligible = 0
         qty = 0
         price_krw = None
-        reason = "rank_outside_micro_contract"
-        if int(rank) == 1:
+        reason = default_reason
+        if contract_ticker and str(ticker or "").upper() == contract_ticker:
             reference = float(reference_close) if reference_close is not None else None
             price_krw = reference * fx if reference and fx else None
             source = str(candidate_source or "").lower()
@@ -1287,8 +1325,13 @@ def annotate_execution_shadow(
                     reason = "micro_budget_cannot_buy_one_share"
                 else:
                     eligible = 1
-                    reason = "selected_rank1_whole_share"
-                    selected = {"ticker": str(ticker), "rank": 1, "qty": qty}
+                    reason = (
+                        "selected_contract_selection_whole_share" if selection_applied
+                        else "selected_rank1_whole_share"
+                    )
+                    # 원 rank를 그대로 기록한다 — 밴드가 rank3을 골랐으면 3이다.
+                    selected = {"ticker": str(ticker), "rank": int(rank or 0), "qty": qty,
+                                "selection_applied": selection_applied}
         con.execute(
             """UPDATE signals SET execution_shadow_eligible=?,execution_shadow_reason=?,
                 execution_shadow_qty=?,execution_shadow_budget_krw=?,
@@ -1305,7 +1348,7 @@ def annotate_execution_shadow(
                 reference_close,
                 price_krw,
                 fx,
-                "rank1_skip_v1",
+                policy_label,
                 evaluated_at,
                 str(contract["contract_id"]),
                 int(max_open_slots),
@@ -1316,7 +1359,7 @@ def annotate_execution_shadow(
         )
     con.commit()
     return {
-        "policy": "rank1_skip_v1",
+        "policy": policy_label,
         "contract_id": str(contract["contract_id"]),
         "contract": contract,
         "budget_krw": budget,
@@ -1326,6 +1369,9 @@ def annotate_execution_shadow(
         "open_slots_used": len(occupied),
         "max_open_slots": max_open_slots,
         "selected": selected,
+        # 선별 근거를 남긴다 — 라이브 상태파일(us_swing_order_status)의 dvol_band/max_floor와
+        # 같은 내용이어야 한다. 다르면 두 경로가 또 갈라진 것이다.
+        "selection": {"applied": selection_applied, "dvol_band": band_meta, "max_floor": max_meta},
     }
 
 

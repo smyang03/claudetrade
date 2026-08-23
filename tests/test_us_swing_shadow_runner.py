@@ -93,7 +93,11 @@ def test_execution_shadow_uses_rank1_whole_share_and_contract_outcome(tmp_path: 
         fx_map={"2026-01-05": 1000.0},
         policy=policy,
     )
-    assert shadow["selected"] == {"ticker": "TEST", "rank": 1, "qty": 5}
+    # 선별(밴드/MAX)이 꺼져 있으면 이전과 동일하게 rank1이 뽑힌다 — fail-open 하위호환.
+    assert shadow["selected"] == {
+        "ticker": "TEST", "rank": 1, "qty": 5, "selection_applied": False,
+    }
+    assert shadow["policy"] == "rank1_skip_v1"
     rows = con.execute(
         "SELECT ticker,execution_shadow_eligible,execution_shadow_reason FROM signals ORDER BY rank"
     ).fetchall()

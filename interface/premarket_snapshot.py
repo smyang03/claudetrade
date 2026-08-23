@@ -37,7 +37,16 @@ KST = ZoneInfo("Asia/Seoul")
 PREMARKET_START = dtime(4, 0)    # ET
 REGULAR_OPEN = dtime(9, 30)      # ET
 _CACHE_TTL_SEC = 60
-_CACHE: dict[str, Any] = {"at": None, "payload": None}
+# 2026-08-23 수리 (Codex 리뷰 P2-11): 캐시를 **모드별로 분리**한다.
+# 이전에는 단일 슬롯이라, 같은 프로세스에서 paper를 조회한 뒤 60초 안에 live를 조회하면
+# (또는 그 반대) mode를 확인하지 않고 직전 payload를 그대로 돌려줬다. 두 모드는 브로커
+# 보유종목·평단이 다르므로 라이브 화면에 paper 포지션·손익이 뜰 수 있다.
+_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def _cache_slot(mode: str) -> dict[str, Any]:
+    key = str(mode or "live").strip().lower() or "live"
+    return _CACHE.setdefault(key, {"at": None, "payload": None})
 
 
 def is_premarket(now: datetime | None = None) -> bool:
@@ -88,8 +97,9 @@ def premarket_positions(bot: Any = None, *, mode: str = "live") -> dict[str, Any
     if not is_premarket(now):
         return {"active": False, "reason": "not_premarket", "rows": [], "as_of": now.isoformat(timespec="seconds")}
 
-    cached = _CACHE.get("payload")
-    at = _CACHE.get("at")
+    slot = _cache_slot(mode)
+    cached = slot.get("payload")
+    at = slot.get("at")
     if cached is not None and at is not None and (now - at).total_seconds() < _CACHE_TTL_SEC:
         return cached
 
@@ -132,7 +142,7 @@ def premarket_positions(bot: Any = None, *, mode: str = "live") -> dict[str, Any
         "rows": rows,
         "as_of": now.isoformat(timespec="seconds"),
     }
-    _CACHE["at"], _CACHE["payload"] = now, payload
+    slot["at"], slot["payload"] = now, payload
     return payload
 
 

@@ -9519,9 +9519,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         position_id: str = "",
         reason_code: str = "",
         payload: Optional[dict] = None,
-    ) -> None:
+    ) -> bool:
+        """이벤트 기록. 성공 여부를 그대로 전달한다(2026-08-23, ORDER_SENT 중복키용).
+
+        v2가 없거나 스텁이 None을 돌려주면 True로 본다 — "실패했다는 증거가 있을 때만"
+        재시도 여지를 남기는 보수적 규약이다.
+        """
         if getattr(self, "v2", None) is not None:
-            self.v2.record_event(
+            return self.v2.record_event(
                 event_type,
                 market,
                 ticker,
@@ -9530,7 +9535,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 position_id=position_id,
                 reason_code=reason_code,
                 payload=payload,
-            )
+            ) is not False
+        return True
     def _v2_record_profit_evidence_shadow(
         self,
         market: str,
@@ -18654,8 +18660,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 # close_position의 pnl_pct는 KRW 실현 손익률로 수수료·FX가 이미 반영된
                 # net이다(B3 실측: FRMI gross +12.81 vs 기록 +12.32 = 왕복비용 0.49%p).
                 # sync가 이 키를 pnl_pct_net 정본 컬럼으로 옮긴다(2026-08-18 배선).
-                # 수수료·FX 분해값은 KIS가 주지 않아 비운다 — 총비용 반영 net만 인증.
+                # 2026-08-23: 왕복 수수료를 close 쪽에서 계산하게 됐으므로(P2-7 수리)
+                # 분해값도 함께 남긴다. FX 분해는 여전히 KIS가 주지 않아 비운다.
                 "pnl_pct_net": float(ex.get("pnl_pct", 0) or 0),
+                "fee_pct_round_trip": float(ex.get("fee_pct_round_trip", 0) or 0) or None,
+                "fee_krw_est": (
+                    float(ex.get("buy_fee_krw", 0) or 0) + float(ex.get("sell_fee_krw", 0) or 0)
+                ) or None,
                 "pnl_krw_net": float(ex.get("pnl", 0) or ex.get("pnl_krw", 0) or ex.get("realized_pnl_krw", 0) or 0),
                 "net_source": "broker_realized_krw",
                 "close_reason": str(reason or ""),
@@ -25693,13 +25704,12 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             key = f"{market}:{order_no}"
             if key in seen:
                 return
-            seen.add(key)
             decision_id = str(
                 order.get("v2_decision_id", "")
                 or self._v2_decision_id_for_ticker(market, ticker_key)
                 or ""
             )
-            self._v2_record_lifecycle_event(
+            emitted = self._v2_record_lifecycle_event(
                 "ORDER_SENT",
                 market,
                 ticker_key,
@@ -25715,6 +25725,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "emitted_by": "add_pending_order",
                 },
             )
+            # 2026-08-23 수리 (Codex 리뷰 P2-14): 중복키를 **기록 성공 뒤에** 넣는다.
+            # 이전에는 record 앞에서 seen.add를 해서, DB 잠금 등으로 한 번 실패하면
+            # 키만 남고 이벤트는 없는 상태가 됐다. _add_pending_order는 주문 갱신 때도
+            # 다시 부르는데 그때 즉시 return하므로 ORDER_SENT가 **영구 누락**되고,
+            # 그 체결은 FILLED_WITHOUT_ORDER_SENT = DIRTY로 떨어진다.
+            # 08-22에 고친 그 결함(코호트 전건 learning_allowed=0)의 재발 경로다.
+            # record_event가 예외를 내부에서 삼키므로 반환값으로 성공을 확인한다 —
+            # 그러지 않으면 "호출했다"와 "기록됐다"를 여전히 혼동하게 된다.
+            # "실패했다는 증거가 있을 때만" 재시도 — 스텁이나 v2 미설정처럼 None이
+            # 돌아오는 경로는 성공으로 본다(_v2_record_lifecycle_event와 같은 규약).
+            if emitted is not False:
+                seen.add(key)
+            else:
+                log.warning(
+                    f"[ORDER_SENT] 기록 실패 — 중복키 미등록(다음 갱신에서 재시도) "
+                    f"{market} {ticker_key} order_no={order_no}"
+                )
         except Exception as exc:
             log.warning(f"[ORDER_SENT] 기록 실패 {market} {ticker_key}: {exc}")
 
@@ -29446,12 +29473,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 fee_fn = getattr(self.risk, "_fee", None)
                 sell_fee = float(fee_fn("sell", exit_price_krw * close_qty) if callable(fee_fn) else 0.0)
                 gross_pnl = (exit_price_krw - float(original.get("entry", 0) or 0)) * close_qty
-                pnl = gross_pnl - sell_fee
                 cost_basis = float(original.get("entry", 0) or 0) * close_qty
+                # 왕복 비용 반영 (2026-08-23, Codex 리뷰 P2-7 — risk_manager와 같은 규약).
+                # 매수 수수료는 진입 때 이미 현금에서 빠졌지만 손익 **보고값**에는 없었다.
+                buy_fee_fn = getattr(self.risk, "_entry_side_fee", None)
+                buy_fee = float(
+                    buy_fee_fn(float(original.get("entry", 0) or 0), close_qty)
+                    if callable(buy_fee_fn) else 0.0
+                )
+                pnl = gross_pnl - sell_fee - buy_fee
                 pnl_pct = (pnl / cost_basis * 100.0) if cost_basis else 0.0
                 self.risk.cash += exit_price_krw * close_qty - sell_fee
                 self.risk.total_fee = float(getattr(self.risk, "total_fee", 0.0) or 0.0) + sell_fee
-                self.risk.daily_pnl = float(getattr(self.risk, "daily_pnl", 0.0) or 0.0) + pnl
+                # daily_pnl은 매수 수수료를 진입 때 이미 반영했다 — 매도측만 더한다.
+                self.risk.daily_pnl = float(getattr(self.risk, "daily_pnl", 0.0) or 0.0) + (gross_pnl - sell_fee)
                 pos["qty"] = max(0, pos_qty - close_qty)
                 pos["sell_confirmation_pending"] = False
                 pos["pending_sell_status"] = "resolved"
@@ -29465,6 +29500,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                     "pnl": pnl,
                     "pnl_krw": pnl,
                     "pnl_pct": pnl_pct,
+                    "buy_fee_krw": buy_fee,
+                    "sell_fee_krw": sell_fee,
+                    "fee_pct_round_trip": ((buy_fee + sell_fee) / cost_basis * 100.0) if cost_basis else 0.0,
                     "reason": reason,
                 }
                 evt = {
@@ -29553,6 +29591,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 )
         except Exception:
             pass
+        # sleeve 계약 청산 CLOSED 발행 — **지연 체결 경로** (2026-08-23 수리, Codex 리뷰 P1-5).
+        #
+        # _record_sleeve_closed_event의 호출자가 직접 청산 경로(_execute_sell 계열) 한 곳뿐이었다.
+        # 브로커가 매도를 접수만 하고 즉시 체결 확인이 없으면 그 경로는 pending으로 빠져나가고,
+        # 나중에 이 함수가 포지션을 닫아도 CLOSED가 발행되지 않는다. 정상적인 지연 체결인데
+        # 정본 원장(v2_canonical_performance)에는 진입행만 남아 영원히 "보유중"·DIRTY가 된다.
+        # 지금까지 안 물린 건 sleeve 청산 6건이 전부 즉시 확인이었기 때문이다(잠재 결함).
+        #
+        # 부분 청산에는 발행하지 않는다 — 포지션이 아직 열려 있으므로 CLOSED가 아니다.
+        # 기록 실패가 청산을 막지 않도록 전 구간을 감싼다(직접 경로와 같은 규약).
+        if close_qty >= pos_qty:
+            try:
+                self._record_sleeve_closed_event(pos, market_key, reason, ex)
+            except Exception as _sleeve_closed_exc:
+                log.warning(
+                    f"[sleeve CLOSED] 지연체결 발행 실패 {market_key} {ticker}: {_sleeve_closed_exc}"
+                )
         return ex
 
     def _reconcile_pending_sell_confirmations(

@@ -4,8 +4,23 @@ A안 (2026-08-05 운영자 승인): 판정 날 지표를 급조하면 결과를 
 된다(골대 이동). 판정에 쓸 지표를 지금 코드로 고정하고, 부분 데이터로 미리
 돌려 배선 구멍을 사전에 찾는다.
 
-판정 코호트 = 현재 실행 계약(contract_id)과 일치하는 execution shadow 정산분.
-교차 확인 = 실체결 원장(execution_shortfall_ledger)의 실현 손익.
+판정 코호트 = **실체결 원장(v2_canonical_performance)의 sleeve 정산분**.
+shadow 정산은 근사 검증치로 분리 표기한다.
+
+2026-08-23 정정 (Codex 리뷰 P1-1/P1-3):
+  이전 구현은 `execution_shadow_eligible=1` 행을 그대로 표본으로 셌다. 그 결과
+    · 계약 발효 전(지문 없음) 7월 행 3건(SMCI·NVTS×2)
+    · 라이브가 차단한 건(STEP 08-10)
+    · 제출됐으나 미체결로 만료된 건(DIOD 08-14, SUBMITTED_UNCONFIRMED)
+  이 모두 표본에 들어가 "정산 9/30, 평균 +3.07%"가 나왔다. 실제로 돈이 오간 건 4건뿐이다.
+  게다가 08-20부터 라이브는 거래대금 밴드·MAX로 재선별한 종목을 사는데 shadow는 원 rank1을
+  평가하고 있어(08-20 shadow=VOYG / live=MXL) **다른 전략을 재고 있었다.**
+  사전등록 코호트 정의는 1항 "실주문과 동일 계약 전체로 선정된 건만", 2항 "정산 수치의
+  정본은 실체결 원장이고 shadow 정산은 근사 검증치"다. 그 규약대로 되돌린다.
+
+  · 정산 표본  = 실체결 CLOSED + net 정본 존재
+  · 엄격 표본  = 그중 CLEAN(learning_allowed=1)만 — 품질 게이트를 통과한 부분집합
+  · 미체결 제출건 = 체결률 통계에만 넣고 손익 평균에서는 뺀다(운영자 판단 08-23)
 
 사전 고정 지표(순서 포함 — 판정 시 이 순서로 본다):
   1. 표본 진행률 (정산 n / 30)
@@ -35,6 +50,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 DB = ROOT / "data" / "analysis" / "us_swing_shadow.db"
+CANON_DB = ROOT / "data" / "ml" / "decisions.db"
+SLEEVE_STRATEGY = "us_swing_5d"
 SPY = ROOT / "data" / "price" / "us" / "us_SPY.csv"
 IWM = ROOT / "data" / "price" / "us" / "us_IWM.csv"
 POLICY = ROOT / "config" / "us_swing_accelerated.json"
@@ -105,27 +122,42 @@ def main() -> int:
     )
     con.close()
 
-    settled = frame[frame["execution_shadow_net_krw_pct"].notna()].copy()
-    pending = frame[frame["execution_shadow_net_krw_pct"].isna()]
     scope = f"contract {args.contract_id}" if args.contract_id else "누적(전 지문)"
     print(f"=== US swing forward 판정 리포트 ({scope}) ===")
-    print(f"[1] 표본: 정산 {len(settled)} / {TARGET_N}  (보유중 {len(pending)}건: "
-          f"{', '.join(pending['ticker'].tolist()) or '-'})")
-    if not args.contract_id and not frame.empty:
-        # 지문 분해 병기 — 규약이 요구하는 형태. 금액·슬롯이 다른 구간을 섞어 읽지 않게 한다.
-        print("    [지문 분해] " + " | ".join(
-            f"{cid[:8] or '미기록'}: 정산 {int(g['execution_shadow_net_krw_pct'].notna().sum())}"
-            f"/{len(g)}"
-            for cid, g in frame.groupby("contract_id", dropna=False)
+
+    # ── 정본: 실체결 원장 ──────────────────────────────────────────────────────
+    contract_start = _contract_start_date(frame)
+    real = _real_cohort(contract_start)
+    settled = _settled_view(real, frame)
+    holding = real[real["closed"] == 0]
+    net_missing = real[(real["closed"] == 1) & (real["pnl_pct_net"].isna())]
+    strict = settled[settled["learning_allowed"] == 1]
+
+    print(f"[1] 표본(정본=실체결): 정산 {len(settled)} / {TARGET_N}"
+          f"  | 엄격(CLEAN) {len(strict)}건"
+          f"  | 보유중 {len(holding)}건: {', '.join(holding['ticker'].tolist()) or '-'}")
+    print(f"    계약 발효일 {contract_start or '미상'} 이후만 집계 — 그 이전 행은 계약 밖이다.")
+    if not net_missing.empty:
+        print(f"    ⚠ 청산됐으나 net 정본 결손 {len(net_missing)}건: "
+              f"{', '.join(net_missing['ticker'].tolist())} — 원장 동기화 확인 필요(평균에서 제외됨)")
+    if not settled.empty:
+        print("    [등급 분해] " + " | ".join(
+            f"{grade or '미기록'} {len(g)}건" for grade, g in settled.groupby("quality_grade", dropna=False)
         ))
-        print(f"    현재 실행 지문: {contract or '미기록'}")
+    _shadow_observation_view(frame, contract, args.contract_id, contract_start)
+    _cross_check_real_fills()
+
     if settled.empty:
         print("정산 표본 없음 — 이하 지표는 표본 축적 후 산출된다. (배선 점검용 실행 완료)")
-        _cross_check_real_fills()
         _observation_views(contract)
         return 0
 
     nets = settled["execution_shadow_net_krw_pct"].to_numpy(float)
+    if len(strict) and len(strict) != len(settled):
+        s_nets = strict["execution_shadow_net_krw_pct"].to_numpy(float)
+        print(f"[2-엄격] CLEAN {len(strict)}건 평균 net {s_nets.mean():+.3f}% | "
+              f"승률 {100 * (s_nets > 0).mean():.0f}% "
+              f"(전체 정산과 분리해서 본다 — 품질 게이트 통과분)")
     pos_sum = nets[nets > 0].sum()
     neg_sum = -nets[nets <= 0].sum()
     print(f"[2] 평균 net {nets.mean():+.3f}% | 승률 {100 * (nets > 0).mean():.0f}% | "
@@ -166,9 +198,105 @@ def main() -> int:
     print("[보조] source 분해:", settled.groupby("candidate_source")["execution_shadow_net_krw_pct"]
           .agg(["count", "mean"]).round(2).to_dict("index"))
     _sector_distribution(settled)
-    _cross_check_real_fills()
     _observation_views(contract)
     return 0
+
+
+def _contract_start_date(frame: pd.DataFrame) -> str:
+    """계약 발효일 = 지문이 처음 찍힌 세션.
+
+    상수로 박지 않고 원장에서 끌어온다 — 지문 이력이 바뀌어도 따라간다.
+    이 날짜 이전 행(07월 SMCI·NVTS·AXTI)은 계약 밖이라 판정 표본이 아니다.
+    """
+    if frame.empty or "contract_id" not in frame.columns:
+        return ""
+    tagged = frame[frame["contract_id"].astype(str).str.strip() != ""]
+    return str(tagged["signal_date"].min()) if not tagged.empty else ""
+
+
+def _real_cohort(contract_start: str) -> pd.DataFrame:
+    """정본 실체결 코호트 — 라이브에서 실제로 체결된 sleeve 건만."""
+    empty = pd.DataFrame(columns=[
+        "session_date", "ticker", "closed", "quality_grade", "learning_allowed",
+        "pnl_pct_net", "pnl_krw_net", "first_closed_at",
+    ])
+    if not CANON_DB.exists():
+        print("[1] ⚠ 정본 원장 없음 — data/ml/decisions.db 확인 필요")
+        return empty
+    con = sqlite3.connect(f"file:{CANON_DB}?mode=ro", uri=True, timeout=10)
+    try:
+        frame = pd.read_sql_query(
+            """SELECT session_date, ticker, closed, quality_grade, learning_allowed,
+                      pnl_pct_net, pnl_krw_net, first_closed_at
+               FROM v2_canonical_performance
+               WHERE strategy=? AND filled=1 AND runtime_mode='live'
+               ORDER BY session_date""",
+            con, params=(SLEEVE_STRATEGY,),
+        )
+    finally:
+        con.close()
+    if contract_start and not frame.empty:
+        frame = frame[frame["session_date"] >= contract_start]
+    return frame
+
+
+def _settled_view(real: pd.DataFrame, shadow: pd.DataFrame) -> pd.DataFrame:
+    """정산 표본을 기존 지표 함수들이 읽는 모양으로 맞춘다.
+
+    net은 **정본(pnl_pct_net)** 을 쓰고, breadth·source·진입일 같은 메타만 shadow
+    signals에서 가져온다. net이 비어 있는 행은 표본이 아니다 — gross로 대체하지 않는다.
+    """
+    if real.empty:
+        return pd.DataFrame(columns=[
+            "signal_date", "ticker", "entry_date", "execution_shadow_exit_date",
+            "execution_shadow_net_krw_pct", "breadth_context_state", "candidate_source",
+            "quality_grade", "learning_allowed",
+        ])
+    settled = real[(real["closed"] == 1) & (real["pnl_pct_net"].notna())].copy()
+    if settled.empty:
+        return settled.assign(**{
+            "signal_date": [], "entry_date": [], "execution_shadow_exit_date": [],
+            "execution_shadow_net_krw_pct": [], "breadth_context_state": [], "candidate_source": [],
+        })
+    meta_cols = ["signal_date", "ticker", "entry_date", "breadth_context_state", "candidate_source"]
+    meta = shadow[[c for c in meta_cols if c in shadow.columns]].copy() if not shadow.empty else pd.DataFrame()
+    settled = settled.rename(columns={"session_date": "signal_date"})
+    if not meta.empty:
+        settled = settled.merge(meta, on=["signal_date", "ticker"], how="left")
+    for column in ("entry_date", "breadth_context_state", "candidate_source"):
+        if column not in settled.columns:
+            settled[column] = ""
+    settled["entry_date"] = settled["entry_date"].fillna(settled["signal_date"])
+    settled["breadth_context_state"] = settled["breadth_context_state"].fillna("미기록")
+    settled["candidate_source"] = settled["candidate_source"].fillna("미기록")
+    settled["execution_shadow_exit_date"] = settled["first_closed_at"].astype(str).str[:10]
+    settled["execution_shadow_net_krw_pct"] = settled["pnl_pct_net"].astype(float)
+    return settled.sort_values("signal_date").reset_index(drop=True)
+
+
+def _shadow_observation_view(
+    frame: pd.DataFrame, contract: str, explicit_contract: str, contract_start: str
+) -> None:
+    """[S] shadow 근사 관측 — **판정 표본이 아니다.** 계약기 행만 보고 실주문 여부를 병기한다."""
+    if frame.empty:
+        print("[S] shadow 관측: 행 없음")
+        return
+    scoped = frame[frame["contract_id"].astype(str).str.strip() != ""]
+    if contract_start:
+        scoped = scoped[scoped["signal_date"] >= contract_start]
+    settled = scoped[scoped["execution_shadow_net_krw_pct"].notna()]
+    dropped = len(frame) - len(scoped)
+    nets = settled["execution_shadow_net_krw_pct"].to_numpy(float)
+    summary = f"정산 {len(settled)}건" + (f", 평균 {nets.mean():+.3f}%" if len(nets) else "")
+    print(f"[S] shadow 근사 관측(판정 표본 아님): {summary}"
+          + (f" | 계약 전 행 {dropped}건 제외" if dropped else ""))
+    if not explicit_contract and not scoped.empty:
+        # 지문 분해 병기 — 금액·슬롯·선별이 다른 구간을 섞어 읽지 않게 한다.
+        print("    [지문 분해] " + " | ".join(
+            f"{cid[:8]}: 정산 {int(g['execution_shadow_net_krw_pct'].notna().sum())}/{len(g)}"
+            for cid, g in scoped.groupby("contract_id", dropna=False)
+        ))
+        print(f"    현재 실행 지문: {contract or '미기록'}")
 
 
 def _alpha_regime_view(settled: pd.DataFrame) -> None:
@@ -588,15 +716,21 @@ def _cross_check_real_fills() -> None:
         return
     buys: dict[str, dict] = {}
     trades = []
+    unfilled: list[str] = []
+    submitted = 0
     for line in SHORTFALL.read_text(encoding="utf-8").splitlines():
         try:
             row = json.loads(line)
         except ValueError:
             continue
         if str(row.get("source") or "") == "us_swing_5d" and row.get("side") == "BUY":
+            submitted += 1
             # 2026-08-17: 접수만 되고 체결 확정이 없는 주문(DIOD 08-14)은 보유가 아니다.
             # 이 가드가 없으면 미체결 건이 "보유중"으로 영구히 남는다.
+            # 2026-08-23: 이런 건은 **체결률 통계에만** 넣는다. 미체결에 shadow 손익을
+            # 붙여 실적처럼 세면 안 된다(운영자 판단 08-23).
             if str(row.get("fill_status") or "") == "SUBMITTED_UNCONFIRMED":
+                unfilled.append(f"{row.get('ticker')}({row.get('session_date')})")
                 continue
             buys[row["ticker"]] = row
         elif row.get("side") == "SELL" and row.get("ticker") in buys:
@@ -613,6 +747,10 @@ def _cross_check_real_fills() -> None:
     print("[교차] 실체결 왕복(us_swing_5d):",
           [f"{t} {a}->{b} {label}" for t, a, b, label in trades] or "아직 없음",
           f"| 보유중 {sorted(buys)}" if buys else "")
+    if submitted:
+        fill_rate = 100.0 * (submitted - len(unfilled)) / submitted
+        print(f"[체결률] 제출 {submitted}건 중 체결 {submitted - len(unfilled)}건 ({fill_rate:.0f}%)"
+              + (f" | 미체결 {unfilled}" if unfilled else ""))
 
 
 if __name__ == "__main__":

@@ -17369,6 +17369,12 @@ def _strategy_canonical_nets(rows: list[dict], mode: str) -> dict[str, dict]:
       다른 전략 거래와 확실히 분리 — 5월 MXL claude_price 실측)
     - pnl_pct_net이 비어 있으면 **net으로 승격하지 않는다.** DIRTY 백필분은
       `is_net=False`로 표시해 화면이 gross/브로커 실현값과 정본 net을 구분하게 한다.
+
+    2026-08-23 수리 (Codex 리뷰 P2-8): **반환 키가 티커 하나였다.** 같은 티커를 여러 번
+    거래하면 모든 라운드가 같은 fill/net을 공유해, 먼저 정산된 라운드는 HOLDING으로
+    오표시되고 나중 라운드가 청산되면 같은 손익이 두 행에 중복 집계될 수 있었다
+    (MXL 08-11 정산 / 08-20 보유가 실제 사례). 키를 `티커|신호일`로 바꾸고, 한 canonical
+    행이 두 신호행에 재사용되지 않도록 소비된 decision_id를 소진 처리한다.
     """
     if not rows or not DECISIONS_DB_PATH.exists():
         return {}
@@ -17404,9 +17410,13 @@ def _strategy_canonical_nets(rows: list[dict], mode: str) -> dict[str, dict]:
             by_decision[decision_id] = row
         fallback.setdefault(str(row[0] or "").upper(), []).append(row)
 
-    for item in rows:
+    # 라운드 재사용 방지 — 한 canonical 청산행은 한 신호행에만 귀속된다.
+    consumed: set[str] = set()
+    # 신호일 오름차순으로 소비해야 "먼저 난 신호가 먼저 청산된 행을 가져간다"가 성립한다.
+    for item in sorted(rows, key=lambda r: str(r.get("signal_date") or "")):
         ticker = item["ticker"]
         signal_date = item.get("signal_date", "")
+        round_key = f"{ticker}|{signal_date}"
         matched = None
         match_basis = ""
         # 0순위: 진입 decision_id(가장 정확). 2026-08-21부터 sleeve 청산이 진입
@@ -17416,7 +17426,7 @@ def _strategy_canonical_nets(rows: list[dict], mode: str) -> dict[str, dict]:
         entry_prefix = f"dec_{str(signal_date or '').replace('-', '')}_"
         if len(entry_prefix) > 5:
             for decision_id, row in by_decision.items():
-                if not decision_id.startswith(entry_prefix):
+                if decision_id in consumed or not decision_id.startswith(entry_prefix):
                     continue
                 parts = decision_id.split("_")
                 if len(parts) >= 5 and parts[3].upper() == str(ticker).upper():
@@ -17424,7 +17434,7 @@ def _strategy_canonical_nets(rows: list[dict], mode: str) -> dict[str, dict]:
                     break
         # 1순위: sleeve 합성 decision_id(정확) — 청산 세션일은 신호일 이후이므로 후보를 훑는다
         for decision_id, row in (by_decision.items() if matched is None else []):
-            if not decision_id.startswith("sleeve_"):
+            if decision_id in consumed or not decision_id.startswith("sleeve_"):
                 continue
             parts = decision_id.split("_")
             if len(parts) >= 4 and parts[2].upper() == ticker and str(row[1] or "")[:10] >= signal_date:
@@ -17433,13 +17443,17 @@ def _strategy_canonical_nets(rows: list[dict], mode: str) -> dict[str, dict]:
         # 2순위: 신호일 이후 최초 청산(느슨 — 근거를 함께 남긴다)
         if matched is None:
             for row in fallback.get(ticker, []):
+                if str(row[2] or "") in consumed:
+                    continue
                 if str(row[1] or "")[:10] >= signal_date:
                     matched, match_basis = row, "ticker_session_date_fallback"
                     break
         if matched is None:
             continue
+        if str(matched[2] or ""):
+            consumed.add(str(matched[2] or ""))
         net_value = matched[5]
-        out[ticker] = {
+        out[round_key] = {
             "net_pct": round(float(net_value), 3) if net_value is not None else (
                 round(float(matched[4]), 3) if matched[4] is not None else None),
             "is_net": net_value is not None,
@@ -17537,17 +17551,30 @@ def _strategy_cohort(mode: str = "live") -> dict:
         fingerprints[str(contract_id)] = fingerprints.get(str(contract_id), 0) + 1
         fill = filled.get(key) or {}
         entry_at = str(fill.get("filled_at") or "")
-        net = canonical.get(key)
+        # 라운드 키(티커|신호일)로 조회 — 같은 티커 재매수 시 라운드가 안 섞인다(P2-8).
+        net = canonical.get(f"{key}|{str(signal_date or '')[:10]}")
         if not entry_at:
             state = "NOT_FILLED"
+        elif net:
+            # 이 라운드에 귀속된 청산행이 있으면 정산이다. `held` 판정보다 앞에 온다 —
+            # 같은 티커를 재매수해 지금 보유 중이어도 **먼저 끝난 라운드**는 정산이다
+            # (2026-08-23: 이전에는 재매수 종목의 과거 정산이 HOLDING으로 오표시됐다).
+            state = "SETTLED"
         elif key in held:
             state = "HOLDING"
-        elif net:
-            state = "SETTLED"
         else:
             state = "PENDING_SYNC"
         if state == "SETTLED" and net:
-            settled_nets.append(float(net["net_pct"]))
+            # 2026-08-23 수리 (Codex 리뷰 P2-15): **정본 net이 있는 행만** 평균에 넣는다.
+            # pnl_pct_net이 NULL이고 gross pnl_pct만 있는 legacy·지연동기화 행이 DB에
+            # 208건 있는데, 이전에는 fallback이 gross로 채운 dict를 만들고 그게 그대로
+            # settled_nets에 들어갔다. "판정은 실제 net만"이라는 규칙과 이 함수 상단
+            # 주석 양쪽에 반한다. net 결손 행은 정산 카운트에서 빼고 따로 센다.
+            if net.get("is_net") and net.get("net_pct") is not None:
+                settled_nets.append(float(net["net_pct"]))
+            else:
+                state = "PENDING_SYNC"
+                counts["settled_net_missing"] = counts.get("settled_net_missing", 0) + 1
         counts[state.lower()] = counts.get(state.lower(), 0) + 1
         out_rows.append({
             "signal_date": str(signal_date or "")[:10],
@@ -17576,6 +17603,8 @@ def _strategy_cohort(mode: str = "live") -> dict:
         "holding": counts.get("holding", 0),
         "not_filled": counts.get("not_filled", 0),
         "pending_sync": counts.get("pending_sync", 0),
+        # net 정본이 없어 정산에서 뺀 건수 — 0이 아니면 원장 동기화가 밀린 것이다.
+        "settled_net_missing": counts.get("settled_net_missing", 0),
         "settled_nets": settled_nets,
         "fingerprints": [
             {"id": fid[:8], "count": n} for fid, n in sorted(fingerprints.items())
@@ -17742,6 +17771,18 @@ def api_strategy_summary():
     except Exception:
         local_positions = {}
 
+    # 2026-08-23 수리 (Codex 리뷰 P2-9): 계약 포지션 판정을 **sleeve 2종 전부**로 넓힌다.
+    # cohort_tickers는 US swing 핸드오프 원장에서만 만들어져서, kr_fallen_5d 보유
+    # (08-19 031330)가 non_contract로 떨어졌다. 전략 관제 화면이 그 포지션의
+    # TP12/SL25/D5와 보유일을 통째로 누락해 "실제 매수 sleeve 두 종류를 다 보여준다"는
+    # 운영 계약을 못 지켰다. 로컬 포지션의 source_strategy를 정본으로 쓴다.
+    _SLEEVE_SOURCES = {"us_swing_5d", "kr_fallen_5d"}
+    sleeve_tickers = {
+        ticker for ticker, item in local_positions.items()
+        if str(item.get("source_strategy") or "").lower() in _SLEEVE_SOURCES
+    }
+    contract_tickers = cohort_tickers | sleeve_tickers
+
     tp_pct = float(contract.get("take_profit_pct") or 0.12) * 100
     sl_pct = float(contract.get("catastrophe_stop_pct") or 0.25) * 100
     max_hold = int(contract.get("max_hold_sessions") or 5)
@@ -17761,7 +17802,7 @@ def api_strategy_summary():
             "current_price": float(pos.get("current_price") or 0),
             "pnl_pct": round(float(pos.get("pnl_pct") or 0), 2),
         }
-        if ticker in cohort_tickers:
+        if ticker in contract_tickers:
             entry_date = entry_dates.get(ticker, "")
             # 보유일수는 **봇이 세는 held_days가 truth**다. 화면이 KST date.today()로
             # 자체 계산하면 US 밤장 시작 전에 이미 하루가 지난 것으로 세어 하루 앞선다

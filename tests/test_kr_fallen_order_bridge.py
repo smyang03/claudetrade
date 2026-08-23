@@ -71,6 +71,17 @@ class FakeBot:
 
     def _submit_micro_probe_buy_order(self, **kwargs):
         self.submits.append(kwargs)
+        # 2026-08-23: 프로덕션과 같은 부수효과 — True를 돌려주기 전에 주문이
+        # pending_orders에 들어간다(trading_bot.py:14592). 슬롯 계산(_open_slots)이
+        # positions + pending_orders를 세므로, 이 부수효과가 없으면 픽스처가
+        # 프로덕션보다 슬롯을 적게 세어 용량 버그를 영원히 통과시킨다.
+        self.pending_orders.append({
+            "ticker": kwargs.get("ticker"),
+            "market": kwargs.get("market"),
+            "qty": kwargs.get("qty"),
+            "source_strategy": kwargs.get("source_strategy", ""),
+            "entry_session_date": "2026-08-05",
+        })
         return True
 
 
@@ -320,6 +331,29 @@ def test_phase3_on_k1_stays_single(tmp_path: Path) -> None:
     result = _run(bot, _rows_n(1))
     assert len(bot.submits) == 1
     assert result["phase3"]["daily_cap"] == 1
+
+
+def test_phase3_ladder_cap_blocks_third_entry(tmp_path: Path) -> None:
+    """사다리 일한도 초과 차단 (2026-08-23 수리, Codex 리뷰 P1-4).
+
+    후보 k=5면 사다리 상한은 2건이다. 오늘 이미 2건 진입했으면 **주문이 나가면 안 된다.**
+    수리 전에는 상단 게이트가 사다리가 아니라 고정값 3과 비교해 통과시키고, 루프의
+    종료 검사(submitted_now >= remaining)가 **제출 뒤**에 있어 3건째가 실제로 나갔다.
+    """
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_PHASE3_CAPACITY_ENABLED"] = True
+    # 오늘 이미 2건 진입 — session_date는 FakeBot._current_session_date_str와 같아야 한다.
+    bot.risk.positions = [
+        {"ticker": "D1", "qty": 1, "source_strategy": "kr_fallen_5d",
+         "entry_session_date": "2026-08-05"},
+        {"ticker": "D2", "qty": 1, "source_strategy": "kr_fallen_5d",
+         "entry_session_date": "2026-08-05"},
+    ]
+    result = _run(bot, _rows_n(5))
+    assert bot.submits == [], "사다리 상한 2건을 이미 채웠으면 추가 주문이 나가면 안 된다"
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "daily_new_entry_cap_reached"
+    assert result["daily_cap"] == 2 and result["today_new"] == 2
 
 
 def test_phase3_slot_cap_three_enforced(tmp_path: Path) -> None:
