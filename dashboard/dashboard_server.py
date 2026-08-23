@@ -17323,6 +17323,11 @@ def _strategy_filled_entries(order_map: dict[str, str], mode: str) -> dict[str, 
     거래했을 때 잘못 붙고(5월 MXL claude_price 실측), paper/live 이벤트도 섞인다.
     signals.handoff_order_no == lifecycle_events.execution_id가 유일한 정확 키다.
     runtime_mode도 함께 걸러 모드 혼입을 막는다.
+
+    2026-08-23 (P2-8 후속): 조회는 주문번호로 정확했는데 **반환 키가 티커**여서
+    같은 티커를 재매수하면 first-wins로 첫 라운드의 체결이 모든 라운드에 붙었다
+    (실측: MXL 08-20 보유 라운드가 08-11 체결시각을 물고 있었다 → 화면 진입일 오표시).
+    주문번호로 키를 바꾼다 — 호출부가 코호트 행의 order_no로 찾는다.
     """
     if not order_map:
         return {}
@@ -17347,11 +17352,13 @@ def _strategy_filled_entries(order_map: dict[str, str], mode: str) -> dict[str, 
         for execution_id, ticker, event_id, created_at, row_mode in rows:
             if _normalize_mode(row_mode) != runtime_mode:
                 continue
-            key = str(order_map.get(str(execution_id or ""), "") or "").upper()
+            order_no = str(execution_id or "")
+            key = str(order_map.get(order_no, "") or "").upper()
             if not key or key != str(ticker or "").upper():
                 continue
-            out.setdefault(key, {
-                "order_no": str(execution_id or ""),
+            out.setdefault(order_no, {
+                "ticker": key,
+                "order_no": order_no,
                 "filled_at": str(created_at or "")[:19],
                 "fill_event_id": event_id,
             })
@@ -17549,7 +17556,8 @@ def _strategy_cohort(mode: str = "live") -> dict:
          source, probability, order_no) in rows:
         key = str(ticker or "").upper()
         fingerprints[str(contract_id)] = fingerprints.get(str(contract_id), 0) + 1
-        fill = filled.get(key) or {}
+        # 체결도 주문번호로 찾는다 — 티커로 찾으면 재매수 시 첫 라운드 체결이 붙는다.
+        fill = filled.get(str(order_no or "").strip()) or {}
         entry_at = str(fill.get("filled_at") or "")
         # 라운드 키(티커|신호일)로 조회 — 같은 티커 재매수 시 라운드가 안 섞인다(P2-8).
         net = canonical.get(f"{key}|{str(signal_date or '')[:10]}")
@@ -17756,10 +17764,12 @@ def api_strategy_summary():
     cohort_tickers = {row["ticker"] for row in cohort["rows"]}
     us_positions = _strategy_broker_positions("US", mode)
     kr_positions = _strategy_broker_positions("KR", mode)
-    entry_dates = {
-        row["ticker"]: row["entry_at"][:10]
-        for row in cohort["rows"] if row.get("entry_at")
-    }
+    # 티커당 **가장 최근** 진입일 — 재매수 종목은 지금 보유 중인 라운드가 최신이다.
+    # (2026-08-23: 이전에는 dict 컴프리헨션 순서에 맡겨 08-20 보유 MXL이 08-11로 떴다.)
+    entry_dates: dict[str, str] = {}
+    for row in sorted(cohort["rows"], key=lambda r: str(r.get("signal_date") or "")):
+        if row.get("entry_at"):
+            entry_dates[row["ticker"]] = row["entry_at"][:10]
 
     local_positions: dict[str, dict] = {}
     try:
@@ -17803,7 +17813,13 @@ def api_strategy_summary():
             "pnl_pct": round(float(pos.get("pnl_pct") or 0), 2),
         }
         if ticker in contract_tickers:
-            entry_date = entry_dates.get(ticker, "")
+            # kr_fallen 보유는 US swing 코호트 원장에 없어 entry_dates가 비어 있다.
+            # 로컬 포지션의 entry_session_date로 채운다(2026-08-23).
+            entry_date = entry_dates.get(ticker, "") or str(
+                (local_positions.get(ticker) or {}).get("entry_session_date")
+                or (local_positions.get(ticker) or {}).get("entry_date")
+                or ""
+            )[:10]
             # 보유일수는 **봇이 세는 held_days가 truth**다. 화면이 KST date.today()로
             # 자체 계산하면 US 밤장 시작 전에 이미 하루가 지난 것으로 세어 하루 앞선다
             # (2026-08-17 실측: 봇 held_days=2인데 화면 D4). 청산 판단은 봇이 하므로
