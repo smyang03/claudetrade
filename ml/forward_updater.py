@@ -105,6 +105,14 @@ def _calc_forward_return(df: pd.DataFrame, session_date: str, n_days: int) -> tu
 def _fetch_pending(market: Optional[str]) -> list[dict]:
     conditions = ["(forward_1d IS NULL OR forward_3d IS NULL OR forward_5d IS NULL)"]
     params: list[object] = []
+    # 시뮬 하네스가 남긴 가짜 티커는 제외한다 (2026-08-24).
+    # sim_entry_path_gates / sim_exit_path_gates가 게이트를 태워보려고 SIMTK로 봇 경로를
+    # 돌리는데, 그 행이 decisions에 data_source='live'로 들어간다(07-29 835행 실측).
+    # 실재하지 않는 티커라 가격 CSV가 영원히 없고, 그래서 forward가 절대 안 채워진다
+    # = **영구 pending**으로 매 실행마다 다시 스캔되고 missing CSV 경고를 낸다.
+    # 과거 행은 mark_simulator_rows.py가 is_simulated=1로 정정하지만, 시뮬을 다시 돌리면
+    # 또 들어오므로 **여기서 티커로 막는 것이 재발 방지**다.
+    conditions.append("ticker NOT LIKE 'SIMTK%'")
     if market:
         conditions.append("market = ?")
         params.append(market)
