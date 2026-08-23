@@ -126,6 +126,13 @@ def _query_perf(market: str, like: str, source_filter: str, days: int) -> tuple[
                   AND decision = 'BUY_SIGNAL'
                   AND (pnl_pct IS NOT NULL OR forward_1d IS NOT NULL)
                   AND data_source {source_filter}
+                  -- 시뮬 하네스가 남긴 행 제외 (2026-08-24). db_writer:396 ·
+                  -- db_health:160 · dashboard digest에는 이미 있는 필터가 여기만 빠져 있었다.
+                  -- sim_entry_path_gates가 SIMTK로 봇 경로를 태우면 decisions에
+                  -- data_source='live'로 들어간다(07-29 835행 실측). 그 행들은 pnl_pct도
+                  -- forward_1d도 NULL이라 지금까지 실제 영향은 없었지만, 필터가 빠져 있으면
+                  -- 시뮬이 체결까지 흉내내는 순간 adaptive 파라미터가 가짜 성과로 움직인다.
+                  AND COALESCE(is_simulated, 0) = 0
                   AND session_date >= date('now', '-{days} days')
                 """,
                 (market, like),

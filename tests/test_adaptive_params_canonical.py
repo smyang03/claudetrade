@@ -21,7 +21,12 @@ class AdaptiveParamsCanonicalTests(unittest.TestCase):
                 strategy_used TEXT,
                 pnl_pct REAL,
                 forward_1d REAL,
-                data_source TEXT
+                data_source TEXT,
+                -- 2026-08-24: 프로덕션 스키마(ml/db_writer.py)에 있는 컬럼이다.
+                -- 픽스처에서 빠져 있으면 is_simulated 필터를 추가하는 순간 쿼리가
+                -- "no such column"으로 죽고, adaptive가 조용히 (0,0)을 돌려주는 것을
+                -- 테스트가 못 잡는다. 픽스처는 프로덕션과 같아야 한다.
+                is_simulated INTEGER DEFAULT 0
             )
             """
         )
@@ -33,15 +38,16 @@ class AdaptiveParamsCanonicalTests(unittest.TestCase):
         ticker: str,
         pnl_pct: float,
         data_source: str = "live",
+        is_simulated: int = 0,
     ) -> None:
         conn.execute(
             """
             INSERT INTO decisions (
                 market, ticker, session_date, decision, strategy_used,
-                pnl_pct, data_source
-            ) VALUES ('US', ?, '2026-05-20', 'BUY_SIGNAL', 'momentum', ?, ?)
+                pnl_pct, data_source, is_simulated
+            ) VALUES ('US', ?, '2026-05-20', 'BUY_SIGNAL', 'momentum', ?, ?, ?)
             """,
-            (ticker, pnl_pct, data_source),
+            (ticker, pnl_pct, data_source, is_simulated),
         )
 
     def _create_canonical_schema(self, conn: sqlite3.Connection, *, include_learning_allowed: bool = True) -> None:
@@ -192,6 +198,39 @@ class AdaptiveParamsCanonicalTests(unittest.TestCase):
             "= 'live'",
             [call.args[2] for call in query_perf.call_args_list],
         )
+
+    def test_simulated_rows_never_reach_adaptive_perf(self) -> None:
+        """시뮬 하네스 행은 adaptive 성과에 들어가면 안 된다 (2026-08-24).
+
+        sim_entry_path_gates가 SIMTK로 봇 경로를 태우면 decisions에 data_source='live'로
+        들어간다(07-29 835행 실측). db_writer·db_health·dashboard에는 is_simulated 필터가
+        있었는데 adaptive._query_perf에만 빠져 있었다. 지금까지는 그 행들의 pnl_pct가
+        전부 NULL이라 무해했지만, 시뮬이 체결까지 흉내내면 가짜 성과로 라이브 파라미터가
+        움직인다. 그 경로를 막는다.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "decisions.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                self._create_decisions_schema(conn)
+                # 진짜 라이브 2건: 1승 1패 -> 50%
+                self._insert_decision(conn, ticker="REAL_WIN", pnl_pct=5.0)
+                self._insert_decision(conn, ticker="REAL_LOSS", pnl_pct=-5.0)
+                # 시뮬 3건 전승 — 섞이면 승률이 80%로 부풀어 오른다
+                for i in range(3):
+                    self._insert_decision(
+                        conn, ticker=f"SIMTK{i}", pnl_pct=99.0,
+                        data_source="live", is_simulated=1,
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+            with patch.object(adaptive, "_DB", db_path):
+                stats = adaptive.get_perf_stats("momentum", "US", days=9999)
+
+        self.assertEqual(stats["n"], 2, "시뮬 3건이 표본에 섞였다")
+        self.assertEqual(stats["win_rate"], 50.0, "시뮬 전승이 승률을 부풀렸다")
 
     def test_canonical_without_learning_allowed_column_falls_back_to_legacy_live(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
