@@ -158,6 +158,7 @@ def main() -> int:
         print(f"[2-엄격] CLEAN {len(strict)}건 평균 net {s_nets.mean():+.3f}% | "
               f"승률 {100 * (s_nets > 0).mean():.0f}% "
               f"(전체 정산과 분리해서 본다 — 품질 게이트 통과분)")
+    _fee_regime_view(settled)
     pos_sum = nets[nets > 0].sum()
     neg_sum = -nets[nets <= 0].sum()
     print(f"[2] 평균 net {nets.mean():+.3f}% | 승률 {100 * (nets > 0).mean():.0f}% | "
@@ -202,6 +203,42 @@ def main() -> int:
     return 0
 
 
+def _fee_regime_view(settled: pd.DataFrame) -> None:
+    """[2b] 수수료 규약 분해 — 표본에 두 규약이 섞이는 구간을 자동 보정 병기한다.
+
+    2026-08-23 이전 청산은 `close_position`이 **매도 수수료만** 뺀 값을 net으로 인증했다
+    (매수 수수료는 진입 때 현금에서만 빠지고 손익 보고값에는 없었다). 그날 수리 이후
+    청산분은 왕복을 뺀다. 두 규약이 한 평균에 섞이면 판정이 흔들리므로:
+
+      · 구규약 행은 매수측 수수료율만큼 net이 **정확히** 과대계상돼 있다
+        (buy_fee/cost_basis = 매수 수수료율 그 자체 — 가격·수량과 무관하다).
+      · 따라서 보정치는 시장별 상수다: US −0.25%p / KR −0.015%p.
+
+    판정일에 손으로 보정하지 않도록 여기서 자동 병기한다. 원장은 건드리지 않는다 —
+    이미 인증된 값을 소급 수정하면 그게 골대 이동이다.
+    """
+    if settled.empty or "fee_regime" not in settled.columns:
+        return
+    try:
+        from risk_manager import FEE_RATES  # noqa: PLC0415 - 요율 정본 재사용(드리프트 방지)
+    except Exception:
+        return
+    counts = settled["fee_regime"].value_counts().to_dict()
+    print("[2b] 수수료 규약: " + " | ".join(f"{k} {v}건" for k, v in sorted(counts.items())))
+    legacy = settled[settled["fee_regime"] == "매도측만(구)"]
+    if legacy.empty:
+        return
+    adjusted = settled["execution_shadow_net_krw_pct"].astype(float).copy()
+    for index, row in legacy.iterrows():
+        market = str(row.get("market") or "US").upper()
+        rate = float(FEE_RATES.get(market, FEE_RATES["KR"])["buy"])
+        adjusted.loc[index] -= rate * 100.0
+    raw_mean = float(settled["execution_shadow_net_krw_pct"].astype(float).mean())
+    print(f"     구규약 {len(legacy)}건 매수측 보정 시 전체 평균 "
+          f"{raw_mean:+.3f}% → {float(adjusted.mean()):+.3f}% "
+          f"(보정폭 {float(adjusted.mean()) - raw_mean:+.3f}%p) — 원장은 불변, 판정용 병기값")
+
+
 def _contract_start_date(frame: pd.DataFrame) -> str:
     """계약 발효일 = 지문이 처음 찍힌 세션.
 
@@ -217,8 +254,8 @@ def _contract_start_date(frame: pd.DataFrame) -> str:
 def _real_cohort(contract_start: str) -> pd.DataFrame:
     """정본 실체결 코호트 — 라이브에서 실제로 체결된 sleeve 건만."""
     empty = pd.DataFrame(columns=[
-        "session_date", "ticker", "closed", "quality_grade", "learning_allowed",
-        "pnl_pct_net", "pnl_krw_net", "first_closed_at",
+        "session_date", "ticker", "market", "closed", "quality_grade", "learning_allowed",
+        "pnl_pct_net", "pnl_krw_net", "first_closed_at", "fee_pct_round_trip",
     ])
     if not CANON_DB.exists():
         print("[1] ⚠ 정본 원장 없음 — data/ml/decisions.db 확인 필요")
@@ -226,8 +263,8 @@ def _real_cohort(contract_start: str) -> pd.DataFrame:
     con = sqlite3.connect(f"file:{CANON_DB}?mode=ro", uri=True, timeout=10)
     try:
         frame = pd.read_sql_query(
-            """SELECT session_date, ticker, closed, quality_grade, learning_allowed,
-                      pnl_pct_net, pnl_krw_net, first_closed_at
+            """SELECT session_date, ticker, market, closed, quality_grade, learning_allowed,
+                      pnl_pct_net, pnl_krw_net, first_closed_at, fee_pct_round_trip
                FROM v2_canonical_performance
                WHERE strategy=? AND filled=1 AND runtime_mode='live'
                ORDER BY session_date""",
@@ -258,6 +295,9 @@ def _settled_view(real: pd.DataFrame, shadow: pd.DataFrame) -> pd.DataFrame:
             "signal_date": [], "entry_date": [], "execution_shadow_exit_date": [],
             "execution_shadow_net_krw_pct": [], "breadth_context_state": [], "candidate_source": [],
         })
+    settled["fee_regime"] = settled["fee_pct_round_trip"].map(
+        lambda v: "왕복(신)" if pd.notna(v) and float(v or 0) > 0 else "매도측만(구)"
+    )
     meta_cols = ["signal_date", "ticker", "entry_date", "breadth_context_state", "candidate_source"]
     meta = shadow[[c for c in meta_cols if c in shadow.columns]].copy() if not shadow.empty else pd.DataFrame()
     settled = settled.rename(columns={"session_date": "signal_date"})

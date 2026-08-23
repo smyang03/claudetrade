@@ -204,6 +204,16 @@ try {
         throw "Restarted, but broker truth is not fresh. Check state/live_restart_last.json"
     }
     Write-Output "[OK] safe restart complete; checkpoint=$($backup.backup_dir)"
+    # 2026-08-23: 성공 경로에서 **명시적으로 0을 돌려준다.**
+    # 이 스크립트는 exit를 안 불렀기 때문에 PowerShell이 마지막 네이티브 명령의
+    # $LASTEXITCODE를 그대로 프로세스 종료코드로 내보냈다. 정상 재시작에서도
+    # Invoke-BrokerTruthChecked가 "락은 새로 뜬 스케줄러가 쥐었으니 그 스냅샷을
+    # 재사용" 경로로 빠지면 broker_truth_scheduler --once가 비0으로 끝나고,
+    # 함수는 성공 반환하지만 $LASTEXITCODE는 그 값이 남는다.
+    # 실측(08-23): "[OK] safe restart complete"를 찍고도 종료코드 2.
+    # 종료코드로 성공을 판단하는 호출자·자동화가 정상 재시작을 실패로 읽는다.
+    # 실패는 전부 throw로 나가므로 여기 도달했다는 것 자체가 성공이다.
+    exit 0
 } finally {
     Pop-Location
 }
