@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 from runtime.us_swing_authority import evaluate_swing_authority, load_swing_policy
 from runtime.us_swing_execution_contract import (
     OPERATOR_MICRO_OVERRIDE_ACK,
+    breakeven_lock_trigger_pct,
     default_max_hold_sessions,
     operator_override_active,
     resolve_execution_contract,
@@ -1406,9 +1407,13 @@ def summarize_active_execution_shadow(
 ) -> dict[str, Any]:
     """Expose legitimate one-slot maturity instead of labelling it stale."""
 
-    # D5→D7 결함(2026-08-25): policy JSON 직독+하드 5가 env 단일 소스를 우회해
-    # 러너 지문이 D5로 갈라졌다. 폴백은 env(default_max_hold_sessions)가 정본.
-    max_hold = int((policy.get("execution_contract") or {}).get("max_hold_sessions") or default_max_hold_sessions())
+    # D5→D7 결함(2026-08-25): env가 있으면 env가 정본, 없으면 policy 값(봉인 파일).
+    import os as _os
+    max_hold = (
+        default_max_hold_sessions()
+        if _os.getenv("US_SWING_MAX_HOLD_SESSIONS")
+        else int((policy.get("execution_contract") or {}).get("max_hold_sessions") or 5)
+    )
     rows = con.execute(
         """SELECT signal_date,ticker,entry_date,execution_shadow_entry_fill_usd,
                   execution_shadow_qty,execution_shadow_reason
@@ -1465,6 +1470,8 @@ def mature_pending(
     entry_slippage_pct: float = 0.5,
     tp_pct: float = 0.12,
     sl_pct: float = 0.25,
+    max_hold_sessions: int = 5,
+    be_lock_trigger_pct: float | None = None,
 ) -> dict[str, int]:
     ensure_handoff_schema(con)
     pending = con.execute(
@@ -1557,11 +1564,14 @@ def mature_pending(
                 execution_unaffordable += 1
             else:
                 contract_exit_date, contract_exit_price, contract_reason = simulate_exit(
-                    future.head(5),
+                    # 2026-08-25: head(5) 하드값 -> 계약 보유창(D7 4번째 소스 사고 계열).
+                    # BE락도 계약에서 이어받아 실주문 출구와 같은 규칙으로 시뮬한다.
+                    future.head(int(max_hold_sessions)),
                     entry_price=execution_entry_price,
                     tp_pct=tp_pct,
                     sl_pct=sl_pct,
                     tie_break="sl_first",
+                    be_lock_trigger_pct=be_lock_trigger_pct,
                 )
                 contract_exit_fx = fx_map.get(str(contract_exit_date)) or _latest_fx(
                     fx_map, str(contract_exit_date)
@@ -1736,6 +1746,12 @@ def main() -> int:
         ),
         tp_pct=float((policy.get("execution_contract") or {}).get("take_profit_pct", 0.12)),
         sl_pct=float((policy.get("execution_contract") or {}).get("catastrophe_stop_pct", 0.25)),
+        max_hold_sessions=(
+            default_max_hold_sessions()
+            if os.getenv("US_SWING_MAX_HOLD_SESSIONS")
+            else int((policy.get("execution_contract") or {}).get("max_hold_sessions") or 5)
+        ),
+        be_lock_trigger_pct=breakeven_lock_trigger_pct() or None,
     )
     generated = 0
     candidates_n = 0

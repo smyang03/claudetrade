@@ -39,6 +39,38 @@ def test_us_swing_keeps_predeclared_take_profit() -> None:
     assert result[0]["reason"] == "strategy_fixed_take_profit"
 
 
+def test_us_swing_breakeven_lock_fires_only_after_peak(monkeypatch) -> None:
+    """BE락(2026-08-25 사전등록): 봉우리 +4% 도달 후 본전 이탈 시에만 스크래치 청산.
+
+    - 봉우리 미달(3%)이면 본전 아래여도 발동 금지(일반 하락은 SL25/D7 몫)
+    - 봉우리 도달(5%) 후 본전 이탈이면 strategy_breakeven_lock
+    - env 0(비활성)이면 기존 동작 그대로
+    - KR sleeve에는 적용되지 않는다(US 데이터로만 검증 — 이식 금지)
+    """
+    monkeypatch.setenv("US_SWING_BE_LOCK_TRIGGER_PCT", "4")
+    risk = RiskManager()
+    below_peak = _position("us_swing_5d", 99.0, tp_pct=0.12)
+    below_peak["peak_pnl_pct"] = 3.0
+    risk.positions = [below_peak]
+    assert risk.get_exit_candidates() == []
+
+    armed = _position("us_swing_5d", 99.0, tp_pct=0.12)
+    armed["peak_pnl_pct"] = 5.0
+    risk.positions = [armed]
+    result = risk.get_exit_candidates()
+    assert result and result[0]["reason"] == "strategy_breakeven_lock"
+    assert result[0]["be_lock_peak_pct"] == 5.0
+
+    kr = _position("kr_fallen_5d", 99.0, tp_pct=0.12)
+    kr["peak_pnl_pct"] = 5.0
+    risk.positions = [kr]
+    assert risk.get_exit_candidates() == []
+
+    monkeypatch.setenv("US_SWING_BE_LOCK_TRIGGER_PCT", "0")
+    risk.positions = [dict(armed)]
+    assert risk.get_exit_candidates() == []
+
+
 def test_trading_bot_generic_advisor_recognizes_all_isolated_exit_owners() -> None:
     for source in ISOLATED_STRATEGY_SOURCES:
         assert TradingBot._isolated_strategy_exit_owner(_position(source, 100.0)) == source

@@ -780,7 +780,8 @@
     "LEGACY_NEW_BUY_DISABLED": "true",
     "SECTOR_MAP_ENABLED": "true",
     "KR_FALLEN_LIVE_ACK": "I_ACCEPT_LIVE_KR_FALLEN",
-    "IDLE_PATH_LOW_FREQ_MODE": "true"
+    "IDLE_PATH_LOW_FREQ_MODE": "true",
+    "US_SWING_BE_LOCK_TRIGGER_PCT": "4"
   },
   "updated_at": "2026-06-09T21:27:06+09:00",
   "updated_by": "dashboard_order_size_control"

@@ -44,6 +44,18 @@ def default_max_hold_sessions() -> int:
         return _DEFAULT_MAX_HOLD_SESSIONS
 
 
+def breakeven_lock_trigger_pct() -> float:
+    """BE락 발동 봉우리(%) — env 단일 소스, 0이면 비활성 (2026-08-25 운영자 승인).
+
+    봉우리가 이 값 이상 도달하면 손절선을 본전으로 올린다. 계약 지문 재료다 —
+    출구 행동을 바꾸므로 값이 바뀌면 코호트를 섞지 않는다.
+    """
+    try:
+        return max(0.0, float(os.getenv("US_SWING_BE_LOCK_TRIGGER_PCT", "0")))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 CONTRACT_SCHEMA_VERSION = "us_swing_execution_contract_v1"
 
 # 오버라이드 ACK는 order bridge와 같은 문자열을 쓴다(값이 다르면 계약이 갈라진다).
@@ -173,7 +185,17 @@ def resolve_execution_contract(
         "allowed_sources": list(parse_allowed_sources(allowed_sources_raw)),
         "take_profit_pct": _number(contract.get("take_profit_pct"), 0.12),
         "catastrophe_stop_pct": _number(contract.get("catastrophe_stop_pct"), 0.25),
-        "max_hold_sessions": int(_number(contract.get("max_hold_sessions"), default_max_hold_sessions())),
+        # 2026-08-25(수정2): env가 있으면 env가 정본(D7 운영자 결정), 없으면 policy 값.
+        # ⚠️ policy JSON은 historical evidence가 sha256으로 봉인한 파일이다 — 키를 지우면
+        # authority가 historical_policy_hash_mismatch로 레인을 차단한다(당일 실측).
+        # 값 변경은 env로만 하고 policy 파일은 건드리지 않는다.
+        "max_hold_sessions": (
+            default_max_hold_sessions()
+            if os.getenv("US_SWING_MAX_HOLD_SESSIONS")
+            else int(_number(contract.get("max_hold_sessions"), _DEFAULT_MAX_HOLD_SESSIONS))
+        ),
+        # BE락(2026-08-25): env 단일 소스. policy JSON 직독은 두지 않는다(D7 4번째 소스 사고).
+        "breakeven_lock_trigger_pct": breakeven_lock_trigger_pct(),
         "min_probability": _number(min_probability, 0.55),
         "min_predicted_net_pct": _number(min_predicted_net_pct, 0.25),
         "hurdles_enforced": bool(hurdles_enforced),
@@ -202,6 +224,11 @@ def contract_id(payload: Mapping[str, Any]) -> str:
         "min_predicted_net_pct": round(_number(payload.get("min_predicted_net_pct"), 0.25), 6),
         "hurdles_enforced": bool(payload.get("hurdles_enforced")),
     }
+    # 2026-08-25: BE락도 출구 행동을 정의하므로 지문 재료다. 0(비활성)이면 키 자체를
+    # 넣지 않는다 — 기존 지문이 그대로 재현돼야 이력이 안 끊긴다(선별 정책과 동일 규약).
+    be_lock = _number(payload.get("breakeven_lock_trigger_pct"), 0.0)
+    if be_lock > 0:
+        material["breakeven_lock_trigger_pct"] = round(be_lock, 6)
     # 2026-08-23: 선별 정책(밴드·MAX)이 있으면 지문에 포함한다. 없으면 키 자체를 넣지
     # 않는다 — 기존 지문(afc07db8·feb33565 등)이 그대로 재현돼야 이력이 안 끊긴다.
     selection = payload.get("selection_policy")

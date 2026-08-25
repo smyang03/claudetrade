@@ -7,6 +7,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from logger import get_trading_logger
 from runtime.market_resolver import normalize_market, resolve_position_market
+from runtime.us_swing_execution_contract import breakeven_lock_trigger_pct
 
 load_dotenv()
 log = get_trading_logger()
@@ -1397,6 +1398,31 @@ class RiskManager:
                 "exit_owner": source,
                 "strategy_stop_price": entry_native * (1.0 - sl_pct),
             }
+        # BE락 (2026-08-25 운영자 승인, 사전등록 §BE락): 봉우리가 +트리거% 도달한 뒤
+        # 본전 아래로 내려오면 스크래치 청산. 승자는 안 건드리고(TP12 그대로) 중간
+        # 봉우리 반납형만 끊는다 — 분봉 재검 실측: 살림 32건 +309%p vs 놓침 19건 -104%p.
+        # US 데이터로만 검증됐으므로 us_swing_5d 한정(KR 이식 금지 원칙 — 별도 검증 후).
+        # 봉우리는 봇이 유지하는 peak_pnl_pct(진입 후 관측 최고 수익률, %)를 쓴다.
+        if source == "us_swing_5d":
+            be_trigger = breakeven_lock_trigger_pct()
+            peak_pct = float(pos.get("peak_pnl_pct") or pos.get("position_mfe_pct") or 0.0)
+            if be_trigger > 0 and peak_pct >= be_trigger and current_native <= entry_native:
+                _be_log_key = f"be:{pos.get('ticker')}"
+                _now = time.time()
+                if _now - _SLEEVE_TP_LOG_AT.get(_be_log_key, 0.0) >= 600:
+                    _SLEEVE_TP_LOG_AT[_be_log_key] = _now
+                    log.info(
+                        f"[sleeve BE락] {pos.get('ticker')} {source} 봉우리 {peak_pct:.2f}% >= {be_trigger:g}% "
+                        f"이후 본전 이탈({current_native:g} <= {entry_native:g}) → 스크래치 청산 후보"
+                    )
+                return True, {
+                    **pos,
+                    "exit_price": current_krw,
+                    "reason": "strategy_breakeven_lock",
+                    "exit_owner": source,
+                    "strategy_stop_price": entry_native,
+                    "be_lock_peak_pct": peak_pct,
+                }
         if source in {"us_swing_5d", "kr_fallen_5d"} and tp_pct > 0 and current_native >= entry_native * (1.0 + tp_pct):
             # 계약 청산 트리거는 반드시 로그로 남긴다. 2026-08-05 사고는 TP 조건이
             # 성립하지 않은 채(옛 가격 $6.09) 조용히 지나간 것이라 흔적이 없었다.

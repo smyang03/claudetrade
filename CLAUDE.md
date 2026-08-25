@@ -97,6 +97,10 @@ AI의 사고 방식은 **트레이너이자 개발자**다. 시장·전략·분�
     `US_SWING_MAX_NEW_PER_DAY=1`. **최악 동시 SL = 54만 × 7 × 25% = 94.5만.**
     (08-25 재배분 — 노출·최악손실 불변으로 슬롯만 확대. 근거·반대근거는
     preregistered_falsification_criteria §리스크 한도 재개정 08-25.)
+  - `US_SWING_BE_LOCK_TRIGGER_PCT=4` — BE락(봉우리 +4% 도달 시 손절선을 본전으로,
+    08-25 승인·지문 재료·US 한정). 반증 시 롤백은 사전등록 §BE락 조항으로만.
+    ⚠️ `config/us_swing_accelerated.json`은 historical evidence가 sha256으로 봉인한
+    파일이다 — **키 추가/삭제 금지**(해시 깨지면 레인 차단). 계약값 변경은 env로만.
   - ⚠️ **`US_SWING_MAX_NEW_PER_DAY`는 "하루 최대 건수"가 아니다**(2026-08-22 운영자 결정 A안).
     `us_swing_order_handoff.py`가 이 값을 **"밴드 내 순위가 N 이하인가"**로 쓴다. 진입한
     종목이 다음 사이클에서 후보 목록에서 빠지면 그 다음 종목이 1순위로 승격해 또 통과한다.

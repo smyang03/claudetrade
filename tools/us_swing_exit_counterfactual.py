@@ -136,31 +136,42 @@ def simulate_exit(
     tp_pct: float | None,
     sl_pct: float | None,
     tie_break: str,
+    be_lock_trigger_pct: float | None = None,
 ) -> tuple[str, float, str]:
+    """be_lock_trigger_pct(2026-08-25, %단위): 봉우리가 트리거 이상 도달하면 손절선을
+    본전으로 올린다. 일봉 근사는 **전일까지의 봉우리**로만 손절선을 갱신한다(당일
+    고가→당일 이탈 순서 모호성 배제 — 라이브 분봉 대비 보수). None/0이면 기존 동작."""
     if bars.empty:
         raise ValueError("price_path_missing")
     tp_price = entry_price * (1.0 + float(tp_pct)) if tp_pct is not None else None
     sl_price = entry_price * (1.0 - float(sl_pct)) if sl_pct is not None else None
+    be_trigger = float(be_lock_trigger_pct or 0.0)
+    stop_price = sl_price
+    peak = entry_price
     for idx, row in enumerate(bars.itertuples(index=False)):
         opened = float(row.open)
         high = float(row.high)
         low = float(row.low)
         date = str(row.date)
+        be_stop_active = stop_price is not None and sl_price is not None and stop_price > sl_price
         if idx > 0:
-            if sl_price is not None and opened <= sl_price:
-                return date, opened, "SL_GAP"
+            if stop_price is not None and opened <= stop_price:
+                return date, opened, ("BE_GAP" if be_stop_active else "SL_GAP")
             if tp_price is not None and opened >= tp_price:
                 return date, opened, "TP_GAP"
-        hit_sl = sl_price is not None and low <= sl_price
+        hit_sl = stop_price is not None and low <= stop_price
         hit_tp = tp_price is not None and high >= tp_price
         if hit_sl and hit_tp:
             if tie_break == "tp_first":
                 return date, float(tp_price), "BOTH_TP_FIRST"
-            return date, float(sl_price), "BOTH_SL_FIRST"
+            return date, float(stop_price), ("BE" if be_stop_active else "BOTH_SL_FIRST")
         if hit_sl:
-            return date, float(sl_price), "SL"
+            return date, float(stop_price), ("BE" if be_stop_active else "SL")
         if hit_tp:
             return date, float(tp_price), "TP"
+        peak = max(peak, high)
+        if be_trigger > 0 and entry_price > 0 and (peak / entry_price - 1.0) * 100.0 >= be_trigger:
+            stop_price = max(stop_price or entry_price, entry_price)
     last = bars.iloc[-1]
     return str(last["date"]), float(last["close"]), "FIFTH_CLOSE"
 

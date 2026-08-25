@@ -17316,6 +17316,23 @@ def _strategy_business_days(start: date, end: date) -> int:
     return days
 
 
+def _sleeve_be_lock_trigger() -> float:
+    """BE락 발동 봉우리(%) — 설정 정본 파일 직독(2026-08-25 승인, US swing 한정).
+
+    0이면 비활성. 규칙은 max_hold와 동일: env_overrides > .env.live > 기본 0.
+    """
+    try:
+        overrides = _start_config_env_overrides("live") or {}
+        raw = (
+            overrides.get("US_SWING_BE_LOCK_TRIGGER_PCT")
+            or _runtime_env_value("live", "US_SWING_BE_LOCK_TRIGGER_PCT")
+            or "0"
+        )
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _sleeve_max_hold_fallback() -> int:
     """sleeve 보유 세션 수 폴백 — 봇과 **같은 env 키**를 읽는다 (2026-08-25 D5→D7).
 
@@ -17915,6 +17932,16 @@ def api_strategy_summary():
                 "to_tp_pp": round(tp_pct - float(pos.get("pnl_pct") or 0), 2),
                 "to_sl_pp": round(float(pos.get("pnl_pct") or 0) + sl_pct, 2),
             })
+            # BE락 상태(2026-08-25 승인, US swing 한정): 봉우리 +트리거% 도달 시
+            # 손절선=본전. 화면은 봇 청산 규칙과 같은 소스(설정 파일)를 읽는다.
+            if str(local.get("source_strategy") or "").lower() == "us_swing_5d":
+                _be_trigger = _sleeve_be_lock_trigger()
+                _peak = float(local.get("peak_pnl_pct") or local.get("position_mfe_pct") or 0.0)
+                payload.update({
+                    "be_lock_trigger_pct": _be_trigger,
+                    "be_lock_peak_pct": round(_peak, 2),
+                    "be_lock_armed": bool(_be_trigger > 0 and _peak >= _be_trigger),
+                })
             open_contracts.append(payload)
         else:
             payload["core"] = ticker in STRATEGY_CORE_TICKERS
@@ -18166,7 +18193,13 @@ function renderStrategy(d) {
       '<span>0</span><span>TP +' + stgNum(c.tp_pct, 0) + '% (' + stgNum(p.tp_price, 2) + ')</span></div>' +
       '<div class="days">' + days.join('') + '</div>' +
       '<div class="stg-sub" style="margin-top:6px">D' + p.d_elapsed + ' / D' + p.max_hold +
-      ' · TP까지 ' + stgNum(p.to_tp_pp) + '%p · SL까지 ' + stgNum(p.to_sl_pp) + '%p</div></div>';
+      ' · TP까지 ' + stgNum(p.to_tp_pp) + '%p · SL까지 ' + stgNum(p.to_sl_pp) + '%p' +
+      (Number(p.be_lock_trigger_pct || 0) > 0
+        ? (p.be_lock_armed
+            ? ' · <span style="color:#fbbf24">BE락 발동 — 손절선=본전 (봉우리 ' + stgNum(p.be_lock_peak_pct) + '%)</span>'
+            : ' · BE락 ' + stgNum(p.be_lock_trigger_pct, 0) + '% 대기 (봉우리 ' + stgNum(p.be_lock_peak_pct) + '%)')
+        : '') +
+      '</div></div>';
   }).join('') : '<div class="stg-empty">진행 중인 계약이 없습니다.</div>';
 
   // 용량
