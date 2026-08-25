@@ -515,6 +515,7 @@ def _observation_views(contract: str) -> None:
     _capacity_view(contract)
     _tp_capture_view()
     _tp_ladder_counterfactual_view()
+    _be_lock_falsification_view()
     _candidate_age_view()
 
 
@@ -592,6 +593,68 @@ def _tp_capture_view() -> None:
                      + (f"(정산 {len(vals)} 평균 {sum(vals)/len(vals):+.2f}%)" if vals else ""))
     print(f"[A10] TP 포획 조건(ATR past-only 상위25%): 세션 {len(sessions)} | " + " | ".join(parts)
           + ("" if ready else " — 임계 산출까지 이력 150건 필요"))
+
+
+def _be_lock_falsification_view() -> None:
+    """[B] BE락 반증 원장 — 사전등록 §BE락(2026-08-25)의 자동 판정 뷰.
+
+    발동 정산(close_reason=strategy_breakeven_lock)마다 "원계약(D 만기 종가) 대비
+    실제 net"을 계산해 살림/놓침을 판정한다. 반증 기준: 정상 발동 20건에서
+    놓침 합 > 살림 합이면 롤백. 소급(지각) 발동 건은 표본 제외·별도 표기
+    (08-25 FRVO — 사전등록 각주).
+    """
+    if not CANON_DB.exists():
+        return
+    con = sqlite3.connect(f"file:{CANON_DB}?mode=ro", uri=True, timeout=10)
+    try:
+        rows = con.execute(
+            """SELECT session_date, ticker, entry_price, pnl_pct_net, close_reason
+               FROM v2_learning_performance
+               WHERE close_reason='strategy_breakeven_lock' AND closed=1
+               ORDER BY session_date"""
+        ).fetchall()
+    finally:
+        con.close()
+    if not rows:
+        print("[B] BE락 반증 원장: 발동 정산 0건 (표본 대기)")
+        return
+    from runtime.us_swing_execution_contract import default_max_hold_sessions
+    max_hold = default_max_hold_sessions()
+    # 소급 발동 예외 목록 (사전등록 각주와 동기) — 정상 표본에서 제외
+    retro = {("2026-08-18", "FRVO")}
+    saved_sum = missed_sum = 0.0
+    normal_n = 0
+    print(f"[B] BE락 반증 원장 (원계약 D{max_hold} 만기 종가 대비 · 반증: 정상 20건 놓침합>살림합):")
+    for session_date, ticker, entry_price, net, _reason in rows:
+        key = (str(session_date), str(ticker).upper())
+        tag = " [소급-표본제외]" if key in retro else ""
+        counter_txt = "만기 대기"
+        try:
+            import csv as _csv
+            path = ROOT / "data" / "price" / "us" / f"us_{str(ticker).upper()}.csv"
+            dates_close: list[tuple[str, float]] = []
+            with path.open(encoding="utf-8-sig") as fh:
+                for row in _csv.reader(fh):
+                    if len(row) >= 6 and row[0][:2] == "20":
+                        dates_close.append((row[0], float(row[4])))
+            idx = next(i for i, (d, _) in enumerate(dates_close) if d == str(session_date))
+            maturity = idx + max_hold - 1
+            if maturity < len(dates_close) and entry_price and float(entry_price) > 0:
+                m_close = dates_close[maturity][1]
+                counter = 100 * (m_close / float(entry_price) - 1) - 0.5
+                diff = float(net) - counter
+                counter_txt = f"만기 {dates_close[maturity][0]} 대비 {diff:+.2f}%p ({'살림' if diff > 0 else '놓침'})"
+                if key not in retro:
+                    normal_n += 1
+                    if diff > 0:
+                        saved_sum += diff
+                    else:
+                        missed_sum += diff
+        except (StopIteration, OSError, ValueError):
+            counter_txt = "대조 불가(가격/진입가)"
+        print(f"    {session_date} {str(ticker):6s} net {float(net):+7.2f}% · {counter_txt}{tag}")
+    print(f"    정상 표본 {normal_n}/20 · 살림 누계 +{saved_sum:.2f}%p vs 놓침 누계 {missed_sum:.2f}%p"
+          f" → {'롤백 검토' if normal_n >= 20 and abs(missed_sum) > saved_sum else '기준 내'}")
 
 
 def _tp_ladder_counterfactual_view() -> None:
