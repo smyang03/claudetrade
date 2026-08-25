@@ -14,7 +14,8 @@
      과소집계 — 절대량이 아니라 종목 간 상대 비교로 쓸 것)
 
 사용:
-  set ALPACA_API_KEY_ID=... & set ALPACA_API_SECRET_KEY=...  (paper 계정 키)
+  키는 저장소 루트 `.env.alpaca`에 넣는다(자동 로드, .gitignore로 커밋 제외).
+  환경변수 ALPACA_API_KEY_ID/ALPACA_API_SECRET_KEY가 있으면 그쪽이 우선.
   python tools/verify_premarket_volume_source.py --tickers AAPL,NVDA,TSLA
   python tools/verify_premarket_volume_source.py --date 2026-08-24
 
@@ -25,6 +26,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timedelta, timezone
 import os
+from pathlib import Path
 import sys
 from zoneinfo import ZoneInfo
 
@@ -32,6 +34,21 @@ import requests
 
 BARS_URL = "https://data.alpaca.markets/v2/stocks/bars"
 ET = ZoneInfo("America/New_York")
+ENV_FILE = Path(__file__).resolve().parent.parent / ".env.alpaca"
+
+
+def _load_env_file() -> dict[str, str]:
+    """`.env.alpaca`의 KEY=VALUE 파싱 — 환경변수가 없을 때의 폴백."""
+    values: dict[str, str] = {}
+    if not ENV_FILE.exists():
+        return values
+    for line in ENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
 
 
 def _last_us_weekday(now_et: datetime) -> str:
@@ -50,12 +67,13 @@ def main() -> int:
     parser.add_argument("--feed", default="sip", choices=["sip", "iex", "delayed_sip"])
     args = parser.parse_args()
 
-    key_id = os.getenv("ALPACA_API_KEY_ID", "").strip()
-    secret = os.getenv("ALPACA_API_SECRET_KEY", "").strip()
+    file_env = _load_env_file()
+    key_id = os.getenv("ALPACA_API_KEY_ID", "").strip() or file_env.get("ALPACA_API_KEY_ID", "")
+    secret = os.getenv("ALPACA_API_SECRET_KEY", "").strip() or file_env.get("ALPACA_API_SECRET_KEY", "")
     if not key_id or not secret:
-        print("FAIL: ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY 환경변수가 없다.")
-        print("  → https://alpaca.markets 에서 paper 계정 가입 후 API 키를 발급해 환경변수로 넣고 재실행.")
-        print("  (키는 .env.live에 넣지 않는다 — 브로커 자격증명과 분리, 셸 환경변수 또는 별도 파일로.)")
+        print(f"FAIL: 키 없음 — {ENV_FILE} 의 ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY 두 줄을 채우고 재실행.")
+        print("  → https://alpaca.markets 에서 paper 계정 가입 후 대시보드 API Keys에서 발급.")
+        print("  (.env.live에 넣지 않는다 — 브로커 자격증명과 분리. .env.alpaca는 .gitignore로 커밋 제외.)")
         return 2
 
     now_et = datetime.now(tz=ET)

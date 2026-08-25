@@ -15,6 +15,7 @@ env/
 .env.paper
 .env.live
 *.env
+.env.*
 
 # Logs
 logs/
