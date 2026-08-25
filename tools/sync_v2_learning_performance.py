@@ -794,20 +794,43 @@ def _load_decisions(
     """
     for event_row in conn.execute(event_sql, event_params).fetchall():
         decision_id = str(event_row["decision_id"] or "")
-        if decision_id and decision_id not in by_decision:
-            by_decision[decision_id] = {
-                "decision_id": decision_id,
-                "market": str(event_row["market"] or ""),
-                "runtime_mode": str(event_row["runtime_mode"] or ""),
-                "session_date": str(event_row["session_date"] or ""),
-                "ticker": str(event_row["ticker"] or ""),
-                "prompt_version": str(event_row["prompt_version"] or ""),
-                "brain_snapshot_id": str(event_row["brain_snapshot_id"] or ""),
-                "strategy_hint": "",
-                "timing_style": "",
-                "status": str(event_row["status"] or ""),
-                "payload": {},
-            }
+        if not decision_id or decision_id in by_decision:
+            continue
+        # ★창 밖 결정 가림 방지(2026-08-25): CLOSED 백필/재귀속 이벤트는 청산일
+        # session_date를 달고 있어, 진입일이 sync 창 밖으로 나가면 v2_decisions 본체가
+        # 날짜 필터에서 빠지고 이 fallback이 합성 결정(진입일=청산일, strategy_hint 빈값)
+        # 으로 원장을 덮는다(MXL 08-11 실측: 세션마감 sync 창 08-14~24가 매일 재오염,
+        # 판정 코호트 5/30→4/30). 실결정 행이 있으면 창과 무관하게 그 행을 정본으로 쓴다.
+        real_row = conn.execute(
+            "SELECT * FROM v2_decisions WHERE decision_id=?", (decision_id,)
+        ).fetchone()
+        if real_row is not None:
+            if _is_shadow_decision(real_row):
+                continue
+            if runtime_mode and str(real_row["runtime_mode"] or "").lower() != runtime_mode.lower():
+                continue
+            by_decision[decision_id] = _row_to_dict(real_row)
+            continue
+        # 결정 행 자체가 없는 복구 케이스: 창 내 이벤트의 MIN이 아니라 전체 이벤트의
+        # MIN(session_date)을 진입일로 쓴다 — 같은 청산일-덮어쓰기를 여기서도 막는다.
+        earliest = conn.execute(
+            "SELECT MIN(session_date) FROM lifecycle_events WHERE decision_id=?",
+            (decision_id,),
+        ).fetchone()
+        earliest_session = str((earliest[0] if earliest else "") or "") or str(event_row["session_date"] or "")
+        by_decision[decision_id] = {
+            "decision_id": decision_id,
+            "market": str(event_row["market"] or ""),
+            "runtime_mode": str(event_row["runtime_mode"] or ""),
+            "session_date": earliest_session,
+            "ticker": str(event_row["ticker"] or ""),
+            "prompt_version": str(event_row["prompt_version"] or ""),
+            "brain_snapshot_id": str(event_row["brain_snapshot_id"] or ""),
+            "strategy_hint": "",
+            "timing_style": "",
+            "status": str(event_row["status"] or ""),
+            "payload": {},
+        }
     return sorted(
         by_decision.values(),
         key=lambda row: (

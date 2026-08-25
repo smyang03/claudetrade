@@ -127,6 +127,94 @@ class V2LearningPerformanceSyncTests(unittest.TestCase):
             self.assertEqual(row["quality_grade"], "CLEAN")
             self.assertEqual(row["learning_allowed"], 1)
 
+    def test_windowed_sync_keeps_out_of_window_decision_truth(self) -> None:
+        """창 밖 결정 가림 방지 회귀(2026-08-25, MXL 실측).
+
+        청산일 session_date를 단 CLOSED 이벤트만 sync 창에 걸리면, 이벤트 fallback이
+        합성 결정(진입일=청산일, strategy 빈값)으로 v2_decisions 본체를 가려 판정
+        코호트에서 행이 빠졌다(5/30→4/30). 진입일이 창 밖이어도 실결정 행이 정본이다.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="US",
+                runtime_mode="live",
+                session_date="2026-08-11",
+                ticker="MXL",
+                prompt_version="v2",
+                brain_snapshot_id="brain_us",
+                strategy_hint="us_swing_5d",
+            )
+            for event in (
+                LifecycleEvent(
+                    event_type="FILLED",
+                    market="US",
+                    runtime_mode="live",
+                    session_date="2026-08-11",
+                    ticker="MXL",
+                    decision_id=decision_id,
+                    execution_id="buy1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    # 복구 등록 케이스: fill payload에 strategy가 비어 있다(MXL 실측)
+                    payload={"price": 66.89, "qty": 8, "strategy_used": ""},
+                ),
+                LifecycleEvent(
+                    event_type="CLOSED",
+                    market="US",
+                    runtime_mode="live",
+                    # 청산일 백필 이벤트는 청산 세션 날짜를 단다 — 이 날짜만 창에 걸린다
+                    session_date="2026-08-14",
+                    ticker="MXL",
+                    decision_id=decision_id,
+                    execution_id="sell1",
+                    prompt_version="v2",
+                    brain_snapshot_id="brain_us",
+                    payload={
+                        "exit_price": 75.22,
+                        "qty": 8,
+                        "pnl_krw": 37053,
+                        "pnl_pct": 12.46,
+                        "pnl_pct_net": 12.46,
+                        "pnl_krw_net": 37053,
+                        "close_reason": "SLEEVE_TP",
+                    },
+                ),
+            ):
+                store.append(event)
+
+            # 1) 전체 창 sync — 정본 행(진입일 08-11, strategy us_swing_5d)이 만들어진다
+            sync_v2_learning_performance(event_db=event_db, ml_db=ml_db, market="US", dry_run=False)
+            # 2) 진입일이 빠지고 청산일만 걸리는 좁은 창으로 재sync — 세션마감 sync 재현
+            sync_v2_learning_performance(
+                event_db=event_db,
+                ml_db=ml_db,
+                market="US",
+                start_date="2026-08-14",
+                end_date="2026-08-20",
+                dry_run=False,
+            )
+
+            with closing(sqlite3.connect(ml_db)) as conn:
+                conn.row_factory = sqlite3.Row
+                canonical = conn.execute(
+                    "SELECT session_date, canonical_key, strategy, status, pnl_pct_net"
+                    " FROM v2_canonical_performance WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchall()
+
+            self.assertEqual(len(canonical), 1)
+            row = canonical[0]
+            self.assertEqual(row["session_date"], "2026-08-11")
+            self.assertIn("|2026-08-11|", row["canonical_key"])
+            self.assertEqual(row["strategy"], "us_swing_5d")
+            self.assertEqual(row["status"], "CLOSED")
+            self.assertEqual(row["pnl_pct_net"], 12.46)
+
     def test_sync_uses_audited_broker_native_exit_price_and_qty_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
