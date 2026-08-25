@@ -373,7 +373,9 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
         ok = bot._submit_micro_probe_buy_order(
             market="KR", ticker=ticker, name=ticker, qty=qty,
             raw_price=price, risk_price_krw=price,
-            tp_pct=0.12, sl_pct=0.25, max_hold=5, mode=mode,
+            # 2026-08-25 D5→D7 (운영자 결정, KR도 함께). env 단일 소스.
+            tp_pct=0.12, sl_pct=0.25,
+            max_hold=bot._runtime_int("KR_FALLEN_MAX_HOLD_SESSIONS", 5), mode=mode,
             selected_reason=f"kr_fallen_{matched_tag}",
             source_strategy=SOURCE_STRATEGY,
             entry_priority_score=abs(float((row.get("feats") or {}).get("ma20_disc") or 0.0)),

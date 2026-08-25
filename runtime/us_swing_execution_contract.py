@@ -26,7 +26,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from typing import Any, Mapping
+
+# 보유기간 기본값 (2026-08-25 운영자 결정 D5→D7).
+# ⚠️ 이 값은 **실주문 브리지와 같은 env 키**를 읽어야 한다. 08-21 이전에 슬롯·일한도가
+# 실주문과 shadow 두 군데에 따로 하드코딩돼 계약이 갈라졌던 것과 같은 계열이다.
+# max_hold_sessions는 contract_id 재료라, 갈라지면 지문이 서로 다른 코호트가 된다.
+_DEFAULT_MAX_HOLD_SESSIONS = 5
+
+
+def default_max_hold_sessions() -> int:
+    """US swing 보유 세션 수 — env 단일 소스."""
+    try:
+        return max(1, int(float(os.getenv("US_SWING_MAX_HOLD_SESSIONS", _DEFAULT_MAX_HOLD_SESSIONS))))
+    except (TypeError, ValueError):
+        return _DEFAULT_MAX_HOLD_SESSIONS
 
 
 CONTRACT_SCHEMA_VERSION = "us_swing_execution_contract_v1"
@@ -158,7 +173,7 @@ def resolve_execution_contract(
         "allowed_sources": list(parse_allowed_sources(allowed_sources_raw)),
         "take_profit_pct": _number(contract.get("take_profit_pct"), 0.12),
         "catastrophe_stop_pct": _number(contract.get("catastrophe_stop_pct"), 0.25),
-        "max_hold_sessions": int(_number(contract.get("max_hold_sessions"), 5)),
+        "max_hold_sessions": int(_number(contract.get("max_hold_sessions"), default_max_hold_sessions())),
         "min_probability": _number(min_probability, 0.55),
         "min_predicted_net_pct": _number(min_predicted_net_pct, 0.25),
         "hurdles_enforced": bool(hurdles_enforced),

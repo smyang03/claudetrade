@@ -18591,6 +18591,56 @@ class TradingBot(MarketUtilsMixin, StateMixin):
 
     SLEEVE_SOURCE_STRATEGIES = ("us_swing_5d", "kr_fallen_5d")
 
+    @staticmethod
+    def _sleeve_closed_extremes(cand: dict, market_key: str):
+        """청산 시점 MFE/MAE와 그 출처를 뽑는다 (2026-08-24).
+
+        반환: (mfe_pct, mfe_source, mae_pct, mae_source) — 값이 없으면 None.
+
+        ⚠️ **출처 태그를 반드시 함께 남긴다.** observed_* 계열은 WS 틱 기반이라
+        계측 강등 구간(instrument_health_events 원장 참조)에서는 극값을 놓친다.
+        태그가 없으면 오염 구간 숫자와 정상 구간 숫자가 원장에서 구분되지 않아,
+        나중에 "계측 정상 구간만" 부분집합을 잘라낼 수 없다.
+
+        결측은 0.0이 아니라 None이다. MFE 0.0은 "진입 후 한 번도 플러스가 없었다"는
+        실제 관측이므로(08-19 AXTI가 그 사례) 결측과 섞으면 판정이 오염된다.
+        """
+        def _f(value) -> float:
+            try:
+                return float(value or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        mfe_pct = mae_pct = None
+        mfe_source = mae_source = ""
+        for key, tag in (
+            ("position_mfe_pct", "position_mfe"),
+            ("peak_pnl_pct", "peak_pnl"),
+            ("observed_mfe_pct", "observed_ws"),
+        ):
+            if cand.get(key) is not None:
+                mfe_pct, mfe_source = round(_f(cand.get(key)), 4), tag
+                break
+
+        if cand.get("position_mae_pct") is not None:
+            mae_pct, mae_source = round(_f(cand.get("position_mae_pct")), 4), "position_mae"
+        else:
+            # 포지션에 mae 필드가 없는 계약(sleeve)은 관측 저점에서 되계산한다.
+            # 진입가는 반드시 **같은 통화**를 써야 한다 — observed_low_price는 native다.
+            # US에서 native 평단이 없으면 계산하지 않는다(entry는 KRW라 섞으면 쓰레기 값).
+            if str(market_key or "").upper() == "US":
+                entry_native = _f(cand.get("display_avg_price") or cand.get("avg_price"))
+            else:
+                entry_native = _f(
+                    cand.get("entry") or cand.get("avg_price") or cand.get("display_avg_price")
+                )
+            low_native = _f(cand.get("observed_low_price"))
+            # 20배 가드: 통화 혼입(USD 자리에 KRW)이면 조용히 오염된 MAE가 남는다.
+            if entry_native > 0 and 0 < low_native < entry_native * 20:
+                mae_pct = round((low_native / entry_native - 1.0) * 100.0, 4)
+                mae_source = "observed_low_ws"
+        return mfe_pct, mfe_source, mae_pct, mae_source
+
     def _record_sleeve_closed_event(self, cand: dict, market: str, reason: str, ex: dict) -> None:
         """isolated sleeve 계약 청산을 CLOSED lifecycle 이벤트로 즉시 기록한다.
 
@@ -18643,6 +18693,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.info(f"[sleeve CLOSED] {ticker_key} 진입 decision_id 이어받음: {entry_decision_id}")
         else:
             log.warning(f"[sleeve CLOSED] {ticker_key} 진입 decision_id 없음 — 합성 ID 폴백")
+        mfe_pct, mfe_source, mae_pct, mae_source = self._sleeve_closed_extremes(cand, market_key)
         v2.record_event(
             "CLOSED",
             market_key,
@@ -18675,6 +18726,16 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "source_strategy": source,
                 "emitted_by": "live_exit_path",
                 "sleeve_contract": True,
+                # MFE/MAE (2026-08-24 수리): 청산 시점 관측 극값을 함께 싣는다.
+                # sync가 close_payload에서 꺼내 정본 원장의 mfe_pct/mae_pct를 채운다
+                # (sync_v2_learning_performance.py:1093). 이 두 키가 없어서 정산 6건이
+                # 전부 NULL이었고, TP12 적정성·capture·"승자도 보유 중엔 마이너스였나"를
+                # 원장으로 판정할 수 없었다. 값이 없으면 0이 아니라 None으로 남긴다 —
+                # 0.0은 "극값이 진입가"라는 실제 관측이므로 결측과 구분해야 한다.
+                "mfe_pct": mfe_pct,
+                "mae_pct": mae_pct,
+                "mfe_source": mfe_source or None,
+                "mae_source": mae_source or None,
             },
         )
         log.info(
@@ -26803,7 +26864,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 continue
             if self._has_active_pending_sell_confirmation(pos) or pos.get("pathb_path_run_id"):
                 continue
-            max_hold = max(1, int(pos.get("max_hold", 1) or 1))
+            max_hold = self._sleeve_max_hold_sessions(source, pos)
             held_days = max(0, int(pos.get("held_days", 0) or 0))
             if held_days < max_hold - 1:
                 continue
@@ -26820,6 +26881,35 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "fixed_horizon_held_days": held_days,
             })
         return output
+
+    # sleeve 소스 → 보유기간 env 키. 진입 브리지(us_swing_order_bridge·kr_fallen_order_bridge)와
+    # **같은 키**를 읽어야 계약이 갈라지지 않는다.
+    SLEEVE_MAX_HOLD_ENV_KEYS = {
+        "us_swing_5d": "US_SWING_MAX_HOLD_SESSIONS",
+        "kr_fallen_5d": "KR_FALLEN_MAX_HOLD_SESSIONS",
+    }
+
+    def _sleeve_max_hold_sessions(self, source: str, pos: dict) -> int:
+        """보유 세션 수를 결정한다 — sleeve는 env가 우선이다 (2026-08-25).
+
+        포지션 dict의 `max_hold`는 **진입 시점에 박제된 값**이라, 운영자가 계약을
+        D5→D7로 바꿔도 이미 보유 중인 건은 옛 계약으로 청산된다. 08-25 운영자 결정은
+        "기존 보유도 함께 연장"이므로, sleeve 소스에 한해 env를 단일 소스로 삼는다.
+        (포지션 원장을 손으로 고치는 대신 이 경로를 쓴다 — 라이브 원장 직접 편집은
+         봇이 주기 저장으로 덮어쓰고, 편집 시점에 따라 값이 갈라진다.)
+
+        sleeve가 아닌 포지션(PathB·코어·레거시)은 기존 동작 그대로 pos 값을 쓴다.
+        env가 없거나 잘못된 값이면 pos 값으로 안전하게 되돌아간다(fail-safe).
+        """
+        pos_hold = max(1, int(pos.get("max_hold", 1) or 1))
+        env_key = self.SLEEVE_MAX_HOLD_ENV_KEYS.get(str(source or "").strip().lower())
+        if not env_key:
+            return pos_hold
+        try:
+            env_hold = int(self._runtime_int(env_key, pos_hold))
+        except (TypeError, ValueError):
+            return pos_hold
+        return max(1, env_hold)
 
     @staticmethod
     def _isolated_strategy_exit_owner(pos: dict) -> str:

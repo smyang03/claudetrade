@@ -684,7 +684,9 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
                     risk_price_krw=float(decision.details.get("price_krw") or 0.0),
                     tp_pct=bot._runtime_float("US_SWING_ORDER_TP_DECIMAL", 0.12),
                     sl_pct=bot._runtime_float("US_SWING_ORDER_SL_DECIMAL", 0.25),
-                    max_hold=5,
+                    # 2026-08-25 D5→D7: env 단일 소스. shadow 계약
+                    # (us_swing_execution_contract.default_max_hold_sessions)와 **같은 키**를 읽는다.
+                    max_hold=bot._runtime_int("US_SWING_MAX_HOLD_SESSIONS", 5),
                     mode=mode,
                     # rank2 폴백 경유분은 태그로 분리(반증 기준 "폴백 정산 10건" 집계용).
                     #

@@ -14244,7 +14244,7 @@ async function loadSummary() {
               <div style="font-size:11px;color:${netColor2}">${netStr2}${pnlKrwText ? ' · '+pnlKrwText : ''}</div>
             </div>
           </div>
-          <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${[buyPath === 'PathB' ? 'B플랜 가격대 진입' : (buyPath === 'PlanA' ? 'A플랜 신호 진입' : (buyPath === 'Core' ? '저회전 코어 슬리브' : (buyPath === 'US Swing' ? '미국 5일 스윙' : ''))), stratLabel, qty+'주', entryDate ? entryDate+(heldDays?' ('+heldDays+'일째)':'') : (heldDays?heldDays+'일째':'')].filter(Boolean).join(' · ')}</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${[buyPath === 'PathB' ? 'B플랜 가격대 진입' : (buyPath === 'PlanA' ? 'A플랜 신호 진입' : (buyPath === 'Core' ? '저회전 코어 슬리브' : (buyPath === 'US Swing' ? '미국 급락 스윙' : ''))), stratLabel, qty+'주', entryDate ? entryDate+(heldDays?' ('+heldDays+'일째)':'') : (heldDays?heldDays+'일째':'')].filter(Boolean).join(' · ')}</div>
           <div style="display:flex;gap:16px;margin-bottom:4px">
             <div><div style="font-size:10px;color:var(--text-dim)">매수가</div><div style="font-family:var(--mono);font-size:12px">${entry}</div></div>
             <div><div style="font-size:10px;color:var(--text-dim)">현재가</div><div style="font-family:var(--mono);font-size:12px">${cur}</div></div>
@@ -15743,7 +15743,7 @@ function koBuyPath(v) {
     claude_price: 'B플랜(클로드 가격)',
     manual_or_broker: '수동/브로커 동기화',
     Core: '저회전 코어',
-    'US Swing': '미국 5일 스윙'
+    'US Swing': '미국 급락 스윙'
   };
   return m[v] || v || '';
 }
@@ -17316,6 +17316,19 @@ def _strategy_business_days(start: date, end: date) -> int:
     return days
 
 
+def _sleeve_max_hold_fallback() -> int:
+    """sleeve 보유 세션 수 폴백 — 봇과 **같은 env 키**를 읽는다 (2026-08-25 D5→D7).
+
+    화면이 숫자를 따로 굳혀두면 계약 변경 후 표시만 옛 값으로 남아, 운영자가 보는
+    만기와 봇이 실제로 청산하는 시점이 갈린다. 계약 payload가 있으면 그쪽이 우선이고
+    이 함수는 payload가 비었을 때만 쓰인다.
+    """
+    try:
+        return max(1, int(float(os.getenv("US_SWING_MAX_HOLD_SESSIONS", "5"))))
+    except (TypeError, ValueError):
+        return 5
+
+
 def _strategy_filled_entries(order_map: dict[str, str], mode: str) -> dict[str, dict]:
     """브로커 확정 체결(FILLED) — **주문번호로 정확히 귀속**한다.
 
@@ -17498,9 +17511,10 @@ def _strategy_configured_order_cap() -> float:
 def _strategy_cohort(mode: str = "live") -> dict:
     """실주문이 나간 계약 건(handoff SUBMITTED ∩ 계약 지문)만 판정 코호트로 센다."""
     empty = {
-        "target": STRATEGY_COHORT_TARGET_N, "count": 0, "rows": [],
-        "settled": 0, "holding": 0, "not_filled": 0, "pending_sync": 0,
-        "settled_nets": [], "fingerprints": [], "blocks": [], "error": "",
+        "target": STRATEGY_COHORT_TARGET_N, "count": 0, "submitted": 0, "rows": [],
+        "settled": 0, "strict_settled": 0, "holding": 0, "not_filled": 0,
+        "pending_sync": 0, "settled_nets": [], "strict_settled_nets": [],
+        "fingerprints": [], "blocks": [], "error": "",
     }
     if _normalize_mode(mode) != "live":
         # us_swing_shadow.db·us_swing_status·kr_fallen 원장은 전부 live 러너 산출물이라
@@ -17551,6 +17565,7 @@ def _strategy_cohort(mode: str = "live") -> dict:
     out_rows: list[dict] = []
     counts = {"settled": 0, "holding": 0, "not_filled": 0, "pending_sync": 0}
     settled_nets: list[float] = []
+    strict_settled_nets: list[float] = []
     fingerprints: dict[str, int] = {}
     for (signal_date, ticker, contract_id, status, reason, quote_price, qty,
          source, probability, order_no) in rows:
@@ -17580,6 +17595,8 @@ def _strategy_cohort(mode: str = "live") -> dict:
             # 주석 양쪽에 반한다. net 결손 행은 정산 카운트에서 빼고 따로 센다.
             if net.get("is_net") and net.get("net_pct") is not None:
                 settled_nets.append(float(net["net_pct"]))
+                if int(net.get("learning_allowed") or 0) == 1:
+                    strict_settled_nets.append(float(net["net_pct"]))
             else:
                 state = "PENDING_SYNC"
                 counts["settled_net_missing"] = counts.get("settled_net_missing", 0) + 1
@@ -17605,15 +17622,20 @@ def _strategy_cohort(mode: str = "live") -> dict:
 
     return {
         "target": STRATEGY_COHORT_TARGET_N,
-        "count": len(out_rows),
+        # `/30`은 제출 횟수가 아니라 정본 net이 있는 실체결 정산 진행도다.
+        # 보유·미체결까지 count에 넣으면 DIOD 같은 미체결이 판정 표본을 앞당긴다.
+        "count": counts.get("settled", 0),
+        "submitted": len(out_rows),
         "rows": out_rows,
         "settled": counts.get("settled", 0),
+        "strict_settled": len(strict_settled_nets),
         "holding": counts.get("holding", 0),
         "not_filled": counts.get("not_filled", 0),
         "pending_sync": counts.get("pending_sync", 0),
         # net 정본이 없어 정산에서 뺀 건수 — 0이 아니면 원장 동기화가 밀린 것이다.
         "settled_net_missing": counts.get("settled_net_missing", 0),
         "settled_nets": settled_nets,
+        "strict_settled_nets": strict_settled_nets,
         "fingerprints": [
             {"id": fid[:8], "count": n} for fid, n in sorted(fingerprints.items())
         ],
@@ -17622,6 +17644,29 @@ def _strategy_cohort(mode: str = "live") -> dict:
             for d, t, r in blocks
         ],
         "error": "",
+    }
+
+
+def _strategy_cohort_stats(cohort: dict) -> dict:
+    """전체 정산과 CLEAN 판정 표본을 같은 응답에서 분리한다."""
+    settled_nets = [float(value) for value in (cohort.get("settled_nets") or [])]
+    strict_nets = [float(value) for value in (cohort.get("strict_settled_nets") or [])]
+
+    def _stats(values: list[float]) -> tuple:
+        if not values:
+            return None, None
+        return (
+            round(sum(values) / len(values), 2),
+            round(100 * sum(1 for value in values if value > 0) / len(values), 0),
+        )
+
+    settled_mean, settled_win_rate = _stats(settled_nets)
+    strict_mean, strict_win_rate = _stats(strict_nets)
+    return {
+        "settled_mean_pct": settled_mean,
+        "settled_win_rate": settled_win_rate,
+        "strict_mean_pct": strict_mean,
+        "strict_win_rate": strict_win_rate,
     }
 
 
@@ -17786,6 +17831,8 @@ def api_strategy_summary():
     # (08-19 031330)가 non_contract로 떨어졌다. 전략 관제 화면이 그 포지션의
     # TP12/SL25/D5와 보유일을 통째로 누락해 "실제 매수 sleeve 두 종류를 다 보여준다"는
     # 운영 계약을 못 지켰다. 로컬 포지션의 source_strategy를 정본으로 쓴다.
+    # ⚠️ 소스 ID의 "_5d"는 **전략 식별자**다. 보유기간이 D7로 바뀌어도 이 문자열은 바꾸지 않는다
+    #    — 원장·DB·판정 리포트 전체가 이 값으로 묶여 있어, 바꾸면 과거 표본과 연결이 끊긴다.
     _SLEEVE_SOURCES = {"us_swing_5d", "kr_fallen_5d"}
     sleeve_tickers = {
         ticker for ticker, item in local_positions.items()
@@ -17795,7 +17842,8 @@ def api_strategy_summary():
 
     tp_pct = float(contract.get("take_profit_pct") or 0.12) * 100
     sl_pct = float(contract.get("catastrophe_stop_pct") or 0.25) * 100
-    max_hold = int(contract.get("max_hold_sessions") or 5)
+    # 계약 payload가 없을 때의 폴백도 env를 따른다 — 5로 굳으면 D7 전환 후 화면만 D5로 남는다.
+    max_hold = int(contract.get("max_hold_sessions") or _sleeve_max_hold_fallback())
     today = date.today()
 
     open_contracts: list[dict] = []
@@ -17844,7 +17892,15 @@ def api_strategy_summary():
                 "entry_date": entry_date,
                 "d_elapsed": elapsed,
                 "d_elapsed_source": elapsed_source,
-                "max_hold": int(local.get("max_hold") or max_hold),
+                # 2026-08-25 D5→D7: 로컬 포지션의 max_hold는 **진입 시점 박제값**이라,
+                # 계약을 바꿔도 기존 보유가 옛 만기로 표시된다(화면과 실제 청산 시점이 갈림).
+                # 봇의 청산 판정(trading_bot._sleeve_max_hold_sessions)이 env를 우선하므로
+                # 화면도 같은 규칙을 따른다 — sleeve는 계약값, 그 외에만 포지션 값.
+                "max_hold": (
+                    max_hold
+                    if str(local.get("source_strategy") or "").lower() in _SLEEVE_SOURCES
+                    else int(local.get("max_hold") or max_hold)
+                ),
                 "to_tp_pp": round(tp_pct - float(pos.get("pnl_pct") or 0), 2),
                 "to_sl_pp": round(float(pos.get("pnl_pct") or 0) + sl_pct, 2),
             })
@@ -17863,7 +17919,7 @@ def api_strategy_summary():
     kr_cash_krw = float(kr_summary.get("orderable_cash", 0) or 0)
     cash_krw = kr_cash_krw + us_cash_krw
 
-    settled_nets = cohort.get("settled_nets") or []
+    cohort_stats = _strategy_cohort_stats(cohort)
     payload = {
         "ok": True,
         "generated_at": datetime.now(KST).isoformat(timespec="seconds"),
@@ -17886,15 +17942,10 @@ def api_strategy_summary():
             "generated_at": str(status.get("generated_at") or ""),
         },
         "cohort": {
-            k: v for k, v in cohort.items() if k != "settled_nets"
+            k: v for k, v in cohort.items()
+            if k not in {"settled_nets", "strict_settled_nets"}
         },
-        "cohort_stats": {
-            "settled_mean_pct": round(sum(settled_nets) / len(settled_nets), 2) if settled_nets else None,
-            "settled_win_rate": (
-                round(100 * sum(1 for x in settled_nets if x > 0) / len(settled_nets), 0)
-                if settled_nets else None
-            ),
-        },
+        "cohort_stats": cohort_stats,
         "open_contracts": open_contracts,
         "non_contract": non_contract,
         "capacity": {
@@ -18112,14 +18163,16 @@ function renderStrategy(d) {
   document.getElementById('stg-capacity').innerHTML =
     '<div class="stg-card"><div class="lab">US 주문가능</div><div class="val">' +
     Math.round((cap.us_cash_krw || 0) / 10000) + '<span style="font-size:15px;color:var(--muted)">만원</span></div>' +
-    '<div class="sub">KR ' + Math.round((cap.kr_cash_krw || 0) / 10000) + '만원은 US에 못 씀 · 3슬롯 최대 ' +
+    '<div class="sub">KR ' + Math.round((cap.kr_cash_krw || 0) / 10000) + '만원은 US에 못 씀 · ' +
+    (cap.us_slots_max || 0) + '슬롯 최대 ' +
     Math.round((cap.us_exposure_if_full_krw || 0) / 10000) + '만원</div></div>' +
     '<div class="stg-card"><div class="lab">US 슬롯</div><div class="val">' + (cap.us_slots_used || 0) +
     '<span style="font-size:15px;color:var(--muted)"> / ' + (cap.us_slots_max || 0) + '</span></div>' +
     '<div class="sub">신규 일 ' + (cap.new_per_day || 0) + '건</div></div>' +
-    '<div class="stg-card"><div class="lab">코호트</div><div class="val">' + ((d.cohort || {}).count || 0) +
+    '<div class="stg-card"><div class="lab">정산 코호트</div><div class="val">' + ((d.cohort || {}).count || 0) +
     '<span style="font-size:15px;color:var(--muted)"> / ' + ((d.cohort || {}).target || 30) + '</span></div>' +
-    '<div class="sub">정산 ' + ((d.cohort || {}).settled || 0) + ' · 보유 ' + ((d.cohort || {}).holding || 0) + '</div></div>';
+    '<div class="sub">엄격 CLEAN ' + ((d.cohort || {}).strict_settled || 0) + ' · 보유 ' +
+    ((d.cohort || {}).holding || 0) + ' · 미체결 ' + ((d.cohort || {}).not_filled || 0) + '</div></div>';
 
   // 계약 밖 보유
   const nc = d.non_contract || [];
@@ -18135,9 +18188,11 @@ function renderStrategy(d) {
   // B. 코호트
   const co = d.cohort || {}, st = d.cohort_stats || {};
   const rows = co.rows || [];
+  const settledRows = rows.filter(function (r) { return r.state === 'SETTLED'; });
   const ticks = [];
   for (let i = 0; i < (co.target || 30); i++) {
-    const r = rows[i];
+    // 진행 눈금은 실제 정산만 센다. 보유·미체결은 아래 상태표에서 별도 표시한다.
+    const r = settledRows[i];
     let cls = '';
     if (r) {
       if (r.state === 'SETTLED') cls = (r.net_pct > 0 ? 'good' : 'bad');
@@ -18148,14 +18203,17 @@ function renderStrategy(d) {
     ticks.push('<span class="tick ' + cls + '"></span>');
   }
   document.getElementById('stg-b-note').textContent =
-    (co.count || 0) + ' / ' + (co.target || 30) + ' · 지문 ' +
+    '정산 ' + (co.count || 0) + ' / ' + (co.target || 30) + ' · 제출 ' + (co.submitted || 0) + ' · 지문 ' +
     (co.fingerprints || []).map(function (f) { return f.id + '(' + f.count + ')'; }).join(' ');
   document.getElementById('stg-cohort').innerHTML =
     '<div class="ticks">' + ticks.join('') + '</div>' +
     '<div class="stg-sub">정산 ' + (co.settled || 0) + ' · 보유 ' + (co.holding || 0) +
     ' · 정본대기 ' + (co.pending_sync || 0) + ' · 미체결 ' + (co.not_filled || 0) +
     (st.settled_mean_pct !== null && st.settled_mean_pct !== undefined ?
-      ' · 정산 평균 net ' + stgSigned(st.settled_mean_pct) + '% (승률 ' + stgNum(st.settled_win_rate, 0) + '%)' : '') + '</div>' +
+      ' · 전체 평균 net ' + stgSigned(st.settled_mean_pct) + '% (승률 ' + stgNum(st.settled_win_rate, 0) + '%)' : '') +
+    (st.strict_mean_pct !== null && st.strict_mean_pct !== undefined ?
+      ' · 엄격 CLEAN ' + (co.strict_settled || 0) + '건 ' + stgSigned(st.strict_mean_pct) +
+      '% (승률 ' + stgNum(st.strict_win_rate, 0) + '%)' : '') + '</div>' +
     '<table class="stg-tbl" style="margin-top:12px"><thead><tr><th>신호일</th><th>종목</th><th>지문</th><th>상태</th><th class="n">net(정본)</th><th>비고</th></tr></thead><tbody>' +
     rows.map(function (r) {
       const lab = STG_STATE_LABEL[r.state] || [r.state, ''];
@@ -18204,8 +18262,7 @@ function renderStrategy(d) {
     '체결 여부: v2_event_store FILLED · net 정본: v2_canonical_performance(수수료·FX 반영) · ' +
     '보유·현금: 브로커 truth 스냅샷 · KR 게이트: kr_fallen_shadow.jsonl(kr_fallen_gate_report 규칙 재사용)<br>' +
     'net은 정본에 기록된 건만 표시합니다. gross나 shadow 값으로 대체하지 않습니다.<br>' +
-    '<b>*</b> 표시 = v2_canonical_performance의 pnl_pct_net이 비어 브로커 실현/gross 값을 보여주는 건입니다(현재 sleeve 청산은 ' +
-    '라이브가 CLOSED를 발행하지 않아 소급 주입분이라 quality_grade=DIRTY·learning_allowed=0). 자동 학습·판정에 쓰기 전 정본화가 필요합니다.<br>' +
+    '<b>*</b> 표시 = pnl_pct_net이 없어 gross 진단값만 보이는 행입니다. 이런 행은 정산 건수·평균·승률에서 제외됩니다.<br>' +
     '체결·정산 귀속은 signals.handoff_order_no ↔ lifecycle FILLED.execution_id, canonical은 sleeve decision_id로 매칭합니다(추정 매칭은 행에 표기).<br>' +
     '이 화면의 원장은 모두 live 전용입니다 — paper 모드에서는 데이터를 표시하지 않습니다.';
 }

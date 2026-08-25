@@ -47,8 +47,20 @@ def _bot(v2, store=None):
     bot._mode = "live"
     bot._current_session_date_str = lambda market: "2026-08-18"
     bot.SLEEVE_SOURCE_STRATEGIES = TradingBot.SLEEVE_SOURCE_STRATEGIES
+    bot._sleeve_closed_extremes = TradingBot._sleeve_closed_extremes
     bot._record_sleeve_closed_event = TradingBot._record_sleeve_closed_event.__get__(bot)
     return bot
+
+
+# 프로덕션 포지션 dict가 실제로 갖는 극값 필드 (2026-08-24 실측, live_open_positions.json).
+# 픽스처가 프로덕션과 다르면 테스트는 버그를 영원히 통과시킨다 — 08-21 MAX 하한 fail-open
+# 사고와 같은 계열이므로 실제 키 이름·단위를 그대로 쓴다.
+_US_POSITION_EXTREMES = {
+    "display_avg_price": 18.02,      # native USD 평단 (FRVO 08-18 진입)
+    "position_mfe_pct": 5.3,
+    "observed_peak_price": 18.975,
+    "observed_low_price": 16.53,
+}
 
 
 class SleeveClosedLiveEmitTests(unittest.TestCase):
@@ -136,6 +148,86 @@ class SleeveClosedLiveEmitTests(unittest.TestCase):
         self.assertEqual(v2.events[0]["decision_id"], "sleeve_US_MXL_20260818")
 
 
+class SleeveClosedExtremesTests(unittest.TestCase):
+    """청산 CLOSED payload에 MFE/MAE가 실린다 (2026-08-24 수리).
+
+    이 배선이 없어서 정산 6건(FRMI·CVI·MXL·FA·WIX·AXTI)의 mfe_pct/mae_pct가 전부
+    NULL이었다. sync는 close_payload에서만 값을 꺼내므로(sync_v2_learning_performance.py:1093)
+    emit이 안 실으면 원장은 영원히 빈다. TP12 적정성·capture 판정의 입력이 사라진다.
+    """
+
+    def test_us_close_carries_mfe_mae_with_source_tags(self) -> None:
+        v2 = _FakeV2()
+        _bot(v2)._record_sleeve_closed_event(
+            {"ticker": "FRVO", "source_strategy": "us_swing_5d", **_US_POSITION_EXTREMES},
+            "US", "strategy_horizon_exit",
+            {"ticker": "FRVO", "pnl_pct": -3.0, "pnl": -9000, "qty": 39, "exit_price": 17.48},
+        )
+        payload = v2.events[0]["payload"]
+        self.assertEqual(payload["mfe_pct"], 5.3)
+        self.assertEqual(payload["mfe_source"], "position_mfe")
+        # MAE = 관측 저점 16.53 / 평단 18.02 - 1 = -8.2686%
+        self.assertAlmostEqual(payload["mae_pct"], -8.2686, places=3)
+        self.assertEqual(payload["mae_source"], "observed_low_ws")
+
+    def test_zero_mfe_is_kept_not_dropped(self) -> None:
+        """MFE 0.0은 결측이 아니라 '진입 후 한 번도 플러스가 없었다'는 관측이다.
+
+        08-19 AXTI가 실제 사례다. None으로 뭉개면 판정에서 최악 진입이 사라진다.
+        """
+        v2 = _FakeV2()
+        _bot(v2)._record_sleeve_closed_event(
+            {"ticker": "AXTI", "source_strategy": "us_swing_5d",
+             "display_avg_price": 82.09, "position_mfe_pct": 0.0, "observed_low_price": 68.5},
+            "US", "strategy_fixed_stop_loss",
+            {"ticker": "AXTI", "pnl_pct": -25.0, "pnl": -190000, "qty": 8, "exit_price": 61.57},
+        )
+        payload = v2.events[0]["payload"]
+        self.assertEqual(payload["mfe_pct"], 0.0)
+        self.assertEqual(payload["mfe_source"], "position_mfe")
+        # MAE = 관측 저점 68.50 / 평단 82.09 - 1 = -16.5550%
+        self.assertAlmostEqual(payload["mae_pct"], -16.5550, places=3)
+
+    def test_kr_uses_entry_as_native_price(self) -> None:
+        v2 = _FakeV2()
+        _bot(v2)._record_sleeve_closed_event(
+            {"ticker": "031330", "source_strategy": "kr_fallen_5d",
+             "entry": 7660.0, "peak_pnl_pct": 3.4, "observed_low_price": 7300.0},
+            "KR", "strategy_horizon_exit",
+            {"ticker": "031330", "pnl_pct": 1.7, "pnl": 5070, "qty": 39, "exit_price": 7790},
+        )
+        payload = v2.events[0]["payload"]
+        self.assertEqual((payload["mfe_pct"], payload["mfe_source"]), (3.4, "peak_pnl"))
+        self.assertAlmostEqual(payload["mae_pct"], -4.6997, places=3)
+
+    def test_us_without_native_avg_price_skips_mae(self) -> None:
+        """US에서 native 평단이 없으면 MAE를 만들지 않는다.
+
+        entry는 KRW라 native 저점(USD)과 섞으면 -99% 같은 쓰레기 값이 원장에 남는다.
+        조용히 틀린 숫자보다 결측이 낫다.
+        """
+        v2 = _FakeV2()
+        _bot(v2)._record_sleeve_closed_event(
+            {"ticker": "MXL", "source_strategy": "us_swing_5d",
+             "entry": 93646.0, "observed_low_price": 63.25},
+            "US", "strategy_fixed_take_profit",
+            {"ticker": "MXL", "pnl_pct": 12.46, "pnl": 37053, "qty": 8, "exit_price": 74.92},
+        )
+        payload = v2.events[0]["payload"]
+        self.assertIsNone(payload["mae_pct"])
+        self.assertIsNone(payload["mae_source"])
+
+    def test_missing_extremes_stay_none(self) -> None:
+        v2 = _FakeV2()
+        _bot(v2)._record_sleeve_closed_event(
+            {"ticker": "MXL", "source_strategy": "us_swing_5d"}, "US",
+            "strategy_fixed_take_profit", {"ticker": "MXL", "pnl_pct": 12.46},
+        )
+        payload = v2.events[0]["payload"]
+        self.assertIsNone(payload["mfe_pct"])
+        self.assertIsNone(payload["mae_pct"])
+
+
 class DelayedFillCloseTests(unittest.TestCase):
     """지연 체결 청산 경로도 CLOSED를 발행한다 (2026-08-23, Codex 리뷰 P1-5).
 
@@ -158,6 +250,7 @@ class DelayedFillCloseTests(unittest.TestCase):
         bot.decision_events = []
         bot._record_decision_event = lambda *a, **kw: bot.decision_events.append(kw)
         bot._note_recent_sell_proceeds = lambda *a, **kw: None
+        bot._sleeve_closed_extremes = TradingBot._sleeve_closed_extremes
         bot._record_sleeve_closed_event = TradingBot._record_sleeve_closed_event.__get__(bot)
         bot._close_position_from_pending_sell = (
             TradingBot._close_position_from_pending_sell.__get__(bot)
