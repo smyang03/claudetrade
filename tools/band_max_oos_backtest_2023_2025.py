@@ -27,7 +27,21 @@ data/price_backfill_alpaca, 규약 all=기존 CSV와 경계 100% 정합)으로 �
   포함(Alpaca 실증)이라 생존편향은 없으나, 무작위 불일치 7종목은 제외.
 
 사용: python tools/band_max_oos_backtest_2023_2025.py
+보정 체크: --price-dir data/price/us --start 2025-05-15 --end 2026-08-15
 read-only. live DB·주문 접근 없음.
+
+== 판정 (2026-08-25, 보정 체크 후 확정) ==
+⚠️ **판정 불가 — 프록시 검정력 부족.** 같은 프록시를 in-sample 창(2025-05~
+2026-08 라이브 CSV)에 돌린 보정 체크에서 밴드 효과(+3.67%/건, 실제 스크리너
+풀 138건)가 재현되지 않았다(밴드내 +0.37 vs 밖 +0.56, top10 풀에서도 음).
+일봉 재구성(-5% 전량/하락 상위10)은 야후 스크리너 모집단(수집 시점 장중
+등락·정렬·시총 필터)을 담지 못한다 — 픽스처가 프로덕션과 다르면 검정은
+무의미하다(08-21 교훈). 따라서 OOS 무변별을 "선별 재현 실패"로 읽지 않는다.
+밴드+MAX 판정은 사전등록대로 라이브 forward 30건 몫.
+
+유효한 부산물(같은 프록시끼리의 창 간 비교라 모집단 정합):
+급락 기저 net이 2023-02~2025-03 -0.24%(t -3.67) vs 2025-05~2026-08
++0.49%(t 5.9) — "약세/변동 국면이 사냥철" 계열의 대규모 재확인(1,445종목).
 """
 from __future__ import annotations
 
@@ -64,7 +78,7 @@ def _cluster_t(nets_by_ticker: dict[str, list[float]]) -> tuple[float | None, in
 
 def _bucket(day: str) -> str:
     y, m = day[:4], int(day[5:7])
-    return f"{y}{'H1' if m <= 6 else 'H2'}" if y < "2025" else "2025Q1"
+    return f"{y}{'H1' if m <= 6 else 'H2'}"
 
 
 def _stats(rows: list[dict]) -> str:
@@ -80,14 +94,25 @@ def _stats(rows: list[dict]) -> str:
 
 
 def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description="밴드+MAX OOS/보정 검정")
+    parser.add_argument("--price-dir", default=str(BF_DIR),
+                        help="가격 CSV 디렉터리 (보정 체크: data/price/us = in-sample 창)")
+    parser.add_argument("--start", default=SIG_START)
+    parser.add_argument("--end", default=SIG_END)
+    args = parser.parse_args()
+    price_dir = Path(args.price_dir)
+    sig_start, sig_end = args.start, args.end
+
     rows: list[dict] = []
-    files = sorted(BF_DIR.glob("us_*.csv"))
-    print(f"백필 파일 {len(files)}개 스캔 (제외 {len(EXCLUDED)}종목) | 신호창 {SIG_START}~{SIG_END}")
+    files = sorted(price_dir.glob("us_*.csv"))
+    print(f"가격 파일 {len(files)}개 스캔 (제외 {len(EXCLUDED)}종목) | 신호창 {sig_start}~{sig_end} | dir={price_dir.name}")
     for path in files:
         ticker = path.stem.replace("us_", "", 1)
         if ticker in EXCLUDED:
             continue
-        bars = pd.read_csv(path)
+        # 라이브 CSV는 BOM 헤더(08-21 함정) — utf-8-sig로 양쪽 다 안전
+        bars = pd.read_csv(path, encoding="utf-8-sig")
         if len(bars) < 30:
             continue
         bars["date"] = bars["date"].astype(str)
@@ -97,7 +122,7 @@ def main() -> int:
         max20 = rets.rolling(20).max()  # 신호일 포함 21종가/20수익
         for i in range(21, len(bars)):
             day = bars.at[i, "date"]
-            if not (SIG_START <= day <= SIG_END):
+            if not (sig_start <= day <= sig_end):
                 continue
             chg = rets.iat[i]
             close = closes.iat[i]
@@ -136,7 +161,7 @@ def main() -> int:
     print(f"  밴드내 MAX미달 {_stats([r for r in band_in if not r['max_pass']])}")
 
     print("\n== 반기 버킷 (판정 ② 부호) ==")
-    for bucket in ("2023H1", "2023H2", "2024H1", "2024H2", "2025Q1"):
+    for bucket in sorted({r["bucket"] for r in rows}):
         b_in = [r for r in band_in if r["bucket"] == bucket]
         b_out = [r for r in band_out if r["bucket"] == bucket]
         m_in = st.mean([r["net"] for r in b_in]) if b_in else float("nan")
