@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from runtime.us_swing_execution_contract import default_max_hold_sessions
 from tools.us_swing_exit_counterfactual import FxLookup, _block_lcb, _load_path, simulate_exit
 
 
@@ -329,7 +330,9 @@ def main() -> int:
             "order_cap_krw": args.base_order_budget_krw * args.size_multiplier,
             "take_profit_pct": 0.12,
             "catastrophe_stop_pct": 0.25,
-            "max_hold_sessions": 5,
+            # env 단일 소스(2026-08-25). 실제 보유창은 원장 컬럼(entry/exit_date_5d —
+            # 러너가 live 계약으로 산출)이 정하고, 이 값은 메타데이터 표기다.
+            "max_hold_sessions": default_max_hold_sessions(),
             "cost_pct": 0.50,
         },
         "assumptions": {
