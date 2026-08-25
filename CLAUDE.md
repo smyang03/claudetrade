@@ -93,8 +93,10 @@ AI의 사고 방식은 **트레이너이자 개발자**다. 시장·전략·분�
     shadow(`us_swing_execution_contract` 상수) 두 군데**에 같은 값이 따로 있어
     한쪽만 고치면 계약이 갈라졌다. 지금은 세 경로(실주문·shadow·integrity_check)가
     같은 키를 읽고, effective-config 스냅샷으로 실효값을 확인할 수 있다.
-  - US swing: `US_SWING_ORDER_MAX_KRW=760000` / `US_SWING_MAX_OPEN_SLOTS=5` /
-    `US_SWING_MAX_NEW_PER_DAY=1`. **최악 동시 SL = 76만 × 5 × 25% = 95만.**
+  - US swing: `US_SWING_ORDER_MAX_KRW=540000` / `US_SWING_MAX_OPEN_SLOTS=7` /
+    `US_SWING_MAX_NEW_PER_DAY=1`. **최악 동시 SL = 54만 × 7 × 25% = 94.5만.**
+    (08-25 재배분 — 노출·최악손실 불변으로 슬롯만 확대. 근거·반대근거는
+    preregistered_falsification_criteria §리스크 한도 재개정 08-25.)
   - ⚠️ **`US_SWING_MAX_NEW_PER_DAY`는 "하루 최대 건수"가 아니다**(2026-08-22 운영자 결정 A안).
     `us_swing_order_handoff.py`가 이 값을 **"밴드 내 순위가 N 이하인가"**로 쓴다. 진입한
     종목이 다음 사이클에서 후보 목록에서 빠지면 그 다음 종목이 1순위로 승격해 또 통과한다.
