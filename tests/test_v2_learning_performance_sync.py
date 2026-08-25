@@ -215,6 +215,46 @@ class V2LearningPerformanceSyncTests(unittest.TestCase):
             self.assertEqual(row["status"], "CLOSED")
             self.assertEqual(row["pnl_pct_net"], 12.46)
 
+    def test_micro_probe_label_resolves_to_source_strategy(self) -> None:
+        """'MICRO_PROBE'는 사이징 라벨 — 전략으로 오인 금지 (2026-08-26 RGTI 실측).
+
+        체결 복구 경로가 FILLED에 strategy_used='MICRO_PROBE'만 싣는 경우,
+        ORDER_SENT의 source_strategy(us_swing_5d)로 복원돼야 코호트에 들어간다.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            event_db = root / "events.db"
+            ml_db = root / "decisions.db"
+            store = EventStore(event_db)
+            registry = DecisionRegistry(store)
+            decision_id = registry.register_trade_ready(
+                market="US", runtime_mode="live", session_date="2026-08-25",
+                ticker="RGTI", prompt_version="v2", brain_snapshot_id="brain_us",
+                strategy_hint="MICRO_PROBE",
+            )
+            for event in (
+                LifecycleEvent(
+                    event_type="ORDER_SENT", market="US", runtime_mode="live",
+                    session_date="2026-08-25", ticker="RGTI", decision_id=decision_id,
+                    execution_id="buy1", prompt_version="v2", brain_snapshot_id="brain_us",
+                    payload={"source_strategy": "us_swing_5d", "strategy_used": "MICRO_PROBE"},
+                ),
+                LifecycleEvent(
+                    event_type="FILLED", market="US", runtime_mode="live",
+                    session_date="2026-08-25", ticker="RGTI", decision_id=decision_id,
+                    execution_id="buy1", prompt_version="v2", brain_snapshot_id="brain_us",
+                    payload={"price": 16.53, "qty": 5, "strategy_used": "MICRO_PROBE"},
+                ),
+            ):
+                store.append(event)
+            sync_v2_learning_performance(event_db=event_db, ml_db=ml_db, market="US", dry_run=False)
+            with closing(sqlite3.connect(ml_db)) as conn:
+                row = conn.execute(
+                    "SELECT strategy FROM v2_canonical_performance WHERE v2_decision_id=?",
+                    (decision_id,),
+                ).fetchone()
+            self.assertEqual(row[0], "us_swing_5d")
+
     def test_sync_uses_audited_broker_native_exit_price_and_qty_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

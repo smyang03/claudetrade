@@ -1052,6 +1052,21 @@ def build_learning_row(decision: dict[str, Any], events: list[dict[str, Any]], p
         )
         or ("claude_price" if path_type == "claude_price" else "")
     )
+    # 2026-08-26(RGTI 실측): 'MICRO_PROBE'는 사이징 모드 라벨이지 전략이 아니다.
+    # 체결 복구 경로가 FILLED에 strategy_used='MICRO_PROBE'만 싣는 경우 sleeve 행이
+    # 코호트에서 빠진다(MXL 빈 문자열 사건의 변종). 등록/주문 이벤트의 source_strategy
+    # → micro_probe 원장 순으로 실제 전략을 복원한다.
+    if strategy == "MICRO_PROBE":
+        order_payload = dict(_first_event(events, "ORDER_SENT", "CLAUDE_TRADE_READY").get("payload") or {})
+        strategy = (
+            _text(order_payload, "source_strategy")
+            or _micro_probe_strategy(
+                str(decision.get("market") or ""),
+                str(decision.get("session_date") or ""),
+                str(decision.get("ticker") or ""),
+            )
+            or strategy
+        )
     close_reason = _text(close_payload, "close_reason", "exit_reason") or str(close.get("reason_code") or "")
     status = "CLOSED" if close else ("FILLED" if fill else str(decision.get("status") or latest_event.get("event_type") or ""))
     experiment_context = _discovery_performance_context(decision, path_run)

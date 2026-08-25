@@ -618,8 +618,19 @@ def _be_lock_falsification_view() -> None:
     if not rows:
         print("[B] BE락 반증 원장: 발동 정산 0건 (표본 대기)")
         return
-    from runtime.us_swing_execution_contract import default_max_hold_sessions
-    max_hold = default_max_hold_sessions()
+    # 만기는 설정 정본(.env.live + start-config)에서 읽는다 — 이 도구는 수동 셸에서도
+    # 돌므로 프로세스 env 의존이면 D5로 오계산한다(2026-08-26 실측).
+    max_hold = 5
+    try:
+        env_path = ROOT / ".env.live"
+        for line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.strip().startswith("US_SWING_MAX_HOLD_SESSIONS="):
+                max_hold = int(float(line.split("=", 1)[1].strip()))
+        overrides = json.loads((ROOT / "config" / "v2_start_config.json").read_text(encoding="utf-8")).get("env_overrides") or {}
+        if overrides.get("US_SWING_MAX_HOLD_SESSIONS"):
+            max_hold = int(float(overrides["US_SWING_MAX_HOLD_SESSIONS"]))
+    except (OSError, ValueError):
+        pass
     # 소급 발동 예외 목록 (사전등록 각주와 동기) — 정상 표본에서 제외
     retro = {("2026-08-18", "FRVO")}
     saved_sum = missed_sum = 0.0
