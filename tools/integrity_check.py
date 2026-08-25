@@ -403,6 +403,13 @@ def check_contract_env_drift(now: datetime) -> list[dict[str, Any]]:
         policy = json.loads((ROOT / "config" / "us_swing_accelerated.json").read_text(encoding="utf-8"))
         configured_max = float(env.get("US_SWING_ORDER_MAX_KRW", "250000") or 250000.0)
         truthy = {"1", "true", "yes", "y", "on"}
+        # max_hold는 resolve가 내부에서 env(default_max_hold_sessions)로 폴백한다 —
+        # 이 검사 프로세스의 os.environ이 아니라 설정 정본(.env.live+start-config)을
+        # 보게 주입한다(2026-08-25: policy 하드값 제거 후 기대 id 계산의 정합).
+        import os as _os
+        _prev_hold = _os.environ.get("US_SWING_MAX_HOLD_SESSIONS")
+        if env.get("US_SWING_MAX_HOLD_SESSIONS"):
+            _os.environ["US_SWING_MAX_HOLD_SESSIONS"] = env["US_SWING_MAX_HOLD_SESSIONS"]
         expected = resolve_execution_contract(
             policy=policy, effective_mode="micro",
             configured_max_order_krw=configured_max, base_order_budget_krw=500_000.0,
@@ -419,6 +426,10 @@ def check_contract_env_drift(now: datetime) -> list[dict[str, Any]]:
             # 이 드리프트 검사가 정상 상태를 매번 drift로 오인한다.
             selection_policy=_expected_selection_policy(env, truthy),
         )["contract_id"]
+        if _prev_hold is None:
+            _os.environ.pop("US_SWING_MAX_HOLD_SESSIONS", None)
+        else:
+            _os.environ["US_SWING_MAX_HOLD_SESSIONS"] = _prev_hold
         with _connect_ro(ROOT / "data" / "analysis" / "us_swing_shadow.db") as con:
             row = con.execute(
                 """SELECT signal_date, COALESCE(execution_shadow_contract_id,'') FROM signals

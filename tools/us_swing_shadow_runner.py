@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 from runtime.us_swing_authority import evaluate_swing_authority, load_swing_policy
 from runtime.us_swing_execution_contract import (
     OPERATOR_MICRO_OVERRIDE_ACK,
+    default_max_hold_sessions,
     operator_override_active,
     resolve_execution_contract,
 )
@@ -1405,7 +1406,9 @@ def summarize_active_execution_shadow(
 ) -> dict[str, Any]:
     """Expose legitimate one-slot maturity instead of labelling it stale."""
 
-    max_hold = int((policy.get("execution_contract") or {}).get("max_hold_sessions", 5) or 5)
+    # D5→D7 결함(2026-08-25): policy JSON 직독+하드 5가 env 단일 소스를 우회해
+    # 러너 지문이 D5로 갈라졌다. 폴백은 env(default_max_hold_sessions)가 정본.
+    max_hold = int((policy.get("execution_contract") or {}).get("max_hold_sessions") or default_max_hold_sessions())
     rows = con.execute(
         """SELECT signal_date,ticker,entry_date,execution_shadow_entry_fill_usd,
                   execution_shadow_qty,execution_shadow_reason
