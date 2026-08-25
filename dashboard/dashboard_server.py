@@ -17320,11 +17320,19 @@ def _sleeve_max_hold_fallback() -> int:
     """sleeve 보유 세션 수 폴백 — 봇과 **같은 env 키**를 읽는다 (2026-08-25 D5→D7).
 
     화면이 숫자를 따로 굳혀두면 계약 변경 후 표시만 옛 값으로 남아, 운영자가 보는
-    만기와 봇이 실제로 청산하는 시점이 갈린다. 계약 payload가 있으면 그쪽이 우선이고
-    이 함수는 payload가 비었을 때만 쓰인다.
+    만기와 봇이 실제로 청산하는 시점이 갈린다. 봇 청산 규칙과 동일하게 **env가
+    payload(러너 산출물·포지션 박제값)보다 우선**이다(2026-08-25 D5 잔상 실측).
     """
     try:
-        return max(1, int(float(os.getenv("US_SWING_MAX_HOLD_SESSIONS", "5"))))
+        # 설정 정본을 파일에서 직접 읽는다(반영 규칙: start-config env_overrides가
+        # .env.live를 덮는다). 프로세스 env 의존이면 스폰 경로에 따라 5 잔상이 재발한다.
+        overrides = _start_config_env_overrides("live") or {}
+        raw = (
+            overrides.get("US_SWING_MAX_HOLD_SESSIONS")
+            or _runtime_env_value("live", "US_SWING_MAX_HOLD_SESSIONS")
+            or "5"
+        )
+        return max(1, int(float(raw)))
     except (TypeError, ValueError):
         return 5
 
@@ -17842,8 +17850,11 @@ def api_strategy_summary():
 
     tp_pct = float(contract.get("take_profit_pct") or 0.12) * 100
     sl_pct = float(contract.get("catastrophe_stop_pct") or 0.25) * 100
-    # 계약 payload가 없을 때의 폴백도 env를 따른다 — 5로 굳으면 D7 전환 후 화면만 D5로 남는다.
-    max_hold = int(contract.get("max_hold_sessions") or _sleeve_max_hold_fallback())
+    # 봇 청산 규칙(trading_bot._sleeve_max_hold_sessions)과 동일하게 **env 우선**.
+    # 계약 payload(러너 산출물/포지션 박제값)를 우선하면 D5→D7 전환 후에도 화면이
+    # 5일로 남는다(2026-08-25 실측 — 러너 지문이 하루 늦게 갱신되는 창에서도 화면은
+    # 봇의 실제 청산 기준을 보여줘야 한다).
+    max_hold = _sleeve_max_hold_fallback() or int(contract.get("max_hold_sessions") or 5)
     today = date.today()
 
     open_contracts: list[dict] = []
