@@ -641,6 +641,13 @@ def _tp_ladder_counterfactual_view() -> None:
 
     lines = []
     base, cf15, cf20 = [], [], []
+    # 중간 부분익절 관측(2026-08-25 승인, 관측 전용 — 사전등록 결정 규약 없음):
+    # 정산 4건 중 3건(CVI +4.8 / FRVO +5.3 / FA +5.6)이 TP12 미달 봉우리를 찍고
+    # 시간만기로 반납했다. peak>=t에서 절반을 t−0.5에 실현하고 나머지 절반은 실제
+    # net을 따랐다면의 근사. ⚠️조기익절 x0.4 기각(08-01)은 enforce 기본값 얘기였고
+    # 이것은 counterfactual 관측이다 — 합계가 현행을 넘는 게 재현돼야 재론 대상.
+    partial_triggers = (4.0, 5.0, 6.0)
+    cf_partial: dict[float, list[float]] = {t: [] for t in partial_triggers}
     for ticker, signal_date, net, exit_reason in settled:
         key = str(ticker or "").upper()
         peak_row = peaks.get(key)
@@ -652,6 +659,8 @@ def _tp_ladder_counterfactual_view() -> None:
         base.append(net_f)
         cf15.append(15.0 - 0.5 if peak >= 15.0 else net_f)
         cf20.append(20.0 - 0.5 if peak >= 20.0 else net_f)
+        for t in partial_triggers:
+            cf_partial[t].append(0.5 * (t - 0.5) + 0.5 * net_f if peak >= t else net_f)
         lines.append(f"    {signal_date} {key:6s} net {net_f:+7.2f}%  peak {peak:+6.2f}%  "
                      f"TP15 {'도달' if peak >= 15 else '미달'} · TP20 {'도달' if peak >= 20 else '미달'}")
     print("[A11] TP 사다리 counterfactual (근사: 도달 시 t−0.5, 갭보너스 무시 — 보수 하한):")
@@ -659,6 +668,9 @@ def _tp_ladder_counterfactual_view() -> None:
         print(text)
     if base:
         print(f"    관측 {len(base)}건 합계: 현행 {sum(base):+.2f}% | TP15였다면 {sum(cf15):+.2f}% | TP20였다면 {sum(cf20):+.2f}%")
+        partial_txt = " | ".join(f"P{t:.0f} {sum(cf_partial[t]):+.2f}%" for t in partial_triggers)
+        print(f"    부분익절50%(도달 시 절반 t−0.5 실현, 잔여 절반 현행 출구): {partial_txt}")
+        print("    (관측 전용 — 조기익절 기각(08-01)과 별개의 counterfactual. 30건 시점에 현행 합계와 비교만 한다)")
     holding = {k: v for k, v in peaks.items()}
     if holding:
         tops = ", ".join(f"{k} peak {float(v.get('peak_pnl_pct') or 0):+.2f}%" for k, v in sorted(holding.items()))
