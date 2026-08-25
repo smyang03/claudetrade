@@ -18267,7 +18267,7 @@ function renderStrategy(d) {
         '<td><span class="pill ' + lab[1] + '">' + lab[0] + '</span></td>' +
         '<td class="n ' + stgCls(r.net_pct) + '">' + (r.net_pct === null || r.net_pct === undefined ? '—' :
           stgSigned(r.net_pct) + '%' + (r.is_net ? '' : '<span class="warn" title="정본 net 컬럼이 비어 브로커 실현/gross 값을 표시">*</span>')) + '</td>' +
-        '<td class="dim" style="font-size:11px">' + (r.state === 'PENDING_SYNC' ? 'CLOSED 이벤트 미발행 — 정본 동기화 대기' :
+        '<td class="dim" style="font-size:11px">' + (r.state === 'PENDING_SYNC' ? '정본 동기화 대기 — 다음 장마감 sync에서 반영' :
           (r.state === 'NOT_FILLED' ? '주문 제출됐으나 미체결' :
            (r.quality_grade ? r.quality_grade + (r.is_net ? ' · net' : ' · net 미인증') +
             (r.match_basis === 'ticker_session_date_fallback' ? ' · 귀속 추정' : '') : ''))) + '</td></tr>';
