@@ -440,6 +440,129 @@ def check_contract_env_drift(now: datetime) -> list[dict[str, Any]]:
              "detail": detail, "note": "env 변경 시 스폰 부모까지 재시작"}]
 
 
+def _settings_env_sources() -> tuple[dict[str, str], dict[str, str]]:
+    """설정 정본 두 소스를 각각 반환 — (.env.live, start-config env_overrides).
+
+    live 반영 규칙상 두 소스가 일치해야 하므로, 합치지 않고 따로 돌려줘서
+    불일치 자체를 검사할 수 있게 한다.
+    """
+    env_file: dict[str, str] = {}
+    env_path = ROOT / ".env.live"
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            env_file[key.strip()] = value.strip()
+    overrides: dict[str, str] = {}
+    cfg_path = ROOT / "config" / "v2_start_config.json"
+    if cfg_path.exists():
+        try:
+            raw = json.loads(cfg_path.read_text(encoding="utf-8")).get("env_overrides") or {}
+            overrides = {str(k): str(v) for k, v in raw.items()}
+        except ValueError:
+            pass
+    return env_file, overrides
+
+
+def _latest_effective_config() -> tuple[str, dict[str, str]]:
+    """봇이 마지막 시작 때 기록한 effective-config 스냅샷 (파일명, effective dict)."""
+    cfg_dir = ROOT / "logs" / "config"
+    candidates = sorted(cfg_dir.glob("effective_config_*_live.redacted.json"))
+    if not candidates:
+        return "", {}
+    latest = candidates[-1]
+    try:
+        payload = json.loads(latest.read_text(encoding="utf-8"))
+    except ValueError:
+        return latest.name, {}
+    effective = payload.get("effective") or {}
+    return latest.name, {str(k): str(v) for k, v in effective.items()}
+
+
+def check_max_hold_drift(now: datetime) -> list[dict[str, Any]]:
+    """sleeve 보유기간(max_hold_sessions) 소스·실효·러너 산출물 일치 감시 (2026-08-25 승인).
+
+    D5→D7 전환처럼 contract_id 재료가 바뀔 때, 아래 층위가 갈라지면 코호트가
+    조용히 쪼개진다: ① .env.live vs start-config(두 소스 일치 규칙) ② 봇 실효값
+    (effective-config 스냅샷 = 재시작 여부) ③ 러너 산출물(state/us_swing_status.json
+    — 스폰 부모가 옛 env를 들고 있는 08-10 사고 계열). ③은 러너가 다음 세션에
+    갱신하는 파일이라 전환 직후 하루는 정상 지연일 수 있어 WARN까지만 든다.
+    """
+    checks: list[dict[str, Any]] = []
+    env_file, overrides = _settings_env_sources()
+    snap_name, effective = _latest_effective_config()
+    for key, label in (("US_SWING_MAX_HOLD_SESSIONS", "US swing"), ("KR_FALLEN_MAX_HOLD_SESSIONS", "KR fallen")):
+        a, b = env_file.get(key), overrides.get(key)
+        if a is None and b is None:
+            checks.append({"check": f"{label} max_hold 소스", "kind": "drift", "status": WARN,
+                           "detail": f"{key}가 두 소스 모두 미정의 — 코드 기본값 의존", "note": ""})
+            continue
+        if a is not None and b is not None and a != b:
+            checks.append({"check": f"{label} max_hold 소스", "kind": "drift", "status": FAIL,
+                           "detail": f"{key} 두 소스 불일치: .env.live={a} / start-config={b}",
+                           "note": "두 소스 동시변경 규칙 위반"})
+            continue
+        expected = b if b is not None else a
+        eff = effective.get(key)
+        if effective and eff != expected:
+            checks.append({"check": f"{label} max_hold 실효", "kind": "drift", "status": FAIL,
+                           "detail": f"설정={expected} vs 봇 실효({snap_name})={eff}",
+                           "note": "봇 재시작 필요"})
+        else:
+            checks.append({"check": f"{label} max_hold", "kind": "drift", "status": OK,
+                           "detail": f"소스·실효 일치 = {expected}", "note": ""})
+    # ③ 러너 산출물 (US만 — 상태파일이 있는 레인)
+    status_path = ROOT / "state" / "us_swing_status.json"
+    expected_us = overrides.get("US_SWING_MAX_HOLD_SESSIONS") or env_file.get("US_SWING_MAX_HOLD_SESSIONS")
+    if status_path.exists() and expected_us is not None:
+        try:
+            contract = (json.loads(status_path.read_text(encoding="utf-8")).get("execution_contract") or {})
+            runner_val = contract.get("max_hold_sessions")
+            if runner_val is not None and str(runner_val) != str(expected_us):
+                checks.append({"check": "US swing max_hold 러너 산출물", "kind": "drift", "status": WARN,
+                               "detail": f"설정={expected_us} vs us_swing_status.json={runner_val}",
+                               "note": "다음 러너(22:20) 갱신 대기 가능 — 이틀째면 스폰 부모 재시작 의심"})
+            else:
+                checks.append({"check": "US swing max_hold 러너 산출물", "kind": "drift", "status": OK,
+                               "detail": f"러너 계약 일치 = {runner_val}", "note": ""})
+        except ValueError:
+            checks.append({"check": "US swing max_hold 러너 산출물", "kind": "drift", "status": WARN,
+                           "detail": "us_swing_status.json 파싱 실패", "note": ""})
+    return checks
+
+
+def check_canonical_session_alignment(ml_db: Path, event_db: Path, now: datetime) -> list[dict[str, Any]]:
+    """canonical.session_date가 v2_decisions 정본과 어긋난 행 감시 — 0건이 정상 (2026-08-25 승인).
+
+    d2215ea 결함 클래스(창 있는 sync + 청산일 백필 이벤트가 진입 정본을 가림)의
+    재발 감시. 어긋난 행은 판정 코호트에서 조용히 빠지거나(strategy 소실)
+    D5/D7·밴드 전후 같은 진입일 기준 코호트 분리를 오염시킨다.
+    """
+    cutoff = datetime.fromtimestamp(now.timestamp() - 60 * 86400, tz=timezone.utc).strftime("%Y-%m-%d")
+    try:
+        with _connect_ro(event_db) as ev:
+            truth = {str(r[0]): str(r[1] or "") for r in ev.execute(
+                "SELECT decision_id, session_date FROM v2_decisions WHERE session_date>=?", (cutoff,))}
+        with _connect_ro(ml_db) as ml:
+            rows = ml.execute(
+                "SELECT v2_decision_id, session_date, ticker FROM v2_canonical_performance "
+                "WHERE runtime_mode='live' AND session_date>=?", (cutoff,)).fetchall()
+    except sqlite3.Error as exc:
+        return [{"check": "canonical 진입일 정합 (최근60일)", "kind": "alignment", "status": WARN,
+                 "detail": f"조회 실패: {exc}", "note": ""}]
+    mismatched = [(str(r[0]), str(r[2]), str(r[1]), truth[str(r[0])])
+                  for r in rows if str(r[0]) in truth and truth[str(r[0])] != str(r[1])]
+    if mismatched:
+        sample = ", ".join(f"{t}({have}→정본{want})" for _, t, have, want in mismatched[:3])
+        return [{"check": "canonical 진입일 정합 (최근60일)", "kind": "alignment", "status": FAIL,
+                 "detail": f"불일치 {len(mismatched)}건: {sample}",
+                 "note": "sync 재실행으로 복구 후 원인 조사 (d2215ea 계열)"}]
+    return [{"check": "canonical 진입일 정합 (최근60일)", "kind": "alignment", "status": OK,
+             "detail": f"대조 {len(rows)}행 불일치 0", "note": ""}]
+
+
 def check_learning_fields(ml_db: Path, now: datetime, window_days: int) -> list[dict[str, Any]]:
     """A형: 채워져야 할 필드가 최근 창에서 비기 시작했나."""
     checks: list[dict[str, Any]] = []
@@ -492,6 +615,8 @@ def run_integrity_check(ml_db: Path, event_db: Path, audit_db: Path, window_days
     checks += check_ledger_growth(now)
     checks += check_sleeve_contract_exits(now)
     checks += check_contract_env_drift(now)
+    checks += check_max_hold_drift(now)
+    checks += check_canonical_session_alignment(ml_db, event_db, now)
     collect_sleeve_mfe_paths()  # A5 관측 수집(판정 아님) — watch 주기마다 경로 보존
     checks += check_learning_fields(ml_db, now, window_days)
     checks += check_sync_coverage(ml_db, event_db, now, window_days)

@@ -14,6 +14,7 @@ from tools.integrity_check import (
     OK,
     WARN,
     FAIL,
+    check_canonical_session_alignment,
     check_sync_coverage,
     evaluate_freshness,
     evaluate_population,
@@ -120,6 +121,59 @@ class SyncCoverageTests(unittest.TestCase):
             learn_rows=[("dec_IREN", 1, "2026-07-02")],
         )
         result = check_sync_coverage(ml, ev, now, window_days=7)[0]
+        self.assertEqual(result["status"], OK)
+
+
+class CanonicalSessionAlignmentTests(unittest.TestCase):
+    """canonical 진입일 정합: d2215ea 결함 클래스(합성 행이 진입 정본을 가림) 재발 감시."""
+
+    def _make_dbs(self, decision_rows, canonical_rows):
+        d = tempfile.mkdtemp(prefix="integ_align_")
+        self.addCleanup(lambda: shutil.rmtree(d, ignore_errors=True))
+        ev_path = os.path.join(d, "events.db")
+        ml_path = os.path.join(d, "ml.db")
+        con = sqlite3.connect(ev_path)
+        con.execute("CREATE TABLE v2_decisions (decision_id TEXT, session_date TEXT)")
+        con.executemany("INSERT INTO v2_decisions VALUES (?,?)", decision_rows)
+        con.commit()
+        con.close()
+        con = sqlite3.connect(ml_path)
+        con.execute(
+            "CREATE TABLE v2_canonical_performance (v2_decision_id TEXT, session_date TEXT, ticker TEXT, runtime_mode TEXT)"
+        )
+        con.executemany("INSERT INTO v2_canonical_performance VALUES (?,?,?,?)", canonical_rows)
+        con.commit()
+        con.close()
+        return Path(ml_path), Path(ev_path)
+
+    def test_aligned_ok(self):
+        now = datetime(2026, 8, 25, 3, 0, tzinfo=timezone.utc)
+        ml, ev = self._make_dbs(
+            decision_rows=[("dec_MXL", "2026-08-11")],
+            canonical_rows=[("dec_MXL", "2026-08-11", "MXL", "live")],
+        )
+        result = check_canonical_session_alignment(ml, ev, now)[0]
+        self.assertEqual(result["status"], OK)
+
+    def test_shadowed_row_fails(self):
+        # MXL 실측 재현: 결정 정본 08-11인데 canonical이 청산일 08-14로 덮인 상태.
+        now = datetime(2026, 8, 25, 3, 0, tzinfo=timezone.utc)
+        ml, ev = self._make_dbs(
+            decision_rows=[("dec_MXL", "2026-08-11")],
+            canonical_rows=[("dec_MXL", "2026-08-14", "MXL", "live")],
+        )
+        result = check_canonical_session_alignment(ml, ev, now)[0]
+        self.assertEqual(result["status"], FAIL)
+        self.assertIn("MXL", result["detail"])
+
+    def test_old_rows_outside_window_ignored(self):
+        # 60일 창 밖의 레거시 불일치는 판정하지 않는다(정리 대상이지 신규 결함이 아님).
+        now = datetime(2026, 8, 25, 3, 0, tzinfo=timezone.utc)
+        ml, ev = self._make_dbs(
+            decision_rows=[("dec_OLD", "2026-04-01")],
+            canonical_rows=[("dec_OLD", "2026-04-05", "OLD", "live")],
+        )
+        result = check_canonical_session_alignment(ml, ev, now)[0]
         self.assertEqual(result["status"], OK)
 
 
