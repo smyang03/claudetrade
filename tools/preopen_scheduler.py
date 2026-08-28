@@ -184,10 +184,31 @@ def _write_scheduler_heartbeat(
         "status": status,
         "last_job": last_job or {},
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    os.replace(tmp, path)
+    # ⚠️ 하트비트는 **관측용**이다 — 쓰기 실패가 스케줄러를 죽이면 안 된다.
+    # 2026-08-28 사고: os.replace가 PermissionError(WinError 5, 파일 잠금 경합)로
+    # 터져 preopen_scheduler가 18:05에 종료 → 그날 밤 22:33 US 러너가 돌지 않아
+    # 신호가 생성되지 않았고, 진입 기회를 통째로 놓쳤다("후보 없음"으로 보였다).
+    # 관측 실패는 로그만 남기고 스케줄은 계속 돈다. 고아 tmp도 정리한다.
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        for attempt in range(3):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.3)
+    except OSError as exc:
+        print(f"[preopen scheduler] heartbeat write skipped (관측 전용, 스케줄 계속): {exc}")
+        try:
+            tmp_path = path.with_suffix(path.suffix + ".tmp")
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
 
 
 def _tail(text: str, limit: int = 900) -> str:
