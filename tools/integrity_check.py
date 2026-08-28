@@ -22,6 +22,7 @@ import argparse
 import hashlib
 import json
 import sqlite3
+import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -546,6 +547,63 @@ def check_max_hold_drift(now: datetime) -> list[dict[str, Any]]:
     return checks
 
 
+def check_stack_processes_alive(now: datetime) -> list[dict[str, Any]]:
+    """라이브 스택 프로세스 생존 감시 — 08-28 사고 재발 방지 (2026-08-29 운영자 승인).
+
+    실사고: preopen_scheduler가 하트비트 쓰기 실패(WinError 5)로 18:05에 조용히
+    죽었는데, 로그·정합성·에러 카운트가 전부 정상이라 **11시간 동안 아무도 몰랐다.**
+    그 사이 22:33 US 러너가 안 돌아 신호가 생성되지 않았고 진입 기회를 통째로
+    잃었다("후보 없음"으로 보였다). 데이터만 감시하면 실행 주체의 죽음을 못 본다.
+
+    프로세스별 심각도:
+      FAIL — trading_bot·live_guardian·preopen_scheduler (죽으면 매매/스캔 정지)
+      WARN — 그 외 보조 프로세스(대시보드·수집기 등)
+    """
+    pid_path = ROOT / "state" / "headless_live_stack_pids.json"
+    if not pid_path.exists():
+        return [{"check": "스택 프로세스 생존", "kind": "process", "status": WARN,
+                 "detail": "PID 레지스트리 없음", "note": ""}]
+    try:
+        registry = json.loads(pid_path.read_text(encoding="utf-8-sig"))
+    except ValueError:
+        return [{"check": "스택 프로세스 생존", "kind": "process", "status": WARN,
+                 "detail": "PID 레지스트리 파싱 실패", "note": ""}]
+    if not isinstance(registry, dict):
+        return [{"check": "스택 프로세스 생존", "kind": "process", "status": WARN,
+                 "detail": "PID 레지스트리 형식 예상 밖", "note": ""}]
+    critical = {"trading_bot", "live_guardian", "preopen_scheduler"}
+    dead_critical: list[str] = []
+    dead_other: list[str] = []
+    for name, pid in registry.items():
+        try:
+            pid_int = int(pid)
+        except (TypeError, ValueError):
+            continue
+        alive = False
+        try:
+            # Windows: os.kill(pid, 0)은 TerminateProcess다(08-13 지뢰) — 절대 쓰지 않는다.
+            # tasklist 조회로만 생존을 판정한다.
+            out = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid_int}", "/NH"],
+                capture_output=True, text=True, timeout=15,
+            ).stdout
+            alive = str(pid_int) in out
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if not alive:
+            (dead_critical if name in critical else dead_other).append(f"{name}({pid_int})")
+    if dead_critical:
+        return [{"check": "스택 프로세스 생존", "kind": "process", "status": FAIL,
+                 "detail": f"핵심 프로세스 사망: {', '.join(dead_critical)}"
+                           + (f" · 보조: {', '.join(dead_other)}" if dead_other else ""),
+                 "note": "재기동 필요 — 08-28 사고(러너 미실행) 계열"}]
+    if dead_other:
+        return [{"check": "스택 프로세스 생존", "kind": "process", "status": WARN,
+                 "detail": f"보조 프로세스 사망: {', '.join(dead_other)}", "note": "매매는 계속되나 관측 손실"}]
+    return [{"check": "스택 프로세스 생존", "kind": "process", "status": OK,
+             "detail": f"{len(registry)}개 전부 생존", "note": ""}]
+
+
 def check_price_currency_consistency(ml_db: Path, now: datetime) -> list[dict[str, Any]]:
     """US 행의 진입가/청산가 통화 혼입 감시 — 0건이 정상 (2026-08-28 감사에서 발견).
 
@@ -663,6 +721,7 @@ def run_integrity_check(ml_db: Path, event_db: Path, audit_db: Path, window_days
     checks += check_max_hold_drift(now)
     checks += check_canonical_session_alignment(ml_db, event_db, now)
     checks += check_price_currency_consistency(ml_db, now)
+    checks += check_stack_processes_alive(now)
     collect_sleeve_mfe_paths()  # A5 관측 수집(판정 아님) — watch 주기마다 경로 보존
     checks += check_learning_fields(ml_db, now, window_days)
     checks += check_sync_coverage(ml_db, event_db, now, window_days)
