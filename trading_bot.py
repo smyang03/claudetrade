@@ -18722,7 +18722,21 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 "net_source": "broker_realized_krw",
                 "close_reason": str(reason or ""),
                 "qty": int(ex.get("qty", 0) or 0),
+                # ⚠️ 통화 규약(2026-08-28 감사에서 발견·수리): close_position이 반환하는
+                # exit_price는 **내부 KRW 환산가**다. 진입가(entry_price)는 native(USD)로
+                # 저장되므로, 이 값을 그대로 exit_price로 쓰면 US 행에서 진입=달러 /
+                # 청산=원화로 갈려 "가격 비율 재계산"이 무의미해진다(실측: US sleeve
+                # 청산 5건 exit/entry가 1,000배대). net·pnl은 close_position이 KRW
+                # 기준으로 이미 정확히 계산하므로 손익 판정에는 영향이 없었다.
+                # 수리: native 청산가를 별도 키로 싣고, exit_price 통화를 명시한다.
                 "exit_price": float(ex.get("exit_price", 0) or 0),
+                "exit_price_currency": "KRW",
+                "exit_price_native": (
+                    float(cand.get("display_current_price") or 0)
+                    or float(cand.get("exit_price_native") or 0)
+                    or None
+                ),
+                "entry_price_native": (float(cand.get("display_avg_price") or 0) or None),
                 "source_strategy": source,
                 "emitted_by": "live_exit_path",
                 "sleeve_contract": True,

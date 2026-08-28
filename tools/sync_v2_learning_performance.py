@@ -377,15 +377,19 @@ ENTRY_PRICE_KEYS = (
     "avg_price",
 )
 
+# ⚠️ native 우선(2026-08-28 통화 혼입 수리): entry_price는 native(USD)로 저장되는데
+# sleeve CLOSED의 exit_price는 내부 KRW 환산가라, KRW 키를 먼저 읽으면 US 행에서
+# 진입=달러/청산=원화로 갈린다(실측 5건, exit/entry 1,000배대). 손익 컬럼은 KRW
+# 기준으로 따로 계산되므로 net 판정은 영향 없었으나, 가격 재계산·감사가 불가능했다.
 EXIT_PRICE_KEYS = (
-    "exit_price",
+    "exit_price_native",
+    "sell_fill_price_native",
+    "broker_sell_fill_price_native",
     "actual_fill_price",
     "fill_price",
     "price",
     "close_price",
-    "exit_price_native",
-    "sell_fill_price_native",
-    "broker_sell_fill_price_native",
+    "exit_price",
 )
 
 CLOSE_QTY_KEYS = (

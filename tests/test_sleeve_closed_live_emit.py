@@ -81,6 +81,27 @@ class SleeveClosedLiveEmitTests(unittest.TestCase):
         self.assertTrue(ev["payload"]["sleeve_contract"])
         self.assertEqual(ev["payload"]["emitted_by"], "live_exit_path")
 
+    def test_us_close_carries_native_price_and_currency_tag(self) -> None:
+        """통화 혼입 방지(2026-08-28 감사): exit_price는 KRW 환산가라 native를 함께 싣는다.
+
+        진입가(entry_price)는 native(USD)로 저장되는데 청산가만 KRW면 US 행의
+        가격 비율 재계산이 무의미해진다(실측: exit/entry 1,000배대 5건).
+        sync는 exit_price_native를 우선 읽는다.
+        """
+        v2 = _FakeV2()
+        _bot(v2)._record_sleeve_closed_event(
+            {"ticker": "RGTI", "source_strategy": "us_swing_5d",
+             "display_current_price": 16.53, "display_avg_price": 16.53}, "US",
+            "strategy_breakeven_lock",
+            {"ticker": "RGTI", "pnl_pct": -0.45, "pnl_krw": -514, "qty": 5,
+             "exit_price": 22890.4134},
+        )
+        payload = v2.events[0]["payload"]
+        self.assertEqual(payload["exit_price_currency"], "KRW")
+        self.assertEqual(payload["exit_price_native"], 16.53)
+        self.assertEqual(payload["entry_price_native"], 16.53)
+        self.assertEqual(payload["exit_price"], 22890.4134)
+
     def test_kr_fallen_close_emits_closed(self) -> None:
         v2 = _FakeV2()
         _bot(v2)._record_sleeve_closed_event(

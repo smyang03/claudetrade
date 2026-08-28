@@ -546,6 +546,38 @@ def check_max_hold_drift(now: datetime) -> list[dict[str, Any]]:
     return checks
 
 
+def check_price_currency_consistency(ml_db: Path, now: datetime) -> list[dict[str, Any]]:
+    """US 행의 진입가/청산가 통화 혼입 감시 — 0건이 정상 (2026-08-28 감사에서 발견).
+
+    entry_price는 native(USD)인데 sleeve CLOSED의 exit_price는 내부 KRW 환산가라,
+    US 행에서 두 컬럼의 통화가 갈렸다(실측 5건, exit/entry 1,000배대). 손익 컬럼은
+    KRW 기준으로 따로 계산되어 net 판정은 무영향이었으나 가격 재계산·감사가 막힌다.
+    수리 후(exit_price_native 우선) 신규 행은 정상이어야 하므로 상시 감시한다.
+    """
+    try:
+        with _connect_ro(ml_db) as ml:
+            rows = ml.execute(
+                """SELECT session_date, ticker, entry_price, last_exit_price
+                   FROM v2_canonical_performance
+                   WHERE market='US' AND closed=1 AND entry_price>0 AND last_exit_price>0
+                     AND last_exit_price/entry_price > 50
+                   ORDER BY session_date DESC"""
+            ).fetchall()
+    except sqlite3.Error as exc:
+        return [{"check": "US 가격 통화 정합", "kind": "alignment", "status": WARN,
+                 "detail": f"조회 실패: {exc}", "note": ""}]
+    known = {("2026-08-12", "FA"), ("2026-08-17", "WIX"), ("2026-08-18", "FRVO"),
+             ("2026-08-19", "AXTI"), ("2026-08-25", "RGTI")}
+    fresh = [(str(r[0]), str(r[1])) for r in rows if (str(r[0]), str(r[1])) not in known]
+    if fresh:
+        sample = ", ".join(f"{t}({d})" for d, t in fresh[:3])
+        return [{"check": "US 가격 통화 정합", "kind": "alignment", "status": FAIL,
+                 "detail": f"신규 혼입 {len(fresh)}건: {sample} — CLOSED payload의 exit_price_native 확인",
+                 "note": "2026-08-28 수리 이후 신규 발생은 회귀"}]
+    return [{"check": "US 가격 통화 정합", "kind": "alignment", "status": OK,
+             "detail": f"신규 혼입 0건 (기지 {len(rows)}건은 수리 전 잔존 — net 판정 무영향)", "note": ""}]
+
+
 def check_canonical_session_alignment(ml_db: Path, event_db: Path, now: datetime) -> list[dict[str, Any]]:
     """canonical.session_date가 v2_decisions 정본과 어긋난 행 감시 — 0건이 정상 (2026-08-25 승인).
 
@@ -630,6 +662,7 @@ def run_integrity_check(ml_db: Path, event_db: Path, audit_db: Path, window_days
     checks += check_contract_env_drift(now)
     checks += check_max_hold_drift(now)
     checks += check_canonical_session_alignment(ml_db, event_db, now)
+    checks += check_price_currency_consistency(ml_db, now)
     collect_sleeve_mfe_paths()  # A5 관측 수집(판정 아님) — watch 주기마다 경로 보존
     checks += check_learning_fields(ml_db, now, window_days)
     checks += check_sync_coverage(ml_db, event_db, now, window_days)
