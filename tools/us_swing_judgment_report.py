@@ -515,6 +515,7 @@ def _observation_views(contract: str) -> None:
     _capacity_view(contract)
     _tp_capture_view()
     _tp_ladder_counterfactual_view()
+    _contract_generation_view()
     _be_lock_falsification_view()
     _candidate_age_view()
 
@@ -593,6 +594,69 @@ def _tp_capture_view() -> None:
                      + (f"(정산 {len(vals)} 평균 {sum(vals)/len(vals):+.2f}%)" if vals else ""))
     print(f"[A10] TP 포획 조건(ATR past-only 상위25%): 세션 {len(sessions)} | " + " | ".join(parts)
           + ("" if ready else " — 임계 산출까지 이력 150건 필요"))
+
+
+def _contract_generation_view() -> None:
+    """[G] 계약 세대별 성적표 — 구계약과 신계약을 섞지 않고 읽는다 (2026-08-28).
+
+    문제: 누계 평균은 8월 초 수확(구계약)과 8월 하순 조정(구계약 손실)이 섞여 있어
+    **밴드+MAX 이후 픽의 실제 성적을 가린다**. 지문(contract_id)은 원장에 있으므로
+    세대로 묶어 따로 낸다. 판정은 세대별로만 한다(코호트 정의 §지문 분해).
+
+    세대 정의(적용 시점 기준):
+      G1 선별 이전   : 1436a5b1 / 367576a1 / afc07db8 (~08-14)
+      G2 밴드 도입   : c3e16b9a (08-17~19)
+      G3 밴드+MAX    : feb33565 (08-20~21)
+      G4 D7·54만×7   : dad3907a (08-25)
+      G5 +BE락 4%    : 7d70bce6 (08-27~)
+    """
+    if not CANON_DB.exists():
+        return
+    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=10)
+    try:
+        fp = {(str(r[0]), str(r[1]).upper()): str(r[2] or "")
+              for r in con.execute(
+                  "SELECT signal_date, ticker, COALESCE(execution_shadow_contract_id,'') FROM signals "
+                  "WHERE handoff_order_no IS NOT NULL AND handoff_order_no<>''")}
+    finally:
+        con.close()
+    con = sqlite3.connect(f"file:{CANON_DB}?mode=ro", uri=True, timeout=10)
+    try:
+        rows = con.execute(
+            """SELECT session_date, ticker, closed, pnl_pct_net, pnl_krw_net
+               FROM v2_canonical_performance
+               WHERE strategy='us_swing_5d' AND runtime_mode='live' AND filled=1
+                 AND session_date>='2026-08-03' ORDER BY session_date"""
+        ).fetchall()
+    finally:
+        con.close()
+    gens = [
+        ("G1 선별 이전", {"1436a5b1ec4a0837", "367576a1b8bf7802", "afc07db83b6ad8a6"}),
+        ("G2 밴드", {"c3e16b9ab924ff85"}),
+        ("G3 밴드+MAX", {"feb335657cc32286"}),
+        ("G4 D7·54만×7", {"dad3907ad57f8a76"}),
+        ("G5 +BE락4%", {"7d70bce678c0e792"}),
+    ]
+    print("[G] 계약 세대별 성적표 (세대를 섞어 평균내지 않는다):")
+    for label, ids in gens:
+        picked = [(t, closed, net, krw) for (sd, t, closed, net, krw) in
+                  ((str(r[0]), str(r[1]).upper(), r[2], r[3], r[4]) for r in rows)
+                  if fp.get((sd, t), "") in ids]
+        if not picked:
+            continue
+        settled = [(t, float(n), float(k or 0)) for t, c, n, k in picked if c == 1 and n is not None]
+        holding = [t for t, c, n, k in picked if c != 1 or n is None]
+        if settled:
+            avg = sum(n for _, n, _ in settled) / len(settled)
+            tot = sum(k for _, _, k in settled)
+            wins = sum(1 for _, n, _ in settled if n > 0)
+            detail = ", ".join(f"{t} {n:+.1f}" for t, n, _ in settled)
+            print(f"    {label:14s} 정산 {len(settled)}건 평균 {avg:+6.2f}% 승률 {100*wins/len(settled):3.0f}% "
+                  f"실현 {tot:+9,.0f}원 | {detail}"
+                  + (f" | 보유중 {holding}" if holding else ""))
+        else:
+            print(f"    {label:14s} 정산 0건 | 보유중 {holding}")
+    print("    ※ G3 이후가 현행 선별의 실제 성적표다. G1·G2 손실을 현행 계약의 근거로 읽지 않는다.")
 
 
 def _be_lock_falsification_view() -> None:
