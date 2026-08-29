@@ -624,8 +624,14 @@ def check_price_currency_consistency(ml_db: Path, now: datetime) -> list[dict[st
     except sqlite3.Error as exc:
         return [{"check": "US 가격 통화 정합", "kind": "alignment", "status": WARN,
                  "detail": f"조회 실패: {exc}", "note": ""}]
+    # MXL(08-20 진입)은 수리 커밋(2026-08-28 16:08) **이후** 08-28 19:45에 청산됐으므로
+    # 원래는 신규 혼입 = 회귀다. 다만 원인은 코드가 아니라 배포다 — 수리를 담은 trading_bot
+    # 프로세스가 08-25 23:50 기동이라 청산 시점에 구코드가 CLOSED를 발행했고, 이 감시
+    # 자체도 같은 이유로 돌지 않아 못 잡았다. CLOSED 이벤트에 native가 없어 복원 경로는
+    # 기존 5건과 동일하게 막혀 있다(운영자 결정 2026-08-30). 재시작 이후 발생하는 혼입은
+    # 배포 갭으로 설명되지 않으므로 그때는 진짜 회귀다.
     known = {("2026-08-12", "FA"), ("2026-08-17", "WIX"), ("2026-08-18", "FRVO"),
-             ("2026-08-19", "AXTI"), ("2026-08-25", "RGTI")}
+             ("2026-08-19", "AXTI"), ("2026-08-25", "RGTI"), ("2026-08-20", "MXL")}
     fresh = [(str(r[0]), str(r[1])) for r in rows if (str(r[0]), str(r[1])) not in known]
     if fresh:
         sample = ", ".join(f"{t}({d})" for d, t in fresh[:3])

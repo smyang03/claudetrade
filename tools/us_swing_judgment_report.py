@@ -605,10 +605,24 @@ def _contract_generation_view() -> None:
 
     세대 정의(적용 시점 기준):
       G1 선별 이전   : 1436a5b1 / 367576a1 / afc07db8 (~08-14)
-      G2 밴드 도입   : c3e16b9a (08-17~19)
-      G3 밴드+MAX    : feb33565 (08-20~21)
+      G2 밴드 이전   : c3e16b9a (08-17~19)
+      G3a 밴드만     : feb33565 & 체결 < 2026-08-20T15:44Z (MXL)
+      G3b 밴드+MAX   : feb33565 & 체결 >= 위 경계 (AVAV·SEI)
       G4 D7·54만×7   : dad3907a (08-25)
       G5 +BE락 4%    : 7d70bce6 (08-27~)
+
+    2026-08-30 정정 — 최초 라벨(08-28)이 세 곳에서 실제 계약과 어긋나 있었다.
+    커밋 시각과 원장 체결 시각을 대조해 고친다.
+
+    1) G2는 "밴드"가 아니라 **밴드 이전**이다. 밴드 라이브 반영은 94336bd(08-20 21:47),
+       실효는 43cde0f(08-20 22:38)인데 WIX(08-17)·FRVO(08-18)·AXTI(08-19)는 전부 그 전이다.
+    2) G3는 한 지문 안에 두 계약이 섞여 있다. MAX 하한은 0e90870(08-21 00:44)까지
+       BOM 때문에 100% fail-open이었다 — 즉 MXL(체결 08-20T13:45Z)은 MAX 미적용,
+       AVAV·SEI(08-21)만 밴드+MAX다. **지문은 MAX_FLOOR_ENABLED=true를 기록했지만
+       실행은 무력이었으므로 지문만으로는 갈라지지 않는다.** 체결 시각으로 쪼갠다.
+    3) 지문은 진입 시점 계약이고 출구는 청산 시점 계약이 적용된다. RGTI(G4)는
+       진입이 BE락 이전인데 출구는 strategy_breakeven_lock으로 잡혔다(BE락 발동 1호,
+       재시작을 관통한 포지션). 라벨의 계약이 출구까지 보장하지는 않는다.
     """
     if not CANON_DB.exists():
         return
@@ -623,25 +637,32 @@ def _contract_generation_view() -> None:
     con = sqlite3.connect(f"file:{CANON_DB}?mode=ro", uri=True, timeout=10)
     try:
         rows = con.execute(
-            """SELECT session_date, ticker, closed, pnl_pct_net, pnl_krw_net
+            """SELECT session_date, ticker, closed, pnl_pct_net, pnl_krw_net, earliest_fill_at
                FROM v2_canonical_performance
                WHERE strategy='us_swing_5d' AND runtime_mode='live' AND filled=1
                  AND session_date>='2026-08-03' ORDER BY session_date"""
         ).fetchall()
     finally:
         con.close()
+    # MAX 하한이 실제로 작동하기 시작한 순간(0e90870, 2026-08-21 00:44:22 KST).
+    # 그 전 체결은 지문이 뭐라 적혔든 MAX 미적용이다 — docstring 2) 참고.
+    max_live_at = "2026-08-20T15:44:22+00:00"
     gens = [
-        ("G1 선별 이전", {"1436a5b1ec4a0837", "367576a1b8bf7802", "afc07db83b6ad8a6"}),
-        ("G2 밴드", {"c3e16b9ab924ff85"}),
-        ("G3 밴드+MAX", {"feb335657cc32286"}),
-        ("G4 D7·54만×7", {"dad3907ad57f8a76"}),
-        ("G5 +BE락4%", {"7d70bce678c0e792"}),
+        ("G1 선별 이전", {"1436a5b1ec4a0837", "367576a1b8bf7802", "afc07db83b6ad8a6"}, None),
+        ("G2 밴드 이전", {"c3e16b9ab924ff85"}, None),
+        ("G3a 밴드만", {"feb335657cc32286"}, "before"),
+        ("G3b 밴드+MAX", {"feb335657cc32286"}, "after"),
+        ("G4 D7·54만×7", {"dad3907ad57f8a76"}, None),
+        ("G5 +BE락4%", {"7d70bce678c0e792"}, None),
     ]
     print("[G] 계약 세대별 성적표 (세대를 섞어 평균내지 않는다):")
-    for label, ids in gens:
-        picked = [(t, closed, net, krw) for (sd, t, closed, net, krw) in
-                  ((str(r[0]), str(r[1]).upper(), r[2], r[3], r[4]) for r in rows)
-                  if fp.get((sd, t), "") in ids]
+    for label, ids, fill_side in gens:
+        picked = [(t, closed, net, krw) for (sd, t, closed, net, krw, fill_at) in
+                  ((str(r[0]), str(r[1]).upper(), r[2], r[3], r[4], str(r[5] or "")) for r in rows)
+                  if fp.get((sd, t), "") in ids
+                  and (fill_side is None
+                       or (fill_side == "before" and fill_at and fill_at < max_live_at)
+                       or (fill_side == "after" and fill_at and fill_at >= max_live_at))]
         if not picked:
             continue
         settled = [(t, float(n), float(k or 0)) for t, c, n, k in picked if c == 1 and n is not None]
@@ -656,7 +677,8 @@ def _contract_generation_view() -> None:
                   + (f" | 보유중 {holding}" if holding else ""))
         else:
             print(f"    {label:14s} 정산 0건 | 보유중 {holding}")
-    print("    ※ G3 이후가 현행 선별의 실제 성적표다. G1·G2 손실을 현행 계약의 근거로 읽지 않는다.")
+    print("    ※ 현행 선별(밴드+MAX)의 성적표는 G3b 이후다. G1·G2·G3a 손실을 현행 계약의")
+    print("      근거로 읽지 않는다 — 셋 다 MAX가 실제로는 안 걸린 픽이다.")
 
 
 def _be_lock_falsification_view() -> None:
