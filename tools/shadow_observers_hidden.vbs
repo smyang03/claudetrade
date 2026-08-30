@@ -1,8 +1,15 @@
 ' shadow_observers_hidden.vbs — 관측기들을 창 없이(hidden) 순차 실행한다.
 '
-' 대상 (둘 다 라이브 미개입, read-only + shadow 원장 append)
+' 대상 (전부 라이브 미개입, read-only + shadow 원장 append)
 '   ① shadow_fade_entry_observer  fade 진입 신호를 대조군과 쌍으로 누적
 '   ② judge_budget_observer       judge 예산 사용을 공급/호출/플랜 3숫자로 기록
+'   ③ observe_tail_risk_axes      꼬리 위험 축 10종을 신호일 값으로 박제(08-30)
+'
+' ③이 왜 필요한가: 08-30 검정에서 꼬리 기준 6축이 3기준을 통과했으나 클러스터
+'   t가 검정력 미달이라 판정을 못 냈다. 판정에 필요한 것은 표본인데 현행 계약
+'   실거래 정산은 0건이다. 30건을 그냥 기다리면 그 시점에도 재료가 없다.
+'   축 값은 사후 계산도 가능하지만 가격 CSV가 소급 조정되면 과거 값이 바뀌므로
+'   진입 시점 값을 박제해야 no-lookahead를 사후에 증명할 수 있다.
 '
 ' ②가 왜 필요한가: 지금은 "매수 0건"이라는 결과만 보이고 그 원인이
 '   ㉠데이터 파이프라인 장애 ㉡큐/게이트 문제 ㉢후보 질 중 무엇인지 구분되지 않는다.
@@ -21,3 +28,4 @@ base = "E:\code\claudetrade\tools\"
 
 sh.Run py & " """ & base & "shadow_fade_entry_observer.py"" --since-days 10", 0, True
 sh.Run py & " """ & base & "judge_budget_observer.py"" --since-days 10", 0, True
+sh.Run py & " """ & base & "observe_tail_risk_axes.py""", 0, True
