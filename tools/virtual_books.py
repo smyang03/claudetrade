@@ -181,7 +181,8 @@ def ensure_schema(con: sqlite3.Connection) -> None:
     con.executescript("""
     CREATE TABLE IF NOT EXISTS strategies (
         id TEXT PRIMARY KEY, universe TEXT, pick TEXT, daily_cap INTEGER,
-        slots INTEGER, order_krw REAL, capital_krw REAL, note TEXT, created_at TEXT);
+        slots INTEGER, order_krw REAL, capital_krw REAL, note TEXT, created_at TEXT,
+        contract_hash TEXT, code_commit TEXT, updated_at TEXT);
     CREATE TABLE IF NOT EXISTS trades (
         strategy_id TEXT, session_date TEXT, ticker TEXT,
         entry_price REAL, notional_krw REAL, backfill INTEGER, pick_pos INTEGER,
@@ -193,22 +194,128 @@ def ensure_schema(con: sqlite3.Connection) -> None:
         open_mtm_krw REAL, realized_pnl_krw REAL, equity_krw REAL,
         PRIMARY KEY (strategy_id, asof));
     """)
+    # 마이그레이션 — 기존 DB에 계보 컬럼 추가 (09-01 v1.4)
+    have = {r[1] for r in con.execute("PRAGMA table_info(strategies)")}
+    for col in ("contract_hash", "code_commit", "updated_at"):
+        if col not in have:
+            con.execute(f"ALTER TABLE strategies ADD COLUMN {col} TEXT")
+    if "meta" not in {r[1] for r in con.execute("PRAGMA table_info(trades)")}:
+        con.execute("ALTER TABLE trades ADD COLUMN meta TEXT")
     con.commit()
+
+
+def _contract_hash(s: dict) -> str:
+    """전략 계약 지문 — 전략 dict + 엔진 정산 상수. Codex 취약점 ① 증거 계보.
+
+    바뀌면 '변경 열차' 위반 후보다: 파라미터·정산 코드는 묶음 변경 + 새 epoch가 원칙."""
+    import hashlib
+    payload = json.dumps({**{k: v for k, v in s.items() if k != "note"},
+                          "_engine": [TP, SL, BE, HOLD_SESSIONS, FEE_US, FEE_KR,
+                                      R2_DISC_LE, R2_RV20_LE, R4_GAP_LE, R4_DISC_LE]},
+                         sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _code_commit() -> str:
+    import subprocess
+    try:
+        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(ROOT),
+                              capture_output=True, text=True, timeout=10).stdout.strip()
+    except Exception:
+        return ""
 
 
 def sync_strategies(con: sqlite3.Connection) -> None:
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    commit = _code_commit()
     for s in STRATEGIES:
+        chash = _contract_hash(s)
+        prev = con.execute("SELECT contract_hash FROM strategies WHERE id=?", (s["id"],)).fetchone()
+        if prev and prev[0] and prev[0] != chash:
+            print(f"[VIRTUAL][경고] {s['id']} 계약 지문 변경 {prev[0]} → {chash} — "
+                  f"변경 열차 위반 후보. 의도 변경이면 새 epoch(전략 id 갱신)를 권장")
         con.execute(
             """INSERT INTO strategies (id, universe, pick, daily_cap, slots, order_krw,
-                   capital_krw, note, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?)
+                   capital_krw, note, created_at, contract_hash, code_commit, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET universe=excluded.universe, pick=excluded.pick,
                    daily_cap=excluded.daily_cap, slots=excluded.slots,
-                   order_krw=excluded.order_krw, note=excluded.note""",
+                   order_krw=excluded.order_krw, note=excluded.note,
+                   contract_hash=excluded.contract_hash, code_commit=excluded.code_commit,
+                   updated_at=excluded.updated_at""",
             (s["id"], s["universe"], s["pick"], s["daily_cap"], s["slots"],
-             s["order_krw"], s["capital_krw"], s["note"], now))
+             s["order_krw"], s["capital_krw"], s["note"], now, chash, commit, now))
     con.commit()
+
+
+def reconcile(con: sqlite3.Connection) -> bool:
+    """일일 장부 대사 — Codex 훔칠 규율 ①. 불변식이 깨지면 성과 확정 금지."""
+    problems: list[str] = []
+    for status, need_net in (("CLOSED", True), ("OPEN", False)):
+        bad = con.execute(
+            f"SELECT COUNT(*) FROM trades WHERE status='{status}' AND "
+            f"(net_pct IS {'NULL' if need_net else 'NOT NULL'} "
+            f"OR pnl_krw IS {'NULL' if need_net else 'NOT NULL'})").fetchone()[0]
+        if bad:
+            problems.append(f"{status} 행 {bad}건의 손익 필드 불일치")
+    today = datetime.now().strftime("%Y-%m-%d")
+    future = con.execute("SELECT COUNT(*) FROM trades WHERE session_date>?", (today,)).fetchone()[0]
+    if future:
+        problems.append(f"미래 세션 거래 {future}건")
+    for s in STRATEGIES:
+        realized = con.execute(
+            "SELECT COALESCE(SUM(pnl_krw),0) FROM trades WHERE strategy_id=? AND status='CLOSED'",
+            (s["id"],)).fetchone()[0]
+        row = con.execute(
+            "SELECT realized_pnl_krw FROM book_daily WHERE strategy_id=? ORDER BY asof DESC LIMIT 1",
+            (s["id"],)).fetchone()
+        if row is not None and abs(float(row[0]) - float(realized)) > 1.0:
+            problems.append(f"{s['id']} 실현손익 대사 불일치 (원장 {realized:.0f} vs 북 {row[0]:.0f})")
+    if problems:
+        print("[VIRTUAL] RECONCILE_REQUIRED — 성과 확정 금지:")
+        for p in problems:
+            print("  -", p)
+        return False
+    print("[VIRTUAL] 장부 대사 OK (불변식 전건 통과)")
+    return True
+
+
+def overlap_report(con: sqlite3.Connection) -> None:
+    """합성 포트폴리오 겹침 — Codex 취약점 ③. '하나의 엣지를 17번 센' 정도를 잰다."""
+    import statistics as st
+    rows = con.execute(
+        "SELECT strategy_id, session_date, ticker, COALESCE(pnl_krw,0), status "
+        "FROM trades").fetchall()
+    by_strat: dict[str, set] = defaultdict(set)
+    pnl_by: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for sid, sd, tk, pnl, status in rows:
+        by_strat[sid].add((sd, tk))
+        if status == "CLOSED":
+            pnl_by[sid][sd] += float(pnl)
+    ids = [s["id"] for s in STRATEGIES if by_strat.get(s["id"])]
+    print("\n[겹침/상관 — 같은 (세션,종목) 비율과 세션 P&L 상관. 판정 아님, 중첩 경보용]")
+    printed = 0
+    for i, a in enumerate(ids):
+        for b in ids[i + 1:]:
+            inter = len(by_strat[a] & by_strat[b])
+            union = len(by_strat[a] | by_strat[b])
+            jac = inter / union if union else 0.0
+            common = sorted(set(pnl_by[a]) & set(pnl_by[b]))
+            corr = None
+            if len(common) >= 6:
+                xa = [pnl_by[a][d] for d in common]
+                xb = [pnl_by[b][d] for d in common]
+                ma, mb = st.mean(xa), st.mean(xb)
+                cov = sum((p - ma) * (q - mb) for p, q in zip(xa, xb))
+                va = sum((p - ma) ** 2 for p in xa)
+                vb = sum((q - mb) ** 2 for q in xb)
+                corr = cov / (va * vb) ** 0.5 if va > 0 and vb > 0 else None
+            if jac >= 0.3 or (corr is not None and abs(corr) >= 0.6):
+                print(f"  {a:16s} × {b:16s} 겹침 {jac*100:3.0f}% ({inter}건) "
+                      f"상관 {f'{corr:+.2f}' if corr is not None else '  -  '}")
+                printed += 1
+    if not printed:
+        print("  경보 기준(겹침>=30% 또는 |상관|>=0.6) 해당 쌍 없음")
 
 
 def load_sessions() -> dict[str, list[dict]]:
@@ -653,11 +760,16 @@ def main() -> int:
             settled = settle_open_trades(con)
             mark_books(con)
             print(f"[VIRTUAL] 진입 {opened}건 / 정산 {settled}건")
+            reconcile(con)
             report(con, sessions_us, sessions_kr)
+            overlap_report(con)
         elif cmd == "report":
             report(con, load_sessions(), load_kr_sessions())
+            overlap_report(con)
+        elif cmd == "reconcile":
+            return 0 if reconcile(con) else 1
         else:
-            print("사용: virtual_books.py [run|report]")
+            print("사용: virtual_books.py [run|report|reconcile]")
             return 1
     return 0
 
