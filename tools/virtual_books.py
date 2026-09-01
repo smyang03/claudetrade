@@ -11,9 +11,13 @@ KIS 모의서버는 쓰지 않는다 — 실데이터(가격 CSV·후보 풀)로
   모든 산출물에 [VIRTUAL] 표기를 남긴다.
 **진입**: session_date 시가(연구 표준 규약). 수량 대신 명목 KRW(건당 주문액)로
   회계한다 — pnl_krw = 주문액 × net%/100. 현금 부족이면 진입 생략(기록).
-**출구**: 현행 계약 TP12(일봉 high, D0은 종가만)/SL25(종가)/BE락4(종가)/D7,
-  수수료 왕복 0.48%. 08-30 확립 규약(실거래 재현 6/9) — 근사의 한계 명시:
-  실체결가·슬리피지·게이트(추격·갭)는 재현하지 않는다.
+**출구 (정본 = 런타임, Codex 09-01 검토로 통일)**: TP12(일봉 high, D0은 종가만)/
+  SL25(종가)/BE락4(전일까지 봉우리 기준, 종가 청산)/**보유 = 진입일 포함 7세션
+  (D0..D6)** — `expected_maturity_session`의 inclusive 규약이자 SEI·AVAV 실측
+  (08-21 진입 → 7세션째 08-31 마감 청산)과 일치. 연구 스크립트들의 D0..D7(8봉)은
+  off-by-one이었다(Codex 지적). 수수료 왕복 **0.50%**(봉인 policy cost_pct 정본,
+  연구용 0.48%와 구분). 한계: 실체결가·슬리피지·장중 게이트는 재현하지 않는다.
+  갭 TP는 TP가 체결 보수 규약.
 **모집단 2종**: live(in_pool=1 = 스크리너 quota 통과 = 현 시스템이 실제로 사는
   풀) / wide(eligible=1 전체 = 공급 확대 가정). 09-01 실증으로 두 모집단이
   다름이 확인됐다(quota가 day_losers를 10/세션으로 자름).
@@ -42,11 +46,40 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from research_early_exit_no_bump import bars  # noqa: E402
 from research_pick_simulation import (  # noqa: E402
-    BAND_HI, BAND_LO, FEE, MAX_FLOOR, RULES, _key, contract_net_d7, max21_at,
+    BAND_HI, BAND_LO, MAX_FLOOR, _key, max21_at,
 )
 
 POOL_DB = ROOT / "data" / "analysis" / "us_swing_shadow.db"
 BOOK_DB = ROOT / "data" / "shadow" / "virtual_books.db"
+# ── 정산 계약 정본 (런타임 규약과 통일 — docstring 참조) ─────────────────────
+TP, SL, BE = 12.0, -25.0, 4.0
+HOLD_SESSIONS = 7      # 진입일 포함 (D0..D6)
+FEE_ROUND_TRIP = 0.50  # 봉인 policy cost_pct
+
+
+def contract_exit_v2(entry: float, win: list[tuple]) -> tuple[float, str] | None:
+    """정본 계약 정산. win = D0..D6 (최대 7봉). 미완결·미발동이면 None.
+
+    BE락은 **전일까지의 봉우리**로 활성 판정한다(당일 순서 모호성 제거 —
+    us_swing_exit_counterfactual과 같은 규약). TP·종가 SL/BE 동시 성립 시 TP 우선
+    (고가는 장중, SL/BE는 종가 판정이므로).
+    """
+    if not win or entry <= 0:
+        return None
+    peak = (win[0][4] - entry) / entry * 100.0  # D0은 종가만 (체결 전 고가 오염 방지)
+    for i, (_d, _o, hi, _lo, c, _v) in enumerate(win[:HOLD_SESSIONS]):
+        hip = (hi - entry) / entry * 100.0 if i > 0 else (c - entry) / entry * 100.0
+        cp = (c - entry) / entry * 100.0
+        if hip >= TP:
+            return TP - FEE_ROUND_TRIP, "TP"
+        if cp <= SL:
+            return cp - FEE_ROUND_TRIP, "SL"
+        if peak >= BE and cp <= 0:
+            return cp - FEE_ROUND_TRIP, "BE"
+        peak = max(peak, hip)
+    if len(win) < HOLD_SESSIONS:
+        return None
+    return (win[HOLD_SESSIONS - 1][4] - entry) / entry * 100.0 - FEE_ROUND_TRIP, "D_MAT"
 BACKFILL_START = "2026-08-12"  # 풀 원장 시작. 이 구간은 backfill=1로 표기(forward 아님)
 FORWARD_START = "2026-09-01"   # 가상 운용 전환일 — 승격 판정은 이 이후만 센다
 
@@ -75,6 +108,13 @@ STRATEGIES: list[dict] = [
     {"id": "us_wide_maxlo",  "universe": "wide", "pick": "max_lo",   "daily_cap": 1,
      "slots": 7,  "order_krw": 540_000, "capital_krw": 10_000_000,
      "note": "승자 프로필 MAX 낮음"},
+    # ── Codex 제안 (09-01, gpt-5.6-sol 검토) ──────────────────────────────
+    {"id": "us_wide_nomax",  "universe": "wide", "pick": "dvol_desc", "daily_cap": 1,
+     "slots": 7,  "order_krw": 540_000, "capital_krw": 10_000_000, "max_floor": False,
+     "note": "S6 — 밴드만(MAX 게이트 제거). MAX 부호 혼재 검정. 반증: S2 대비 <=0 30건"},
+    {"id": "us_wide_dvol_k3", "universe": "wide", "pick": "dvol_desc", "daily_cap": 3,
+     "slots": 21, "order_krw": 540_000, "capital_krw": 20_000_000,
+     "note": "S7 — top3 균등. K=1(S2)과 cap10(S3) 사이 용량 곡선. 슬롯별 한계 판정"},
 ]
 
 
@@ -142,10 +182,10 @@ def load_sessions() -> dict[str, list[dict]]:
     return sessions
 
 
-def band_max_pass(cands: list[dict]) -> list[dict]:
+def band_max_pass(cands: list[dict], *, max_floor: bool = True) -> list[dict]:
     return [c for c in cands
             if c["dvol"] is not None and BAND_LO <= c["dvol"] < BAND_HI
-            and (c["max21"] is None or c["max21"] >= MAX_FLOOR)]
+            and (not max_floor or c["max21"] is None or c["max21"] >= MAX_FLOOR)]
 
 
 def entry_of(ticker: str, session_date: str) -> tuple[float, list[tuple]] | None:
@@ -153,7 +193,7 @@ def entry_of(ticker: str, session_date: str) -> tuple[float, list[tuple]] | None
     ei = next((i for i, x in enumerate(b) if x[0] == str(session_date)), None)
     if ei is None:
         return None
-    win = b[ei: ei + 8]  # D0..D7
+    win = b[ei: ei + HOLD_SESSIONS]  # D0..D6 (진입일 포함 7세션 — 런타임 정본)
     if not win or not win[0][1] or win[0][1] <= 0:
         return None
     return float(win[0][1]), win
@@ -170,7 +210,7 @@ def open_new_trades(con: sqlite3.Connection, sessions: dict[str, list[dict]]) ->
             if sd < BACKFILL_START or sd in done:
                 continue
             pool = [c for c in sessions[sd] if c["in_pool"]] if s["universe"] == "live" else sessions[sd]
-            passers = band_max_pass(pool)
+            passers = band_max_pass(pool, max_floor=bool(s.get("max_floor", True)))
             if not passers:
                 continue
             if s["pick"] == "all":
@@ -213,7 +253,7 @@ def settle_open_trades(con: sqlite3.Connection) -> int:
         if eo is None:
             continue
         _e, win = eo
-        res = contract_net_d7(float(entry), win)
+        res = contract_exit_v2(float(entry), win)
         if res is None:
             continue  # 창 미완결·미발동 — 다음 실행에서 재시도
         net, reason = res
