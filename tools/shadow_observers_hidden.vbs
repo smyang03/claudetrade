@@ -36,3 +36,6 @@ sh.Run py & " """ & base & "shadow_fade_entry_observer.py"" --since-days 10", 0,
 sh.Run py & " """ & base & "judge_budget_observer.py"" --since-days 10", 0, True
 sh.Run py & " """ & base & "observe_tail_risk_axes.py""", 0, True
 sh.Run py & " """ & base & "observe_pick_rules.py""", 0, True
+' ⑤ virtual_books — 가상 운용 전환(09-01 운영자 결정)의 본체. 다전략 가상 북을
+'   매일 진입·정산·MTM한다. 전부 [VIRTUAL]이며 실주문 무접촉.
+sh.Run py & " """ & base & "virtual_books.py"" run", 0, True
