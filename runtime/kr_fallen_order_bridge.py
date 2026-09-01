@@ -370,6 +370,18 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
         # 사유에는 설정 라벨이 아니라 **충족 규칙**을 남긴다 (판정 시 R4∖R2 분해용, 설계 D4)
         matched = list(row.get("_matched_rules") or [])
         matched_tag = "_".join(m.lower() for m in matched) or rule_label.replace("+", "_").lower()
+        # 2026-09-01 운영자 결정: 가상 운용 전환 — 평가·게이트·용량 회계는 실거래와
+        # 동일하게 태우고 **제출만** 끊는다(US 브리지 SUBMIT_ENABLED와 대칭).
+        # REHEARSAL_READY 행이 "실거래였다면 샀을 것"의 원장이 되고, 가상 북 엔진이
+        # (session_date, ticker) 멱등으로 읽는다. 복귀는 env 한 줄 원복.
+        if not bot._runtime_bool("KR_FALLEN_ORDER_SUBMIT_ENABLED", True):
+            results.append({"ticker": ticker, "status": "REHEARSAL_READY",
+                            "reason": "submit_disabled_virtual_mode",
+                            "qty": qty, "price": price, "matched": matched})
+            submitted_now += 1
+            if submitted_now >= remaining:
+                break
+            continue
         ok = bot._submit_micro_probe_buy_order(
             market="KR", ticker=ticker, name=ticker, qty=qty,
             raw_price=price, risk_price_krw=price,
