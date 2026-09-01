@@ -65,7 +65,7 @@ R4_GAP_LE, R4_DISC_LE = -4.0, -15.0
 
 
 def contract_exit_v2(entry: float, win: list[tuple], *, fee: float = FEE_US,
-                     be_lock: bool = True) -> tuple[float, str] | None:
+                     be_lock: bool = True, tp: float = TP) -> tuple[float, str] | None:
     """정본 계약 정산. win = D0..D6 (최대 7봉). 미완결·미발동이면 None.
 
     BE락은 **전일까지의 봉우리**로 활성 판정한다(당일 순서 모호성 제거 —
@@ -79,8 +79,8 @@ def contract_exit_v2(entry: float, win: list[tuple], *, fee: float = FEE_US,
     for i, (_d, _o, hi, _lo, c, _v) in enumerate(win[:HOLD_SESSIONS]):
         hip = (hi - entry) / entry * 100.0 if i > 0 else (c - entry) / entry * 100.0
         cp = (c - entry) / entry * 100.0
-        if hip >= TP:
-            return TP - fee, "TP"
+        if hip >= tp:
+            return tp - fee, "TP"
         if cp <= SL:
             return cp - fee, "SL"
         if be_lock and peak >= BE and cp <= 0:
@@ -156,6 +156,17 @@ STRATEGIES: list[dict] = [
     {"id": "kr_r4x",         "universe": "kr",   "pick": "disc_deep", "daily_cap": 2,
      "slots": 6,  "order_krw": 220_000, "capital_krw": 5_000_000, "kr_rule": "r4x",
      "note": "S10 — KR R4∖R2 순증분(gap<=-4 & disc<=-15, R2 미충족만). R4 추가가치 검정"},
+    # ── 독립 가설 3종 (09-01 오후, 운영자 '하고 싶은 것 다' 지시) ──────────
+    {"id": "us_slow_fallen", "universe": "slowus", "pick": "cum5_deep", "daily_cap": 1,
+     "slots": 7,  "order_krw": 540_000, "capital_krw": 10_000_000,
+     "note": "S11 — 5일 -12% 완만하락(단일 -5% 없음, day_losers 배타 공급). 사각 검정"},
+    {"id": "us_wide_tp20",   "universe": "wide", "pick": "dvol_desc", "daily_cap": 1,
+     "slots": 7,  "order_krw": 540_000, "capital_krw": 10_000_000, "tp": 20.0,
+     "note": "S12 — 상방 절단 완화(TP20). 신규 코호트 출구 검정(구 코호트 기각과 별개)"},
+    {"id": "us_wide_noearn", "universe": "wide", "pick": "dvol_desc", "daily_cap": 1,
+     "slots": 7,  "order_krw": 540_000, "capital_krw": 10_000_000, "no_earnings": True,
+     "forward_only": True,
+     "note": "S13 — 어닝 ±2일 하락 배제(정보성 하락 무반등 가설). 캘린더가 forward만 커버"},
 ]
 
 
@@ -262,7 +273,56 @@ def load_kr_sessions() -> dict[str, list[dict]]:
 def strategy_pick_key(s: dict, c: dict) -> float:
     if s.get("pick") == "disc_deep":
         return c["disc"]  # 할인 깊은순(가장 음수 먼저) — 08-04 검증 통과 랭킹
+    if s.get("pick") == "cum5_deep":
+        return c["cum5"]  # 5일 누적낙폭 깊은순
     return _key(s["pick"], c)
+
+
+SLOW_LEDGER = ROOT / "data" / "shadow" / "slow_fallen_shadow.jsonl"
+SLOW_CACHE = ROOT / "data" / "analysis" / "slow_fallen_market_cache.json"
+_SLOW_SERIES: dict | None = None
+
+
+def load_slow_sessions() -> dict[str, list[dict]]:
+    sessions: dict[str, list[dict]] = defaultdict(list)
+    if SLOW_LEDGER.exists():
+        for line in SLOW_LEDGER.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            for c in row.get("candidates") or []:
+                sessions[str(row["session_date"])].append(
+                    {"ticker": str(c["ticker"]), "cum5": float(c["cum5"])})
+    return sessions
+
+
+def bars_slow(ticker: str) -> list[tuple]:
+    """느린 급락 레인은 전시장 Alpaca 캐시가 가격 소스다(CSV 없는 종목 다수)."""
+    global _SLOW_SERIES
+    if _SLOW_SERIES is None:
+        _SLOW_SERIES = json.loads(SLOW_CACHE.read_text()) if SLOW_CACHE.exists() else {}
+    rows = []
+    for x in sorted(_SLOW_SERIES.get(str(ticker), []), key=lambda b: b["t"]):
+        try:
+            rows.append((str(x["t"])[:10], float(x["o"]), float(x["h"]),
+                         float(x["l"]), float(x["c"]), float(x.get("v") or 0)))
+        except (TypeError, ValueError, KeyError):
+            continue
+    return rows
+
+
+def load_earnings_windows() -> dict[str, str]:
+    """티커 → 어닝 날짜(현재 캘린더 창). forward 전용 — 과거 스냅샷은 없다."""
+    path = ROOT / "data" / "earnings_calendar.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return {str(t).upper(): str(v.get("date") or "")
+                for t, v in (data.get("by_symbol") or {}).items()}
+    except (OSError, ValueError):
+        return {}
 
 
 def entry_of(ticker: str, session_date: str, *, market: str = "US") -> tuple[float, list[tuple]] | None:
@@ -270,6 +330,9 @@ def entry_of(ticker: str, session_date: str, *, market: str = "US") -> tuple[flo
     신호일이라 **다음 거래 세션** 시가 진입(핸드오프 규약과 동일)."""
     if market == "KR":
         b = bars_kr(ticker)
+        ei = next((i for i, x in enumerate(b) if x[0] > str(session_date)), None)
+    elif market == "SLOW":
+        b = bars_slow(ticker)
         ei = next((i for i, x in enumerate(b) if x[0] > str(session_date)), None)
     else:
         b = bars(ticker)
@@ -282,34 +345,62 @@ def entry_of(ticker: str, session_date: str, *, market: str = "US") -> tuple[flo
     return float(win[0][1]), win
 
 
-def strategy_passers(s: dict, sessions_us: dict, sessions_kr: dict, sd: str) -> list[dict]:
+_EARN_BY_TICKER: dict[str, str] | None = None
+
+
+def strategy_passers(s: dict, sessions_us: dict, sessions_kr: dict, sd: str,
+                     sessions_slow: dict | None = None) -> list[dict]:
     """전략의 세션 통과 후보 (선별 파이프 전체 적용, 픽 전 단계)."""
+    global _EARN_BY_TICKER
     if s["universe"] == "kr":
         cands = sessions_kr.get(sd, [])
         return [c for c in cands if c.get(s["kr_rule"])]
+    if s["universe"] == "slowus":
+        return list((sessions_slow or {}).get(sd, []))
     pool = sessions_us.get(sd, [])
     if s["universe"] == "live":
         pool = [c for c in pool if c["in_pool"]]
     passers = band_max_pass(pool, max_floor=bool(s.get("max_floor", True)))
     if s.get("max_passers") and len(passers) > int(s["max_passers"]):
         return []  # S8 — 고밀도 세션 no-trade
+    if s.get("no_earnings"):
+        if _EARN_BY_TICKER is None:
+            _EARN_BY_TICKER = load_earnings_windows()
+        def near_earnings(t: str) -> bool:
+            d = _EARN_BY_TICKER.get(str(t).upper(), "")
+            if not d:
+                return False  # 캘린더 미수록 = fail-open (창 밖 과거 세션 포함)
+            try:
+                gap = abs((datetime.strptime(d, "%Y-%m-%d")
+                           - datetime.strptime(sd, "%Y-%m-%d")).days)
+            except ValueError:
+                return False
+            return gap <= 2
+        passers = [c for c in passers if not near_earnings(c["ticker"])]
     return passers
 
 
+def strategy_market(s: dict) -> str:
+    return {"kr": "KR", "slowus": "SLOW"}.get(s["universe"], "US")
+
+
 def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
-                    sessions_kr: dict[str, list[dict]]) -> int:
+                    sessions_kr: dict[str, list[dict]],
+                    sessions_slow: dict[str, list[dict]]) -> int:
     opened = 0
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for s in STRATEGIES:
-        market = "KR" if s["universe"] == "kr" else "US"
-        all_dates = sessions_kr if s["universe"] == "kr" else sessions_us
+        market = strategy_market(s)
+        all_dates = {"KR": sessions_kr, "SLOW": sessions_slow}.get(market, sessions_us)
         done = {r[0] for r in con.execute(
             "SELECT DISTINCT session_date FROM trades WHERE strategy_id=?", (s["id"],))}
         cash = book_cash(con, s)
         for sd in sorted(all_dates):
             if sd < BACKFILL_START or sd in done:
                 continue
-            passers = strategy_passers(s, sessions_us, sessions_kr, sd)
+            if s.get("forward_only") and sd < FORWARD_START:
+                continue
+            passers = strategy_passers(s, sessions_us, sessions_kr, sd, sessions_slow)
             if not passers:
                 continue
             if s["pick"] == "all":
@@ -353,14 +444,15 @@ def settle_open_trades(con: sqlite3.Connection) -> int:
         s = by_id.get(sid)
         if s is None:
             continue
-        market = "KR" if s["universe"] == "kr" else "US"
+        market = strategy_market(s)
         eo = entry_of(tk, sd, market=market)
         if eo is None:
             continue
         _e, win = eo
         res = contract_exit_v2(float(entry), win,
                                fee=FEE_KR if market == "KR" else FEE_US,
-                               be_lock=(market != "KR"))
+                               be_lock=(market != "KR"),
+                               tp=float(s.get("tp", TP)))
         if res is None:
             continue  # 창 미완결·미발동 — 다음 실행에서 재시도
         net, reason = res
@@ -395,7 +487,8 @@ def mark_books(con: sqlite3.Connection) -> None:
             "WHERE strategy_id=? AND status='OPEN'", (s["id"],)).fetchall()
         mtm = 0.0
         for tk, entry, notional in open_rows:
-            b = bars_kr(str(tk)) if s["universe"] == "kr" else bars(str(tk))
+            m = strategy_market(s)
+            b = bars_kr(str(tk)) if m == "KR" else (bars_slow(str(tk)) if m == "SLOW" else bars(str(tk)))
             if b and entry:
                 mtm += float(notional) * (b[-1][4] / float(entry) - 1.0)
         cash = book_cash(con, s)
@@ -416,21 +509,22 @@ def null_percentile(con: sqlite3.Connection, s: dict, sessions_us: dict,
     """C0 널 — 전략이 거래한 세션에서 같은 모집단·같은 건수 무작위 픽의 평균 분포
     대비 실측 평균의 백분위. seed 고정(Codex 제안). 정산 5건 미만이면 None."""
     import random
-    market = "KR" if s["universe"] == "kr" else "US"
+    market = strategy_market(s)
     traded = con.execute(
         "SELECT session_date, COUNT(*), AVG(net_pct) FROM trades "
         "WHERE strategy_id=? AND status='CLOSED' GROUP BY session_date", (s["id"],)).fetchall()
     if sum(r[1] for r in traded) < 5:
         return None
+    sessions_slow = load_slow_sessions() if market == "SLOW" else {}
     per_sess: list[tuple[list[float], int]] = []
     for sd, k, _avg in traded:
         nets = []
-        for c in strategy_passers(s, sessions_us, sessions_kr, str(sd)):
+        for c in strategy_passers(s, sessions_us, sessions_kr, str(sd), sessions_slow):
             eo = entry_of(c["ticker"], str(sd), market=market)
             if eo is None:
                 continue
             res = contract_exit_v2(eo[0], eo[1], fee=FEE_KR if market == "KR" else FEE_US,
-                                   be_lock=(market != "KR"))
+                                   be_lock=(market != "KR"), tp=float(s.get("tp", TP)))
             if res is not None:
                 nets.append(res[0])
         if nets:
@@ -503,7 +597,8 @@ def main() -> int:
         if cmd == "run":
             sessions_us = load_sessions()
             sessions_kr = load_kr_sessions()
-            opened = open_new_trades(con, sessions_us, sessions_kr)
+            sessions_slow = load_slow_sessions()
+            opened = open_new_trades(con, sessions_us, sessions_kr, sessions_slow)
             settled = settle_open_trades(con)
             mark_books(con)
             print(f"[VIRTUAL] 진입 {opened}건 / 정산 {settled}건")
