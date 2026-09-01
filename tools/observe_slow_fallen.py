@@ -110,6 +110,7 @@ def main() -> int:
     ap.add_argument("--no-refresh", action="store_true")
     args = ap.parse_args()
     series = load_cache(allow_refresh=not args.no_refresh)
+    cache_age_h = round((time.time() - CACHE.stat().st_mtime) / 3600.0, 1) if CACHE.exists() else None
     hits = scan(series)
     done = recorded_sessions()
     todo = [sd for sd in sorted(hits) if sd not in done]
@@ -118,8 +119,10 @@ def main() -> int:
     with LEDGER.open("a", encoding="utf-8") as fh:
         for sd in todo:
             cands = sorted(hits[sd], key=lambda c: c["cum5"])
+            # cache_age_h 박제 — S11 판정 전 stale 캐시로 열린 세션을 걸러낼 근거
             fh.write(json.dumps({"session_date": sd, "n": len(cands),
-                                 "candidates": cands, "recorded_at": stamp},
+                                 "candidates": cands, "recorded_at": stamp,
+                                 "cache_age_h": cache_age_h},
                                 ensure_ascii=False) + "\n")
             print(f"[slow_fallen] {sd} 후보 {len(cands)}건 (최심 {cands[0]['ticker']} {cands[0]['cum5']}%)")
     if not todo:

@@ -179,7 +179,7 @@ def ensure_schema(con: sqlite3.Connection) -> None:
         strategy_id TEXT, session_date TEXT, ticker TEXT,
         entry_price REAL, notional_krw REAL, backfill INTEGER, pick_pos INTEGER,
         status TEXT, exit_reason TEXT, exit_index INTEGER,
-        net_pct REAL, pnl_krw REAL, opened_at TEXT, settled_at TEXT,
+        net_pct REAL, pnl_krw REAL, opened_at TEXT, settled_at TEXT, meta TEXT,
         PRIMARY KEY (strategy_id, session_date, ticker));
     CREATE TABLE IF NOT EXISTS book_daily (
         strategy_id TEXT, asof TEXT, cash_krw REAL, open_n INTEGER,
@@ -314,15 +314,18 @@ def bars_slow(ticker: str) -> list[tuple]:
     return rows
 
 
-def load_earnings_windows() -> dict[str, str]:
-    """티커 → 어닝 날짜(현재 캘린더 창). forward 전용 — 과거 스냅샷은 없다."""
+def load_earnings_windows() -> tuple[dict[str, str], str, str]:
+    """(티커→어닝날짜, 창 시작, 창 끝). 캘린더는 롤링 스냅샷이라 **창 밖 세션은
+    unknown**이다 — fail-open을 조용히 흘리면 S13이 no-op인지 가설 기각인지
+    구분 불가(08-21 MAX BOM 사고 구조). 판정 결과는 결정 시점에 trades.meta로 박제."""
     path = ROOT / "data" / "earnings_calendar.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return {str(t).upper(): str(v.get("date") or "")
-                for t, v in (data.get("by_symbol") or {}).items()}
+        return ({str(t).upper(): str(v.get("date") or "")
+                 for t, v in (data.get("by_symbol") or {}).items()},
+                str(data.get("from") or ""), str(data.get("to") or ""))
     except (OSError, ValueError):
-        return {}
+        return {}, "", ""
 
 
 def entry_of(ticker: str, session_date: str, *, market: str = "US") -> tuple[float, list[tuple]] | None:
@@ -345,13 +348,17 @@ def entry_of(ticker: str, session_date: str, *, market: str = "US") -> tuple[flo
     return float(win[0][1]), win
 
 
-_EARN_BY_TICKER: dict[str, str] | None = None
+_EARN_CAL: tuple[dict[str, str], str, str] | None = None
 
 
 def strategy_passers(s: dict, sessions_us: dict, sessions_kr: dict, sd: str,
-                     sessions_slow: dict | None = None) -> list[dict]:
-    """전략의 세션 통과 후보 (선별 파이프 전체 적용, 픽 전 단계)."""
-    global _EARN_BY_TICKER
+                     sessions_slow: dict | None = None,
+                     out_meta: dict | None = None) -> list[dict]:
+    """전략의 세션 통과 후보 (선별 파이프 전체 적용, 픽 전 단계).
+
+    out_meta: 결정 시점에만 알 수 있는 판정 근거를 호출자가 박제할 수 있게 채운다
+    (S13 어닝 필터의 캘린더 커버 여부·배제 수 — 사후 재산출 불가 데이터)."""
+    global _EARN_CAL
     if s["universe"] == "kr":
         cands = sessions_kr.get(sd, [])
         return [c for c in cands if c.get(s["kr_rule"])]
@@ -364,19 +371,26 @@ def strategy_passers(s: dict, sessions_us: dict, sessions_kr: dict, sd: str,
     if s.get("max_passers") and len(passers) > int(s["max_passers"]):
         return []  # S8 — 고밀도 세션 no-trade
     if s.get("no_earnings"):
-        if _EARN_BY_TICKER is None:
-            _EARN_BY_TICKER = load_earnings_windows()
-        def near_earnings(t: str) -> bool:
-            d = _EARN_BY_TICKER.get(str(t).upper(), "")
-            if not d:
-                return False  # 캘린더 미수록 = fail-open (창 밖 과거 세션 포함)
-            try:
-                gap = abs((datetime.strptime(d, "%Y-%m-%d")
-                           - datetime.strptime(sd, "%Y-%m-%d")).days)
-            except ValueError:
-                return False
-            return gap <= 2
-        passers = [c for c in passers if not near_earnings(c["ticker"])]
+        if _EARN_CAL is None:
+            _EARN_CAL = load_earnings_windows()
+        by_ticker, c_from, c_to = _EARN_CAL
+        covers = bool(c_from and c_to and c_from <= sd <= c_to)
+        before = len(passers)
+        if covers:
+            def near_earnings(t: str) -> bool:
+                d = by_ticker.get(str(t).upper(), "")
+                if not d:
+                    return False
+                try:
+                    gap = abs((datetime.strptime(d, "%Y-%m-%d")
+                               - datetime.strptime(sd, "%Y-%m-%d")).days)
+                except ValueError:
+                    return False
+                return gap <= 2
+            passers = [c for c in passers if not near_earnings(c["ticker"])]
+        if out_meta is not None:
+            out_meta["earnings_calendar_covers"] = covers
+            out_meta["earnings_dropped"] = before - len(passers)
     return passers
 
 
@@ -400,7 +414,9 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
                 continue
             if s.get("forward_only") and sd < FORWARD_START:
                 continue
-            passers = strategy_passers(s, sessions_us, sessions_kr, sd, sessions_slow)
+            sess_meta: dict = {}
+            passers = strategy_passers(s, sessions_us, sessions_kr, sd, sessions_slow,
+                                       out_meta=sess_meta)
             if not passers:
                 continue
             if s["pick"] == "all":
@@ -422,10 +438,11 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
                 entry, _win = eo
                 con.execute(
                     """INSERT OR IGNORE INTO trades (strategy_id, session_date, ticker,
-                           entry_price, notional_krw, backfill, pick_pos, status, opened_at)
-                       VALUES (?,?,?,?,?,?,?, 'OPEN', ?)""",
+                           entry_price, notional_krw, backfill, pick_pos, status, opened_at, meta)
+                       VALUES (?,?,?,?,?,?,?, 'OPEN', ?, ?)""",
                     (s["id"], sd, c["ticker"], entry, s["order_krw"],
-                     1 if sd < FORWARD_START else 0, pos, now))
+                     1 if sd < FORWARD_START else 0, pos, now,
+                     json.dumps(sess_meta, ensure_ascii=False) if sess_meta else None))
                 if con.execute("SELECT changes()").fetchone()[0]:
                     opened += 1
                     open_n += 1
