@@ -10754,6 +10754,7 @@ tr:hover td {{ background: rgba(255,255,255,0.02); }}
 def _header_html(active_page: str) -> str:
     pages = [
         ("/",          "오늘 현황"),
+        ("/virtual",   "가상운용"),
         ("/strategy",  "전략 관제"),
         ("/pathb",     "B플랜 실시간"),
         ("/preopen",   "장전 후보"),
@@ -17194,11 +17195,166 @@ setInterval(loadLogs, 15000);
 """
 
 
+# ── 가상 운용 (2026-09-01 운영자 결정: 신규 실매수 전면 차단, 다전략 가상 북) ──
+
+VIRTUAL_MODE_BANNER_HTML = """
+<div style="background:#3b2f13;border-bottom:1px solid #7c5c1a;color:#f59e0b;
+     padding:8px 24px;font-size:13px;font-family:var(--sans);">
+  ⚠ <b>가상 운용 모드</b> (2026-09-01~) — 신규 실매수 차단, 실계좌는 기존 보유의
+  매도만 실행됩니다. 신규 진입은 전부 <a href="/virtual" style="color:#fbbf24;">
+  가상 북 [VIRTUAL]</a>에 기록됩니다. 복귀는 승격 게이트
+  (preregistered_promotion_gate_20260901) 통과 + 운영자 승인.
+</div>
+"""
+
+
+@app.route("/api/virtual_books")
+def api_virtual_books():
+    """가상 북 스코어보드 — read-only. 전부 [VIRTUAL]이며 실계좌 손익과 무관."""
+    db = BASE_DIR / "data" / "shadow" / "virtual_books.db"
+    if not db.exists():
+        return jsonify({"available": False, "reason": "virtual_books.db 없음"})
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+        con.row_factory = sqlite3.Row
+        try:
+            strategies = []
+            for s in con.execute(
+                    "SELECT id, universe, pick, daily_cap, slots, order_krw, capital_krw, "
+                    "note, contract_hash FROM strategies ORDER BY rowid"):
+                agg = con.execute(
+                    """SELECT
+                         SUM(CASE WHEN status='CLOSED' THEN 1 ELSE 0 END) AS settled,
+                         SUM(CASE WHEN status='CLOSED' AND backfill=0 THEN 1 ELSE 0 END) AS fwd,
+                         SUM(CASE WHEN status='CLOSED' AND net_pct>0 THEN 1 ELSE 0 END) AS wins,
+                         AVG(CASE WHEN status='CLOSED' THEN net_pct END) AS avg_net,
+                         SUM(CASE WHEN status='CLOSED' THEN pnl_krw ELSE 0 END) AS realized,
+                         SUM(CASE WHEN status='OPEN' THEN 1 ELSE 0 END) AS open_n
+                       FROM trades WHERE strategy_id=?""", (s["id"],)).fetchone()
+                book = con.execute(
+                    "SELECT asof, open_mtm_krw, equity_krw FROM book_daily "
+                    "WHERE strategy_id=? ORDER BY asof DESC LIMIT 1", (s["id"],)).fetchone()
+                settled = int(agg["settled"] or 0)
+                strategies.append({
+                    "id": s["id"], "universe": s["universe"], "pick": s["pick"],
+                    "note": s["note"], "capital_krw": s["capital_krw"],
+                    "settled": settled, "forward_settled": int(agg["fwd"] or 0),
+                    "win_rate": round(100.0 * (agg["wins"] or 0) / settled, 1) if settled else None,
+                    "avg_net_pct": round(agg["avg_net"], 2) if agg["avg_net"] is not None else None,
+                    "realized_krw": round(agg["realized"] or 0.0),
+                    "open_n": int(agg["open_n"] or 0),
+                    "mtm_krw": round(book["open_mtm_krw"]) if book else 0,
+                    "equity_krw": round(book["equity_krw"]) if book else s["capital_krw"],
+                    "asof": book["asof"] if book else None,
+                    "contract_hash": s["contract_hash"],
+                })
+            recent = [dict(r) for r in con.execute(
+                "SELECT strategy_id, session_date, ticker, status, exit_reason, "
+                "net_pct, pnl_krw, backfill FROM trades "
+                "ORDER BY session_date DESC, strategy_id LIMIT 40")]
+        finally:
+            con.close()
+        return jsonify({
+            "available": True, "banner": "VIRTUAL — 실계좌 아님",
+            "gate": {"doc": "preregistered_promotion_gate_20260901",
+                     "us_required": {"sessions": 80, "settled": 50, "months": 3},
+                     "note": "판정은 forward(09-01 이후 진입)만. 백필은 배관 검증 전용."},
+            "strategies": strategies, "recent_trades": recent,
+        })
+    except Exception as exc:
+        return jsonify({"available": False, "reason": str(exc)[:200]})
+
+
+PAGE_VIRTUAL_HTML = """
+<div style="padding:20px 24px;">
+  <div style="background:#1a2436;border:1px solid #2c3e5d;border-radius:8px;padding:14px 18px;margin-bottom:18px;font-size:13px;">
+    <b style="color:var(--yellow);">[VIRTUAL]</b> 가상 자본 다전략 인큐베이터 —
+    실계좌 손익과 무관. 승격 판정은 <b>forward 표본만</b>(백필은 배관 검증), 게이트:
+    US 80세션·정산 50건·3개월 + 지표 전량 충족(사전등록 정본 09-01 승인).
+  </div>
+  <h2 style="font-size:15px;margin-bottom:10px;color:var(--cyan);">전략 스코어보드</h2>
+  <div style="overflow-x:auto;">
+  <table id="vb-table" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
+    <thead><tr style="color:var(--muted);text-align:right;">
+      <th style="text-align:left;padding:6px;">전략</th><th>자본</th><th>실현손익</th>
+      <th>미결제</th><th>MTM</th><th>정산</th><th>forward</th><th>승률</th><th>평균net</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  </div>
+  <h2 style="font-size:15px;margin:22px 0 10px;color:var(--cyan);">최근 가상 거래 40건</h2>
+  <div style="overflow-x:auto;">
+  <table id="vb-trades" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
+    <thead><tr style="color:var(--muted);text-align:right;">
+      <th style="text-align:left;padding:6px;">세션</th><th style="text-align:left;">전략</th>
+      <th style="text-align:left;">종목</th><th>상태</th><th>출구</th><th>net%</th><th>손익</th><th>구분</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  </div>
+</div>
+<script>
+function vbFmt(v, suffix) {
+  if (v === null || v === undefined) return '-';
+  const n = Number(v);
+  const cls = n > 0 ? 'style="color:var(--green);"' : (n < 0 ? 'style="color:var(--red);"' : '');
+  return `<span ${cls}>${n.toLocaleString()}${suffix || ''}</span>`;
+}
+async function loadVirtual() {
+  try {
+    const d = await (await fetch('/api/virtual_books')).json();
+    if (!d.available) return;
+    const tb = document.querySelector('#vb-table tbody');
+    tb.innerHTML = d.strategies.map(s => `
+      <tr style="border-top:1px solid var(--border);text-align:right;">
+        <td style="text-align:left;padding:6px;" title="${(s.note||'').replace(/"/g,'')}">${s.id}</td>
+        <td>${(s.capital_krw/10000).toFixed(0)}만</td>
+        <td>${vbFmt(s.realized_krw, '원')}</td>
+        <td>${s.open_n}</td>
+        <td>${vbFmt(s.mtm_krw, '원')}</td>
+        <td>${s.settled}</td>
+        <td>${s.forward_settled}/50</td>
+        <td>${s.win_rate === null ? '-' : s.win_rate + '%'}</td>
+        <td>${s.avg_net_pct === null ? '-' : vbFmt(s.avg_net_pct, '%')}</td>
+      </tr>`).join('');
+    const tt = document.querySelector('#vb-trades tbody');
+    tt.innerHTML = d.recent_trades.map(t => `
+      <tr style="border-top:1px solid var(--border);text-align:right;">
+        <td style="text-align:left;padding:6px;">${t.session_date}</td>
+        <td style="text-align:left;">${t.strategy_id}</td>
+        <td style="text-align:left;">${t.ticker}</td>
+        <td>${t.status}</td><td>${t.exit_reason || '-'}</td>
+        <td>${t.net_pct === null ? '-' : vbFmt(t.net_pct, '%')}</td>
+        <td>${t.pnl_krw === null ? '-' : vbFmt(t.pnl_krw, '원')}</td>
+        <td>${t.backfill ? '백필' : '<b style="color:var(--cyan);">FWD</b>'}</td>
+      </tr>`).join('');
+  } catch (e) { /* 조용히 재시도 */ }
+}
+loadVirtual();
+setInterval(loadVirtual, 60000);
+</script>
+"""
+
+
+@app.route("/virtual")
+def page_virtual():
+    html = (
+        _head("가상 운용")
+        + _header_html("/virtual")
+        + VIRTUAL_MODE_BANNER_HTML
+        + COMMON_JS_BLOCK
+        + PAGE_VIRTUAL_HTML
+        + "</body></html>"
+    )
+    return render_template_string(html)
+
+
 @app.route("/")
 def page_today():
     html = (
         _head("오늘 현황")
         + _header_html("/")
+        + VIRTUAL_MODE_BANNER_HTML
         + COMMON_JS_BLOCK
         + PAGE_TODAY_HTML
         + TODAY_SUMMARY_OVERRIDE_JS_V2
