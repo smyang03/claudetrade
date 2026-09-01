@@ -409,6 +409,10 @@ def apply_contract_selection(
         # 이전 동작(모델 rank 순) 그대로 둔다.
         pick_order = resolve_pick_order(config)
         band_meta["pick_order"] = pick_order
+        # 실효 정렬을 따로 남긴다 (2026-09-01 Codex 리뷰): dvol 결손으로 밴드가
+        # fail-open이면 정렬은 모델 rank로 폴백되는데, 계약 지문은 dvol_desc다.
+        # 이 마커 없이는 폴백 세션이 새 코호트에 조용히 섞인다.
+        band_meta["pick_order_effective"] = "model_rank"
         if pick_order == "dvol_desc" and band_meta.get("applied"):
             dvol_by = {
                 str(entry.get("ticker") or "").upper(): float(entry.get("dollar_vol_m") or 0.0)
@@ -418,6 +422,9 @@ def apply_contract_selection(
                 -dvol_by.get(str(s.get("ticker") or "").upper(), 0.0),
                 int(s.get("rank") or 0),
             ))
+            band_meta["pick_order_effective"] = "dvol_desc"
+        elif pick_order == "dvol_desc":
+            band_meta["pick_order_effective"] = "model_rank_failopen"
         # 밴드 통과분은 원 랭크가 3·7일 수 있다. 랭크 게이트(rank2 폴백용)가 이를
         # "폴백 후보"로 오인하지 않도록 밴드 내 순위를 따로 붙인다.
         # 원 rank는 귀속 태그(us_swing_5d_rank_N)에 그대로 쓰이므로 보존한다.

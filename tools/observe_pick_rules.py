@@ -14,6 +14,12 @@ candidate_pool_all은 ON CONFLICT 덮어쓰기라 사후 재산출이 그날의 
 100~500M, MAX>=8)도 사전등록 고정 — env 드리프트가 연구 원장을 오염시키지 않게
 한다. 라이브 계약 검증은 integrity_check의 몫이고 여기는 연구 관측 전용이다.
 
+**모집단 2종 분리 기록** (2026-09-01 Codex 리뷰 P1-5 반영): `picks`(wide =
+eligible 전체, 공급 확대 가정)와 `picks_live`(in_pool=1 = 스크리너 quota 통과,
+실제 주문 도달 가능)를 나란히 남긴다. 실측(09-01): 스크리너 quota가 day_losers를
+세션당 10개로 자르므로 wide와 live는 다른 모집단이다 — 이걸 섞으면 "30건 모아도
+주문 가능 후보의 forward가 아니다".
+
 정산은 기록하지 않는다 — 픽이 고정되면 정산은 가격 CSV에서 결정론으로 재산출
 가능하다(research_pick_simulation 참조). 판정: 새 계약 정산 30건 시점.
 
@@ -79,15 +85,15 @@ def main() -> int:
     con = sqlite3.connect(f"file:{POOL_DB}?mode=ro", uri=True, timeout=10)
     try:
         rows = con.execute(
-            """SELECT session_date, ticker, chg_pct, dollar_vol
+            """SELECT session_date, ticker, chg_pct, dollar_vol, in_pool
                FROM candidate_pool_all WHERE eligible=1 ORDER BY session_date"""
         ).fetchall()
     finally:
         con.close()
 
     by_session: dict[str, list] = defaultdict(list)
-    for sd, tk, chg, dvol in rows:
-        by_session[str(sd)].append((str(tk).upper(), chg, dvol))
+    for sd, tk, chg, dvol, in_pool in rows:
+        by_session[str(sd)].append((str(tk).upper(), chg, dvol, int(in_pool or 0)))
 
     done = recorded_sessions()
     todo = [sd for sd in sorted(by_session) if sd not in done]
@@ -100,7 +106,7 @@ def main() -> int:
     with LEDGER.open("a", encoding="utf-8") as fh:
         for sd in todo:
             cands = []
-            for tk, chg, dvol in by_session[sd]:
+            for tk, chg, dvol, in_pool in by_session[sd]:
                 f = signal_day_features(tk, sd)
                 if f is None:
                     continue
@@ -108,28 +114,42 @@ def main() -> int:
                     f["chg"] = float(chg)
                 if dvol is not None:
                     f["dvol"] = float(dvol) / 1e6
+                f["in_pool"] = in_pool
                 cands.append(f)
-            passers = [
-                c for c in cands
-                if c["dvol"] is not None and BAND_LO <= c["dvol"] < BAND_HI
-                and (c["max21"] is None or c["max21"] >= MAX_FLOOR)
-            ]
-            picks = {}
-            for rule in RULES:
-                if passers:
-                    p = sorted(passers, key=lambda c: _key(rule, c))[0]
-                    picks[rule] = {k: (round(v, 4) if isinstance(v, float) else v)
-                                   for k, v in p.items()}
+
+            def band_max_pass(cs):
+                return [c for c in cs
+                        if c["dvol"] is not None and BAND_LO <= c["dvol"] < BAND_HI
+                        and (c["max21"] is None or c["max21"] >= MAX_FLOOR)]
+
+            # 두 모집단을 분리 기록한다 (2026-09-01 Codex 리뷰 P1-5):
+            #   live  = in_pool=1 (스크리너 quota 컷 통과 = 실제 주문 도달 가능)
+            #   wide  = eligible=1 전체 (공급 확대 가정의 연구 모집단)
+            # 이전에는 wide만 기록해 "30건 모아도 주문 가능 후보의 forward가 아니다"였다.
+            passers_wide = band_max_pass(cands)
+            passers_live = band_max_pass([c for c in cands if c["in_pool"]])
+
+            def rule_picks(ps):
+                out = {}
+                for rule in RULES:
+                    if ps:
+                        p = sorted(ps, key=lambda c: _key(rule, c))[0]
+                        out[rule] = {k: (round(v, 4) if isinstance(v, float) else v)
+                                     for k, v in p.items()}
+                return out
+
             fh.write(json.dumps({
                 "session_date": sd,
                 "n_eligible": len(by_session[sd]),
                 "n_featured": len(cands),
-                "n_passers": len(passers),
-                "picks": picks,
+                "n_passers": len(passers_wide),
+                "n_passers_live": len(passers_live),
+                "picks": rule_picks(passers_wide),
+                "picks_live": rule_picks(passers_live),
                 "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             }, ensure_ascii=False) + "\n")
             written += 1
-            print(f"[pick_rules] {sd} 통과 {len(passers)}건 픽 {len(picks)}규칙 기록")
+            print(f"[pick_rules] {sd} 통과 wide {len(passers_wide)} / live {len(passers_live)} 기록")
     print(f"[pick_rules] {written}세션 기록 완료 → {LEDGER.name}")
     return 0
 
