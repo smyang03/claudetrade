@@ -21,7 +21,11 @@ import sqlite3
 import pytest
 
 from runtime.us_swing_execution_contract import resolve_execution_contract
-from runtime.us_swing_order_bridge import EnvRuntimeConfig, resolve_selection_policy
+from runtime.us_swing_order_bridge import (
+    EnvRuntimeConfig,
+    apply_contract_selection,
+    resolve_selection_policy,
+)
 from tools.us_swing_shadow_runner import annotate_execution_shadow, ensure_schema
 
 _POLICY = {
@@ -107,6 +111,94 @@ def test_selection_disabled_keeps_rank1_behaviour(monkeypatch: pytest.MonkeyPatc
     )
     assert shadow["selected"]["ticker"] == "BIGVOL"
     assert shadow["policy"] == "rank1_skip_v1"
+
+
+def _con_with_two_in_band() -> sqlite3.Connection:
+    """밴드 안 2종 — 모델 rank 순서와 거래대금 순서가 반대인 모양 (2026-09-01)."""
+    con = sqlite3.connect(":memory:")
+    ensure_schema(con)
+    con.executemany(
+        """INSERT INTO signals(signal_date,ticker,feature_date,model_version,rank,created_at,
+            status,reference_close) VALUES (?,?,?,?,?,?,?,?)""",
+        [
+            ("2026-01-05", "SMALLIN", "2026-01-02", "m", 1, "now", "PENDING", 10.0),
+            ("2026-01-05", "BIGIN", "2026-01-02", "m", 2, "now", "PENDING", 10.0),
+        ],
+    )
+    con.executemany(
+        "INSERT INTO candidate_pool_all(session_date,ticker,dollar_vol,recorded_at) VALUES (?,?,?,?)",
+        [
+            ("2026-01-05", "SMALLIN", 150e6, "now"),  # 밴드 안, 거래대금 작음, 모델 rank1
+            ("2026-01-05", "BIGIN", 400e6, "now"),    # 밴드 안, 거래대금 큼, 모델 rank2
+        ],
+    )
+    con.commit()
+    return con
+
+
+def test_pick_order_dvol_desc_reorders_band_positions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """모델 제거 (2026-09-01): dvol_desc면 밴드 내 순위가 거래대금 큰순이다."""
+    _enable_band(monkeypatch)
+    monkeypatch.setenv("US_SWING_PICK_ORDER", "dvol_desc")
+    con = _con_with_two_in_band()
+    signals = [{"ticker": "SMALLIN", "rank": 1}, {"ticker": "BIGIN", "rank": 2}]
+    picked, band_meta, _max_meta = apply_contract_selection(
+        EnvRuntimeConfig(), con, "2026-01-05", signals
+    )
+    assert [s["ticker"] for s in picked] == ["BIGIN", "SMALLIN"]
+    assert [s["_band_position"] for s in picked] == [1, 2]
+    # 원 rank는 귀속용으로 보존된다.
+    assert [s["rank"] for s in picked] == [2, 1]
+    assert band_meta["pick_order"] == "dvol_desc"
+
+
+def test_pick_order_default_keeps_model_rank(monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable_band(monkeypatch)
+    monkeypatch.delenv("US_SWING_PICK_ORDER", raising=False)
+    con = _con_with_two_in_band()
+    signals = [{"ticker": "SMALLIN", "rank": 1}, {"ticker": "BIGIN", "rank": 2}]
+    picked, band_meta, _max_meta = apply_contract_selection(
+        EnvRuntimeConfig(), con, "2026-01-05", signals
+    )
+    assert [s["ticker"] for s in picked] == ["SMALLIN", "BIGIN"]
+    assert band_meta["pick_order"] == "model_rank"
+
+
+def test_shadow_follows_dvol_desc_pick(monkeypatch: pytest.MonkeyPatch) -> None:
+    """shadow 원장도 같은 함수로 정렬을 상속한다 — 실주문·shadow 분기 방지."""
+    _enable_band(monkeypatch)
+    monkeypatch.setenv("US_SWING_PICK_ORDER", "dvol_desc")
+    con = _con_with_two_in_band()
+    shadow = annotate_execution_shadow(
+        con, signal_date="2026-01-05", fx_map={"2026-01-05": 1000.0}, policy=_POLICY
+    )
+    assert shadow["selected"]["ticker"] == "BIGIN"
+    assert shadow["selected"]["rank"] == 2
+    assert shadow["policy"] == "contract_selection_v1"
+
+
+def test_pick_order_changes_contract_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """픽 순서도 계약이다 — 모델 컷 구간과 제거 구간이 한 평균에 섞이면 안 된다."""
+    common = dict(
+        policy=_POLICY,
+        effective_mode="micro",
+        configured_max_order_krw=760_000.0,
+        base_order_budget_krw=500_000.0,
+    )
+    _enable_band(monkeypatch)
+    monkeypatch.delenv("US_SWING_PICK_ORDER", raising=False)
+    model_rank = resolve_execution_contract(
+        **common, selection_policy=resolve_selection_policy(EnvRuntimeConfig())
+    )["contract_id"]
+    monkeypatch.setenv("US_SWING_PICK_ORDER", "dvol_desc")
+    dvol_desc = resolve_execution_contract(
+        **common, selection_policy=resolve_selection_policy(EnvRuntimeConfig())
+    )["contract_id"]
+    monkeypatch.setenv("US_SWING_STORE_TOP_K", "999")
+    widened = resolve_execution_contract(
+        **common, selection_policy=resolve_selection_policy(EnvRuntimeConfig())
+    )["contract_id"]
+    assert len({model_rank, dvol_desc, widened}) == 3
 
 
 def test_selection_policy_changes_contract_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -4,6 +4,12 @@
 '   ① shadow_fade_entry_observer  fade 진입 신호를 대조군과 쌍으로 누적
 '   ② judge_budget_observer       judge 예산 사용을 공급/호출/플랜 3숫자로 기록
 '   ③ observe_tail_risk_axes      꼬리 위험 축 10종을 신호일 값으로 박제(08-30)
+'   ④ observe_pick_rules          픽 규칙 5종의 세션당 픽을 결정 시점 값으로 박제(09-01)
+'
+' ④가 왜 필요한가: 모델 제거(09-01) 후 라이브 픽 순서는 dvol_desc(잠정)인데,
+'   픽 시뮬에서 5규칙 전부 통계적으로 구별 불가였다. 어느 순서가 라이브든
+'   나머지 규칙들의 픽을 병행 박제해야 forward 30건 시점에 "매수 코호트끼리"
+'   재판정할 수 있다. candidate_pool_all은 덮어쓰기라 결정 시점 값 보존이 필요.
 '
 ' ③이 왜 필요한가: 08-30 검정에서 꼬리 기준 6축이 3기준을 통과했으나 클러스터
 '   t가 검정력 미달이라 판정을 못 냈다. 판정에 필요한 것은 표본인데 현행 계약
@@ -29,3 +35,4 @@ base = "E:\code\claudetrade\tools\"
 sh.Run py & " """ & base & "shadow_fade_entry_observer.py"" --since-days 10", 0, True
 sh.Run py & " """ & base & "judge_budget_observer.py"" --since-days 10", 0, True
 sh.Run py & " """ & base & "observe_tail_risk_axes.py""", 0, True
+sh.Run py & " """ & base & "observe_pick_rules.py""", 0, True

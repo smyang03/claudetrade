@@ -397,6 +397,15 @@ def check_contract_env_drift(now: datetime) -> list[dict[str, Any]]:
             policy["dvol_band_max_m"] = round(float(env.get("US_SWING_DVOL_BAND_MAX_M", "500") or 500.0), 4)
         if max_on:
             policy["max_floor_pct"] = round(float(env.get("US_SWING_MAX_FLOOR_PCT", "8") or 8.0), 4)
+        # 픽 순서·신호 저장 폭 (2026-09-01 모델 제거) — resolve_selection_policy와 동일 키.
+        pick_order = str(env.get("US_SWING_PICK_ORDER", "model_rank") or "model_rank").strip().lower()
+        policy["pick_order"] = pick_order if pick_order in ("model_rank", "dvol_desc") else "model_rank"
+        try:
+            store_top_k = int(float(env.get("US_SWING_STORE_TOP_K", "0") or 0))
+        except (TypeError, ValueError):
+            store_top_k = 0
+        if store_top_k:
+            policy["signal_store_top_k"] = store_top_k
         return policy
 
     try:

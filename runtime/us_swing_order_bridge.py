@@ -349,6 +349,20 @@ class EnvRuntimeConfig:
             return int(default)
 
 
+def resolve_pick_order(config: Any) -> str:
+    """밴드+MAX 통과분 중 실제 살 1건의 정렬 규칙 (2026-09-01 모델 제거).
+
+    model_rank(기본) = 이전 동작 그대로 — 모델 rank 순.
+    dvol_desc = 신호일 거래대금 큰순. 운영자 결정(09-01): 알파 근거가 아니라
+    체결 품질 근거다 — 픽 시뮬(research_pick_simulation)에서 5규칙 전부
+    "두 표본 널 95% 동시 초과" 미달, 통계적으로 구별 불가였다. 모델 rank는
+    같은 시뮬에서 무작위 널 백분위 0.0(최하단)이라 정렬 기준 자격을 잃었다.
+    """
+    raw = str(config._runtime_value("US_SWING_PICK_ORDER", "model_rank") or "model_rank")
+    value = raw.strip().lower()
+    return value if value in ("model_rank", "dvol_desc") else "model_rank"
+
+
 def resolve_selection_policy(config: Any) -> dict[str, Any]:
     """계약 지문에 들어갈 선별 정책 스냅샷. 라이브·shadow가 같은 키를 읽는다."""
     band_on = bool(config._runtime_bool("US_SWING_DVOL_BAND_ENABLED", False))
@@ -359,6 +373,12 @@ def resolve_selection_policy(config: Any) -> dict[str, Any]:
         policy["dvol_band_max_m"] = round(float(config._runtime_float("US_SWING_DVOL_BAND_MAX_M", 500.0)), 4)
     if max_on:
         policy["max_floor_pct"] = round(float(config._runtime_float("US_SWING_MAX_FLOOR_PCT", 8.0)), 4)
+    # 픽 순서·신호 저장 폭도 계약이다 (2026-09-01 모델 제거). 이걸 지문에서 빼면
+    # 모델 컷 시절 행과 제거 이후 행이 한 평균에 섞여 forward 판정이 무효가 된다.
+    policy["pick_order"] = resolve_pick_order(config)
+    store_top_k = int(config._runtime_int("US_SWING_STORE_TOP_K", 0))
+    if store_top_k:
+        policy["signal_store_top_k"] = store_top_k
     return policy
 
 
@@ -383,6 +403,21 @@ def apply_contract_selection(
     if max_meta.get("applied") and not signals:
         return [], band_meta, max_meta
     if band_meta.get("applied") or max_meta.get("applied"):
+        # 픽 순서 (2026-09-01 모델 제거): 통과분을 무엇 순으로 세울지도 계약이다.
+        # dvol_desc면 모델 rank 대신 신호일 거래대금 큰순 — 동률·결측은 원 rank로
+        # 안정 정렬한다(결정론 보장). 밴드 미적용(fail-open)이면 dvol을 모르므로
+        # 이전 동작(모델 rank 순) 그대로 둔다.
+        pick_order = resolve_pick_order(config)
+        band_meta["pick_order"] = pick_order
+        if pick_order == "dvol_desc" and band_meta.get("applied"):
+            dvol_by = {
+                str(entry.get("ticker") or "").upper(): float(entry.get("dollar_vol_m") or 0.0)
+                for entry in (band_meta.get("in_band") or [])
+            }
+            signals = sorted(signals, key=lambda s: (
+                -dvol_by.get(str(s.get("ticker") or "").upper(), 0.0),
+                int(s.get("rank") or 0),
+            ))
         # 밴드 통과분은 원 랭크가 3·7일 수 있다. 랭크 게이트(rank2 폴백용)가 이를
         # "폴백 후보"로 오인하지 않도록 밴드 내 순위를 따로 붙인다.
         # 원 rank는 귀속 태그(us_swing_5d_rank_N)에 그대로 쓰이므로 보존한다.
@@ -499,11 +534,14 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
         base_limit = max(1, int(authority.get("max_new_per_day") or 1))
         pick_limit = base_limit + 1 if fallback_on else base_limit
         # 밴드가 켜지면 풀 전체에서 재선택해야 하므로 넓게 읽는다(정책 top_k=10).
+        # 픽 순서가 model_rank가 아니면 rank 상위 10 컷 자체가 모델 개입이므로
+        # 그날 신호 전체를 읽는다 (2026-09-01 모델 제거 — STORE_TOP_K=999와 한 쌍).
         band_on = bot._runtime_bool("US_SWING_DVOL_BAND_ENABLED", False)
+        model_free = resolve_pick_order(bot) != "model_rank"
         signals = load_handoff_signals(
             con,
             session_date=session_date,
-            limit=10 if band_on else pick_limit,
+            limit=999 if (band_on and model_free) else (10 if band_on else pick_limit),
         )
         if not signals:
             return _write_execution_status(
