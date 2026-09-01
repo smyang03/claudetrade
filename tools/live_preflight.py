@@ -2098,7 +2098,20 @@ def _us_swing_shadow_runtime_check(effective: dict[str, Any]) -> CheckResult:
         and live_ack == "I_ACCEPT_LIVE_US_SWING"
         and override_ack == "I_ACCEPT_MICRO_WITHOUT_FORWARD"
     )
-    if not (shadow_contract or micro_contract):
+    # 가상 운용(REHEARSAL, 2026-09-01 운영자 결정): 핸드오프 평가·용량 회계는
+    # 태우되 제출만 차단(SUBMIT off). 이 조합은 의도 상태다 — 결함으로 읽으면
+    # 상시 FAIL 노이즈가 진짜 결함 감지를 가린다.
+    rehearsal_contract = (
+        authority == "micro"
+        and handoff_enabled
+        and not submit_enabled
+        and override_ack == "I_ACCEPT_MICRO_WITHOUT_FORWARD"
+    )
+    data["recognized_contract"] = (
+        "shadow" if shadow_contract else "micro" if micro_contract
+        else "micro_rehearsal" if rehearsal_contract else ""
+    )
+    if not (shadow_contract or micro_contract or rehearsal_contract):
         return CheckResult(
             "config.us_swing_shadow_runtime",
             "FAIL",

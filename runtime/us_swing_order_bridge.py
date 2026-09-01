@@ -561,20 +561,16 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
         # 선별(밴드 → MAX)은 shadow 원장과 **같은 함수**를 쓴다 (2026-08-23, P1-3 수리).
         # 여기 로직을 인라인으로 두면 shadow와 갈라진다 — 실제로 08-20에 갈라졌다.
         signals, band_meta, max_meta = apply_contract_selection(bot, con, session_date, signals)
-        if band_meta.get("applied") and not signals:
+        if (band_meta.get("applied") or max_meta.get("applied")) and not signals:
+            # 사유는 실제로 비운 게이트를 가리켜야 한다 (2026-09-02 수리): 밴드가
+            # 남긴 후보를 MAX가 비웠는데 밴드 사유로 적으면 shadow 원장
+            # (us_swing_shadow_runner와 같은 규약)과 skip 통계가 갈라진다.
+            reason = ("max_floor_no_candidate" if max_meta.get("applied")
+                      else "dvol_band_no_candidate")
             return _write_execution_status(
                 bot,
                 session_date=session_date,
-                result={"status": "SKIPPED", "reason": "dvol_band_no_candidate",
-                        "authority": authority, "dvol_band": band_meta},
-                research_authority=research_authority,
-                execution_authority=authority,
-            )
-        if max_meta.get("applied") and not signals:
-            return _write_execution_status(
-                bot,
-                session_date=session_date,
-                result={"status": "SKIPPED", "reason": "max_floor_no_candidate",
+                result={"status": "SKIPPED", "reason": reason,
                         "authority": authority, "dvol_band": band_meta, "max_floor": max_meta},
                 research_authority=research_authority,
                 execution_authority=authority,

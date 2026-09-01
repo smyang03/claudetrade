@@ -16,7 +16,7 @@
   픽(가상 북): 5일 누적낙폭 깊은순 1건/일.
 
 **데이터**: Alpaca 전시장 일봉(full_market_net_census.collect 재사용).
-  자체 캐시(slow_fallen_market_cache.json)를 20시간 넘으면 리프레시.
+  자체 캐시(slow_fallen_market_cache.json)를 14시간 넘으면 리프레시.
   최초 시드는 8월 인구조사 캐시(full_market_scan_202608.json)를 복사.
   생존편향(현재 상장 종목만) 명시 — 절대값 판정에 쓰지 않고 가상 북 forward로만.
 
@@ -45,7 +45,10 @@ CUM5_LE = -12.0
 DAILY_GT = -5.0
 BAND_LO_USD, BAND_HI_USD = 100e6, 500e6
 MIN_PRICE = 5.0
-REFRESH_AGE_H = 20.0
+# 14h: 관측 체인이 07:20·16:20 하루 2회라, 20h면 07:20 시점 age(~15h)가 문턱
+# 미달로 항상 스킵되어 사실상 16:20 리프레시만 남는다(09-02 실측 — 밤 세션
+# 스캔이 9시간 지연). 14h면 07:20에 리프레시되어 지난밤 US 봉을 아침에 잡는다.
+REFRESH_AGE_H = 14.0
 
 
 def load_cache(allow_refresh: bool) -> dict:

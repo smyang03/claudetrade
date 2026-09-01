@@ -326,3 +326,48 @@ def test_four_open_slots_still_allow_entry_under_slot_cap_five(tmp_path: Path) -
 
     assert result["results"][0]["submitted"] is True
     assert bot.submit_calls == 1
+
+
+class _BandMaxBot(FakeBot):
+    """밴드+MAX 게이트를 켠 봇 — skip 사유 귀속 테스트용."""
+
+    def _runtime_bool(self, key, default=False):
+        if key in ("US_SWING_DVOL_BAND_ENABLED", "US_SWING_MAX_FLOOR_ENABLED"):
+            return True
+        return super()._runtime_bool(key, default)
+
+    def _runtime_float(self, key, default=0.0):
+        if key == "US_SWING_MAX_FLOOR_PCT":
+            return 8.0
+        return super()._runtime_float(key, default)
+
+
+def test_max_floor_empty_reports_max_floor_reason(tmp_path: Path) -> None:
+    # 2026-09-01 실측: KRMN이 밴드 안(175M)이었는데 MAX가 비우자 사유가
+    # dvol_band_no_candidate로 기록됐다(shadow 원장은 max_floor_no_candidate).
+    # 실제로 비운 게이트가 사유여야 두 원장의 skip 통계가 갈라지지 않는다.
+    db_path = tmp_path / "swing.db"
+    _build_db(db_path)
+    con = sqlite3.connect(db_path)
+    con.execute(
+        "INSERT INTO candidate_pool_all(session_date, ticker, dollar_vol, eligible, in_pool,"
+        " recorded_at) VALUES (?,?,?,?,?,?)",
+        ("2026-07-10", "TEST", 200e6, 1, 1, "now"),
+    )
+    con.commit()
+    con.close()
+    # 픽스처 CSV는 프로덕션과 같이 BOM을 단다(test_us_swing_max_floor 교훈).
+    price_dir = tmp_path / "data" / "price" / "us"
+    price_dir.mkdir(parents=True, exist_ok=True)
+    with (price_dir / "us_TEST.csv").open("w", encoding="utf-8-sig", newline="") as fh:
+        fh.write("date,open,high,low,close,volume\n")
+        for i in range(25):
+            close = 100 + i * 0.1  # 하루 최대 상승 ~0.1% << 하한 8%
+            fh.write(f"2026-06-{i + 1:02d},{close},{close},{close},{close},1000\n")
+    bot = _BandMaxBot(db_path, submit_enabled=False)
+
+    result = _run(bot)
+
+    assert result["status"] == "SKIPPED"
+    assert result["reason"] == "max_floor_no_candidate"
+    assert bot.submit_calls == 0
