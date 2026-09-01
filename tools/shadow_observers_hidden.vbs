@@ -36,9 +36,14 @@ sh.Run py & " """ & base & "shadow_fade_entry_observer.py"" --since-days 10", 0,
 sh.Run py & " """ & base & "judge_budget_observer.py"" --since-days 10", 0, True
 sh.Run py & " """ & base & "observe_tail_risk_axes.py""", 0, True
 sh.Run py & " """ & base & "observe_pick_rules.py""", 0, True
-' ⑤ observe_slow_fallen — 느린 급락(5일 -12%, 단일 -5% 없음) 독립 공급 스캔.
-'   Alpaca 전시장 캐시 리프레시(20h 초과 시) 후 원장 append. 가상 북 S11의 공급원.
+' ⑤ snapshot_earnings_calendar — 어닝 캘린더 point-in-time 박제. 롤링 창이라
+'   박제 안 한 날은 영원히 잃는다 (F1 악재전파·S13의 데이터 기반).
+sh.Run py & " """ & base & "snapshot_earnings_calendar.py""", 0, True
+' ⑥ observe_slow_fallen — 느린 급락(5일 -12%, 단일 -5% 없음) 독립 공급 스캔.
+'   Alpaca 전시장 캐시(130일) 리프레시(20h 초과 시) 후 원장 append. S11 공급원.
 sh.Run py & " """ & base & "observe_slow_fallen.py""", 0, True
-' ⑥ virtual_books — 가상 운용 전환(09-01 운영자 결정)의 본체. 15전략 가상 북을
+' ⑦ observe_leader_pullback — 주도주 눌림목(패밀리 B2) 스캔. ⑥의 캐시 재사용.
+sh.Run py & " """ & base & "observe_leader_pullback.py""", 0, True
+' ⑧ virtual_books — 가상 운용 전환(09-01 운영자 결정)의 본체. 17전략 가상 북을
 '   매일 진입·정산·MTM한다. 전부 [VIRTUAL]이며 실주문 무접촉.
 sh.Run py & " """ & base & "virtual_books.py"" run", 0, True

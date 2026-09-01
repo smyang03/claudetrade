@@ -58,7 +58,9 @@ def load_cache(allow_refresh: bool) -> dict:
     if allow_refresh and stale:
         try:
             from full_market_net_census import collect
-            start = (datetime.now(tz=timezone.utc) - timedelta(days=45)).strftime("%Y-%m-%d")
+            # 130일: S11(5일 창)에는 과하지만 B2 주도주 눌림목(60일 상대강도)이
+            # 같은 캐시를 쓴다 (2026-09-01 패밀리 B).
+            start = (datetime.now(tz=timezone.utc) - timedelta(days=130)).strftime("%Y-%m-%d")
             series = collect(start)
             CACHE.write_text(json.dumps(series), encoding="utf-8")
             print(f"[slow_fallen] Alpaca 리프레시 완료 ({len(series)}종목)")
