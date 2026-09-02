@@ -387,7 +387,9 @@ def test_rehearsal_notify_once_per_ticker_across_scans(tmp_path: Path, monkeypat
     second = _run(bot)
 
     assert first["results"][0]["status"] == "REHEARSAL_READY"
-    assert second["results"][0]["status"] == "REHEARSAL_READY"
+    # 2026-09-03: REHEARSAL_READY는 SUBMITTED처럼 원장에 고정되어 재평가되지 않는다
+    # (다음 사이클의 BLOCKED가 REHEARSAL 행을 덮어써 유령 소급 생성이 불가했던 실측).
+    assert second["reason"] == "no_handoff_signal"
     assert len(sent) == 1
     assert "REHEARSAL" in sent[0] and "TEST" in sent[0]
     assert bot.submit_calls == 0

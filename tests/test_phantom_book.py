@@ -46,7 +46,7 @@ def test_rehearsal_creates_phantom_once_and_keeps_live_book_clean(phantom_paths,
     second = e2e._run(bot)
 
     assert first["results"][0]["status"] == "REHEARSAL_READY"
-    assert second["results"][0]["status"] == "REHEARSAL_READY"
+    assert second["reason"] == "no_handoff_signal"     # 원장 고정 → 재평가 없음
     rows = phantom_book.load_positions()
     assert len(rows) == 1 and rows[0]["ticker"] == "TEST" and rows[0]["virtual"] is True
     assert rows[0]["display_avg_price"] == pytest.approx(100.5)   # 브리지 호가 그대로

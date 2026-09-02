@@ -215,7 +215,8 @@ def load_handoff_signals(
             SELECT * FROM signals
             WHERE signal_date=? AND status='PENDING'
               AND COALESCE(handoff_status,'') NOT IN
-                  ('SUBMITTED','ORDERED','FILLED','SUBMIT_FAILED','ORDER_UNKNOWN')
+                  ('SUBMITTED','ORDERED','FILLED','SUBMIT_FAILED','ORDER_UNKNOWN',
+                   'REHEARSAL_READY')
             ORDER BY rank,predicted_net_pct DESC LIMIT ?
             """,
             (str(session_date), max(1, int(limit))),
