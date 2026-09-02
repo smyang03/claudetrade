@@ -17265,6 +17265,121 @@ def api_virtual_books():
         return jsonify({"available": False, "reason": str(exc)[:200]})
 
 
+
+_ARM_QUOTE_CACHE: dict = {"ts": 0.0, "quotes": {}}
+
+
+def _arm_quotes(tickers: list) -> dict:
+    """실시간 픽 보드용 현재가 — yfinance 지연 호가, 60초 캐시 (분석 시세 규율: 장중 KIS 루프 금지)."""
+    import time as _t
+    now = _t.time()
+    want = sorted({str(t).upper() for t in tickers if t})
+    cache = _ARM_QUOTE_CACHE
+    if want and (now - float(cache.get("ts") or 0.0) > 60 or any(t not in cache["quotes"] for t in want)):
+        try:
+            import yfinance as yf
+            data = yf.download(want, period="1d", interval="1m", progress=False, group_by="ticker", threads=True)
+            q: dict = {}
+            for t in want:
+                try:
+                    df = data[t] if len(want) > 1 else data
+                    close = df["Close"].dropna()
+                    if len(close):
+                        q[t] = float(close.iloc[-1])
+                except Exception:
+                    continue
+            cache["quotes"].update(q)
+            cache["ts"] = now
+        except Exception:
+            pass
+    return {t: cache["quotes"].get(t) for t in want}
+
+
+@app.route("/api/arm_picks_realtime")
+def api_arm_picks_realtime():
+    """실시간 픽 보드 — 16전략이 오늘 세션에 고른 종목(22:36 관측기 원장) × 현재가 × 평가. [VIRTUAL]."""
+    ledger = BASE_DIR / "data" / "shadow" / "arm_picks_realtime.jsonl"
+    if not ledger.exists():
+        return jsonify({"available": False, "reason": "arm_picks_realtime.jsonl 없음 (22:36 관측기 미실행)"})
+    rows = []
+    for line in ledger.read_text(encoding="utf-8").splitlines():
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            continue
+    if not rows:
+        return jsonify({"available": False, "reason": "원장 비어 있음"})
+    session = max(r.get("session_date", "") for r in rows)
+    picks = [r for r in rows if r.get("session_date") == session]
+    settled: dict = {}
+    db = BASE_DIR / "data" / "shadow" / "virtual_books.db"
+    if db.exists():
+        try:
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+            try:
+                for sid, tk, st, ep, net, reason in con.execute(
+                        "SELECT strategy_id, ticker, status, entry_price, net_pct, exit_reason "
+                        "FROM trades WHERE session_date=?", (session,)):
+                    settled[(sid, str(tk).upper())] = {"status": st, "entry_price": ep,
+                                                       "net_pct": net, "exit_reason": reason}
+            finally:
+                con.close()
+        except Exception:
+            pass
+    quotes = _arm_quotes([r["ticker"] for r in picks])
+    out = []
+    for r in picks:
+        t = str(r["ticker"]).upper()
+        book = settled.get((r["arm"], t))
+        entry = (book or {}).get("entry_price") or r.get("rehearsal_quote") or r.get("quote")
+        cur = quotes.get(t)
+        pnl = (cur / entry - 1.0) * 100.0 if (entry and cur) else None
+        if (book or {}).get("entry_price"):
+            src = "일봉 시가(확정)"
+        elif r.get("rehearsal_quote"):
+            src = "KIS REHEARSAL"
+        else:
+            src = r.get("quote_source") or "-"
+        out.append({**r, "book_status": (book or {}).get("status"), "book_entry": (book or {}).get("entry_price"),
+                    "book_net_pct": (book or {}).get("net_pct"), "book_exit": (book or {}).get("exit_reason"),
+                    "entry_used": entry, "current": cur, "pnl_pct": pnl, "entry_source": src})
+    out.sort(key=lambda x: (x["arm"], x.get("pick_pos") or 0))
+    return jsonify({"available": True, "session_date": session, "count": len(out), "picks": out,
+                    "quote_source": "yfinance_delayed(60s cache)", "banner": "VIRTUAL — 실주문 아님"})
+
+
+@app.route("/api/phantom_positions")
+def api_phantom_positions():
+    """유령 포지션 — REHEARSAL 픽을 실전 출구 로직으로 추적. 실계좌 보유와 분리. [VIRTUAL]."""
+    state = BASE_DIR / "state" / "phantom_positions.json"
+    ledger = BASE_DIR / "data" / "shadow" / "phantom_ledger.jsonl"
+    positions = []
+    if state.exists():
+        try:
+            positions = [p for p in json.loads(state.read_text(encoding="utf-8") or "[]") if p.get("virtual")]
+        except Exception:
+            positions = []
+    closes = []
+    if ledger.exists():
+        for line in ledger.read_text(encoding="utf-8").splitlines():
+            try:
+                r = json.loads(line)
+                if r.get("event") == "CLOSE":
+                    closes.append(r)
+            except ValueError:
+                continue
+    view = []
+    for p in positions:
+        e, c = float(p.get("display_avg_price") or 0.0), float(p.get("display_current_price") or 0.0)
+        view.append({"ticker": p.get("ticker"), "qty": p.get("qty"), "entry_usd": e, "current_usd": c,
+                     "pnl_pct": (c / e - 1.0) * 100.0 if e and c else None,
+                     "peak_pnl_pct": p.get("peak_pnl_pct"), "trough_pnl_pct": p.get("trough_pnl_pct"),
+                     "held_days": p.get("held_days"), "max_hold": p.get("max_hold"),
+                     "entry_session_date": p.get("entry_session_date"), "source": p.get("source_strategy"),
+                     "retro": bool(p.get("retro")), "last_price_at": p.get("last_price_at")})
+    return jsonify({"available": True, "open": view, "closed": closes[-20:][::-1], "banner": "VIRTUAL — 실주문 아님"})
+
+
 PAGE_VIRTUAL_HTML = """
 <div style="padding:20px 24px;">
   <div style="background:#1a2436;border:1px solid #2c3e5d;border-radius:8px;padding:14px 18px;margin-bottom:18px;font-size:13px;">
@@ -17272,7 +17387,28 @@ PAGE_VIRTUAL_HTML = """
     실계좌 손익과 무관. 승격 판정은 <b>forward 표본만</b>(백필은 배관 검증), 게이트:
     US 80세션·정산 50건·3개월 + 지표 전량 충족(사전등록 정본 09-01 승인).
   </div>
-  <h2 style="font-size:15px;margin-bottom:10px;color:var(--cyan);">전략 스코어보드</h2>
+  <h2 style="font-size:15px;margin-bottom:10px;color:var(--cyan);">실시간 픽 보드 <span id="vb-picks-meta" style="font-size:12px;color:var(--muted);"></span></h2>
+  <div style="overflow-x:auto;">
+  <table id="vb-picks" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
+    <thead><tr style="color:var(--muted);text-align:right;">
+      <th style="text-align:left;padding:6px;">전략</th><th style="text-align:left;">종목</th><th>픽</th>
+      <th>진입가</th><th style="text-align:left;">진입 출처</th><th>현재가</th><th>평가%</th><th>장부</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  </div>
+  <h2 style="font-size:15px;margin:22px 0 10px;color:var(--cyan);">유령 포지션 <span style="font-size:12px;color:var(--muted);">— REHEARSAL 픽을 실전 출구 로직(TP12/SL25/BE락/D7)으로 추적 · 실계좌 보유와 분리 · 실주문 아님</span></h2>
+  <div style="overflow-x:auto;">
+  <table id="vb-phantom" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
+    <thead><tr style="color:var(--muted);text-align:right;">
+      <th style="text-align:left;padding:6px;">종목</th><th>수량</th><th>진입$</th><th>현재$</th><th>평가%</th>
+      <th>MFE</th><th>MAE</th><th>보유/만기</th><th style="text-align:left;">세션</th><th>비고</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  <div id="vb-phantom-closed" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>
+  </div>
+  <h2 style="font-size:15px;margin:22px 0 10px;color:var(--cyan);">전략 스코어보드</h2>
   <div style="overflow-x:auto;">
   <table id="vb-table" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
     <thead><tr style="color:var(--muted);text-align:right;">
@@ -17330,8 +17466,44 @@ async function loadVirtual() {
       </tr>`).join('');
   } catch (e) { /* 조용히 재시도 */ }
 }
-loadVirtual();
-setInterval(loadVirtual, 60000);
+async function loadPicks() {
+  try {
+    const d = await (await fetch('/api/arm_picks_realtime')).json();
+    const meta = document.querySelector('#vb-picks-meta');
+    if (!d.available) { meta.textContent = '(' + d.reason + ')'; return; }
+    meta.textContent = `— 세션 ${d.session_date} · ${d.count}건 · 시세 ${d.quote_source}`;
+    const tb = document.querySelector('#vb-picks tbody');
+    tb.innerHTML = d.picks.map(p => `
+      <tr style="border-top:1px solid var(--border);text-align:right;">
+        <td style="text-align:left;padding:6px;">${p.arm}</td>
+        <td style="text-align:left;">${p.ticker}</td><td>${p.pick_pos}</td>
+        <td>${p.entry_used ? Number(p.entry_used).toFixed(2) : '-'}</td>
+        <td style="text-align:left;color:var(--muted);">${p.entry_source}</td>
+        <td>${p.current ? Number(p.current).toFixed(2) : '-'}</td>
+        <td>${p.pnl_pct === null || p.pnl_pct === undefined ? '-' : vbFmt(Number(p.pnl_pct.toFixed(2)), '%')}</td>
+        <td>${p.book_status ? (p.book_status === 'CLOSED' ? `<b>확정 ${p.book_exit} ${vbFmt(p.book_net_pct, '%')}</b>` : '보유(장부)') : '<span style="color:var(--yellow);">미기록(07:20 확정)</span>'}</td>
+      </tr>`).join('');
+  } catch (e) { /* 조용히 재시도 */ }
+}
+async function loadPhantom() {
+  try {
+    const d = await (await fetch('/api/phantom_positions')).json();
+    const tb = document.querySelector('#vb-phantom tbody');
+    tb.innerHTML = d.open.length ? d.open.map(p => `
+      <tr style="border-top:1px solid var(--border);text-align:right;">
+        <td style="text-align:left;padding:6px;"><b>${p.ticker}</b></td><td>${p.qty}</td>
+        <td>${Number(p.entry_usd).toFixed(2)}</td><td>${p.current_usd ? Number(p.current_usd).toFixed(2) : '-'}</td>
+        <td>${p.pnl_pct === null ? '-' : vbFmt(Number(p.pnl_pct.toFixed(2)), '%')}</td>
+        <td>${vbFmt(Number((p.peak_pnl_pct||0).toFixed(2)), '%')}</td><td>${vbFmt(Number((p.trough_pnl_pct||0).toFixed(2)), '%')}</td>
+        <td>${p.held_days}/${p.max_hold}</td><td style="text-align:left;">${p.entry_session_date}</td>
+        <td style="color:var(--muted);">${p.retro ? '소급' : ''} ${p.source}</td>
+      </tr>`).join('') : '<tr><td colspan="10" style="padding:6px;color:var(--muted);">유령 포지션 없음</td></tr>';
+    const c = document.querySelector('#vb-phantom-closed');
+    c.innerHTML = d.closed.length ? '최근 청산: ' + d.closed.slice(0,5).map(r => `${r.ticker} ${r.reason} ${vbFmt(r.gross_pct,'%')} (${(r.ts||'').slice(5,16)})`).join(' · ') : '';
+  } catch (e) { /* 조용히 재시도 */ }
+}
+loadVirtual(); loadPicks(); loadPhantom();
+setInterval(loadVirtual, 60000); setInterval(loadPicks, 60000); setInterval(loadPhantom, 60000);
 </script>
 """
 
