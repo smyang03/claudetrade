@@ -1145,7 +1145,7 @@ def _maybe_send_telegram_alert(
     try:
         from telegram_reporter import send
 
-        sent = bool(send(message))
+        sent = bool(send(message, critical=True))
         _save_alert_state(
             path,
             {

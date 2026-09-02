@@ -345,6 +345,32 @@ def check_sleeve_contract_exits(now: datetime) -> list[dict[str, Any]]:
     }]
 
 
+def check_phantom_isolation(now: datetime) -> list[dict[str, Any]]:
+    """유령 포지션 격리 검사 (2026-09-03, 설계 정본 §0-2).
+
+    유령(virtual=True)은 state/phantom_positions.json에만 있어야 하고, 실주문 포지션 파일
+    (state/live_open_positions.json)에는 virtual 행이 없어야 한다. 실주문 복귀 시 가상 잔재가
+    실자금 한도를 먹는 사고를 매일 여기서 막는다."""
+    live_path = ROOT / "state" / "live_open_positions.json"
+    phantom_path = ROOT / "state" / "phantom_positions.json"
+    name = "유령 포지션 격리"
+    try:
+        live = json.loads(live_path.read_text(encoding="utf-8") or "[]") if live_path.exists() else []
+        phantom = json.loads(phantom_path.read_text(encoding="utf-8") or "[]") if phantom_path.exists() else []
+    except Exception as exc:
+        return [{"check": name, "kind": "phantom", "status": WARN, "detail": f"파일 읽기 실패: {exc}", "note": ""}]
+    leaked = [p.get("ticker") for p in live if isinstance(p, dict) and (p.get("virtual") or p.get("position_origin") == "phantom")]
+    unmarked = [p.get("ticker") for p in phantom if isinstance(p, dict) and not p.get("virtual")]
+    live_keys = {(str(p.get("market") or "US"), str(p.get("ticker") or "").upper()) for p in live if isinstance(p, dict)}
+    dup = [p.get("ticker") for p in phantom if isinstance(p, dict)
+           and ("US", str(p.get("ticker") or "").upper()) in live_keys]
+    if leaked or unmarked:
+        return [{"check": name, "kind": "phantom", "status": FAIL,
+                 "detail": f"실주문 파일에 virtual 행 {leaked} / 유령 파일에 무표식 행 {unmarked}", "note": "격리 위반"}]
+    note = f"유령 {len(phantom)}건 · 실주문 {len(live)}건" + (f" · 동일 종목 병존 {dup}(허용, 회계 분리)" if dup else "")
+    return [{"check": name, "kind": "phantom", "status": OK, "detail": note, "note": "실주문 회계에 유령 없음"}]
+
+
 def check_contract_env_drift(now: datetime) -> list[dict[str, Any]]:
     """shadow 원장의 계약 지문이 현재 live 설정과 어긋나는지 감시.
 
@@ -733,6 +759,7 @@ def run_integrity_check(ml_db: Path, event_db: Path, audit_db: Path, window_days
     checks += check_ledger_growth(now)
     checks += check_sleeve_contract_exits(now)
     checks += check_contract_env_drift(now)
+    checks += check_phantom_isolation(now)
     checks += check_max_hold_drift(now)
     checks += check_canonical_session_alignment(ml_db, event_db, now)
     checks += check_price_currency_consistency(ml_db, now)

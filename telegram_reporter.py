@@ -273,6 +273,8 @@ def _risk_status_label(value: float) -> str:
 # 프로세스가 여럿(봇·가디언·integrity·관측 체인)이라 카운터는 상태 파일로 공유한다.
 # soft cap: 파일 경합은 무시(정확한 카운트보다 폭주 차단이 목적). critical=True는 우회.
 DAILY_SEND_CAP = int(os.getenv("TELEGRAM_DAILY_SEND_CAP", "40") or 40)
+# 레거시 Path A 선별 알림(모니터링 종목·대시보드 요약·종목 재선정) — 매수 0 체제에선 정보값 0 (2026-09-03)
+LEGACY_SELECTION_ALERTS = _env_flag("TELEGRAM_LEGACY_SELECTION_ALERTS", True)
 _SEND_COUNTER_PATH = BASE_DIR / "state" / "telegram_send_counter.json"
 _cap_warned_date = ""
 
@@ -296,6 +298,8 @@ def _bump_daily_counter() -> int:
 
 def send(text: str, parse_mode: str = "HTML", *, critical: bool = False) -> bool:
     global _cap_warned_date
+    if not str(text or "").strip():
+        return False
     if not TOKEN or not CHAT_ID:
         log.debug(f"[telegram disabled] {text[:80]}")
         return False
@@ -800,7 +804,8 @@ def watchlist_alert(
         + "\n".join(ticker_lines)
         + excl_line
     )
-    send(text)
+    if LEGACY_SELECTION_ALERTS:
+        send(text)
     return text
 
 
@@ -1080,7 +1085,8 @@ def dashboard_push(
         f"  중립 분석가 {_ko_mode(neut.get('stance', '-'))} ({int((neut.get('confidence', 0) or 0) * 100)}%)\n\n"
         f"감시종목: {tickers_txt}"
     )
-    send(text)
+    if LEGACY_SELECTION_ALERTS:
+        send(text)
     return text
 
 
@@ -1138,7 +1144,7 @@ def trade_alert(
         f"{extra_line}\n"
         f"━━━━━━━━━━━━"
     )
-    send(text)
+    send(text, critical=(str(side).lower() == "sell"))
     return text
 
 

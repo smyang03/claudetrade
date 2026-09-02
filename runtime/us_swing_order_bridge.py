@@ -453,7 +453,8 @@ def _notify_rehearsal_pick(bot: Any, *, market: str, session_date: str, ticker: 
     seen.add(key)
     try:
         from telegram_reporter import rehearsal_pick_alert, send as _tg_send
-        return bool(_tg_send(rehearsal_pick_alert(market, ticker, qty, price, reason, matched)))
+        return bool(_tg_send(rehearsal_pick_alert(market, ticker, qty, price, reason, matched)
+                             + ("\n→ 유령 포지션 생성 (실전 출구 로직으로 추적)" if market == "US" else "")))
     except Exception as exc:
         log.warning(f"[{market} handoff] REHEARSAL 통보 실패(무시): {exc}")
         return False
@@ -734,6 +735,16 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
             if decision.status == "REHEARSAL_READY":
                 record_handoff_result(con, decision=decision)
                 results.append(decision.to_dict())
+                # 유령 포지션(2026-09-03, 쉐도우를 실매매처럼): 실주문 대신 같은 dict를 별도 파일에
+                # 만들어 실제 출구 로직에 태운다. (세션, 종목) 멱등. 실패해도 핸드오프는 계속.
+                try:
+                    from runtime import phantom_book
+                    phantom_book.open_from_rehearsal(
+                        bot, ticker=ticker, qty=int(decision.qty or 0),
+                        quote_usd=float(decision.quote_price or 0.0), session_date=session_date,
+                        reason=str(decision.reason or ""))
+                except Exception as _ph_exc:
+                    log.warning(f"[US swing handoff] 유령 포지션 생성 실패(무시): {_ph_exc}")
                 _notify_rehearsal_pick(bot, market="US", session_date=session_date, ticker=ticker,
                                        qty=int(decision.qty or 0), price=float(decision.quote_price or 0.0),
                                        reason=str(decision.reason or ""))

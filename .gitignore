@@ -162,3 +162,5 @@ data/*.db.bak_*
 # 텔레그램 정리(2026-09-02) 상태 파일
 state/telegram_send_counter.json
 state/virtual_books_summary_sent.json
+state/phantom_positions.json
+state/phantom_positions.json.tmp

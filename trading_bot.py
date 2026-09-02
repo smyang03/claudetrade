@@ -26854,8 +26854,32 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         finally:
             self._exit_process_lock.release()
 
-    def _fixed_horizon_strategy_exit_candidates(self) -> list[dict]:
+    def _evaluate_phantom_positions(self, market: str) -> None:
+        """유령 포지션 출구 평가 (2026-09-03, runtime/phantom_book). US 세션 중 60초 스로틀.
+        실주문 경로와 무관 — 어떤 예외도 삼킨다(WARNING 1줄)."""
+        if str(market or "").upper() != "US" or not getattr(self, "session_active", False):
+            return
+        now_ts = time.time()
+        last = float(getattr(self, "_phantom_eval_last_ts", 0.0) or 0.0)
+        if now_ts - last < 60.0:
+            return
+        self._phantom_eval_last_ts = now_ts
+        try:
+            from runtime import phantom_book
+            if not getattr(self, "_phantom_retro_done", False):
+                self._phantom_retro_done = True
+                created = phantom_book.ensure_from_handoff_ledger(self)
+                if created:
+                    log.info(f"[VIRTUAL][phantom] 핸드오프 원장에서 소급 생성 {created}건")
+            phantom_book.evaluate(self)
+        except Exception as exc:
+            log.warning(f"[VIRTUAL][phantom] 평가 실패(무시): {exc}")
+
+    def _fixed_horizon_strategy_exit_candidates(self, positions: list[dict] | None = None) -> list[dict]:
         """Emit deterministic close-window exits for isolated strategy sleeves.
+
+        positions=None이면 실주문 포지션(self.risk.positions). 유령 포지션(runtime/phantom_book)은
+        같은 판정을 받기 위해 자기 리스트를 넘긴다 — 만기 규칙을 두 벌 두지 않는다(2026-09-03).
 
         Entry day counts as session one, so a three-session arm exits near the
         close when ``held_days == 2``.  The generic max-hold/Claude path is not
@@ -26873,7 +26897,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return []
         fixed_sources = {"us_swing_5d", "us_consensus_3d", "kr_us_sector_pulse_3d", "kr_fallen_5d"}
         output: list[dict] = []
-        for pos in list(getattr(self.risk, "positions", []) or []):
+        pool = positions if positions is not None else list(getattr(self.risk, "positions", []) or [])
+        for pos in list(pool):
             source = str(pos.get("source_strategy") or "").strip().lower()
             if source not in fixed_sources or self._ticker_market(str(pos.get("ticker") or "")) != market:
                 continue
@@ -33123,6 +33148,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             self.risk.update_prices(self.price_cache, self.price_cache_raw)
             self._track_non_pathb_excursion(market)
             self._process_exit_candidates()
+            self._evaluate_phantom_positions(market)
             if getattr(self, "pathb", None) is not None:
                 self.pathb.scan_exits(market)
             self._maybe_update_candidate_audit_outcomes_intraday(market)
