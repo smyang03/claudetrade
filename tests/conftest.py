@@ -38,3 +38,18 @@ def _restore_live_control_env_keys():  # pragma: no cover - test hygiene
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
+
+
+@pytest.fixture(autouse=True)
+def _no_real_telegram_in_tests(monkeypatch):  # pragma: no cover - test hygiene
+    """테스트가 실제 텔레그램을 쏘지 못하게 한다 (2026-09-02 사고: REHEARSAL 통보 테스트가
+    운영자 채팅에 실제 메시지를 보냄). 토큰을 비우면 telegram_reporter.send()가 즉시 False.
+    send() 자체를 검증하는 테스트는 TOKEN/CHAT_ID를 명시적으로 다시 patch한다."""
+    import sys as _sys
+    monkeypatch.setenv("TELEGRAM_TOKEN", "")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "")
+    mod = _sys.modules.get("telegram_reporter")
+    if mod is not None:
+        monkeypatch.setattr(mod, "TOKEN", "", raising=False)
+        monkeypatch.setattr(mod, "CHAT_ID", "", raising=False)
+    yield
