@@ -158,3 +158,7 @@ docs/reports/*.json
 
 # 유지보수 DB 백업(로컬 전용, 커밋 금지)
 data/*.db.bak_*
+
+# 텔레그램 정리(2026-09-02) 상태 파일
+state/telegram_send_counter.json
+state/virtual_books_summary_sent.json

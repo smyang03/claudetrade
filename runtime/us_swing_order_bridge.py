@@ -433,6 +433,32 @@ def apply_contract_selection(
     return signals, band_meta, max_meta
 
 
+def _notify_rehearsal_pick(bot: Any, *, market: str, session_date: str, ticker: str,
+                           qty: int, price: float, reason: str = "", matched: str = "") -> bool:
+    """REHEARSAL 픽 텔레그램 통보 (2026-09-02 텔레그램 정리, 운영자 지시).
+
+    load_handoff_signals는 REHEARSAL_READY를 제외하지 않아 진입창(5~30분) 안에서 같은
+    픽이 매 사이클 재발행된다 — 통보는 (세션, 시장, 종목)당 1회로 봇 속성에서 dedupe.
+    fail-silent: 통보 실패가 핸드오프를 막으면 안 된다."""
+    key = (str(session_date), str(market).upper(), str(ticker).upper())
+    seen = getattr(bot, "_rehearsal_notified", None)
+    if seen is None:
+        seen = set()
+        try:
+            setattr(bot, "_rehearsal_notified", seen)
+        except Exception:
+            pass
+    if key in seen:
+        return False
+    seen.add(key)
+    try:
+        from telegram_reporter import rehearsal_pick_alert, send as _tg_send
+        return bool(_tg_send(rehearsal_pick_alert(market, ticker, qty, price, reason, matched)))
+    except Exception as exc:
+        log.warning(f"[{market} handoff] REHEARSAL 통보 실패(무시): {exc}")
+        return False
+
+
 def _us_swing_attribution_manifest(con: sqlite3.Connection) -> frozenset[str]:
     """실제 제출 이력(handoff SUBMITTED)이 있는 티커 집합.
 
@@ -708,6 +734,9 @@ def run_us_swing_handoff(bot: Any) -> dict[str, Any]:
             if decision.status == "REHEARSAL_READY":
                 record_handoff_result(con, decision=decision)
                 results.append(decision.to_dict())
+                _notify_rehearsal_pick(bot, market="US", session_date=session_date, ticker=ticker,
+                                       qty=int(decision.qty or 0), price=float(decision.quote_price or 0.0),
+                                       reason=str(decision.reason or ""))
                 break
             if not decision.allowed_to_submit:
                 record_handoff_result(con, decision=decision)

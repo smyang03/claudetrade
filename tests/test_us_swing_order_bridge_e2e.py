@@ -371,3 +371,23 @@ def test_max_floor_empty_reports_max_floor_reason(tmp_path: Path) -> None:
     assert result["status"] == "SKIPPED"
     assert result["reason"] == "max_floor_no_candidate"
     assert bot.submit_calls == 0
+
+
+def test_rehearsal_notify_once_per_ticker_across_scans(tmp_path: Path, monkeypatch) -> None:
+    # 2026-09-02 텔레그램 정리: REHEARSAL_READY는 진입창 안에서 매 사이클 재발행되므로
+    # 통보는 (세션, 시장, 종목)당 1회여야 한다.
+    import runtime.us_swing_order_bridge as bridge
+    sent: list[str] = []
+    monkeypatch.setattr("telegram_reporter.send", lambda text, parse_mode="HTML", **kw: sent.append(text) or True)
+    db_path = tmp_path / "swing.db"
+    _build_db(db_path)
+    bot = FakeBot(db_path, submit_enabled=False)
+
+    first = _run(bot)
+    second = _run(bot)
+
+    assert first["results"][0]["status"] == "REHEARSAL_READY"
+    assert second["results"][0]["status"] == "REHEARSAL_READY"
+    assert len(sent) == 1
+    assert "REHEARSAL" in sent[0] and "TEST" in sent[0]
+    assert bot.submit_calls == 0

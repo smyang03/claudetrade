@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from bot.session_date import KST
+from runtime.us_swing_order_bridge import _notify_rehearsal_pick
 from kis_api import get_price
 from logger import get_trading_logger
 from preopen.scheduler import regular_open_dt
@@ -378,6 +379,9 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
             results.append({"ticker": ticker, "status": "REHEARSAL_READY",
                             "reason": "submit_disabled_virtual_mode",
                             "qty": qty, "price": price, "matched": matched})
+            _notify_rehearsal_pick(bot, market="KR", session_date=session_date, ticker=ticker,
+                                   qty=int(qty or 0), price=float(price or 0.0),
+                                   reason="submit_disabled_virtual_mode", matched=matched_tag)
             submitted_now += 1
             if submitted_now >= remaining:
                 break

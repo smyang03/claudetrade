@@ -33,6 +33,7 @@ KIS 모의서버는 쓰지 않는다 — 실데이터(가격 CSV·후보 풀)로
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import sys
 from collections import defaultdict
@@ -126,9 +127,15 @@ STRATEGIES: list[dict] = [
     {"id": "us_wide_dvol",   "universe": "wide", "pick": "dvol_desc", "daily_cap": 1,
      "slots": 7,  "order_krw": 540_000, "capital_krw": 10_000_000,
      "note": "공급 확대안 — 승격 1순위 후보"},
+    # v2 (2026-09-02, 게이트 개정 1): v1은 daily_cap=10 무순서 컷이라 후보>10 세션에서
+    # "전량"이 아니었다(8월 8세션 중 4세션, 104건 중 36건 누락 — Codex 실증). v1 행은
+    # DB에 남기되(backfill 전용) 새 id로 진짜 전량을 다시 쌓는다. forward 표본은 0에서 시작.
     {"id": "us_wide_all",    "universe": "wide", "pick": "all",       "daily_cap": 10,
-     "slots": 70, "order_krw": 540_000, "capital_krw": 50_000_000,
-     "note": "통과분 전량 매수 — 알파=용량 가설의 직접 실증"},
+     "slots": 70, "order_krw": 540_000, "capital_krw": 50_000_000, "retired": True,
+     "note": "[RETIRED 09-02] cap10 무순서 컷 — 잔여 OPEN 정산만 진행, 판정·신규진입 제외"},
+    {"id": "us_wide_all_v2", "universe": "wide", "pick": "all",       "daily_cap": 999,
+     "slots": 999, "order_krw": 540_000, "capital_krw": 100_000_000,
+     "note": "통과분 전량 매수(진짜 전량, cap 없음) — 알파=용량 가설의 직접 실증. v1(cap10) 대체"},
     {"id": "us_wide_dvolasc", "universe": "wide", "pick": "dvol_asc", "daily_cap": 1,
      "slots": 7,  "order_krw": 540_000, "capital_krw": 10_000_000,
      "note": "교재 지지 방향(널 93.5)"},
@@ -209,7 +216,7 @@ def _contract_hash(s: dict) -> str:
 
     바뀌면 '변경 열차' 위반 후보다: 파라미터·정산 코드는 묶음 변경 + 새 epoch가 원칙."""
     import hashlib
-    payload = json.dumps({**{k: v for k, v in s.items() if k != "note"},
+    payload = json.dumps({**{k: v for k, v in s.items() if k not in ("note", "retired")},
                           "_engine": [TP, SL, BE, HOLD_SESSIONS, FEE_US, FEE_KR,
                                       R2_DISC_LE, R2_RV20_LE, R4_GAP_LE, R4_DISC_LE]},
                          sort_keys=True, ensure_ascii=False)
@@ -292,7 +299,7 @@ def overlap_report(con: sqlite3.Connection) -> None:
         by_strat[sid].add((sd, tk))
         if status == "CLOSED":
             pnl_by[sid][sd] += float(pnl)
-    ids = [s["id"] for s in STRATEGIES if by_strat.get(s["id"])]
+    ids = [s["id"] for s in STRATEGIES if by_strat.get(s["id"]) and not s.get("retired")]
     print("\n[겹침/상관 — 같은 (세션,종목) 비율과 세션 P&L 상관. 판정 아님, 중첩 경보용]")
     printed = 0
     for i, a in enumerate(ids):
@@ -540,6 +547,8 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
     opened = 0
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for s in STRATEGIES:
+        if s.get("retired"):
+            continue  # 잔여 OPEN 정산만, 신규 진입 없음
         market = strategy_market(s)
         all_dates = {"kr": sessions_kr, "slowus": sessions_slow,
                      "lpus": sessions_lp}.get(s["universe"], sessions_us)
@@ -702,12 +711,66 @@ def null_percentile(con: sqlite3.Connection, s: dict, sessions_us: dict,
     return 100.0 * sum(1 for m in means if m < float(realized_mean)) / len(means)
 
 
+SUMMARY_MARK = ROOT / "state" / "virtual_books_summary_sent.json"
+
+
+def send_daily_summary(con: sqlite3.Connection, *, opened: int, settled: int,
+                       reconcile_ok: bool) -> bool:
+    """가상 북 일일 요약 텔레그램 1건 (2026-09-02 텔레그램 정리, 운영자 지시).
+
+    하루 두 번(07:20·16:20) 도는 체인 중 **첫 실행만** 보낸다(마커 파일, KST 날짜).
+    forward(backfill=0) 수치만 싣는다 — 백필은 판정 표본이 아니다. 실패는 조용히 False."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    try:
+        if SUMMARY_MARK.exists() and json.loads(SUMMARY_MARK.read_text(encoding="utf-8")).get("date") == today:
+            return False
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(ROOT / ".env.live", override=False)  # 체인 프로세스엔 TELEGRAM_* 없음
+        except Exception:
+            pass
+        import telegram_reporter as tg
+        if not tg.TOKEN:
+            tg.TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+            tg.CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+        rows = con.execute(
+            """SELECT strategy_id, COUNT(*), COALESCE(AVG(net_pct),0), COALESCE(SUM(pnl_krw),0)
+               FROM trades WHERE backfill=0 AND status='CLOSED' GROUP BY strategy_id
+               ORDER BY 3 DESC""").fetchall()
+        fwd_open = con.execute("SELECT COUNT(*) FROM trades WHERE backfill=0 AND status='OPEN'").fetchone()[0]
+        fwd_closed = sum(r[1] for r in rows)
+        sessions = con.execute("SELECT COUNT(DISTINCT session_date) FROM trades WHERE backfill=0").fetchone()[0]
+        today_open = con.execute(
+            "SELECT strategy_id, ticker FROM trades WHERE backfill=0 AND opened_at>=? ORDER BY strategy_id",
+            (datetime.now(timezone.utc).strftime("%Y-%m-%d"),)).fetchall()
+        lines = [f"🧪 [VIRTUAL] 가상 북 일일 요약 {today} — 실계좌 아님",
+                 f"오늘 진입 {opened} / 정산 {settled} / 대사 {'OK' if reconcile_ok else 'FAIL(성과 확정 금지)'}",
+                 f"forward 누적: 정산 {fwd_closed}건 · 미결제 {fwd_open}건 · 거래세션 {sessions} (게이트 50건/80세션)"]
+        if today_open:
+            lines.append("오늘 진입: " + ", ".join(f"{sid}:{tk}" for sid, tk in today_open[:12]))
+        if rows:
+            top = rows[:3]; bot_ = rows[-3:] if len(rows) > 3 else []
+            lines.append("forward 상위: " + " | ".join(f"{sid} {n}건 {avg:+.2f}%" for sid, n, avg, _ in top))
+            if bot_:
+                lines.append("forward 하위: " + " | ".join(f"{sid} {n}건 {avg:+.2f}%" for sid, n, avg, _ in bot_))
+        sent = bool(tg.send("\n".join(lines)[:4000], parse_mode=None))
+        SUMMARY_MARK.parent.mkdir(parents=True, exist_ok=True)
+        SUMMARY_MARK.write_text(json.dumps({"date": today, "sent": sent}), encoding="utf-8")
+        print(f"[VIRTUAL] 일일 요약 텔레그램 {'발송' if sent else '미발송(토큰 없음/실패)'}")
+        return sent
+    except Exception as exc:
+        print(f"[VIRTUAL] 일일 요약 실패({str(exc)[:80]}) — 무시")
+        return False
+
+
 def report(con: sqlite3.Connection, sessions_us: dict | None = None,
            sessions_kr: dict | None = None) -> None:
     print("=== [VIRTUAL] 가상 북 현황 — 실계좌 아님, 가상 자본 ===")
     print(f"{'전략':16s} {'자본':>7s} {'실현손익':>10s} {'미결제':>4s} {'MTM':>9s} "
           f"{'정산':>4s} {'승률':>4s} {'평균net':>8s} {'백필/포워드':>10s} {'널백분위':>7s}")
     for s in STRATEGIES:
+        if s.get("retired"):
+            continue
         closed = con.execute(
             "SELECT net_pct, backfill FROM trades WHERE strategy_id=? AND status='CLOSED'",
             (s["id"],)).fetchall()
@@ -760,9 +823,10 @@ def main() -> int:
             settled = settle_open_trades(con)
             mark_books(con)
             print(f"[VIRTUAL] 진입 {opened}건 / 정산 {settled}건")
-            reconcile(con)
+            ok = reconcile(con)
             report(con, sessions_us, sessions_kr)
             overlap_report(con)
+            send_daily_summary(con, opened=opened, settled=settled, reconcile_ok=ok)
         elif cmd == "report":
             report(con, load_sessions(), load_kr_sessions())
             overlap_report(con)

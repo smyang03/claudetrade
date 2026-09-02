@@ -269,10 +269,45 @@ def _risk_status_label(value: float) -> str:
     return "위기"
 
 
-def send(text: str, parse_mode: str = "HTML") -> bool:
+# ── 일일 발송 상한 (2026-09-02 텔레그램 정리, 운영자 지시 "스팸 상한") ──────────
+# 프로세스가 여럿(봇·가디언·integrity·관측 체인)이라 카운터는 상태 파일로 공유한다.
+# soft cap: 파일 경합은 무시(정확한 카운트보다 폭주 차단이 목적). critical=True는 우회.
+DAILY_SEND_CAP = int(os.getenv("TELEGRAM_DAILY_SEND_CAP", "40") or 40)
+_SEND_COUNTER_PATH = BASE_DIR / "state" / "telegram_send_counter.json"
+_cap_warned_date = ""
+
+
+def _bump_daily_counter() -> int:
+    """오늘(KST) 발송 수를 1 올리고 갱신된 값을 돌려준다. 실패하면 0(=상한 미적용)."""
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    try:
+        data = {}
+        if _SEND_COUNTER_PATH.exists():
+            data = json.loads(_SEND_COUNTER_PATH.read_text(encoding="utf-8") or "{}")
+        if data.get("date") != today:
+            data = {"date": today, "count": 0}
+        data["count"] = int(data.get("count") or 0) + 1
+        _SEND_COUNTER_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _SEND_COUNTER_PATH.write_text(json.dumps(data), encoding="utf-8")
+        return int(data["count"])
+    except Exception:
+        return 0
+
+
+def send(text: str, parse_mode: str = "HTML", *, critical: bool = False) -> bool:
+    global _cap_warned_date
     if not TOKEN or not CHAT_ID:
         log.debug(f"[telegram disabled] {text[:80]}")
         return False
+    head = " ".join(str(text or "").strip().split())[:40]
+    count = _bump_daily_counter()
+    if count > DAILY_SEND_CAP and not critical:
+        today = datetime.now(KST).strftime("%Y-%m-%d")
+        if _cap_warned_date != today:
+            _cap_warned_date = today
+            log.warning(f"[telegram cap] 일일 상한 {DAILY_SEND_CAP} 초과 — 이후 비긴급 발송 드롭 (첫 드롭: {head})")
+        return False
+    log.info(f"[telegram send] #{count} {head}")
 
     def _payload(mode: Optional[str]) -> dict:
         payload = {"chat_id": CHAT_ID, "text": text}
@@ -1134,3 +1169,13 @@ def pnl_alert(
     )
     send(text)
     return text
+
+
+def rehearsal_pick_alert(market: str, ticker: str, qty: int, price: float,
+                         reason: str = "", matched: str = "") -> str:
+    """가상 운용 REHEARSAL 픽 통보 (2026-09-02). 실주문 없음 — "실거래였다면 샀을 것"."""
+    px = _display_price(float(price or 0.0), market)
+    tail = f" | 규칙 {matched}" if matched else ""
+    return (f"🧪 [VIRTUAL] REHEARSAL 픽 {market} — 실주문 없음\n"
+            f"{_display_ticker(ticker, market)} {int(qty or 0)}주 @ {px}{tail}\n"
+            f"사유: {reason or 'submit_disabled_virtual_mode'}")
