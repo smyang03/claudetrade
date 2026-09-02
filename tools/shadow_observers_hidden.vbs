@@ -47,3 +47,5 @@ sh.Run py & " """ & base & "observe_leader_pullback.py""", 0, True
 ' ⑧ virtual_books — 가상 운용 전환(09-01 운영자 결정)의 본체. 17전략 가상 북을
 '   매일 진입·정산·MTM한다. 전부 [VIRTUAL]이며 실주문 무접촉.
 sh.Run py & " """ & base & "virtual_books.py"" run", 0, True
+' ⑨ virtual_gate_eval — 승격 게이트 검정(개정 1) JSON 박제. forward만, 판정은 N 충족 후 사람이 읽는다.
+sh.Run py & " """ & base & "virtual_gate_eval.py"""", 0, True
