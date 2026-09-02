@@ -722,8 +722,9 @@ def send_daily_summary(con: sqlite3.Connection, *, opened: int, settled: int,
     forward(backfill=0) 수치만 싣는다 — 백필은 판정 표본이 아니다. 실패는 조용히 False."""
     today = datetime.now().strftime("%Y-%m-%d")
     try:
-        if SUMMARY_MARK.exists() and json.loads(SUMMARY_MARK.read_text(encoding="utf-8")).get("date") == today:
-            return False
+        mark = json.loads(SUMMARY_MARK.read_text(encoding="utf-8")) if SUMMARY_MARK.exists() else {}
+        if mark.get("date") == today and mark.get("sent"):
+            return False  # 오늘 이미 발송. 실패(sent=false)였으면 다음 실행에서 재시도
         try:
             from dotenv import load_dotenv
             load_dotenv(ROOT / ".env.live", override=False)  # 체인 프로세스엔 TELEGRAM_* 없음
@@ -753,7 +754,7 @@ def send_daily_summary(con: sqlite3.Connection, *, opened: int, settled: int,
             lines.append("forward 상위: " + " | ".join(f"{sid} {n}건 {avg:+.2f}%" for sid, n, avg, _ in top))
             if bot_:
                 lines.append("forward 하위: " + " | ".join(f"{sid} {n}건 {avg:+.2f}%" for sid, n, avg, _ in bot_))
-        sent = bool(tg.send("\n".join(lines)[:4000], parse_mode=None))
+        sent = bool(tg.send("\n".join(lines)[:4000], parse_mode=None, critical=True))
         SUMMARY_MARK.parent.mkdir(parents=True, exist_ok=True)
         SUMMARY_MARK.write_text(json.dumps({"date": today, "sent": sent}), encoding="utf-8")
         print(f"[VIRTUAL] 일일 요약 텔레그램 {'발송' if sent else '미발송(토큰 없음/실패)'}")
