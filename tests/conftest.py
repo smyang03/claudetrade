@@ -41,7 +41,7 @@ def _restore_live_control_env_keys():  # pragma: no cover - test hygiene
 
 
 @pytest.fixture(autouse=True)
-def _no_real_telegram_in_tests(monkeypatch):  # pragma: no cover - test hygiene
+def _no_real_telegram_in_tests(monkeypatch, tmp_path):  # pragma: no cover - test hygiene
     """테스트가 실제 텔레그램을 쏘지 못하게 한다 (2026-09-02 사고: REHEARSAL 통보 테스트가
     운영자 채팅에 실제 메시지를 보냄). 토큰을 비우면 telegram_reporter.send()가 즉시 False.
     send() 자체를 검증하는 테스트는 TOKEN/CHAT_ID를 명시적으로 다시 patch한다."""
@@ -52,4 +52,6 @@ def _no_real_telegram_in_tests(monkeypatch):  # pragma: no cover - test hygiene
     if mod is not None:
         monkeypatch.setattr(mod, "TOKEN", "", raising=False)
         monkeypatch.setattr(mod, "CHAT_ID", "", raising=False)
+        # 실제 일일 카운터 파일(state/)도 건드리지 않는다 — fallback 테스트가 #8을 올린 실측
+        monkeypatch.setattr(mod, "_SEND_COUNTER_PATH", tmp_path / "telegram_send_counter.json", raising=False)
     yield
