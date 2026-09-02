@@ -58,3 +58,7 @@
 4. py_compile → 관련 테스트 → 전체 회귀 → mojibake → 커밋·푸시.
 5. **08:30 전 안전 재시작 1회** → 새 PID·health 11/11·effective config·SN 유령 포지션 생존·격리 검사 PASS.
 6. 09:00 KR 개장 정상 진입 확인 → 운영자 보고.
+7. **대시보드(KR 개장 후, 봇 재시작과 무관)**: `/virtual`에 ① 유령 포지션 패널(실계좌 보유와 분리 블록, 진입가·현재가·
+   MFE·출구 상태·"실주문 아님" 배지) ② 유령 vs 일봉 괴리 표(`phantom_vs_daily.jsonl`) ③ 게이트 검정 JSON 요약
+   (N 진행률·INSUFFICIENT/EARLY_WARNING/FINAL·family p) ④ `us_wide_all_v2` 반영·retired v1 숨김
+   ⑤ 운영자 예약 항목 "실계좌(보유·매도만) / [VIRTUAL] 분리 표기" 정리. 배포 = 대시보드 프로세스만 재기동.
