@@ -159,6 +159,7 @@ def main() -> int:
     ap.add_argument("--poll-sec", type=float, default=20.0)
     ap.add_argument("--replay", default=None)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--dry", action="store_true", help="분류·판단·원장만, 유령 진입 없음 (운영 점검용)")
     a = ap.parse_args()
     if a.replay:
         return replay(Path(a.replay), a.limit)
@@ -167,7 +168,7 @@ def main() -> int:
         st = kel.load_state()
         if st.get("session_date") != sd:
             st = {"session_date": sd, "seen": []}
-        print(cycle(sd, st))
+        print(cycle(sd, st, dry=a.dry))
         return 0
     if a.loop:
         return loop(a.poll_sec)
