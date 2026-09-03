@@ -17447,6 +17447,43 @@ def api_virtual_gate():
         return jsonify({"available": False, "reason": str(exc)[:200]})
 
 
+
+@app.route("/api/kr_event_lane")
+def api_kr_event_lane():
+    """KR 공시 이벤트 레인(실시간 DART → 유령 체결) 오늘 현황. [VIRTUAL] 주문 권한 없음."""
+    try:
+        from runtime import kr_event_lane as kel
+        today = kel.now_kst().strftime("%Y-%m-%d")
+        sigs = [r for r in kel.read_jsonl(kel.SIGNAL_LEDGER) if r.get("session_date") == today]
+        ph = kel.read_jsonl(kel.PHANTOM_LEDGER)
+        opened = {r["rcept_no"]: r for r in ph if r.get("event") == "OPEN"}
+        closed = [r for r in ph if r.get("event") == "CLOSE"]
+        closed_ids = {r["rcept_no"] for r in closed}
+        open_rows = [v for k, v in opened.items() if k not in closed_ids and v.get("session_date") == today]
+        hb = {}
+        hbp = BASE_DIR / "state" / "kr_event_lane_heartbeat.json"
+        if hbp.exists():
+            try:
+                hb = json.loads(hbp.read_text(encoding="utf-8"))
+            except ValueError:
+                hb = {}
+        interesting = [r for r in sigs if r.get("decision") in ("ENTER", "SKIP", "OBSERVE")]
+        interesting.sort(key=lambda r: r.get("ts_detected", ""), reverse=True)
+        counts = {}
+        for r in sigs:
+            counts[r.get("decision", "?")] = counts.get(r.get("decision", "?"), 0) + 1
+        settled = [r for r in closed if r.get("session_date")]
+        stats = {"n": len(settled),
+                 "mean_net_pct": round(sum(float(r.get("net_pct") or 0) for r in settled) / len(settled), 3) if settled else None,
+                 "win_rate": round(100.0 * sum(1 for r in settled if float(r.get("net_pct") or 0) > 0) / len(settled), 1) if settled else None}
+        return jsonify({"available": True, "authority": kel.AUTHORITY, "contract": kel.CONTRACT, "session_date": today,
+                        "heartbeat": hb, "counts": counts, "signals": interesting[:40], "open": open_rows,
+                        "closed_recent": sorted(closed, key=lambda r: r.get("closed_at", ""), reverse=True)[:20],
+                        "stats_all": stats})
+    except Exception as exc:
+        return jsonify({"available": False, "reason": str(exc)[:200]})
+
+
 PAGE_VIRTUAL_HTML = """
 <div style="padding:20px 24px;">
   <div style="background:#1a2436;border:1px solid #2c3e5d;border-radius:8px;padding:14px 18px;margin-bottom:18px;font-size:13px;">
@@ -17475,6 +17512,18 @@ PAGE_VIRTUAL_HTML = """
     <tbody></tbody>
   </table>
   <div id="vb-phantom-closed" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>
+  </div>
+  <h2 style="font-size:15px;margin:22px 0 10px;color:var(--cyan);">KR 공시 이벤트 레인 <span style="font-size:12px;color:var(--muted);" id="vb-krevent-meta">— 실시간 DART → 분류·본문 파싱 → 유령 체결(+8/−4/30분/15:20) · 주문 없음</span></h2>
+  <div id="vb-krevent-ops" style="font-size:12px;color:var(--muted);margin-bottom:6px;"></div>
+  <div style="overflow-x:auto;">
+  <table id="vb-krevent" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
+    <thead><tr style="color:var(--muted);text-align:right;">
+      <th style="text-align:left;padding:6px;">감지</th><th style="text-align:left;">종목</th><th style="text-align:left;">공시</th>
+      <th style="text-align:left;">근거</th><th>판단</th><th style="text-align:left;">사유</th><th>지연s</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  <div id="vb-krevent-open" style="font-size:12px;margin-top:6px;"></div>
   </div>
   <h2 style="font-size:15px;margin:22px 0 10px;color:var(--cyan);">전략 스코어보드</h2>
   <div style="overflow-x:auto;">
@@ -17574,6 +17623,35 @@ async function loadPhantom() {
 }
 loadVirtual(); loadPicks(); loadPhantom();
 setInterval(loadVirtual, 60000); setInterval(loadPicks, 60000); setInterval(loadPhantom, 60000);
+async function loadKrEvent() {
+  try {
+    const d = await (await fetch('/api/kr_event_lane')).json();
+    const meta = document.getElementById('vb-krevent-meta');
+    if (!d.available) { meta.textContent = '(' + d.reason + ')'; return; }
+    const hb = d.heartbeat || {};
+    const c = d.counts || {};
+    document.getElementById('vb-krevent-ops').innerHTML =
+      '세션 ' + d.session_date + ' · 러너 ' + (hb.written_at ? ('<span class="pos">alive</span> ' + hb.written_at.slice(11,19) + ' pid ' + hb.pid) : '<span class="warn">하트비트 없음(장중 08:50~15:40만 실행)</span>') +
+      ' · 본 공시 ' + Object.values(c).reduce((a,b)=>a+b,0) + ' (진입 ' + (c.ENTER||0) + ' / 스킵 ' + (c.SKIP||0) + ' / 관측 ' + (c.OBSERVE||0) + ')' +
+      ' · 누적 정산 ' + d.stats_all.n + (d.stats_all.n ? (' 평균 net ' + d.stats_all.mean_net_pct + '% 승률 ' + d.stats_all.win_rate + '%') : '');
+    const tb = document.querySelector('#vb-krevent tbody');
+    tb.innerHTML = (d.signals || []).length ? d.signals.map(r => `
+      <tr style="border-top:1px solid var(--border);text-align:right;">
+        <td style="text-align:left;padding:6px;">${(r.ts_detected||'').slice(11,19)}</td>
+        <td style="text-align:left;">${r.stock_code} ${r.corp_name||''}</td>
+        <td style="text-align:left;color:var(--muted);">${(r.report_nm||'').slice(0,28)}</td>
+        <td style="text-align:left;color:var(--muted);white-space:normal;max-width:380px;">${r.basis||'-'}</td>
+        <td class="${r.decision==='ENTER'?'pos':(r.decision==='SKIP'?'dim':'warn')}">${r.decision}</td>
+        <td style="text-align:left;color:var(--muted);">${r.reason||''}</td>
+        <td>${r.latency_sec ?? '-'}</td>
+      </tr>`).join('') : '<tr><td colspan="7" class="dim">오늘 대상 공시 없음</td></tr>';
+    const op = (d.open || []).map(p => `${p.ticker} ${p.name||''} ${p.qty}주@${Number(p.entry).toLocaleString()} (${p.kind})`).join(' · ');
+    const cl = (d.closed_recent || []).slice(0,5).map(p => `${p.ticker} ${p.exit_reason} ${Number(p.net_pct).toFixed(2)}%`).join(' · ');
+    document.getElementById('vb-krevent-open').innerHTML = '유령 보유: ' + (op || '없음') + (cl ? ' · 최근 청산: ' + cl : '');
+  } catch (e) { /* 조용히 재시도 */ }
+}
+loadKrEvent(); setInterval(loadKrEvent, 30000);
+
 </script>
 """
 

@@ -88,7 +88,7 @@ def compute_picks(session_date: str) -> list[dict]:
     for s in vb.STRATEGIES:
         if s.get("retired"):
             continue
-        if s["universe"] == "kr":
+        if s["universe"] in ("kr", "krevent", "krlimitup"):
             continue  # KR은 다음날 09:00 진입 — 이 보드(US 밤) 대상 아님
         # S11/B2: 신호일 = 직전 세션, 진입 = 이번 세션 (virtual_books 규약)
         key_sd = session_date

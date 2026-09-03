@@ -69,7 +69,7 @@ R4_GAP_LE, R4_DISC_LE = -4.0, -15.0
 
 def contract_exit_v2(entry: float, win: list[tuple], *, fee: float = FEE_US,
                      be_lock: bool = True, tp: float = TP,
-                     sl: float = SL) -> tuple[float, str] | None:
+                     sl: float = SL, hold: int = HOLD_SESSIONS) -> tuple[float, str] | None:
     """정본 계약 정산. win = D0..D6 (최대 7봉). 미완결·미발동이면 None.
 
     BE락은 **전일까지의 봉우리**로 활성 판정한다(당일 순서 모호성 제거 —
@@ -80,7 +80,7 @@ def contract_exit_v2(entry: float, win: list[tuple], *, fee: float = FEE_US,
     if not win or entry <= 0:
         return None
     peak = (win[0][4] - entry) / entry * 100.0  # D0은 종가만 (체결 전 고가 오염 방지)
-    for i, (_d, _o, hi, _lo, c, _v) in enumerate(win[:HOLD_SESSIONS]):
+    for i, (_d, _o, hi, _lo, c, _v) in enumerate(win[:hold]):
         hip = (hi - entry) / entry * 100.0 if i > 0 else (c - entry) / entry * 100.0
         cp = (c - entry) / entry * 100.0
         if hip >= tp:
@@ -90,9 +90,9 @@ def contract_exit_v2(entry: float, win: list[tuple], *, fee: float = FEE_US,
         if be_lock and peak >= BE and cp <= 0:
             return cp - fee, "BE"
         peak = max(peak, hip)
-    if len(win) < HOLD_SESSIONS:
+    if len(win) < hold:
         return None
-    return (win[HOLD_SESSIONS - 1][4] - entry) / entry * 100.0 - fee, "D_MAT"
+    return (win[hold - 1][4] - entry) / entry * 100.0 - fee, "D_MAT"
 
 
 _KR_BAR_CACHE: dict[str, list[tuple]] = {}
@@ -166,6 +166,13 @@ STRATEGIES: list[dict] = [
     {"id": "kr_r4x",         "universe": "kr",   "pick": "disc_deep", "daily_cap": 2,
      "slots": 6,  "order_krw": 220_000, "capital_krw": 5_000_000, "kr_rule": "r4x",
      "note": "S10 — KR R4∖R2 순증분(gap<=-4 & disc<=-15, R2 미충족만). R4 추가가치 검정"},
+    # ── KR 공시 이벤트 family (09-03 DART 12개월 재생 → 09-04 편입, 운영자 "둘 다 반영·진행") ──
+    {"id": "kr_bonus_issue",      "universe": "krevent",   "pick": "all", "daily_cap": 2,
+     "slots": 8,  "order_krw": 220_000, "capital_krw": 5_000_000, "tp": 25.0, "sl": -10.0, "hold": 20,
+     "note": "F6 — 무상증자결정 다음날 시가 매수·20일 드리프트 (재생 n=27: 5일 +7.4%/20일 +12.4%, 중앙 +9.8%, 5일 −10%↓ 3.7%)"},
+    {"id": "kr_limitup_catalyst", "universe": "krlimitup", "pick": "all", "daily_cap": 1,
+     "slots": 3,  "order_krw": 100_000, "capital_krw": 1_000_000, "tp": 100.0, "sl": -25.0, "hold": 20,
+     "note": "F7 — 상한가(+29%↑) & 당일 촉매공시(공급계약/무상증자/자사주) 다음날 시가, 복권 슬롯 (무필터 상한가 20일 내 +100% 터치 10.3%)"},
     # ── 독립 가설 3종 (09-01 오후, 운영자 '하고 싶은 것 다' 지시) ──────────
     {"id": "us_slow_fallen", "universe": "slowus", "pick": "cum5_deep", "daily_cap": 1,
      "slots": 7,  "order_krw": 540_000, "capital_krw": 10_000_000,
@@ -398,6 +405,79 @@ def load_kr_sessions() -> dict[str, list[dict]]:
     return {sd: list(by.values()) for sd, by in sessions.items()}
 
 
+# ── KR 공시 이벤트 universe (09-04) — 백필: data/analysis/dart_events_12m.jsonl(DART 재생, 접수일 기준)
+#    forward: data/shadow/kr_event_signals.jsonl(실시간 레인 원장). session_date = 공시일(진입은 다음 세션 시가).
+KR_EVENT_BACKFILL = ROOT / "data" / "analysis" / "dart_events_12m.jsonl"
+KR_EVENT_SIGNALS = ROOT / "data" / "shadow" / "kr_event_signals.jsonl"
+_KR_EVENT_KIND_MAP = {"무상증자결정": "bonus_issue", "공급계약체결": "supply_contract", "자기주식취득결정": "buyback",
+                      "최대주주변경": "major_holder_change", "유상증자결정(대조)": "rights_offering"}
+_CATALYST_KINDS = ("supply_contract", "bonus_issue", "buyback")
+LIMITUP_CHG = 0.29
+
+
+def _kr_event_rows() -> list[dict]:
+    rows: list[dict] = []
+    if KR_EVENT_BACKFILL.exists():
+        for line in KR_EVENT_BACKFILL.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if "정정" in str(r.get("report", "")):
+                continue
+            kind = _KR_EVENT_KIND_MAP.get(str(r.get("kind", "")))
+            d = str(r.get("date", ""))
+            if kind and len(d) == 8:
+                rows.append({"ticker": str(r["stock"]), "sd": f"{d[:4]}-{d[4:6]}-{d[6:]}", "kind": kind, "src": "backfill",
+                             "ratio": None})
+    if KR_EVENT_SIGNALS.exists():
+        for line in KR_EVENT_SIGNALS.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if r.get("is_correction") or not r.get("stock_code") or r.get("kind") in (None, "other"):
+                continue
+            f = r.get("fields") or {}
+            rows.append({"ticker": str(r["stock_code"]), "sd": str(r.get("session_date")), "kind": r["kind"], "src": "forward",
+                         "ratio": f.get("ratio_per_share") if r["kind"] == "bonus_issue" else f.get("ratio_pct")})
+    return rows
+
+
+def load_kr_event_sessions() -> dict[str, dict[str, list[dict]]]:
+    """{"krevent": {sd: [무상증자 후보]}, "krlimitup": {sd: [상한가+촉매 후보]}}.
+    같은 (sd, ticker, kind)는 1건(백필·forward 겹침은 forward 우선)."""
+    rows = _kr_event_rows()
+    by: dict[tuple, dict] = {}
+    for r in rows:
+        key = (r["sd"], r["ticker"], r["kind"])
+        if key not in by or r["src"] == "forward":
+            by[key] = r
+    bonus: dict[str, dict[str, dict]] = defaultdict(dict)
+    catalysts: dict[tuple, set] = defaultdict(set)
+    for (sd, tk, kind), r in by.items():
+        if kind == "bonus_issue":
+            bonus[sd].setdefault(tk, {"ticker": tk, "kind": kind, "bonus_ratio": r.get("ratio"), "src": r["src"]})
+        if kind in _CATALYST_KINDS:
+            catalysts[(sd, tk)].add(kind)
+    limitup: dict[str, dict[str, dict]] = defaultdict(dict)
+    for (sd, tk), kinds in catalysts.items():
+        b = bars_kr(tk)
+        i = next((k for k, x in enumerate(b) if x[0] == sd), None)
+        if i is None or i < 1 or not b[i - 1][4]:
+            continue
+        chg = b[i][4] / b[i - 1][4] - 1.0
+        if chg >= LIMITUP_CHG:
+            limitup[sd][tk] = {"ticker": tk, "kind": "limitup_catalyst", "chg": round(chg * 100, 2),
+                               "catalysts": sorted(kinds)}
+    return {"krevent": {sd: list(v.values()) for sd, v in bonus.items()},
+            "krlimitup": {sd: list(v.values()) for sd, v in limitup.items()}}
+
+
 def strategy_pick_key(s: dict, c: dict) -> float:
     if s.get("pick") == "disc_deep":
         return c["disc"]  # 할인 깊은순(가장 음수 먼저) — 08-04 검증 통과 랭킹
@@ -474,7 +554,8 @@ def load_earnings_windows() -> tuple[dict[str, str], str, str]:
         return {}, "", ""
 
 
-def entry_of(ticker: str, session_date: str, *, market: str = "US") -> tuple[float, list[tuple]] | None:
+def entry_of(ticker: str, session_date: str, *, market: str = "US",
+             hold: int = HOLD_SESSIONS) -> tuple[float, list[tuple]] | None:
     """진입가·경로 창. US: session_date가 진입 세션(풀 규약). KR: session_date는
     신호일이라 **다음 거래 세션** 시가 진입(핸드오프 규약과 동일)."""
     if market == "KR":
@@ -488,13 +569,37 @@ def entry_of(ticker: str, session_date: str, *, market: str = "US") -> tuple[flo
         ei = next((i for i, x in enumerate(b) if x[0] == str(session_date)), None)
     if ei is None:
         return None
-    win = b[ei: ei + HOLD_SESSIONS]  # D0..D6 (진입일 포함 7세션 — 런타임 정본)
+    win = b[ei: ei + hold]  # D0..D(hold-1) (진입일 포함 — 기본 7세션 런타임 정본, arm별 hold 가능)
+    # 미완성 봉 방어(09-04): 23:40 수동 실행에서 22:00 갱신이 쓴 당일 US 프리마켓 행(FRVO 09-03)으로
+    # 8건이 진입됐다. 세션이 끝나지 않은 날짜의 봉은 진입·정산 어디에도 쓰지 않는다.
+    win = [x for x in win if bar_complete(x[0], "KR" if market == "KR" else "US")]
     if not win or not win[0][1] or win[0][1] <= 0:
         return None
     return float(win[0][1]), win
 
 
+def bar_complete(bar_date: str, market: str, now: datetime | None = None) -> bool:
+    """일봉이 확정됐는가. KR: 당일 16:00 KST 이후. US: 다음날 06:00 KST 이후(서머타임 05:00 마감 포함 여유)."""
+    from datetime import timedelta as _td
+    now = now or (datetime.now(timezone.utc) + _td(hours=9))  # KST naive
+    today = now.strftime("%Y-%m-%d")
+    if market == "KR":
+        return bar_date < today or (bar_date == today and now.hour >= 16)
+    nxt = (datetime.strptime(bar_date, "%Y-%m-%d") + _td(days=1)).strftime("%Y-%m-%d")
+    return nxt < today or (nxt == today and now.hour >= 6)
+
+
 _EARN_CAL: tuple[dict[str, str], str, str] | None = None
+
+
+_KR_EVENT_SESSIONS: dict | None = None
+
+
+def kr_event_sessions_cached() -> dict:
+    global _KR_EVENT_SESSIONS
+    if _KR_EVENT_SESSIONS is None:
+        _KR_EVENT_SESSIONS = load_kr_event_sessions()
+    return _KR_EVENT_SESSIONS
 
 
 def strategy_passers(s: dict, sessions_us: dict, sessions_kr: dict, sd: str,
@@ -509,6 +614,8 @@ def strategy_passers(s: dict, sessions_us: dict, sessions_kr: dict, sd: str,
     if s["universe"] == "kr":
         cands = sessions_kr.get(sd, [])
         return [c for c in cands if c.get(s["kr_rule"])]
+    if s["universe"] in ("krevent", "krlimitup"):
+        return list(kr_event_sessions_cached().get(s["universe"], {}).get(sd, []))
     if s["universe"] == "slowus":
         return list((sessions_slow or {}).get(sd, []))
     if s["universe"] == "lpus":
@@ -568,6 +675,11 @@ def pick_basis(s: dict, c: dict) -> str:
                  f"전일 {_fmt(c.get('chg'), '+.1f', '%')}", f"rv20 {_fmt(c.get('rv20'), '.1f')}",
                  f"20일고점 대비 {_fmt(c.get('from_high20'), '+.0f', '%')}", rule, label]
         return " · ".join(parts)
+    if uni == "krevent":
+        r = c.get("bonus_ratio")
+        return f"무상증자결정 공시 · 1주당 {_fmt(r, '.2f', '주') if r is not None else '?'} · 다음날 시가 · 20일 드리프트 · {label}"
+    if uni == "krlimitup":
+        return f"상한가 {_fmt(c.get('chg'), '+.1f', '%')} · 당일 촉매 {'/'.join(c.get('catalysts') or [])} · 다음날 시가 · 복권(TP100/SL25/20일) · {label}"
     if uni == "slowus":
         return f"5일 누적 {_fmt(c.get('cum5'), '+.1f', '%')} · {label}"
     if uni == "lpus":
@@ -587,7 +699,7 @@ def pick_basis(s: dict, c: dict) -> str:
 
 def _feat_compact(c: dict) -> dict:
     out = {}
-    for k in ("chg", "dvol", "max21", "ibs", "in_pool", "disc", "gap", "rv20", "from_high20", "cum5", "ret60"):
+    for k in ("chg", "dvol", "max21", "ibs", "in_pool", "disc", "gap", "rv20", "from_high20", "cum5", "ret60", "bonus_ratio"):
         v = c.get(k)
         if isinstance(v, (int, float)):
             out[k] = round(float(v), 3)
@@ -611,6 +723,8 @@ def backfill_basis(con: sqlite3.Connection, sessions_us: dict, sessions_kr: dict
         if s is None:
             continue
         pool = {"kr": sessions_kr, "slowus": sessions_slow, "lpus": sessions_lp}.get(s["universe"], sessions_us)
+        if s["universe"] in ("krevent", "krlimitup"):
+            pool = kr_event_sessions_cached().get(s["universe"], {})
         c = next((x for x in pool.get(sd, []) if str(x.get("ticker")).upper() == str(tk).upper()), None)
         if c is None:
             continue
@@ -624,7 +738,7 @@ def backfill_basis(con: sqlite3.Connection, sessions_us: dict, sessions_kr: dict
 
 
 def strategy_market(s: dict) -> str:
-    return {"kr": "KR", "slowus": "SLOW", "lpus": "SLOW"}.get(s["universe"], "US")
+    return {"kr": "KR", "krevent": "KR", "krlimitup": "KR", "slowus": "SLOW", "lpus": "SLOW"}.get(s["universe"], "US")
 
 
 def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
@@ -646,6 +760,8 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
         market = strategy_market(s)
         all_dates = {"kr": sessions_kr, "slowus": sessions_slow,
                      "lpus": sessions_lp}.get(s["universe"], sessions_us)
+        if s["universe"] in ("krevent", "krlimitup"):
+            all_dates = kr_event_sessions_cached().get(s["universe"], {})
         done = {r[0] for r in con.execute(
             "SELECT DISTINCT session_date FROM trades WHERE strategy_id=?", (s["id"],))}
         cash = book_cash(con, s)
@@ -698,7 +814,7 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
 # 갱신 16:00→16:40, 그 시점 720/1307 완료) entry_of가 None → 조용히 건너뜀. 세션이 완료
 # 처리되지 않아 다음 실행에서 소급 기록되긴 하지만 ① 사유가 어디에도 남지 않고 ② 대시보드에
 # 하루 늦게 뜬다. 수리: ① 스킵 원장(사유 분류) ② 체인 실행 전 마커 대기.
-_NEXT_SESSION_UNIVERSES = ("kr", "slowus", "lpus")
+_NEXT_SESSION_UNIVERSES = ("kr", "krevent", "krlimitup", "slowus", "lpus")
 
 
 def classify_entry_skip(s: dict, sd: str, all_dates: dict) -> str:
@@ -799,14 +915,15 @@ def settle_open_trades(con: sqlite3.Connection) -> int:
         if s is None:
             continue
         market = strategy_market(s)
-        eo = entry_of(tk, sd, market=market)
+        hold = int(s.get("hold", HOLD_SESSIONS))
+        eo = entry_of(tk, sd, market=market, hold=hold)
         if eo is None:
             continue
         _e, win = eo
         res = contract_exit_v2(float(entry), win,
                                fee=FEE_KR if market == "KR" else FEE_US,
                                be_lock=(market != "KR"),
-                               tp=float(s.get("tp", TP)), sl=float(s.get("sl", SL)))
+                               tp=float(s.get("tp", TP)), sl=float(s.get("sl", SL)), hold=hold)
         if res is None:
             continue  # 창 미완결·미발동 — 다음 실행에서 재시도
         net, reason = res
@@ -876,12 +993,12 @@ def null_percentile(con: sqlite3.Connection, s: dict, sessions_us: dict,
         nets = []
         for c in strategy_passers(s, sessions_us, sessions_kr, str(sd), sessions_slow,
                                   sessions_lp=sessions_lp):
-            eo = entry_of(c["ticker"], str(sd), market=market)
+            eo = entry_of(c["ticker"], str(sd), market=market, hold=int(s.get("hold", HOLD_SESSIONS)))
             if eo is None:
                 continue
             res = contract_exit_v2(eo[0], eo[1], fee=FEE_KR if market == "KR" else FEE_US,
                                    be_lock=(market != "KR"), tp=float(s.get("tp", TP)),
-                                   sl=float(s.get("sl", SL)))
+                                   sl=float(s.get("sl", SL)), hold=int(s.get("hold", HOLD_SESSIONS)))
             if res is not None:
                 nets.append(res[0])
         if nets:

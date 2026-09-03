@@ -126,6 +126,21 @@ class EntrySkipLedgerTest(unittest.TestCase):
         self.assertEqual(json.loads(lines[0])["ticker"], "IP")
 
 
+class BarCompleteTest(unittest.TestCase):
+    """미완성 봉 방어 (09-04 FRVO 사고): 세션이 끝나지 않은 날짜의 봉은 진입·정산에 쓰지 않는다."""
+
+    def test_us_bar_completes_next_day_0600_kst(self):
+        self.assertFalse(vb.bar_complete("2026-09-03", "US", now=datetime(2026, 9, 3, 23, 40)))  # 장중(프리마켓 행)
+        self.assertFalse(vb.bar_complete("2026-09-03", "US", now=datetime(2026, 9, 4, 5, 30)))   # 마감 직후 미확정
+        self.assertTrue(vb.bar_complete("2026-09-03", "US", now=datetime(2026, 9, 4, 6, 0)))
+        self.assertTrue(vb.bar_complete("2026-09-02", "US", now=datetime(2026, 9, 3, 23, 40)))
+
+    def test_kr_bar_completes_1600_kst(self):
+        self.assertFalse(vb.bar_complete("2026-09-04", "KR", now=datetime(2026, 9, 4, 15, 30)))
+        self.assertTrue(vb.bar_complete("2026-09-04", "KR", now=datetime(2026, 9, 4, 16, 0)))
+        self.assertTrue(vb.bar_complete("2026-09-03", "KR", now=datetime(2026, 9, 4, 9, 0)))
+
+
 class IntegrityCheckTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -170,3 +170,6 @@ state/virtual_strategy_overrides.json.tmp
 state/price_update_marker_*.json
 state/price_update_marker_*.json.tmp
 data/shadow/virtual_books_entry_skips.jsonl
+state/kr_event_lane_state.json
+state/kr_event_lane_state.json.tmp
+state/kr_event_lane_heartbeat.json
