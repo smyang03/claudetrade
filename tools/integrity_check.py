@@ -372,6 +372,47 @@ def check_arm_picks_ledger(now: datetime) -> list[dict[str, Any]]:
     return [{"check": name, "kind": "phantom", "status": OK, "detail": f"세션 {latest} 픽 {n}행", "note": ""}]
 
 
+def check_virtual_entry_skips(now: datetime) -> list[dict[str, Any]]:
+    """가상 북 진입 스킵 원장 + 가격 캐시 갱신 마커 (2026-09-03 KR 캐시 경합 수리).
+
+    최근 36h의 봉 없음 스킵 중 no_bar_stale(캐시 미갱신/종목 미수집)이 있으면 WARN.
+    awaiting_session(다음 세션 대기)은 정상이라 건수만 보인다. 마커는 시장별 end_date·나이."""
+    name = "가상 북 진입 스킵·캐시 마커"
+    ledger = ROOT / "data" / "shadow" / "virtual_books_entry_skips.jsonl"
+    stale: list[str] = []
+    awaiting = 0
+    cutoff = (now.astimezone(timezone.utc) - timedelta(hours=36)) if now.tzinfo else (now - timedelta(hours=36))
+    if ledger.exists():
+        for line in ledger.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+                ts = datetime.fromisoformat(str(row.get("ts")))
+            except (ValueError, TypeError):
+                continue
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts < (cutoff if cutoff.tzinfo else cutoff.replace(tzinfo=timezone.utc)):
+                continue
+            if row.get("reason") == "no_bar_stale":
+                stale.append(f"{row.get('strategy_id')}:{row.get('ticker')}@{row.get('session_date')}")
+            else:
+                awaiting += 1
+    marks = []
+    for m in ("KR", "US"):
+        p = ROOT / "state" / f"price_update_marker_{m}.json"
+        try:
+            d = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        except (OSError, ValueError):
+            d = {}
+        marks.append(f"{m}={d.get('end_date') or '없음'}{'' if d.get('ok', True) else '(실패)'}")
+    detail = f"36h 스킵 stale {len(stale)} · 대기 {awaiting} · 마커 {' '.join(marks)}"
+    if stale:
+        return [{"check": name, "kind": "virtual", "status": WARN,
+                 "detail": detail + " · " + ", ".join(stale[:6]),
+                 "note": "가격 캐시 미갱신/종목 미수집 — update_data 로그·해당 CSV 확인"}]
+    return [{"check": name, "kind": "virtual", "status": OK, "detail": detail, "note": ""}]
+
+
 def check_phantom_isolation(now: datetime) -> list[dict[str, Any]]:
     """유령 포지션 격리 검사 (2026-09-03, 설계 정본 §0-2).
 
@@ -788,6 +829,7 @@ def run_integrity_check(ml_db: Path, event_db: Path, audit_db: Path, window_days
     checks += check_contract_env_drift(now)
     checks += check_phantom_isolation(now)
     checks += check_arm_picks_ledger(now)
+    checks += check_virtual_entry_skips(now)
     checks += check_max_hold_drift(now)
     checks += check_canonical_session_alignment(ml_db, event_db, now)
     checks += check_price_currency_consistency(ml_db, now)

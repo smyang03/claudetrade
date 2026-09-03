@@ -55,6 +55,8 @@ KR_LEDGER = ROOT / "data" / "shadow" / "kr_fallen_shadow.jsonl"
 KR_BLIND_LEDGER = ROOT / "data" / "shadow" / "kr_fallen_blindspot_shadow.jsonl"
 KR_PRICE_DIR = ROOT / "data" / "price" / "kr"
 BOOK_DB = ROOT / "data" / "shadow" / "virtual_books.db"
+ENTRY_SKIP_LEDGER = ROOT / "data" / "shadow" / "virtual_books_entry_skips.jsonl"
+PRICE_MARKER = {m: ROOT / "state" / f"price_update_marker_{m}.json" for m in ("KR", "US")}
 # ── 정산 계약 정본 (런타임 규약과 통일 — docstring 참조) ─────────────────────
 TP, SL, BE = 12.0, -25.0, 4.0
 HOLD_SESSIONS = 7        # 진입일 포함 (D0..D6)
@@ -587,6 +589,7 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
                     break
                 eo = entry_of(c["ticker"], sd, market=market)
                 if eo is None:
+                    record_entry_skip(s, sd, c["ticker"], market, all_dates)
                     continue
                 entry, _win = eo
                 con.execute(
@@ -602,6 +605,101 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
                     cash -= s["order_krw"]
     con.commit()
     return opened
+
+
+# ── 진입 스킵 원장 + 가격 캐시 갱신 대기 (2026-09-03 KR 캐시 경합 수리) ─────────────────
+# 09-03 실측: kr_r4x 09-02 통과자 348340·466100이 16:22 실행 시점에 09-03 봉이 없어(KR CSV
+# 갱신 16:00→16:40, 그 시점 720/1307 완료) entry_of가 None → 조용히 건너뜀. 세션이 완료
+# 처리되지 않아 다음 실행에서 소급 기록되긴 하지만 ① 사유가 어디에도 남지 않고 ② 대시보드에
+# 하루 늦게 뜬다. 수리: ① 스킵 원장(사유 분류) ② 체인 실행 전 마커 대기.
+_NEXT_SESSION_UNIVERSES = ("kr", "slowus", "lpus")
+
+
+def classify_entry_skip(s: dict, sd: str, all_dates: dict) -> str:
+    """봉 없음 스킵 분류. 다음 세션 진입 arm(kr/slowus/lpus)이 **최신 신호일**을 보고 있으면
+    아직 진입 세션이 오지 않은 것(awaiting_session, 정상). 그 외(옛 신호일인데 봉 없음,
+    US 당일 진입인데 봉 없음)는 캐시 미갱신/종목 미수집(no_bar_stale, 결함)."""
+    if s.get("universe") in _NEXT_SESSION_UNIVERSES and all_dates and sd >= max(all_dates):
+        return "awaiting_session"
+    return "no_bar_stale"
+
+
+def record_entry_skip(s: dict, sd: str, ticker: str, market: str, all_dates: dict,
+                      path: Path | None = None) -> dict:
+    reason = classify_entry_skip(s, sd, all_dates)
+    row = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "strategy_id": s["id"], "session_date": sd, "ticker": str(ticker),
+        "market": market, "reason": reason,
+    }
+    tag = "정상(다음 세션 대기)" if reason == "awaiting_session" else "결함 의심(캐시 미갱신/종목 미수집)"
+    print(f"[VIRTUAL] {s['id']} {sd} {ticker} 진입 보류 — 봉 없음 · {reason} {tag}")
+    try:
+        out = path or ENTRY_SKIP_LEDGER
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        print(f"[VIRTUAL] 스킵 원장 기록 실패: {exc}")
+    return row
+
+
+def _read_marker(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def price_marker_ready(market: str, now: datetime, marker: dict | None = None) -> bool:
+    """오늘 캐시 갱신 완료 여부. KR: end_date == today(08:30 실행은 end_dt=어제라 run_date로는
+    못 가른다). US: run_date == today(07:00 실행이 당일 마커, 22:00 실행은 전날 run_date)."""
+    m = marker if marker is not None else _read_marker(PRICE_MARKER[market])
+    if not m:
+        return False
+    today = now.strftime("%Y-%m-%d")
+    key = "end_date" if market == "KR" else "run_date"
+    return str(m.get(key)) == today
+
+
+def markers_to_wait(now: datetime) -> list[str]:
+    """이 실행이 기다려야 할 시장. 16시 이후 = KR 마감 갱신(16:00 작업), 12시 전 = US 갱신
+    (07:00 작업). 주말은 갱신 작업이 없으니 대기하지 않는다."""
+    if now.weekday() >= 5:
+        return []
+    if now.hour >= 16:
+        return ["KR"]
+    if now.hour < 12:
+        return ["US"]
+    return []
+
+
+def wait_for_price_markers(now_fn=None, sleep_fn=None, max_wait_s: float | None = None,
+                           poll_s: float = 30.0) -> dict[str, bool]:
+    """체인 실행 전 가격 캐시 갱신 마커 대기. 타임아웃이면 WARN 출력 후 진행(뒤 단계 ⑨⑩을
+    영원히 막지 않는다). 남는 봉 없음은 스킵 원장이 no_bar_stale로 잡는다."""
+    now_fn = now_fn or datetime.now
+    sleep_fn = sleep_fn or __import__("time").sleep
+    if max_wait_s is None:
+        max_wait_s = float(os.getenv("VIRTUAL_BOOKS_MARKER_WAIT_MAX_MIN", "60")) * 60.0
+    start = now_fn()
+    targets = markers_to_wait(start)
+    result: dict[str, bool] = {}
+    for market in targets:
+        waited = 0.0
+        while not price_marker_ready(market, start):
+            if waited >= max_wait_s:
+                print(f"[VIRTUAL] ⚠ {market} 가격 캐시 갱신 마커 대기 타임아웃({int(max_wait_s // 60)}분) — "
+                      f"진행. 봉 없음 스킵은 원장(no_bar_stale)으로 확인")
+                break
+            if waited == 0.0:
+                print(f"[VIRTUAL] {market} 가격 캐시 갱신 마커 대기 시작 ({PRICE_MARKER[market].name})")
+            sleep_fn(poll_s)
+            waited += poll_s
+        result[market] = price_marker_ready(market, start)
+        if result[market]:
+            print(f"[VIRTUAL] {market} 가격 캐시 갱신 완료 확인 (대기 {int(waited)}s)")
+    return result
 
 
 def settle_open_trades(con: sqlite3.Connection) -> int:
@@ -817,8 +915,12 @@ def report(con: sqlite3.Connection, sessions_us: dict | None = None,
 
 
 def main() -> int:
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "run"
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = {a for a in sys.argv[1:] if a.startswith("--")}
+    cmd = args[0] if args else "run"
     BOOK_DB.parent.mkdir(parents=True, exist_ok=True)
+    if cmd == "run" and "--no-wait" not in flags:
+        wait_for_price_markers()  # 캐시 갱신 전 진입 시도 방지 (bars_kr 캐시는 프로세스 수명 — 먼저 기다린다)
     with closing(sqlite3.connect(BOOK_DB, timeout=30)) as con:
         ensure_schema(con)
         sync_strategies(con)
@@ -841,7 +943,7 @@ def main() -> int:
         elif cmd == "reconcile":
             return 0 if reconcile(con) else 1
         else:
-            print("사용: virtual_books.py [run|report|reconcile]")
+            print("사용: virtual_books.py [run|report|reconcile] [--no-wait]")
             return 1
     return 0
 

@@ -123,6 +123,34 @@ def update_market_lock(market: str):
             log.warning(f"{market_key} update lock cleanup failed: {exc}")
 
 
+def write_price_update_marker(market: str, end_date: str, ok: bool, error: str = "",
+                              path: "Path | None" = None) -> Path:
+    """가격 CSV 갱신 단계([1/5]) 완료 마커 (2026-09-03).
+
+    가상 북(tools/virtual_books.py)이 16:20/07:20 체인에서 이 마커를 보고 캐시 갱신이 끝났는지
+    판단한다. 09-03 실측: KR CSV 1,307개 갱신이 16:00→16:40인데 가상 북이 16:22에 돌아
+    348340·466100(kr_r4x 09-02 통과자)의 09-03 봉이 없어 진입이 조용히 건너뛰어졌다.
+    - run_date: 실행일(KST). US는 07:00 실행이 당일 마커 → run_date == today가 "오늘 갱신 완료".
+    - end_date: 수집 종료일. KR은 08:30 실행이 end_dt=어제, 16:00 실행이 end_dt=오늘이라
+      end_date == today가 "장 마감 갱신 완료"다(run_date만 보면 08:30 마커에 속는다).
+    실패해도 ok=false로 쓴다 — 대기자가 영원히 기다리지 않게."""
+    market_key = str(market).upper()
+    marker = path or get_runtime_path("state", f"price_update_marker_{market_key}.json")
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "market": market_key,
+        "run_date": date.today().strftime("%Y-%m-%d"),
+        "end_date": str(end_date),
+        "finished_at": datetime.now().isoformat(timespec="seconds"),
+        "ok": bool(ok),
+        "error": str(error or "")[:200],
+    }
+    tmp = marker.with_suffix(marker.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, marker)
+    return marker
+
+
 def run_kr_update():
     today = date.today().strftime("%Y-%m-%d")
     log.info("=== KR data update start ===")
@@ -137,9 +165,15 @@ def run_kr_update():
             date.today() if datetime.now().hour >= 16 else date.today() - timedelta(days=1)
         )
         start_dt = pd.Timestamp(date.today() - timedelta(days=500))
+        _price_end = str(end_dt.date())
         collect_kr_incremental(start_dt, end_dt)
+        write_price_update_marker("KR", _price_end, True)
     except Exception as e:
         log.error(f"KR price update failed: {e}")
+        try:
+            write_price_update_marker("KR", locals().get("_price_end", ""), False, str(e))
+        except Exception as exc:
+            log.warning(f"KR price marker write failed: {exc}")
 
     log.info("[2/5] KR news update")
     try:
@@ -194,9 +228,15 @@ def run_us_update():
 
         end_dt = pd.Timestamp(date.today())
         start_dt = pd.Timestamp(date.today() - timedelta(days=500))
+        _price_end = str(end_dt.date())
         collect_us_incremental(start_dt, end_dt)
+        write_price_update_marker("US", _price_end, True)
     except Exception as e:
         log.error(f"US price update failed: {e}")
+        try:
+            write_price_update_marker("US", locals().get("_price_end", ""), False, str(e))
+        except Exception as exc:
+            log.warning(f"US price marker write failed: {exc}")
 
     log.info("[2/5] US news update")
     try:
