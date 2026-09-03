@@ -17381,6 +17381,64 @@ def api_phantom_positions():
     return jsonify({"available": True, "open": view, "closed": closes[-20:][::-1], "banner": "VIRTUAL — 실주문 아님"})
 
 
+
+@app.route("/api/virtual_overrides")
+def api_virtual_overrides():
+    """관제 오버라이드(폐기/일시정지/재개) 현황 + 최근 감사 로그. [VIRTUAL]"""
+    try:
+        from runtime.virtual_overrides import load_overrides, AUDIT_PATH
+        ov = load_overrides()
+        audit = []
+        if AUDIT_PATH.exists():
+            audit = [json.loads(l) for l in AUDIT_PATH.read_text(encoding="utf-8").splitlines()[-30:] if l.strip()]
+        return jsonify({"available": True, "overrides": ov, "audit": audit[::-1]})
+    except Exception as exc:
+        return jsonify({"available": False, "reason": str(exc)[:200]})
+
+
+@app.route("/api/control/virtual-override", methods=["POST"])
+def api_control_virtual_override():
+    """관제 제어: arm 폐기/일시정지/재개 + 메모. 승격은 여기 없다(게이트 판정 + env 원복 + 재시작은 운영자 절차)."""
+    body = request.get_json(silent=True) or {}
+    arm = str(body.get("arm") or "").strip()
+    state = str(body.get("state") or "").strip().lower()
+    memo = str(body.get("memo") or "").strip()
+    if not arm or state not in ("active", "paused", "retired"):
+        return jsonify({"ok": False, "message": "arm/state(active|paused|retired) 필요"}), 400
+    try:
+        from runtime.virtual_overrides import set_override
+        entry = set_override(arm, state, memo=memo, by="dashboard")
+        return jsonify({"ok": True, "arm": arm, "entry": entry,
+                        "message": f"{arm} → {state} (감사 기록됨). 가상 북·유령 진입은 다음 실행부터 반영"})
+    except Exception as exc:
+        return jsonify({"ok": False, "message": str(exc)[:200]}), 500
+
+
+@app.route("/api/virtual_gate")
+def api_virtual_gate():
+    """최신 승격 게이트 검정 JSON 요약 (virtual_gate_eval, forward만). [VIRTUAL]"""
+    files = sorted((BASE_DIR / "data" / "shadow").glob("virtual_gate_eval_2*.json"))
+    files = [f for f in files if "backfill" not in f.name]
+    if not files:
+        return jsonify({"available": False, "reason": "게이트 검정 JSON 없음"})
+    try:
+        d = json.loads(files[-1].read_text(encoding="utf-8"))
+        rows = []
+        for sid, r in (d.get("strategies") or {}).items():
+            rows.append({"arm": sid, "n_stage": r.get("n_stage"), "verdict": r.get("verdict"),
+                         "n_settled": r.get("n_settled"), "n_trade_sessions": r.get("n_trade_sessions"),
+                         "n_market_sessions": r.get("n_market_sessions"), "months": r.get("months"),
+                         "mean_net_pct": r.get("mean_net_pct"), "pf": r.get("pf"),
+                         "alpha_mean_pct": r.get("alpha_mean_pct"), "alpha_lcb95_pct": r.get("alpha_lcb95_pct"),
+                         "maxdd_pct": r.get("maxdd_pct"), "checks": r.get("checks"), "family": r.get("family")})
+        return jsonify({"available": True, "asof": d.get("asof"), "gate_version": d.get("gate_version"),
+                        "code_commit": d.get("code_commit"), "reconcile_ok": d.get("reconcile_ok"),
+                        "params": d.get("params"), "strategies": rows, "families": d.get("families"),
+                        "file": files[-1].name})
+    except Exception as exc:
+        return jsonify({"available": False, "reason": str(exc)[:200]})
+
+
 PAGE_VIRTUAL_HTML = """
 <div style="padding:20px 24px;">
   <div style="background:#1a2436;border:1px solid #2c3e5d;border-radius:8px;padding:14px 18px;margin-bottom:18px;font-size:13px;">
@@ -18459,6 +18517,21 @@ PAGE_STRATEGY_HTML = """
     <div id="stg-krgate"></div>
   </div>
 
+  <div class="stg-block" id="stg-incubator">
+    <h3><span class="tag">V</span> 인큐베이터 관제 <span style="font-size:11px;color:var(--yellow);">[VIRTUAL] 실계좌 아님</span>
+      <span class="stg-note" id="stg-inc-note"></span></h3>
+    <div id="stg-inc-ops" class="stg-sub" style="margin-bottom:10px;"></div>
+    <div style="overflow-x:auto;">
+    <table class="stg-tbl" id="stg-inc-table" style="font-size:12px;">
+      <thead><tr><th style="text-align:left">arm</th><th>family</th><th>상태</th><th>N단계</th><th>정산/세션</th>
+        <th>평균net</th><th>알파</th><th>LCB95</th><th>유령</th><th>제어</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    </div>
+    <div class="stg-sub" style="margin-top:8px;">폐기 기준(개정 2 §1): 30건 paired 알파 ≤ −2% / MaxDD > 20% / 운영 결함 / 괴리 ≤ −1.5%p.
+      개선은 새 arm id(V2), 편입은 새 family. <b>승격은 여기 없음</b>(게이트 판정 + env 원복 + 재시작 = 운영자 절차).</div>
+    <div id="stg-inc-audit" class="stg-sub" style="margin-top:6px;"></div>
+  </div>
   <div class="stg-block">
     <h3>최근 진입 차단·실패</h3>
     <div id="stg-blocks"></div>
@@ -18677,6 +18750,60 @@ function loadStrategyLive() {
 }
 loadStrategy();
 setInterval(loadStrategy, 300000);
+async function stgIncubatorControl(arm, state) {
+  const memo = prompt(arm + ' → ' + state + ' 사유 메모 (감사 기록):', '') ;
+  if (memo === null) return;
+  const r = await fetch('/api/control/virtual-override', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({arm: arm, state: state, memo: memo})});
+  const j = await r.json();
+  alert(j.message || (j.ok ? 'ok' : 'fail'));
+  loadIncubator();
+}
+async function loadIncubator() {
+  try {
+    const [vb, gate, ov, ph, picks, ctl] = await Promise.all([
+      fetch('/api/virtual_books').then(r => r.json()),
+      fetch('/api/virtual_gate').then(r => r.json()),
+      fetch('/api/virtual_overrides').then(r => r.json()),
+      fetch('/api/phantom_positions').then(r => r.json()),
+      fetch('/api/arm_picks_realtime').then(r => r.json()),
+      fetch('/api/control/status').then(r => r.json()).catch(() => ({})),
+    ]);
+    const gmap = {}; (gate.strategies || []).forEach(g => { gmap[g.arm] = g; });
+    const omap = ov.overrides || {};
+    const pcount = {}; (ph.open || []).forEach(p => { pcount[p.arm] = (pcount[p.arm] || 0) + 1; });
+    const rows = (vb.strategies || []).map(sr => {
+      const g = gmap[sr.id] || {}; const st = (omap[sr.id] || {}).state || 'active';
+      const stCls = st === 'active' ? 'pos' : (st === 'paused' ? 'warn' : 'neg');
+      const fmt = (v, d) => (v === null || v === undefined) ? '—' : Number(v).toFixed(d === undefined ? 2 : d);
+      const btn = (label, target) => st === target ? '' :
+        '<button onclick="stgIncubatorControl(\'' + sr.id + '\',\'' + target + '\')" style="font-size:10px;padding:2px 6px;margin-left:3px;">' + label + '</button>';
+      return '<tr><td style="text-align:left;font-family:var(--mono)" title="' + (sr.note || '').replace(/"/g, '') + '">' + sr.id + '</td>' +
+        '<td class="dim">' + (g.family || '—') + '</td>' +
+        '<td class="' + stCls + '">' + st + '</td>' +
+        '<td class="dim">' + (g.n_stage || '—') + '</td>' +
+        '<td>' + (g.n_settled ?? sr.forward_settled ?? 0) + '/' + (g.n_trade_sessions ?? 0) + '</td>' +
+        '<td class="' + stgCls(g.mean_net_pct ?? 0) + '">' + fmt(g.mean_net_pct) + '</td>' +
+        '<td class="' + stgCls(g.alpha_mean_pct ?? 0) + '">' + fmt(g.alpha_mean_pct) + '</td>' +
+        '<td>' + (g.alpha_lcb95_pct === null || g.alpha_lcb95_pct === undefined ? '<span class="dim">INSUF</span>' : fmt(g.alpha_lcb95_pct)) + '</td>' +
+        '<td>' + (pcount[sr.id] || 0) + '</td>' +
+        '<td>' + btn('일시정지', 'paused') + btn('폐기', 'retired') + btn('재개', 'active') + '</td></tr>';
+    });
+    document.querySelector('#stg-inc-table tbody').innerHTML = rows.join('') || '<tr><td colspan="10" class="dim">가상 북 없음</td></tr>';
+    document.getElementById('stg-inc-note').textContent = gate.available ?
+      ('게이트 검정 ' + gate.asof + ' · ' + (gate.reconcile_ok ? '대사 OK' : '대사 FAIL') + ' · ' + (gate.file || '')) : '(게이트 JSON 없음)';
+    const bot = (ctl.bot || {});
+    document.getElementById('stg-inc-ops').innerHTML =
+      '운영 축: 봇 ' + (bot.alive ? '<span class="pos">alive</span>' : '<span class="neg">down</span>') + ' pid ' + (bot.pid || '—') +
+      ' · 유령 보유 ' + (ph.open || []).length + ' · 오늘 픽 원장 ' + (picks.available ? (picks.count + '행 (' + picks.session_date + ')') : '<span class="warn">없음</span>') +
+      ' · 최근 유령 청산 ' + ((ph.closed || []).slice(0, 3).map(r => r.arm + ':' + r.ticker + ' ' + r.reason).join(', ') || '없음');
+    const audit = (ov.audit || []).slice(0, 5);
+    document.getElementById('stg-inc-audit').innerHTML = audit.length ? '최근 제어: ' + audit.map(a => a.ts.slice(5, 16) + ' ' + a.arm + ' ' + a.from + '→' + a.to + (a.memo ? ' (' + a.memo + ')' : '')).join(' · ') : '';
+  } catch (e) { /* 조용히 재시도 */ }
+}
+loadIncubator();
+setInterval(loadIncubator, 60000);
+
 (function () {
   let liveTimer = null;
   function startLive() {
