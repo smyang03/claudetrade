@@ -56,6 +56,24 @@ def _heartbeat(extra: dict | None = None) -> None:
         pass
 
 
+_ENSURED: set = set()
+
+
+def _ensure_cache_async(ticker: str) -> None:
+    """KR 일봉 CSV가 없으면 백그라운드로 생성(중복 방지). 실패는 조용히 — 다음 실행에서 재시도."""
+    if ticker in _ENSURED:
+        return
+    _ENSURED.add(ticker)
+    try:
+        from tools.ensure_kr_price_cache import missing, ensure
+        if not missing([ticker]):
+            return
+        import threading
+        threading.Thread(target=lambda: ensure([ticker], verbose=False), daemon=True).start()
+    except Exception:
+        pass
+
+
 def open_positions_from_ledger(session_date: str) -> list[dict]:
     rows = kel.read_jsonl(kel.PHANTOM_LEDGER)
     opened = {r["rcept_no"]: r for r in rows if r.get("event") == "OPEN" and r.get("session_date") == session_date}
@@ -75,6 +93,8 @@ def cycle(session_date: str, st: dict, *, dry: bool = False) -> dict:
         seen.add(it["rcept_no"])
         row = kel.process_disclosure(it, session_date=session_date, quote_fn=_quote,
                                      open_n=len(open_pos), new_today=new_today)
+        if row.get("kind") in ("supply_contract", "bonus_issue", "buyback") and it.get("stock_code"):
+            _ensure_cache_async(it["stock_code"])  # 일봉 arm(F6/F7)이 다음날 진입할 수 있게 CSV 선제 생성
         if row.get("decision") == "ENTER" and not dry:
             pos = kel.open_phantom({**it, **row}, row["quote"], notify=_notify)
             if pos:

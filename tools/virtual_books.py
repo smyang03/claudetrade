@@ -829,6 +829,8 @@ def classify_entry_skip(s: dict, sd: str, all_dates: dict) -> str:
 def record_entry_skip(s: dict, sd: str, ticker: str, market: str, all_dates: dict,
                       path: Path | None = None) -> dict:
     reason = classify_entry_skip(s, sd, all_dates)
+    if market == "KR" and not bars_kr(str(ticker)):
+        reason = "no_price_cache"  # 종목 CSV 자체가 없음(09-04 실측: 이벤트 종목 41%) → tools/ensure_kr_price_cache.py
     row = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "strategy_id": s["id"], "session_date": sd, "ticker": str(ticker),
