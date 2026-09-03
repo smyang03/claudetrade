@@ -51,3 +51,5 @@ sh.Run py & " """ & base & "virtual_books.py"" run", 0, True
 sh.Run py & " """ & base & "virtual_gate_eval.py""", 0, True
 ' ⑩ phantom_vs_daily — 유령 청산 vs 일봉 정산 괴리 원장(실행 비용 계수). 유령 엔진: runtime/phantom_book
 sh.Run py & " """ & base & "phantom_vs_daily.py""", 0, True
+' ⑪ 어닝 point-in-time 원장 — F4 PEAD 데이터 계약(09-04). 캘린더 값이 처음 보이거나 바뀐 것만 append.
+sh.Run py & " """ & base & "earnings_pit_ledger.py""", 0, True

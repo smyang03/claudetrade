@@ -173,3 +173,5 @@ data/shadow/virtual_books_entry_skips.jsonl
 state/kr_event_lane_state.json
 state/kr_event_lane_state.json.tmp
 state/kr_event_lane_heartbeat.json
+state/earnings_pit_last.json
+state/earnings_pit_last.json.tmp
