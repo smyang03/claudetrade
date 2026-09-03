@@ -17484,6 +17484,26 @@ def api_kr_event_lane():
         return jsonify({"available": False, "reason": str(exc)[:200]})
 
 
+
+@app.route("/api/core_shadow")
+def api_core_shadow():
+    """F3 저회전 코어(US SCHG/BIL SMA10+MOM12 · KR 275280/275300↔153130) shadow NAV. [VIRTUAL] core_shadow_tracker 산출."""
+    p = BASE_DIR / "state" / "core_shadow_book.json"
+    if not p.exists():
+        return jsonify({"available": False, "reason": "core_shadow_book.json 없음"})
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        arms = []
+        for aid, a in (d.get("arms") or {}).items():
+            arms.append({"id": aid, "market": a.get("market"), "role": a.get("role"), "nav": a.get("nav"),
+                         "weights": a.get("weights"), "last_price_date": a.get("last_price_date"),
+                         "effective_month": a.get("effective_month")})
+        return jsonify({"available": True, "family": "F3_AFFORDABLE_TREND_V1", "arms": arms,
+                        "note": "월말 신호·다음 세션 적용·정수주. 판정 단위=완료 월(24개월). 과거 OOS CAGR US +19.8/KR +12.9는 prior."})
+    except Exception as exc:
+        return jsonify({"available": False, "reason": str(exc)[:200]})
+
+
 PAGE_VIRTUAL_HTML = """
 <div style="padding:20px 24px;">
   <div style="background:#1a2436;border:1px solid #2c3e5d;border-radius:8px;padding:14px 18px;margin-bottom:18px;font-size:13px;">
@@ -17513,6 +17533,8 @@ PAGE_VIRTUAL_HTML = """
   </table>
   <div id="vb-phantom-closed" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>
   </div>
+  <h2 style="font-size:15px;margin:22px 0 10px;color:var(--cyan);">F3 저회전 코어 (shadow) <span style="font-size:12px;color:var(--muted);" id="vb-core-note">— 100만 북의 복리 골격 · 월말 신호 · 판정 단위 = 완료 월</span></h2>
+  <div id="vb-core" style="font-size:12px;font-family:var(--mono);margin-bottom:6px;"></div>
   <h2 style="font-size:15px;margin:22px 0 10px;color:var(--cyan);">KR 공시 이벤트 레인 <span style="font-size:12px;color:var(--muted);" id="vb-krevent-meta">— 실시간 DART → 분류·본문 파싱 → 유령 체결(+8/−4/30분/15:20) · 주문 없음</span></h2>
   <div id="vb-krevent-ops" style="font-size:12px;color:var(--muted);margin-bottom:6px;"></div>
   <div style="overflow-x:auto;">
@@ -17651,6 +17673,20 @@ async function loadKrEvent() {
   } catch (e) { /* 조용히 재시도 */ }
 }
 loadKrEvent(); setInterval(loadKrEvent, 30000);
+async function loadCore() {
+  try {
+    const d = await (await fetch('/api/core_shadow')).json();
+    const el = document.getElementById('vb-core');
+    if (!d.available) { el.textContent = '(' + d.reason + ')'; return; }
+    el.innerHTML = d.arms.map(a => {
+      const nav = Number(a.nav); const cls = nav >= 1 ? 'pos' : 'neg';
+      const w = Object.entries(a.weights || {}).map(([k, v]) => k + ' ' + Math.round(v * 100) + '%').join(' · ');
+      return `<div style="padding:4px 0;border-top:1px solid var(--border);">${a.id} <span class="dim">[${a.market} ${a.role}]</span> NAV <b class="${cls}">${nav.toFixed(4)}</b> (${((nav - 1) * 100).toFixed(2)}%) · ${w} · ${a.effective_month} · ${a.last_price_date}</div>`;
+    }).join('');
+  } catch (e) { /* 조용히 재시도 */ }
+}
+loadCore(); setInterval(loadCore, 300000);
+
 
 </script>
 """
