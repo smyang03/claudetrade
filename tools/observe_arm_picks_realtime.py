@@ -111,7 +111,8 @@ def compute_picks(session_date: str) -> list[dict]:
                          # 유령 엔진(③)이 봇 안에서 virtual_books를 import하지 않도록 arm 계약을 여기 박제
                          "book_session_date": key_sd, "tp_pct": float(s.get("tp", vb.TP)) / 100.0,
                          "sl_pct": abs(float(s.get("sl", vb.SL))) / 100.0, "order_krw": float(s["order_krw"]),
-                         "slots": int(s["slots"]), "daily_cap": int(s["daily_cap"])})
+                         "slots": int(s["slots"]), "daily_cap": int(s["daily_cap"]),
+                         "basis": vb.pick_basis(s, c)})
     return rows
 
 

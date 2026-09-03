@@ -17248,10 +17248,18 @@ def api_virtual_books():
                     "asof": book["asof"] if book else None,
                     "contract_hash": s["contract_hash"],
                 })
-            recent = [dict(r) for r in con.execute(
-                "SELECT strategy_id, session_date, ticker, status, exit_reason, "
-                "net_pct, pnl_krw, backfill FROM trades "
-                "ORDER BY session_date DESC, strategy_id LIMIT 40")]
+            recent = []
+            for r in con.execute(
+                    "SELECT strategy_id, session_date, ticker, status, exit_reason, "
+                    "net_pct, pnl_krw, backfill, meta FROM trades "
+                    "ORDER BY session_date DESC, strategy_id LIMIT 40"):
+                row = dict(r)
+                try:
+                    meta = json.loads(row.pop("meta") or "{}")
+                except (TypeError, ValueError):
+                    meta = {}
+                row["basis"] = meta.get("basis") or ""
+                recent.append(row)
         finally:
             con.close()
         return jsonify({
@@ -17451,6 +17459,7 @@ PAGE_VIRTUAL_HTML = """
   <table id="vb-picks" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
     <thead><tr style="color:var(--muted);text-align:right;">
       <th style="text-align:left;padding:6px;">전략</th><th style="text-align:left;">종목</th><th>픽</th>
+      <th style="text-align:left;">픽 근거</th>
       <th>진입가</th><th style="text-align:left;">진입 출처</th><th>현재가</th><th>평가%</th><th>장부</th>
     </tr></thead>
     <tbody></tbody>
@@ -17482,7 +17491,7 @@ PAGE_VIRTUAL_HTML = """
   <table id="vb-trades" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
     <thead><tr style="color:var(--muted);text-align:right;">
       <th style="text-align:left;padding:6px;">세션</th><th style="text-align:left;">전략</th>
-      <th style="text-align:left;">종목</th><th>상태</th><th>출구</th><th>net%</th><th>손익</th><th>구분</th>
+      <th style="text-align:left;">종목</th><th style="text-align:left;">픽 근거</th><th>상태</th><th>출구</th><th>net%</th><th>손익</th><th>구분</th>
     </tr></thead>
     <tbody></tbody>
   </table>
@@ -17518,6 +17527,7 @@ async function loadVirtual() {
         <td style="text-align:left;padding:6px;">${t.session_date}</td>
         <td style="text-align:left;">${t.strategy_id}</td>
         <td style="text-align:left;">${t.ticker}</td>
+        <td style="text-align:left;color:var(--muted);white-space:normal;max-width:420px;">${t.basis || '-'}</td>
         <td>${t.status}</td><td>${t.exit_reason || '-'}</td>
         <td>${t.net_pct === null ? '-' : vbFmt(t.net_pct, '%')}</td>
         <td>${t.pnl_krw === null ? '-' : vbFmt(t.pnl_krw, '원')}</td>
@@ -17536,6 +17546,7 @@ async function loadPicks() {
       <tr style="border-top:1px solid var(--border);text-align:right;">
         <td style="text-align:left;padding:6px;">${p.arm}</td>
         <td style="text-align:left;">${p.ticker}</td><td>${p.pick_pos}</td>
+        <td style="text-align:left;color:var(--muted);white-space:normal;max-width:420px;">${p.basis || '-'}</td>
         <td>${p.entry_used ? Number(p.entry_used).toFixed(2) : '-'}</td>
         <td style="text-align:left;color:var(--muted);">${p.entry_source}</td>
         <td>${p.current ? Number(p.current).toFixed(2) : '-'}</td>

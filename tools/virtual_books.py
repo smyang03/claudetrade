@@ -389,6 +389,11 @@ def load_kr_sessions() -> dict[str, list[dict]]:
             sd, tk = str(row.get("session_date")), str(row.get("ticker"))
             sessions[sd].setdefault(tk, {
                 "ticker": tk, "disc": float(disc), "r2": bool(r2), "r4x": bool(r4 and not r2),
+                # 픽 근거 표시용(판정에는 쓰지 않음)
+                "gap": float(gap) if gap is not None else None,
+                "rv20": float(rv) if rv is not None else None,
+                "chg": float(f["chg"]) if f.get("chg") is not None else None,
+                "from_high20": float(f["from_high20"]) if f.get("from_high20") is not None else None,
             })
     return {sd: list(by.values()) for sd, by in sessions.items()}
 
@@ -538,6 +543,86 @@ def strategy_passers(s: dict, sessions_us: dict, sessions_kr: dict, sd: str,
     return passers
 
 
+# ── 픽 근거(사람이 읽는 한 줄) — 대시보드 열·관측기 원장·trades.meta.basis (2026-09-03) ──
+PICK_LABEL = {
+    "all": "전량", "dvol_desc": "거래대금 큰순", "dvol_asc": "거래대금 작은순",
+    "chg_hi": "덜 빠진 순(낙폭 얕은순)", "ibs_hi": "IBS 높은순(고가 쪽 마감)", "max_lo": "MAX 낮은순",
+    "disc_deep": "할인 깊은순", "cum5_deep": "5일 누적낙폭 깊은순", "ret60_desc": "60일 추세 강한순",
+}
+
+
+def _fmt(v, spec: str, suffix: str = "") -> str:
+    try:
+        return format(float(v), spec) + suffix
+    except (TypeError, ValueError):
+        return "-"
+
+
+def pick_basis(s: dict, c: dict) -> str:
+    """전략 s가 후보 c를 고른 근거 한 줄. 숫자는 신호일 피처(판정 입력이 아니라 표시용)."""
+    label = PICK_LABEL.get(str(s.get("pick")), str(s.get("pick")))
+    uni = s.get("universe")
+    if uni == "kr":
+        rule = "R2(할인≤-25&저변동)" if c.get("r2") else "R4(갭≤-4&할인≤-15)"
+        parts = [f"할인 {_fmt(c.get('disc'), '+.1f', '%')}", f"갭 {_fmt(c.get('gap'), '+.1f', '%')}",
+                 f"전일 {_fmt(c.get('chg'), '+.1f', '%')}", f"rv20 {_fmt(c.get('rv20'), '.1f')}",
+                 f"20일고점 대비 {_fmt(c.get('from_high20'), '+.0f', '%')}", rule, label]
+        return " · ".join(parts)
+    if uni == "slowus":
+        return f"5일 누적 {_fmt(c.get('cum5'), '+.1f', '%')} · {label}"
+    if uni == "lpus":
+        return f"60일 {_fmt(c.get('ret60'), '+.1f', '%')} · {label}"
+    parts = [f"전일 {_fmt(c.get('chg'), '+.1f', '%')}", f"거래대금 {_fmt(c.get('dvol'), '.0f', 'M')}",
+             f"MAX21 {_fmt(c.get('max21'), '.1f')}", "풀 in" if c.get("in_pool") else "풀 wide", label]
+    if s.get("max_floor") is False:
+        parts.append("MAX하한 없음")
+    if s.get("no_earnings"):
+        parts.append("어닝 제외")
+    if s.get("max_passers"):
+        parts.append(f"고밀도 no-trade(>{s['max_passers']})")
+    if s.get("tp") and float(s["tp"]) != float(TP):
+        parts.append(f"TP{int(float(s['tp']))}")
+    return " · ".join(parts)
+
+
+def _feat_compact(c: dict) -> dict:
+    out = {}
+    for k in ("chg", "dvol", "max21", "ibs", "in_pool", "disc", "gap", "rv20", "from_high20", "cum5", "ret60"):
+        v = c.get(k)
+        if isinstance(v, (int, float)):
+            out[k] = round(float(v), 3)
+    return out
+
+
+def backfill_basis(con: sqlite3.Connection, sessions_us: dict, sessions_kr: dict,
+                   sessions_slow: dict, sessions_lp: dict) -> int:
+    """meta.basis가 없는 기존 행에 근거를 소급 박제(표시용, 판정 무관). 멱등."""
+    by_id = {s["id"]: s for s in STRATEGIES}
+    updated = 0
+    for sid, sd, tk, meta in con.execute(
+            "SELECT strategy_id, session_date, ticker, meta FROM trades").fetchall():
+        try:
+            m = json.loads(meta) if meta else {}
+        except ValueError:
+            m = {}
+        if m.get("basis"):
+            continue
+        s = by_id.get(sid)
+        if s is None:
+            continue
+        pool = {"kr": sessions_kr, "slowus": sessions_slow, "lpus": sessions_lp}.get(s["universe"], sessions_us)
+        c = next((x for x in pool.get(sd, []) if str(x.get("ticker")).upper() == str(tk).upper()), None)
+        if c is None:
+            continue
+        m["basis"] = pick_basis(s, c)
+        m["feat"] = _feat_compact(c)
+        con.execute("UPDATE trades SET meta=? WHERE strategy_id=? AND session_date=? AND ticker=?",
+                    (json.dumps(m, ensure_ascii=False), sid, sd, tk))
+        updated += 1
+    con.commit()
+    return updated
+
+
 def strategy_market(s: dict) -> str:
     return {"kr": "KR", "slowus": "SLOW", "lpus": "SLOW"}.get(s["universe"], "US")
 
@@ -598,7 +683,8 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
                        VALUES (?,?,?,?,?,?,?, 'OPEN', ?, ?)""",
                     (s["id"], sd, c["ticker"], entry, s["order_krw"],
                      1 if sd < FORWARD_START else 0, pos, now,
-                     json.dumps(sess_meta, ensure_ascii=False) if sess_meta else None))
+                     json.dumps({**sess_meta, "basis": pick_basis(s, c), "feat": _feat_compact(c)},
+                                ensure_ascii=False)))
                 if con.execute("SELECT changes()").fetchone()[0]:
                     opened += 1
                     open_n += 1
@@ -942,8 +1028,11 @@ def main() -> int:
             overlap_report(con)
         elif cmd == "reconcile":
             return 0 if reconcile(con) else 1
+        elif cmd == "backfill-basis":
+            n = backfill_basis(con, load_sessions(), load_kr_sessions(), load_slow_sessions(), load_lp_sessions())
+            print(f"[VIRTUAL] 픽 근거 소급 박제 {n}건")
         else:
-            print("사용: virtual_books.py [run|report|reconcile] [--no-wait]")
+            print("사용: virtual_books.py [run|report|reconcile|backfill-basis] [--no-wait]")
             return 1
     return 0
 
