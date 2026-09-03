@@ -156,6 +156,7 @@ def test_arm_picks_open_from_ledger_with_dedupe_slots_and_override(phantom_paths
     ])
     out = phantom_book.open_arm_picks_from_ledger(bot, session_date="2026-09-03", price_fn=price_fn, minutes_since_open=10)
     assert out["candidates"] == 6 and out["opened"] == 3
+    assert out["skipped"]["us_live_dvol:SN"] == "live_mirror_bridge_only"   # 원장 경로는 라이브 미러를 만들지 않는다
     assert out["skipped"]["us_wide_chg"] == "override:paused"
     assert out["skipped"]["us_wide_dvol_k3:BBB"] == "slots_full"
     rows = phantom_book.load_positions()
@@ -219,3 +220,22 @@ def test_legacy_selection_alerts_gated(monkeypatch):
     monkeypatch.setattr(tg, "LEGACY_SELECTION_ALERTS", True)
     tg.watchlist_alert("US", "CAUTIOUS", ["AAA"], {"AAA": "r"}, [], trigger="session_open")
     assert len(sent) == 1
+
+
+def test_ledger_only_live_mirror_row_opens_nothing(phantom_paths, tmp_path):
+    bot, price_fn = _eval_bot(price_usd={"SN": 171.0})
+    _ledger_rows(tmp_path, [_pick("us_live_dvol", "SN")])
+    out = phantom_book.open_arm_picks_from_ledger(bot, session_date="2026-09-03", price_fn=price_fn, minutes_since_open=10)
+    assert out["opened"] == 0 and phantom_book.load_positions() == []
+
+
+def test_all_no_quote_does_not_set_entry_mark_and_retries(phantom_paths, tmp_path):
+    bot, _ = _eval_bot()
+    _ledger_rows(tmp_path, [_pick("us_wide_dvol", "AAA")])
+    dead = lambda t: {"price": 0.0}                      # KIS 결손
+    out = phantom_book.open_arm_picks_from_ledger(bot, session_date="2026-09-03", price_fn=dead, minutes_since_open=10)
+    assert out["opened"] == 0 and out["skipped"]["us_wide_dvol:AAA"] == "no_quote"
+    assert not (tmp_path / "state" / "phantom_arm_entry_mark.json").exists()
+    live = lambda t: {"price": 50.0}
+    out2 = phantom_book.open_arm_picks_from_ledger(bot, session_date="2026-09-03", price_fn=live, minutes_since_open=12)
+    assert out2["opened"] == 1 and (tmp_path / "state" / "phantom_arm_entry_mark.json").exists()

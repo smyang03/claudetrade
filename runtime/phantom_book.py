@@ -264,6 +264,11 @@ def open_arm_picks_from_ledger(bot: Any, *, session_date: str, price_fn: Callabl
     opened: list[str] = []
     for r in sorted(rows, key=lambda x: (x["arm"], int(x.get("pick_pos") or 0))):
         arm, t = str(r["arm"]), str(r["ticker"]).upper()
+        if arm == LIVE_MIRROR_ARM:
+            # 라이브 미러는 실제 봇의 REHEARSAL(브리지)만이 진입 근거다. 관측기 원장으로 만들면
+            # 브리지가 BLOCKED(시가 이탈·슬롯·창)한 날에도 유령이 생겨 "실제 봇 결정"이 아니게 된다.
+            summary["skipped"][f"{arm}:{t}"] = "live_mirror_bridge_only"
+            continue
         if arm_state(arm, overrides) != "active":
             summary["skipped"][arm] = "override:" + arm_state(arm, overrides)
             continue
@@ -288,7 +293,11 @@ def open_arm_picks_from_ledger(bot: Any, *, session_date: str, price_fn: Callabl
             opened.append(f"{arm}:{t}")
             open_by_arm[arm] = open_by_arm.get(arm, 0) + 1
     summary["opened"] = len(opened)
-    _set_entry_mark(session_date, len(opened))
+    transient = any(v == "no_quote" for v in summary["skipped"].values())
+    if opened or not transient:
+        _set_entry_mark(session_date, len(opened))   # 시세 결손(no_quote)만 남았으면 다음 틱 재시도
+    else:
+        log.warning(f"[VIRTUAL][phantom ARM ENTRY] {session_date} 시세 결손으로 진입 0 — 다음 틱 재시도")
     log.info(f"[VIRTUAL][phantom ARM ENTRY] {session_date} 후보 {len(rows)} → 진입 {len(opened)} "
              f"(시세 {src}, skip {len(summary['skipped'])})")
     if opened:

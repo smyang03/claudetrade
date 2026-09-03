@@ -164,3 +164,6 @@ state/telegram_send_counter.json
 state/virtual_books_summary_sent.json
 state/phantom_positions.json
 state/phantom_positions.json.tmp
+state/phantom_arm_entry_mark.json
+state/virtual_strategy_overrides.json
+state/virtual_strategy_overrides.json.tmp
