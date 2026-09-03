@@ -112,10 +112,14 @@ class EntrySkipLedgerTest(unittest.TestCase):
         # 옛 신호일인데 봉 없음 = 캐시 미갱신(오늘 09-03 사고의 형태)
         self.assertEqual(vb.classify_entry_skip(s, "2026-09-01", dates), "no_bar_stale")
 
-    def test_same_session_us_arm_is_stale(self):
+    def test_same_session_us_arm_is_stale_only_when_session_complete(self):
         s = {"id": "us_wide_dvol", "universe": "wide"}
         dates = {"2026-09-02": []}
-        self.assertEqual(vb.classify_entry_skip(s, "2026-09-02", dates), "no_bar_stale")
+        # 오래전 세션인데 봉 없음 → 결함
+        self.assertEqual(vb.classify_entry_skip(s, "2026-08-20", dates), "no_bar_stale")
+        # 아직 끝나지 않은 US 세션(오늘 날짜) → 대기 (09-04 00시 수동 실행 64건 오분류 재발 방지)
+        today = (datetime.utcnow() + timedelta(hours=9)).strftime("%Y-%m-%d")
+        self.assertEqual(vb.classify_entry_skip(s, today, dates), "awaiting_session")
 
     def test_record_appends_row(self):
         s = {"id": "us_slow_fallen", "universe": "slowus"}

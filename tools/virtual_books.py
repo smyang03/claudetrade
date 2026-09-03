@@ -823,6 +823,10 @@ def classify_entry_skip(s: dict, sd: str, all_dates: dict) -> str:
     US 당일 진입인데 봉 없음)는 캐시 미갱신/종목 미수집(no_bar_stale, 결함)."""
     if s.get("universe") in _NEXT_SESSION_UNIVERSES and all_dates and sd >= max(all_dates):
         return "awaiting_session"
+    # 당일 진입 universe(US): 세션이 아직 안 끝난 날짜(bar_complete False)는 캐시 결함이 아니라 대기다
+    # (09-04 실측: 00시 수동 실행이 09-03 US 64건을 no_bar_stale로 오분류 → integrity WARN)
+    if strategy_market(s) != "KR" and not bar_complete(sd, "US"):
+        return "awaiting_session"
     return "no_bar_stale"
 
 
