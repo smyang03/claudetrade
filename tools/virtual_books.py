@@ -546,9 +546,16 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
                     sessions_lp: dict[str, list[dict]]) -> int:
     opened = 0
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    try:
+        from runtime.virtual_overrides import load_overrides, arm_state
+        _ov = load_overrides()
+    except Exception:
+        _ov, arm_state = {}, (lambda a, o=None: "active")  # type: ignore
     for s in STRATEGIES:
         if s.get("retired"):
             continue  # 잔여 OPEN 정산만, 신규 진입 없음
+        if arm_state(s["id"], _ov) != "active":
+            continue  # 관제 오버라이드(paused/retired): 신규 진입 없음, 보유분 정산은 계속
         market = strategy_market(s)
         all_dates = {"kr": sessions_kr, "slowus": sessions_slow,
                      "lpus": sessions_lp}.get(s["universe"], sessions_us)

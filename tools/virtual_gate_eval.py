@@ -343,7 +343,13 @@ def run(*, include_backfill: bool, reps: int, seed: int, asof: str | None = None
     if own:
         con = sqlite3.connect(f"file:{vb.BOOK_DB}?mode=ro", uri=True, timeout=30)
     try:
-        strats = [s for s in (strategies or vb.STRATEGIES) if not s.get("retired")]
+        try:
+            from runtime.virtual_overrides import load_overrides, arm_state
+            _ov = load_overrides()
+        except Exception:
+            _ov, arm_state = {}, (lambda a, o=None: "active")  # type: ignore
+        strats = [s for s in (strategies or vb.STRATEGIES)
+                  if not s.get("retired") and arm_state(s["id"], _ov) != "retired"]
         pool = PoolResolver(pool_fn)
         results = {s["id"]: evaluate_strategy(con, s, pool, include_backfill=include_backfill,
                                               reps=reps, rng=rng, asof=asof) for s in strats}

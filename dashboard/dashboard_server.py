@@ -17376,7 +17376,8 @@ def api_phantom_positions():
                      "peak_pnl_pct": p.get("peak_pnl_pct"), "trough_pnl_pct": p.get("trough_pnl_pct"),
                      "held_days": p.get("held_days"), "max_hold": p.get("max_hold"),
                      "entry_session_date": p.get("entry_session_date"), "source": p.get("source_strategy"),
-                     "retro": bool(p.get("retro")), "last_price_at": p.get("last_price_at")})
+                     "retro": bool(p.get("retro")), "last_price_at": p.get("last_price_at"),
+                     "arm": p.get("arm") or "us_live_dvol", "tp_pct": p.get("tp_pct")})
     return jsonify({"available": True, "open": view, "closed": closes[-20:][::-1], "banner": "VIRTUAL — 실주문 아님"})
 
 

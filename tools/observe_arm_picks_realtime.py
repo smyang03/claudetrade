@@ -107,7 +107,11 @@ def compute_picks(session_date: str) -> list[dict]:
             chosen = sorted(passers, key=lambda c: vb.strategy_pick_key(s, c))[: int(s["daily_cap"])]
         for pos, c in enumerate(chosen, start=1):
             rows.append({"session_date": session_date, "arm": s["id"], "ticker": str(c["ticker"]).upper(),
-                         "pick_pos": pos, "universe": s["universe"], "n_passers": len(passers)})
+                         "pick_pos": pos, "universe": s["universe"], "n_passers": len(passers),
+                         # 유령 엔진(③)이 봇 안에서 virtual_books를 import하지 않도록 arm 계약을 여기 박제
+                         "book_session_date": key_sd, "tp_pct": float(s.get("tp", vb.TP)) / 100.0,
+                         "sl_pct": abs(float(s.get("sl", vb.SL))) / 100.0, "order_krw": float(s["order_krw"]),
+                         "slots": int(s["slots"]), "daily_cap": int(s["daily_cap"])})
     return rows
 
 

@@ -49,3 +49,5 @@ sh.Run py & " """ & base & "observe_leader_pullback.py""", 0, True
 sh.Run py & " """ & base & "virtual_books.py"" run", 0, True
 ' ⑨ virtual_gate_eval — 승격 게이트 검정(개정 1) JSON 박제. forward만, 판정은 N 충족 후 사람이 읽는다.
 sh.Run py & " """ & base & "virtual_gate_eval.py""", 0, True
+' ⑩ phantom_vs_daily — 유령 청산 vs 일봉 정산 괴리 원장(실행 비용 계수). 유령 엔진: runtime/phantom_book
+sh.Run py & " """ & base & "phantom_vs_daily.py""", 0, True

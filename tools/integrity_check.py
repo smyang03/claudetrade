@@ -345,6 +345,33 @@ def check_sleeve_contract_exits(now: datetime) -> list[dict[str, Any]]:
     }]
 
 
+def check_arm_picks_ledger(now: datetime) -> list[dict[str, Any]]:
+    """22:36 관측기(arm_picks_realtime) 원장 결손 감시 (2026-09-03). 스케줄 작업엔 하트비트가 없다 —
+    후보 풀의 최신 US 세션에 픽 원장 행이 없으면 WARN(관측기 미실행 또는 실패)."""
+    name = "실시간 픽 원장(22:36 관측기)"
+    pool = ROOT / "data" / "analysis" / "us_swing_shadow.db"
+    ledger = ROOT / "data" / "shadow" / "arm_picks_realtime.jsonl"
+    try:
+        con = sqlite3.connect(f"file:{pool}?mode=ro", uri=True, timeout=5)
+        try:
+            latest = con.execute("SELECT MAX(session_date) FROM candidate_pool_all").fetchone()[0]
+        finally:
+            con.close()
+    except Exception as exc:
+        return [{"check": name, "kind": "phantom", "status": WARN, "detail": f"풀 조회 실패: {exc}", "note": ""}]
+    if not latest:
+        return [{"check": name, "kind": "phantom", "status": OK, "detail": "후보 풀 없음", "note": ""}]
+    n = 0
+    if ledger.exists():
+        for line in ledger.read_text(encoding="utf-8").splitlines():
+            if f'"session_date": "{latest}"' in line:
+                n += 1
+    if n == 0:
+        return [{"check": name, "kind": "phantom", "status": WARN,
+                 "detail": f"최신 세션 {latest} 픽 원장 0행 — 관측기 미실행/실패 또는 밴드 후보 0", "note": "schtasks claudetrade_arm_picks_realtime 확인"}]
+    return [{"check": name, "kind": "phantom", "status": OK, "detail": f"세션 {latest} 픽 {n}행", "note": ""}]
+
+
 def check_phantom_isolation(now: datetime) -> list[dict[str, Any]]:
     """유령 포지션 격리 검사 (2026-09-03, 설계 정본 §0-2).
 
@@ -760,6 +787,7 @@ def run_integrity_check(ml_db: Path, event_db: Path, audit_db: Path, window_days
     checks += check_sleeve_contract_exits(now)
     checks += check_contract_env_drift(now)
     checks += check_phantom_isolation(now)
+    checks += check_arm_picks_ledger(now)
     checks += check_max_hold_drift(now)
     checks += check_canonical_session_alignment(ml_db, event_db, now)
     checks += check_price_currency_consistency(ml_db, now)

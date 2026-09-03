@@ -26861,7 +26861,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             return
         now_ts = time.time()
         last = float(getattr(self, "_phantom_eval_last_ts", 0.0) or 0.0)
-        if now_ts - last < 60.0:
+        if now_ts - last < 150.0:  # ③ 전 arm(수십 종목) 시세 부하 — 150초 스로틀
             return
         self._phantom_eval_last_ts = now_ts
         try:
@@ -26871,6 +26871,14 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 created = phantom_book.ensure_from_handoff_ledger(self)
                 if created:
                     log.info(f"[VIRTUAL][phantom] 핸드오프 원장에서 소급 생성 {created}건")
+            # ③ 전 arm 유령 진입: 22:36 관측기 원장 → 창(개장+5~45분) 안에서 KIS 호가로 1회
+            try:
+                from preopen.scheduler import regular_open_dt as _ro
+                session = str(self._current_session_date_str("US") or "")
+                mins = (datetime.now(KST) - _ro("US", session)).total_seconds() / 60.0
+                phantom_book.open_arm_picks_from_ledger(self, session_date=session, minutes_since_open=mins)
+            except Exception as _arm_exc:
+                log.warning(f"[VIRTUAL][phantom] arm 진입 단계 실패(무시): {_arm_exc}")
             phantom_book.evaluate(self)
         except Exception as exc:
             log.warning(f"[VIRTUAL][phantom] 평가 실패(무시): {exc}")
