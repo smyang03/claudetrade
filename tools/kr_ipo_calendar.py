@@ -3,269 +3,215 @@
 """KR 공모주(IPO) 캘린더·균등배정 shadow 원장 (read-only, 2026-09-06).
 
 근거: 한국 개인에게 남은 구조적 우위 후보 — 균등배정은 소액 청약증거금으로 참여 가능하고 첫날 수익 분포가 양의 꼬리를 가진다는 가설.
-자동 청약은 API가 없어 반자동이므로, 여기서는 **원장과 캘린더**를 만든다: 어떤 IPO가 언제 청약·상장하는지, 공모가 대비 첫날 시가·종가·고가가
-어땠는지(1주 균등배정 가정). 판정은 표본이 쌓인 뒤 분포로 한다(평균이 아니라 양의 꼬리·손실 비율).
+자동 청약은 API가 없어 반자동이므로 여기서는 **원장과 캘린더**만 만든다. 판정은 표본이 쌓인 뒤 분포로(평균이 아니라 양의 꼬리·손실 비율).
 
-소스: DART list.json pblntf_ty=C(발행공시). IPO = 정정 아닌 '증권신고서(지분증권)' 중 접수 시점 stock_code가 비어 있는 법인(미상장).
-      같은 corp_code의 후속 '[발행조건확정]증권신고서' / '증권발행실적보고서' / '투자설명서'로 공모가·청약일·상장예정일을 보강.
-      본문(document.xml)에서 정규식으로 공모가·희망밴드·청약기일·상장(예정)일 추출. 상장 후 종목코드는 dart_corp_codes.json 역매핑.
-가격: data/price/kr(없으면 ensure_kr_price_cache로 KIS 일봉 생성) 첫 봉 = 상장일.
-출력: data/shadow/kr_ipo_ledger.jsonl (corp_code 멱등) · data/shadow/kr_ipo_calendar.json (대시보드용 upcoming/recent/stats)
-사용: python tools/kr_ipo_calendar.py --months 12          # 이력 구축(본문 fetch ~ 수 분)
-      python tools/kr_ipo_calendar.py --recent-days 45      # 관측 체인용(신규·갱신만)
+소스(09-06 실측): 38커뮤니케이션 신규상장 표(기업명·신규상장일·공모가·시초가·첫날종가, 페이지네이션) — DART 발행공시 본문 파싱은
+공모가 오인식·상장일 결측·종목코드 미해결이라 1차 소스로 부적합(같은 날 실측 19건 중 0건 정산). 외부 표는 생존편향 없음(상장 전부),
+단 '현재가'는 지연·수정주가 미반영이므로 쓰지 않는다. 출처·수집 시각을 행마다 남긴다.
+계산: 1주 균등배정 가정 · 공모가 대비 시초가(ret_open) · 첫날종가(ret_close). 시초가 매도 = 청약 참여자가 잡을 수 있는 몫.
+출력: data/shadow/kr_ipo_ledger.jsonl ((기업명,상장일) 멱등) · data/shadow/kr_ipo_calendar.json (대시보드용 upcoming/recent/stats)
+사용: python tools/kr_ipo_calendar.py --pages 8      # 이력(약 20행/페이지, 8페이지 ≈ 12개월)
+      python tools/kr_ipo_calendar.py --pages 2      # 관측 체인용(신규·예정 갱신)
 """
 from __future__ import annotations
 
 import argparse
-import csv
 import json
-import os
 import re
 import statistics as st
 import sys
 import time
-import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-from dotenv import load_dotenv  # noqa: E402
-
-load_dotenv(ROOT / ".env.live", override=False)
-
 LEDGER = ROOT / "data" / "shadow" / "kr_ipo_ledger.jsonl"
 CAL = ROOT / "data" / "shadow" / "kr_ipo_calendar.json"
-CORP = ROOT / "data" / "dart_corp_codes.json"
-KR_DIR = ROOT / "data" / "price" / "kr"
 KST = timezone(timedelta(hours=9))
-_NUM = r"([\d,]{3,})"
+SRC = "38.co.kr/fund/index.htm?o=nw"
+UA = {"User-Agent": "Mozilla/5.0"}
 
 
-def _key() -> str:
-    return str(os.getenv("DART_API_KEY", "") or "").strip()
+def _fetch(url: str, timeout: float = 15.0) -> str:
+    req = urllib.request.Request(url, headers=UA)
+    return urllib.request.urlopen(req, timeout=timeout).read().decode("euc-kr", "ignore")
 
 
-def _get(url: str, timeout: float = 20.0, tries: int = 3) -> bytes:
-    for i in range(tries):
-        try:
-            return urllib.request.urlopen(url, timeout=timeout).read()
-        except Exception:
-            time.sleep(1.5 * (i + 1))
-    return b""
-
-
-def dart_list(ty: str, bgn: str, end: str, *, max_pages: int = 400) -> list[dict]:
-    out = []
-    page, total = 1, 1
-    while page <= total and page <= max_pages:
-        q = urllib.parse.urlencode({"crtfc_key": _key(), "bgn_de": bgn, "end_de": end, "pblntf_ty": ty, "page_no": page, "page_count": 100})
-        raw = _get(f"https://opendart.fss.or.kr/api/list.json?{q}")
-        try:
-            d = json.loads(raw)
-        except ValueError:
-            break
-        if d.get("status") != "000":
-            break
-        total = int(d.get("total_page", 1))
-        out.extend(d.get("list", []) or [])
-        page += 1
-        time.sleep(0.12)
-    return out
-
-
-def doc_text(rcept_no: str, max_chars: int = 40000) -> str:
-    from runtime.kr_event_lane import dart_document_text
-    return dart_document_text(rcept_no, max_chars=max_chars)
+def _table_rows(html: str, key: str) -> list[list[str]]:
+    for tb in re.findall(r"<table.*?</table>", html, flags=re.S):
+        if key in tb:
+            out = []
+            for tr in re.findall(r"<tr.*?</tr>", tb, flags=re.S):
+                cells = [re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", c)).replace("&nbsp;", "").strip()
+                         for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, flags=re.S)]
+                if any(cells):
+                    out.append(cells)
+            return out
+    return []
 
 
 def _num(s: str | None) -> float | None:
+    if s is None:
+        return None
+    s = s.replace(",", "").replace("%", "").strip()
     try:
-        return float(str(s).replace(",", "")) if s else None
+        return float(s)
     except ValueError:
         return None
 
 
-def _kdate(s: str) -> str | None:
-    m = re.search(r"(\d{4})\s*[.년\-/]\s*(\d{1,2})\s*[.월\-/]\s*(\d{1,2})", s)
-    return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}" if m else None
+def is_spac(name: str) -> bool:
+    return ("스팩" in name) or ("기업인수목적" in name)
 
 
-def parse_ipo_doc(text: str) -> dict:
-    """공모가(확정/희망밴드)·청약기일·상장예정일. 서식이 제각각이라 관대한 정규식 + 원문 조각을 남긴다."""
-    f: dict = {}
-    m = re.search(r"확정\s*공모가(?:액)?[^\d]{0,40}" + _NUM, text) or re.search(r"공모가(?:액)?\s*\(?확정\)?[^\d]{0,40}" + _NUM, text)
-    f["offer_price"] = _num(m.group(1)) if m else None
-    m = re.search(r"희망\s*공모가(?:액)?[^\d]{0,40}" + _NUM + r"\s*원?\s*[~∼\-]\s*" + _NUM, text)
-    f["band"] = [_num(m.group(1)), _num(m.group(2))] if m else None
-    if f["offer_price"] is None:
-        m = re.search(r"(?:모집|매출)\s*가액[^\d]{0,30}" + _NUM, text)
-        f["offer_price_guess"] = _num(m.group(1)) if m else None
-    m = re.search(r"청약\s*기일[^\d]{0,20}(\d{4}\s*[.년\-/]\s*\d{1,2}\s*[.월\-/]\s*\d{1,2})[^\d]{0,12}(\d{4}\s*[.년\-/]\s*\d{1,2}\s*[.월\-/]\s*\d{1,2})?", text)
-    f["subscription"] = [_kdate(m.group(1)), _kdate(m.group(2)) if m.group(2) else None] if m else None
-    m = re.search(r"(?:상장\s*예정일|신규\s*상장일|상장일)[^\d]{0,20}(\d{4}\s*[.년\-/]\s*\d{1,2}\s*[.월\-/]\s*\d{1,2})", text)
-    f["listing_date"] = _kdate(m.group(1)) if m else None
-    m = re.search(r"(?:일반\s*청약자|일반투자자)[^\d%]{0,60}(\d{1,3}(?:\.\d+)?)\s*%", text)
-    f["retail_pct"] = _num(m.group(1)) if m else None
-    f["spac"] = ("기업인수목적" in text[:3000]) or ("스팩" in text[:3000])
-    return f
-
-
-def load_bars(ticker: str) -> list[tuple[str, float, float, float, float]]:
-    p = KR_DIR / f"kr_{ticker}.csv"
-    rows = []
-    if p.exists():
-        with p.open(encoding="utf-8-sig") as fh:
-            for r in csv.reader(fh):
-                if r and r[0][:2] == "20" and len(r) >= 6:
-                    try:
-                        rows.append((r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4])))
-                    except ValueError:
-                        pass
-    return sorted(rows)
-
-
-def outcome(ticker: str, listing_date: str | None, offer: float | None, *, ensure: bool = True) -> dict:
-    if not ticker or not offer:
-        return {}
-    bars = load_bars(ticker)
-    if not bars and ensure:
-        try:
-            from tools.ensure_kr_price_cache import ensure as _ensure
-            _ensure([ticker], verbose=False)
-            bars = load_bars(ticker)
-        except Exception:
-            bars = []
-    if not bars:
-        return {"no_bars": True}
-    # 상장일 봉: listing_date가 있으면 그 날(또는 직후), 없으면 첫 봉
-    idx = 0
-    if listing_date:
-        idx = next((i for i, b in enumerate(bars) if b[0] >= listing_date), None)
-        if idx is None:
-            return {"no_bars": True}
-    d0 = bars[idx]
-    out = {"day1_date": d0[0], "day1_open": d0[1], "day1_high": d0[2], "day1_close": d0[4],
-           "ret_open_pct": round((d0[1] / offer - 1) * 100, 2), "ret_high_pct": round((d0[2] / offer - 1) * 100, 2),
-           "ret_close_pct": round((d0[4] / offer - 1) * 100, 2)}
-    if idx + 4 < len(bars):
-        out["ret_d5_close_pct"] = round((bars[idx + 4][4] / offer - 1) * 100, 2)
-    if idx + 19 < len(bars):
-        out["ret_d20_close_pct"] = round((bars[idx + 19][4] / offer - 1) * 100, 2)
+def parse_listing_rows(rows: list[list[str]]) -> list[dict]:
+    """헤더: 기업명 | 신규상장일 | 현재가 | 전일비 | 공모가 | 공모가대비 | 시초가 | 시초/공모 | 첫날종가"""
+    out = []
+    for r in rows:
+        if len(r) < 9 or not re.match(r"\d{4}/\d{2}/\d{2}", r[1] or ""):
+            continue
+        name = r[0].strip()
+        d = r[1].replace("/", "-")
+        offer, opn, close = _num(r[4]), _num(r[6]), _num(r[8])
+        pending = ("예정" in (r[8] or "")) or opn is None
+        row = {"corp_name": name, "listing_date": d, "offer_price": offer, "day1_open": opn, "day1_close": close,
+               "spac": is_spac(name), "status": "upcoming" if pending else "listed", "source": SRC}
+        if offer and opn:
+            row["ret_open_pct"] = round((opn / offer - 1) * 100, 2)
+        if offer and close:
+            row["ret_close_pct"] = round((close / offer - 1) * 100, 2)
+        if opn and close:
+            row["ret_open_to_close_pct"] = round((close / opn - 1) * 100, 2)
+        out.append(row)
     return out
 
 
-def build(months: int | None, recent_days: int | None, *, ensure_prices: bool = True, verbose: bool = True) -> dict:
-    today = date.today()
-    if months:
-        bgn = (today - timedelta(days=30 * months)).strftime("%Y%m%d")
-    else:
-        bgn = (today - timedelta(days=recent_days or 45)).strftime("%Y%m%d")
-    end = today.strftime("%Y%m%d")
-    # 3개월 창으로 나눠 수집(DART 창 제한)
-    rows: list[dict] = []
-    b = datetime.strptime(bgn, "%Y%m%d").date()
-    while b <= today:
-        e = min(b + timedelta(days=89), today)
-        rows += dart_list("C", b.strftime("%Y%m%d"), e.strftime("%Y%m%d"))
-        b = e + timedelta(days=1)
-    corp = json.load(open(CORP, encoding="utf-8")) if CORP.exists() else {}
-    code2stock = {v: k for k, v in corp.items()} if isinstance(corp, dict) else {}
-    by_corp: dict[str, list[dict]] = {}
-    for r in rows:
-        by_corp.setdefault(r.get("corp_code", ""), []).append(r)
-    ipo_corps = {}
-    for cc, rs in by_corp.items():
-        first = [r for r in rs if "증권신고서(지분증권)" in r.get("report_nm", "") and "정정" not in r.get("report_nm", "")]
-        if not first:
-            continue
-        first.sort(key=lambda r: r["rcept_dt"])
-        f0 = first[0]
-        if (f0.get("stock_code") or "").strip():
-            continue  # 상장사 유상증자
-        ipo_corps[cc] = {"corp_code": cc, "corp_name": f0.get("corp_name"), "filed_at": f0["rcept_dt"], "rcept_no": f0["rcept_no"],
-                         "filings": sorted([{"rcept_no": r["rcept_no"], "report_nm": r["report_nm"], "rcept_dt": r["rcept_dt"],
-                                             "stock_code": (r.get("stock_code") or "").strip()} for r in rs], key=lambda x: x["rcept_dt"])}
-    # 기존 원장(멱등 갱신)
-    old = {}
+def fetch_listings(pages: int, *, sleep: float = 0.4) -> list[dict]:
+    out = []
+    for p in range(1, pages + 1):
+        try:
+            html = _fetch(f"http://www.38.co.kr/html/fund/index.htm?o=nw&page={p}")
+        except Exception as exc:
+            print(f"  page {p} 실패: {str(exc)[:80]}")
+            break
+        rows = parse_listing_rows(_table_rows(html, "신규상장일"))
+        if not rows:
+            break
+        out += rows
+        time.sleep(sleep)
+    return out
+
+
+def fetch_schedule() -> list[dict]:
+    """청약 일정 표(있으면). 헤더에 '희망공모가'·'주간사'가 있는 표를 찾는다. 없으면 빈 리스트(상장예정은 신규상장 표의 '예정' 행으로 대체)."""
+    try:
+        html = _fetch("http://www.38.co.kr/html/fund/index.htm?o=k")
+    except Exception:
+        return []
+    for key in ("희망공모가", "주간사", "공모주일정"):
+        rows = _table_rows(html, key)
+        rows = [r for r in rows if len(r) >= 4 and not r[0].startswith("[")]
+        if len(rows) >= 2:
+            hdr = rows[0]
+            out = []
+            for r in rows[1:]:
+                rec = {"raw": r, "corp_name": r[0]}
+                for i, h in enumerate(hdr[:len(r)]):
+                    if "일정" in h or "청약" in h:
+                        rec["subscription"] = r[i]
+                    elif "확정" in h:
+                        rec["offer_price"] = _num(r[i])
+                    elif "희망" in h:
+                        rec["band"] = r[i]
+                    elif "경쟁률" in h:
+                        rec["competition"] = r[i]
+                    elif "주간사" in h or "주관" in h:
+                        rec["underwriter"] = r[i]
+                rec["spac"] = is_spac(r[0])
+                out.append(rec)
+            return out
+    return []
+
+
+def build(pages: int) -> dict:
+    now = datetime.now(KST)
+    listings = fetch_listings(pages)
+    sched = fetch_schedule()
+    old: dict[tuple, dict] = {}
     if LEDGER.exists():
         for line in LEDGER.read_text(encoding="utf-8").splitlines():
             try:
-                r = json.loads(line); old[r["corp_code"]] = r
+                r = json.loads(line); old[(r["corp_name"], r["listing_date"])] = r
             except (ValueError, KeyError):
                 pass
-    out_rows = []
-    for cc, info in sorted(ipo_corps.items(), key=lambda kv: kv[1]["filed_at"]):
-        prev = old.get(cc, {})
-        # 본문: 발행조건확정 > 최신 증권신고서(지분증권)/투자설명서 순으로 공모가 확정본 우선
-        confirm = [f for f in info["filings"] if "발행조건확정" in f["report_nm"]]
-        base = [f for f in info["filings"] if "증권신고서(지분증권)" in f["report_nm"] or "투자설명서" in f["report_nm"]]
-        pick = (confirm[-1] if confirm else (base[-1] if base else None))
-        fields = prev.get("fields") or {}
-        if pick and (prev.get("parsed_rcept_no") != pick["rcept_no"]):
-            text = doc_text(pick["rcept_no"])
-            fields = parse_ipo_doc(text) if text else fields
-            time.sleep(0.15)
-        stock = next((f["stock_code"] for f in reversed(info["filings"]) if f["stock_code"]), "") or code2stock.get(cc, "") or prev.get("stock_code", "")
-        offer = fields.get("offer_price") or fields.get("offer_price_guess")
-        listing = fields.get("listing_date")
-        status = "listed" if stock else ("subscribed" if confirm else "filed")
-        res = prev.get("outcome") or {}
-        if stock and offer and (not res or res.get("no_bars")) and (not listing or listing <= today.isoformat()):
-            res = outcome(stock, listing, offer, ensure=ensure_prices)
-        row = {"corp_code": cc, "corp_name": info["corp_name"], "stock_code": stock, "filed_at": info["filed_at"], "status": status,
-               "parsed_rcept_no": pick["rcept_no"] if pick else prev.get("parsed_rcept_no"), "fields": fields, "offer_price": offer,
-               "listing_date": listing, "spac": bool(fields.get("spac")), "outcome": res, "n_filings": len(info["filings"]),
-               "updated_at": datetime.now(KST).isoformat(timespec="seconds")}
-        out_rows.append(row)
-        if verbose:
-            o = res or {}
-            print(f"  {info['filed_at']} {info['corp_name']:<18} {stock or '------'} {status:<10} 공모가 {offer} 상장 {listing} "
-                  f"{'SPAC ' if row['spac'] else ''}첫날 시가 {o.get('ret_open_pct')} 종가 {o.get('ret_close_pct')}")
-    # 원장: 기존 + 갱신(멱등)
-    merged = {**old, **{r["corp_code"]: r for r in out_rows}}
+    for r in listings:
+        r["collected_at"] = now.isoformat(timespec="seconds")
+        k = (r["corp_name"], r["listing_date"])
+        prev = old.get(k)
+        if prev and prev.get("status") == "listed" and r.get("status") == "listed":
+            r["first_seen_at"] = prev.get("first_seen_at", r["collected_at"])
+        else:
+            r["first_seen_at"] = (prev or {}).get("first_seen_at", r["collected_at"])
+        old[k] = r
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
     with LEDGER.open("w", encoding="utf-8") as fh:
-        for r in sorted(merged.values(), key=lambda x: x["filed_at"]):
+        for r in sorted(old.values(), key=lambda x: x["listing_date"]):
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-    return summarize(list(merged.values()))
+    return summarize(list(old.values()), sched, now)
 
 
-def summarize(rows: list[dict]) -> dict:
-    today = date.today().isoformat()
-    listed = [r for r in rows if r.get("outcome") and not r["outcome"].get("no_bars") and not r.get("spac")]
-    upcoming = [r for r in rows if r.get("status") != "listed" or (r.get("listing_date") and r["listing_date"] > today)]
-    upcoming.sort(key=lambda r: (r.get("listing_date") or "9999", r["filed_at"]))
-    recent = sorted(listed, key=lambda r: r["outcome"].get("day1_date", ""), reverse=True)[:25]
-    stats = {}
-    if listed:
-        op = [r["outcome"]["ret_open_pct"] for r in listed]; cl = [r["outcome"]["ret_close_pct"] for r in listed]
-        stats = {"n": len(listed), "open_mean": round(st.mean(op), 2), "open_median": round(st.median(op), 2),
-                 "open_pos_pct": round(sum(1 for v in op if v > 0) / len(op) * 100, 1),
-                 "open_ge50_pct": round(sum(1 for v in op if v >= 50) / len(op) * 100, 1),
-                 "close_mean": round(st.mean(cl), 2), "close_median": round(st.median(cl), 2),
-                 "close_pos_pct": round(sum(1 for v in cl if v > 0) / len(cl) * 100, 1),
-                 "close_le_minus10_pct": round(sum(1 for v in cl if v <= -10) / len(cl) * 100, 1)}
-    cal = {"generated_at": datetime.now(KST).isoformat(timespec="seconds"), "n_total": len(rows), "n_listed": len(listed),
-           "n_spac": sum(1 for r in rows if r.get("spac")), "stats": stats,
-           "upcoming": [{k: r.get(k) for k in ("corp_name", "stock_code", "status", "offer_price", "listing_date", "filed_at", "spac")} | {"band": (r.get("fields") or {}).get("band"), "subscription": (r.get("fields") or {}).get("subscription")} for r in upcoming[:30]],
-           "recent": [{k: r.get(k) for k in ("corp_name", "stock_code", "offer_price", "listing_date")} | {k: r["outcome"].get(k) for k in ("day1_date", "ret_open_pct", "ret_high_pct", "ret_close_pct", "ret_d5_close_pct")} for r in recent],
-           "note": "1주 균등배정 가정·공모가 대비. 청약 자동화 없음(반자동). SPAC 제외. 판정은 분포(양의 꼬리·손실 비율)로."}
+def summarize(rows: list[dict], sched: list[dict], now: datetime) -> dict:
+    today = now.date().isoformat()
+    since = (now.date() - timedelta(days=365)).isoformat()
+    listed = [r for r in rows if r.get("status") == "listed" and not r.get("spac") and r.get("ret_open_pct") is not None and r["listing_date"] >= since]
+    spacs = [r for r in rows if r.get("status") == "listed" and r.get("spac") and r.get("ret_open_pct") is not None and r["listing_date"] >= since]
+    upcoming = sorted([r for r in rows if r.get("status") == "upcoming" or r["listing_date"] > today], key=lambda r: r["listing_date"])
+    recent = sorted(listed, key=lambda r: r["listing_date"], reverse=True)[:25]
+
+    def _stats(sel):
+        if not sel:
+            return {}
+        op = [r["ret_open_pct"] for r in sel]; cl = [r.get("ret_close_pct") for r in sel if r.get("ret_close_pct") is not None]
+        return {"n": len(sel), "open_mean": round(st.mean(op), 2), "open_median": round(st.median(op), 2),
+                "open_pos_pct": round(sum(1 for v in op if v > 0) / len(op) * 100, 1),
+                "open_ge50_pct": round(sum(1 for v in op if v >= 50) / len(op) * 100, 1),
+                "open_le_minus10_pct": round(sum(1 for v in op if v <= -10) / len(op) * 100, 1),
+                "close_mean": round(st.mean(cl), 2) if cl else None, "close_median": round(st.median(cl), 2) if cl else None,
+                "close_pos_pct": round(sum(1 for v in cl if v > 0) / len(cl) * 100, 1) if cl else None,
+                "close_le_minus10_pct": round(sum(1 for v in cl if v <= -10) / len(cl) * 100, 1) if cl else None,
+                "quarters": _by_quarter(sel)}
+
+    def _by_quarter(sel):
+        q: dict[str, list[float]] = {}
+        for r in sel:
+            d = r["listing_date"]; key = f"{d[:4]}Q{(int(d[5:7]) - 1) // 3 + 1}"
+            q.setdefault(key, []).append(r["ret_open_pct"])
+        return {k: {"n": len(v), "open_mean": round(st.mean(v), 1), "pos_pct": round(sum(1 for x in v if x > 0) / len(v) * 100, 0)} for k, v in sorted(q.items())}
+
+    cal = {"generated_at": now.isoformat(timespec="seconds"), "source": SRC, "n_total": len(rows), "n_listed": len(listed), "n_spac": len(spacs),
+           "stats": _stats(listed), "stats_spac": _stats(spacs),
+           "upcoming": [{k: r.get(k) for k in ("corp_name", "listing_date", "offer_price", "spac", "status")} for r in upcoming[:20]],
+           "schedule": sched[:20],
+           "recent": [{k: r.get(k) for k in ("corp_name", "listing_date", "offer_price", "day1_open", "day1_close", "ret_open_pct", "ret_close_pct", "ret_open_to_close_pct")} | {"day1_date": r["listing_date"]} for r in recent],
+           "note": "1주 균등배정 가정·공모가 대비 시초가/첫날종가(38커뮤니케이션 신규상장 표, 지연 표). 청약 자동화 없음(반자동). SPAC 분리. 판정은 분포(양의 꼬리·손실 비율)로. 청약증거금·배정 미달·수수료 미반영."}
     CAL.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
     return cal
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--months", type=int, default=None)
-    ap.add_argument("--recent-days", type=int, default=45)
-    ap.add_argument("--no-ensure", action="store_true", help="가격 CSV 생성(KIS) 생략")
+    ap.add_argument("--pages", type=int, default=2)
     a = ap.parse_args()
-    if not _key():
-        print("DART_API_KEY 없음"); return 1
-    cal = build(a.months, a.recent_days, ensure_prices=not a.no_ensure)
-    print(json.dumps({k: cal[k] for k in ("n_total", "n_listed", "n_spac", "stats")}, ensure_ascii=False))
+    cal = build(a.pages)
+    s = cal.get("stats") or {}
+    print(f"[IPO] 법인 {cal['n_total']} · 12개월 상장(비SPAC) {cal['n_listed']} · SPAC {cal['n_spac']} · 예정 {len(cal['upcoming'])}")
+    if s:
+        print(f"  시초가/공모가: 평균 {s['open_mean']:+.1f}% 중앙 {s['open_median']:+.1f}% 양수 {s['open_pos_pct']}% ≥+50% {s['open_ge50_pct']}% ≤−10% {s['open_le_minus10_pct']}%")
+        print(f"  첫날종가/공모가: 평균 {s['close_mean']:+.1f}% 중앙 {s['close_median']:+.1f}% 양수 {s['close_pos_pct']}% ≤−10% {s['close_le_minus10_pct']}%")
+        print("  분기:", s["quarters"])
+    for r in cal["upcoming"][:8]:
+        print(f"  예정 {r['listing_date']} {r['corp_name']}{' (SPAC)' if r['spac'] else ''} 공모가 {r['offer_price']}")
     print(f"saved {LEDGER} / {CAL}")
     return 0
 

@@ -50,6 +50,10 @@
   탈락(SKIP) 공시 포함. 수익률은 감지가 대비(`ret_*_pct`)와 **판단가 대비 종가(`ret_decide_to_close_pct`) = 우리가 실제로 잡을 수 있는 몫**.
   본문 원문은 `data/shadow/kr_event_docs/{rcept_no}.txt`에 보관해 같은 표본으로 규칙만 vs 규칙+LLM을 나중에 재현한다.
   이 원장이 답할 질문: 판단 완료 전에만 오르는가(속도 게임) / 규칙과 LLM 결과가 같은가 / 장중 효과 없고 며칠 드리프트만 있는가 / 비용 민감도.
+- **NXT 시간외 단계(09-06, 커밋 b3755f0)**: KIS NX 시세 프로브 통과 → 15:41 정규장 강제 청산·관측 마감 후 NXT 단계(계약 `kr_event_v1_nxt`:
+  진입 마감 19:40·EOD 19:55·NX 거래량 0 SKIP), 20:01 종료, venue 태그, schtask 제한 PT12H. 상세·근거는 `new_axes_prep_20260906.md` §1.
+- **코퍼레이트 액션(09-06)**: `share_cancellation`(주식소각결정)·`stock_split`(주식분할결정) 분류·관측 추가. 12개월 재생: 소각 n=338 다음날 시가→5일
+  −1.06%(갭 +1.5% 뒤 되돌림) → 일봉 arm 없음, 관측만. 분할 n=23 판정 불가.
 - **유령 vs 일봉 대조 기준(09-06 수리, Codex 리뷰)**: `phantom_vs_daily`가 유령 gross − 장부 net을 적고 있었고 청산 사유 명칭이 달라(실전
   `strategy_fixed_take_profit` vs 장부 `TP`) 같은 익절이 불일치로 집계됐다. 유령에도 장부 왕복 비용(US 0.50/KR 0.25)을 차감한 `phantom_net_pct`로
   비교하고 사유는 `REASON_MAP`(TP/SL/BE/D_MAT)으로 정규화. `--rebuild`로 재산출: ANF net 차 0.544 → 0.045, 사유 일치.
