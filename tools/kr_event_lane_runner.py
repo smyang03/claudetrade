@@ -81,35 +81,69 @@ def open_positions_from_ledger(session_date: str) -> list[dict]:
     return [dict(v) for k, v in opened.items() if k not in closed]
 
 
-def cycle(session_date: str, st: dict, *, dry: bool = False) -> dict:
+def _age_sec(iso: str | None, now: datetime) -> float:
+    try:
+        return (now - datetime.fromisoformat(str(iso))).total_seconds()
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | None = None) -> dict:
+    now = now or kel.now_kst()
     seen: set = set(st.get("seen", []))
+    pending: dict = dict(st.get("pending") or {})  # rcept_no → {item, first_seen, attempts, last_try} (본문 지연 재시도)
     open_pos = open_positions_from_ledger(session_date)
     new_today = sum(1 for r in kel.read_jsonl(kel.PHANTOM_LEDGER)
                     if r.get("event") == "OPEN" and r.get("session_date") == session_date)
     items = kel.dart_list_today(session_date)
     fresh = [i for i in items if i.get("rcept_no") and i["rcept_no"] not in seen]
     entered = 0
-    for it in sorted(fresh, key=lambda x: x["rcept_no"]):
-        seen.add(it["rcept_no"])
-        row = kel.process_disclosure(it, session_date=session_date, quote_fn=_quote,
-                                     open_n=len(open_pos), new_today=new_today)
+    retried = 0
+
+    def _handle(it: dict, row: dict) -> None:
+        nonlocal new_today, entered
         if row.get("kind") in ("supply_contract", "bonus_issue", "buyback") and it.get("stock_code"):
             _ensure_cache_async(it["stock_code"])  # 일봉 arm(F6/F7)이 다음날 진입할 수 있게 CSV 선제 생성
         if row.get("decision") == "ENTER" and not dry:
             pos = kel.open_phantom({**it, **row}, row["quote"], notify=_notify)
             if pos:
                 open_pos.append(pos); new_today += 1; entered += 1
-        elif row.get("decision") in ("OBSERVE",) and row.get("kind") in ("buyback", "major_holder_change", "prelim_earnings"):
-            pass  # 관측만 — 원장에 남음
+
+    # 1) 본문 대기 중인 공시 재시도 (간격 DOC_RETRY_GAP_SEC, 최대 DOC_RETRY_MAX_SEC 뒤 확정)
+    for rno, p in sorted(pending.items()):
+        if _age_sec(p.get("last_try"), now) < kel.DOC_RETRY_GAP_SEC:
+            continue
+        final = _age_sec(p.get("first_seen"), now) >= kel.DOC_RETRY_MAX_SEC
+        row = kel.process_disclosure(p["item"], session_date=session_date, quote_fn=_quote,
+                                     open_n=len(open_pos), new_today=new_today, first_seen=p.get("first_seen"),
+                                     doc_attempts=int(p.get("attempts", 0)), final=final)
+        retried += 1
+        if row.get("decision") == "PENDING":
+            pending[rno] = {**p, "attempts": int(p.get("attempts", 0)) + 1, "last_try": kel._iso(now)}
+            continue
+        pending.pop(rno, None)
+        _handle(p["item"], row)
+    # 2) 신규 공시
+    for it in sorted(fresh, key=lambda x: x["rcept_no"]):
+        seen.add(it["rcept_no"])
+        row = kel.process_disclosure(it, session_date=session_date, quote_fn=_quote,
+                                     open_n=len(open_pos), new_today=new_today, first_seen=kel._iso(now))
+        if row.get("decision") == "PENDING":
+            pending[it["rcept_no"]] = {"item": it, "first_seen": row["ts_detected"], "attempts": 1, "last_try": kel._iso(now)}
+            print(f"[KR-EVENT] 본문 대기 {it.get('corp_name')} {it['rcept_no']} — 재시도 예약", flush=True)
+            continue
+        _handle(it, row)
     # 유령 평가
     open_pos, closed = kel.evaluate_phantoms(open_pos, _quote, notify=_notify)
     st["seen"] = sorted(seen)[-3000:]
+    st["pending"] = pending
     st["session_date"] = session_date
     st["last_cycle_at"] = kel._iso()
     st["open_n"] = len(open_pos)
     kel.save_state(st)
-    _heartbeat({"session_date": session_date, "open_n": len(open_pos), "seen_n": len(seen)})
-    return {"fresh": len(fresh), "entered": entered, "closed": len(closed), "open_n": len(open_pos)}
+    _heartbeat({"session_date": session_date, "open_n": len(open_pos), "seen_n": len(seen), "pending_n": len(pending)})
+    return {"fresh": len(fresh), "entered": entered, "closed": len(closed), "open_n": len(open_pos),
+            "pending": len(pending), "retried": retried}
 
 
 def loop(poll_sec: float) -> int:
@@ -122,7 +156,15 @@ def loop(poll_sec: float) -> int:
             st = {"session_date": sd, "seen": []}
         hhmm = now.strftime("%H:%M")
         if now.weekday() >= 5 or hhmm >= "15:41":
-            # 장 종료: 남은 유령 EOD 청산 후 종료
+            # 장 종료: 본문 대기 건은 SKIP 확정(원장 누락 방지) → 남은 유령 EOD 청산 후 종료
+            for rno, p in sorted((st.get("pending") or {}).items()):
+                try:
+                    kel.process_disclosure(p["item"], session_date=sd, quote_fn=_quote, open_n=0, new_today=0,
+                                           first_seen=p.get("first_seen"), doc_attempts=int(p.get("attempts", 0)), final=True)
+                except Exception as exc:
+                    print(f"[KR-EVENT] pending finalize error {rno}: {exc}", flush=True)
+            st["pending"] = {}
+            kel.save_state(st)
             open_pos = open_positions_from_ledger(sd)
             if open_pos:
                 kel.evaluate_phantoms(open_pos, _quote, notify=_notify)

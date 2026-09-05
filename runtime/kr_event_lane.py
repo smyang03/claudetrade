@@ -69,6 +69,9 @@ KINDS = {
     "rights_offering": ("유상증자결정", "유상증자 결정"),
 }
 ENTER_KINDS = ("supply_contract", "bonus_issue")
+# 본문 지연 재시도 (09-04 실측: 감지 직후 document.xml 빈 응답 → 4건 ratio_missing 오판. 같은 문서가 수십 분 뒤엔 정상)
+DOC_RETRY_GAP_SEC = 60      # 재시도 최소 간격
+DOC_RETRY_MAX_SEC = 900     # 최초 감지 후 이 시간까지 재시도, 넘기면 SKIP doc_unavailable_after_retry 확정
 # 종류별 출구 (09-03 DART 12개월 재생: 공급계약은 당일 반응이 전부 → 30분 게임 / 무상증자는 다음날 시가로도
 # 5일 +7.4%·20일 +12.4% 드리프트 → 장중엔 EOD까지 들고, 다음날부터는 일봉 arm(kr_bonus_issue)이 이어받는다)
 KIND_EXIT = {
@@ -415,14 +418,20 @@ def basis_text(kind: str, fields: dict[str, Any], llm: dict[str, Any]) -> str:
 def process_disclosure(item: dict[str, Any], *, session_date: str, quote_fn: Callable[[str], dict[str, Any] | None],
                        open_n: int, new_today: int, doc_fn: Callable[[str], str] | None = None,
                        llm_fn: Callable[[str, str, dict], dict] | None = None,
-                       contract: dict[str, Any] = CONTRACT) -> dict[str, Any]:
-    """공시 1건 → 분류·본문·판단·원장. 반환 행에 decision 포함."""
+                       contract: dict[str, Any] = CONTRACT, first_seen: str | None = None,
+                       doc_attempts: int = 0, final: bool = False) -> dict[str, Any]:
+    """공시 1건 → 분류·본문·판단·원장. 반환 행에 decision 포함.
+
+    본문(document.xml)이 아직 비어 있으면(09-04 실측: 감지 직후 4건 전부 빈 본문 → ratio_missing 오판) 원장에 쓰지 않고
+    decision=PENDING을 돌려준다. 러너가 DOC_RETRY_GAP_SEC 간격으로 재시도하고, DOC_RETRY_MAX_SEC를 넘기면 final=True로
+    호출해 SKIP doc_unavailable로 확정 기록한다. first_seen은 최초 감지 시각(재시도 시 지연 계산 기준)."""
     t0 = now_kst()
     kind, corr = classify_title(item.get("report_nm", ""))
     row: dict[str, Any] = {"authority": AUTHORITY, "contract": contract["version"], "session_date": session_date,
                            "rcept_no": item.get("rcept_no"), "stock_code": item.get("stock_code"),
                            "corp_name": item.get("corp_name"), "report_nm": item.get("report_nm"), "kind": kind,
-                           "is_correction": corr, "ts_detected": _iso(t0), "event_time_note": "DART list에 접수시각 없음 — 감지시각을 이벤트 시각으로 씀(v1)"}
+                           "is_correction": corr, "ts_detected": first_seen or _iso(t0),
+                           "event_time_note": "DART list에 접수시각 없음 — 감지시각을 이벤트 시각으로 씀(v1)"}
     if kind == "other" or not item.get("stock_code"):
         row.update({"decision": "IGNORE", "reason": "not_target_or_no_stock", "ts_decided": _iso()})
         _append(SIGNAL_LEDGER, row)
@@ -431,6 +440,16 @@ def process_disclosure(item: dict[str, Any], *, session_date: str, quote_fn: Cal
     llm: dict[str, Any] = {"available": False}
     if kind in ENTER_KINDS and not corr:
         text = (doc_fn or dart_document_text)(item["rcept_no"])
+        row["doc_attempts"] = doc_attempts + 1
+        if not text.strip():
+            if not final:
+                row.update({"decision": "PENDING", "reason": "doc_unavailable", "ts_decided": _iso()})
+                return row  # 원장에 쓰지 않음 — 러너가 재시도
+            row.update({"fields": {}, "llm": llm, "quote": None, "liq": {}, "decision": "SKIP",
+                        "reason": "doc_unavailable_after_retry", "ts_decided": _iso(),
+                        "latency_sec": round((now_kst() - t0).total_seconds(), 2), "basis": basis_text(kind, {}, llm)})
+            _append(SIGNAL_LEDGER, row)
+            return row
         fields = parse_supply_contract(text) if kind == "supply_contract" else parse_bonus_issue(text)
         row["ts_parsed"] = _iso()
         if kind == "supply_contract" and fields.get("ratio_pct") is not None and fields["ratio_pct"] >= contract["supply_ratio_min_pct"]:

@@ -34,8 +34,15 @@
   무상증자 EOD(안전 +15/−7). 오버나이트 없음. 왕복 0.21% 차감.
 - 원장: `data/shadow/kr_event_signals.jsonl`(본 공시 전부·분류·판단·지연초), `kr_event_phantom.jsonl`(OPEN/CLOSE).
   하트비트 `state/kr_event_lane_heartbeat.json`. 텔레그램 critical(진입·청산). 대시보드 `/virtual` 패널 + `/api/kr_event_lane`.
-- 알려진 한계 v1: DART list엔 접수시각이 없어 감지시각을 이벤트 시각으로 씀(KIND 연동 후속). 시세는 네이버 폴링(호가·체결 미반영).
-  LLM 모델은 env `KR_EVENT_LLM_MODEL`(기본 저장소 규약).
+- 알려진 한계 v1: DART list엔 접수시각이 없어 감지시각을 이벤트 시각으로 씀(KIND 연동 후속). 시세는 네이버 폴링(호가·체결 미반영,
+  09-04 실측 open/high/low 0 반환). LLM 모델은 env `KR_EVENT_LLM_MODEL`(기본 저장소 규약).
+- **본문 지연 재시도(09-06 수리)**: 09-04 첫 실행에서 공급계약 4건(인콘·톱텍·APS이노베이션·세보엠이씨)이 감지 직후 document.xml 빈 응답으로
+  전 필드 None → `ratio_missing` 오판(지연 0.24초 = 본문을 못 받은 증거). 수십 분 뒤 같은 문서는 정상 파싱(11.56/14.97/8.52/6.00%).
+  이제 빈 본문은 원장에 쓰지 않고 PENDING → 러너가 60초 간격으로 재시도, 최초 감지 후 15분 넘기면 `doc_unavailable_after_retry`로 확정,
+  장 종료(15:41)에도 남은 대기 건은 확정 기록. ts_detected는 최초 감지 시각 유지(지연 계산 기준), `doc_attempts` 기록.
+- **유령 vs 일봉 대조 기준(09-06 수리, Codex 리뷰)**: `phantom_vs_daily`가 유령 gross − 장부 net을 적고 있었고 청산 사유 명칭이 달라(실전
+  `strategy_fixed_take_profit` vs 장부 `TP`) 같은 익절이 불일치로 집계됐다. 유령에도 장부 왕복 비용(US 0.50/KR 0.25)을 차감한 `phantom_net_pct`로
+  비교하고 사유는 `REASON_MAP`(TP/SL/BE/D_MAT)으로 정규화. `--rebuild`로 재산출: ANF net 차 0.544 → 0.045, 사유 일치.
 
 ### 2-2. 일봉 arm 2종 (`tools/virtual_books.py`, 가상 북·게이트·관제·픽 근거 자동 포함)
 | arm | universe | 규칙 | 계약 | 자본 |

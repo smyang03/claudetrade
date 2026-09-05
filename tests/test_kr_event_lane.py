@@ -161,5 +161,100 @@ class ProcessTest(unittest.TestCase):
         self.assertEqual(len(k.read_jsonl(k.SIGNAL_LEDGER)), 2)
 
 
+class DocRetryTest(unittest.TestCase):
+    """본문 지연 재시도 (09-06): 감지 직후 document.xml이 비면 원장에 쓰지 않고 PENDING, 러너가 재시도 후 확정."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        d = Path(self.tmp.name)
+        self.orig = (k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH)
+        k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH = d / "ph.jsonl", d / "sig.jsonl", d / "state.json"
+        self.item = {"rcept_no": "20260904900109", "stock_code": "083640", "corp_name": "인콘",
+                     "report_nm": "단일판매" + _MID + "공급계약체결"}
+
+    def tearDown(self):
+        k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH = self.orig
+        self.tmp.cleanup()
+
+    def test_empty_doc_is_pending_not_ledger(self):
+        row = k.process_disclosure(self.item, session_date="2026-09-04", quote_fn=lambda t: {"price": 1087.0},
+                                   open_n=0, new_today=0, doc_fn=lambda r: "")
+        self.assertEqual(row["decision"], "PENDING")
+        self.assertEqual(row["reason"], "doc_unavailable")
+        self.assertEqual(row["doc_attempts"], 1)
+        self.assertEqual(k.read_jsonl(k.SIGNAL_LEDGER), [])
+
+    def test_retry_keeps_first_seen_and_parses(self):
+        row = k.process_disclosure(self.item, session_date="2026-09-04", quote_fn=lambda t: {"price": 1087.0},
+                                   open_n=0, new_today=0, doc_fn=lambda r: DOC, first_seen="2026-09-04T11:09:11+09:00",
+                                   doc_attempts=1)
+        self.assertEqual(row["ts_detected"], "2026-09-04T11:09:11+09:00")
+        self.assertEqual(row["doc_attempts"], 2)
+        self.assertEqual(row["fields"]["ratio_pct"], 6.0)
+        self.assertTrue(row["reason"].startswith("ratio_6.0_lt_30"))
+        self.assertEqual(len(k.read_jsonl(k.SIGNAL_LEDGER)), 1)
+
+    def test_final_records_skip(self):
+        row = k.process_disclosure(self.item, session_date="2026-09-04", quote_fn=lambda t: None,
+                                   open_n=0, new_today=0, doc_fn=lambda r: "", final=True, doc_attempts=9)
+        self.assertEqual(row["decision"], "SKIP")
+        self.assertEqual(row["reason"], "doc_unavailable_after_retry")
+        self.assertEqual(row["doc_attempts"], 10)
+        self.assertEqual(len(k.read_jsonl(k.SIGNAL_LEDGER)), 1)
+
+    def _runner(self, doc_fn, quote):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import kr_event_lane_runner as rn
+        orig = (k.dart_list_today, k.dart_document_text, rn._quote, rn.HEARTBEAT, rn._ensure_cache_async)
+        k.dart_list_today = lambda sd: [self.item]
+        k.dart_document_text = doc_fn
+        rn._quote = lambda t: quote
+        rn.HEARTBEAT = Path(self.tmp.name) / "hb.json"
+        rn._ensure_cache_async = lambda t: None
+
+        def restore():
+            k.dart_list_today, k.dart_document_text, rn._quote, rn.HEARTBEAT, rn._ensure_cache_async = orig
+        return rn, restore
+
+    def test_runner_cycle_retries_until_doc_arrives(self):
+        from datetime import datetime, timezone
+        docs = {"text": ""}
+        rn, restore = self._runner(lambda r, **kw: docs["text"], {"price": 1087.0, "source": "t"})
+        try:
+            t0 = datetime(2026, 9, 4, 11, 9, 11, tzinfo=timezone(timedelta(hours=9)))
+            st = {"session_date": "2026-09-04", "seen": []}
+            r = rn.cycle("2026-09-04", st, now=t0)
+            self.assertEqual((r["pending"], r["retried"]), (1, 0))
+            self.assertEqual(k.read_jsonl(k.SIGNAL_LEDGER), [])
+            r = rn.cycle("2026-09-04", st, now=t0 + timedelta(seconds=30))   # 간격 미달 → 재시도 안 함
+            self.assertEqual((r["fresh"], r["pending"], r["retried"]), (0, 1, 0))
+            docs["text"] = DOC
+            r = rn.cycle("2026-09-04", st, now=t0 + timedelta(seconds=70))
+            self.assertEqual((r["pending"], r["retried"]), (0, 1))
+            rows = k.read_jsonl(k.SIGNAL_LEDGER)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["ts_detected"], k._iso(t0))
+            self.assertEqual(rows[0]["doc_attempts"], 2)
+            self.assertTrue(rows[0]["reason"].startswith("ratio_6.0_lt_30"))
+            self.assertEqual(st["pending"], {})
+        finally:
+            restore()
+
+    def test_runner_cycle_finalizes_after_max_wait(self):
+        from datetime import datetime, timezone
+        rn, restore = self._runner(lambda r, **kw: "", None)
+        try:
+            t0 = datetime(2026, 9, 4, 11, 9, 11, tzinfo=timezone(timedelta(hours=9)))
+            st = {"session_date": "2026-09-04", "seen": []}
+            rn.cycle("2026-09-04", st, now=t0)
+            r = rn.cycle("2026-09-04", st, now=t0 + timedelta(seconds=k.DOC_RETRY_MAX_SEC + 1))
+            self.assertEqual(r["pending"], 0)
+            rows = k.read_jsonl(k.SIGNAL_LEDGER)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["reason"], "doc_unavailable_after_retry")
+        finally:
+            restore()
+
+
 if __name__ == "__main__":
     unittest.main()
