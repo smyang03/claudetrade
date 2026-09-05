@@ -190,6 +190,8 @@ class DocRetryTest(unittest.TestCase):
                                    doc_attempts=1)
         self.assertEqual(row["ts_detected"], "2026-09-04T11:09:11+09:00")
         self.assertEqual(row["doc_attempts"], 2)
+        self.assertGreater(row["latency_sec"], 600)          # 총 지연 = 최초 감지 기준(본문 대기 포함)
+        self.assertLess(row["proc_sec"], 5)                   # 이번 호출 처리 시간은 별도
         self.assertEqual(row["fields"]["ratio_pct"], 6.0)
         self.assertTrue(row["reason"].startswith("ratio_6.0_lt_30"))
         self.assertEqual(len(k.read_jsonl(k.SIGNAL_LEDGER)), 1)
@@ -236,6 +238,7 @@ class DocRetryTest(unittest.TestCase):
             self.assertEqual(rows[0]["ts_detected"], k._iso(t0))
             self.assertEqual(rows[0]["doc_attempts"], 2)
             self.assertTrue(rows[0]["reason"].startswith("ratio_6.0_lt_30"))
+            self.assertEqual(rows[0]["latency_sec"], 70.0)   # 감지 11:09:11 → 판단 11:10:21
             self.assertEqual(st["pending"], {})
         finally:
             restore()

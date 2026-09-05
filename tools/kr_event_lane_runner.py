@@ -120,7 +120,7 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
         final = _age_sec(p.get("first_seen"), now) >= kel.DOC_RETRY_MAX_SEC
         row = kel.process_disclosure(p["item"], session_date=session_date, quote_fn=_quote,
                                      open_n=len(open_pos), new_today=new_today, first_seen=p.get("first_seen"),
-                                     doc_attempts=int(p.get("attempts", 0)), final=final)
+                                     doc_attempts=int(p.get("attempts", 0)), final=final, now=now)
         retried += 1
         if row.get("decision") == "PENDING":
             pending[rno] = {**p, "attempts": int(p.get("attempts", 0)) + 1, "last_try": kel._iso(now)}
@@ -131,7 +131,7 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
     for it in sorted(fresh, key=lambda x: x["rcept_no"]):
         seen.add(it["rcept_no"])
         row = kel.process_disclosure(it, session_date=session_date, quote_fn=_quote,
-                                     open_n=len(open_pos), new_today=new_today, first_seen=kel._iso(now))
+                                     open_n=len(open_pos), new_today=new_today, first_seen=kel._iso(now), now=now)
         if row.get("decision") == "PENDING":
             pending[it["rcept_no"]] = {"item": it, "first_seen": row["ts_detected"], "attempts": 1, "last_try": kel._iso(now)}
             print(f"[KR-EVENT] 본문 대기 {it.get('corp_name')} {it['rcept_no']} — 재시도 예약", flush=True)

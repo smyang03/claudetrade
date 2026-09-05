@@ -487,6 +487,17 @@ def basis_text(kind: str, fields: dict[str, Any], llm: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
+def _latencies(row: dict[str, Any], t0: datetime, now: datetime | None) -> dict[str, float]:
+    """latency_sec = 최초 감지(ts_detected)→판단 총 지연(본문 재시도 대기 포함), proc_sec = 이번 호출의 처리 시간.
+    09-06 수리: 재시도 호출 시작 기준이라 10분 기다린 건도 몇 초로 찍혔다(Codex 리뷰 2차)."""
+    t_end = now_kst() if now is None else now
+    try:
+        t_first = datetime.fromisoformat(str(row.get("ts_detected")))
+    except (TypeError, ValueError):
+        t_first = t0
+    return {"latency_sec": round((t_end - t_first).total_seconds(), 2), "proc_sec": round((t_end - t0).total_seconds(), 2)}
+
+
 def process_disclosure(item: dict[str, Any], *, session_date: str, quote_fn: Callable[[str], dict[str, Any] | None],
                        open_n: int, new_today: int, doc_fn: Callable[[str], str] | None = None,
                        llm_fn: Callable[[str, str, dict], dict] | None = None,
@@ -519,7 +530,7 @@ def process_disclosure(item: dict[str, Any], *, session_date: str, quote_fn: Cal
                 return row  # 원장에 쓰지 않음 — 러너가 재시도
             row.update({"fields": {}, "llm": llm, "quote": None, "liq": {}, "decision": "SKIP",
                         "reason": "doc_unavailable_after_retry", "ts_decided": _iso(),
-                        "latency_sec": round((now_kst() - t0).total_seconds(), 2), "basis": basis_text(kind, {}, llm)})
+                        **_latencies(row, t0, now), "basis": basis_text(kind, {}, llm)})
             _append(SIGNAL_LEDGER, row)
             return row
         fields = parse_supply_contract(text) if kind == "supply_contract" else parse_bonus_issue(text)
@@ -533,6 +544,6 @@ def process_disclosure(item: dict[str, Any], *, session_date: str, quote_fn: Cal
                               now=t0)
     row.update({"fields": fields, "llm": llm, "quote": quote, "liq": {k: v for k, v in liq.items() if k != "bars"},
                 "decision": decision, "reason": reason, "ts_decided": _iso(),
-                "latency_sec": round((now_kst() - t0).total_seconds(), 2), "basis": basis_text(kind, fields, llm)})
+                **_latencies(row, t0, now), "basis": basis_text(kind, fields, llm)})
     _append(SIGNAL_LEDGER, row)
     return row
