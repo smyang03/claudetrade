@@ -15,6 +15,8 @@ sys.path.insert(0, str(ROOT))
 
 from runtime import kr_event_lane as k  # noqa: E402
 
+k.DOC_DIR = Path(tempfile.mkdtemp()) / "kr_event_docs"  # 본문 보관은 임시 디렉터리로 (저장소 오염 방지)
+
 DOC = ("유한양행/단일판매" + _MID + "공급계약체결/(2026.09.01) 1. 판매" + _MID + "공급계약 구분 상품공급 - 체결계약명 원료의약품(API) 공급계약 "
        "2. 계약내역 계약금액(원) 131,074,406,400 최근매출액(원) 2,186,637,586,358 매출액대비(%) 6.0 대규모법인여부 해당 "
        "3. 계약상대 글로벌 제약사 - 회사와의 관계 - 4. 판매" + _MID + "공급지역 미정 5. 계약기간 시작일 2026-09-01 종료일 2028-05-31 "
@@ -393,6 +395,77 @@ class RelationThreeStateTest(unittest.TestCase):
         self.assertFalse(f["related_party"])
         self.assertEqual(k.decide("supply_contract", False, f, {"available": False}, {"price": 10100.0},
                                   {"prev_close": 10000.0, "dvol20_krw": 5e9}), ("ENTER", "rules_pass"))
+
+
+class ObservationLedgerTest(unittest.TestCase):
+    """09-06 수리 4: 3시점 관측 원장 — 감지·본문·판단 시점 가격 + 5분/30분/15:20/종가 결과, 탈락 공시 포함, 본문 보관."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        d = Path(self.tmp.name)
+        self.orig = (k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH, k.OBS_LEDGER, k.DOC_DIR)
+        k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH = d / "ph.jsonl", d / "sig.jsonl", d / "state.json"
+        k.OBS_LEDGER, k.DOC_DIR = d / "obs.jsonl", d / "docs"
+        self.item = {"rcept_no": "77", "stock_code": "000100", "corp_name": "유한양행", "report_nm": "단일판매" + _MID + "공급계약체결"}
+
+    def tearDown(self):
+        k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH, k.OBS_LEDGER, k.DOC_DIR = self.orig
+        self.tmp.cleanup()
+
+    def test_rejected_disclosure_is_observed_with_three_timestamps_and_outcomes(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import kr_event_lane_runner as rn
+        from datetime import datetime, timezone
+        tz = timezone(timedelta(hours=9)); t0 = datetime(2026, 9, 7, 10, 0, 0, tzinfo=tz)
+        docs = {"text": ""}; px = {"v": 10000.0}
+        orig = (k.dart_list_today, k.dart_document_text, rn._quote, rn.HEARTBEAT, rn._ensure_cache_async)
+        k.dart_list_today = lambda sd: [self.item]
+        k.dart_document_text = lambda r, **kw: docs["text"]
+        rn._quote = lambda t: {"price": px["v"], "source": "t"}
+        rn.HEARTBEAT = Path(self.tmp.name) / "hb.json"; rn._ensure_cache_async = lambda t: None
+        try:
+            st = {"session_date": "2026-09-07", "seen": []}
+            rn.cycle("2026-09-07", st, now=t0)                       # 본문 없음 → PENDING, 감지가 10000 기록
+            self.assertEqual(st["obs"]["77"]["px_detect"], 10000.0)
+            self.assertIsNone(st["obs"]["77"]["decision"])
+            docs["text"] = DOC; px["v"] = 10100.0
+            rn.cycle("2026-09-07", st, now=t0 + timedelta(seconds=70))  # 본문 확보·판단(6% → SKIP), 판단가 10100
+            o = st["obs"]["77"]
+            self.assertEqual(o["decision"], "SKIP"); self.assertEqual(o["px_decide"], 10100.0)
+            self.assertEqual(o["t_doc"], k._iso(t0 + timedelta(seconds=70)))
+            self.assertEqual(o["fields"]["ratio_pct"], 6.0)
+            self.assertTrue((k.DOC_DIR / "77.txt").exists())        # 본문 보관 → 나중에 LLM 재현
+            px["v"] = 10300.0
+            rn.cycle("2026-09-07", st, now=t0 + timedelta(minutes=6))   # 5분 결과
+            self.assertEqual(st["obs"]["77"]["out"]["px_5m"], 10300.0)
+            self.assertNotIn("px_30m", st["obs"]["77"]["out"])
+            px["v"] = 10050.0
+            rn.cycle("2026-09-07", st, now=t0 + timedelta(minutes=31))  # 30분 결과
+            self.assertEqual(st["obs"]["77"]["out"]["px_30m"], 10050.0)
+            px["v"] = 9900.0
+            rn.cycle("2026-09-07", st, now=t0.replace(hour=15, minute=21))  # 15:20 결과
+            self.assertEqual(st["obs"]["77"]["out"]["px_1520"], 9900.0)
+            self.assertFalse(k.OBS_LEDGER.exists())                  # 아직 원장 기록 전
+            px["v"] = 9950.0
+            written = rn._obs_fill(st["obs"], rn._quote, t0.replace(hour=15, minute=41), session_end=True)
+            self.assertEqual(len(written), 1); self.assertEqual(st["obs"], {})
+            rows = k.read_jsonl(k.OBS_LEDGER)
+            out = rows[0]["out"]
+            self.assertEqual(out["px_close"], 9950.0)
+            self.assertAlmostEqual(out["ret_5m_pct"], 3.0, places=3)         # 감지가 대비
+            self.assertAlmostEqual(out["ret_close_pct"], -0.5, places=3)
+            self.assertAlmostEqual(out["ret_decide_to_close_pct"], -1.485, places=3)  # 판단가 대비 = 우리가 잡을 수 있는 몫
+        finally:
+            k.dart_list_today, k.dart_document_text, rn._quote, rn.HEARTBEAT, rn._ensure_cache_async = orig
+
+    def test_non_target_kinds_not_observed(self):
+        obs = {}
+        sys.path.insert(0, str(ROOT / "tools"))
+        import kr_event_lane_runner as rn
+        rn._obs_start(obs, {"rcept_no": "1", "stock_code": "000100"}, {"kind": "rights_offering"}, "2026-09-07", k.now_kst())
+        rn._obs_start(obs, {"rcept_no": "2", "stock_code": "000100"}, {"kind": "supply_contract", "is_correction": True}, "2026-09-07", k.now_kst())
+        rn._obs_start(obs, {"rcept_no": "3", "stock_code": "000100"}, {"kind": "buyback", "quote": {"price": 5.0}}, "2026-09-07", k.now_kst())
+        self.assertEqual(list(obs), ["3"])
 
 
 if __name__ == "__main__":

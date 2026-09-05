@@ -40,6 +40,11 @@ SIGNAL_LEDGER = ROOT / "data" / "shadow" / "kr_event_signals.jsonl"
 PHANTOM_LEDGER = ROOT / "data" / "shadow" / "kr_event_phantom.jsonl"
 STATE_PATH = ROOT / "state" / "kr_event_lane_state.json"
 KR_PRICE_DIR = ROOT / "data" / "price" / "kr"
+# 3시점 관측 원장(09-06, Codex 리뷰 2차 연구 설계): 감지·본문 확보·판단 완료 시점 가격 + 5분/30분/15:20/종가 결과, 탈락 공시 포함
+OBS_LEDGER = ROOT / "data" / "shadow" / "kr_event_observations.jsonl"
+DOC_DIR = ROOT / "data" / "shadow" / "kr_event_docs"      # 본문 원문 보관 → 나중에 같은 표본으로 규칙만 vs 규칙+LLM 재현
+OBS_KINDS = ("supply_contract", "bonus_issue", "buyback")
+OBS_HORIZONS_MIN = (5, 30)
 
 CONTRACT = {
     "version": "kr_event_v1",
@@ -317,6 +322,17 @@ def decide(kind: str, is_correction: bool, fields: dict[str, Any], llm: dict[str
 
 
 # ── 원장 ─────────────────────────────────────────────────────────────────────
+def save_doc_text(rcept_no: str, text: str) -> None:
+    """본문 원문 보관(멱등). 실패는 조용히 — 판단 경로를 막지 않는다."""
+    try:
+        DOC_DIR.mkdir(parents=True, exist_ok=True)
+        p = DOC_DIR / f"{rcept_no}.txt"
+        if not p.exists():
+            p.write_text(text, encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _append(path: Path, row: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with _LOCK, path.open("a", encoding="utf-8") as fh:
@@ -527,6 +543,8 @@ def process_disclosure(item: dict[str, Any], *, session_date: str, quote_fn: Cal
         if not text.strip():
             if not final:
                 row.update({"decision": "PENDING", "reason": "doc_unavailable", "ts_decided": _iso()})
+                if doc_attempts == 0:
+                    row["quote"] = quote_fn(item["stock_code"])  # 감지 시점 가격(관측 원장 px_detect) — 첫 시도만
                 return row  # 원장에 쓰지 않음 — 러너가 재시도
             row.update({"fields": {}, "llm": llm, "quote": None, "liq": {}, "decision": "SKIP",
                         "reason": "doc_unavailable_after_retry", "ts_decided": _iso(),
@@ -534,7 +552,8 @@ def process_disclosure(item: dict[str, Any], *, session_date: str, quote_fn: Cal
             _append(SIGNAL_LEDGER, row)
             return row
         fields = parse_supply_contract(text) if kind == "supply_contract" else parse_bonus_issue(text)
-        row["ts_parsed"] = _iso()
+        row["ts_parsed"] = _iso(now) if now else _iso()
+        save_doc_text(item["rcept_no"], text)
         if kind == "supply_contract" and fields.get("ratio_pct") is not None and fields["ratio_pct"] >= contract["supply_ratio_min_pct"]:
             llm = (llm_fn or llm_judge)(kind, text, fields)
             row["ts_classified"] = _iso()

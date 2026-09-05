@@ -85,6 +85,65 @@ def load_open_positions(session_date: str, st: dict) -> list[dict]:
     return [state.get(rno) or ledger[rno] for rno in ledger]
 
 
+# ── 3시점 관측 원장 (탈락 공시 포함) ─────────────────────────────────────────
+def _obs_start(obs: dict, it: dict, row: dict, session_date: str, now: datetime) -> None:
+    """대상 종류 공시를 처음 봤을 때 감지 시점 가격을 적는다(PENDING이든 확정이든)."""
+    rno = it["rcept_no"]
+    if rno in obs or row.get("kind") not in kel.OBS_KINDS or row.get("is_correction"):
+        return
+    q = row.get("quote") or {}
+    obs[rno] = {"rcept_no": rno, "stock_code": it.get("stock_code"), "corp_name": it.get("corp_name"), "kind": row.get("kind"),
+                "session_date": session_date, "t_detect": row.get("ts_detected") or kel._iso(now),
+                "px_detect": q.get("price"), "t_doc": None, "px_doc": None, "t_decide": None, "px_decide": None,
+                "decision": None, "reason": None, "fields": {}, "out": {}}
+
+
+def _obs_decide(obs: dict, rno: str, row: dict) -> None:
+    o = obs.get(rno)
+    if not o or row.get("decision") == "PENDING":
+        return
+    q = row.get("quote") or {}
+    px = q.get("price")
+    o.update({"t_doc": row.get("ts_parsed"), "px_doc": px, "t_decide": row.get("ts_decided"), "px_decide": px,
+              "decision": row.get("decision"), "reason": row.get("reason"),
+              "fields": {k: (row.get("fields") or {}).get(k) for k in ("ratio_pct", "amount_krw", "related_party", "ratio_per_share")},
+              "latency_sec": row.get("latency_sec"), "doc_attempts": row.get("doc_attempts")})
+    if o["px_detect"] is None:
+        o["px_detect"] = px
+
+
+def _obs_fill(obs: dict, quote_fn, now: datetime, *, session_end: bool = False) -> list[dict]:
+    """만기 지난 결과 칸 채우기. 15:20 이후 px_1520, 장 종료(session_end)에 px_close를 채우고 원장에 쓴 뒤 상태에서 제거."""
+    done = []
+    eod = now.replace(hour=15, minute=20, second=0, microsecond=0)
+    for rno, o in list(obs.items()):
+        t0 = datetime.fromisoformat(o["t_detect"])
+        need = [f"px_{h}m" for h in kel.OBS_HORIZONS_MIN if f"px_{h}m" not in o["out"] and now >= t0 + timedelta(minutes=h)]
+        if now >= eod and "px_1520" not in o["out"]:
+            need.append("px_1520")
+        if session_end and "px_close" not in o["out"]:
+            need.append("px_close")
+        if not need:
+            continue
+        q = quote_fn(o["stock_code"]) if o.get("stock_code") else None
+        px = float(q["price"]) if q and q.get("price") else None
+        for k in need:
+            if px is not None or session_end:
+                o["out"][k] = px
+                o["out"][f"t_{k[3:]}"] = kel._iso(now)
+        if session_end:
+            base = o.get("px_detect"); dec = o.get("px_decide")
+            for k in ("px_5m", "px_30m", "px_1520", "px_close"):
+                v = o["out"].get(k)
+                o["out"][f"ret_{k[3:]}_pct"] = round((v / base - 1.0) * 100.0, 3) if v and base else None
+            v = o["out"].get("px_close")
+            o["out"]["ret_decide_to_close_pct"] = round((v / dec - 1.0) * 100.0, 3) if v and dec else None
+            o["written_at"] = kel._iso(now)
+            kel._append(kel.OBS_LEDGER, o)
+            done.append(obs.pop(rno))
+    return done
+
+
 def _age_sec(iso: str | None, now: datetime) -> float:
     try:
         return (now - datetime.fromisoformat(str(iso))).total_seconds()
@@ -96,6 +155,7 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
     now = now or kel.now_kst()
     seen: set = set(st.get("seen", []))
     pending: dict = dict(st.get("pending") or {})  # rcept_no → {item, first_seen, attempts, last_try} (본문 지연 재시도)
+    obs: dict = dict(st.get("obs") or {})            # rcept_no → 3시점 관측(탈락 포함), 장 종료에 원장으로
     open_pos = load_open_positions(session_date, st)
     new_today = sum(1 for r in kel.read_jsonl(kel.PHANTOM_LEDGER)
                     if r.get("event") == "OPEN" and r.get("session_date") == session_date)
@@ -126,21 +186,26 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
             pending[rno] = {**p, "attempts": int(p.get("attempts", 0)) + 1, "last_try": kel._iso(now)}
             continue
         pending.pop(rno, None)
+        _obs_decide(obs, rno, row)
         _handle(p["item"], row)
     # 2) 신규 공시
     for it in sorted(fresh, key=lambda x: x["rcept_no"]):
         seen.add(it["rcept_no"])
         row = kel.process_disclosure(it, session_date=session_date, quote_fn=_quote,
                                      open_n=len(open_pos), new_today=new_today, first_seen=kel._iso(now), now=now)
+        _obs_start(obs, it, row, session_date, now)
         if row.get("decision") == "PENDING":
             pending[it["rcept_no"]] = {"item": it, "first_seen": row["ts_detected"], "attempts": 1, "last_try": kel._iso(now)}
             print(f"[KR-EVENT] 본문 대기 {it.get('corp_name')} {it['rcept_no']} — 재시도 예약", flush=True)
             continue
+        _obs_decide(obs, it["rcept_no"], row)
         _handle(it, row)
-    # 유령 평가
+    # 유령 평가 + 관측 결과 칸
     open_pos, closed = kel.evaluate_phantoms(open_pos, _quote, notify=_notify, now=now)
+    _obs_fill(obs, _quote, now)
     st["seen"] = sorted(seen)[-3000:]
     st["pending"] = pending
+    st["obs"] = obs
     st["open_positions"] = open_pos
     st["session_date"] = session_date
     st["last_cycle_at"] = kel._iso()
@@ -172,6 +237,9 @@ def loop(poll_sec: float) -> int:
                 except Exception as exc:
                     print(f"[KR-EVENT] pending finalize error {rno}: {exc}", flush=True)
             st["pending"] = {}
+            written = _obs_fill(st.setdefault("obs", {}), _quote, now, session_end=True)
+            if written:
+                print(f"[KR-EVENT] 관측 원장 기록 {len(written)}건 (탈락 포함)", flush=True)
             open_pos = load_open_positions(sd, st)
             if open_pos:
                 open_pos, closed = kel.evaluate_phantoms(open_pos, _quote, notify=_notify, now=now, force_close=True)

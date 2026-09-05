@@ -40,6 +40,16 @@
   전 필드 None → `ratio_missing` 오판(지연 0.24초 = 본문을 못 받은 증거). 수십 분 뒤 같은 문서는 정상 파싱(11.56/14.97/8.52/6.00%).
   이제 빈 본문은 원장에 쓰지 않고 PENDING → 러너가 60초 간격으로 재시도, 최초 감지 후 15분 넘기면 `doc_unavailable_after_retry`로 확정,
   장 종료(15:41)에도 남은 대기 건은 확정 기록. ts_detected는 최초 감지 시각 유지(지연 계산 기준), `doc_attempts` 기록.
+- **09-06 Codex 리뷰 2차 수리 4건**(커밋 9cd6633·d4e15a3·b32b77b·4단계): ① 유령 상태(peak/trough/time_checked/last_px)는 러너 state가
+  정본, 원장은 대사·복구용 — 매 사이클 OPEN 원장 재생성으로 30분 점검이 반복되던 결함. 진입 마감 `entry_cutoff_hhmm` 15:10, EOD에 시세 없으면
+  마지막 관측가(EOD_LASTQUOTE)·없으면 진입가(EOD_FORCED), 이전 세션 미청산은 ORPHAN_UNPRICED — 전부 `unpriced_exit=true`로 손익 표본 제외,
+  오버나이트 이월 없음. ② 관계사 판정 3상태: 관계사 True / 항목 있고 공란·부정(관계없음·해당없음·아님·-) False / 항목 없음 None → `relation_unknown`
+  SKIP(LLM이 명시적으로 비관계사라 하면 통과). 상대방은 다음 소항목(최근 매출액·주요사업·회사와의 관계) 앞에서 끊는다. ③ `latency_sec`=최초 감지→판단
+  총 지연(본문 대기 포함), `proc_sec`=이번 호출 처리 시간. ④ **3시점 관측 원장** `data/shadow/kr_event_observations.jsonl`: 대상 종류(공급계약·
+  무상증자·자사주, 정정 제외) 전부에 대해 감지(px_detect)·본문 확보(px_doc)·판단 완료(px_decide) 가격과 5분·30분·15:20·종가 결과를 적는다.
+  탈락(SKIP) 공시 포함. 수익률은 감지가 대비(`ret_*_pct`)와 **판단가 대비 종가(`ret_decide_to_close_pct`) = 우리가 실제로 잡을 수 있는 몫**.
+  본문 원문은 `data/shadow/kr_event_docs/{rcept_no}.txt`에 보관해 같은 표본으로 규칙만 vs 규칙+LLM을 나중에 재현한다.
+  이 원장이 답할 질문: 판단 완료 전에만 오르는가(속도 게임) / 규칙과 LLM 결과가 같은가 / 장중 효과 없고 며칠 드리프트만 있는가 / 비용 민감도.
 - **유령 vs 일봉 대조 기준(09-06 수리, Codex 리뷰)**: `phantom_vs_daily`가 유령 gross − 장부 net을 적고 있었고 청산 사유 명칭이 달라(실전
   `strategy_fixed_take_profit` vs 장부 `TP`) 같은 익절이 불일치로 집계됐다. 유령에도 장부 왕복 비용(US 0.50/KR 0.25)을 차감한 `phantom_net_pct`로
   비교하고 사유는 `REASON_MAP`(TP/SL/BE/D_MAT)으로 정규화. `--rebuild`로 재산출: ANF net 차 0.544 → 0.045, 사유 일치.
