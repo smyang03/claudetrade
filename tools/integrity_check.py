@@ -414,15 +414,15 @@ def check_virtual_entry_skips(now: datetime) -> list[dict[str, Any]]:
 
 
 def check_kr_event_lane(now: datetime) -> list[dict[str, Any]]:
-    """KR 공시 이벤트 레인 러너 생존 (2026-09-04). schtask 08:45 기동, 08:50~15:40 루프.
-    장중(주중 08:55~15:40 KST)에 하트비트가 5분 이상 늙으면 WARN. 장외는 정보 행."""
+    """KR 공시 이벤트 레인 러너 생존 (2026-09-04, 09-06 NXT 단계 확장). schtask 08:45 기동, 08:50~15:40 KRX + 15:41~20:00 NXT.
+    가동 시간(주중 08:55~20:00 KST)에 하트비트가 5분 이상 늙으면 WARN. 장외는 정보 행."""
     name = "KR 이벤트 레인(실시간 DART)"
     hb_path = ROOT / "state" / "kr_event_lane_heartbeat.json"
     sig_path = ROOT / "data" / "shadow" / "kr_event_signals.jsonl"
     kst = timezone(timedelta(hours=9))
     now_k = now.astimezone(kst) if now.tzinfo else now.replace(tzinfo=timezone.utc).astimezone(kst)
     today = now_k.strftime("%Y-%m-%d")
-    in_session = now_k.weekday() < 5 and "08:55" <= now_k.strftime("%H:%M") <= "15:40"
+    in_session = now_k.weekday() < 5 and "08:55" <= now_k.strftime("%H:%M") <= "20:00"
     hb: dict[str, Any] = {}
     try:
         hb = json.loads(hb_path.read_text(encoding="utf-8")) if hb_path.exists() else {}
@@ -439,10 +439,11 @@ def check_kr_event_lane(now: datetime) -> list[dict[str, Any]]:
         for line in sig_path.read_text(encoding="utf-8").splitlines():
             if f'"session_date": "{today}"' in line:
                 n_today += 1
-    detail = f"하트비트 {('%.1f분 전' % age_min) if age_min is not None else '없음'} · 오늘 본 공시 {n_today}행 · 유령 {hb.get('open_n', 0)}"
+    detail = (f"하트비트 {('%.1f분 전' % age_min) if age_min is not None else '없음'} · 단계 {hb.get('phase', '?')} · 오늘 본 공시 {n_today}행"
+              f" · 유령 {hb.get('open_n', 0)} · 본문대기 {hb.get('pending_n', 0)} · 관측중 {hb.get('obs_n', 0)}")
     if in_session and (age_min is None or age_min > 5.0):
         return [{"check": name, "kind": "virtual", "status": WARN, "detail": detail,
-                 "note": "schtasks claudetrade_kr_event_lane 확인 (08:45 기동, 08:50~15:40 루프)"}]
+                 "note": "schtasks claudetrade_kr_event_lane 확인 (08:45 기동, 08:50~15:40 KRX · 15:41~20:00 NXT, 제한 PT12H)"}]
     return [{"check": name, "kind": "virtual", "status": OK, "detail": detail + ("" if in_session else " (장외)"), "note": ""}]
 
 

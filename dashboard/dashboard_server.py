@@ -17485,6 +17485,60 @@ def api_kr_event_lane():
 
 
 
+@app.route("/api/kr_event_observations")
+def api_kr_event_observations():
+    """KR 공시 3시점 관측 원장(감지·본문·판단 가격 + 5분/30분/EOD/종가, 탈락 포함). [VIRTUAL] 판단 아님, 계측."""
+    try:
+        from runtime import kr_event_lane as kel
+        rows = kel.read_jsonl(kel.OBS_LEDGER)[-150:]
+        st = kel.load_state()
+        live = [dict(v, live=True) for v in (st.get("obs") or {}).values()]
+        today = kel.now_kst().strftime("%Y-%m-%d")
+
+        def _summ(sel):
+            vals = [r["out"].get("ret_close_pct") for r in sel if (r.get("out") or {}).get("ret_close_pct") is not None]
+            dec = [r["out"].get("ret_decide_to_close_pct") for r in sel if (r.get("out") or {}).get("ret_decide_to_close_pct") is not None]
+            f5 = [r["out"].get("ret_5m_pct") for r in sel if (r.get("out") or {}).get("ret_5m_pct") is not None]
+            f30 = [r["out"].get("ret_30m_pct") for r in sel if (r.get("out") or {}).get("ret_30m_pct") is not None]
+            m = lambda xs: round(sum(xs) / len(xs), 3) if xs else None
+            return {"n": len(sel), "ret_5m": m(f5), "ret_30m": m(f30), "ret_close": m(vals), "ret_decide_to_close": m(dec),
+                    "pos_pct": round(100.0 * sum(1 for v in dec if v > 0) / len(dec), 1) if dec else None}
+        summary = {}
+        for kind in kel.OBS_KINDS:
+            sel = [r for r in rows if r.get("kind") == kind]
+            if sel:
+                summary[kind] = {"all": _summ(sel), "ENTER": _summ([r for r in sel if r.get("decision") == "ENTER"]),
+                                 "SKIP": _summ([r for r in sel if r.get("decision") != "ENTER"])}
+        return jsonify({"available": True, "session_date": today, "phase": (st.get("phase") or "KRX"), "live": live,
+                        "rows": list(reversed(rows)), "summary": summary,
+                        "note": "ret_*: 감지가 대비 · ret_decide_to_close: 판단가→종가(우리가 잡을 수 있는 몫) · venue NXT는 EOD 19:55"})
+    except Exception as exc:
+        return jsonify({"available": False, "reason": str(exc)[:200]})
+
+
+@app.route("/api/research")
+def api_research():
+    """연구·신규 축 현황: NXT 프로브 / US→KR 오버나이트 / 코퍼레이트 액션 12개월 / 공모주 캘린더. 전부 read-only 산출물."""
+    def _load(p):
+        try:
+            return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+        except (OSError, ValueError):
+            return None
+    us_kr = _load(BASE_DIR / "data" / "analysis" / "us_kr_overnight_study.json") or {}
+    sectors = []
+    for sec, r in (us_kr.get("sectors") or {}).items():
+        if "skipped" in r:
+            continue
+        sectors.append({"sector": sec, "n_days": r.get("n_days"), "corr_us_gap": r.get("corr_us_gap"), "corr_us_drift": r.get("corr_us_drift"),
+                        "strong_up": r.get("strong_up"), "strong_down": r.get("strong_down"),
+                        "latest": (us_kr.get("latest_signal") or {}).get(sec)})
+    return jsonify({"available": True,
+                    "nxt": _load(BASE_DIR / "state" / "nxt_probe.json"),
+                    "us_kr": {"generated_at": us_kr.get("generated_at"), "kr_period": us_kr.get("kr_period"), "pooled": us_kr.get("pooled"), "sectors": sectors},
+                    "corp_actions": _load(BASE_DIR / "data" / "analysis" / "dart_corp_actions_12m_summary.json"),
+                    "ipo": _load(BASE_DIR / "data" / "shadow" / "kr_ipo_calendar.json")})
+
+
 @app.route("/api/core_shadow")
 def api_core_shadow():
     """F3 저회전 코어(US SCHG/BIL SMA10+MOM12 · KR 275280/275300↔153130) shadow NAV. [VIRTUAL] core_shadow_tracker 산출."""
@@ -17547,6 +17601,19 @@ PAGE_VIRTUAL_HTML = """
   </table>
   <div id="vb-krevent-open" style="font-size:12px;margin-top:6px;"></div>
   </div>
+  <h2 style="font-size:15px;margin:22px 0 10px;color:var(--cyan);">공시 3시점 관측 원장 <span style="font-size:12px;color:var(--muted);" id="vb-obs-meta">— 감지·본문·판단 가격 + 5분/30분/EOD/종가 · 탈락 포함 · 판단가→종가가 우리가 잡을 수 있는 몫</span></h2>
+  <div id="vb-obs-summary" style="font-size:12px;font-family:var(--mono);margin-bottom:6px;"></div>
+  <div style="overflow-x:auto;">
+  <table id="vb-obs" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
+    <thead><tr style="color:var(--muted);text-align:right;">
+      <th style="text-align:left;padding:6px;">감지</th><th style="text-align:left;">종목</th><th style="text-align:left;">종류</th><th>venue</th>
+      <th>판단</th><th style="text-align:left;">사유</th><th>감지가</th><th>판단가</th><th>5분</th><th>30분</th><th>EOD</th><th>종가</th><th>판단→종가</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  </div>
+  <h2 style="font-size:15px;margin:22px 0 10px;color:var(--cyan);">연구·신규 축 <span style="font-size:12px;color:var(--muted);">— NXT 시간외 · US→KR 오버나이트 · 코퍼레이트 액션 · 공모주 (전부 read-only 산출물, 판정 아님)</span></h2>
+  <div id="vb-research" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:10px;font-size:12px;font-family:var(--mono);"></div>
   <h2 style="font-size:15px;margin:22px 0 10px;color:var(--cyan);">전략 스코어보드</h2>
   <div style="overflow-x:auto;">
   <table id="vb-table" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
@@ -17686,6 +17753,67 @@ async function loadCore() {
   } catch (e) { /* 조용히 재시도 */ }
 }
 loadCore(); setInterval(loadCore, 300000);
+async function loadObs() {
+  try {
+    const d = await (await fetch('/api/kr_event_observations')).json();
+    const meta = document.getElementById('vb-obs-meta');
+    if (!d.available) { meta.textContent = '(' + d.reason + ')'; return; }
+    const f = v => (v === null || v === undefined) ? '-' : (Number(v) >= 0 ? '+' : '') + Number(v).toFixed(2);
+    const cls = v => (v === null || v === undefined) ? 'dim' : (Number(v) > 0 ? 'pos' : (Number(v) < 0 ? 'neg' : 'dim'));
+    const sm = Object.entries(d.summary || {}).map(([k, v]) => `${k}: n=${v.all.n} 5분 ${f(v.all.ret_5m)} 30분 ${f(v.all.ret_30m)} 종가 ${f(v.all.ret_close)} · 판단→종가 <b class="${cls(v.all.ret_decide_to_close)}">${f(v.all.ret_decide_to_close)}%</b> (양수 ${v.all.pos_pct ?? '-'}%) · ENTER n=${v.ENTER.n} ${f(v.ENTER.ret_decide_to_close)} / SKIP n=${v.SKIP.n} ${f(v.SKIP.ret_decide_to_close)}`).join('<br>');
+    document.getElementById('vb-obs-summary').innerHTML = '세션 ' + d.session_date + ' · 단계 ' + d.phase + ' · 관측중 ' + (d.live || []).length + ' · 누적 ' + (d.rows || []).length + (sm ? '<br>' + sm : '');
+    const rows = [...(d.live || []), ...(d.rows || [])].slice(0, 60);
+    const tb = document.querySelector('#vb-obs tbody');
+    tb.innerHTML = rows.length ? rows.map(r => {
+      const o = r.out || {}; const eod = o.px_1955 !== undefined ? o.px_1955 : o.px_1520;
+      const rel = (px) => (px && r.px_detect) ? ((px / r.px_detect - 1) * 100) : null;
+      return `<tr style="border-top:1px solid var(--border);text-align:right;${r.live ? 'background:rgba(255,255,255,0.03);' : ''}">
+        <td style="text-align:left;padding:6px;">${(r.t_detect||'').slice(5,16)}${r.live ? ' <span class="warn">●</span>' : ''}</td>
+        <td style="text-align:left;">${r.stock_code} ${r.corp_name||''}</td>
+        <td style="text-align:left;color:var(--muted);">${r.kind}</td>
+        <td>${r.venue||'KRX'}</td>
+        <td class="${r.decision==='ENTER'?'pos':(r.decision?'dim':'warn')}">${r.decision||'대기'}</td>
+        <td style="text-align:left;color:var(--muted);">${(r.reason||'').slice(0,26)}</td>
+        <td>${r.px_detect ? Number(r.px_detect).toLocaleString() : '-'}</td>
+        <td>${r.px_decide ? Number(r.px_decide).toLocaleString() : '-'}</td>
+        <td class="${cls(rel(o.px_5m))}">${f(rel(o.px_5m))}</td>
+        <td class="${cls(rel(o.px_30m))}">${f(rel(o.px_30m))}</td>
+        <td class="${cls(rel(eod))}">${f(rel(eod))}</td>
+        <td class="${cls(rel(o.px_close))}">${f(rel(o.px_close))}</td>
+        <td class="${cls(o.ret_decide_to_close_pct)}"><b>${f(o.ret_decide_to_close_pct)}</b></td>
+      </tr>`; }).join('') : '<tr><td colspan="13" class="dim">관측 없음 (주중 08:50~20:00 러너가 채움)</td></tr>';
+  } catch (e) { /* 조용히 재시도 */ }
+}
+loadObs(); setInterval(loadObs, 60000);
+async function loadResearch() {
+  try {
+    const d = await (await fetch('/api/research')).json();
+    const el = document.getElementById('vb-research');
+    const f = v => (v === null || v === undefined) ? '-' : (Number(v) >= 0 ? '+' : '') + Number(v).toFixed(2);
+    const card = (title, body) => `<div style="border:1px solid var(--border);border-radius:6px;padding:8px;"><div style="color:var(--cyan);margin-bottom:4px;">${title}</div>${body}</div>`;
+    const cards = [];
+    const nx = d.nxt;
+    cards.push(card('NXT 시간외 (넥스트레이드) — 레인 15:41~20:00 확장', nx ? `프로브 ${nx.probed_at} (${nx.session_hint}) → <b class="${nx.verdict==='supported'?'pos':'warn'}">${nx.verdict}</b><br>` +
+      (nx.rows||[]).map(r => `${r.ticker}: KRX ${Number(r.J?.price||0).toLocaleString()} / NX ${Number(r.NX?.price||0).toLocaleString()} (NX vol ${Number(r.NX?.volume||0).toLocaleString()})`).join('<br>') +
+      '<br><span class="dim">' + (nx.note||'') + '</span>' : '<span class="dim">프로브 없음 — python tools/nxt_probe.py</span>'));
+    const uk = d.us_kr || {};
+    cards.push(card('US→KR 오버나이트 정보 이전 (' + (uk.generated_at||'').slice(0,10) + ')', uk.pooled ? `풀 n=${uk.pooled.n} corr(US,갭) ${uk.pooled.corr_us_gap} · corr(US,드리프트) <b>${uk.pooled.corr_us_drift}</b><br>` +
+      '<table style="width:100%;border-collapse:collapse;"><tr class="dim"><td>섹터</td><td>갭corr</td><td>드리프트corr</td><td>US≥+1%→드리프트</td><td>US≤−1%→드리프트</td><td>최근 US초과</td></tr>' +
+      (uk.sectors||[]).map(r => `<tr><td>${r.sector}</td><td>${r.corr_us_gap}</td><td>${r.corr_us_drift}</td><td class="${(r.strong_up?.drift_x_mean||0)>0?'pos':'neg'}">${f(r.strong_up?.drift_x_mean)} (t ${r.strong_up?.t ?? '-'})</td><td class="${(r.strong_down?.drift_x_mean||0)>0?'pos':'neg'}">${f(r.strong_down?.drift_x_mean)} (t ${r.strong_down?.t ?? '-'})</td><td>${r.latest ? (r.latest.us_date.slice(5) + ' ' + f(r.latest.us_excess) + '%') : '-'}</td></tr>`).join('') + '</table>' +
+      '<span class="dim">판정: 정보는 시가에 반영, 드리프트는 반도체 강신호에서만 소폭 → 진입 레인 아님, 회피 필터 후보</span>' : '<span class="dim">결과 없음</span>'));
+    const ca = d.corp_actions;
+    cards.push(card('코퍼레이트 액션 12개월 (DART 재생, 다음날 시가 매수)', ca ? '<table style="width:100%;border-collapse:collapse;"><tr class="dim"><td>종류</td><td>n</td><td>당일</td><td>갭</td><td>5일</td><td>5일중앙</td><td>20일</td><td>≥+10%</td><td>≤−10%</td></tr>' +
+      Object.entries(ca).map(([k, v]) => `<tr><td>${k}</td><td>${v.n}</td><td>${f(v.d0_close)}</td><td>${f(v.gap)}</td><td class="${v.r5>0?'pos':'neg'}">${f(v.r5)}</td><td>${f(v.r5_med)}</td><td class="${v.r20>0?'pos':'neg'}">${f(v.r20)}</td><td>${v.p5_ge10}%</td><td>${v.p5_le10}%</td></tr>`).join('') + '</table><span class="dim">실시간 레인은 소각·분할을 관측(OBSERVE)만 한다</span>' : '<span class="dim">재생 결과 대기 중</span>'));
+    const ipo = d.ipo;
+    cards.push(card('공모주(IPO) 균등배정 shadow — 1주 가정, 공모가 대비', ipo ? `${(ipo.generated_at||'').slice(0,16)} · 법인 ${ipo.n_total} · 상장 표본 ${ipo.n_listed} (SPAC ${ipo.n_spac} 제외)` +
+      (ipo.stats && ipo.stats.n ? `<br>첫날 시가 평균 <b class="${ipo.stats.open_mean>0?'pos':'neg'}">${f(ipo.stats.open_mean)}%</b> 중앙 ${f(ipo.stats.open_median)} 양수 ${ipo.stats.open_pos_pct}% ≥+50% ${ipo.stats.open_ge50_pct}% · 종가 평균 ${f(ipo.stats.close_mean)} 양수 ${ipo.stats.close_pos_pct}% ≤−10% ${ipo.stats.close_le_minus10_pct}%` : '') +
+      '<br><span class="dim">예정</span> ' + ((ipo.upcoming||[]).slice(0,8).map(u => `${u.corp_name}${u.spac?'(SPAC)':''} ${u.offer_price ? Number(u.offer_price).toLocaleString()+'원' : (u.band ? u.band.map(x=>Number(x||0).toLocaleString()).join('~') : '?')} 청약 ${(u.subscription||[])[0]||'?'} 상장 ${u.listing_date||'?'}`).join(' · ') || '없음') +
+      '<br><span class="dim">최근</span> ' + ((ipo.recent||[]).slice(0,8).map(r => `${r.corp_name} ${r.day1_date||''} 시가 <span class="${(r.ret_open_pct||0)>0?'pos':'neg'}">${f(r.ret_open_pct)}%</span> 종가 ${f(r.ret_close_pct)}%`).join(' · ') || '없음') +
+      '<br><span class="dim">' + (ipo.note||'') + '</span>' : '<span class="dim">캘린더 없음 — python tools/kr_ipo_calendar.py --months 12</span>'));
+    el.innerHTML = cards.join('');
+  } catch (e) { /* 조용히 재시도 */ }
+}
+loadResearch(); setInterval(loadResearch, 300000);
 
 
 </script>

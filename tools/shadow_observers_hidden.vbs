@@ -53,3 +53,6 @@ sh.Run py & " """ & base & "virtual_gate_eval.py""", 0, True
 sh.Run py & " """ & base & "phantom_vs_daily.py""", 0, True
 ' ⑪ 어닝 point-in-time 원장 — F4 PEAD 데이터 계약(09-04). 캘린더 값이 처음 보이거나 바뀐 것만 append.
 sh.Run py & " """ & base & "earnings_pit_ledger.py""", 0, True
+' ⑫ 공모주(IPO) 캘린더·균등배정 shadow 원장(09-06) — DART 발행공시(C)에서 미상장 법인의 증권신고서(지분증권)를 모아
+'   공모가·청약일·상장일·첫날 시가/종가를 원장에 남긴다. 청약 자동화 없음(반자동), 판정은 분포로.
+sh.Run py & " """ & base & "kr_ipo_calendar.py"" --recent-days 45", 0, True
