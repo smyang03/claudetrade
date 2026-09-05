@@ -351,5 +351,46 @@ class PhantomStateAndEodTest(unittest.TestCase):
             k.dart_list_today, rn._quote, rn.HEARTBEAT = orig
 
 
+class RelationThreeStateTest(unittest.TestCase):
+    """09-06 수리 2: 관계사 True / 비관계사 False / 확인불가 None, 확인불가는 LLM 명시 없으면 SKIP. 상대방 경계."""
+    REAL = ("3. 계약상대방 인천국제공항공사 - 최근 매출액(원) 3,067,177,661,865 - 주요사업 인천국제공항의 건설 및 관리·운영 등 "
+            "- 회사와의 관계 - - 회사와 최근 3년간 동종계약 이행여부 미해당 4. 판매" + _MID + "공급지역 인천 5. 계약기간 시작일 2026-09-03 종료일 2027-12-03")
+
+    def test_classify_relation(self):
+        self.assertIsNone(k.classify_relation(None, found=False))
+        self.assertFalse(k.classify_relation("", found=True))
+        self.assertFalse(k.classify_relation("-", found=True))
+        self.assertFalse(k.classify_relation("관계없음", found=True))
+        self.assertFalse(k.classify_relation("해당사항 없음", found=True))
+        self.assertFalse(k.classify_relation("특수관계 없음", found=True))
+        self.assertFalse(k.classify_relation("계열회사 아님", found=True))
+        self.assertTrue(k.classify_relation("계열회사", found=True))
+        self.assertTrue(k.classify_relation("최대주주의 특수관계인", found=True))
+        self.assertTrue(k.classify_relation("종속회사", found=True))
+
+    def test_counterparty_boundary_on_real_form(self):
+        f = k.parse_supply_contract(self.REAL)
+        self.assertEqual(f["counterparty"], "인천국제공항공사")
+        self.assertEqual(f["relation"], "")
+        self.assertTrue(f["relation_found"]); self.assertFalse(f["related_party"])
+        self.assertEqual(f["period"], ("2026-09-03", "2027-12-03"))
+
+    def test_missing_relation_section_is_unknown(self):
+        f = k.parse_supply_contract("계약금액(원) 50,000,000,000 최근매출액(원) 100,000,000,000 매출액대비(%) 50.0 3. 계약상대 ABC 4. 판매지역")
+        self.assertIsNone(f["related_party"]); self.assertFalse(f["relation_found"])
+        liq = {"prev_close": 10000.0, "dvol20_krw": 5e9}; q = {"price": 10100.0}
+        self.assertEqual(k.decide("supply_contract", False, f, {"available": False}, q, liq), ("SKIP", "relation_unknown"))
+        self.assertEqual(k.decide("supply_contract", False, f, {"available": True, "related_party": False, "quality": "strong"}, q, liq)[0], "ENTER")
+        self.assertEqual(k.decide("supply_contract", False, f, {"available": True, "related_party": True, "quality": "strong"}, q, liq), ("SKIP", "related_party"))
+        self.assertIn("관계불명", k.basis_text("supply_contract", f, {"available": False}))
+
+    def test_negated_relation_passes(self):
+        doc = DOC.replace("회사와의 관계 - 4.", "회사와의 관계 관계없음 4.").replace("매출액대비(%) 6.0", "매출액대비(%) 40.0")
+        f = k.parse_supply_contract(doc)
+        self.assertFalse(f["related_party"])
+        self.assertEqual(k.decide("supply_contract", False, f, {"available": False}, {"price": 10100.0},
+                                  {"prev_close": 10000.0, "dvol20_krw": 5e9}), ("ENTER", "rules_pass"))
+
+
 if __name__ == "__main__":
     unittest.main()

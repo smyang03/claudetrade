@@ -174,20 +174,38 @@ def parse_supply_contract(text: str) -> dict[str, Any]:
     f["ratio_pct"] = _num(m.group(1)) if m else None
     if f["ratio_pct"] is None and f["amount_krw"] and f["recent_sales_krw"]:
         f["ratio_pct"] = round(f["amount_krw"] / f["recent_sales_krw"] * 100.0, 2)
-    m = re.search(r"3\.\s*계약상대\s*(.+?)\s*-?\s*회사와의\s*관계\s*(.+?)\s*4\.", text)
-    if m:
-        f["counterparty"] = m.group(1).strip(" -")
-        f["relation"] = m.group(2).strip(" -")
-    else:
-        f["counterparty"] = None
-        f["relation"] = None
+    # 3. 계약상대(방) [이름] - 최근 매출액(원) … - 주요사업 … - 회사와의 관계 … - 회사와 최근 3년간 동종계약 이행여부 … 4.
+    # 09-06 수리: 상대방은 다음 소항목 앞에서 끊고, 관계는 부정 표현(관계없음/해당없음/-)과 결측(항목 없음)을 가른다.
+    m = re.search(r"계약상대(?:방)?\s*(.+?)\s*-\s*(?:최근\s*매출액|주요\s*사업|회사와의\s*관계|4\.)", text)
+    f["counterparty"] = m.group(1).strip(" -") or None if m else None
+    m = re.search(r"회사와의\s*관계\s*(.*?)\s*(?:-\s*회사와\s*최근|4\.)", text)
+    f["relation"] = m.group(1).strip(" -") if m else None
+    f["relation_found"] = bool(m)
     m = re.search(r"계약기간\s*시작일\s*(\d{4}-\d{2}-\d{2})\s*종료일\s*(\d{4}-\d{2}-\d{2})", text)
     f["period"] = (m.group(1), m.group(2)) if m else None
     m = re.search(r"선급금\s*유무\s*(유|무)", text)
     f["advance_payment"] = m.group(1) if m else None
-    rel = (f.get("relation") or "")
-    f["related_party"] = any(k in rel for k in ("계열", "관계", "종속", "자회사", "모회사", "최대주주", "특수관계"))
+    f["related_party"] = classify_relation(f["relation"], found=f["relation_found"])
     return f
+
+
+_REL_NEG = ("관계없음", "관계 없음", "해당없음", "해당 없음", "해당사항없음", "해당사항 없음", "없음", "아님", "무")
+_REL_POS = ("계열", "종속", "자회사", "모회사", "최대주주", "특수관계", "관계회사", "관계사", "지배", "임원", "대표이사")
+
+
+def classify_relation(relation: str | None, *, found: bool) -> bool | None:
+    """True=관계사, False=비관계사(항목이 있고 공란·부정 표현), None=확인 불가(항목 자체를 못 찾음).
+    09-06 수리 전엔 '관계' 부분 문자열로 '관계없음'이 관계사, 결측이 비관계사로 잡혔다."""
+    if not found:
+        return None
+    rel = re.sub(r"\s+", " ", str(relation or "")).strip(" -")
+    if not rel:
+        return False
+    if any(rel == n or rel.endswith(n) for n in _REL_NEG):
+        return False
+    if any(k in rel for k in _REL_POS):
+        return True
+    return False
 
 
 def parse_bonus_issue(text: str) -> dict[str, Any]:
@@ -267,8 +285,11 @@ def decide(kind: str, is_correction: bool, fields: dict[str, Any], llm: dict[str
             return "SKIP", "ratio_missing"
         if r < contract["supply_ratio_min_pct"]:
             return "SKIP", f"ratio_{r:.1f}_lt_{contract['supply_ratio_min_pct']:.0f}"
-        if fields.get("related_party") or (llm.get("available") and llm.get("related_party") is True):
+        rp = fields.get("related_party")
+        if rp is True or (llm.get("available") and llm.get("related_party") is True):
             return "SKIP", "related_party"
+        if rp is None and not (llm.get("available") and llm.get("related_party") is False):
+            return "SKIP", "relation_unknown"  # 관계 항목을 못 찾음 — LLM이 명시적으로 비관계사라 하지 않으면 통과 금지
         if llm.get("available") and llm.get("quality") == "skip":
             return "SKIP", f"llm_skip:{str(llm.get('reason', ''))[:60]}"
     if kind == "bonus_issue":
@@ -453,7 +474,8 @@ def basis_text(kind: str, fields: dict[str, Any], llm: dict[str, Any]) -> str:
     if kind == "supply_contract":
         amt = fields.get("amount_krw"); r = fields.get("ratio_pct")
         parts = [f"공급계약 {amt / 1e8:,.0f}억" if amt else "공급계약", f"매출대비 {r:.0f}%" if r is not None else "매출대비 ?",
-                 f"상대 {fields.get('counterparty') or '?'}", "관계사" if fields.get("related_party") else "외부"]
+                 f"상대 {fields.get('counterparty') or '?'}",
+                 {True: "관계사", False: "외부"}.get(fields.get("related_party"), "관계불명")]
         if fields.get("advance_payment"):
             parts.append(f"선급금 {fields['advance_payment']}")
     elif kind == "bonus_issue":
