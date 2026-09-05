@@ -256,5 +256,100 @@ class DocRetryTest(unittest.TestCase):
             restore()
 
 
+class PhantomStateAndEodTest(unittest.TestCase):
+    """09-06 수리 1: 유령 상태 영속화·진입 마감 15:10·시세 없는 EOD·이월 금지."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        d = Path(self.tmp.name)
+        self.orig = (k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH)
+        k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH = d / "ph.jsonl", d / "sig.jsonl", d / "state.json"
+        from datetime import datetime, timezone
+        self.tz = timezone(timedelta(hours=9))
+        self.t0 = datetime(2026, 9, 7, 10, 0, 0, tzinfo=self.tz)
+        self.sig = {"rcept_no": "1", "stock_code": "000100", "corp_name": "A", "kind": "supply_contract",
+                    "session_date": "2026-09-07", "basis": "t"}
+
+    def tearDown(self):
+        k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH = self.orig
+        self.tmp.cleanup()
+
+    def _open(self):
+        pos = k.open_phantom(self.sig, {"price": 10000.0, "source": "t"})
+        pos["opened_at"] = k._iso(self.t0)
+        return pos
+
+    def test_entry_cutoff(self):
+        fields = {"ratio_pct": 40.0, "related_party": False}
+        liq = {"prev_close": 10000.0, "dvol20_krw": 5e9}
+        q = {"price": 10100.0}
+        self.assertEqual(k.decide("supply_contract", False, fields, {"available": False}, q, liq,
+                                  now=self.t0.replace(hour=15, minute=9))[0], "ENTER")
+        self.assertEqual(k.decide("supply_contract", False, fields, {"available": False}, q, liq,
+                                  now=self.t0.replace(hour=15, minute=10)), ("SKIP", "after_entry_cutoff"))
+
+    def test_time_check_once_when_state_carried(self):
+        pos = self._open()
+        # 31분 시점 +3% → 시점 점검 통과, time_checked 기록
+        keep, closed = k.evaluate_phantoms([pos], lambda t: {"price": 10330.0}, now=self.t0 + timedelta(minutes=31))
+        self.assertEqual(len(keep), 1); self.assertTrue(keep[0]["time_checked"]); self.assertAlmostEqual(keep[0]["peak_pct"], 2.99, places=1)
+        # 같은 dict를 이어받은 40분 시점 +1% → 다시 시점 점검하지 않는다
+        keep, closed = k.evaluate_phantoms(keep, lambda t: {"price": 10130.0}, now=self.t0 + timedelta(minutes=40))
+        self.assertEqual((len(keep), len(closed)), (1, 0))
+        self.assertAlmostEqual(keep[0]["peak_pct"], (10330 / 10030 - 1) * 100, places=3)  # MFE 유지
+        # 원장에서 재생성한 옛 방식이면 청산됐다 (재발 방지 대조)
+        fresh = k.open_positions_from_ledger("2026-09-07")
+        self.assertFalse(fresh[0].get("time_checked"))
+        keep2, closed2 = k.evaluate_phantoms(fresh, lambda t: {"price": 10130.0}, now=self.t0 + timedelta(minutes=40))
+        self.assertEqual(closed2[0]["exit_reason"], "TIME_STOP")
+
+    def test_eod_without_quote_uses_last_observed(self):
+        pos = self._open()
+        keep, _ = k.evaluate_phantoms([pos], lambda t: {"price": 10200.0}, now=self.t0 + timedelta(minutes=5))
+        self.assertEqual(keep[0]["last_px"], 10200.0)
+        keep, closed = k.evaluate_phantoms(keep, lambda t: None, now=self.t0.replace(hour=15, minute=25))
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(closed[0]["exit_reason"], "EOD_LASTQUOTE"); self.assertTrue(closed[0]["unpriced_exit"])
+        self.assertEqual(closed[0]["exit"], 10200.0)
+
+    def test_force_close_without_any_quote(self):
+        pos = self._open()
+        keep, closed = k.evaluate_phantoms([pos], lambda t: None, now=self.t0.replace(hour=15, minute=41), force_close=True)
+        self.assertEqual((len(keep), closed[0]["exit_reason"], closed[0]["gross_pct"]), (0, "EOD_FORCED", 0.0))
+        self.assertTrue(closed[0]["unpriced_exit"])
+
+    def test_before_eod_no_quote_keeps(self):
+        pos = self._open()
+        keep, closed = k.evaluate_phantoms([pos], lambda t: None, now=self.t0 + timedelta(minutes=10))
+        self.assertEqual((len(keep), len(closed)), (1, 0))
+
+    def test_finalize_orphans(self):
+        self._open()
+        out = k.finalize_orphans("2026-09-08", now=self.t0 + timedelta(days=1))
+        self.assertEqual(len(out), 1); self.assertEqual(out[0]["exit_reason"], "ORPHAN_UNPRICED")
+        self.assertEqual(k.open_positions_from_ledger("2026-09-07"), [])
+        self.assertEqual(k.finalize_orphans("2026-09-08"), [])  # 멱등
+
+    def test_runner_persists_state_between_cycles(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import kr_event_lane_runner as rn
+        pos = self._open()
+        st = {"session_date": "2026-09-07", "seen": []}
+        orig = (k.dart_list_today, rn._quote, rn.HEARTBEAT)
+        k.dart_list_today = lambda sd: []
+        rn.HEARTBEAT = Path(self.tmp.name) / "hb.json"
+        try:
+            rn._quote = lambda t: {"price": 10330.0}
+            rn.cycle("2026-09-07", st, now=self.t0 + timedelta(minutes=31))
+            self.assertTrue(st["open_positions"][0]["time_checked"])
+            st2 = k.load_state()
+            self.assertTrue(st2["open_positions"][0]["time_checked"])  # 파일에도 남는다
+            rn._quote = lambda t: {"price": 10130.0}
+            r = rn.cycle("2026-09-07", st2, now=self.t0 + timedelta(minutes=40))
+            self.assertEqual((r["closed"], r["open_n"]), (0, 1))
+        finally:
+            k.dart_list_today, rn._quote, rn.HEARTBEAT = orig
+
+
 if __name__ == "__main__":
     unittest.main()

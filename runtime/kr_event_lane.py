@@ -57,6 +57,7 @@ CONTRACT = {
     "time_stop_min": 30,
     "time_stop_min_gain_pct": 2.0,
     "eod_exit_hhmm": "15:20",
+    "entry_cutoff_hhmm": "15:10",   # 이후 감지분은 진입 안 함(EOD 청산 10분 전, 09-06 Codex 지적)
     "fee_rt_pct": 0.21,
 }
 
@@ -251,12 +252,15 @@ def liquidity_snapshot(ticker: str) -> dict[str, Any]:
 
 
 def decide(kind: str, is_correction: bool, fields: dict[str, Any], llm: dict[str, Any], quote: dict[str, Any] | None,
-           liq: dict[str, Any], *, contract: dict[str, Any] = CONTRACT, open_n: int = 0, new_today: int = 0) -> tuple[str, str]:
+           liq: dict[str, Any], *, contract: dict[str, Any] = CONTRACT, open_n: int = 0, new_today: int = 0,
+           now: datetime | None = None) -> tuple[str, str]:
     """(decision, reason). decision ∈ ENTER / OBSERVE / SKIP."""
     if is_correction:
         return "SKIP", "correction"
     if kind not in ENTER_KINDS:
         return "OBSERVE", f"kind_{kind}_observe_only"
+    if now is not None and now.strftime("%H:%M") >= contract.get("entry_cutoff_hhmm", "15:10"):
+        return "SKIP", "after_entry_cutoff"
     if kind == "supply_contract":
         r = fields.get("ratio_pct")
         if r is None:
@@ -349,20 +353,48 @@ def open_phantom(sig: dict[str, Any], quote: dict[str, Any], *, contract: dict[s
     return pos
 
 
+def _close_row(pos: dict[str, Any], px: float, reason: str, now: datetime, *, contract: dict[str, Any],
+               unpriced: bool = False) -> dict[str, Any]:
+    pnl = (px / pos["entry"] - 1.0) * 100.0
+    net = pnl - contract["fee_rt_pct"]
+    held_min = (now - datetime.fromisoformat(pos["opened_at"])).total_seconds() / 60.0
+    row = {**pos, "event": "CLOSE", "closed_at": _iso(now), "exit": px, "exit_reason": reason,
+           "gross_pct": round(pnl, 3), "net_pct": round(net, 3), "pnl_krw": round(pos["notional_krw"] * net / 100.0),
+           "held_min": round(held_min, 1), "unpriced_exit": bool(unpriced)}
+    row.pop("time_checked", None)
+    _append(PHANTOM_LEDGER, row)
+    return row
+
+
 def evaluate_phantoms(open_positions: list[dict[str, Any]], quote_fn: Callable[[str], dict[str, Any] | None],
                       *, now: datetime | None = None, contract: dict[str, Any] = CONTRACT,
-                      notify: Callable[[str], Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """열린 유령 평가. (남은 포지션, 청산 행) 반환. 청산 행은 원장에 기록."""
+                      notify: Callable[[str], Any] | None = None,
+                      force_close: bool = False) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """열린 유령 평가. (남은 포지션, 청산 행) 반환. 청산 행은 원장에 기록.
+
+    pos 딕셔너리는 사이클 간 상태(peak/trough/time_checked/last_px)를 들고 다닌다 — 러너가 state 파일에 영속화한다
+    (09-06 수리: 매 사이클 OPEN 원장에서 재생성하면 30분 점검이 반복되고 MFE/MAE가 마지막 사이클 값만 남는다).
+    시세가 없을 때: EOD 이후면 마지막 관측가로 청산(EOD_LASTQUOTE, unpriced_exit=true), force_close면 마지막 관측가
+    또는 진입가로 강제 청산(EOD_FORCED). 오버나이트 이월은 없다."""
     now = now or now_kst()
     eod = now.replace(hour=int(contract["eod_exit_hhmm"][:2]), minute=int(contract["eod_exit_hhmm"][3:]), second=0)
     keep, closed = [], []
     for pos in open_positions:
         q = quote_fn(pos["ticker"])
         if not q or not q.get("price"):
+            if force_close or now >= eod:
+                last = pos.get("last_px")
+                if last or force_close:
+                    row = _close_row(pos, float(last or pos["entry"]), "EOD_LASTQUOTE" if last else "EOD_FORCED",
+                                     now, contract=contract, unpriced=True)
+                    closed.append(row)
+                    continue
             keep.append(pos)
             continue
         px = float(q["price"])
         pnl = (px / pos["entry"] - 1.0) * 100.0
+        pos["last_px"] = px
+        pos["last_quote_at"] = _iso(now)
         pos["peak_pct"] = max(pos.get("peak_pct", 0.0), pnl)
         pos["trough_pct"] = min(pos.get("trough_pct", 0.0), pnl)
         opened = datetime.fromisoformat(pos["opened_at"])
@@ -377,25 +409,43 @@ def evaluate_phantoms(open_positions: list[dict[str, Any]], quote_fn: Callable[[
             reason = "SL"
         elif ts_min is not None and held_min >= ts_min and pnl < ex["time_stop_min_gain_pct"] and not pos.get("time_checked"):
             reason = "TIME_STOP"
-        elif now >= eod:
+        elif force_close or now >= eod:
             reason = "EOD"
         if ts_min is not None and held_min >= ts_min:
             pos["time_checked"] = True
         if reason is None:
             keep.append(pos)
             continue
-        net = pnl - contract["fee_rt_pct"]
-        row = {**pos, "event": "CLOSE", "closed_at": _iso(now), "exit": px, "exit_reason": reason,
-               "gross_pct": round(pnl, 3), "net_pct": round(net, 3), "pnl_krw": round(pos["notional_krw"] * net / 100.0),
-               "held_min": round(held_min, 1)}
-        _append(PHANTOM_LEDGER, row)
+        row = _close_row(pos, px, reason, now, contract=contract)
         closed.append(row)
         if notify:
             try:
-                notify(f"🧪 [VIRTUAL] KR 이벤트 유령 청산 {pos['ticker']} {reason} net {net:+.2f}% ({held_min:.0f}분)")
+                notify(f"🧪 [VIRTUAL] KR 이벤트 유령 청산 {pos['ticker']} {reason} net {row['net_pct']:+.2f}% ({held_min:.0f}분)")
             except Exception:
                 pass
     return keep, closed
+
+
+def open_positions_from_ledger(session_date: str) -> list[dict[str, Any]]:
+    """원장 기준 미청산 유령(해당 세션). 상태 파일이 없을 때의 복구용 — 사이클 간 상태는 러너 state가 정본."""
+    rows = read_jsonl(PHANTOM_LEDGER)
+    opened = {r["rcept_no"]: r for r in rows if r.get("event") == "OPEN" and r.get("session_date") == session_date}
+    closed = {r["rcept_no"] for r in rows if r.get("event") == "CLOSE"}
+    return [dict(v) for k, v in opened.items() if k not in closed]
+
+
+def finalize_orphans(today: str, *, now: datetime | None = None, contract: dict[str, Any] = CONTRACT) -> list[dict[str, Any]]:
+    """이전 세션 OPEN인데 CLOSE가 없는 유령을 ORPHAN_UNPRICED로 마감(진입가, unpriced_exit=true). 계약상 오버나이트 없음이므로
+    원장 정합용이며 손익 표본에서는 unpriced_exit로 제외한다."""
+    now = now or now_kst()
+    rows = read_jsonl(PHANTOM_LEDGER)
+    closed = {r["rcept_no"] for r in rows if r.get("event") == "CLOSE"}
+    out = []
+    for r in rows:
+        if r.get("event") == "OPEN" and r.get("session_date", "") < today and r["rcept_no"] not in closed:
+            out.append(_close_row(dict(r), float(r["entry"]), "ORPHAN_UNPRICED", now, contract=contract, unpriced=True))
+            closed.add(r["rcept_no"])
+    return out
 
 
 # ── 한 사이클 ────────────────────────────────────────────────────────────────
@@ -419,13 +469,13 @@ def process_disclosure(item: dict[str, Any], *, session_date: str, quote_fn: Cal
                        open_n: int, new_today: int, doc_fn: Callable[[str], str] | None = None,
                        llm_fn: Callable[[str, str, dict], dict] | None = None,
                        contract: dict[str, Any] = CONTRACT, first_seen: str | None = None,
-                       doc_attempts: int = 0, final: bool = False) -> dict[str, Any]:
+                       doc_attempts: int = 0, final: bool = False, now: datetime | None = None) -> dict[str, Any]:
     """공시 1건 → 분류·본문·판단·원장. 반환 행에 decision 포함.
 
     본문(document.xml)이 아직 비어 있으면(09-04 실측: 감지 직후 4건 전부 빈 본문 → ratio_missing 오판) 원장에 쓰지 않고
     decision=PENDING을 돌려준다. 러너가 DOC_RETRY_GAP_SEC 간격으로 재시도하고, DOC_RETRY_MAX_SEC를 넘기면 final=True로
     호출해 SKIP doc_unavailable로 확정 기록한다. first_seen은 최초 감지 시각(재시도 시 지연 계산 기준)."""
-    t0 = now_kst()
+    t0 = now or now_kst()
     kind, corr = classify_title(item.get("report_nm", ""))
     row: dict[str, Any] = {"authority": AUTHORITY, "contract": contract["version"], "session_date": session_date,
                            "rcept_no": item.get("rcept_no"), "stock_code": item.get("stock_code"),
@@ -457,7 +507,8 @@ def process_disclosure(item: dict[str, Any], *, session_date: str, quote_fn: Cal
             row["ts_classified"] = _iso()
     quote = quote_fn(item["stock_code"]) if kind in ENTER_KINDS and not corr else None
     liq = liquidity_snapshot(item["stock_code"]) if kind in ENTER_KINDS and not corr else {}
-    decision, reason = decide(kind, corr, fields, llm, quote, liq, contract=contract, open_n=open_n, new_today=new_today)
+    decision, reason = decide(kind, corr, fields, llm, quote, liq, contract=contract, open_n=open_n, new_today=new_today,
+                              now=t0)
     row.update({"fields": fields, "llm": llm, "quote": quote, "liq": {k: v for k, v in liq.items() if k != "bars"},
                 "decision": decision, "reason": reason, "ts_decided": _iso(),
                 "latency_sec": round((now_kst() - t0).total_seconds(), 2), "basis": basis_text(kind, fields, llm)})

@@ -74,11 +74,15 @@ def _ensure_cache_async(ticker: str) -> None:
         pass
 
 
-def open_positions_from_ledger(session_date: str) -> list[dict]:
-    rows = kel.read_jsonl(kel.PHANTOM_LEDGER)
-    opened = {r["rcept_no"]: r for r in rows if r.get("event") == "OPEN" and r.get("session_date") == session_date}
-    closed = {r["rcept_no"] for r in rows if r.get("event") == "CLOSE"}
-    return [dict(v) for k, v in opened.items() if k not in closed]
+open_positions_from_ledger = kel.open_positions_from_ledger
+
+
+def load_open_positions(session_date: str, st: dict) -> list[dict]:
+    """사이클 간 유령 상태(peak/trough/time_checked/last_px)는 state가 정본, 원장은 복구·대사용(09-06 수리).
+    원장에 OPEN인데 state에 없으면 원장 행을 쓰고, 원장에서 이미 CLOSE된 건은 state에서 제거한다."""
+    ledger = {p["rcept_no"]: p for p in kel.open_positions_from_ledger(session_date)}
+    state = {p["rcept_no"]: p for p in (st.get("open_positions") or []) if st.get("session_date") == session_date}
+    return [state.get(rno) or ledger[rno] for rno in ledger]
 
 
 def _age_sec(iso: str | None, now: datetime) -> float:
@@ -92,7 +96,7 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
     now = now or kel.now_kst()
     seen: set = set(st.get("seen", []))
     pending: dict = dict(st.get("pending") or {})  # rcept_no → {item, first_seen, attempts, last_try} (본문 지연 재시도)
-    open_pos = open_positions_from_ledger(session_date)
+    open_pos = load_open_positions(session_date, st)
     new_today = sum(1 for r in kel.read_jsonl(kel.PHANTOM_LEDGER)
                     if r.get("event") == "OPEN" and r.get("session_date") == session_date)
     items = kel.dart_list_today(session_date)
@@ -134,9 +138,10 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
             continue
         _handle(it, row)
     # 유령 평가
-    open_pos, closed = kel.evaluate_phantoms(open_pos, _quote, notify=_notify)
+    open_pos, closed = kel.evaluate_phantoms(open_pos, _quote, notify=_notify, now=now)
     st["seen"] = sorted(seen)[-3000:]
     st["pending"] = pending
+    st["open_positions"] = open_pos
     st["session_date"] = session_date
     st["last_cycle_at"] = kel._iso()
     st["open_n"] = len(open_pos)
@@ -148,6 +153,9 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
 
 def loop(poll_sec: float) -> int:
     print(f"[KR-EVENT] loop start poll={poll_sec}s authority={kel.AUTHORITY}", flush=True)
+    orphans = kel.finalize_orphans(kel.now_kst().strftime("%Y-%m-%d"))
+    if orphans:
+        print(f"[KR-EVENT] 이전 세션 미청산 유령 {len(orphans)}건 ORPHAN_UNPRICED 마감(손익 표본 제외)", flush=True)
     while True:
         now = kel.now_kst()
         sd = now.strftime("%Y-%m-%d")
@@ -156,7 +164,7 @@ def loop(poll_sec: float) -> int:
             st = {"session_date": sd, "seen": []}
         hhmm = now.strftime("%H:%M")
         if now.weekday() >= 5 or hhmm >= "15:41":
-            # 장 종료: 본문 대기 건은 SKIP 확정(원장 누락 방지) → 남은 유령 EOD 청산 후 종료
+            # 장 종료: 본문 대기 건은 SKIP 확정(원장 누락 방지) → 남은 유령 강제 청산(마지막 관측가, 이월 없음) 후 종료
             for rno, p in sorted((st.get("pending") or {}).items()):
                 try:
                     kel.process_disclosure(p["item"], session_date=sd, quote_fn=_quote, open_n=0, new_today=0,
@@ -164,10 +172,12 @@ def loop(poll_sec: float) -> int:
                 except Exception as exc:
                     print(f"[KR-EVENT] pending finalize error {rno}: {exc}", flush=True)
             st["pending"] = {}
-            kel.save_state(st)
-            open_pos = open_positions_from_ledger(sd)
+            open_pos = load_open_positions(sd, st)
             if open_pos:
-                kel.evaluate_phantoms(open_pos, _quote, notify=_notify)
+                open_pos, closed = kel.evaluate_phantoms(open_pos, _quote, notify=_notify, now=now, force_close=True)
+                print(f"[KR-EVENT] 장 종료 강제 청산 {len(closed)}건 (남음 {len(open_pos)})", flush=True)
+            st["open_positions"] = open_pos
+            kel.save_state(st)
             print(f"[KR-EVENT] session end {sd} — exit", flush=True)
             return 0
         if hhmm < "08:50":
