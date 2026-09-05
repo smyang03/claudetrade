@@ -81,7 +81,9 @@ ENTER_KINDS = ("supply_contract", "bonus_issue")
 # NXT 시간외 단계(09-06 프로브: KIS inquire-price NX/UN 지원, NX 가격이 KRX 종가와 다르게 움직임 — 마감 후 공시를 당일 저녁에 대응)
 # 정규장 포지션은 15:41에 강제 청산하고 NXT 단계는 별도 venue로 시작한다. 이월 없음.
 AFTER_HOURS = {"start_hhmm": "15:41", "end_hhmm": "20:01", "entry_cutoff_hhmm": "19:40", "eod_exit_hhmm": "19:55",
-               "min_nx_volume": 1}   # NX 누적 거래량 0이면 체결 가정 불가 → SKIP no_nx_volume
+               "min_nx_volume": 1,             # NX 누적 거래량 0이면 체결 가정 불가 → SKIP no_nx_volume
+               "max_last_trade_age_min": 10}   # 마지막 체결이 10분보다 오래되면 SKIP nx_stale (체결 시각을 못 받으면 통과하되 기록)
+# 공식 NXT 애프터마켓은 15:40~20:00(주문 접수와 체결 시간 구분). 러너는 15:41부터 NX 시세로 전환한다.
 CONTRACT_NXT = {**CONTRACT, "version": "kr_event_v1_nxt", "entry_cutoff_hhmm": AFTER_HOURS["entry_cutoff_hhmm"],
                 "eod_exit_hhmm": AFTER_HOURS["eod_exit_hhmm"]}
 
@@ -329,8 +331,12 @@ def decide(kind: str, is_correction: bool, fields: dict[str, Any], llm: dict[str
             return "SKIP", f"bonus_ratio_{r}"
     if not quote or not quote.get("price"):
         return "SKIP", "no_quote"
-    if quote.get("venue") == "NXT" and float(quote.get("volume") or 0) < AFTER_HOURS["min_nx_volume"]:
-        return "SKIP", "no_nx_volume"
+    if quote.get("venue") == "NXT":
+        if float(quote.get("volume") or 0) < AFTER_HOURS["min_nx_volume"]:
+            return "SKIP", "no_nx_volume"
+        age = quote.get("last_trade_age_min")
+        if age is not None and age > AFTER_HOURS["max_last_trade_age_min"]:
+            return "SKIP", f"nx_stale_{age:.0f}min"   # 누적 거래량만으로는 '지금 거래되는가'를 못 본다(Codex 3차)
     px = float(quote["price"])
     if px < contract["min_price"]:
         return "SKIP", "price_lt_min"
@@ -367,12 +373,34 @@ def kis_quote_nx(ticker: str, *, timeout: float = 8.0) -> dict[str, Any] | None:
         px = float(o.get("stck_prpr") or 0)
         if j.get("rt_cd") != "0" or px <= 0:
             return None
-        return {"ticker": str(ticker), "price": px, "open": float(o.get("stck_oprc") or 0), "high": float(o.get("stck_hgpr") or 0),
-                "low": float(o.get("stck_lwpr") or 0), "volume": float(o.get("acml_vol") or 0),
-                "change_pct": float(o.get("prdy_ctrt") or 0), "source": "kis_nx", "venue": "NXT"}
+        q = {"ticker": str(ticker), "price": px, "open": float(o.get("stck_oprc") or 0), "high": float(o.get("stck_hgpr") or 0),
+             "low": float(o.get("stck_lwpr") or 0), "volume": float(o.get("acml_vol") or 0),
+             "change_pct": float(o.get("prdy_ctrt") or 0), "source": "kis_nx", "venue": "NXT"}
+        q.update(kis_last_trade_nx(ticker, tok, timeout=timeout))
+        return q
     except Exception:
         _NX_TOKEN.pop("token", None)
         return None
+
+
+def kis_last_trade_nx(ticker: str, token: str, *, timeout: float = 8.0) -> dict[str, Any]:
+    """NX 최근 체결 시각(inquire-ccnl, FHKST01010300). 실패·미지원이면 {} — 게이트는 값이 있을 때만 작동하고, 없으면 기록만."""
+    try:
+        import kis_api as k
+        resp = k._kis_get(f"{k.BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-ccnl",
+                          headers=k._headers(token, "FHKST01010300"),
+                          params={"FID_COND_MRKT_DIV_CODE": "NX", "FID_INPUT_ISCD": str(ticker)}, timeout=timeout)
+        j = resp.json()
+        rows = j.get("output") or []
+        if j.get("rt_cd") != "0" or not rows:
+            return {"last_trade_hhmmss": None, "last_trade_age_min": None}
+        hh = str(rows[0].get("stck_cntg_hour") or "").zfill(6)
+        now = now_kst()
+        t = now.replace(hour=int(hh[:2]), minute=int(hh[2:4]), second=int(hh[4:6]), microsecond=0)
+        age = (now - t).total_seconds() / 60.0
+        return {"last_trade_hhmmss": hh, "last_trade_age_min": round(age, 1) if age >= 0 else None}
+    except Exception:
+        return {"last_trade_hhmmss": None, "last_trade_age_min": None}
 
 
 # ── 원장 ─────────────────────────────────────────────────────────────────────
@@ -558,15 +586,26 @@ def basis_text(kind: str, fields: dict[str, Any], llm: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
-def _latencies(row: dict[str, Any], t0: datetime, now: datetime | None) -> dict[str, float]:
-    """latency_sec = 최초 감지(ts_detected)→판단 총 지연(본문 재시도 대기 포함), proc_sec = 이번 호출의 처리 시간.
-    09-06 수리: 재시도 호출 시작 기준이라 10분 기다린 건도 몇 초로 찍혔다(Codex 리뷰 2차)."""
-    t_end = now_kst() if now is None else now
+def _latencies(row: dict[str, Any], t0: datetime, now: datetime | None, mono_start: float) -> dict[str, float]:
+    """latency_sec = 최초 감지(ts_detected)→판단 총 지연(본문 재시도 대기 + 이번 처리), proc_sec = 이번 호출의 실제 처리 시간(단조 시계).
+    09-06 수리 2회: 재시도 호출 시작 기준 → 최초 감지 기준; 주입 시각을 종료 시각으로도 써서 proc_sec=0이던 결함(Codex 3차) → 단조 시계 실측."""
+    proc = time.monotonic() - mono_start
     try:
         t_first = datetime.fromisoformat(str(row.get("ts_detected")))
     except (TypeError, ValueError):
         t_first = t0
-    return {"latency_sec": round((t_end - t_first).total_seconds(), 2), "proc_sec": round((t_end - t0).total_seconds(), 2)}
+    if now is None:
+        latency = (now_kst() - t_first).total_seconds()
+    else:
+        latency = (now - t_first).total_seconds() + proc
+    return {"latency_sec": round(latency, 2), "proc_sec": round(proc, 3)}
+
+
+def _stamped(q: dict[str, Any] | None) -> dict[str, Any] | None:
+    """시세에 실제 수신 시각(quoted_at, 실시계)을 붙인다. 3시점 관측은 이 시각으로 각 단계를 구분한다."""
+    if not q:
+        return None
+    return {**q, "quoted_at": _iso()}
 
 
 def process_disclosure(item: dict[str, Any], *, session_date: str, quote_fn: Callable[[str], dict[str, Any] | None],
@@ -580,6 +619,7 @@ def process_disclosure(item: dict[str, Any], *, session_date: str, quote_fn: Cal
     decision=PENDING을 돌려준다. 러너가 DOC_RETRY_GAP_SEC 간격으로 재시도하고, DOC_RETRY_MAX_SEC를 넘기면 final=True로
     호출해 SKIP doc_unavailable로 확정 기록한다. first_seen은 최초 감지 시각(재시도 시 지연 계산 기준)."""
     t0 = now or now_kst()
+    mono0 = time.monotonic()
     kind, corr = classify_title(item.get("report_nm", ""))
     row: dict[str, Any] = {"authority": AUTHORITY, "contract": contract["version"], "session_date": session_date,
                            "rcept_no": item.get("rcept_no"), "stock_code": item.get("stock_code"),
@@ -592,32 +632,35 @@ def process_disclosure(item: dict[str, Any], *, session_date: str, quote_fn: Cal
         return row
     fields: dict[str, Any] = {}
     llm: dict[str, Any] = {"available": False}
+    # 3시점 관측(09-06 Codex 3차): 감지 시점 시세는 본문 fetch 전에, 첫 시도에만, 관측 대상 종류 전부(소각·분할·자사주 포함).
+    # 없으면 결측(None)으로 남긴다 — 다른 단계 가격으로 메우지 않는다.
+    if kind in OBS_KINDS and not corr and doc_attempts == 0:
+        row["quote_detect"] = _stamped(quote_fn(item["stock_code"]))
     if kind in ENTER_KINDS and not corr:
         text = (doc_fn or dart_document_text)(item["rcept_no"])
         row["doc_attempts"] = doc_attempts + 1
         if not text.strip():
             if not final:
                 row.update({"decision": "PENDING", "reason": "doc_unavailable", "ts_decided": _iso()})
-                if doc_attempts == 0:
-                    row["quote"] = quote_fn(item["stock_code"])  # 감지 시점 가격(관측 원장 px_detect) — 첫 시도만
                 return row  # 원장에 쓰지 않음 — 러너가 재시도
             row.update({"fields": {}, "llm": llm, "quote": None, "liq": {}, "decision": "SKIP",
                         "reason": "doc_unavailable_after_retry", "ts_decided": _iso(),
-                        **_latencies(row, t0, now), "basis": basis_text(kind, {}, llm)})
+                        **_latencies(row, t0, now, mono0), "basis": basis_text(kind, {}, llm)})
             _append(SIGNAL_LEDGER, row)
             return row
+        row["ts_parsed"] = _iso()
+        row["quote_doc"] = _stamped(quote_fn(item["stock_code"]))   # 본문 확보 시점 시세(파싱·LLM 전)
         fields = parse_supply_contract(text) if kind == "supply_contract" else parse_bonus_issue(text)
-        row["ts_parsed"] = _iso(now) if now else _iso()
         save_doc_text(item["rcept_no"], text)
         if kind == "supply_contract" and fields.get("ratio_pct") is not None and fields["ratio_pct"] >= contract["supply_ratio_min_pct"]:
             llm = (llm_fn or llm_judge)(kind, text, fields)
             row["ts_classified"] = _iso()
-    quote = quote_fn(item["stock_code"]) if kind in ENTER_KINDS and not corr else None
+    quote = _stamped(quote_fn(item["stock_code"])) if kind in ENTER_KINDS and not corr else None   # 판단 시점 시세
     liq = liquidity_snapshot(item["stock_code"]) if kind in ENTER_KINDS and not corr else {}
     decision, reason = decide(kind, corr, fields, llm, quote, liq, contract=contract, open_n=open_n, new_today=new_today,
                               now=t0)
     row.update({"fields": fields, "llm": llm, "quote": quote, "liq": {k: v for k, v in liq.items() if k != "bars"},
                 "decision": decision, "reason": reason, "ts_decided": _iso(),
-                **_latencies(row, t0, now), "basis": basis_text(kind, fields, llm)})
+                **_latencies(row, t0, now, mono0), "basis": basis_text(kind, fields, llm)})
     _append(SIGNAL_LEDGER, row)
     return row

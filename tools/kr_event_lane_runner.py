@@ -100,10 +100,11 @@ def _obs_start(obs: dict, it: dict, row: dict, session_date: str, now: datetime)
     rno = it["rcept_no"]
     if rno in obs or row.get("kind") not in kel.OBS_KINDS or row.get("is_correction"):
         return
-    q = row.get("quote") or {}
+    q = row.get("quote_detect") or {}
     obs[rno] = {"rcept_no": rno, "stock_code": it.get("stock_code"), "corp_name": it.get("corp_name"), "kind": row.get("kind"),
                 "session_date": session_date, "venue": _PHASE.get("phase", "KRX"), "t_detect": row.get("ts_detected") or kel._iso(now),
-                "px_detect": q.get("price"), "t_doc": None, "px_doc": None, "t_decide": None, "px_decide": None,
+                "px_detect": q.get("price"), "t_detect_quote": q.get("quoted_at"),   # 감지 시점 시세(없으면 결측 유지)
+                "t_doc": None, "px_doc": None, "t_decide": None, "px_decide": None,
                 "decision": None, "reason": None, "fields": {}, "out": {}}
 
 
@@ -111,23 +112,28 @@ def _obs_decide(obs: dict, rno: str, row: dict) -> None:
     o = obs.get(rno)
     if not o or row.get("decision") == "PENDING":
         return
-    q = row.get("quote") or {}
-    px = q.get("price")
-    o.update({"t_doc": row.get("ts_parsed"), "px_doc": px, "t_decide": row.get("ts_decided"), "px_decide": px,
+    qd = row.get("quote_doc") or {}
+    qz = row.get("quote") or {}
+    # 단계별로 실제 받은 시세만 적는다. 결측은 결측(다른 단계 값으로 메우지 않음 — Codex 3차).
+    o.update({"t_doc": qd.get("quoted_at") or row.get("ts_parsed"), "px_doc": qd.get("price"),
+              "t_decide": qz.get("quoted_at") or row.get("ts_decided"), "px_decide": qz.get("price"),
               "decision": row.get("decision"), "reason": row.get("reason"),
               "fields": {k: (row.get("fields") or {}).get(k) for k in ("ratio_pct", "amount_krw", "related_party", "ratio_per_share")},
-              "latency_sec": row.get("latency_sec"), "doc_attempts": row.get("doc_attempts")})
-    if o["px_detect"] is None:
-        o["px_detect"] = px
+              "latency_sec": row.get("latency_sec"), "proc_sec": row.get("proc_sec"), "doc_attempts": row.get("doc_attempts"),
+              "nx_last_trade_age_min": qz.get("last_trade_age_min")})
 
 
-def _obs_fill(obs: dict, quote_fn, now: datetime, *, session_end: bool = False, venue: str | None = None) -> list[dict]:
+def _obs_fill(obs: dict, quote_fn, now: datetime, *, session_end: bool = False, venue: str | None = None,
+              keep: set | None = None) -> list[dict]:
     """만기 지난 결과 칸 채우기. EOD(KRX 15:20 / NXT 19:55) 이후 px_1520|px_1955, 단계 종료(session_end)에 px_close를
-    채우고 원장에 쓴 뒤 상태에서 제거. venue를 주면 그 venue의 관측만 마감한다."""
+    채우고 원장에 쓴 뒤 상태에서 제거. venue를 주면 그 venue의 관측만 마감한다. keep(본문 대기 중)은 마감하지 않고 이월."""
     done = []
     for rno, o in list(obs.items()):
         v = o.get("venue") or "KRX"
         if venue is not None and v != venue:
+            continue
+        if session_end and keep and rno in keep:
+            o["carried_over"] = True
             continue
         c = kel.CONTRACT_NXT if v == "NXT" else kel.CONTRACT
         eod = now.replace(hour=int(c["eod_exit_hhmm"][:2]), minute=int(c["eod_exit_hhmm"][3:]), second=0, microsecond=0)
@@ -153,6 +159,10 @@ def _obs_fill(obs: dict, quote_fn, now: datetime, *, session_end: bool = False, 
                 o["out"][f"ret_{k[3:]}_pct"] = round((v / base - 1.0) * 100.0, 3) if v and base else None
             v = o["out"].get("px_close")
             o["out"]["ret_decide_to_close_pct"] = round((v / dec - 1.0) * 100.0, 3) if v and dec else None
+            pd_ = o.get("px_detect"); pdoc = o.get("px_doc")
+            o["out"]["ret_detect_to_decide_pct"] = round((dec / pd_ - 1.0) * 100.0, 3) if dec and pd_ else None   # 판단하는 동안 움직인 몫
+            o["out"]["ret_detect_to_doc_pct"] = round((pdoc / pd_ - 1.0) * 100.0, 3) if pdoc and pd_ else None
+            o["missing"] = [k for k in ("px_detect", "px_doc", "px_decide") if o.get(k) is None] + [k for k in ("px_5m", "px_30m", ek, "px_close") if o["out"].get(k) is None]
             o["written_at"] = kel._iso(now)
             kel._append(kel.OBS_LEDGER, o)
             done.append(obs.pop(rno))
@@ -236,6 +246,42 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
             "pending": len(pending), "retried": retried}
 
 
+def end_phase(sd: str, st: dict, now: datetime, phase: str, prev_phase: str) -> bool:
+    """단계 종료 처리. KRX→NXT 전환(phase=NXT, prev=KRX)이면 본문 대기 건을 확정하지 않고 NXT로 이월(Codex 3차: 마감 직전 감지분 유실 방지),
+    END(20:01)에서만 SKIP 확정. 그 venue의 관측을 마감(이월 건 제외)하고 유령을 강제 청산(이월 없음). 반환 True = 루프 종료."""
+    end_venue = "KRX" if phase == "NXT" else prev_phase
+    _PHASE["phase"] = end_venue
+    pending_now = dict(st.get("pending") or {})
+    if phase == "END":
+        for rno, p in sorted(pending_now.items()):
+            try:
+                kel.process_disclosure(p["item"], session_date=sd, quote_fn=_quote, open_n=0, new_today=0,
+                                       first_seen=p.get("first_seen"), doc_attempts=int(p.get("attempts", 0)), final=True)
+            except Exception as exc:
+                print(f"[KR-EVENT] pending finalize error {rno}: {exc}", flush=True)
+        st["pending"] = {}
+        pending_now = {}
+    elif pending_now:
+        print(f"[KR-EVENT] 본문 대기 {len(pending_now)}건 NXT 단계로 이월", flush=True)
+    written = _obs_fill(st.setdefault("obs", {}), _quote, now, session_end=True, venue=end_venue, keep=set(pending_now))
+    if written:
+        print(f"[KR-EVENT] {end_venue} 관측 원장 기록 {len(written)}건 (탈락 포함)", flush=True)
+    open_pos = load_open_positions(sd, st)
+    if open_pos:
+        open_pos, closed = kel.evaluate_phantoms(open_pos, _quote, notify=_notify, now=now, force_close=True)
+        print(f"[KR-EVENT] {end_venue} 종료 강제 청산 {len(closed)}건 (남음 {len(open_pos)})", flush=True)
+    st["open_positions"] = open_pos
+    if phase == "END":
+        kel.save_state(st)
+        print(f"[KR-EVENT] session end {sd} — exit", flush=True)
+        return True
+    st["phase"] = "NXT"
+    _PHASE["phase"] = "NXT"
+    kel.save_state(st)
+    print(f"[KR-EVENT] {now.strftime('%H:%M')} NXT 시간외 단계 시작 (KIS NX 시세, 진입 마감 {kel.AFTER_HOURS['entry_cutoff_hhmm']} · EOD {kel.AFTER_HOURS['eod_exit_hhmm']})", flush=True)
+    return False
+
+
 def loop(poll_sec: float) -> int:
     print(f"[KR-EVENT] loop start poll={poll_sec}s authority={kel.AUTHORITY}", flush=True)
     orphans = kel.finalize_orphans(kel.now_kst().strftime("%Y-%m-%d"))
@@ -251,31 +297,8 @@ def loop(poll_sec: float) -> int:
         phase = kel.phase_of(now)
         prev_phase = st.get("phase") or "KRX"
         if phase == "END" or (phase == "NXT" and prev_phase == "KRX"):
-            # 단계 종료(KRX 15:41 / NXT 20:01): 본문 대기 건 SKIP 확정 → 그 venue 관측 마감 → 유령 강제 청산(이월 없음)
-            end_venue = "KRX" if phase == "NXT" else prev_phase
-            _PHASE["phase"] = end_venue
-            for rno, p in sorted((st.get("pending") or {}).items()):
-                try:
-                    kel.process_disclosure(p["item"], session_date=sd, quote_fn=_quote, open_n=0, new_today=0,
-                                           first_seen=p.get("first_seen"), doc_attempts=int(p.get("attempts", 0)), final=True)
-                except Exception as exc:
-                    print(f"[KR-EVENT] pending finalize error {rno}: {exc}", flush=True)
-            st["pending"] = {}
-            written = _obs_fill(st.setdefault("obs", {}), _quote, now, session_end=True, venue=end_venue)
-            if written:
-                print(f"[KR-EVENT] {end_venue} 관측 원장 기록 {len(written)}건 (탈락 포함)", flush=True)
-            open_pos = load_open_positions(sd, st)
-            if open_pos:
-                open_pos, closed = kel.evaluate_phantoms(open_pos, _quote, notify=_notify, now=now, force_close=True)
-                print(f"[KR-EVENT] {end_venue} 종료 강제 청산 {len(closed)}건 (남음 {len(open_pos)})", flush=True)
-            st["open_positions"] = open_pos
-            if phase == "END":
-                kel.save_state(st)
-                print(f"[KR-EVENT] session end {sd} — exit", flush=True)
+            if end_phase(sd, st, now, phase, prev_phase):
                 return 0
-            st["phase"] = "NXT"
-            kel.save_state(st)
-            print(f"[KR-EVENT] {hhmm} NXT 시간외 단계 시작 (KIS NX 시세, 진입 마감 {kel.AFTER_HOURS['entry_cutoff_hhmm']} · EOD {kel.AFTER_HOURS['eod_exit_hhmm']})", flush=True)
             continue
         if hhmm < "08:50":
             time.sleep(min(poll_sec, 30)); continue

@@ -17472,10 +17472,15 @@ def api_kr_event_lane():
         counts = {}
         for r in sigs:
             counts[r.get("decision", "?")] = counts.get(r.get("decision", "?"), 0) + 1
-        settled = [r for r in closed if r.get("session_date")]
-        stats = {"n": len(settled),
+        # 정상 정산(가격 확인) / 가격 미확인 종료(unpriced_exit) / 미해결(open)을 나눈다 — 미확인은 평균·승률에서 제외, 결측률은 별도 표시(Codex 3차)
+        settled_all = [r for r in closed if r.get("session_date")]
+        settled = [r for r in settled_all if not r.get("unpriced_exit")]
+        unpriced = [r for r in settled_all if r.get("unpriced_exit")]
+        stats = {"n": len(settled), "n_unpriced": len(unpriced), "n_open": len(open_rows),
+                 "unpriced_pct": round(100.0 * len(unpriced) / len(settled_all), 1) if settled_all else None,
                  "mean_net_pct": round(sum(float(r.get("net_pct") or 0) for r in settled) / len(settled), 3) if settled else None,
-                 "win_rate": round(100.0 * sum(1 for r in settled if float(r.get("net_pct") or 0) > 0) / len(settled), 1) if settled else None}
+                 "win_rate": round(100.0 * sum(1 for r in settled if float(r.get("net_pct") or 0) > 0) / len(settled), 1) if settled else None,
+                 "by_venue": {v: sum(1 for r in settled if (r.get("venue") or "KRX") == v) for v in ("KRX", "NXT")}}
         return jsonify({"available": True, "authority": kel.AUTHORITY, "contract": kel.CONTRACT, "session_date": today,
                         "heartbeat": hb, "counts": counts, "signals": interesting[:40], "open": open_rows,
                         "closed_recent": sorted(closed, key=lambda r: r.get("closed_at", ""), reverse=True)[:20],
@@ -17500,8 +17505,11 @@ def api_kr_event_observations():
             dec = [r["out"].get("ret_decide_to_close_pct") for r in sel if (r.get("out") or {}).get("ret_decide_to_close_pct") is not None]
             f5 = [r["out"].get("ret_5m_pct") for r in sel if (r.get("out") or {}).get("ret_5m_pct") is not None]
             f30 = [r["out"].get("ret_30m_pct") for r in sel if (r.get("out") or {}).get("ret_30m_pct") is not None]
+            dd = [r["out"].get("ret_detect_to_decide_pct") for r in sel if (r.get("out") or {}).get("ret_detect_to_decide_pct") is not None]
+            miss = sum(1 for r in sel if (r.get("missing") or []) or (r.get("out") or {}).get("px_close") is None)
             m = lambda xs: round(sum(xs) / len(xs), 3) if xs else None
             return {"n": len(sel), "ret_5m": m(f5), "ret_30m": m(f30), "ret_close": m(vals), "ret_decide_to_close": m(dec),
+                    "ret_detect_to_decide": m(dd), "n_missing": miss, "missing_pct": round(100.0 * miss / len(sel), 1) if sel else None,
                     "pos_pct": round(100.0 * sum(1 for v in dec if v > 0) / len(dec), 1) if dec else None}
         summary = {}
         for kind in kel.OBS_KINDS:
@@ -17607,7 +17615,7 @@ PAGE_VIRTUAL_HTML = """
   <table id="vb-obs" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
     <thead><tr style="color:var(--muted);text-align:right;">
       <th style="text-align:left;padding:6px;">감지</th><th style="text-align:left;">종목</th><th style="text-align:left;">종류</th><th>venue</th>
-      <th>판단</th><th style="text-align:left;">사유</th><th>감지가</th><th>판단가</th><th>5분</th><th>30분</th><th>EOD</th><th>종가</th><th>판단→종가</th>
+      <th>판단</th><th style="text-align:left;">사유</th><th>감지가</th><th>본문가</th><th>판단가</th><th>감지→판단</th><th>5분</th><th>30분</th><th>EOD</th><th>종가</th><th>판단→종가</th>
     </tr></thead>
     <tbody></tbody>
   </table>
@@ -17722,7 +17730,8 @@ async function loadKrEvent() {
     document.getElementById('vb-krevent-ops').innerHTML =
       '세션 ' + d.session_date + ' · 러너 ' + (hb.written_at ? ('<span class="pos">alive</span> ' + hb.written_at.slice(11,19) + ' pid ' + hb.pid) : '<span class="warn">하트비트 없음(장중 08:50~15:40만 실행)</span>') +
       ' · 본 공시 ' + Object.values(c).reduce((a,b)=>a+b,0) + ' (진입 ' + (c.ENTER||0) + ' / 스킵 ' + (c.SKIP||0) + ' / 관측 ' + (c.OBSERVE||0) + ')' +
-      ' · 누적 정산 ' + d.stats_all.n + (d.stats_all.n ? (' 평균 net ' + d.stats_all.mean_net_pct + '% 승률 ' + d.stats_all.win_rate + '%') : '');
+      ' · 누적 정산(가격 확인) ' + d.stats_all.n + (d.stats_all.n ? (' 평균 net ' + d.stats_all.mean_net_pct + '% 승률 ' + d.stats_all.win_rate + '% [KRX ' + (d.stats_all.by_venue||{}).KRX + '/NXT ' + (d.stats_all.by_venue||{}).NXT + ']') : '') +
+      ' · <span class="' + (d.stats_all.n_unpriced ? 'warn' : 'dim') + '">가격 미확인 종료 ' + d.stats_all.n_unpriced + (d.stats_all.unpriced_pct !== null && d.stats_all.unpriced_pct !== undefined ? ' (' + d.stats_all.unpriced_pct + '%)' : '') + '</span> · 미해결 ' + d.stats_all.n_open;
     const tb = document.querySelector('#vb-krevent tbody');
     tb.innerHTML = (d.signals || []).length ? d.signals.map(r => `
       <tr style="border-top:1px solid var(--border);text-align:right;">
@@ -17760,7 +17769,7 @@ async function loadObs() {
     if (!d.available) { meta.textContent = '(' + d.reason + ')'; return; }
     const f = v => (v === null || v === undefined) ? '-' : (Number(v) >= 0 ? '+' : '') + Number(v).toFixed(2);
     const cls = v => (v === null || v === undefined) ? 'dim' : (Number(v) > 0 ? 'pos' : (Number(v) < 0 ? 'neg' : 'dim'));
-    const sm = Object.entries(d.summary || {}).map(([k, v]) => `${k}: n=${v.all.n} 5분 ${f(v.all.ret_5m)} 30분 ${f(v.all.ret_30m)} 종가 ${f(v.all.ret_close)} · 판단→종가 <b class="${cls(v.all.ret_decide_to_close)}">${f(v.all.ret_decide_to_close)}%</b> (양수 ${v.all.pos_pct ?? '-'}%) · ENTER n=${v.ENTER.n} ${f(v.ENTER.ret_decide_to_close)} / SKIP n=${v.SKIP.n} ${f(v.SKIP.ret_decide_to_close)}`).join('<br>');
+    const sm = Object.entries(d.summary || {}).map(([k, v]) => `${k}: n=${v.all.n} <span class="${v.all.n_missing ? 'warn' : 'dim'}">결측 ${v.all.n_missing} (${v.all.missing_pct ?? '-'}%)</span> · 감지→판단 ${f(v.all.ret_detect_to_decide)} · 5분 ${f(v.all.ret_5m)} 30분 ${f(v.all.ret_30m)} 종가 ${f(v.all.ret_close)} · 판단→종가 <b class="${cls(v.all.ret_decide_to_close)}">${f(v.all.ret_decide_to_close)}%</b> (양수 ${v.all.pos_pct ?? '-'}%) · ENTER n=${v.ENTER.n} ${f(v.ENTER.ret_decide_to_close)} / SKIP n=${v.SKIP.n} ${f(v.SKIP.ret_decide_to_close)}`).join('<br>');
     document.getElementById('vb-obs-summary').innerHTML = '세션 ' + d.session_date + ' · 단계 ' + d.phase + ' · 관측중 ' + (d.live || []).length + ' · 누적 ' + (d.rows || []).length + (sm ? '<br>' + sm : '');
     const rows = [...(d.live || []), ...(d.rows || [])].slice(0, 60);
     const tb = document.querySelector('#vb-obs tbody');
@@ -17774,14 +17783,16 @@ async function loadObs() {
         <td>${r.venue||'KRX'}</td>
         <td class="${r.decision==='ENTER'?'pos':(r.decision?'dim':'warn')}">${r.decision||'대기'}</td>
         <td style="text-align:left;color:var(--muted);">${(r.reason||'').slice(0,26)}</td>
-        <td>${r.px_detect ? Number(r.px_detect).toLocaleString() : '-'}</td>
+        <td>${r.px_detect ? Number(r.px_detect).toLocaleString() : '<span class="warn">결측</span>'}</td>
+        <td>${r.px_doc ? Number(r.px_doc).toLocaleString() : '-'}</td>
         <td>${r.px_decide ? Number(r.px_decide).toLocaleString() : '-'}</td>
+        <td class="${cls(o.ret_detect_to_decide_pct ?? ((r.px_decide && r.px_detect) ? (r.px_decide / r.px_detect - 1) * 100 : null))}">${f(o.ret_detect_to_decide_pct ?? ((r.px_decide && r.px_detect) ? (r.px_decide / r.px_detect - 1) * 100 : null))}</td>
         <td class="${cls(rel(o.px_5m))}">${f(rel(o.px_5m))}</td>
         <td class="${cls(rel(o.px_30m))}">${f(rel(o.px_30m))}</td>
         <td class="${cls(rel(eod))}">${f(rel(eod))}</td>
         <td class="${cls(rel(o.px_close))}">${f(rel(o.px_close))}</td>
         <td class="${cls(o.ret_decide_to_close_pct)}"><b>${f(o.ret_decide_to_close_pct)}</b></td>
-      </tr>`; }).join('') : '<tr><td colspan="13" class="dim">관측 없음 (주중 08:50~20:00 러너가 채움)</td></tr>';
+      </tr>`; }).join('') : '<tr><td colspan="15" class="dim">관측 없음 (주중 08:50~20:00 러너가 채움)</td></tr>';
   } catch (e) { /* 조용히 재시도 */ }
 }
 loadObs(); setInterval(loadObs, 60000);

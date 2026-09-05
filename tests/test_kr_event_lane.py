@@ -243,7 +243,7 @@ class DocRetryTest(unittest.TestCase):
             self.assertEqual(rows[0]["ts_detected"], k._iso(t0))
             self.assertEqual(rows[0]["doc_attempts"], 2)
             self.assertTrue(rows[0]["reason"].startswith("ratio_6.0_lt_30"))
-            self.assertEqual(rows[0]["latency_sec"], 70.0)   # 감지 11:09:11 → 판단 11:10:21
+            self.assertAlmostEqual(rows[0]["latency_sec"], 70.0, delta=1.0)   # 감지 11:09:11 → 판단 11:10:21 (+실처리)
             self.assertEqual(st["pending"], {})
         finally:
             restore()
@@ -435,7 +435,7 @@ class ObservationLedgerTest(unittest.TestCase):
             rn.cycle("2026-09-07", st, now=t0 + timedelta(seconds=70))  # 본문 확보·판단(6% → SKIP), 판단가 10100
             o = st["obs"]["77"]
             self.assertEqual(o["decision"], "SKIP"); self.assertEqual(o["px_decide"], 10100.0)
-            self.assertEqual(o["t_doc"], k._iso(t0 + timedelta(seconds=70)))
+            self.assertIsNotNone(o["t_doc"]); self.assertEqual(o["px_doc"], 10100.0)   # 본문 확보 시점 시세(실시계 스탬프)
             self.assertEqual(o["fields"]["ratio_pct"], 6.0)
             self.assertTrue((k.DOC_DIR / "77.txt").exists())        # 본문 보관 → 나중에 LLM 재현
             px["v"] = 10300.0
@@ -566,6 +566,113 @@ class NxtAfterHoursTest(unittest.TestCase):
             self.assertEqual(len(written), 1); self.assertEqual(written[0]["out"]["px_close"], 10200.0)
         finally:
             k.dart_list_today, k.dart_document_text, rn._quote, rn.HEARTBEAT, rn._ensure_cache_async, k.kis_quote_nx = orig
+
+
+class ThreePointFidelityTest(unittest.TestCase):
+    """Codex 3차 수리: 감지·본문·판단 시세를 각각 실제 받은 값으로, 결측은 결측으로. 처리시간 실측. 대기 건 NXT 이월. 집계 미확인 분리."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        d = Path(self.tmp.name)
+        self.orig = (k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH, k.OBS_LEDGER, k.DOC_DIR)
+        k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH = d / "ph.jsonl", d / "sig.jsonl", d / "state.json"
+        k.OBS_LEDGER, k.DOC_DIR = d / "obs.jsonl", d / "docs"
+        from datetime import datetime, timezone
+        self.tz = timezone(timedelta(hours=9)); self.t0 = datetime(2026, 9, 7, 10, 0, 0, tzinfo=self.tz)
+
+    def tearDown(self):
+        k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH, k.OBS_LEDGER, k.DOC_DIR = self.orig
+        self.tmp.cleanup()
+
+    def test_three_quotes_are_distinct_and_stamped(self):
+        seq = iter([10000.0, 10150.0, 10300.0])   # 감지 → 본문 → 판단 순으로 호출
+        row = k.process_disclosure({"rcept_no": "5", "stock_code": "000100", "corp_name": "A", "report_nm": "단일판매" + _MID + "공급계약체결"},
+                                   session_date="2026-09-07", quote_fn=lambda t: {"price": next(seq)}, open_n=0, new_today=0,
+                                   doc_fn=lambda r: DOC.replace("매출액대비(%) 6.0", "매출액대비(%) 40.0"), now=self.t0)
+        self.assertEqual((row["quote_detect"]["price"], row["quote_doc"]["price"], row["quote"]["price"]), (10000.0, 10150.0, 10300.0))
+        for q in (row["quote_detect"], row["quote_doc"], row["quote"]):
+            self.assertIn("quoted_at", q)
+        self.assertEqual(row["quote"]["price"], 10300.0)   # 판단은 판단 시점 시세로(감지가 아님)
+
+    def test_observe_only_kind_gets_detect_quote_only(self):
+        row = k.process_disclosure({"rcept_no": "6", "stock_code": "000100", "corp_name": "A", "report_nm": "주요사항보고서(주식소각결정)"},
+                                   session_date="2026-09-07", quote_fn=lambda t: {"price": 5000.0}, open_n=0, new_today=0, now=self.t0)
+        self.assertEqual(row["decision"], "OBSERVE"); self.assertEqual(row["quote_detect"]["price"], 5000.0)
+        self.assertIsNone(row.get("quote")); self.assertNotIn("quote_doc", row)
+
+    def test_missing_detect_quote_stays_missing(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import kr_event_lane_runner as rn
+        calls = {"n": 0}
+        def q(t):
+            calls["n"] += 1
+            return None if calls["n"] == 1 else {"price": 10100.0}   # 감지 시점 시세 실패, 이후 성공
+        row = k.process_disclosure({"rcept_no": "7", "stock_code": "000100", "corp_name": "A", "report_nm": "단일판매" + _MID + "공급계약체결"},
+                                   session_date="2026-09-07", quote_fn=q, open_n=0, new_today=0, doc_fn=lambda r: DOC, now=self.t0)
+        obs = {}
+        rn._obs_start(obs, {"rcept_no": "7", "stock_code": "000100"}, row, "2026-09-07", self.t0)
+        rn._obs_decide(obs, "7", row)
+        self.assertIsNone(obs["7"]["px_detect"]); self.assertEqual(obs["7"]["px_decide"], 10100.0)   # 메우지 않는다
+        obs["7"]["out"] = {"px_close": 10200.0}
+        rn._obs_fill(obs, lambda t: {"price": 10200.0}, self.t0.replace(hour=15, minute=41), session_end=True)
+        rows = k.read_jsonl(k.OBS_LEDGER)
+        self.assertIn("px_detect", rows[0]["missing"]); self.assertIsNone(rows[0]["out"]["ret_close_pct"])
+        self.assertAlmostEqual(rows[0]["out"]["ret_decide_to_close_pct"], 0.99, places=2)
+
+    def test_proc_sec_is_measured_even_with_injected_now(self):
+        import time as _t
+        row = k.process_disclosure({"rcept_no": "8", "stock_code": "000100", "corp_name": "A", "report_nm": "단일판매" + _MID + "공급계약체결"},
+                                   session_date="2026-09-07", quote_fn=lambda t: {"price": 10000.0}, open_n=0, new_today=0,
+                                   doc_fn=lambda r: (_t.sleep(0.05), DOC)[1], first_seen=k._iso(self.t0 - timedelta(seconds=120)), now=self.t0)
+        self.assertGreaterEqual(row["proc_sec"], 0.05)
+        self.assertGreaterEqual(row["latency_sec"], 120.05)   # 대기 120초 + 실제 처리
+
+    def test_pending_carried_into_nxt_not_finalized(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import kr_event_lane_runner as rn
+        orig = (rn._quote, rn.HEARTBEAT, k.dart_list_today)
+        rn._quote = lambda t: {"price": 10000.0, "venue": "KRX"}; rn.HEARTBEAT = Path(self.tmp.name) / "hb.json"
+        try:
+            item = {"rcept_no": "9", "stock_code": "000100", "corp_name": "A", "report_nm": "단일판매" + _MID + "공급계약체결"}
+            st = {"session_date": "2026-09-07", "seen": ["9"], "phase": "KRX",
+                  "pending": {"9": {"item": item, "first_seen": k._iso(self.t0.replace(hour=15, minute=35)), "attempts": 1, "last_try": k._iso(self.t0.replace(hour=15, minute=35))}},
+                  "obs": {"9": {"rcept_no": "9", "stock_code": "000100", "kind": "supply_contract", "session_date": "2026-09-07", "venue": "KRX",
+                                "t_detect": k._iso(self.t0.replace(hour=15, minute=35)), "px_detect": 10000.0, "out": {}}}}
+            exit_ = rn.end_phase("2026-09-07", st, self.t0.replace(hour=15, minute=41), "NXT", "KRX")
+            self.assertFalse(exit_)
+            self.assertIn("9", st["pending"])                       # 확정하지 않고 이월
+            self.assertIn("9", st["obs"]); self.assertTrue(st["obs"]["9"].get("carried_over"))
+            self.assertEqual(k.read_jsonl(k.SIGNAL_LEDGER), [])       # SKIP 확정 행 없음
+            self.assertEqual(st["phase"], "NXT")
+            # END에서는 확정된다
+            k.dart_list_today = lambda sd: []
+            exit_ = rn.end_phase("2026-09-07", st, self.t0.replace(hour=20, minute=1), "END", "NXT")
+            self.assertTrue(exit_); self.assertEqual(st["pending"], {})
+            self.assertEqual(k.read_jsonl(k.SIGNAL_LEDGER)[0]["reason"], "doc_unavailable_after_retry")
+        finally:
+            rn._quote, rn.HEARTBEAT, k.dart_list_today = orig
+
+    def test_nx_stale_gate_only_when_known(self):
+        f = {"ratio_pct": 40.0, "related_party": False}; liq = {"prev_close": 10000.0, "dvol20_krw": 5e9}
+        base = {"price": 10100.0, "venue": "NXT", "volume": 500}
+        now = self.t0.replace(hour=16, minute=30)
+        self.assertEqual(k.decide("supply_contract", False, f, {"available": False}, {**base, "last_trade_age_min": 3.0}, liq, contract=k.CONTRACT_NXT, now=now)[0], "ENTER")
+        self.assertEqual(k.decide("supply_contract", False, f, {"available": False}, {**base, "last_trade_age_min": 25.0}, liq, contract=k.CONTRACT_NXT, now=now), ("SKIP", "nx_stale_25min"))
+        self.assertEqual(k.decide("supply_contract", False, f, {"available": False}, {**base, "last_trade_age_min": None}, liq, contract=k.CONTRACT_NXT, now=now)[0], "ENTER")
+
+    def test_dashboard_stats_separate_unpriced(self):
+        sig = {"rcept_no": "1", "stock_code": "000100", "corp_name": "A", "kind": "supply_contract", "session_date": "2026-09-07", "basis": "t"}
+        p1 = k.open_phantom(sig, {"price": 10000.0, "source": "t", "venue": "KRX"}, now=self.t0)
+        p2 = k.open_phantom({**sig, "rcept_no": "2"}, {"price": 10000.0, "source": "t", "venue": "NXT"}, now=self.t0)
+        k.evaluate_phantoms([p1], lambda t: {"price": 10900.0}, now=self.t0 + timedelta(minutes=5))          # TP (가격 확인)
+        k.evaluate_phantoms([p2], lambda t: None, now=self.t0.replace(hour=15, minute=41), force_close=True)   # 미확인
+        sys.path.insert(0, str(ROOT))
+        from dashboard.dashboard_server import app
+        d = app.test_client().get('/api/kr_event_lane').get_json()
+        s = d["stats_all"]
+        self.assertEqual((s["n"], s["n_unpriced"]), (1, 1))
+        self.assertGreater(s["mean_net_pct"], 8.0)   # 미확인(0%)이 평균에 섞이면 4%대가 된다
+        self.assertEqual(s["unpriced_pct"], 50.0)
 
 
 if __name__ == "__main__":
