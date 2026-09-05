@@ -31,12 +31,21 @@ HEARTBEAT = ROOT / "state" / "kr_event_lane_heartbeat.json"
 
 
 def _quote(ticker: str):
+    """정규장: 네이버 폴링(KRX). 시간외 단계: KIS NX(넥스트레이드) 현재가."""
+    if _PHASE.get("phase") == "NXT":
+        return kel.kis_quote_nx(ticker)
     try:
         from tools.analysis_quotes import get_quote_kr
         q = get_quote_kr(ticker)
-        return q if q and q.get("price") else None
+        if q and q.get("price"):
+            q["venue"] = "KRX"
+            return q
+        return None
     except Exception:
         return None
+
+
+_PHASE: dict = {"phase": "KRX"}
 
 
 def _notify(text: str) -> None:
@@ -93,7 +102,7 @@ def _obs_start(obs: dict, it: dict, row: dict, session_date: str, now: datetime)
         return
     q = row.get("quote") or {}
     obs[rno] = {"rcept_no": rno, "stock_code": it.get("stock_code"), "corp_name": it.get("corp_name"), "kind": row.get("kind"),
-                "session_date": session_date, "t_detect": row.get("ts_detected") or kel._iso(now),
+                "session_date": session_date, "venue": _PHASE.get("phase", "KRX"), "t_detect": row.get("ts_detected") or kel._iso(now),
                 "px_detect": q.get("price"), "t_doc": None, "px_doc": None, "t_decide": None, "px_decide": None,
                 "decision": None, "reason": None, "fields": {}, "out": {}}
 
@@ -112,15 +121,21 @@ def _obs_decide(obs: dict, rno: str, row: dict) -> None:
         o["px_detect"] = px
 
 
-def _obs_fill(obs: dict, quote_fn, now: datetime, *, session_end: bool = False) -> list[dict]:
-    """만기 지난 결과 칸 채우기. 15:20 이후 px_1520, 장 종료(session_end)에 px_close를 채우고 원장에 쓴 뒤 상태에서 제거."""
+def _obs_fill(obs: dict, quote_fn, now: datetime, *, session_end: bool = False, venue: str | None = None) -> list[dict]:
+    """만기 지난 결과 칸 채우기. EOD(KRX 15:20 / NXT 19:55) 이후 px_1520|px_1955, 단계 종료(session_end)에 px_close를
+    채우고 원장에 쓴 뒤 상태에서 제거. venue를 주면 그 venue의 관측만 마감한다."""
     done = []
-    eod = now.replace(hour=15, minute=20, second=0, microsecond=0)
     for rno, o in list(obs.items()):
+        v = o.get("venue") or "KRX"
+        if venue is not None and v != venue:
+            continue
+        c = kel.CONTRACT_NXT if v == "NXT" else kel.CONTRACT
+        eod = now.replace(hour=int(c["eod_exit_hhmm"][:2]), minute=int(c["eod_exit_hhmm"][3:]), second=0, microsecond=0)
+        ek = kel.eod_key(v)
         t0 = datetime.fromisoformat(o["t_detect"])
         need = [f"px_{h}m" for h in kel.OBS_HORIZONS_MIN if f"px_{h}m" not in o["out"] and now >= t0 + timedelta(minutes=h)]
-        if now >= eod and "px_1520" not in o["out"]:
-            need.append("px_1520")
+        if now >= eod and ek not in o["out"]:
+            need.append(ek)
         if session_end and "px_close" not in o["out"]:
             need.append("px_close")
         if not need:
@@ -133,7 +148,7 @@ def _obs_fill(obs: dict, quote_fn, now: datetime, *, session_end: bool = False) 
                 o["out"][f"t_{k[3:]}"] = kel._iso(now)
         if session_end:
             base = o.get("px_detect"); dec = o.get("px_decide")
-            for k in ("px_5m", "px_30m", "px_1520", "px_close"):
+            for k in ("px_5m", "px_30m", ek, "px_close"):
                 v = o["out"].get(k)
                 o["out"][f"ret_{k[3:]}_pct"] = round((v / base - 1.0) * 100.0, 3) if v and base else None
             v = o["out"].get("px_close")
@@ -151,8 +166,10 @@ def _age_sec(iso: str | None, now: datetime) -> float:
         return float("inf")
 
 
-def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | None = None) -> dict:
+def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | None = None, phase: str | None = None) -> dict:
     now = now or kel.now_kst()
+    _PHASE["phase"] = phase or kel.phase_of(now)
+    contract = kel.CONTRACT_NXT if _PHASE["phase"] == "NXT" else kel.CONTRACT
     seen: set = set(st.get("seen", []))
     pending: dict = dict(st.get("pending") or {})  # rcept_no → {item, first_seen, attempts, last_try} (본문 지연 재시도)
     obs: dict = dict(st.get("obs") or {})            # rcept_no → 3시점 관측(탈락 포함), 장 종료에 원장으로
@@ -169,7 +186,7 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
         if row.get("kind") in ("supply_contract", "bonus_issue", "buyback") and it.get("stock_code"):
             _ensure_cache_async(it["stock_code"])  # 일봉 arm(F6/F7)이 다음날 진입할 수 있게 CSV 선제 생성
         if row.get("decision") == "ENTER" and not dry:
-            pos = kel.open_phantom({**it, **row}, row["quote"], notify=_notify)
+            pos = kel.open_phantom({**it, **row}, row["quote"], notify=_notify, now=now, contract=contract)
             if pos:
                 open_pos.append(pos); new_today += 1; entered += 1
 
@@ -180,7 +197,7 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
         final = _age_sec(p.get("first_seen"), now) >= kel.DOC_RETRY_MAX_SEC
         row = kel.process_disclosure(p["item"], session_date=session_date, quote_fn=_quote,
                                      open_n=len(open_pos), new_today=new_today, first_seen=p.get("first_seen"),
-                                     doc_attempts=int(p.get("attempts", 0)), final=final, now=now)
+                                     doc_attempts=int(p.get("attempts", 0)), final=final, now=now, contract=contract)
         retried += 1
         if row.get("decision") == "PENDING":
             pending[rno] = {**p, "attempts": int(p.get("attempts", 0)) + 1, "last_try": kel._iso(now)}
@@ -192,7 +209,8 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
     for it in sorted(fresh, key=lambda x: x["rcept_no"]):
         seen.add(it["rcept_no"])
         row = kel.process_disclosure(it, session_date=session_date, quote_fn=_quote,
-                                     open_n=len(open_pos), new_today=new_today, first_seen=kel._iso(now), now=now)
+                                     open_n=len(open_pos), new_today=new_today, first_seen=kel._iso(now), now=now,
+                                     contract=contract)
         _obs_start(obs, it, row, session_date, now)
         if row.get("decision") == "PENDING":
             pending[it["rcept_no"]] = {"item": it, "first_seen": row["ts_detected"], "attempts": 1, "last_try": kel._iso(now)}
@@ -208,10 +226,12 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
     st["obs"] = obs
     st["open_positions"] = open_pos
     st["session_date"] = session_date
+    st["phase"] = _PHASE["phase"]
     st["last_cycle_at"] = kel._iso()
     st["open_n"] = len(open_pos)
     kel.save_state(st)
-    _heartbeat({"session_date": session_date, "open_n": len(open_pos), "seen_n": len(seen), "pending_n": len(pending)})
+    _heartbeat({"session_date": session_date, "phase": _PHASE["phase"], "open_n": len(open_pos), "seen_n": len(seen),
+                "pending_n": len(pending), "obs_n": len(obs)})
     return {"fresh": len(fresh), "entered": entered, "closed": len(closed), "open_n": len(open_pos),
             "pending": len(pending), "retried": retried}
 
@@ -228,8 +248,12 @@ def loop(poll_sec: float) -> int:
         if st.get("session_date") != sd:
             st = {"session_date": sd, "seen": []}
         hhmm = now.strftime("%H:%M")
-        if now.weekday() >= 5 or hhmm >= "15:41":
-            # 장 종료: 본문 대기 건은 SKIP 확정(원장 누락 방지) → 남은 유령 강제 청산(마지막 관측가, 이월 없음) 후 종료
+        phase = kel.phase_of(now)
+        prev_phase = st.get("phase") or "KRX"
+        if phase == "END" or (phase == "NXT" and prev_phase == "KRX"):
+            # 단계 종료(KRX 15:41 / NXT 20:01): 본문 대기 건 SKIP 확정 → 그 venue 관측 마감 → 유령 강제 청산(이월 없음)
+            end_venue = "KRX" if phase == "NXT" else prev_phase
+            _PHASE["phase"] = end_venue
             for rno, p in sorted((st.get("pending") or {}).items()):
                 try:
                     kel.process_disclosure(p["item"], session_date=sd, quote_fn=_quote, open_n=0, new_today=0,
@@ -237,21 +261,26 @@ def loop(poll_sec: float) -> int:
                 except Exception as exc:
                     print(f"[KR-EVENT] pending finalize error {rno}: {exc}", flush=True)
             st["pending"] = {}
-            written = _obs_fill(st.setdefault("obs", {}), _quote, now, session_end=True)
+            written = _obs_fill(st.setdefault("obs", {}), _quote, now, session_end=True, venue=end_venue)
             if written:
-                print(f"[KR-EVENT] 관측 원장 기록 {len(written)}건 (탈락 포함)", flush=True)
+                print(f"[KR-EVENT] {end_venue} 관측 원장 기록 {len(written)}건 (탈락 포함)", flush=True)
             open_pos = load_open_positions(sd, st)
             if open_pos:
                 open_pos, closed = kel.evaluate_phantoms(open_pos, _quote, notify=_notify, now=now, force_close=True)
-                print(f"[KR-EVENT] 장 종료 강제 청산 {len(closed)}건 (남음 {len(open_pos)})", flush=True)
+                print(f"[KR-EVENT] {end_venue} 종료 강제 청산 {len(closed)}건 (남음 {len(open_pos)})", flush=True)
             st["open_positions"] = open_pos
+            if phase == "END":
+                kel.save_state(st)
+                print(f"[KR-EVENT] session end {sd} — exit", flush=True)
+                return 0
+            st["phase"] = "NXT"
             kel.save_state(st)
-            print(f"[KR-EVENT] session end {sd} — exit", flush=True)
-            return 0
+            print(f"[KR-EVENT] {hhmm} NXT 시간외 단계 시작 (KIS NX 시세, 진입 마감 {kel.AFTER_HOURS['entry_cutoff_hhmm']} · EOD {kel.AFTER_HOURS['eod_exit_hhmm']})", flush=True)
+            continue
         if hhmm < "08:50":
             time.sleep(min(poll_sec, 30)); continue
         try:
-            r = cycle(sd, st)
+            r = cycle(sd, st, phase=phase)
             if r["fresh"] or r["entered"] or r["closed"]:
                 print(f"[KR-EVENT] {hhmm} fresh={r['fresh']} enter={r['entered']} close={r['closed']} open={r['open_n']}", flush=True)
         except Exception as exc:

@@ -43,7 +43,7 @@ KR_PRICE_DIR = ROOT / "data" / "price" / "kr"
 # 3시점 관측 원장(09-06, Codex 리뷰 2차 연구 설계): 감지·본문 확보·판단 완료 시점 가격 + 5분/30분/15:20/종가 결과, 탈락 공시 포함
 OBS_LEDGER = ROOT / "data" / "shadow" / "kr_event_observations.jsonl"
 DOC_DIR = ROOT / "data" / "shadow" / "kr_event_docs"      # 본문 원문 보관 → 나중에 같은 표본으로 규칙만 vs 규칙+LLM 재현
-OBS_KINDS = ("supply_contract", "bonus_issue", "buyback")
+OBS_KINDS = ("supply_contract", "bonus_issue", "buyback", "share_cancellation", "stock_split")
 OBS_HORIZONS_MIN = (5, 30)
 
 CONTRACT = {
@@ -73,8 +73,34 @@ KINDS = {
     "major_holder_change": ("최대주주변경",),
     "prelim_earnings": ("영업(잠정)실적", "잠정실적", "매출액또는손익구조"),
     "rights_offering": ("유상증자결정", "유상증자 결정"),
+    # 09-06 코퍼레이트 액션 확대(관측만): 소각은 취득보다 강한 신호 가설, 액면분할은 유동성 이벤트
+    "share_cancellation": ("주식소각결정", "주식소각 결정", "자기주식소각"),
+    "stock_split": ("주식분할결정", "주식분할 결정", "액면분할"),
 }
 ENTER_KINDS = ("supply_contract", "bonus_issue")
+# NXT 시간외 단계(09-06 프로브: KIS inquire-price NX/UN 지원, NX 가격이 KRX 종가와 다르게 움직임 — 마감 후 공시를 당일 저녁에 대응)
+# 정규장 포지션은 15:41에 강제 청산하고 NXT 단계는 별도 venue로 시작한다. 이월 없음.
+AFTER_HOURS = {"start_hhmm": "15:41", "end_hhmm": "20:01", "entry_cutoff_hhmm": "19:40", "eod_exit_hhmm": "19:55",
+               "min_nx_volume": 1}   # NX 누적 거래량 0이면 체결 가정 불가 → SKIP no_nx_volume
+CONTRACT_NXT = {**CONTRACT, "version": "kr_event_v1_nxt", "entry_cutoff_hhmm": AFTER_HOURS["entry_cutoff_hhmm"],
+                "eod_exit_hhmm": AFTER_HOURS["eod_exit_hhmm"]}
+
+
+def phase_of(now: "datetime") -> str:
+    """KRX(08:50~15:40) / NXT(15:41~20:00) / END. 주말은 END."""
+    if now.weekday() >= 5:
+        return "END"
+    hhmm = now.strftime("%H:%M")
+    if hhmm < AFTER_HOURS["start_hhmm"]:
+        return "KRX"
+    if hhmm < AFTER_HOURS["end_hhmm"]:
+        return "NXT"
+    return "END"
+
+
+def eod_key(venue: str) -> str:
+    """관측 원장 EOD 칸 이름: KRX 15:20 / NXT 19:55."""
+    return "px_1520" if venue != "NXT" else "px_1955"
 # 본문 지연 재시도 (09-04 실측: 감지 직후 document.xml 빈 응답 → 4건 ratio_missing 오판. 같은 문서가 수십 분 뒤엔 정상)
 DOC_RETRY_GAP_SEC = 60      # 재시도 최소 간격
 DOC_RETRY_MAX_SEC = 900     # 최초 감지 후 이 시간까지 재시도, 넘기면 SKIP doc_unavailable_after_retry 확정
@@ -303,6 +329,8 @@ def decide(kind: str, is_correction: bool, fields: dict[str, Any], llm: dict[str
             return "SKIP", f"bonus_ratio_{r}"
     if not quote or not quote.get("price"):
         return "SKIP", "no_quote"
+    if quote.get("venue") == "NXT" and float(quote.get("volume") or 0) < AFTER_HOURS["min_nx_volume"]:
+        return "SKIP", "no_nx_volume"
     px = float(quote["price"])
     if px < contract["min_price"]:
         return "SKIP", "price_lt_min"
@@ -319,6 +347,32 @@ def decide(kind: str, is_correction: bool, fields: dict[str, Any], llm: dict[str
     if new_today >= contract["max_new_per_day"]:
         return "SKIP", "daily_cap"
     return "ENTER", "rules_pass" + ("+llm_" + str(llm.get("quality")) if llm.get("available") else "")
+
+
+# ── NXT 시세 (KIS inquire-price, 시장구분 NX) ─────────────────────────────────
+_NX_TOKEN: dict[str, Any] = {}
+
+
+def kis_quote_nx(ticker: str, *, timeout: float = 8.0) -> dict[str, Any] | None:
+    """넥스트레이드 현재가. 실패는 None. 토큰은 kis_api가 캐시한다."""
+    try:
+        import kis_api as k
+        tok = _NX_TOKEN.get("token") or k.get_access_token(market="KR")
+        _NX_TOKEN["token"] = tok
+        resp = k._kis_get(f"{k.BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
+                          headers=k._headers(tok, "FHKST01010100"),
+                          params={"FID_COND_MRKT_DIV_CODE": "NX", "FID_INPUT_ISCD": str(ticker)}, timeout=timeout)
+        j = resp.json()
+        o = j.get("output") or {}
+        px = float(o.get("stck_prpr") or 0)
+        if j.get("rt_cd") != "0" or px <= 0:
+            return None
+        return {"ticker": str(ticker), "price": px, "open": float(o.get("stck_oprc") or 0), "high": float(o.get("stck_hgpr") or 0),
+                "low": float(o.get("stck_lwpr") or 0), "volume": float(o.get("acml_vol") or 0),
+                "change_pct": float(o.get("prdy_ctrt") or 0), "source": "kis_nx", "venue": "NXT"}
+    except Exception:
+        _NX_TOKEN.pop("token", None)
+        return None
 
 
 # ── 원장 ─────────────────────────────────────────────────────────────────────
@@ -368,7 +422,7 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 # ── 유령 포지션 ──────────────────────────────────────────────────────────────
 def open_phantom(sig: dict[str, Any], quote: dict[str, Any], *, contract: dict[str, Any] = CONTRACT,
-                 notify: Callable[[str], Any] | None = None) -> dict[str, Any] | None:
+                 notify: Callable[[str], Any] | None = None, now: datetime | None = None) -> dict[str, Any] | None:
     px = float(quote["price"]) * (1.0 + contract["slippage_pct"] / 100.0)
     qty = int(contract["order_krw"] // px)
     if qty <= 0:
@@ -376,14 +430,14 @@ def open_phantom(sig: dict[str, Any], quote: dict[str, Any], *, contract: dict[s
     pos = {
         "event": "OPEN", "authority": AUTHORITY, "contract": contract["version"],
         "rcept_no": sig["rcept_no"], "ticker": sig["stock_code"], "name": sig.get("corp_name"), "kind": sig["kind"],
-        "session_date": sig["session_date"], "opened_at": _iso(), "entry": round(px, 2), "qty": qty,
+        "session_date": sig["session_date"], "opened_at": _iso(now), "entry": round(px, 2), "qty": qty,
         "notional_krw": round(px * qty), "quote_source": quote.get("source"), "peak_pct": 0.0, "trough_pct": 0.0,
-        "basis": sig.get("basis"),
+        "basis": sig.get("basis"), "venue": quote.get("venue") or "KRX",
     }
     _append(PHANTOM_LEDGER, pos)
     if notify:
         try:
-            notify(f"🧪 [VIRTUAL] KR 이벤트 유령 진입 {pos['ticker']} {pos.get('name') or ''} {pos['kind']} "
+            notify(f"🧪 [VIRTUAL] KR 이벤트 유령 진입 {pos['ticker']} {pos.get('name') or ''} {pos['kind']} [{pos['venue']}] "
                    f"{qty}주@{px:,.0f} — {sig.get('basis', '')}")
         except Exception:
             pass
@@ -414,9 +468,10 @@ def evaluate_phantoms(open_positions: list[dict[str, Any]], quote_fn: Callable[[
     시세가 없을 때: EOD 이후면 마지막 관측가로 청산(EOD_LASTQUOTE, unpriced_exit=true), force_close면 마지막 관측가
     또는 진입가로 강제 청산(EOD_FORCED). 오버나이트 이월은 없다."""
     now = now or now_kst()
-    eod = now.replace(hour=int(contract["eod_exit_hhmm"][:2]), minute=int(contract["eod_exit_hhmm"][3:]), second=0)
     keep, closed = [], []
     for pos in open_positions:
+        c_pos = CONTRACT_NXT if pos.get("venue") == "NXT" else contract
+        eod = now.replace(hour=int(c_pos["eod_exit_hhmm"][:2]), minute=int(c_pos["eod_exit_hhmm"][3:]), second=0)
         q = quote_fn(pos["ticker"])
         if not q or not q.get("price"):
             if force_close or now >= eod:

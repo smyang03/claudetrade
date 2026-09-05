@@ -32,6 +32,9 @@ class ClassifyParseTest(unittest.TestCase):
         self.assertEqual(k.classify_title("무상증자결정"), ("bonus_issue", False))
         self.assertEqual(k.classify_title("주요사항보고서(자기주식취득결정)"), ("buyback", False))
         self.assertEqual(k.classify_title("소송등의제기"), ("other", False))
+        self.assertEqual(k.classify_title("주요사항보고서(주식소각결정)"), ("share_cancellation", False))
+        self.assertEqual(k.classify_title("주식분할결정"), ("stock_split", False))
+        self.assertIn("share_cancellation", k.OBS_KINDS)
 
     def test_supply_fields(self):
         f = k.parse_supply_contract(DOC)
@@ -466,6 +469,103 @@ class ObservationLedgerTest(unittest.TestCase):
         rn._obs_start(obs, {"rcept_no": "2", "stock_code": "000100"}, {"kind": "supply_contract", "is_correction": True}, "2026-09-07", k.now_kst())
         rn._obs_start(obs, {"rcept_no": "3", "stock_code": "000100"}, {"kind": "buyback", "quote": {"price": 5.0}}, "2026-09-07", k.now_kst())
         self.assertEqual(list(obs), ["3"])
+
+
+class NxtAfterHoursTest(unittest.TestCase):
+    """09-06 NXT 시간외 단계: 15:41~20:00은 KIS NX 시세·별도 계약(진입 마감 19:40·EOD 19:55)·venue 태그, 정규장 포지션 이월 없음."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        d = Path(self.tmp.name)
+        self.orig = (k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH, k.OBS_LEDGER, k.DOC_DIR)
+        k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH = d / "ph.jsonl", d / "sig.jsonl", d / "state.json"
+        k.OBS_LEDGER, k.DOC_DIR = d / "obs.jsonl", d / "docs"
+        from datetime import datetime, timezone
+        self.tz = timezone(timedelta(hours=9))
+        self.day = datetime(2026, 9, 7, 0, 0, tzinfo=self.tz)
+        self.item = {"rcept_no": "88", "stock_code": "000100", "corp_name": "유한양행", "report_nm": "단일판매" + _MID + "공급계약체결"}
+
+    def tearDown(self):
+        k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH, k.OBS_LEDGER, k.DOC_DIR = self.orig
+        self.tmp.cleanup()
+
+    def test_phase_of(self):
+        self.assertEqual(k.phase_of(self.day.replace(hour=10)), "KRX")
+        self.assertEqual(k.phase_of(self.day.replace(hour=15, minute=40)), "KRX")
+        self.assertEqual(k.phase_of(self.day.replace(hour=15, minute=41)), "NXT")
+        self.assertEqual(k.phase_of(self.day.replace(hour=20, minute=0)), "NXT")
+        self.assertEqual(k.phase_of(self.day.replace(hour=20, minute=1)), "END")
+        from datetime import datetime
+        self.assertEqual(k.phase_of(datetime(2026, 9, 6, 10, 0, tzinfo=self.tz)), "END")  # 일요일
+
+    def test_nxt_contract_cutoff_and_volume(self):
+        f = {"ratio_pct": 40.0, "related_party": False}; liq = {"prev_close": 10000.0, "dvol20_krw": 5e9}
+        q = {"price": 10100.0, "venue": "NXT", "volume": 500}
+        self.assertEqual(k.decide("supply_contract", False, f, {"available": False}, q, liq, contract=k.CONTRACT_NXT,
+                                  now=self.day.replace(hour=16, minute=30))[0], "ENTER")
+        self.assertEqual(k.decide("supply_contract", False, f, {"available": False}, q, liq, contract=k.CONTRACT_NXT,
+                                  now=self.day.replace(hour=19, minute=41)), ("SKIP", "after_entry_cutoff"))
+        self.assertEqual(k.decide("supply_contract", False, f, {"available": False}, {**q, "volume": 0}, liq, contract=k.CONTRACT_NXT,
+                                  now=self.day.replace(hour=16, minute=30)), ("SKIP", "no_nx_volume"))
+        # 정규장 계약이면 16:30은 마감 이후
+        self.assertEqual(k.decide("supply_contract", False, f, {"available": False}, q, liq, now=self.day.replace(hour=16, minute=30)),
+                         ("SKIP", "after_entry_cutoff"))
+
+    def test_nxt_position_uses_1955_eod(self):
+        sig = {"rcept_no": "88", "stock_code": "000100", "corp_name": "A", "kind": "supply_contract", "session_date": "2026-09-07", "basis": "t"}
+        pos = k.open_phantom(sig, {"price": 10000.0, "source": "kis_nx", "venue": "NXT"}, contract=k.CONTRACT_NXT, now=self.day.replace(hour=16))
+        self.assertEqual(pos["venue"], "NXT"); self.assertEqual(pos["contract"], "kr_event_v1_nxt")
+        keep, closed = k.evaluate_phantoms([pos], lambda t: {"price": 10300.0}, now=self.day.replace(hour=16, minute=35))
+        self.assertEqual(len(keep), 1)   # 시점 점검(+3%) 통과. 정규장 EOD(15:20)는 NXT 포지션에 적용되지 않는다
+        keep, closed = k.evaluate_phantoms(keep, lambda t: {"price": 10300.0}, now=self.day.replace(hour=19, minute=56))
+        self.assertEqual(closed[0]["exit_reason"], "EOD")
+
+    def test_runner_transition_closes_krx_and_starts_nxt(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import kr_event_lane_runner as rn
+        from datetime import datetime
+        orig = (k.dart_list_today, k.dart_document_text, rn._quote, rn.HEARTBEAT, rn._ensure_cache_async, k.kis_quote_nx)
+        k.dart_list_today = lambda sd: []
+        rn.HEARTBEAT = Path(self.tmp.name) / "hb.json"; rn._ensure_cache_async = lambda t: None
+        try:
+            # 정규장 유령 하나 보유
+            sig = {"rcept_no": "1", "stock_code": "000100", "corp_name": "A", "kind": "supply_contract", "session_date": "2026-09-07", "basis": "t"}
+            k.open_phantom(sig, {"price": 10000.0, "source": "t", "venue": "KRX"}, now=self.day.replace(hour=14))
+            st = {"session_date": "2026-09-07", "seen": [], "phase": "KRX"}
+            rn._quote = lambda t: {"price": 10250.0, "venue": "KRX"}   # +2.5% → 시점 점검 통과
+            rn.cycle("2026-09-07", st, now=self.day.replace(hour=15, minute=10), phase="KRX")
+            self.assertEqual(st["open_n"], 1)
+            # 15:41 전환은 loop가 하지만 같은 절차를 재현: 강제 청산 → phase NXT
+            open_pos = rn.load_open_positions("2026-09-07", st)
+            open_pos, closed = k.evaluate_phantoms(open_pos, rn._quote, now=self.day.replace(hour=15, minute=41), force_close=True)
+            self.assertEqual((len(open_pos), closed[0]["exit_reason"]), (0, "EOD"))
+            st["open_positions"] = open_pos; st["phase"] = "NXT"
+            # NXT 단계에서 새 공시 → NX 시세로 진입, venue NXT
+            docs = {"text": DOC.replace("매출액대비(%) 6.0", "매출액대비(%) 40.0")}
+            k.dart_list_today = lambda sd: [self.item]
+            k.dart_document_text = lambda r, **kw: docs["text"]
+            k.kis_quote_nx = lambda t, **kw: {"ticker": t, "price": 10200.0, "volume": 800, "source": "kis_nx", "venue": "NXT"}
+            rn._quote = orig[2]   # 실제 _quote: NXT 단계면 kis_quote_nx로 분기
+            orig_liq = k.liquidity_snapshot
+            k.liquidity_snapshot = lambda t: {"prev_close": 10000.0, "dvol20_krw": 5e9}
+            try:
+                r = rn.cycle("2026-09-07", st, now=self.day.replace(hour=16, minute=10), phase="NXT")
+            finally:
+                k.liquidity_snapshot = orig_liq
+            self.assertEqual(r["entered"], 1)
+            self.assertEqual(st["open_positions"][0]["venue"], "NXT")
+            self.assertEqual(st["obs"]["88"]["venue"], "NXT")
+            self.assertEqual(st["obs"]["88"]["px_detect"], 10200.0)
+            hb = json.loads(rn.HEARTBEAT.read_text(encoding="utf-8"))
+            self.assertEqual(hb["phase"], "NXT")
+            # 19:56 EOD → NXT 포지션 청산, 관측 원장 px_1955
+            rn.cycle("2026-09-07", st, now=self.day.replace(hour=19, minute=56), phase="NXT")
+            self.assertEqual(st["open_n"], 0)
+            self.assertIn("px_1955", st["obs"]["88"]["out"])
+            written = rn._obs_fill(st["obs"], rn._quote, self.day.replace(hour=20, minute=1), session_end=True, venue="NXT")
+            self.assertEqual(len(written), 1); self.assertEqual(written[0]["out"]["px_close"], 10200.0)
+        finally:
+            k.dart_list_today, k.dart_document_text, rn._quote, rn.HEARTBEAT, rn._ensure_cache_async, k.kis_quote_nx = orig
 
 
 if __name__ == "__main__":
