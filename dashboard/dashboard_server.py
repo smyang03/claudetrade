@@ -17608,7 +17608,10 @@ def api_research():
                 "absorption": {"kinds": _kinds(sh / "kr_absorption.jsonl"), "closed": _closed_stats(sh / "kr_absorption.jsonl")},
                 "ws_ticks": {"days": len(tick_files), "latest": tick_files[-1].name if tick_files else None,
                              "latest_rows": _cnt(tick_files[-1]) if tick_files else 0},
-                "ws_observe": _load(BASE_DIR / "state" / "ws_observe_kr.json")}
+                "ws_observe": _load(BASE_DIR / "state" / "ws_observe_kr.json"),
+                "forward_gate": _load(BASE_DIR / "state" / "forward_gate_state.json"),
+                "fast_lane": _kinds(sh / "kr_event_fast.jsonl", "event"),
+                "kr_submit_ledger": _cnt(sh / "kr_fallen_submit_ledger.jsonl")}
 
     return jsonify({"available": True,
                     "panic_close": _panic(), "ledgers": _ledger_status(),
@@ -17963,6 +17966,12 @@ async function loadResearch() {
       `US 개장 15분 충격: ${kk(lg.open_impact?.kinds)} · ${cs(lg.open_impact?.closed)}<br>KRX 시장경보: ${kk(lg.krx_alert)}<br>` +
       `N2 매도 흡수: 관측 목록 ${wo.date || '-'} ${(wo.tickers || []).length}종목 · 틱 원장 ${lg.ws_ticks?.days || 0}일(최근 ${lg.ws_ticks?.latest || '-'} ${lg.ws_ticks?.latest_rows || 0}행) · ${kk(lg.absorption?.kinds)} · ${cs(lg.absorption?.closed)}` +
       '<br><span class="dim">schtask: 07:25 레인(PREOPEN) · 08:40 관측 목록 · 09:25 흡수 판정 · 15:17 종가 · 21:05 원장 갱신 · 22:40 개장 충격 · 04:35 패닉 마감</span>'));
+    const fg = lg.forward_gate || {}; const vd = fg.verdicts || {};
+    const vcount = Object.values(vd).reduce((a, v) => { const k = String(v).split('(')[0]; a[k] = (a[k] || 0) + 1; return a; }, {});
+    cards.push(card('forward 판정 자동화 (21:05 갱신, 상태 변화 때만 텔레그램)', `판정 ${(fg.generated_at || '-').slice(0, 16)} · ${kk(vcount)}<br>` +
+      Object.entries(vd).filter(([k, v]) => !String(v).startsWith('ACCUMULATING')).map(([k, v]) => `${k}: <b class="${v === 'REFUTED' ? 'neg' : 'pos'}">${v}</b>`).join(' · ') +
+      (fg.stars && fg.stars.length ? `<br>★4조건 셀: ${fg.stars.join(', ')}` : '') +
+      `<br><span class="dim">캐너리 정책(제안, 미배선): 동시 1 · 5만원 · 손실선 −33,000원 · CANDIDATE_STRONG만 · 2단계 공시 판단 fast 원장 ${kk(lg.fast_lane)} · KR 접수 원장 ${lg.kr_submit_ledger || 0}행</span>`));
     cards.push(card('신규 전략 원장 (family C_EVENT_V1 입력)', `KR 내부자 소유보고 ${lg.kr_insider ?? 0}행 · 거래계획 ${lg.kr_insider_plan ?? 0}행 · DART 자사주기간/권리락 ${lg.kr_dart_terms ?? 0}행 · US Form 4 매수 ${lg.us_insider ?? 0}행 · US 어닝 발표일 ${lg.us_earnings_dates ?? 0}행` +
       '<br><span class="dim">arm 성적은 아래 "탐색 원장 x*/c_*" 표(c_kr_fallen_buyback30·c_kr_insider_cluster·c_kr_exright·c_us_earn_gap 등). 갱신: dart_insider_ledger / dart_corp_action_terms / us_earnings_dates_cache / edgar_form4_ledger</span>'));
     el.innerHTML = cards.join('');

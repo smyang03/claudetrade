@@ -119,3 +119,17 @@ US Form 4 군집은 데이터가 2026-03(SEC 2026Q1)에 끊겨 H2가 3개월뿐�
 | 대시보드 | `/virtual` 연구 카드 "2차 편입 forward 원장": 장전 유예·종가 동시호가·개장 충격·KRX 경보·N2(관측 목록·틱 원장·흡수) | 스택 재시작으로 반영 |
 
 **오늘 09:00 확인(08-19 그렙 4종 + 관측)**: `KR 관측 구독 n종목` 로그(없으면 08:40 생산자 미실행 또는 날짜 불일치), `구독 응답 rt_cd`, `끊김`, `[WS silence]`, `[WS silence restart]`. 관측 구독이 붙은 첫 세션이라 무음 재발 시 관측 20종목부터 의심.
+
+
+## 9. 09-08 새벽 4차 — "다 해봐, 전부 쉐도우" 6항목 (커밋·푸시·재시작 포함)
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 1 | Codex P0(실주문 경로) | **코드 완료 7·계약 유지 1·운영자 결정 2.** KR 브리지: 입력 계약 격리(`runtime/order_input_guard.py`, x*/c_*/SHADOW_ONLY 거절), 주문 전 브로커 동기화·신뢰 검사(실제 제출 경로에서만 — REHEARSAL 쉐도우 기록 계약 불변, 테스트로 고정), 선정 데이터 결측 차단(신호 종가·할인 None), 체결가 사전 게이트(스프레드 ≥0.5%·시가 괴리 ≥3% 대기), **UNKNOWN 격리**(응답 유실·주문번호 없음 → ORDER_UNKNOWN 영속화 + 세션 즉시 중단, `_v2_record_order_unknown`), 세션 접수 원장 `kr_fallen_submit_ledger.jsonl`. US 브리지: 입력 격리 + 거래대금 결측 시 `data_missing` 플래그·에러 로그(fail-open은 08-20 계약 → 운영자 결정). 봇 본체: 주문 의도 선기록 `state/order_intents.jsonl`(전송 전 intent → 응답 후 submitted), UNKNOWN 종목 당일 재제출 차단 `state/order_unknown_block.json`. 계약 유지: US 하루 1건 우회(08-22 A안). 운영자 결정: 밴드 결측 fail-closed 전환, KR 지정가 전환. 미구현: 증액 승인 강제·출구 감시 경보(integrity_check 검사 추가는 후속) |
+| 2 | forward 판정 자동화 | `tools/forward_gate_watch.py`(래퍼 21:05): arm별 forward 정산·세션 t → ACCUMULATING/WATCH/CANDIDATE_STRONG/REFUTED, 패닉 오버나이트 10세션, ★4조건 셀 신규 출현. **상태 변화 때만** 텔레그램. 대시보드 카드 "forward 판정 자동화" |
+| 3 | 공시 레인 2단계 판단 | `kr_event_v1_fast`: 본문 대기(PENDING) 시점에 제목·유동성·급등만으로 유령, 본문 확정 후 ENTER면 승격 종료·아니면 즉시 청산(doc_reject = 속도의 비용), 하루 3건 별도, 원장 `kr_event_fast.jsonl`. **`FAST_ENABLED=False`(코드 상수) — 오늘 07:25 첫 PREOPEN 세션을 한 번 관찰한 뒤 내일 ON 검토** |
+| 4 | 패닉 실행 형태 | 원장에 `prev_dvol_usd` 소급, 리포트 exec_form 분해(백필 55세션): **top3_dvol +5.17%(t 3.95, 최악 −45)** · top1 +4.69%(t 2.79) · TQQQ +4.19%(t 3.32, 최악 −13.6) · IWM +1.82%(t 4.13) · SPY +0.79%. 캐너리 후보 = top3(3×5만원) 또는 TQQQ 1주 — forward에서 남는 쪽 |
+| 5 | 내부자 본문 구분 | `tools/dart_insider_reason.py`(하루 1,500건, 최근부터, 래퍼 단계): 첫 1,036건 = 장내매수 55%·미상 12%·유상증자 8%·옵션 4%. `discovery_pools`는 사유 원장이 덮는 보고서는 장내매수만 군집에 센다(`insider_reason_coverage`). US 어닝 PIT는 2시즌 전 — 손대지 않음 |
+| 6 | 자본 산수·캐너리 | `config/canary_policy.json`(**제안, 미배선**: 동시 1·5만원·손실선 −33,000·CANDIDATE_STRONG만·통과 순서 큐·K1 뷰 제외) + `tools/canary_policy_check.py`(읽기 전용, 지금 ON 가능 0/20) |
+
+테스트: `tests/test_kr_fallen_order_bridge.py`(+3: UNKNOWN 세션 중단·REHEARSAL 불변·신뢰 차단), 입력 가드, fast precheck, 기존 실패 2건(`_open` 픽스처가 실시계 의존 → t0 주입) 수리.

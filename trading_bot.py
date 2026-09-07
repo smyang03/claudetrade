@@ -11491,6 +11491,47 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             min_order_krw=min_order_krw,
             sizing_context=sizing_context,
         )
+    # ── P0(2026-09-08) 주문 의도 원장 · UNKNOWN 종목 당일 차단 ─────────────────────────────
+    def _append_order_intent(self, market: str, ticker: str, qty: int, price, source_strategy: str, reason: str,
+                             *, stage: str = "intent", order_no: str = "") -> None:
+        try:
+            path = get_runtime_path("state", "order_intents.jsonl")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"ts": datetime.now(KST).isoformat(timespec="seconds"), "stage": stage, "market": market,
+                                     "ticker": ticker, "qty": int(qty), "price": price, "source_strategy": source_strategy,
+                                     "reason": reason, "order_no": order_no, "pid": os.getpid()}, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            log.warning(f"[order intent] write failed: {exc}")
+
+    def _unknown_block_path(self):
+        return get_runtime_path("state", "order_unknown_block.json")
+
+    def _mark_order_unknown(self, market: str, ticker: str, *, detail: str = "") -> None:
+        """응답 유실 주문 종목을 당일 재제출 차단 목록에 올린다(브로커 대사·운영자 확인으로 해제)."""
+        try:
+            path = self._unknown_block_path()
+            try:
+                d = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                d = {}
+            key = f"{market}:{ticker}"
+            d[key] = {"date": self._current_session_date_str(market), "detail": detail,
+                      "ts": datetime.now(KST).isoformat(timespec="seconds")}
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+            log.error(f"[order unknown] {key} 당일 재제출 차단 등록 ({detail})")
+        except Exception as exc:
+            log.warning(f"[order unknown] mark failed: {exc}")
+
+    def _order_unknown_blocked(self, market: str, ticker: str) -> bool:
+        try:
+            d = json.loads(self._unknown_block_path().read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        rec = d.get(f"{market}:{ticker}")
+        return bool(rec) and str(rec.get("date")) == self._current_session_date_str(market)
+
     def _v2_record_order_unknown(self, market: str, ticker: str, order: dict, detail: str) -> None:
         if getattr(self, "v2", None) is not None:
             self.v2.record_order_unknown(market, ticker, order, detail)
@@ -14477,12 +14518,20 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             except Exception:
                 pass
             return False
+        # P0(09-08) UNKNOWN 종목 당일 재제출 차단: 응답 유실 주문이 있는 종목은 브로커 대사 전 다시 주문하지 않는다(이중 주문 방지).
+        if self._order_unknown_blocked(market, ticker):
+            self._last_micro_probe_submit_result.update(status="BLOCKED", reason="unknown_outcome_pending_reconcile")
+            log.error(f"micro_probe blocked [{ticker}]: 미확정(UNKNOWN) 주문이 남아 있어 재제출 금지")
+            return False
+        # P0(09-08) 제출 의도 선기록: 주문 전송 전에 의도를 원장에 남겨 전송 직후 프로세스 사망 시 귀속 복구 근거로 쓴다.
+        self._append_order_intent(market, ticker, qty, order_px, source_strategy, selected_reason)
         try:
             result = place_order(ticker, qty, order_px, "buy", self._token_for_market(market), market=market)
         except Exception as exc:
             self._last_micro_probe_submit_result.update(
                 status="UNKNOWN", reason="order_exception", detail=str(exc)[:240]
             )
+            self._mark_order_unknown(market, ticker, detail=str(exc)[:120])
             self._record_decision_event(
                 market,
                 "buy_failed",
@@ -14538,6 +14587,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             reason="broker_accepted" if order_no else "broker_accepted_without_order_no",
             order_no=order_no,
         )
+        if not order_no:
+            self._mark_order_unknown(market, ticker, detail="accepted_without_order_no")
+        self._append_order_intent(market, ticker, qty, order_px, source_strategy, selected_reason, stage="submitted", order_no=order_no)
         log.info(
             f"[{'PAPER' if self.is_paper else 'LIVE'} MICRO_PROBE BUY] "
             f"{ticker} {qty}@{raw_price:,} | source={source_strategy} | order_no={order_no}"

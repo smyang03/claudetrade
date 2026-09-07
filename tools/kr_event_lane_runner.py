@@ -222,6 +222,20 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
             continue
         pending.pop(rno, None)
         _obs_decide(obs, rno, row)
+        # fast 유령 정리(09-08): 본문 확정 결과가 ENTER면 v1 유령이 새로 열리므로 fast 유령은 승격 종료(중복 방지), 아니면 즉시 청산(doc_reject)
+        fast_open = [q for q in open_pos if q.get("rcept_no") == rno and q.get("contract") == kel.CONTRACT_FAST["version"]]
+        if fast_open and not dry:
+            q1 = _quote(p["item"].get("stock_code", "")) or {}
+            for pos0 in fast_open:
+                px1 = float(q1.get("price") or 0.0)
+                reason0 = "promoted_to_v1" if row.get("decision") == "ENTER" else f"doc_reject:{str(row.get('reason') or '')[:30]}"
+                if px1 > 0:
+                    kel._close_row(pos0, px1, reason0, now, contract=kel.CONTRACT_FAST)
+                else:
+                    kel._close_row(pos0, float(pos0["entry"]), reason0, now, contract=kel.CONTRACT_FAST, unpriced=True)
+                kel._append(kel.FAST_LEDGER, {"event": "FAST_RESOLVE", "rcept_no": rno, "ticker": pos0.get("ticker"), "session_date": session_date,
+                                              "ts": kel._iso(now), "decision": row.get("decision"), "exit_reason": reason0, "entry": pos0.get("entry"), "exit": px1 or None})
+            open_pos = [q for q in open_pos if not (q.get("rcept_no") == rno and q.get("contract") == kel.CONTRACT_FAST["version"])]
         _handle(p["item"], row)
     # 2) 신규 공시
     for it in sorted(fresh, key=lambda x: x["rcept_no"]):
@@ -233,6 +247,23 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
         if row.get("decision") == "PENDING":
             pending[it["rcept_no"]] = {"item": it, "first_seen": row["ts_detected"], "attempts": 1, "last_try": kel._iso(now)}
             print(f"[KR-EVENT] 본문 대기 {it.get('corp_name')} {it['rcept_no']} — 재시도 예약", flush=True)
+            # 2단계 판단(09-08, FAST_ENABLED일 때만): 본문 없이 제목·유동성·급등만으로 빠른 유령을 연다(별도 계약·별도 일일 한도)
+            if kel.FAST_ENABLED and not dry and _PHASE["phase"] == "KRX":
+                try:
+                    kind0, corr0 = kel.classify_title(it.get("report_nm", ""))
+                    q0 = _quote(it["stock_code"]); liq0 = kel.liquidity_snapshot(it["stock_code"])
+                    fast_today = sum(1 for r in kel.read_jsonl(kel.PHANTOM_LEDGER)
+                                     if r.get("event") == "OPEN" and r.get("session_date") == session_date and r.get("contract") == kel.CONTRACT_FAST["version"])
+                    ok0, why0 = kel.fast_precheck(kind0, corr0, q0, liq0, now=now, fast_today=fast_today)
+                    kel._append(kel.FAST_LEDGER, {"event": "FAST_PRECHECK", "rcept_no": it["rcept_no"], "ticker": it.get("stock_code"), "session_date": session_date,
+                                                  "ts": kel._iso(now), "ok": ok0, "reason": why0, "px": (q0 or {}).get("price")})
+                    if ok0:
+                        pos0 = kel.open_phantom({**it, "kind": kind0, "session_date": session_date, "basis": f"fast:{kind0} 본문 전 진입"}, q0,
+                                                contract=kel.CONTRACT_FAST, notify=_notify, now=now)
+                        if pos0:
+                            open_pos.append(pos0); entered += 1
+                except Exception as exc:
+                    print(f"[KR-EVENT] fast precheck error: {exc}", flush=True)
             continue
         _obs_decide(obs, it["rcept_no"], row)
         _handle(it, row)

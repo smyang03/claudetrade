@@ -242,11 +242,24 @@ def _load_events() -> dict:
     terms: dict[str, list[dict]] = defaultdict(list)
     for r in _jsonl(KR_TERMS):
         terms[str(r.get("stock"))].append(r)
+    # 09-08: 보고사유 원장(kr_insider_reason.jsonl)이 덮는 rcept_no는 장내매수만 '증가'로 센다(증여·옵션행사 제외). 미커버는 증감 부호 그대로.
+    reasons: dict[str, list[str]] = {}
+    for r in _jsonl(SHADOW_DIR / "kr_insider_reason.jsonl"):
+        if r.get("rcept_no"):
+            reasons[str(r["rcept_no"])] = list(r.get("reasons") or [])
     ins: dict[str, list[tuple]] = defaultdict(list)
+    n_cov = 0
     for r in _jsonl(KR_INSIDER):
         d = _dt(r.get("rcept_dt"))
         if d and r.get("irds_cnt") is not None:
-            ins[str(r["stock"])].append((d, str(r.get("repror")), float(r["irds_cnt"])))
+            val = float(r["irds_cnt"])
+            rs = reasons.get(str(r.get("rcept_no")))
+            if rs is not None:
+                n_cov += 1
+                if val > 0 and "market_buy" not in rs:
+                    val = 0.0   # 증가지만 장내매수가 아님(증여·옵션·선임 등) → 군집에서 제외
+            ins[str(r["stock"])].append((d, str(r.get("repror")), val))
+    _EVT["insider_reason_coverage"] = n_cov
     plans: dict[str, list[dict]] = defaultdict(list)
     for r in _jsonl(KR_PLANS):
         plans[str(r.get("stock"))].append(r)

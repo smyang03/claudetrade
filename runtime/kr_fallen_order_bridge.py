@@ -190,6 +190,17 @@ def _load_candidates(
     return out
 
 
+def _append_submit_ledger(row: dict[str, Any]) -> None:
+    """P0(09-08) 세션별 접수 원장 — UNKNOWN·실패·당일 청산 포함 모든 제출 시도를 남긴다(일일 한도 회계의 정본)."""
+    try:
+        path = get_runtime_path("data", "shadow", "kr_fallen_submit_ledger.jsonl")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({**row, "ts": datetime.now(KST).isoformat(timespec="seconds")}, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        log.warning(f"[KR fallen handoff] submit ledger write failed: {exc}")
+
+
 def _open_slots(bot: Any) -> int:
     count = 0
     for item in [*(getattr(getattr(bot, "risk", None), "positions", []) or []),
@@ -290,9 +301,35 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
     if include_blind:
         rule_label += "+blind"
     candidates = _load_candidates(prev_session, rule_keys, include_blindspot=include_blind)
+    # P0(09-08) 입력 계약 격리: 가상 북·유령·탐색 원장 표식(x*/c_*/SHADOW_ONLY)이 붙은 행은 실주문 브리지에 들어오지 못한다.
+    from runtime.order_input_guard import filter_rows
+    candidates, rejected_inputs = filter_rows(candidates, "KR")
+    if rejected_inputs:
+        log.error(f"[KR fallen handoff] 가상 입력 거절 {len(rejected_inputs)}건: {[r.get('_reject') for r in rejected_inputs][:3]}")
     if not candidates:
         return _write_status(bot, session_date, {"status": "SKIPPED", "reason": "no_rule_candidates",
-                                                 "prev_session": prev_session, "rule": rule_label})
+                                                 "prev_session": prev_session, "rule": rule_label,
+                                                 "rejected_inputs": len(rejected_inputs)})
+    # P0(09-08) 주문 전 브로커 신뢰(실제 제출 경로에서만 — REHEARSAL 쉐도우 기록 계약은 바꾸지 않는다):
+    # US 브리지와 대칭으로 최신 잔고·미체결 동기화 후 trust가 degraded/untrusted면 신규 진입 차단. 동기화 실패도 fail-closed.
+    submit_enabled = bool(bot._runtime_bool("KR_FALLEN_ORDER_SUBMIT_ENABLED", True))
+    trust = "n/a"
+    if submit_enabled:
+        sync = getattr(bot, "_sync_runtime_with_broker", None)
+        if callable(sync):
+            try:
+                sync()
+            except Exception as exc:
+                log.warning(f"[KR fallen handoff] broker sync 실패 — fail-closed: {exc}")
+                return _write_status(bot, session_date, {"status": "BLOCKED", "reason": "broker_sync_failed", "detail": str(exc)[:120]})
+        tl = getattr(bot, "_broker_trust_level", None)
+        try:
+            trust = str(tl("KR") or "unknown") if callable(tl) else "unavailable"
+        except Exception:
+            trust = "unknown"
+        if trust.lower() in ("degraded", "untrusted", "unknown"):
+            return _write_status(bot, session_date, {"status": "BLOCKED", "reason": f"broker_untrusted:{trust}",
+                                                     "prev_session": prev_session, "rule": rule_label})
 
     # 슬롯·일한도 검사는 후보 조회 "뒤"에 온다 (2026-08-20 수리).
     # 이전에는 앞에 있어서, 후보가 0건인 날도 slot_cap으로 기록됐다 —
@@ -357,6 +394,21 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
         if signal_close > 0 and price >= signal_close * 1.10:
             results.append({"ticker": ticker, "status": "BLOCKED", "reason": "extreme_gap_up_tp_room_gone"})
             continue
+        # P0(09-08) 선정 데이터 결측 차단: 신호 종가·할인 결측이면 주문하지 않는다(결측=통과 금지).
+        feats_row = row.get("feats") or {}
+        if signal_close <= 0 or feats_row.get("ma20_disc") is None:
+            results.append({"ticker": ticker, "status": "BLOCKED", "reason": "signal_data_missing"})
+            continue
+        # P0(09-08) 체결가 통제(실제 제출 경로에서만): 호가가 있으면 스프레드 ≥0.5%는 대기, 시가 대비 괴리 ≥3%면 대기(시장가 제출 전 최소 방어).
+        if submit_enabled:
+            _ask = float((quote or {}).get("ask") or 0.0); _bid = float((quote or {}).get("bid") or 0.0)
+            if _ask > 0 and _bid > 0 and (_ask / _bid - 1.0) >= 0.005:
+                results.append({"ticker": ticker, "status": "WAIT", "reason": "spread_too_wide"})
+                continue
+            _opn = float((quote or {}).get("open") or 0.0)
+            if _opn > 0 and abs(price / _opn - 1.0) >= 0.03:
+                results.append({"ticker": ticker, "status": "WAIT", "reason": "price_far_from_open"})
+                continue
         budget = min(cap_krw, float(bot._market_budget_available("KR")), float(bot._broker_orderable_cash_krw("KR")))
         qty = int(budget // price) if price > 0 else 0
         if qty <= 0:
@@ -403,8 +455,24 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
                         "adjusted_order_cost_krw": qty * price, "order_budget_krw": budget,
                         "min_effective_order_krw": 0.0, "oversize_ratio": 1.0},
         )
+        # P0(09-08) UNKNOWN 격리(US 브리지 800~850행 대칭): 응답 유실·주문번호 없음이면 ORDER_UNKNOWN으로 영속화하고
+        # 이 세션의 추가 제출을 즉시 중단한다(다음 후보 재주문 금지). SUBMIT_FAILED로 뭉개지 않는다.
+        outcome = dict(getattr(bot, "_last_micro_probe_submit_result", {}) or {})
+        o_status = str(outcome.get("status") or "").upper(); o_no = str(outcome.get("order_no") or "")
+        _append_submit_ledger({"session_date": session_date, "ticker": ticker, "qty": qty, "price": price, "ok": bool(ok),
+                               "status": o_status, "order_no": o_no, "reason": outcome.get("reason"), "matched": matched})
+        if o_status == "UNKNOWN" or (ok and not o_no):
+            try:
+                bot._v2_record_order_unknown("KR", ticker, {"ticker": ticker, "market": "KR", "qty": int(qty), "order_no": o_no,
+                                                            "source_strategy": SOURCE_STRATEGY}, "KR fallen broker submission outcome unknown")
+            except Exception:
+                pass
+            results.append({"ticker": ticker, "status": "ORDER_UNKNOWN", "reason": "broker_submit_outcome_unknown",
+                            "qty": qty, "price": price, "matched": matched, "detail": str(outcome.get("detail") or "")[:120]})
+            results.append({"status": "STOPPED", "reason": "unknown_outcome_halts_session"})
+            break
         results.append({"ticker": ticker, "status": "SUBMITTED" if ok else "SUBMIT_FAILED",
-                        "qty": qty, "price": price, "matched": matched})
+                        "qty": qty, "price": price, "matched": matched, "submit_reason": outcome.get("reason")})
         if ok:
             submitted_now += 1
             # 잔여 일일 한도 소진 → 종료 (OFF면 remaining=1이라 현행 일1건과 동일)
@@ -420,7 +488,7 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
             if _open_slots(bot) >= max_slots:
                 results.append({"status": "STOPPED", "reason": "slot_cap_would_exceed"})
                 break
-    return _write_status(bot, session_date, {"status": "EVALUATED", "rule": rule_label,
+    return _write_status(bot, session_date, {"status": "EVALUATED", "rule": rule_label, "broker_trust": trust,
                                              "prev_session": prev_session, "results": results,
                                              "phase3": {"enabled": phase3, "k": k_candidates,
                                                         "daily_cap": daily_cap, "submitted_now": submitted_now}})

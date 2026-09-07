@@ -283,7 +283,8 @@ class PhantomStateAndEodTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def _open(self):
-        pos = k.open_phantom(self.sig, {"price": 10000.0, "source": "t"})
+        # 09-08 수리: 원장 행의 opened_at도 t0여야 한다(실시계로 쓰면 날짜가 지나면서 held_min이 음수가 돼 TIME_STOP 대조가 깨졌다)
+        pos = k.open_phantom(self.sig, {"price": 10000.0, "source": "t"}, now=self.t0)
         pos["opened_at"] = k._iso(self.t0)
         return pos
 
@@ -624,8 +625,8 @@ class ThreePointFidelityTest(unittest.TestCase):
         row = k.process_disclosure({"rcept_no": "8", "stock_code": "000100", "corp_name": "A", "report_nm": "단일판매" + _MID + "공급계약체결"},
                                    session_date="2026-09-07", quote_fn=lambda t: {"price": 10000.0}, open_n=0, new_today=0,
                                    doc_fn=lambda r: (_t.sleep(0.05), DOC)[1], first_seen=k._iso(self.t0 - timedelta(seconds=120)), now=self.t0)
-        self.assertGreaterEqual(row["proc_sec"], 0.05)
-        self.assertGreaterEqual(row["latency_sec"], 120.05)   # 대기 120초 + 실제 처리
+        self.assertGreaterEqual(row["proc_sec"], 0.04)   # 09-08: Windows sleep 해상도(~15ms)로 0.047 실측 — 0.05 경계 완화
+        self.assertGreaterEqual(row["latency_sec"], 120.04)   # 대기 120초 + 실제 처리
 
     def test_pending_carried_into_nxt_not_finalized(self):
         sys.path.insert(0, str(ROOT / "tools"))
@@ -805,6 +806,26 @@ class N5N6LaneWiringTest(unittest.TestCase):
         # amend 판단: 증액 5% 미만은 SKIP
         self.assertEqual(k.decide("supply_contract_amend", False, {"amount_delta_pct": 2.0}, {}, {"price": 5000.0}, {"prev_close": 4900.0, "dvol20_krw": 5e9})[0], "SKIP")
         self.assertEqual(k.decide("supply_contract_amend", False, {"amount_delta_pct": 30.0}, {}, {"price": 5000.0}, {"prev_close": 4900.0, "dvol20_krw": 5e9})[0], "ENTER")
+
+
+class FastPrecheckTest(unittest.TestCase):
+    """09-08 2단계 판단: 플래그 OFF면 항상 거절, ON이면 제목·유동성·급등·일일 한도만으로 판단."""
+
+    def test_fast_precheck(self):
+        from datetime import datetime
+        q = {"price": 5000.0}; liq = {"prev_close": 4900.0, "dvol20_krw": 5e9}; now = datetime(2026, 9, 8, 10, 0, tzinfo=k.KST)
+        self.assertEqual(k.fast_precheck("supply_contract", False, q, liq, now=now)[1], "fast_disabled")
+        old = k.FAST_ENABLED; k.FAST_ENABLED = True
+        try:
+            self.assertEqual(k.fast_precheck("supply_contract", False, q, liq, now=now), (True, "fast_ok"))
+            self.assertEqual(k.fast_precheck("supply_contract", True, q, liq, now=now)[1], "not_fast_kind")
+            self.assertEqual(k.fast_precheck("buyback", False, q, liq, now=now)[1], "not_fast_kind")
+            self.assertEqual(k.fast_precheck("supply_contract", False, {"price": 5500.0}, liq, now=now)[1], "runup")
+            self.assertEqual(k.fast_precheck("supply_contract", False, q, {"prev_close": 4900.0, "dvol20_krw": 1e9}, now=now)[1], "liquidity")
+            self.assertEqual(k.fast_precheck("supply_contract", False, q, liq, now=now, fast_today=3)[1], "fast_daily_cap")
+            self.assertEqual(k.fast_precheck("supply_contract", False, q, liq, now=datetime(2026, 9, 8, 15, 12, tzinfo=k.KST))[1], "after_entry_cutoff")
+        finally:
+            k.FAST_ENABLED = old
 
 
 if __name__ == "__main__":

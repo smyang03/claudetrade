@@ -71,6 +71,9 @@ class FakeBot:
 
     def _submit_micro_probe_buy_order(self, **kwargs):
         self.submits.append(kwargs)
+        # 프로덕션과 같은 형태: 제출 결과 dict를 남긴다(09-08 P0 UNKNOWN 격리가 이 값을 읽는다)
+        self._last_micro_probe_submit_result = dict(getattr(self, "next_submit_result", None) or
+                                                    {"status": "SUBMITTED", "order_no": f"T{len(self.submits)}", "reason": "broker_accepted"})
         # 2026-08-23: 프로덕션과 같은 부수효과 — True를 돌려주기 전에 주문이
         # pending_orders에 들어간다(trading_bot.py:14592). 슬롯 계산(_open_slots)이
         # positions + pending_orders를 세므로, 이 부수효과가 없으면 픽스처가
@@ -366,3 +369,49 @@ def test_phase3_slot_cap_three_enforced(tmp_path: Path) -> None:
     ]
     result = _run(bot, _rows_n(12))
     assert len(bot.submits) == 1  # 슬롯 3 - 보유 2 = 1
+
+
+def test_p0_unknown_outcome_halts_session(tmp_path: Path) -> None:
+    """09-08 P0: 제출 결과 UNKNOWN(응답 유실)이면 ORDER_UNKNOWN으로 기록하고 그 세션의 추가 제출을 멈춘다(다음 후보 재주문 금지)."""
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_PHASE3_CAPACITY_ENABLED"] = True   # 후보 2건 → 일 2건 허용 상태에서도 UNKNOWN 뒤 멈춰야 한다
+    bot.next_submit_result = {"status": "UNKNOWN", "reason": "order_exception", "order_no": ""}
+    seen: list = []
+    bot._v2_record_order_unknown = lambda m, tk, o, d: seen.append((m, tk))
+    rows = [_row("DEEP", "2026-08-04", -32.0, 5.0), _row("DEEP2", "2026-08-04", -31.0, 5.0)]
+    result = _run(bot, rows)
+    statuses = [r.get("status") for r in result["results"]]
+    assert "ORDER_UNKNOWN" in statuses and "STOPPED" in statuses
+    assert len(bot.submits) == 1 and seen == [("KR", "DEEP")]
+    assert (tmp_path / "data" / "shadow" / "kr_fallen_submit_ledger.jsonl").exists()
+
+
+def test_p0_rehearsal_path_unaffected_by_trust_gate(tmp_path: Path) -> None:
+    """제출 스위치 OFF(쉐도우)면 브로커 신뢰·체결가 게이트를 타지 않고 REHEARSAL_READY를 그대로 낸다."""
+    bot = FakeBot(tmp_path)
+    bot.values["KR_FALLEN_ORDER_SUBMIT_ENABLED"] = False
+    bot._sync_runtime_with_broker = lambda: (_ for _ in ()).throw(RuntimeError("broker down"))
+    bot._broker_trust_level = lambda m: "untrusted"
+    with patch("runtime.kr_fallen_order_bridge._notify_rehearsal_pick", return_value=None):
+        result = _run(bot, [_row("DEEP", "2026-08-04", -32.0, 5.0)])
+    assert result["status"] == "EVALUATED" and result["results"][0]["status"] == "REHEARSAL_READY"
+    assert result.get("broker_trust") == "n/a"
+
+
+def test_p0_trust_gate_blocks_real_submit(tmp_path: Path) -> None:
+    bot = FakeBot(tmp_path)
+    bot._sync_runtime_with_broker = lambda: None
+    bot._broker_trust_level = lambda m: "degraded"
+    result = _run(bot, [_row("DEEP", "2026-08-04", -32.0, 5.0)])
+    assert result["status"] == "BLOCKED" and result["reason"].startswith("broker_untrusted") and bot.submits == []
+
+
+def test_p0_input_guard_rejects_virtual_rows():
+    from runtime.order_input_guard import filter_rows, input_rejection
+    assert input_rejection({"ticker": "005930", "arm": "xkr_fallen3"}, "KR").startswith("virtual_input_rejected")
+    assert input_rejection({"ticker": "005930", "strategy_id": "c_kr_insider_k1"}, "KR").startswith("virtual_input_rejected")
+    assert input_rejection({"ticker": "005930", "authority": "SHADOW_ONLY_NO_ORDER_AUTHORITY"}, "KR").startswith("shadow_authority")
+    assert input_rejection({"ticker": "005930", "_matched_rules": ["R2"]}, "KR") is None
+    assert input_rejection({"ticker": "AAPL", "source": "day_losers", "rank": 1}, "US") is None
+    kept, rej = filter_rows([{"ticker": "A", "pool": "xus_fallen3"}, {"ticker": "B"}], "US")
+    assert [r["ticker"] for r in kept] == ["B"] and rej[0]["_reject"]

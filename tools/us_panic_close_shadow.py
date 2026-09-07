@@ -381,9 +381,51 @@ def settle() -> int:
     return n
 
 
+def _fill_prev_dvol() -> int:
+    """실행 형태 분해용: 신호일 직전 봉 거래대금(USD)을 행에 소급(전일 정보 → lookahead 없음)."""
+    rows = _load(); n = 0
+    for r in rows:
+        if r.get("kind") != "trade" or r.get("prev_dvol_usd") is not None:
+            continue
+        d = daily(r["ticker"])
+        if not d or r["session_date"] not in d[0]:
+            continue
+        bars, dates = d; i = dates.index(r["session_date"])
+        if i >= 1:
+            pv = bars[dates[i - 1]]; r["prev_dvol_usd"] = round(pv[3] * pv[4]); n += 1
+    if n:
+        _rewrite(rows)
+    return n
+
+
 def report() -> None:
     import statistics as st
+    _fill_prev_dvol()
     rows = [r for r in _load() if r.get("kind") == "trade" and r.get("status") == "CLOSED"]
+    # 실행 형태(exec_form) 부분집합 — 330만 자본으로 살 수 있는 형태만 판정 후보: top1/top3(전일 거래대금), ETF 단일
+    forms = {}
+    stock_by = {}
+    for r in rows:
+        if r.get("instrument") == "stock":
+            stock_by.setdefault(r["session_date"], []).append(r)
+    for k in (1, 3):
+        sub = []
+        for sd, v in stock_by.items():
+            v2 = sorted([x for x in v if x.get("prev_dvol_usd")], key=lambda x: -x["prev_dvol_usd"])[:k]
+            sub.extend(v2)
+        forms[f"top{k}_dvol"] = sub
+    for tk in ETFS:
+        forms[f"etf_{tk}"] = [r for r in rows if r.get("ticker") == tk]
+    for name, sub in forms.items():
+        if not sub:
+            continue
+        by = {}
+        for r in sub:
+            by.setdefault(r["session_date"], []).append(r["net_pct"])
+        sm = [st.mean(v) for v in by.values()]
+        t = (st.mean(sm) / (st.pstdev(sm) / len(sm) ** 0.5)) if len(sm) > 1 and st.pstdev(sm) else 0.0
+        print(f"[PANIC] exec_form {name:10s}: n={len(sub)} sessions={len(sm)} session_mean={st.mean(sm):+.2f}% session_t={t:.2f} "
+              f"min={min(r['net_pct'] for r in sub):+.1f} forward={sum(1 for r in sub if r.get('mode') == 'live')}")
     for inst in ("stock", "etf"):
         sub = [r for r in rows if r.get("instrument") == inst]
         if not sub:

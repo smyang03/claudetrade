@@ -32,6 +32,7 @@
 - 09-07 폐기한 lookahead: ① 종가 등락률로 15:45 진입 종목을 고른 것 ② 자사주 창에 급락 뒤 공시를 포함한 것. 재발 금지.
 - 반증: forward 패닉 세션 10개에서 오버나이트 세션 평균 ≤0, 또는 마감진입 D10 − 시가진입(C6) D10 증분 ≤0. 장기 프록시(2005~)에서 약세장 음수 → 국면 조건부·총 노출 한도.
 - 운영: schtask `claudetrade_us_panic_close` 매일 04:35 KST → `live`(15:40 ET 대기) → `settle`.
+- **실행 형태(09-08)**: forward 판정을 exec_form별로 낸다 — top3_dvol(전일 거래대금 상위 3, 15:40 정보만) · top1 · TQQQ/IWM/SPY 1주. 백필 top3 +5.17%(t 3.95)·TQQQ +4.19%(t 3.32). 캐너리 후보는 이 중 forward에서 남는 쪽.
 
 ## 3. B등급 사전등록 셀 (코드 변경 없음, forward 원장에서 사후 분해)
 
@@ -65,3 +66,4 @@
 | N2 KR 매도 체결 흡수 | 09:05~09:15 매도체결 비중 ≥55% & 가격 ≥−0.5% & 총매수잔량 ≥90% 유지 & 체결강도<100 & 매수호가1 유지 → 09:16 매도호가1, TP12/SL25/D7 | `kr_absorption.jsonl` + 틱 `kr_ws_ticks/` | 30건 세션 t<0 또는 09:30 확인 진입(L3) 대비 증분 ≤0 |
 | N6 잠정실적 흑자전환 | 영업이익 당기>0 & 전년동기≤0 & 매출 증가 → 판단 후 시세, TP8/SL4/EOD | 공시 레인(kind prelim_earnings) | 30건 |
 | N5 공급계약 긍정 정정 | 정정전/후 금액 ≥+5% & 종료일 불변 → 계약 kr_event_v1_amend, 그 외 OBSERVE | 공시 레인 | 30건 |
+| KR 공시 2단계(fast) | 본문 대기 중 제목·유동성·급등만으로 진입(계약 kr_event_v1_fast), 본문 확정 후 비ENTER면 즉시 청산 | `kr_event_fast.jsonl` + phantom | doc_reject 손익(속도의 비용) 합이 승격분 이익보다 크면 기각. FAST_ENABLED 기본 OFF |

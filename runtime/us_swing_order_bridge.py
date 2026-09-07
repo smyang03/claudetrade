@@ -396,7 +396,18 @@ def apply_contract_selection(
 
     순서는 검정 순서와 같다 — MAX는 밴드 **위에** 얹은 축이다.
     """
+    # P0(09-08) 입력 계약 격리: 가상 북·유령 표식 행 거절(KR 브리지와 대칭)
+    from runtime.order_input_guard import filter_rows
+    signals, _rejected = filter_rows(list(signals or []), "US")
+    if _rejected:
+        log.error(f"[US swing handoff] 가상 입력 거절 {len(_rejected)}건: {[r.get('_reject') for r in _rejected][:3]}")
     signals, band_meta = _apply_dollar_volume_band(config, con, session_date, signals)
+    if _rejected:
+        band_meta = {**band_meta, "rejected_inputs": len(_rejected)}
+    if not band_meta.get("applied"):
+        # P0(09-08) 선정 데이터 결측: 밴드 fail-open은 08-20 계약이라 유지하되, 결측 사실을 status·로그에 남긴다(운영자 결정 항목).
+        band_meta = {**band_meta, "data_missing": True}
+        log.error(f"[US swing handoff] 선정 데이터 결측(dollar_volume) — 밴드 미적용 fail-open (session={session_date}); 운영자 확인 항목")
     if band_meta.get("applied") and not signals:
         return [], band_meta, {"applied": False, "reason": "not_evaluated_band_empty"}
     signals, max_meta = _apply_max_lottery_floor(config, session_date, signals)

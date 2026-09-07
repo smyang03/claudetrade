@@ -27,6 +27,10 @@ STEPS = [
     ("panic_settle", ["tools/us_panic_close_shadow.py", "settle"]),
     ("absorption_settle", ["tools/kr_absorption_shadow.py", "settle"]),
     ("open_impact_settle", ["tools/us_open_impact_collector.py", "settle"]),
+    ("insider_reason", ["tools/dart_insider_reason.py", "--max", "1500"]),      # 09-08: 소유보고 본문 사유(장내매수 구분), 하루 1,500건
+    ("event_family_report", ["tools/event_family_report.py", "--json", "data/analysis/event_family_report_20260907.json"]),
+    ("forward_gate_watch", ["tools/forward_gate_watch.py"]),                    # 09-08: forward 판정 자동화(상태 변화 때만 텔레그램)
+    ("panic_report", ["tools/us_panic_close_shadow.py", "report"]),
 ]
 
 

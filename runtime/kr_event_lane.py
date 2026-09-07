@@ -92,6 +92,35 @@ CONTRACT_NXT = {**CONTRACT, "version": "kr_event_v1_nxt", "entry_cutoff_hhmm": A
 PREOPEN = {"start_hhmm": "07:30", "open_hhmm": "09:00", "fill_from_hhmmss": "09:00:30", "fill_until_hhmm": "09:20"}
 CONTRACT_PREOPEN = {**CONTRACT, "version": "kr_event_v1_preopen"}
 PREOPEN_FILL_LEDGER = ROOT / "data" / "shadow" / "kr_event_preopen_fills.jsonl"
+# 2단계 판단(09-08): 본문 대기 중 빠른 유령. 기본 OFF — 기존 판단 경로를 한 세션 관찰한 뒤 켠다(코드 상수, env 아님).
+FAST_ENABLED = False
+CONTRACT_FAST = {**CONTRACT, "version": "kr_event_v1_fast", "max_new_per_day": 3}
+FAST_LEDGER = ROOT / "data" / "shadow" / "kr_event_fast.jsonl"
+
+
+def fast_precheck(kind: str, is_correction: bool, quote: dict | None, liq: dict, *, now: datetime | None = None,
+                  contract: dict = CONTRACT_FAST, fast_today: int = 0) -> tuple[bool, str]:
+    """본문 없이 판단 가능한 조건만: 대상 종류·비정정·진입 마감 전·시세·유동성·급등·일일 fast 한도."""
+    if not FAST_ENABLED:
+        return False, "fast_disabled"
+    if is_correction or kind not in ("supply_contract", "bonus_issue"):
+        return False, "not_fast_kind"
+    if now is not None and now.strftime("%H:%M") >= contract.get("entry_cutoff_hhmm", "15:10"):
+        return False, "after_entry_cutoff"
+    if fast_today >= int(contract["max_new_per_day"]):
+        return False, "fast_daily_cap"
+    if not quote or not quote.get("price"):
+        return False, "no_quote"
+    px = float(quote["price"])
+    if px < contract["min_price"]:
+        return False, "price_lt_min"
+    pc = liq.get("prev_close")
+    if pc and (px / pc - 1.0) * 100.0 > contract["max_runup_pct"]:
+        return False, "runup"
+    dv = liq.get("dvol20_krw")
+    if dv is None or dv < contract["min_dvol20_krw"]:
+        return False, "liquidity"
+    return True, "fast_ok"
 
 
 def phase_of(now: "datetime") -> str:
