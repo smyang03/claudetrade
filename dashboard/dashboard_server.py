@@ -17247,11 +17247,13 @@ def api_virtual_books():
                     "equity_krw": round(book["equity_krw"]) if book else s["capital_krw"],
                     "asof": book["asof"] if book else None,
                     "contract_hash": s["contract_hash"],
+                    "discovery": s["universe"] in ("xus", "xkr"),
+                    "total_rows": int((agg["settled"] or 0) + (agg["open_n"] or 0)),
                 })
             recent = []
             for r in con.execute(
                     "SELECT strategy_id, session_date, ticker, status, exit_reason, "
-                    "net_pct, pnl_krw, backfill, meta FROM trades "
+                    "net_pct, pnl_krw, backfill, meta FROM trades WHERE strategy_id NOT LIKE 'x%' "
                     "ORDER BY session_date DESC, strategy_id LIMIT 40"):
                 row = dict(r)
                 try:
@@ -17547,6 +17549,37 @@ def api_research():
                     "ipo": _load(BASE_DIR / "data" / "shadow" / "kr_ipo_calendar.json")})
 
 
+@app.route("/api/discovery")
+def api_discovery():
+    """탐색 원장 요약 — 조건 분해 JSON(discovery_breakdown) + 최근 세션 풀 규모 + 탈락 후보 원장 크기. [VIRTUAL] 후보 생성기, 판정 아님."""
+    try:
+        p = BASE_DIR / "data" / "analysis" / "discovery_breakdown.json"
+        bd = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        pools = {}
+        for pid, d in (bd.get("pools") or {}).items():
+            pools[pid] = {k: d.get(k) for k in ("all", "forward", "regime", "live_reference_filter", "needle_candidates_buy", "needle_candidates_avoid")}
+            pools[pid]["grid"] = d.get("grid") or {}
+        db = BASE_DIR / "data" / "shadow" / "virtual_books.db"
+        stats = []
+        if db.exists():
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+            try:
+                keys = [r[0] for r in con.execute("SELECT DISTINCT session_key FROM discovery_pool_stats ORDER BY session_key DESC LIMIT 3")]
+                for k in keys:
+                    for mk in ("US", "KR"):
+                        rows = con.execute("SELECT pool, n, universe_n FROM discovery_pool_stats WHERE session_key=? AND market=?", (k, mk)).fetchall()
+                        if rows:
+                            stats.append({"session_key": k, "market": mk, "pools": {r[0]: r[1] for r in rows}, "universe_n": rows[0][2]})
+            finally:
+                con.close()
+        nm = BASE_DIR / "data" / "shadow" / "discovery_nearmiss.jsonl"
+        nm_n = sum(1 for _ in nm.open(encoding="utf-8")) if nm.exists() else 0
+        return jsonify({"available": True, "generated_at": bd.get("generated_at"), "min_n": bd.get("min_n"), "pools": pools,
+                        "pool_stats": stats, "nearmiss_sessions": nm_n})
+    except Exception as exc:
+        return jsonify({"available": False, "reason": str(exc)[:200]})
+
+
 @app.route("/api/core_shadow")
 def api_core_shadow():
     """F3 저회전 코어(US SCHG/BIL SMA10+MOM12 · KR 275280/275300↔153130) shadow NAV. [VIRTUAL] core_shadow_tracker 산출."""
@@ -17632,7 +17665,18 @@ PAGE_VIRTUAL_HTML = """
     <tbody></tbody>
   </table>
   </div>
-  <h2 style="font-size:15px;margin:22px 0 10px;color:var(--cyan);">최근 가상 거래 40건</h2>
+  <h2 style="font-size:15px;margin:22px 0 10px;color:var(--cyan);">탐색 원장 x* <span style="font-size:12px;color:var(--muted);">— 한도 없음·넓은 풀·통과자 전량. 후보 생성기(승격 근거 아님). 위 스코어보드는 실운영 레퍼런스(K=1·하루 1건) 전용</span></h2>
+  <div id="vb-x-summary" style="font-size:12px;font-family:var(--mono);margin-bottom:6px;"></div>
+  <div style="overflow-x:auto;">
+  <table id="vb-xtable" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
+    <thead><tr style="color:var(--muted);text-align:right;">
+      <th style="text-align:left;padding:6px;">풀</th><th>행</th><th>정산</th><th>미결제</th><th>forward</th><th>승률</th><th>평균net</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  </div>
+  <div id="vb-x-breakdown" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:10px;font-size:12px;font-family:var(--mono);margin-top:8px;"></div>
+  <h2 style="font-size:15px;margin:22px 0 10px;color:var(--cyan);">최근 가상 거래 40건 <span style="font-size:12px;color:var(--muted);">(레퍼런스 arm)</span></h2>
   <div style="overflow-x:auto;">
   <table id="vb-trades" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
     <thead><tr style="color:var(--muted);text-align:right;">
@@ -17655,7 +17699,16 @@ async function loadVirtual() {
     const d = await (await fetch('/api/virtual_books')).json();
     if (!d.available) return;
     const tb = document.querySelector('#vb-table tbody');
-    tb.innerHTML = d.strategies.map(s => `
+    const xt = document.querySelector('#vb-xtable tbody');
+    if (xt) xt.innerHTML = d.strategies.filter(s => s.discovery).map(s => `
+      <tr style="border-top:1px solid var(--border);text-align:right;">
+        <td style="text-align:left;padding:6px;" title="${(s.note||'').replace(/"/g,'')}">${s.id}</td>
+        <td>${s.total_rows.toLocaleString()}</td><td>${s.settled.toLocaleString()}</td><td>${s.open_n}</td>
+        <td>${s.forward_settled}</td>
+        <td>${s.win_rate === null ? '-' : s.win_rate + '%'}</td>
+        <td>${s.avg_net_pct === null ? '-' : vbFmt(s.avg_net_pct, '%')}</td>
+      </tr>`).join('');
+    tb.innerHTML = d.strategies.filter(s => !s.discovery).map(s => `
       <tr style="border-top:1px solid var(--border);text-align:right;">
         <td style="text-align:left;padding:6px;" title="${(s.note||'').replace(/"/g,'')}">${s.id}</td>
         <td>${(s.capital_krw/10000).toFixed(0)}만</td>
@@ -17825,6 +17878,29 @@ async function loadResearch() {
   } catch (e) { /* 조용히 재시도 */ }
 }
 loadResearch(); setInterval(loadResearch, 300000);
+async function loadDiscovery() {
+  try {
+    const d = await (await fetch('/api/discovery')).json();
+    const f = v => (v === null || v === undefined) ? '-' : (Number(v) >= 0 ? '+' : '') + Number(v).toFixed(2);
+    const cls = v => (v === null || v === undefined) ? 'dim' : (Number(v) > 0 ? 'pos' : (Number(v) < 0 ? 'neg' : 'dim'));
+    const fc = c => (c && c.n) ? `n=${c.n} <span class="${cls(c.mean)}">${f(c.mean)}%</span> 승 ${c.win_pct}% t ${c.t ?? '-'}` : 'n=0';
+    const sm = document.getElementById('vb-x-summary');
+    if (!d.available) { sm.textContent = '(' + d.reason + ')'; return; }
+    const ps = (d.pool_stats || []);
+    sm.innerHTML = '분해 기준 ' + (d.generated_at || '-').slice(0, 16) + ' · 성숙 세션만 · 최근 세션 풀 규모: ' +
+      ps.map(r => `${r.session_key} ${r.market} ${Object.entries(r.pools).map(([k, v]) => k.replace(/^x(us|kr)_/, '') + ' ' + v).join('/')} (유니버스 ${r.universe_n})`).join(' · ') +
+      (d.nearmiss_sessions ? ' · 탈락 후보 원장 ' + d.nearmiss_sessions + '세션' : '');
+    const el = document.getElementById('vb-x-breakdown');
+    const card = (title, body) => `<div style="border:1px solid var(--border);border-radius:6px;padding:8px;"><div style="color:var(--cyan);margin-bottom:4px;">${title}</div>${body}</div>`;
+    el.innerHTML = Object.entries(d.pools || {}).map(([pid, p]) => card(pid,
+      `전체 ${fc(p.all)} · forward ${fc(p.forward)}<br>국면: MA20 위 ${fc(p.regime.idx_above_ma20)} / 아래 ${fc(p.regime.idx_below_ma20)}<br>` +
+      (p.live_reference_filter ? `실운영 필터 복원 ${fc(p.live_reference_filter.all_passers)}<br>` : '') +
+      `출구: ${Object.entries(p.grid || {}).slice(0, 6).map(([k, c]) => k + ' ' + f(c.mean)).join(' · ')}<br>` +
+      `<span class="pos">매수 후보</span>: ${(p.needle_candidates_buy || []).map(x => x.ladder + '=' + x.cell + ' ' + f(x.mean) + ' t' + x.t + (x.passes_4 ? ' ★' : '')).join(', ') || '없음'}<br>` +
+      `<span class="warn">회피 후보</span>: ${(p.needle_candidates_avoid || []).map(x => x.ladder + '=' + x.cell + ' ' + f(x.mean) + ' t' + x.t).join(', ') || '없음'}`)).join('');
+  } catch (e) { /* 조용히 재시도 */ }
+}
+loadDiscovery(); setInterval(loadDiscovery, 300000);
 
 
 </script>

@@ -91,6 +91,7 @@ class GridAndEntryTest(unittest.TestCase):
         self.assertEqual(r["grid"]["hold_d5"], [round(1.0 - 0.5, 3), "D_MAT"])
         self.assertEqual(r["grid"]["hold_d10"], [round(-12.0 - 0.5, 3), "D_MAT"])
         self.assertAlmostEqual(r["mfe"], 15.0, places=3); self.assertAlmostEqual(r["mae"], -15.0, places=3)
+        self.assertEqual(r["path"]["dates"][0], "d0"); self.assertEqual(r["path"]["raw_d0"], [100, 101, 99, 101, 1])   # 원본 D0 OHLCV 보존
         short = vb._path_and_grid(entry, win[:3], fee=0.5, be_lock_main=True)
         self.assertFalse(short["grid_complete"]); self.assertIn("tp6_sl6_d2", short["grid"]); self.assertNotIn("hold_d10", short["grid"])
 
@@ -127,6 +128,28 @@ class GridAndEntryTest(unittest.TestCase):
         self.assertIn('s.get("discovery")', src)
         src2 = (ROOT / "runtime" / "phantom_book.py").read_text(encoding="utf-8")
         self.assertIn('startswith(("xus_", "xkr_"))', src2)
+
+    def test_nearmiss_collected_outside_pools(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            orig = (dp.US_DIR, dp.DISCOVERY_START)
+            dp.US_DIR, dp.DISCOVERY_START = d, "2025-01-01"; dp._NEARMISS.clear()
+            try:
+                b = _bars(70, vol=4_000_000.0)
+                b[60] = (b[60][0], 100.0, 100.5, 97.0, 97.5, 4_000_000.0)   # −2.5%: 풀(−3%) 탈락, near-miss 밴드(|chg|≥2) 안
+                with (d / "us_CCC.csv").open("w", encoding="utf-8") as fh:
+                    fh.write("date,open,high,low,close,volume\n"); [fh.write(",".join(str(x) for x in r) + "\n") for r in b]
+                dp.build("US")
+                nm = dp._NEARMISS.get("US", {})
+                self.assertIn(b[60][0], nm); self.assertEqual(nm[b[60][0]][0][0], "CCC"); self.assertAlmostEqual(nm[b[60][0]][0][1], -2.5, places=2)
+            finally:
+                dp.US_DIR, dp.DISCOVERY_START = orig; dp._NEARMISS.clear()
+
+    def test_candidate_checks(self):
+        import discovery_breakdown as bd
+        rows = [{"net": 1.0 + (i % 3), "session": f"2025-0{1 + i % 6}-1{i % 9}", "half": "H1" if i < 12 else "H2", "rank_dvol_raw": 1 if i % 4 == 0 else 3} for i in range(24)]
+        chk = bd.candidate_checks(rows)
+        self.assertTrue(chk["oos_halves_same_sign"]); self.assertEqual(chk["k1"]["n"], 6); self.assertGreater(chk["k1"]["mean"], 0)
 
     def test_kr_breakout_window_120(self):
         b = _bars(200, drift=0.0)

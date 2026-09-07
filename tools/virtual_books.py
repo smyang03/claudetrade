@@ -257,6 +257,35 @@ def _x_pool_stats(market: str) -> dict:
         return {}
 
 
+NEARMISS_LEDGER = ROOT / "data" / "shadow" / "discovery_nearmiss.jsonl"
+
+
+def record_nearmiss() -> int:
+    """탈락 후보(풀 문턱 바로 밖) 압축 행을 신호일 단위로 append(멱등: market+signal_date). 문턱을 더 낮춘 가설의 사후 복원용."""
+    try:
+        import discovery_pools as dp
+    except Exception:
+        return 0
+    seen: set[tuple[str, str]] = set()
+    if NEARMISS_LEDGER.exists():
+        for line in NEARMISS_LEDGER.read_text(encoding="utf-8").splitlines():
+            try:
+                r = json.loads(line); seen.add((r["market"], r["signal_date"]))
+            except (ValueError, KeyError):
+                continue
+    n = 0
+    NEARMISS_LEDGER.parent.mkdir(parents=True, exist_ok=True)
+    with NEARMISS_LEDGER.open("a", encoding="utf-8") as fh:
+        for market in ("US", "KR"):
+            for sd, rows in sorted(dp.nearmiss(market).items()):
+                if (market, sd) in seen:
+                    continue
+                fh.write(json.dumps({"market": market, "signal_date": sd, "n": len(rows), "cols": ["ticker", "chg", "dvol", "vol_spike", "cum5", "hi_break_n"],
+                                     "rows": rows}, ensure_ascii=False) + "\n")
+                n += 1
+    return n
+
+
 def record_pool_stats(con: sqlite3.Connection) -> int:
     """세션별 풀 규모·유니버스 수(탈락 후보 규모의 기록). 멱등."""
     n = 0
@@ -275,11 +304,14 @@ def record_pool_stats(con: sqlite3.Connection) -> int:
 
 def _path_and_grid(entry: float, win: list[tuple], *, fee: float, be_lock_main: bool) -> dict:
     """경로(일별 종가/고가/저가 %, MFE/MAE)와 출구 계약 격자. 창이 짧으면 완결된 계약만 채운다."""
-    path = {"close": [], "high": [], "low": []}
-    for i, (_d, _o, hi, lo, c, _v) in enumerate(win[:GRID_HOLD_MAX]):
+    path = {"close": [], "high": [], "low": [], "dates": [], "raw_d0": None}
+    for i, (d_, o_, hi, lo, c, v_) in enumerate(win[:GRID_HOLD_MAX]):
+        path["dates"].append(d_)
         path["close"].append(round((c / entry - 1.0) * 100.0, 3))
-        path["high"].append(round(((c if i == 0 else hi) / entry - 1.0) * 100.0, 3))
+        path["high"].append(round(((c if i == 0 else hi) / entry - 1.0) * 100.0, 3))   # D0 고저는 계약용 보수 경로(종가 대체)
         path["low"].append(round(((c if i == 0 else lo) / entry - 1.0) * 100.0, 3))
+        if i == 0:
+            path["raw_d0"] = [o_, hi, lo, c, v_]   # 원본 D0 OHLCV(갭·장중 폭 연구용, 계약 정산엔 쓰지 않음)
     grid = {}
     for name, (tp, sl, hold, be) in CONTRACT_GRID.items():
         res = contract_exit_v2(entry, win, fee=fee, be_lock=(be and be_lock_main), tp=tp, sl=sl, hold=hold)
@@ -289,14 +321,15 @@ def _path_and_grid(entry: float, win: list[tuple], *, fee: float, be_lock_main: 
             "grid": grid, "grid_complete": len(grid) == len(CONTRACT_GRID)}
 
 
-def enrich_discovery(con: sqlite3.Connection, *, limit: int = 40000) -> int:
+def enrich_discovery(con: sqlite3.Connection, *, limit: int = 60000) -> int:
     """탐색 arm CLOSED 행에 경로·계약 격자 박제(meta). 격자가 미완결(창 부족)이면 다음 실행에서 다시 채운다."""
     by_id = {s["id"]: s for s in STRATEGIES if s.get("discovery")}
     if not by_id:
         return 0
     rows = con.execute(
         "SELECT strategy_id, session_date, ticker, entry_price, meta FROM trades "
-        "WHERE status='CLOSED' AND strategy_id IN (%s) AND (meta NOT LIKE '%%\"grid_complete\": true%%')"
+        "WHERE status='CLOSED' AND strategy_id IN (%s) AND (meta NOT LIKE '%%\"grid_complete\": true%%') "
+        "ORDER BY session_date ASC"   # 오래된 세션부터 — 창이 완결된 행이 먼저 끝나고, 미완결 최근 행은 다음 실행에서
         % ",".join("?" * len(by_id)), tuple(by_id)).fetchmany(limit)
     n = 0
     for sid, sd, tk, entry, meta in rows:
@@ -1304,16 +1337,23 @@ def main() -> int:
         ensure_schema(con)
         sync_strategies(con)
         if cmd == "run":
+            import time as _time
+            _t = {"start": _time.monotonic()}
+
+            def _lap(name: str) -> None:
+                now_m = _time.monotonic(); print(f"[VIRTUAL][time] {name} {now_m - _t['start']:.1f}s"); _t["start"] = now_m
             sessions_us = load_sessions()
             sessions_kr = load_kr_sessions()
             sessions_slow = load_slow_sessions()
             sessions_lp = load_lp_sessions()
-            opened = open_new_trades(con, sessions_us, sessions_kr, sessions_slow, sessions_lp)
-            settled = settle_open_trades(con)
-            enriched = enrich_discovery(con)
-            stats_n = record_pool_stats(con)
-            mark_books(con)
-            print(f"[VIRTUAL] 진입 {opened}건 / 정산 {settled}건 / 탐색 격자 박제 {enriched}건 / 풀 통계 {stats_n}행")
+            _lap("세션 로드(레퍼런스)")
+            _x_sessions("US"); _x_sessions("KR"); _lap("탐색 풀 생성(US+KR)")
+            opened = open_new_trades(con, sessions_us, sessions_kr, sessions_slow, sessions_lp); _lap("진입")
+            settled = settle_open_trades(con); _lap("정산")
+            enriched = enrich_discovery(con); _lap("탐색 격자 박제")
+            stats_n = record_pool_stats(con); nm = record_nearmiss(); _lap("풀 통계·탈락 후보")
+            mark_books(con); _lap("MTM")
+            print(f"[VIRTUAL] 진입 {opened}건 / 정산 {settled}건 / 탐색 격자 박제 {enriched}건 / 풀 통계 {stats_n}행 / 탈락 후보 세션 {nm}")
             ok = reconcile(con)
             report(con, sessions_us, sessions_kr)
             overlap_report(con)

@@ -56,3 +56,5 @@ sh.Run py & " """ & base & "earnings_pit_ledger.py""", 0, True
 ' ⑫ 공모주(IPO) 캘린더·균등배정 shadow 원장(09-06) — DART 발행공시(C)에서 미상장 법인의 증권신고서(지분증권)를 모아
 '   공모가·청약일·상장일·첫날 시가/종가를 원장에 남긴다. 청약 자동화 없음(반자동), 판정은 분포로.
 sh.Run py & " """ & base & "kr_ipo_calendar.py"" --pages 2", 0, True
+' ⑬ discovery_breakdown — 탐색 원장 조건 분해 JSON/MD 갱신(09-07). 대시보드 /api/discovery가 읽는다. 판정 아님(후보 생성).
+sh.Run py & " """ & base & "discovery_breakdown.py"" --min-n 30", 0, True

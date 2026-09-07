@@ -22,6 +22,25 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "data" / "shadow" / "virtual_books.db"
+SECTOR_MAP = ROOT / "data" / "sector_map.json"
+EARN_CAL = ROOT / "data" / "earnings_calendar.json"
+
+
+def _sector_lookup() -> dict[str, dict[str, str]]:
+    try:
+        sm = json.loads(SECTOR_MAP.read_text(encoding="utf-8"))
+        return {"US": {t: str(v.get("sector") or "") for t, v in (sm.get("US") or {}).items()},
+                "KR": {t: str(v.get("sector") or "") for t, v in (sm.get("KR") or {}).items()}}
+    except (OSError, ValueError):
+        return {"US": {}, "KR": {}}
+
+
+def _earn_lookup() -> tuple[dict[str, str], str, str]:
+    try:
+        d = json.loads(EARN_CAL.read_text(encoding="utf-8"))
+        return ({str(t).upper(): str(v.get("date") or "") for t, v in (d.get("by_symbol") or {}).items()}, str(d.get("from") or ""), str(d.get("to") or ""))
+    except (OSError, ValueError):
+        return {}, "", ""
 OUT_JSON = ROOT / "data" / "analysis" / "discovery_breakdown.json"
 
 LADDERS = {
@@ -64,6 +83,7 @@ def load(pool: str | None) -> list[dict]:
         q += " AND strategy_id=?"; args = (pool,)
     # 성숙 코호트: 같은 (풀, 세션)에 OPEN이 남아 있으면 그 세션은 미성숙 — 빨리 정산된 TP만 먼저 보이는 선택편향 방지(Codex D1)
     immature = {(r[0], r[1]) for r in con.execute("SELECT DISTINCT strategy_id, session_date FROM trades WHERE status='OPEN' AND strategy_id LIKE 'x%'")}
+    sectors = _sector_lookup(); earn, e_from, e_to = _earn_lookup()
     out = []
     for sid, sd, tk, net, reason, bf, meta in con.execute(q, args):
         try:
@@ -71,8 +91,18 @@ def load(pool: str | None) -> list[dict]:
         except ValueError:
             m = {}
         f = m.get("feat") or {}
+        mk = "KR" if sid.startswith("xkr") else "US"
+        sig = m.get("signal_date") or sd
+        earn_near = None
+        if mk == "US" and e_from and e_to and e_from <= sig <= e_to:
+            ed = earn.get(str(tk).upper(), "")
+            try:
+                earn_near = bool(ed) and abs((datetime.strptime(ed, "%Y-%m-%d") - datetime.strptime(sig, "%Y-%m-%d")).days) <= 2
+            except ValueError:
+                earn_near = None
         out.append({"pool": sid, "session": sd, "ticker": tk, "net": float(net), "reason": reason, "backfill": int(bf or 0),
-                    "mature": (sid, sd) not in immature,
+                    "mature": (sid, sd) not in immature, "sector": sectors[mk].get(str(tk)) or "(미분류)", "earn_near": earn_near,
+                    "rank_dvol_raw": (m.get("ranks") or {}).get("dvol_desc"),
                     "chg": f.get("chg"), "dvol": f.get("dvol"), "max21": f.get("max21"), "from_high20": f.get("from_high20"),
                     "rank_dvol": (m.get("ranks") or {}).get("dvol_desc"), "regime": m.get("regime") or {}, "grid": m.get("grid") or {},
                     "half": ("H1" if sd < "2026-01-01" else "H2")})
@@ -87,6 +117,28 @@ def ladder_cells(rows: list[dict], key: str, ladder) -> list[dict]:
               [(r["net"], r["session"]) for r in rows if r.get(key) is not None and lo <= r[key] <= hi]
         out.append({"label": label, **cell(sel)})
     return out
+
+
+def cat_cells(rows: list[dict], key: str, min_n: int = 30) -> list[dict]:
+    groups: dict[str, list] = defaultdict(list)
+    for r in rows:
+        groups[str(r.get(key))].append((r["net"], r["session"]))
+    out = [{"label": k, **cell(v)} for k, v in groups.items() if len(v) >= min_n]
+    return sorted(out, key=lambda c: -c["n"])
+
+
+def _sel_ladder(rows: list[dict], key: str, lo, hi) -> list[dict]:
+    if key == "rank_dvol":
+        return [r for r in rows if r.get(key) is not None and lo <= r[key] <= hi]
+    return [r for r in rows if r.get(key) is not None and lo <= r[key] < hi]
+
+
+def candidate_checks(sel: list[dict]) -> dict:
+    """후보 칸의 자동 검사: 반기 OOS 같은 부호(둘 다 n≥10), K=1(거래대금 큰순 1위) 재계산 — 실운영 계약(하루 1건)의 근사."""
+    h1 = cell([(r["net"], r["session"]) for r in sel if r["half"] == "H1"]); h2 = cell([(r["net"], r["session"]) for r in sel if r["half"] == "H2"])
+    k1 = cell([(r["net"], r["session"]) for r in sel if r.get("rank_dvol_raw") == 1])
+    same = (h1.get("n", 0) >= 10 and h2.get("n", 0) >= 10 and (h1["mean"] > 0) == (h2["mean"] > 0))
+    return {"h1": h1, "h2": h2, "oos_halves_same_sign": bool(same) if (h1.get("n", 0) >= 10 and h2.get("n", 0) >= 10) else None, "k1": k1}
 
 
 def analyze(rows: list[dict], min_n: int) -> dict:
@@ -106,7 +158,10 @@ def analyze(rows: list[dict], min_n: int) -> dict:
                         "idx_below_ma20": cell([(r["net"], r["session"]) for r in pr if r["regime"].get("idx_above_ma20") is False]),
                         "breadth_down_ge60": cell([(r["net"], r["session"]) for r in pr if (r["regime"].get("breadth_down_pct") or 0) >= 60]),
                         "breadth_down_lt40": cell([(r["net"], r["session"]) for r in pr if r["regime"].get("breadth_down_pct") is not None and r["regime"]["breadth_down_pct"] < 40])},
-             "exit_reason": {k: cell([(r["net"], r["session"]) for r in pr if r["reason"] == k]) for k in ("TP", "SL", "BE", "D_MAT")}}
+             "exit_reason": {k: cell([(r["net"], r["session"]) for r in pr if r["reason"] == k]) for k in ("TP", "SL", "BE", "D_MAT")},
+             "sector": cat_cells(pr, "sector", min_n),
+             "earnings": {"near": cell([(r["net"], r["session"]) for r in pr if r.get("earn_near") is True]),
+                          "not_near": cell([(r["net"], r["session"]) for r in pr if r.get("earn_near") is False])}}
         # 출구 계약 격자 비교(같은 진입)
         grid: dict[str, list] = defaultdict(list)
         for r in pr:
@@ -120,6 +175,8 @@ def analyze(rows: list[dict], min_n: int) -> dict:
             d["live_reference_filter"] = {"all_passers": cell(ref)}
         # 바늘 후보: 사다리 칸 중 n≥min_n & t≥2.5 & 인접 칸 같은 부호 & 두 반기 같은 부호
         cands = []
+        ladder_defs = {"chg": LADDERS["chg"], "rank_dvol": LADDERS["rank_dvol"], "dvol": LADDERS["dvol_kr" if market == "KR" else "dvol_us"],
+                       "max21": LADDERS["max21"], "from_high20": LADDERS["from_high20"]}
         for lname, cells in d["ladders"].items():
             for i, c in enumerate(cells):
                 if c.get("n", 0) < min_n or c.get("t") is None or abs(c["t"]) < 2.5:
@@ -128,10 +185,13 @@ def analyze(rows: list[dict], min_n: int) -> dict:
                 neigh = [cells[j] for j in (i - 1, i + 1) if 0 <= j < len(cells) and cells[j].get("n", 0) >= 10]
                 if not neigh or any((x["mean"] > 0) != (sign > 0) for x in neigh):
                     continue   # 유효 이웃이 없으면 통과시키지 않는다(문턱 안정성 미확인)
-                h1 = [r for r in pr if r["half"] == "H1"]; h2 = [r for r in pr if r["half"] == "H2"]
+                lo, hi, _label = ladder_defs[lname][i]
+                chk = candidate_checks(_sel_ladder(pr, lname, lo, hi))
+                k1 = chk["k1"]
                 cands.append({"ladder": lname, "cell": c["label"], "n": c["n"], "mean": c["mean"], "t": c["t"],
                               "kind": "buy" if sign > 0 else "avoid",
-                              "oos_halves_same_sign": None})
+                              "oos_halves_same_sign": chk["oos_halves_same_sign"], "h1": chk["h1"], "h2": chk["h2"], "k1": k1,
+                              "passes_4": bool(sign > 0 and chk["oos_halves_same_sign"] and k1.get("n", 0) >= 10 and k1["mean"] > 0)})
         d["needle_candidates_buy"] = [x for x in cands if x["kind"] == "buy"]
         d["needle_candidates_avoid"] = [x for x in cands if x["kind"] == "avoid"]
         d["needle_candidates"] = cands   # 호환
@@ -163,9 +223,15 @@ def to_md(res: dict) -> str:
             L += ["", "| 출구 계약(같은 진입) | n | 평균 | 승률 | t |", "|---|---:|---:|---:|---:|"]
             for name, c in d["grid"].items():
                 L.append(f"| {name} | {c['n']} | {c['mean']:+.2f} | {c['win_pct']} | {c['t'] if c['t'] is not None else '-'} |")
-        L += ["", "매수 후보 칸: " + (", ".join(f"{x['ladder']}={x['cell']} (n={x['n']}, {x['mean']:+.2f}%, t={x['t']})" for x in d["needle_candidates_buy"]) or "없음"),
-              "회피 후보 칸: " + (", ".join(f"{x['ladder']}={x['cell']} (n={x['n']}, {x['mean']:+.2f}%, t={x['t']})" for x in d["needle_candidates_avoid"]) or "없음"),
-              "(반기 OOS·실운영 K=1 재계산은 후보별 수동 확인 — 자동화는 D2)", ""]
+        def _cand(x):
+            return (f"{x['ladder']}={x['cell']} (n={x['n']}, {x['mean']:+.2f}%, t={x['t']}, 반기 OOS {'같은 부호' if x['oos_halves_same_sign'] else ('다름' if x['oos_halves_same_sign'] is False else '표본부족')}, "
+                    f"K=1 n={x['k1'].get('n', 0)} {x['k1'].get('mean', 0) if x['k1'].get('n') else 0:+.2f}%{' ★4조건 통과' if x.get('passes_4') else ''})")
+        L += ["", "매수 후보 칸: " + (", ".join(_cand(x) for x in d["needle_candidates_buy"]) or "없음"),
+              "회피 후보 칸: " + (", ".join(_cand(x) for x in d["needle_candidates_avoid"]) or "없음"), ""]
+        if d.get("sector"):
+            L += ["| 섹터 | n | 평균 | 승률 | t |", "|---|---:|---:|---:|---:|"] + [f"| {c['label']} | {c['n']} | {c['mean']:+.2f} | {c['win_pct']} | {c['t'] if c['t'] is not None else '-'} |" for c in d["sector"][:12]] + [""]
+        if d["earnings"]["near"].get("n") or d["earnings"]["not_near"].get("n"):
+            L += [f"- 어닝 ±2일(US, 캘린더 창 안): 근접 {fmt(d['earnings']['near'])} / 비근접 {fmt(d['earnings']['not_near'])}", ""]
     return "\n".join(L) + "\n"
 
 

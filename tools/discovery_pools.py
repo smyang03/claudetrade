@@ -53,6 +53,8 @@ POOLS_KR = {
 RANK_RULES = ("dvol_desc", "dvol_asc", "chg_hi", "chg_lo", "ibs_hi", "max_lo", "disc_deep", "cum5_deep", "ret60_desc", "volspike_desc")
 
 _CACHE: dict[str, tuple[dict, dict]] = {}
+_NEARMISS: dict[str, dict[str, list]] = {}   # market → {signal_date: [[ticker, chg, dvol, vol_spike, cum5, hi_break_n], ...]}
+NEARMISS_BAND = {"chg_abs": 2.0, "vol_spike": 2.0, "cum5": -5.0}   # 풀 문턱 바로 밖(탈락) 후보만 남긴다 — "문턱을 더 낮췄다면"의 복원용
 
 
 def _load_bars(path: Path) -> list[tuple]:
@@ -198,6 +200,11 @@ def build(market: str, *, start: str | None = None) -> tuple[dict, dict]:
                 breadth[sig_date][1] += 1
             hits = pool_pass(f, market)
             if not hits:
+                if (abs(f["chg"]) >= NEARMISS_BAND["chg_abs"] or (f["vol_spike"] or 0) >= NEARMISS_BAND["vol_spike"]
+                        or (f["cum5"] is not None and f["cum5"] <= NEARMISS_BAND["cum5"])):
+                    _NEARMISS.setdefault(market, {}).setdefault(sig_date, []).append(
+                        [t, round(f["chg"], 2), round(f["dvol"], 1), round(f["vol_spike"], 2) if f["vol_spike"] is not None else None,
+                         round(f["cum5"], 2) if f["cum5"] is not None else None, f["hi_break_n"]])
                 continue
             key = b[i + 1][0] if market == "US" and i + 1 < len(b) else (sig_date if market == "KR" else None)
             if key is None:
@@ -232,6 +239,14 @@ def discovery_sessions(market: str) -> dict:
     if market not in _CACHE:
         _CACHE[market] = build(market)
     return _CACHE[market][0]
+
+
+def nearmiss(market: str) -> dict[str, list]:
+    """신호일 → 탈락 후보(풀 문턱 바로 밖) 압축 행. build 이후에만 채워진다."""
+    market = market.upper()
+    if market not in _CACHE:
+        _CACHE[market] = build(market)
+    return _NEARMISS.get(market, {})
 
 
 def pool_stats(market: str) -> dict:
