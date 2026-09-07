@@ -178,6 +178,16 @@ class GridAndEntryTest(unittest.TestCase):
         finally:
             vb._x_sessions, vb.entry_of = orig
 
+    def test_exclude_sectors_filter(self):
+        s = next(x for x in vb.STRATEGIES if x["id"] == "c_kr_fallen5_nobio")
+        orig = dict(vb._SECTOR_CACHE); vb._SECTOR_CACHE.clear(); vb._SECTOR_CACHE.update({"KR": {"000100": "제약·바이오", "005930": "전자·반도체"}, "US": {}})
+        try:
+            self.assertFalse(vb.candidate_filter_pass({"ticker": "000100", "chg": -6.0, "pool": "xkr_fallen3"}, s["filter"]))
+            self.assertTrue(vb.candidate_filter_pass({"ticker": "005930", "chg": -6.0, "pool": "xkr_fallen3"}, s["filter"]))
+            self.assertTrue(vb.candidate_filter_pass({"ticker": "999999", "chg": -6.0, "pool": "xkr_fallen3"}, s["filter"]))   # 미분류는 통과
+        finally:
+            vb._SECTOR_CACHE.clear(); vb._SECTOR_CACHE.update(orig)
+
     def test_kr_breakout_window_120(self):
         b = _bars(200, drift=0.0)
         b[199] = (b[199][0], 100.0, 101.0, 99.0, 100.5, 1_000_000.0)   # 직전 최고 종가(100) 돌파

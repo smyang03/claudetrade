@@ -231,6 +231,10 @@ STRATEGIES += [
      "note": "C3 — 5일 ≤−8% 완만하락(단일 −5% 없음) 전량. −12% 버전이 두 반기 모두 양수(+1.04%, t 1.65)의 확장. 반증: forward 30건 t<0"},
     {"id": "c_us_slow8_regime", "pool": "xus_slow8", **_C_US, "filter": {"idx_above_ma20": False},
      "note": "C4 — C3 × SPY MA20 아래 국면. 반증: C3 대비 개선 없음"},
+    # C5 (09-07 저녁, 운영자 "국면 무관, 매물 소진 종목 고르기"): 전반기 학습→후반기 검증에서 유일하게 살아남은 배제 규칙 = KR 제약·바이오 제외.
+    # 일봉 특성(낙폭·거래량·순위)은 후반기에서 정반대로 작동해 배제 필터로 기각. 장중 정보(체결강도·호가)는 별도 수집 과제.
+    {"id": "c_kr_fallen5_nobio", "pool": "xkr_fallen3", **_C_KR, "filter": {"chg_le": -5.0, "exclude_sectors": ["제약·바이오"]},
+     "note": "C5 — KR 전일 ≤−5% 전량, 제약·바이오 제외(국면 무관). 근거: H1 학습 규칙 중 H2에서도 유효한 유일한 배제(−2.92%, t −2.5). 반증: forward 30세션에서 바이오 부분집합이 나머지보다 낮지 않음"},
 ]
 
 
@@ -248,7 +252,24 @@ def candidate_filter_pass(c: dict, flt: dict) -> bool:
         v = (c.get("regime") or {}).get("idx_above_ma20")
         if v is None or bool(v) != bool(flt["idx_above_ma20"]):
             return False
+    if flt.get("exclude_sectors"):
+        if _sector_of(c.get("ticker"), "KR" if str(c.get("pool", "")).startswith("xkr") else "US") in set(flt["exclude_sectors"]):
+            return False
     return True
+
+
+_SECTOR_CACHE: dict[str, dict[str, str]] = {}
+
+
+def _sector_of(ticker, market: str) -> str:
+    if not _SECTOR_CACHE:
+        try:
+            sm = json.loads((ROOT / "data" / "sector_map.json").read_text(encoding="utf-8"))
+            for mk in ("KR", "US"):
+                _SECTOR_CACHE[mk] = {t: str(v.get("sector") or "") for t, v in (sm.get(mk) or {}).items()}
+        except (OSError, ValueError):
+            _SECTOR_CACHE.update({"KR": {}, "US": {}})
+    return _SECTOR_CACHE.get(market, {}).get(str(ticker), "")
 
 
 # 출구 계약 격자 — 탐색 arm의 CLOSED 행마다 같은 진입에 대해 여러 출구를 함께 정산해 meta.grid에 적는다(사후 계약 스윕용).
