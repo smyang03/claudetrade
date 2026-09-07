@@ -151,6 +151,13 @@ class GridAndEntryTest(unittest.TestCase):
         chk = bd.candidate_checks(rows)
         self.assertTrue(chk["oos_halves_same_sign"]); self.assertEqual(chk["k1"]["n"], 6); self.assertGreater(chk["k1"]["mean"], 0)
 
+    def test_bar_complete_guard(self):
+        from datetime import datetime
+        self.assertFalse(dp.bar_complete("2026-09-07", "KR", now=datetime(2026, 9, 7, 11, 0)))
+        self.assertTrue(dp.bar_complete("2026-09-07", "KR", now=datetime(2026, 9, 7, 16, 0)))
+        self.assertFalse(dp.bar_complete("2026-09-04", "US", now=datetime(2026, 9, 5, 5, 0)))
+        self.assertTrue(dp.bar_complete("2026-09-04", "US", now=datetime(2026, 9, 5, 6, 0)))
+
     def test_kr_breakout_window_120(self):
         b = _bars(200, drift=0.0)
         b[199] = (b[199][0], 100.0, 101.0, 99.0, 100.5, 1_000_000.0)   # 직전 최고 종가(100) 돌파

@@ -57,6 +57,17 @@ _NEARMISS: dict[str, dict[str, list]] = {}   # market → {signal_date: [[ticker
 NEARMISS_BAND = {"chg_abs": 2.0, "vol_spike": 2.0, "cum5": -5.0}   # 풀 문턱 바로 밖(탈락) 후보만 남긴다 — "문턱을 더 낮췄다면"의 복원용
 
 
+def bar_complete(bar_date: str, market: str, now=None) -> bool:
+    """virtual_books.bar_complete와 같은 규약: KR은 당일 16:00 KST 이후, US는 다음날 06:00 KST 이후."""
+    from datetime import datetime, timedelta, timezone
+    now = now or (datetime.now(timezone.utc) + timedelta(hours=9)).replace(tzinfo=None)
+    today = now.strftime("%Y-%m-%d")
+    if market == "KR":
+        return bar_date < today or (bar_date == today and now.hour >= 16)
+    nxt = (datetime.strptime(bar_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    return nxt < today or (nxt == today and now.hour >= 6)
+
+
 def _load_bars(path: Path) -> list[tuple]:
     rows = []
     try:
@@ -189,8 +200,8 @@ def build(market: str, *, start: str | None = None) -> tuple[dict, dict]:
             continue
         for i in range(MIN_HISTORY, len(b)):
             sig_date = b[i][0]
-            if sig_date < start:
-                continue
+            if sig_date < start or not bar_complete(sig_date, market):
+                continue   # 미완성 봉(당일 장중 KR·미마감 US)은 신호로 쓰지 않는다 — 풀 통계·탈락 후보에도 섞이지 않게
             f = featurize(b, i, market)
             if f is None:
                 continue
