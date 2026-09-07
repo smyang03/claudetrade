@@ -310,6 +310,71 @@ def liquidity_snapshot(ticker: str) -> dict[str, Any]:
             "last_bar_date": b[-1][0]}
 
 
+# ── 오프라인 파서 (2026-09-08, Codex N6 잠정실적 흑자전환 · N5 공급계약 긍정 정정) — 레인 판단 경로에 연결하지 않은 순수 함수.
+# 연결(장중 판단 후 호가 진입 규약)은 사전등록 §4 후속. 여기서는 본문 → 구조화 필드와 테스트만 둔다.
+_MONEY = r"(-?[\d,]+(?:\.\d+)?)"
+
+
+def parse_provisional_results(text: str) -> dict[str, Any]:
+    """영업(잠정)실적 본문 → 당기·전년동기 매출액/영업이익(같은 단위, 같은 기간 기준의 표만).
+    반환: {revenue_cur, revenue_prev_yr, op_cur, op_prev_yr, unit, basis(연결/별도/None), turnaround(bool|None), revenue_growth_pct}
+    실패 필드는 None. 흑자전환 = 당기 영업이익 > 0 & 전년동기 ≤ 0. 누적(반기·연간) 표와 분기 표가 섞이면 첫 표(당해 분기)만 본다."""
+    t = re.sub(r"\s+", " ", text or "")
+    f: dict[str, Any] = {"revenue_cur": None, "revenue_prev_yr": None, "op_cur": None, "op_prev_yr": None, "unit": None,
+                         "basis": None, "turnaround": None, "revenue_growth_pct": None}
+    if not t:
+        return f
+    m = re.search(r"(연결|별도)", t)
+    f["basis"] = m.group(1) if m else None
+    m = re.search(r"\(단위\s*:\s*([^)]+)\)", t)
+    f["unit"] = m.group(1).strip() if m else None
+
+    def _row(label: str) -> tuple[float | None, float | None]:
+        # 서식(DART 잠정실적 표): 열 순서 = 당해실적 · 전기실적 · 전기대비증감율 · 전년동기실적 · 전년동기대비증감율
+        # → 라벨 뒤 토큰 5개 중 1번째(당해)·4번째(전년동기). 증감율 칸은 '흑자전환' 같은 한글일 수 있다.
+        mm = re.search(label + r"\s+((?:\S+\s+){4}\S+)", t)
+        if not mm:
+            return None, None
+        toks = mm.group(1).split()
+        return _num(toks[0]) if re.fullmatch(r"-?[\d,]+(?:\.\d+)?", toks[0]) else None,             (_num(toks[3]) if re.fullmatch(r"-?[\d,]+(?:\.\d+)?", toks[3]) else None)
+
+    f["revenue_cur"], f["revenue_prev_yr"] = _row(r"매출액")
+    f["op_cur"], f["op_prev_yr"] = _row(r"영업\s*이익")
+    if f["op_cur"] is not None and f["op_prev_yr"] is not None:
+        f["turnaround"] = bool(f["op_cur"] > 0 and f["op_prev_yr"] <= 0)
+    if f["revenue_cur"] and f["revenue_prev_yr"]:
+        f["revenue_growth_pct"] = round((f["revenue_cur"] / f["revenue_prev_yr"] - 1.0) * 100.0, 2)
+    return f
+
+
+def contract_amendment_diff(orig: dict[str, Any], amended: dict[str, Any]) -> dict[str, Any]:
+    """공급계약 원공시 vs 정정 파싱 필드 diff → 실제 증액(positive) / 기간만 변경 / 오기·감액 분류.
+    입력은 parse_supply_contract 결과(amount, ratio_pct, counterparty, period_end 등 존재하는 키만 비교)."""
+    def g(d, k):
+        v = d.get(k)
+        return float(v) if isinstance(v, (int, float)) else v
+    a0, a1 = g(orig, "amount"), g(amended, "amount")
+    out = {"amount_before": a0, "amount_after": a1, "amount_delta_pct": None, "counterparty_same": None, "period_end_same": None, "kind": "unknown"}
+    if isinstance(a0, float) and isinstance(a1, float) and a0 > 0:
+        out["amount_delta_pct"] = round((a1 / a0 - 1.0) * 100.0, 2)
+    c0, c1 = orig.get("counterparty"), amended.get("counterparty")
+    out["counterparty_same"] = (c0 == c1) if (c0 and c1) else None
+    p0, p1 = orig.get("period_end"), amended.get("period_end")
+    out["period_end_same"] = (p0 == p1) if (p0 and p1) else None
+    d = out["amount_delta_pct"]
+    if d is None:
+        out["kind"] = "unknown"
+    elif d >= 5.0 and out["counterparty_same"] is not False and out["period_end_same"] is not False:
+        out["kind"] = "positive_increase"          # N5 신호 후보: 상대·종료일 불변·금액 ≥+5%
+    elif abs(d) < 1.0 and out["period_end_same"] is False:
+        out["kind"] = "period_only"
+    elif d <= -5.0:
+        out["kind"] = "decrease"
+    else:
+        out["kind"] = "minor_or_typo"
+    return out
+
+
 def decide(kind: str, is_correction: bool, fields: dict[str, Any], llm: dict[str, Any], quote: dict[str, Any] | None,
            liq: dict[str, Any], *, contract: dict[str, Any] = CONTRACT, open_n: int = 0, new_today: int = 0,
            now: datetime | None = None) -> tuple[str, str]:

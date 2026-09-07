@@ -89,3 +89,21 @@ US Form 4 군집은 데이터가 2026-03(SEC 2026Q1)에 끊겨 H2가 3개월뿐�
 4. K1 arm 2종은 백필 결과를 본 뒤 추가한 뷰(사전등록 문서에 명시). forward만 판정.
 5. 잔여 결함: `event_family_report.py`가 배제 arm(c_kr_fallen_nomajor)을 구분하지 못해 "기각(음수)"로 오라벨 — 풀 기저 대비 증분으로 읽어야 함(다음 수정).
 6. 이 밤 체인을 세 번 수동 실행(신규 arm·K1·거래계획 순)해 텔레그램 요약 3건이 나갔다. 데이터 원장(`data/shadow/*`)은 untracked, `discovery_breakdown_20260907.md`는 체인이 갱신하는 파일이라 커밋에서 제외.
+
+
+## 7. 09-08 새벽 추가 편입 (운영자 "미국 휴장이니 다 준비해")
+
+| 항목 | 붙인 형태 | 운영 | 첫 실행 |
+|---|---|---|---|
+| P9 장전 공시(07:30~08:59) | 공시 레인 PREOPEN 단계: 감지·본문·판단은 장전, 진입은 09:00:30~09:20 시가 유예(`fill_preopen_entries` — 시가/전일종가 급등 8%·max_open·max_new_per_day 재검사, 유예 원장 `kr_event_preopen_fills.jsonl`, 계약 `kr_event_v1_preopen`). 코드 상수(env 아님) | schtask `claudetrade_kr_event_lane` 08:45→**07:25**, PT12H→PT13H | 09-08 07:25 |
+| Codex N8 US 개장 15분 충격 | `tools/us_open_impact_collector.py` — 신호는 가격만(09:30→09:45 ≤−3% & 직전 20세션 창 최저 미만, sip 백필), 09:46 iex ask 진입, TP6/SL6/30분, 10:32 이후 sip 정산·거래대금 특성 | schtask `claudetrade_us_open_impact` 화~토 22:40 KST, PT2H30M | 09-08 22:40 |
+| P12 KR 종가 동시호가 눌림 | `tools/kr_close_auction_collector.py` — **네이버 시세**(KIS 장중 호출 없음 → Codex P1 호출 예산 우려 소멸), 15:19/15:31 스냅, 15:19→종가 ≤−2% 신호 → 다음날 시가 진입·다음날 15:19 청산. 유니버스 전일 거래대금 상위 300 + 급락 풀(331종목) | schtask `claudetrade_kr_close_auction` 주중 15:17, PT25M | 09-08 15:17 |
+| P13 KRX 투자경고(B등급으로 정정 — 백필 불가) | `tools/krx_market_alert_collector.py` — 네이버 투자경보 3종 일일 스냅 → 지정/해제 diff 원장(KRX data 포털은 400) | 원장 래퍼에 포함 | 09-08 21:05 |
+| US Form 4 forward | `tools/edgar_form4_daily.py` — SEC 일일 인덱스 → 유니버스 CIK Form 4 XML(코드 P) → 같은 원장(멱등, 보고자 전원 저장). 2026-04-01~ 공백 백필 중 | 원장 래퍼에 포함 | 09-08 21:05 |
+| 원장 일일 갱신 | `tools/refresh_event_ledgers.py` — 내부자 elestock(refresh 1일)·거래계획·자사주기간/권리락·Form 4·KRX 경보·어닝일(7일)·패닉 정산, 단계별 try | schtask `claudetrade_event_ledgers` 주중 21:05, PT1H30M | 09-08 21:05 |
+| N6 잠정실적 흑자전환 · N5 공급계약 긍정 정정 | `runtime/kr_event_lane.py` 오프라인 파서 `parse_provisional_results`·`contract_amendment_diff` + 테스트(레인 판단 경로 미연결 — 장중 판단 후 호가 진입 규약은 후속) | — | — |
+| 리포트 도구 | 배제 arm은 "같은 풀·기본 필터 기저 대비 증분"으로 출력(c_kr_fallen_nomajor: 기저 −0.73% 대비 +0.06%p) | — | — |
+| 대시보드 `/virtual` | 표 제목 어긋남 수리: 전역 `th{text-align:left}`가 페이지의 우측 정렬을 덮어써 숫자 열 제목이 왼쪽으로 밀림 → `.vb-wrap th{text-align:right}` 페이지 범위 CSS. 대시보드 PID 29668 재시작 | — | 즉시 |
+
+**미착수(사유)**: Codex N2 KR 매도 체결 흡수 — KIS WS 단일 연결 제약(봇이 점유) + 틱 수집기 설계 필요. N5/N6는 파서까지(레인 연결은 장중 호가 진입 규약 후).
+**등급 정정**: P13은 C(수집기)→B(forward 전용, 백필 불가). US Form 4 군집은 forward 수집기 가동으로 "수집기 후"→09-08부터 forward.

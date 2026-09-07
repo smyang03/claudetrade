@@ -713,5 +713,29 @@ class PreopenFillTest(unittest.TestCase):
                 k.PHANTOM_LEDGER, k.PREOPEN_FILL_LEDGER = old_p, old_f
 
 
+class OfflineParsersTest(unittest.TestCase):
+    """2026-09-08 N6 잠정실적 흑자전환 · N5 공급계약 긍정 정정 — 순수 함수(레인 미연결)."""
+
+    def test_provisional_turnaround(self):
+        txt = ("연결재무제표 기준 영업(잠정)실적 (단위 : 백만원) 구분 당해실적 전기실적 전기대비증감율(%) 전년동기실적 전년동기대비증감율(%) "
+               "매출액 12,500 11,000 13.6 10,000 25.0 영업이익 300 -50 흑자전환 -120 흑자전환 당기순이익 200 -80 - -150 -")
+        f = k.parse_provisional_results(txt)
+        self.assertEqual(f["basis"], "연결"); self.assertEqual(f["unit"], "백만원")
+        self.assertEqual((f["revenue_cur"], f["revenue_prev_yr"]), (12500.0, 10000.0))
+        self.assertEqual((f["op_cur"], f["op_prev_yr"]), (300.0, -120.0))
+        self.assertTrue(f["turnaround"]); self.assertEqual(f["revenue_growth_pct"], 25.0)
+        f2 = k.parse_provisional_results("매출액 1,000 900 11.1 800 25.0 영업이익 50 40 25.0 30 66.7")
+        self.assertFalse(f2["turnaround"])   # 전년동기 양수 → 전환 아님
+        self.assertIsNone(k.parse_provisional_results("")["turnaround"])
+
+    def test_contract_amendment_kinds(self):
+        base = {"amount": 100.0, "counterparty": "A사", "period_end": "2027-01-01"}
+        self.assertEqual(k.contract_amendment_diff(base, {**base, "amount": 130.0})["kind"], "positive_increase")
+        self.assertEqual(k.contract_amendment_diff(base, {**base, "period_end": "2027-06-30"})["kind"], "period_only")
+        self.assertEqual(k.contract_amendment_diff(base, {**base, "amount": 80.0})["kind"], "decrease")
+        self.assertEqual(k.contract_amendment_diff(base, {**base, "amount": 130.0, "counterparty": "B사"})["kind"], "minor_or_typo")
+        self.assertEqual(k.contract_amendment_diff({}, {"amount": 5.0})["kind"], "unknown")
+
+
 if __name__ == "__main__":
     unittest.main()

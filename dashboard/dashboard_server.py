@@ -17647,7 +17647,14 @@ def api_core_shadow():
 
 
 PAGE_VIRTUAL_HTML = """
-<div style="padding:20px 24px;">
+<style>
+/* 2026-09-08 운영자 지적(표 제목이 옆으로 밀림): 전역 th{text-align:left;padding:8px 12px}가 이 페이지의 <tr style="text-align:right">를
+   덮어써 숫자 열 제목은 왼쪽·값은 오른쪽으로 어긋났다. 페이지 범위에서 th를 우측 정렬로 되돌리고(인라인 text-align:left는 그대로 우선) 패딩을 셀과 맞춘다. */
+.vb-wrap th { text-align: right; padding: 6px 8px; letter-spacing: 0; }
+.vb-wrap td { padding: 6px 8px; }
+.vb-wrap table { table-layout: auto; }
+</style>
+<div class="vb-wrap" style="padding:20px 24px;">
   <div style="background:#1a2436;border:1px solid #2c3e5d;border-radius:8px;padding:14px 18px;margin-bottom:18px;font-size:13px;">
     <b style="color:var(--yellow);">[VIRTUAL]</b> 가상 자본 다전략 인큐베이터 —
     실계좌 손익과 무관. 승격 판정은 <b>forward 표본만</b>(백필은 배관 검증), 게이트:

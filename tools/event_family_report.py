@@ -58,6 +58,28 @@ def _k1_within(rows: list[dict]) -> list[dict]:
     return out
 
 
+try:
+    sys.path.insert(0, str(ROOT / "tools"))
+    from virtual_books import STRATEGIES as _STRATS, candidate_filter_pass as _cfp  # noqa: E402
+except Exception:  # noqa: BLE001
+    _STRATS, _cfp = [], None
+
+
+def _pool_baseline(con: sqlite3.Connection, pool: str, flt: dict, start: str) -> dict:
+    """배제 arm의 기저: 같은 풀(x* 원장) 행에 기본 필터(chg_le 등)만 적용한 세션 요약."""
+    rows = []
+    for sd, tk, net, reason, bf, meta in con.execute(
+            "SELECT session_date, ticker, net_pct, exit_reason, backfill, meta FROM trades WHERE strategy_id=? AND status='CLOSED' AND session_date>=?", (pool, start or "")):
+        try:
+            m = json.loads(meta) if meta else {}
+        except ValueError:
+            m = {}
+        c = {**(m.get("feat") or {}), "regime": m.get("regime") or {}, "pool": pool, "ticker": tk}
+        if _cfp is None or _cfp(c, flt):
+            rows.append({"sd": sd, "tk": tk, "net": float(net), "reason": reason, "backfill": int(bf or 0), "feat": m.get("feat") or {}})
+    return _summ(rows)
+
+
 def load(con: sqlite3.Connection, sid: str) -> list[dict]:
     out = []
     for sd, tk, net, reason, bf, meta in con.execute(
@@ -87,8 +109,18 @@ def main() -> int:
                      "halves_same_sign": bool(h1.get("n", 0) >= 10 and h2.get("n", 0) >= 10 and (h1["session_mean"] > 0) == (h2["session_mean"] > 0) and a["session_mean"] > 0),
                      "k1_positive": bool(k1.get("n", 0) >= 10 and k1["session_mean"] > 0),
                      "halves_underpowered": not (h1.get("n", 0) >= 10 and h2.get("n", 0) >= 10)}
-        d["grade"] = ("후보(3/3 근사 통과)" if all(v for k, v in d["star"].items() if k != "halves_underpowered")
-                      else ("미달(표본)" if a.get("n", 0) < 30 else ("기각(음수)" if (a.get("session_mean") or 0) <= 0 else "후보(일부 통과)")))
+        spec = next((s for s in _STRATS if s["id"] == sid), {}) if _STRATS else {}
+        if (spec.get("filter") or {}).get("feat_exclude_range"):
+            # 배제 arm: 성적이 아니라 "같은 풀·같은 기본 필터의 기저 대비 증분"이 판정값 (Codex/advisor 09-08)
+            base_flt = {k: v for k, v in spec["filter"].items() if k not in ("feat_exclude_range", "require_true")}
+            base = _pool_baseline(con, spec["pool"], base_flt, str(spec.get("backfill_start", "")))
+            d["baseline"] = base
+            inc = (a.get("session_mean") or 0) - (base.get("session_mean") or 0) if base.get("n") else None
+            d["increment_vs_baseline"] = round(inc, 2) if inc is not None else None
+            d["grade"] = "배제 arm — 기저 대비 " + (f"{inc:+.2f}%p" if inc is not None else "기저 없음")
+        else:
+            d["grade"] = ("후보(3/3 근사 통과)" if all(v for k, v in d["star"].items() if k != "halves_underpowered")
+                          else ("미달(표본)" if a.get("n", 0) < 30 else ("기각(음수)" if (a.get("session_mean") or 0) <= 0 else "후보(일부 통과)")))
         res["arms"][sid] = d
     # 패닉 마감 진입 vs 같은 세션 C6(다음 시가) 증분
     pc = [json.loads(l) for l in PANIC.read_text(encoding="utf-8").splitlines() if l.strip()] if PANIC.exists() else []
