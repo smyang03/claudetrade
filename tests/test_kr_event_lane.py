@@ -814,7 +814,8 @@ class FastPrecheckTest(unittest.TestCase):
     def test_fast_precheck(self):
         from datetime import datetime
         q = {"price": 5000.0}; liq = {"prev_close": 4900.0, "dvol20_krw": 5e9}; now = datetime(2026, 9, 8, 10, 0, tzinfo=k.KST)
-        self.assertEqual(k.fast_precheck("supply_contract", False, q, liq, now=now)[1], "fast_disabled")
+        self.assertEqual(k.fast_precheck("supply_contract", False, q, liq, now=now)[1], "fast_disabled")   # 09-08은 OFF
+        self.assertTrue(k.fast_active(datetime(2026, 9, 9, 8, 0, tzinfo=k.KST)))                          # 09-09부터 ON
         old = k.FAST_ENABLED; k.FAST_ENABLED = True
         try:
             self.assertEqual(k.fast_precheck("supply_contract", False, q, liq, now=now), (True, "fast_ok"))

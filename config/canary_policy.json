@@ -1,6 +1,6 @@
 {
-  "version": "canary_policy_v1_proposal_20260908",
-  "status": "PROPOSAL — 운영자 승인 전, 어디에도 배선되지 않음(실매수 스위치 무관)",
+  "version": "canary_policy_v1_20260908",
+  "status": "APPROVED 2026-09-08 (운영자 '승인') — runtime/canary_policy.canary_gate가 실주문 브리지 제출 직전에 검사",
   "order_krw": 50000,
   "max_concurrent_canaries": 1,
   "total_loss_line_krw": -33000,
@@ -20,5 +20,11 @@
     "c_us_insider_k1": "동일",
     "c_kr_fallen_nomajor": "배제 규칙 — 캐너리 대상 아님(기존 레인 필터로만)"
   },
-  "note": "패닉 마감 진입 캐너리 실행 형태는 top3_dvol 또는 TQQQ 1주 중 forward에서 남는 쪽(사전등록 §2)."
+  "note": "패닉 마감 진입 캐너리 실행 형태는 top3_dvol 또는 TQQQ 1주 중 forward에서 남는 쪽(사전등록 §2). 캐너리 전략의 실주문 브리지는 아직 없다(후보 통과 시 기존 브리지에 계약 어댑터로 붙인다). 현행 us_swing_5d·kr_fallen_5d는 총 손실선만 공유.",
+  "canary_strategies": {
+    "us_panic_close_top3": "panic_close_overnight",
+    "kr_insider_k1": "c_kr_insider_k1",
+    "us_insider_cluster": "c_us_insider_cluster",
+    "kr_fallen_buyback30": "c_kr_fallen_buyback30"
+  }
 }

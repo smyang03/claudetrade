@@ -415,3 +415,17 @@ def test_p0_input_guard_rejects_virtual_rows():
     assert input_rejection({"ticker": "AAPL", "source": "day_losers", "rank": 1}, "US") is None
     kept, rej = filter_rows([{"ticker": "A", "pool": "xus_fallen3"}, {"ticker": "B"}], "US")
     assert [r["ticker"] for r in kept] == ["B"] and rej[0]["_reject"]
+
+
+def test_kr_limit_price_tick_rounding() -> None:
+    from runtime.kr_fallen_order_bridge import kr_limit_buy_price, kr_tick_size
+    assert kr_tick_size(1500) == 1 and kr_tick_size(9500) == 10 and kr_tick_size(45000) == 50 and kr_tick_size(150000) == 100
+    assert kr_limit_buy_price(9500.0) == 9520          # 9528.5 → 10원 단위 내림
+    assert kr_limit_buy_price(45000.0) == 45100        # 45135 → 50원 단위 내림
+    assert kr_limit_buy_price(1000.0) == 1003
+
+
+def test_submit_passes_limit_px(tmp_path: Path) -> None:
+    bot = FakeBot(tmp_path)
+    _run(bot, [_row("DEEP", "2026-08-04", -32.0, 5.0)], quote_price=9500.0)
+    assert bot.submits and bot.submits[0]["limit_px"] == 9520

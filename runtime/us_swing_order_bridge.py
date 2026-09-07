@@ -277,12 +277,13 @@ def _apply_dollar_volume_band(
     hi = float(bot._runtime_float("US_SWING_DVOL_BAND_MAX_M", 500.0))
     dvol = _dollar_volume_by_ticker(con, session_date)
     if not dvol:
-        log.warning(
-            "[US swing handoff] 거래대금 밴드 skip — candidate_pool_all 결손 "
-            f"(session={session_date}) → 현행 rank1로 fail-open"
+        # 2026-09-08 운영자 결정(전환): 결측인 날은 밴드 계약이 검증한 조건이 아니다 → fail-closed(신호 0). 08-20~09-07은 fail-open이었다.
+        log.error(
+            "[US swing handoff] 거래대금 결측(candidate_pool_all) — 밴드 판정 불가 → fail-closed, 오늘 신호 없음 "
+            f"(session={session_date}); 운영자 결정 2026-09-08"
         )
-        return signals, {"applied": False, "reason": "dollar_volume_unavailable",
-                         "band_min_m": lo, "band_max_m": hi}
+        return [], {"applied": False, "reason": "dollar_volume_unavailable_fail_closed", "fail_closed": True,
+                    "band_min_m": lo, "band_max_m": hi}
     in_band, out_band = [], []
     for signal in signals:
         ticker = str(signal.get("ticker") or "").upper()
@@ -399,15 +400,19 @@ def apply_contract_selection(
     # P0(09-08) 입력 계약 격리: 가상 북·유령 표식 행 거절(KR 브리지와 대칭)
     from runtime.order_input_guard import filter_rows
     signals, _rejected = filter_rows(list(signals or []), "US")
+    from runtime.canary_policy import canary_gate
+    _cg_ok, _cg_reason = canary_gate("us_swing_5d")
+    if not _cg_ok:
+        log.error(f"[US swing handoff] 캐너리 정책 차단: {_cg_reason}")
+        return [], {"applied": False, "reason": f"canary_policy:{_cg_reason}", "canary_blocked": True}, {"applied": False, "reason": "canary_policy"}
     if _rejected:
         log.error(f"[US swing handoff] 가상 입력 거절 {len(_rejected)}건: {[r.get('_reject') for r in _rejected][:3]}")
     signals, band_meta = _apply_dollar_volume_band(config, con, session_date, signals)
     if _rejected:
         band_meta = {**band_meta, "rejected_inputs": len(_rejected)}
-    if not band_meta.get("applied"):
-        # P0(09-08) 선정 데이터 결측: 밴드 fail-open은 08-20 계약이라 유지하되, 결측 사실을 status·로그에 남긴다(운영자 결정 항목).
-        band_meta = {**band_meta, "data_missing": True}
-        log.error(f"[US swing handoff] 선정 데이터 결측(dollar_volume) — 밴드 미적용 fail-open (session={session_date}); 운영자 확인 항목")
+    if band_meta.get("fail_closed"):
+        # 2026-09-08 운영자 결정: 결측 = 신호 없음(fail-closed). 상태 파일에 data_missing 표기.
+        return [], {**band_meta, "data_missing": True}, {"applied": False, "reason": "not_evaluated_data_missing"}
     if band_meta.get("applied") and not signals:
         return [], band_meta, {"applied": False, "reason": "not_evaluated_band_empty"}
     signals, max_meta = _apply_max_lottery_floor(config, session_date, signals)

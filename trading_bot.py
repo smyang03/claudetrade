@@ -14400,6 +14400,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         signal_at: str,
         signal_row: dict,
         probe_meta: dict,
+        limit_px: float | None = None,
     ) -> bool:
         self._last_micro_probe_submit_result = {
             "status": "NOT_ATTEMPTED",
@@ -14443,6 +14444,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             order_cost_krw=int(order_cost),
         )
         order_px = self._compute_order_price("buy", market, float(raw_price))
+        if limit_px is not None and float(limit_px) > 0:
+            order_px = float(limit_px)   # 2026-09-08 운영자 결정: 레인이 준 지정가(KR fallen +0.3% 호가단위)를 시장가 대신 쓴다
+            self._last_micro_probe_submit_result["limit_px"] = order_px
         precheck_px = float(raw_price) if order_px == 0 else order_px
         buy_gate = self._new_buy_block_state(
             market,

@@ -93,7 +93,13 @@ PREOPEN = {"start_hhmm": "07:30", "open_hhmm": "09:00", "fill_from_hhmmss": "09:
 CONTRACT_PREOPEN = {**CONTRACT, "version": "kr_event_v1_preopen"}
 PREOPEN_FILL_LEDGER = ROOT / "data" / "shadow" / "kr_event_preopen_fills.jsonl"
 # 2단계 판단(09-08): 본문 대기 중 빠른 유령. 기본 OFF — 기존 판단 경로를 한 세션 관찰한 뒤 켠다(코드 상수, env 아님).
-FAST_ENABLED = False
+FAST_ENABLED = False               # 강제 ON 스위치(테스트용)
+FAST_ENABLED_FROM = "2026-09-09"   # 운영자 결정(09-08 "내일"): 이 날짜부터 자동 ON — 러너가 매일 새로 뜨므로 코드 변경 없이 09-09 07:25부터 적용
+
+
+def fast_active(now: "datetime | None" = None) -> bool:
+    d = (now or now_kst()).date().isoformat()
+    return bool(FAST_ENABLED or d >= FAST_ENABLED_FROM)
 CONTRACT_FAST = {**CONTRACT, "version": "kr_event_v1_fast", "max_new_per_day": 3}
 FAST_LEDGER = ROOT / "data" / "shadow" / "kr_event_fast.jsonl"
 
@@ -101,7 +107,7 @@ FAST_LEDGER = ROOT / "data" / "shadow" / "kr_event_fast.jsonl"
 def fast_precheck(kind: str, is_correction: bool, quote: dict | None, liq: dict, *, now: datetime | None = None,
                   contract: dict = CONTRACT_FAST, fast_today: int = 0) -> tuple[bool, str]:
     """본문 없이 판단 가능한 조건만: 대상 종류·비정정·진입 마감 전·시세·유동성·급등·일일 fast 한도."""
-    if not FAST_ENABLED:
+    if not fast_active(now):
         return False, "fast_disabled"
     if is_correction or kind not in ("supply_contract", "bonus_issue"):
         return False, "not_fast_kind"

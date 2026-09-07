@@ -133,3 +133,15 @@ US Form 4 군집은 데이터가 2026-03(SEC 2026Q1)에 끊겨 H2가 3개월뿐�
 | 6 | 자본 산수·캐너리 | `config/canary_policy.json`(**제안, 미배선**: 동시 1·5만원·손실선 −33,000·CANDIDATE_STRONG만·통과 순서 큐·K1 뷰 제외) + `tools/canary_policy_check.py`(읽기 전용, 지금 ON 가능 0/20) |
 
 테스트: `tests/test_kr_fallen_order_bridge.py`(+3: UNKNOWN 세션 중단·REHEARSAL 불변·신뢰 차단), 입력 가드, fast precheck, 기존 실패 2건(`_open` 픽스처가 실시계 의존 → t0 주입) 수리.
+
+
+## 10. 운영자 결정 4건 반영 (09-08 02:xx — "전환 지정가 승인 내일")
+
+| 결정 | 반영 |
+|---|---|
+| US 거래대금 결측 → **fail-closed** | `_apply_dollar_volume_band`: 결측이면 신호 0(`dollar_volume_unavailable_fail_closed`, status `data_missing`). 08-20~09-07의 fail-open 종료 |
+| KR fallen **지정가** | `kr_limit_buy_price`: 현재가 ×1.003을 KRX 호가단위로 내림(`KR_FALLEN_LIMIT_CAP_PCT` 기본 0.3). `_submit_micro_probe_buy_order(limit_px=…)`가 시장가 대신 사용. 미체결이면 그날 포기(pending 원장·접수 원장에 남음) |
+| 캐너리 정책 **승인** | `config/canary_policy.json` status APPROVED, `runtime/canary_policy.canary_gate`가 두 실주문 브리지 제출 직전에 검사: 총 손실선(−33,000, `canary_realized.jsonl` 누적)·캐너리 전략은 forward CANDIDATE_STRONG + 통과 순서 큐·동시 1. 현행 두 레인은 손실선만 공유. 스위치를 대신 켜지 않는다 |
+| fast 유령 **내일** | `FAST_ENABLED_FROM="2026-09-09"` 날짜 게이트 — 09-09 07:25 러너 기동부터 자동 ON(코드 변경 불필요) |
+
+검증: 관련 테스트 통과(지정가 호가단위·limit_px 전달·fail-closed 경로·fast 날짜 게이트), 재시작 후 effective config 불변 확인(§11).

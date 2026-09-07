@@ -248,7 +248,7 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
             pending[it["rcept_no"]] = {"item": it, "first_seen": row["ts_detected"], "attempts": 1, "last_try": kel._iso(now)}
             print(f"[KR-EVENT] 본문 대기 {it.get('corp_name')} {it['rcept_no']} — 재시도 예약", flush=True)
             # 2단계 판단(09-08, FAST_ENABLED일 때만): 본문 없이 제목·유동성·급등만으로 빠른 유령을 연다(별도 계약·별도 일일 한도)
-            if kel.FAST_ENABLED and not dry and _PHASE["phase"] == "KRX":
+            if kel.fast_active(now) and not dry and _PHASE["phase"] == "KRX":
                 try:
                     kind0, corr0 = kel.classify_title(it.get("report_nm", ""))
                     q0 = _quote(it["stock_code"]); liq0 = kel.liquidity_snapshot(it["stock_code"])

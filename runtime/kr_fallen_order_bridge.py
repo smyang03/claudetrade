@@ -190,6 +190,30 @@ def _load_candidates(
     return out
 
 
+def kr_tick_size(px: float) -> int:
+    """KRX 호가단위(2023-01 개정): <2,000:1 / <5,000:5 / <20,000:10 / <50,000:50 / <200,000:100 / <500,000:500 / 이상:1,000."""
+    if px < 2000:
+        return 1
+    if px < 5000:
+        return 5
+    if px < 20000:
+        return 10
+    if px < 50000:
+        return 50
+    if px < 200000:
+        return 100
+    if px < 500000:
+        return 500
+    return 1000
+
+
+def kr_limit_buy_price(price: float, cap_pct: float = 0.3) -> int:
+    """2026-09-08 운영자 결정(지정가): 매수 지정가 = 현재가 × (1+cap%)를 호가단위로 내림. 미체결이면 그날은 포기(원장에 남김)."""
+    raw = round(float(price) * (1.0 + cap_pct / 100.0), 6)   # 부동소수 오차(1000×1.003=1002.999…) 방지
+    tick = kr_tick_size(raw)
+    return int(max(tick, (raw // tick) * tick))
+
+
 def _append_submit_ledger(row: dict[str, Any]) -> None:
     """P0(09-08) 세션별 접수 원장 — UNKNOWN·실패·당일 청산 포함 모든 제출 시도를 남긴다(일일 한도 회계의 정본)."""
     try:
@@ -315,6 +339,11 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
     submit_enabled = bool(bot._runtime_bool("KR_FALLEN_ORDER_SUBMIT_ENABLED", True))
     trust = "n/a"
     if submit_enabled:
+        from runtime.canary_policy import canary_gate
+        _cg_ok, _cg_reason = canary_gate(SOURCE_STRATEGY)
+        if not _cg_ok:
+            return _write_status(bot, session_date, {"status": "BLOCKED", "reason": f"canary_policy:{_cg_reason}",
+                                                     "prev_session": prev_session, "rule": rule_label})
         sync = getattr(bot, "_sync_runtime_with_broker", None)
         if callable(sync):
             try:
@@ -438,9 +467,10 @@ def run_kr_fallen_handoff(bot: Any) -> dict[str, Any]:
             if submitted_now >= remaining:
                 break
             continue
+        limit_px = kr_limit_buy_price(price, float(bot._runtime_float("KR_FALLEN_LIMIT_CAP_PCT", 0.3)))
         ok = bot._submit_micro_probe_buy_order(
             market="KR", ticker=ticker, name=ticker, qty=qty,
-            raw_price=price, risk_price_krw=price,
+            raw_price=price, risk_price_krw=price, limit_px=limit_px,
             # 2026-08-25 D5→D7 (운영자 결정, KR도 함께). env 단일 소스.
             tp_pct=0.12, sl_pct=0.25,
             max_hold=bot._runtime_int("KR_FALLEN_MAX_HOLD_SESSIONS", 5), mode=mode,
