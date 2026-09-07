@@ -26,7 +26,9 @@ DB = ROOT / "data" / "shadow" / "virtual_books.db"
 SECTOR_MAP = ROOT / "data" / "sector_map.json"
 OUT_DIR = ROOT / "data" / "analysis"
 SPLIT = "2026-01-01"
-NUMERIC = ("chg", "dvol", "max21", "ibs", "from_high20", "rv20", "ma20_disc", "cum5", "vol_spike", "gap", "mom20", "down_streak", "rank_dvol", "breadth_down")
+NUMERIC = ("chg", "dvol", "max21", "ibs", "from_high20", "rv20", "ma20_disc", "cum5", "vol_spike", "gap", "mom20", "down_streak", "rank_dvol", "breadth_down",
+           # 개장 스냅샷(kr_open_flow, 09-08부터 쌓임): 매물 소진 후보 특성 — 값이 없는 행은 해당 규칙에서 제외된다
+           "flow_gap", "flow_strength_0905", "flow_strength_0930", "flow_imb_0905", "flow_imb_0930", "flow_ret_open_0930", "flow_pos_0930")
 
 
 def cell(rows):
@@ -55,9 +57,14 @@ def load(pool: str, extra_filter=None) -> list[dict]:
             continue
         m = json.loads(meta) if meta else {}
         f = m.get("feat") or {}
+        fl = m.get("flow") or {}
+        s05, s30 = fl.get("09:05") or {}, fl.get("09:30") or {}
         r = {"s": sd, "t": tk, "net": float(net), "reason": reason, "sector": sectors.get(str(tk)) or "(미분류)",
              "rank_dvol": (m.get("ranks") or {}).get("dvol_desc"), "breadth_down": (m.get("regime") or {}).get("breadth_down_pct"),
-             "half": "H1" if sd < SPLIT else "H2"}
+             "half": "H1" if sd < SPLIT else "H2",
+             "flow_gap": s05.get("gap_pct"), "flow_strength_0905": s05.get("strength"), "flow_strength_0930": s30.get("strength"),
+             "flow_imb_0905": s05.get("imbalance"), "flow_imb_0930": s30.get("imbalance"), "flow_ret_open_0930": s30.get("ret_from_open_pct"),
+             "flow_pos_0930": s30.get("pos_in_range")}
         for k in NUMERIC:
             if k not in r:
                 r[k] = f.get(k)

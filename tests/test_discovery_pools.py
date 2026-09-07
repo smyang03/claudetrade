@@ -188,6 +188,26 @@ class GridAndEntryTest(unittest.TestCase):
         finally:
             vb._SECTOR_CACHE.clear(); vb._SECTOR_CACHE.update(orig)
 
+    def test_attach_open_flow(self):
+        with tempfile.TemporaryDirectory() as td:
+            led = Path(td) / "flow.jsonl"
+            led.write_text(json.dumps({"session_date": "2026-09-08", "signal_date": "2026-09-07", "ticker": "000100", "snap": "09:05",
+                                       "flow": {"gap_pct": -1.2, "strength": 130.0, "imbalance": 0.3}}) + "\n", encoding="utf-8")
+            orig = vb.OPEN_FLOW_LEDGER; vb.OPEN_FLOW_LEDGER = led
+            try:
+                con = sqlite3.connect(":memory:"); vb.ensure_schema(con)
+                con.execute("INSERT INTO strategies (id, universe) VALUES ('xkr_fallen3','xkr')")
+                con.execute("INSERT INTO trades (strategy_id, session_date, ticker, status, meta) VALUES ('xkr_fallen3','2026-09-07','000100','OPEN',?)",
+                            (json.dumps({"signal_date": "2026-09-07"}),))
+                con.execute("INSERT INTO trades (strategy_id, session_date, ticker, status, meta) VALUES ('xkr_fallen3','2026-09-07','000200','OPEN',?)",
+                            (json.dumps({"signal_date": "2026-09-07"}),))
+                self.assertEqual(vb.attach_open_flow(con), 1)
+                m = json.loads(con.execute("SELECT meta FROM trades WHERE ticker='000100'").fetchone()[0])
+                self.assertEqual(m["flow"]["09:05"]["strength"], 130.0); self.assertEqual(m["flow"]["entry_date"], "2026-09-08")
+                self.assertEqual(vb.attach_open_flow(con), 0)   # 멱등
+            finally:
+                vb.OPEN_FLOW_LEDGER = orig
+
     def test_kr_breakout_window_120(self):
         b = _bars(200, drift=0.0)
         b[199] = (b[199][0], 100.0, 101.0, 99.0, 100.5, 1_000_000.0)   # 직전 최고 종가(100) 돌파

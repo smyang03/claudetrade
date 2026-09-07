@@ -344,6 +344,46 @@ def record_nearmiss() -> int:
     return n
 
 
+OPEN_FLOW_LEDGER = ROOT / "data" / "shadow" / "kr_open_flow.jsonl"
+
+
+def attach_open_flow(con: sqlite3.Connection) -> int:
+    """KR 개장 스냅샷(09:05~09:30 체결강도·호가 불균형·갭·시가 대비)을 KR 탐색·후보·레퍼런스 행의 meta.flow에 결합.
+    키: 스냅의 session_date(진입일) = 거래의 다음 세션. 거래 행은 session_date가 신호일이므로 meta.signal_date == 스냅 signal_date로 조인.
+    이미 flow가 있는 행은 건너뛴다(멱등). 매물 소진 판별(09-07 운영자 지시)의 데이터 배관."""
+    if not OPEN_FLOW_LEDGER.exists():
+        return 0
+    by_key: dict[tuple[str, str], dict] = {}
+    for line in OPEN_FLOW_LEDGER.read_text(encoding="utf-8").splitlines():
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        sig = r.get("signal_date") or ""
+        if not sig or not r.get("ticker"):
+            continue
+        d = by_key.setdefault((sig, str(r["ticker"])), {"entry_date": r.get("session_date")})
+        d[r["snap"]] = r.get("flow") or {}
+    if not by_key:
+        return 0
+    n = 0
+    rows = con.execute(
+        "SELECT strategy_id, session_date, ticker, meta FROM trades WHERE strategy_id IN "
+        "(SELECT id FROM strategies WHERE universe IN ('xkr','kr')) AND session_date >= ?", (min(k[0] for k in by_key),)).fetchall()
+    for sid, sd, tk, meta in rows:
+        m = json.loads(meta) if meta else {}
+        if m.get("flow"):
+            continue
+        fl = by_key.get((str(m.get("signal_date") or sd), str(tk)))
+        if not fl:
+            continue
+        m["flow"] = fl
+        con.execute("UPDATE trades SET meta=? WHERE strategy_id=? AND session_date=? AND ticker=?", (json.dumps(m, ensure_ascii=False), sid, sd, tk))
+        n += 1
+    con.commit()
+    return n
+
+
 def record_pool_stats(con: sqlite3.Connection) -> int:
     """세션별 풀 규모·유니버스 수(탈락 후보 규모의 기록). 멱등."""
     n = 0
@@ -1412,7 +1452,7 @@ def main() -> int:
             opened = open_new_trades(con, sessions_us, sessions_kr, sessions_slow, sessions_lp); _lap("진입")
             settled = settle_open_trades(con); _lap("정산")
             enriched = enrich_discovery(con); _lap("탐색 격자 박제")
-            stats_n = record_pool_stats(con); nm = record_nearmiss(); _lap("풀 통계·탈락 후보")
+            stats_n = record_pool_stats(con); nm = record_nearmiss(); fl = attach_open_flow(con); _lap(f"풀 통계·탈락 후보·개장 스냅 결합({fl})")
             mark_books(con); _lap("MTM")
             print(f"[VIRTUAL] 진입 {opened}건 / 정산 {settled}건 / 탐색 격자 박제 {enriched}건 / 풀 통계 {stats_n}행 / 탈락 후보 세션 {nm}")
             ok = reconcile(con)
