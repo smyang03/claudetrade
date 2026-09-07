@@ -3,7 +3,7 @@
 
 메커니즘: 마감 동시호가(15:20~15:30)의 ETF·펀드 리밸런싱·반대매매가 종가를 누르면 다음날 시가에 되돌린다(마감 가격 압력 문헌).
 시세: 네이버(`tools/analysis_quotes.get_quote_kr`) — 장중 KIS 시세 루프 금지 원칙(analysis-script-runbook) 준수, KIS 호출 예산과 무관.
-유니버스: 전일 거래대금 상위 300 + 전일 ≤−5% 급락 풀(CSV). 15:19 스냅(가격·누적거래량) → 15:31 종가 스냅 → 눌림 신호.
+유니버스: 전일 거래대금 상위 250 + 전일 ≤−5% 급락 풀(CSV). 15:18:20~ 스냅(가격·누적거래량, 0.25s 간격 ≈70s) → 15:30:40~ 종가 스냅 → 눌림 신호.
 정산: 다음 거래일 시가(CSV) 진입 가정 → 그날 15:19 스냅 가격으로 청산(이 수집기가 다음날 15:19에 찍는다). 비용 0.21%.
 원장: data/shadow/kr_close_auction.jsonl (snapshot / signal / trade). schtask claudetrade_kr_close_auction 주중 15:17, PT20M.
 사용: python tools/kr_close_auction_collector.py [--universe N]
@@ -75,14 +75,14 @@ def snap(tickers: list[str], label: str, today: str) -> dict[str, dict]:
     return out
 
 
-def _wait_until(hhmm: str) -> None:
-    while datetime.now().strftime("%H:%M") < hhmm:
-        time.sleep(5)
+def _wait_until(hhmmss: str) -> None:
+    while datetime.now().strftime("%H:%M:%S") < hhmmss:
+        time.sleep(2)
 
 
 def main() -> int:
     args = sys.argv[1:]
-    n_top = int(args[args.index("--universe") + 1]) if "--universe" in args else 300
+    n_top = int(args[args.index("--universe") + 1]) if "--universe" in args else 250
     today = date.today().isoformat()
     if date.today().weekday() >= 5:
         return 0
@@ -93,7 +93,7 @@ def main() -> int:
     # 1) 전날 OPEN 거래의 청산 대상도 15:19 스냅에 포함
     opens = [r for r in rows if r.get("kind") == "trade" and r.get("status") == "OPEN"]
     tickers = sorted(set(uni) | {r["ticker"] for r in opens})
-    _wait_until("15:19")
+    _wait_until("15:18:20")   # 네이버 0.25s×~280종목 ≈ 70s → 15:19:30 전 완료(동시호가 15:20 전)
     s1519 = snap(tickers, "1519", today)
     # 2) 전날 신호의 정산: 오늘 시가(CSV는 16:00 갱신 → 네이버 open 사용) 진입 → 15:19 청산
     for r in opens:
@@ -105,7 +105,7 @@ def main() -> int:
                   "net_pct": round((exit_px / entry - 1) * 100 - COST, 3), "settled_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
     if opens:
         tmp = OUT.with_suffix(".tmp"); tmp.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in rows), encoding="utf-8"); tmp.replace(OUT)
-    _wait_until("15:31")
+    _wait_until("15:30:40")
     s1531 = snap(sorted(uni), "1531", today)
     n_sig = 0
     for tk in uni:

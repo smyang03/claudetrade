@@ -737,5 +737,43 @@ class OfflineParsersTest(unittest.TestCase):
         self.assertEqual(k.contract_amendment_diff({}, {"amount": 5.0})["kind"], "unknown")
 
 
+class PreopenRunnerIntegrationTest(unittest.TestCase):
+    """러너 경로: PREOPEN 사이클(ENTER 판단 → 유령 0, 유예 1) → 09:00:40 KRX 사이클(유예 채움 → 유령 1, 유예 0, fill 원장 1행)."""
+
+    def test_defer_then_fill(self):
+        from datetime import datetime
+        from tools import kr_event_lane_runner as rn
+        with tempfile.TemporaryDirectory() as td:
+            keep = (k.PHANTOM_LEDGER, k.PREOPEN_FILL_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH, k.OBS_LEDGER, rn._quote,
+                    k.dart_list_today, k.process_disclosure, rn._ensure_cache_async, rn._notify, rn._heartbeat)
+            k.PHANTOM_LEDGER = Path(td) / "ph.jsonl"; k.PREOPEN_FILL_LEDGER = Path(td) / "fill.jsonl"; k.SIGNAL_LEDGER = Path(td) / "sig.jsonl"
+            k.STATE_PATH = Path(td) / "st.json"; k.OBS_LEDGER = Path(td) / "obs.jsonl"
+            item = {"rcept_no": "20260908000001", "corp_code": "0", "corp_name": "테스트", "stock_code": "000001",
+                    "report_nm": "단일판매ㆍ공급계약체결", "rcept_dt": "20260908", "ty": "I"}
+            prices = {"px": 10000.0}
+            try:
+                rn._quote = lambda tk: {"price": prices["px"], "source": "fake", "venue": "KRX"}
+                k.dart_list_today = lambda sd, **kw: [item]
+                k.process_disclosure = lambda it, **kw: {"rcept_no": it["rcept_no"], "kind": "supply_contract", "is_correction": False,
+                                                          "decision": "ENTER", "reason": "ok", "ts_detected": k._iso(kw.get("now")),
+                                                          "ts_decided": k._iso(kw.get("now")), "quote": rn._quote(it["stock_code"]),
+                                                          "liq": {"prev_close": 10000.0, "dvol20_krw": 5e9}, "fields": {}, "llm": {},
+                                                          "basis": "테스트", "session_date": sd_}
+                rn._ensure_cache_async = lambda tk: None; rn._notify = lambda text: None; rn._heartbeat = lambda extra=None: None
+                sd_ = "2026-09-08"; st = {"session_date": sd_, "seen": []}
+                r1 = rn.cycle(sd_, st, now=datetime(2026, 9, 8, 7, 45, tzinfo=k.KST), phase="PREOPEN")
+                self.assertEqual(r1["entered"], 0); self.assertEqual(len(st["preopen_enter"]), 1); self.assertEqual(st["open_positions"], [])
+                self.assertEqual(st["phase"], "PREOPEN")
+                prices["px"] = 10300.0   # 09:00 시가 +3%
+                k.dart_list_today = lambda sd, **kw: []
+                r2 = rn.cycle(sd_, st, now=datetime(2026, 9, 8, 9, 0, 40, tzinfo=k.KST), phase="KRX")
+                self.assertEqual(r2["entered"], 1); self.assertEqual(st["preopen_enter"], []); self.assertEqual(len(st["open_positions"]), 1)
+                self.assertEqual(st["open_positions"][0]["contract"], "kr_event_v1_preopen"); self.assertEqual(st["open_positions"][0]["opened_at"][11:19], "09:00:40")
+                fills = k.read_jsonl(k.PREOPEN_FILL_LEDGER); self.assertEqual(len(fills), 1); self.assertEqual(fills[0]["decision"], "ENTER")
+            finally:
+                (k.PHANTOM_LEDGER, k.PREOPEN_FILL_LEDGER, k.SIGNAL_LEDGER, k.STATE_PATH, k.OBS_LEDGER, rn._quote,
+                 k.dart_list_today, k.process_disclosure, rn._ensure_cache_async, rn._notify, rn._heartbeat) = keep
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,7 +21,7 @@ STEPS = [
     ("insider_holdings", ["tools/dart_insider_ledger.py", "--holdings-only", "--refresh-days", "1"]),
     ("insider_plans", ["tools/dart_insider_ledger.py", "--plans-only"]),
     ("corp_action_terms", ["tools/dart_corp_action_terms.py"]),
-    ("form4_daily", ["tools/edgar_form4_daily.py"]),
+    ("form4_daily", ["tools/edgar_form4_daily.py", "--from", "2026-04-01", "--max-days", "8"]),   # 2026-04~ 공백을 하루 8거래일씩 이어받아 채운다(재개 가능)
     ("krx_alert", ["tools/krx_market_alert_collector.py"]),
     ("earnings_dates", ["tools/us_earnings_dates_cache.py", "--refresh-days", "7"]),
     ("panic_settle", ["tools/us_panic_close_shadow.py", "settle"]),
