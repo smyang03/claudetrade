@@ -351,7 +351,7 @@ def run(*, include_backfill: bool, reps: int, seed: int, asof: str | None = None
         except Exception:
             _ov, arm_state = {}, (lambda a, o=None: "active")  # type: ignore
         strats = [s for s in (strategies or vb.STRATEGIES)
-                  if not s.get("retired") and arm_state(s["id"], _ov) != "retired"]
+                  if not s.get("retired") and not s.get("discovery") and arm_state(s["id"], _ov) != "retired"]  # 탐색 arm은 게이트 대상 아님
         pool = PoolResolver(pool_fn)
         results = {s["id"]: evaluate_strategy(con, s, pool, include_backfill=include_backfill,
                                               reps=reps, rng=rng, asof=asof) for s in strats}

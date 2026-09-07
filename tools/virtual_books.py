@@ -192,6 +192,118 @@ STRATEGIES: list[dict] = [
              "추세주 차익실현 물량 수확. 반증: forward 30건 클러스터 net<=0 또는 널<50"},
 ]
 
+# ── 탐색 arm (2026-09-07, 쉐도우 탐색 체계 개편 D1 — 운영자 "한도 두지 말고 다양하게 전부 DB에") ─────────────
+# 기존 arm은 실운영 레퍼런스(K=1·밴드·하루 1건)로 불변. 탐색 arm은 tools/discovery_pools의 넓은 풀을 **통과자 전량**
+# 진입(한도 없음)하고 특성값·풀 내 순위·국면 태그·출구 계약 격자·경로를 meta에 남긴다. 승격 게이트·널·겹침 보고·텔레그램
+# 상세에서 제외(후보 생성기이지 승격 근거가 아님). 계약(TP12/SL25/D5, 비용)은 실운영과 동일. 백필은 2025-06-02부터.
+DISCOVERY_START = "2025-06-02"
+_X_US = dict(universe="xus", pick="all", daily_cap=1_000_000, slots=1_000_000, order_krw=540_000,
+             capital_krw=1_000_000_000_000, discovery=True, backfill_start=DISCOVERY_START)
+_X_KR = dict(universe="xkr", pick="all", daily_cap=1_000_000, slots=1_000_000, order_krw=220_000,
+             capital_krw=1_000_000_000_000, discovery=True, backfill_start=DISCOVERY_START)
+STRATEGIES += [
+    {"id": "xus_fallen3",  "pool": "xus_fallen3",  **_X_US, "note": "X — 전일 ≤−3%·거래대금 ≥50M 전량(실운영 −5%·밴드·MAX는 특성 필터로 복원)"},
+    {"id": "xus_slow8",    "pool": "xus_slow8",    **_X_US, "note": "X — 5일 ≤−8% 완만하락(단일 −5% 없음) 전량"},
+    {"id": "xus_rise5",    "pool": "xus_rise5",    **_X_US, "note": "X — 전일 ≥+5% 급등 다음날 전량(지속/되돌림 관측)"},
+    {"id": "xus_breakout", "pool": "xus_breakout", **_X_US, "note": "X — 120~250봉 최고 종가 돌파 전량(신고가 추세)"},
+    {"id": "xus_volspike", "pool": "xus_volspike", **_X_US, "note": "X — 거래량 3배↑ & |전일|<3% 전량"},
+    {"id": "xkr_fallen3",  "pool": "xkr_fallen3",  **_X_KR, "note": "X — 전일 ≤−3%·거래대금 ≥20억 전량(8조건은 플래그, R2/R4는 특성 필터로 복원)"},
+    {"id": "xkr_rise5",    "pool": "xkr_rise5",    **_X_KR, "note": "X — 전일 ≥+5% 급등 다음날 전량"},
+    {"id": "xkr_breakout", "pool": "xkr_breakout", **_X_KR, "note": "X — 120봉 최고 종가 돌파 전량"},
+    {"id": "xkr_volspike", "pool": "xkr_volspike", **_X_KR, "note": "X — 거래량 3배↑ & |전일|<3% 전량"},
+]
+
+# 출구 계약 격자 — 탐색 arm의 CLOSED 행마다 같은 진입에 대해 여러 출구를 함께 정산해 meta.grid에 적는다(사후 계약 스윕용).
+# (tp, sl, hold, be_lock). hold는 진입일 포함 세션 수. 'hold_only'는 TP/SL 없이 만기 종가.
+CONTRACT_GRID = {
+    "tp12_sl25_d5_be": (12.0, -25.0, 5, True),   # 실운영 계약(US) — KR은 be_lock False로 정산됨
+    "tp12_sl25_d5":    (12.0, -25.0, 5, False),
+    "tp8_sl10_d3":     (8.0, -10.0, 3, False),
+    "tp6_sl6_d2":      (6.0, -6.0, 2, False),
+    "tp20_sl25_d10":   (20.0, -25.0, 10, False),
+    "tp12_sl25_d10":   (12.0, -25.0, 10, False),
+    "hold_d5":         (999.0, -999.0, 5, False),
+    "hold_d10":        (999.0, -999.0, 10, False),
+}
+GRID_HOLD_MAX = 10
+
+
+def _x_sessions(market: str) -> dict:
+    """탐색 풀 세션(프로세스 캐시). 실패는 빈 dict — 기존 arm 흐름을 막지 않는다."""
+    try:
+        import discovery_pools as dp
+        return dp.discovery_sessions(market)
+    except Exception as exc:  # pragma: no cover
+        print(f"[VIRTUAL] 탐색 풀 로드 실패({market}): {str(exc)[:80]}")
+        return {}
+
+
+def _x_pool_stats(market: str) -> dict:
+    try:
+        import discovery_pools as dp
+        return dp.pool_stats(market)
+    except Exception:
+        return {}
+
+
+def record_pool_stats(con: sqlite3.Connection) -> int:
+    """세션별 풀 규모·유니버스 수(탈락 후보 규모의 기록). 멱등."""
+    n = 0
+    for market in ("US", "KR"):
+        for key, d in _x_pool_stats(market).items():
+            for pid, cnt in d.items():
+                if pid.startswith("_"):
+                    continue
+                con.execute("""INSERT INTO discovery_pool_stats (market, session_key, pool, n, universe_n)
+                               VALUES (?,?,?,?,?) ON CONFLICT(market, session_key, pool) DO UPDATE SET n=excluded.n, universe_n=excluded.universe_n""",
+                            (market, key, pid, int(cnt), int(d.get("_universe") or 0)))
+                n += 1
+    con.commit()
+    return n
+
+
+def _path_and_grid(entry: float, win: list[tuple], *, fee: float, be_lock_main: bool) -> dict:
+    """경로(일별 종가/고가/저가 %, MFE/MAE)와 출구 계약 격자. 창이 짧으면 완결된 계약만 채운다."""
+    path = {"close": [], "high": [], "low": []}
+    for i, (_d, _o, hi, lo, c, _v) in enumerate(win[:GRID_HOLD_MAX]):
+        path["close"].append(round((c / entry - 1.0) * 100.0, 3))
+        path["high"].append(round(((c if i == 0 else hi) / entry - 1.0) * 100.0, 3))
+        path["low"].append(round(((c if i == 0 else lo) / entry - 1.0) * 100.0, 3))
+    grid = {}
+    for name, (tp, sl, hold, be) in CONTRACT_GRID.items():
+        res = contract_exit_v2(entry, win, fee=fee, be_lock=(be and be_lock_main), tp=tp, sl=sl, hold=hold)
+        if res is not None:
+            grid[name] = [round(res[0], 3), res[1]]
+    return {"path": path, "mfe": max(path["high"]) if path["high"] else None, "mae": min(path["low"]) if path["low"] else None,
+            "grid": grid, "grid_complete": len(grid) == len(CONTRACT_GRID)}
+
+
+def enrich_discovery(con: sqlite3.Connection, *, limit: int = 40000) -> int:
+    """탐색 arm CLOSED 행에 경로·계약 격자 박제(meta). 격자가 미완결(창 부족)이면 다음 실행에서 다시 채운다."""
+    by_id = {s["id"]: s for s in STRATEGIES if s.get("discovery")}
+    if not by_id:
+        return 0
+    rows = con.execute(
+        "SELECT strategy_id, session_date, ticker, entry_price, meta FROM trades "
+        "WHERE status='CLOSED' AND strategy_id IN (%s) AND (meta NOT LIKE '%%\"grid_complete\": true%%')"
+        % ",".join("?" * len(by_id)), tuple(by_id)).fetchmany(limit)
+    n = 0
+    for sid, sd, tk, entry, meta in rows:
+        s = by_id[sid]
+        market = strategy_market(s)
+        eo = entry_of(tk, sd, market=market, hold=GRID_HOLD_MAX)
+        if eo is None:
+            continue
+        m = json.loads(meta) if meta else {}
+        if m.get("grid_complete"):
+            continue
+        m.update(_path_and_grid(float(entry), eo[1], fee=FEE_KR if market == "KR" else FEE_US, be_lock_main=(market != "KR")))
+        con.execute("UPDATE trades SET meta=? WHERE strategy_id=? AND session_date=? AND ticker=?",
+                    (json.dumps(m, ensure_ascii=False), sid, sd, tk))
+        n += 1
+    con.commit()
+    return n
+
 
 def ensure_schema(con: sqlite3.Connection) -> None:
     con.executescript("""
@@ -209,6 +321,10 @@ def ensure_schema(con: sqlite3.Connection) -> None:
         strategy_id TEXT, asof TEXT, cash_krw REAL, open_n INTEGER,
         open_mtm_krw REAL, realized_pnl_krw REAL, equity_krw REAL,
         PRIMARY KEY (strategy_id, asof));
+    CREATE TABLE IF NOT EXISTS discovery_pool_stats (
+        market TEXT, session_key TEXT, pool TEXT, n INTEGER, universe_n INTEGER,
+        PRIMARY KEY (market, session_key, pool));
+    CREATE INDEX IF NOT EXISTS idx_trades_sid_status ON trades (strategy_id, status);
     """)
     # 마이그레이션 — 기존 DB에 계보 컬럼 추가 (09-01 v1.4)
     have = {r[1] for r in con.execute("PRAGMA table_info(strategies)")}
@@ -308,7 +424,7 @@ def overlap_report(con: sqlite3.Connection) -> None:
         by_strat[sid].add((sd, tk))
         if status == "CLOSED":
             pnl_by[sid][sd] += float(pnl)
-    ids = [s["id"] for s in STRATEGIES if by_strat.get(s["id"]) and not s.get("retired")]
+    ids = [s["id"] for s in STRATEGIES if by_strat.get(s["id"]) and not s.get("retired") and not s.get("discovery")]
     print("\n[겹침/상관 — 같은 (세션,종목) 비율과 세션 P&L 상관. 판정 아님, 중첩 경보용]")
     printed = 0
     for i, a in enumerate(ids):
@@ -616,6 +732,8 @@ def strategy_passers(s: dict, sessions_us: dict, sessions_kr: dict, sd: str,
         return [c for c in cands if c.get(s["kr_rule"])]
     if s["universe"] in ("krevent", "krlimitup"):
         return list(kr_event_sessions_cached().get(s["universe"], {}).get(sd, []))
+    if s["universe"] in ("xus", "xkr"):
+        return list(_x_sessions("US" if s["universe"] == "xus" else "KR").get(s["pool"], {}).get(sd, []))
     if s["universe"] == "slowus":
         return list((sessions_slow or {}).get(sd, []))
     if s["universe"] == "lpus":
@@ -738,7 +856,7 @@ def backfill_basis(con: sqlite3.Connection, sessions_us: dict, sessions_kr: dict
 
 
 def strategy_market(s: dict) -> str:
-    return {"kr": "KR", "krevent": "KR", "krlimitup": "KR", "slowus": "SLOW", "lpus": "SLOW"}.get(s["universe"], "US")
+    return {"kr": "KR", "krevent": "KR", "krlimitup": "KR", "xkr": "KR", "slowus": "SLOW", "lpus": "SLOW"}.get(s["universe"], "US")
 
 
 def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
@@ -762,11 +880,14 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
                      "lpus": sessions_lp}.get(s["universe"], sessions_us)
         if s["universe"] in ("krevent", "krlimitup"):
             all_dates = kr_event_sessions_cached().get(s["universe"], {})
+        if s["universe"] in ("xus", "xkr"):
+            all_dates = _x_sessions("US" if s["universe"] == "xus" else "KR").get(s["pool"], {})
         done = {r[0] for r in con.execute(
             "SELECT DISTINCT session_date FROM trades WHERE strategy_id=?", (s["id"],))}
         cash = book_cash(con, s)
+        start_date = str(s.get("backfill_start", BACKFILL_START))
         for sd in sorted(all_dates):
-            if sd < BACKFILL_START or sd in done:
+            if sd < start_date or sd in done:
                 continue
             if s.get("forward_only") and sd < FORWARD_START:
                 continue
@@ -790,17 +911,25 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
                     break
                 eo = entry_of(c["ticker"], sd, market=market)
                 if eo is None:
-                    record_entry_skip(s, sd, c["ticker"], market, all_dates)
+                    if not s.get("discovery"):
+                        record_entry_skip(s, sd, c["ticker"], market, all_dates)
                     continue
                 entry, _win = eo
+                if s.get("discovery"):
+                    meta = {"pool": s["pool"], "signal_date": c.get("signal_date"), "pool_n": c.get("pool_n"),
+                            "basis": f"{s['pool']} · 전일 {c.get('chg', 0):+.1f}% · 거래대금 {c.get('dvol', 0):,.0f} · 풀 {c.get('pool_n')}건",
+                            "feat": {k: (round(v, 3) if isinstance(v, float) else v) for k, v in c.items()
+                                     if k not in ("ticker", "ranks", "regime", "pool", "pool_n", "signal_date", "date")},
+                            "ranks": c.get("ranks", {}), "regime": c.get("regime", {})}
+                else:
+                    meta = {**sess_meta, "basis": pick_basis(s, c), "feat": _feat_compact(c)}
                 con.execute(
                     """INSERT OR IGNORE INTO trades (strategy_id, session_date, ticker,
                            entry_price, notional_krw, backfill, pick_pos, status, opened_at, meta)
                        VALUES (?,?,?,?,?,?,?, 'OPEN', ?, ?)""",
                     (s["id"], sd, c["ticker"], entry, s["order_krw"],
                      1 if sd < FORWARD_START else 0, pos, now,
-                     json.dumps({**sess_meta, "basis": pick_basis(s, c), "feat": _feat_compact(c)},
-                                ensure_ascii=False)))
+                     json.dumps(meta, ensure_ascii=False)))
                 if con.execute("SELECT changes()").fetchone()[0]:
                     opened += 1
                     open_n += 1
@@ -1048,21 +1177,28 @@ def send_daily_summary(con: sqlite3.Connection, *, opened: int, settled: int,
         if not tg.TOKEN:
             tg.TOKEN = os.getenv("TELEGRAM_TOKEN", "")
             tg.CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+        xids = tuple(s["id"] for s in STRATEGIES if s.get("discovery")) or ("_none_",)
+        not_x = "strategy_id NOT IN (%s)" % ",".join("'%s'" % x for x in xids)
         rows = con.execute(
-            """SELECT strategy_id, COUNT(*), COALESCE(AVG(net_pct),0), COALESCE(SUM(pnl_krw),0)
-               FROM trades WHERE backfill=0 AND status='CLOSED' GROUP BY strategy_id
+            f"""SELECT strategy_id, COUNT(*), COALESCE(AVG(net_pct),0), COALESCE(SUM(pnl_krw),0)
+               FROM trades WHERE backfill=0 AND status='CLOSED' AND {not_x} GROUP BY strategy_id
                ORDER BY 3 DESC""").fetchall()
-        fwd_open = con.execute("SELECT COUNT(*) FROM trades WHERE backfill=0 AND status='OPEN'").fetchone()[0]
+        fwd_open = con.execute(f"SELECT COUNT(*) FROM trades WHERE backfill=0 AND status='OPEN' AND {not_x}").fetchone()[0]
         fwd_closed = sum(r[1] for r in rows)
-        sessions = con.execute("SELECT COUNT(DISTINCT session_date) FROM trades WHERE backfill=0").fetchone()[0]
+        sessions = con.execute(f"SELECT COUNT(DISTINCT session_date) FROM trades WHERE backfill=0 AND {not_x}").fetchone()[0]
         today_open = con.execute(
-            "SELECT strategy_id, ticker FROM trades WHERE backfill=0 AND opened_at>=? ORDER BY strategy_id",
+            f"SELECT strategy_id, ticker FROM trades WHERE backfill=0 AND opened_at>=? AND {not_x} ORDER BY strategy_id",
             (datetime.now(timezone.utc).strftime("%Y-%m-%d"),)).fetchall()
+        x_today = con.execute(f"SELECT COUNT(*) FROM trades WHERE opened_at>=? AND NOT ({not_x})",
+                              (datetime.now(timezone.utc).strftime("%Y-%m-%d"),)).fetchone()[0]
+        x_total = con.execute(f"SELECT COUNT(*), SUM(status='CLOSED') FROM trades WHERE NOT ({not_x})").fetchone()
         lines = [f"🧪 [VIRTUAL] 가상 북 일일 요약 {today} — 실계좌 아님",
                  f"오늘 진입 {opened} / 정산 {settled} / 대사 {'OK' if reconcile_ok else 'FAIL(성과 확정 금지)'}",
                  f"forward 누적: 정산 {fwd_closed}건 · 미결제 {fwd_open}건 · 거래세션 {sessions} (게이트 50건/80세션)"]
         if today_open:
             lines.append("오늘 진입: " + ", ".join(f"{sid}:{tk}" for sid, tk in today_open[:12]))
+        if x_total and x_total[0]:
+            lines.append(f"탐색 원장(x*, 한도 없음): 오늘 {x_today}행 · 누적 {x_total[0]:,}행(정산 {x_total[1] or 0:,})")
         if rows:
             top = rows[:3]; bot_ = rows[-3:] if len(rows) > 3 else []
             lines.append("forward 상위: " + " | ".join(f"{sid} {n}건 {avg:+.2f}%" for sid, n, avg, _ in top))
@@ -1102,7 +1238,7 @@ def report(con: sqlite3.Connection, sessions_us: dict | None = None,
         wr = 100.0 * sum(1 for n in nets if n > 0) / len(nets) if nets else 0.0
         avg = sum(nets) / len(nets) if nets else 0.0
         np_s = "  -  "
-        if sessions_us is not None:
+        if sessions_us is not None and not s.get("discovery"):
             pct = null_percentile(con, s, sessions_us, sessions_kr or {})
             if pct is not None:
                 np_s = f"{pct:5.1f}"
@@ -1120,7 +1256,15 @@ def report(con: sqlite3.Connection, sessions_us: dict | None = None,
         if rows:
             cells = " | ".join(f"슬롯{p}: n={n} {a:+.2f}% {int(t):+,}원" for p, n, a, t in rows if p)
             print(f"  {s['id']:16s} {cells}")
-    print("\n[승격 게이트] forward(09-01 이후 진입) 표본만 판정에 쓴다. 백필은 참고 전용.")
+    print("\n[승격 게이트] forward(09-01 이후 진입) 표본만 판정에 쓴다. 백필은 참고 전용. 탐색 arm(x*)은 게이트 대상이 아니다.")
+    xs = [s for s in STRATEGIES if s.get("discovery")]
+    if xs:
+        print("\n[탐색 원장 x* — 한도 없음·넓은 풀. 후보 생성기(판정 아님). 조건별 분해는 tools/discovery_breakdown.py]")
+        for s in xs:
+            r = con.execute("SELECT COUNT(*), SUM(status='CLOSED'), SUM(backfill=0), AVG(CASE WHEN status='CLOSED' THEN net_pct END), "
+                            "SUM(CASE WHEN status='CLOSED' AND net_pct>0 THEN 1 ELSE 0 END) FROM trades WHERE strategy_id=?", (s["id"],)).fetchone()
+            n, nc, nf, avg, nw = r
+            print(f"  {s['id']:14s} 행 {n:6d} · 정산 {nc or 0:6d} · forward {nf or 0:4d} · 평균net {(avg or 0):+6.2f}% · 승률 {100.0 * (nw or 0) / (nc or 1):4.1f}%")
 
 
 def main() -> int:
@@ -1140,8 +1284,10 @@ def main() -> int:
             sessions_lp = load_lp_sessions()
             opened = open_new_trades(con, sessions_us, sessions_kr, sessions_slow, sessions_lp)
             settled = settle_open_trades(con)
+            enriched = enrich_discovery(con)
+            stats_n = record_pool_stats(con)
             mark_books(con)
-            print(f"[VIRTUAL] 진입 {opened}건 / 정산 {settled}건")
+            print(f"[VIRTUAL] 진입 {opened}건 / 정산 {settled}건 / 탐색 격자 박제 {enriched}건 / 풀 통계 {stats_n}행")
             ok = reconcile(con)
             report(con, sessions_us, sessions_kr)
             overlap_report(con)
