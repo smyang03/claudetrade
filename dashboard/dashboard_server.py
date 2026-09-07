@@ -17542,7 +17542,54 @@ def api_research():
         sectors.append({"sector": sec, "n_days": r.get("n_days"), "corr_us_gap": r.get("corr_us_gap"), "corr_us_drift": r.get("corr_us_drift"),
                         "strong_up": r.get("strong_up"), "strong_down": r.get("strong_down"),
                         "latest": (us_kr.get("latest_signal") or {}).get(sec)})
+    def _jsonl(pth, limit=None):
+        out = []
+        try:
+            for line in pth.read_text(encoding="utf-8").splitlines():
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    continue
+        except OSError:
+            return out
+        return out[-limit:] if limit else out
+
+    def _panic():
+        rows = _jsonl(BASE_DIR / "data" / "shadow" / "us_panic_close.jsonl")
+        trades = [r for r in rows if r.get("kind") == "trade"]
+        sess = [r for r in rows if r.get("kind") == "session"]
+        out = {"n_sessions": len(sess), "n_trades": len(trades), "latest_session": (sess[-1] if sess else None), "by": {}}
+        for inst in ("stock", "etf"):
+            closed = [r for r in trades if r.get("instrument") == inst and r.get("status") == "CLOSED"]
+            if not closed:
+                continue
+            by_s = {}
+            for r in closed:
+                by_s.setdefault(r["session_date"], []).append(float(r["net_pct"]))
+            sm = [sum(v) / len(v) for v in by_s.values()]
+            mean = sum(sm) / len(sm)
+            sd = (sum((x - mean) ** 2 for x in sm) / len(sm)) ** 0.5 if len(sm) > 1 else 0.0
+            ov = [float(r["overnight_pct"]) for r in closed if r.get("overnight_pct") is not None]
+            out["by"][inst] = {"n": len(closed), "sessions": len(sm), "net_mean": round(sum(float(r["net_pct"]) for r in closed) / len(closed), 2),
+                               "session_mean": round(mean, 2), "session_t": round(mean / (sd / len(sm) ** 0.5), 2) if sd else None,
+                               "overnight_mean": round(sum(ov) / len(ov), 2) if ov else None,
+                               "tp": sum(1 for r in closed if r.get("exit_reason") == "TP"), "sl": sum(1 for r in closed if r.get("exit_reason") == "SL"),
+                               "forward_n": sum(1 for r in closed if r.get("mode") == "live")}
+        return out
+
+    def _ledger_status():
+        def _cnt(pth):
+            try:
+                return sum(1 for _ in pth.open(encoding="utf-8"))
+            except OSError:
+                return 0
+        sh = BASE_DIR / "data" / "shadow"; an = BASE_DIR / "data" / "analysis"
+        return {"kr_insider": _cnt(sh / "kr_insider_ledger.jsonl"), "kr_insider_plan": _cnt(sh / "kr_insider_plan_ledger.jsonl"),
+                "kr_dart_terms": _cnt(sh / "kr_dart_terms.jsonl"), "us_insider": _cnt(sh / "us_insider_ledger.jsonl"),
+                "us_earnings_dates": _cnt(an / "us_earnings_dates.jsonl")}
+
     return jsonify({"available": True,
+                    "panic_close": _panic(), "ledgers": _ledger_status(),
                     "nxt": _load(BASE_DIR / "state" / "nxt_probe.json"),
                     "us_kr": {"generated_at": us_kr.get("generated_at"), "kr_period": us_kr.get("kr_period"), "pooled": us_kr.get("pooled"), "sectors": sectors},
                     "corp_actions": _load(BASE_DIR / "data" / "analysis" / "dart_corp_actions_12m_summary.json"),
@@ -17874,6 +17921,14 @@ async function loadResearch() {
       '<br><span class="dim">예정</span> ' + ((ipo.upcoming||[]).slice(0,8).map(u => `${u.corp_name}${u.spac?'(SPAC)':''} ${u.offer_price ? Number(u.offer_price).toLocaleString()+'원' : (u.band ? u.band.map(x=>Number(x||0).toLocaleString()).join('~') : '?')} 청약 ${(u.subscription||[])[0]||'?'} 상장 ${u.listing_date||'?'}`).join(' · ') || '없음') +
       '<br><span class="dim">최근</span> ' + ((ipo.recent||[]).slice(0,8).map(r => `${r.corp_name} ${r.day1_date||''} 시가 <span class="${(r.ret_open_pct||0)>0?'pos':'neg'}">${f(r.ret_open_pct)}%</span> 종가 ${f(r.ret_close_pct)}%`).join(' · ') || '없음') +
       '<br><span class="dim">' + (ipo.note||'') + '</span>' : '<span class="dim">캘린더 없음 — python tools/kr_ipo_calendar.py --months 12</span>'));
+    const pc = d.panic_close || {};
+    const pcRow = (k, v) => v ? `${k}: n=${v.n} 세션 ${v.sessions} net <b class="${v.session_mean>0?'pos':'neg'}">${f(v.session_mean)}%</b>(세션 t ${v.session_t ?? '-'}) 오버나이트 ${f(v.overnight_mean)}% TP ${v.tp}/SL ${v.sl} · forward ${v.forward_n}` : `${k}: 없음`;
+    cards.push(card('패닉일 마감 진입 (P1/P2, 15:45 ET, TP20/SL25/D10) — 가상 북 밖 원장', pc.n_sessions ? pcRow('급락주', pc.by?.stock) + '<br>' + pcRow('ETF(TQQQ/IWM/SPY)', pc.by?.etf) +
+      '<br><span class="dim">최근 세션 ' + (pc.latest_session ? `${pc.latest_session.session_date} ${pc.latest_session.mode} breadth_1540 ${pc.latest_session.breadth_1540 ?? '-'} / eod ${pc.latest_session.breadth_eod ?? '-'} 통과 ${pc.latest_session.n_pass}` : '-') +
+      ' · 백필=EOD breadth·종가≤−3% 상위집합 근사, forward=15:40 iex 스냅샷. 판정 아님(사전등록 §2)</span>' : '<span class="dim">원장 없음 — python tools/us_panic_close_shadow.py backfill</span>'));
+    const lg = d.ledgers || {};
+    cards.push(card('신규 전략 원장 (family C_EVENT_V1 입력)', `KR 내부자 소유보고 ${lg.kr_insider ?? 0}행 · 거래계획 ${lg.kr_insider_plan ?? 0}행 · DART 자사주기간/권리락 ${lg.kr_dart_terms ?? 0}행 · US Form 4 매수 ${lg.us_insider ?? 0}행 · US 어닝 발표일 ${lg.us_earnings_dates ?? 0}행` +
+      '<br><span class="dim">arm 성적은 아래 "탐색 원장 x*/c_*" 표(c_kr_fallen_buyback30·c_kr_insider_cluster·c_kr_exright·c_us_earn_gap 등). 갱신: dart_insider_ledger / dart_corp_action_terms / us_earnings_dates_cache / edgar_form4_ledger</span>'));
     el.innerHTML = cards.join('');
   } catch (e) { /* 조용히 재시도 */ }
 }

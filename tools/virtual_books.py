@@ -242,6 +242,38 @@ STRATEGIES += [
      "note": "C7 — C6의 실행 형태(거래대금 큰순 5종목·54만). 15개월 K5 hold_d10 +3.3~5.1%(t 2.2~3.7). 반증: 동일"},
     {"id": "c_kr_fallen5_nobio", "pool": "xkr_fallen3", **_C_KR, "filter": {"chg_le": -5.0, "exclude_sectors": ["제약·바이오"]},
      "note": "C5 — KR 전일 ≤−5% 전량, 제약·바이오 제외(국면 무관). 근거: H1 학습 규칙 중 H2에서도 유효한 유일한 배제(−2.92%, t −2.5). 반증: forward 30세션에서 바이오 부분집합이 나머지보다 낮지 않음"},
+
+    # ── family C_EVENT_V1 (2026-09-07 밤, 신규 전략 리스트업 — docs/reports/new_strategy_candidates_20260907.md·preregistration_event_family_20260907.md)
+    # 정렬 변형이 아니라 메커니즘(누가 왜 잘못 판다)이 다른 이벤트 풀·필터. 원장: DART(자사주·최대주주·내부자·거래계획·권리락), yfinance 발표일, SEC Form 4.
+    # DART 기반은 backfill_start 2025-09-08(재생 원장 시작) — 그 전은 "공시 없음"이 아니라 "모름"이라 dart_ok=False로 닫힌다.
+    {"id": "c_kr_fallen_buyback30", "pool": "xkr_fallen3", **{**_C_KR, "backfill_start": "2025-09-08"},
+     "filter": {"chg_le": -5.0, "feat_range": {"buyback_days": [0, 30]}},
+     "note": "E1 — KR 전일 ≤−5% & 자사주 취득결정 공시 후 0~30일. 09-07 실측 +2.68%(n 160, 83세션, 세션 t 2.0), 0~7일 +3.24%(t 2.3), 90일이면 소멸. 반증: forward 30건 세션 t<0 또는 없음 군 대비 증분 소멸"},
+    {"id": "c_kr_fallen_buyback_active", "pool": "xkr_fallen3", **{**_C_KR, "backfill_start": "2025-09-08"},
+     "filter": {"chg_le": -5.0, "feat_range": {"buyback_active": [1, 1]}},
+     "note": "E1b — KR 전일 ≤−5% & 본문 장내취득 기간 내(공시 후). E1의 정확한 창(본문 기간) 대조. 반증: E1 대비 개선 없음"},
+    {"id": "c_kr_fallen_nomajor", "pool": "xkr_fallen3", **{**_C_KR, "backfill_start": "2025-09-08"},
+     "filter": {"chg_le": -5.0, "require_true": ["dart_ok"], "feat_exclude_range": {"major_holder_change_days": [0, 7]}},
+     "note": "E2 — KR 전일 ≤−5% 전량, 최대주주변경 공시 0~7일 후 급락 배제(회피 규칙). 09-07 실측 배제군 −3.92%(n 106, 81세션, 세션 t −2.6). 반증: 배제군이 나머지보다 낮지 않음"},
+    {"id": "c_kr_insider_cluster", "pool": "xkr_insider", **_C_KR, "filter": {}, "hold": 10,
+     "note": "E3 — KR 임원·주요주주 소유보고 증가(+) 7일 내 2인↑ 군집 다음 시가, TP12/SL25/D10. 문헌(내부자 군집 매수). elestock은 장내매수/증여 구분 없음(후속 본문 표본 검증). 반증: forward 30건 t<0"},
+    {"id": "c_kr_plan_buy", "pool": "xkr_plan_buy", **_C_KR, "filter": {}, "hold": 10,
+     "note": "E4 — KR 거래계획 사전공시(매수) 0~3일 후 다음 시가, D10. 2024-07 제도, 표본 얇음. 반증: forward 20건 t<0"},
+    {"id": "c_kr_exright", "pool": "xkr_exright", **_C_KR, "filter": {}, "tp": 20.0, "sl": -10.0, "hold": 10,
+     "note": "E5 — 무상증자 권리락일 시가 매수(기준일 −2거래일 신호), TP20/SL10/D10. 문헌(KR 권리락 효과). F6(결정 다음날)과 다른 날·다른 메커니즘. 반증: forward 20건 t<0"},
+    {"id": "c_kr_buyback_start", "pool": "xkr_buyback_start", **_C_KR, "filter": {},
+     "note": "N4(Codex) — 자사주 장내취득 예정 시작일 시가 매수(시작일 −1거래일 신호), TP12/SL25/D7. 발표가 아니라 실행 개시 수요. 반증: 발표 다음날 대조군 대비 개선 없음"},
+    {"id": "c_us_earn_gap", "pool": "xus_earn_gap", **_C_US, "filter": {}, "hold": 10,
+     "note": "E6 — US 어닝 반응일 갭 ≥+8% & 종가≥시가 → 다음 시가, TP12/SL25/D10. 가격반응 PEAD(추정치 불필요·PIT 문제 없음). 문헌 강. 반증: forward 30건 t<0 또는 xus_rise5 비어닝 급등 대비 증분 없음"},
+    {"id": "c_us_insider_cluster", "pool": "xus_insider", **{**_C_US, "backfill_start": "2025-07-01"}, "filter": {}, "hold": 10,
+     "note": "E7 — US Form 4 공개시장 매수 7일 내 2인↑ 군집(제출일 기준) 다음 시가, D10. SEC 분기 데이터셋 2025Q3~2026Q1(2026Q2+는 forward 수집기 필요). 반증: forward 30건 t<0"},
+    {"id": "c_us_volfirst", "pool": "xus_volfirst", **_C_US, "filter": {},
+     "note": "N1(Codex) — 조용한 최초 거래량 충격(volspike & 60봉 최대 & 직전 20봉 3배 없음) 다음 시가, TP12/SL25/D7. 반증: xus_volspike 반복 사건 대비 증분 net≤0"},
+    # K=1 실행 형태(09-07 백필 부산물 — 군집 안 거래대금 1위: KR +2.88%(306세션, t 5.3) vs 전량 +0.36%; US +1.35%(t 2.7)). 다중비교 의심 → forward 재확인 전용 뷰
+    {"id": "c_kr_insider_k1", "pool": "xkr_insider", **{**_C_KR, "pick": "dvol_desc", "daily_cap": 1}, "filter": {}, "hold": 10,
+     "note": "E3-K1 — KR 내부자 군집 중 전일 거래대금 1위 1종목·D10. 백필 +2.88%(t 5.3)는 사후 발견 → forward 30건 t<0이면 기각"},
+    {"id": "c_us_insider_k1", "pool": "xus_insider", **{**_C_US, "pick": "dvol_desc", "daily_cap": 1, "backfill_start": "2025-07-01"}, "filter": {}, "hold": 10,
+     "note": "E7-K1 — US Form 4 군집 중 거래대금 1위 1종목·D10. 백필 +1.35%(t 2.7). forward는 2026Q2+ 수집기 후"},
 ]
 
 
@@ -265,6 +297,18 @@ def candidate_filter_pass(c: dict, flt: dict) -> bool:
             return False
     if flt.get("exclude_sectors"):
         if _sector_of(c.get("ticker"), "KR" if str(c.get("pool", "")).startswith("xkr") else "US") in set(flt["exclude_sectors"]):
+            return False
+    # 2026-09-07 이벤트 원장 특성 필터 — 결측(None)은 포함 조건에서 불통과, 배제 조건에서는 "원장 자체가 있어야"(require_true) 통과
+    for k, (lo, hi) in (flt.get("feat_range") or {}).items():
+        v = c.get(k)
+        if v is None or (lo is not None and v < lo) or (hi is not None and v > hi):
+            return False
+    for k in (flt.get("require_true") or ()):
+        if not c.get(k):
+            return False   # 예: dart_ok — 원장이 없거나 백필 창 밖이면 배제 판단 불가 → 불통과(fail-closed)
+    for k, (lo, hi) in (flt.get("feat_exclude_range") or {}).items():
+        v = c.get(k)
+        if v is not None and (lo is None or v >= lo) and (hi is None or v <= hi):
             return False
     return True
 
@@ -558,8 +602,11 @@ def reconcile(con: sqlite3.Connection) -> bool:
             problems.append(f"{s['id']} 실현손익 대사 불일치 (원장 {realized:.0f} vs 북 {row[0]:.0f})")
     # 탐색 원장 완전성: 최근 세션의 풀 통과 수와 기록 수 대사(경고만 — 봉 미완성 세션은 다음 실행에서 채워짐)
     try:
+        xids = {s["id"] for s in STRATEGIES if s.get("discovery")}   # 이벤트 풀(c_* 뷰만 있는 풀)은 arm id ≠ pool id → 대사 대상 아님(09-07)
         for (market, key, pool, n_pass) in con.execute(
                 "SELECT market, session_key, pool, n FROM discovery_pool_stats WHERE session_key >= date('now','-14 day') ORDER BY session_key DESC").fetchall():
+            if pool not in xids:
+                continue
             n_rows = con.execute("SELECT COUNT(*) FROM trades WHERE strategy_id=? AND session_date=?", (pool, key)).fetchone()[0]
             if n_pass and n_rows < n_pass:
                 print(f"[VIRTUAL] 탐색 완전성 경고 {pool} {key}: 통과 {n_pass} vs 기록 {n_rows} (봉 미완성이면 다음 실행에서 보충)")

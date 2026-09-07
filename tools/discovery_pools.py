@@ -25,6 +25,7 @@ import json
 import statistics as st
 import sys
 from collections import defaultdict
+from datetime import date as _date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,12 +44,21 @@ POOLS_US = {
     "xus_rise5":    "전일 ≥+5% — 급등 다음날(지속/되돌림) 관측",
     "xus_breakout": "종가가 직전 120~250봉 최고 종가 돌파 — 신고가 추세",
     "xus_volspike": "거래량 20일 평균의 3배↑ & |전일| <3% — 조용한 거래량 급증",
+    # 2026-09-07 신규 전략(이벤트 풀 — 원장 결합, 기존 풀과 메커니즘이 다름)
+    "xus_earn_gap": "어닝 반응일(yfinance 발표일·확정분) 갭 ≥+8% & 종가 ≥ 시가 — P7 가격반응 PEAD(추정치 불필요)",
+    "xus_insider":  "Form 4 공개시장 매수 7일 내 2인↑ 군집(SEC 분기 데이터셋) — P8 내부자",
+    "xus_volfirst": "volspike & 60봉 최대 거래량 & 직전 20봉 3배 사건 없음 — Codex N1 최초 거래량 충격",
 }
 POOLS_KR = {
     "xkr_fallen3":  "전일 ≤−3% (거래대금 ≥20억) — 급락 풀 확장(8조건은 플래그, R2/R4는 특성 필터로 복원)",
     "xkr_rise5":    "전일 ≥+5% — 급등 다음날 관측(상한가 복권·회피 판단 데이터)",
     "xkr_breakout": "종가가 직전 120봉 최고 종가 돌파 — 신고가 추세",
     "xkr_volspike": "거래량 20일 평균의 3배↑ & |전일| <3%",
+    # 2026-09-07 신규 전략(DART 원장 결합)
+    "xkr_insider":       "임원·주요주주 소유보고 증가(+) 7일 내 2인↑ 군집(elestock) — P4 내부자 매수",
+    "xkr_plan_buy":      "거래계획 사전공시(매수) 0~3일 후 — P5 예고된 수요",
+    "xkr_exright":       "무상증자 신주배정기준일 −2거래일(다음 시가 = 권리락일 시가) — P6 권리락 착시",
+    "xkr_buyback_start": "자사주 장내취득 예정 시작일 −1거래일(다음 시가 = 시작일 시가) — Codex N4 취득 개시 수요",
 }
 RANK_RULES = ("dvol_desc", "dvol_asc", "chg_hi", "chg_lo", "ibs_hi", "max_lo", "disc_deep", "cum5_deep", "ret60_desc", "volspike_desc")
 
@@ -83,8 +93,8 @@ def _load_bars(path: Path) -> list[tuple]:
     return sorted(rows)
 
 
-def featurize(b: list[tuple], i: int, market: str) -> dict | None:
-    """신호봉 i의 특성값. 데이터 부족이면 None."""
+def featurize(b: list[tuple], i: int, market: str, vol_ctx: tuple | None = None) -> dict | None:
+    """신호봉 i의 특성값. 데이터 부족이면 None. vol_ctx=(spike_flags, vols) — 종목당 1회 계산한 롤링 3배 플래그(N1용, 선택)."""
     if i < MIN_HISTORY or i >= len(b):
         return None
     d, o, h, l, c, v = b[i]
@@ -122,8 +132,27 @@ def featurize(b: list[tuple], i: int, market: str) -> dict | None:
         "max21": max(100.0 * (b[j][4] / b[j - 1][4] - 1.0) for j in range(i - 20, i + 1)) if i >= 21 else None,
         "hi_break_n": n_break if (prior_max is not None and c >= prior_max) else 0,
         "down_streak": streak,
+        "close_pos_up": c >= o,
     }
+    if vol_ctx is not None:
+        flags, vols_all = vol_ctx
+        f["vol_max60"] = bool(i >= 60 and v > max(vols_all[i - 60: i]))
+        f["spike_prior20"] = sum(flags[i - 20: i]) if i >= 20 else None
     return f
+
+
+def volume_context(b: list[tuple]) -> tuple[list[int], list[float]]:
+    """종목당 1회: 각 봉의 '직전 20봉 평균 대비 3배' 플래그(O(n))와 거래량 배열 — N1 최초 거래량 사건용."""
+    vols = [x[5] for x in b]
+    flags = [0] * len(b)
+    if len(b) <= 20:
+        return flags, vols
+    run = sum(vols[:20])
+    for j in range(20, len(b)):
+        mean = run / 20.0
+        flags[j] = 1 if (mean > 0 and vols[j] >= 3.0 * mean) else 0
+        run += vols[j] - vols[j - 20]
+    return flags, vols
 
 
 def pool_pass(f: dict, market: str) -> list[str]:
@@ -154,6 +183,187 @@ def pool_pass(f: dict, market: str) -> list[str]:
             out.append("xkr_volspike")
     return out
 
+
+# ── 이벤트 원장(2026-09-07 신규 전략) — 신호일 기준 no-lookahead: 공시일/보고일/발표일 ≤ 신호일만 본다 ──────────────
+SHADOW_DIR = ROOT / "data" / "shadow"
+DART_EVENTS_12M = ROOT / "data" / "analysis" / "dart_events_12m.jsonl"      # 09-03 재생(2025-09-01~)
+KR_EVENT_SIGNALS = SHADOW_DIR / "kr_event_signals.jsonl"                   # 실시간 레인 forward
+KR_TERMS = SHADOW_DIR / "kr_dart_terms.jsonl"                               # 자사주 기간·무상증자 기준일
+KR_INSIDER = SHADOW_DIR / "kr_insider_ledger.jsonl"                         # elestock 소유보고
+KR_PLANS = SHADOW_DIR / "kr_insider_plan_ledger.jsonl"                      # 거래계획 사전공시
+US_EARN = ROOT / "data" / "analysis" / "us_earnings_dates.jsonl"           # yfinance 발표일
+US_INSIDER = SHADOW_DIR / "us_insider_ledger.jsonl"                         # SEC Form 4 'P'
+DART_BACKFILL_START = "2025-09-08"   # dart_events_12m 시작(2025-09-01)+창 → 그 전 세션은 "공시 없음"이 아니라 "모름"(dart_ok=False)
+_EVT: dict[str, object] = {}
+_KIND_MAP = {"자기주식취득결정": "buyback", "최대주주변경": "major_holder_change", "유상증자결정(대조)": "rights_offering",
+             "공급계약체결": "supply_contract", "무상증자결정": "bonus_issue",
+             "buyback": "buyback", "major_holder_change": "major_holder_change", "rights_offering": "rights_offering",
+             "supply_contract": "supply_contract", "bonus_issue": "bonus_issue"}
+
+
+def _jsonl(path: Path) -> list[dict]:
+    out = []
+    if not path.exists():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
+
+
+def _dt(s) -> _date | None:
+    """'YYYY-MM-DD' 또는 'YYYYMMDD'(DART rcept_dt) → date. Python 3.9는 fromisoformat이 기본형(YYYYMMDD)을 못 읽는다."""
+    t = str(s or "").strip()
+    try:
+        if len(t) == 8 and t.isdigit():
+            return _date(int(t[:4]), int(t[4:6]), int(t[6:8]))
+        return _date.fromisoformat(t[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_events() -> dict:
+    """한 번만 로드. 원장이 없으면 빈 dict + ok=False(호출자는 결측을 '불통과'로 닫는다)."""
+    if _EVT:
+        return _EVT
+    kr: dict[str, list[tuple]] = defaultdict(list)
+    for r in _jsonl(DART_EVENTS_12M):
+        k = _KIND_MAP.get(str(r.get("kind")))
+        d = str(r.get("date", ""))
+        if k and len(d) == 8 and "정정" not in str(r.get("report", "")):
+            kr[str(r["stock"])].append((_date(int(d[:4]), int(d[4:6]), int(d[6:])), k))
+    for r in _jsonl(KR_EVENT_SIGNALS):
+        k = _KIND_MAP.get(str(r.get("kind")))
+        d = _dt(r.get("session_date"))
+        if k and d and not r.get("is_correction") and r.get("stock_code"):
+            kr[str(r["stock_code"])].append((d, k))
+    terms: dict[str, list[dict]] = defaultdict(list)
+    for r in _jsonl(KR_TERMS):
+        terms[str(r.get("stock"))].append(r)
+    ins: dict[str, list[tuple]] = defaultdict(list)
+    for r in _jsonl(KR_INSIDER):
+        d = _dt(r.get("rcept_dt"))
+        if d and r.get("irds_cnt") is not None:
+            ins[str(r["stock"])].append((d, str(r.get("repror")), float(r["irds_cnt"])))
+    plans: dict[str, list[dict]] = defaultdict(list)
+    for r in _jsonl(KR_PLANS):
+        plans[str(r.get("stock"))].append(r)
+    earn: dict[str, list[tuple]] = defaultdict(list)
+    for r in _jsonl(US_EARN):
+        d = _dt(r.get("date"))
+        if d and r.get("confirmed"):
+            earn[str(r["ticker"]).upper()].append((d, str(r.get("hour"))))
+    usi: dict[str, list[tuple]] = defaultdict(list)
+    for r in _jsonl(US_INSIDER):
+        d = _dt(r.get("filing_date"))
+        if d:
+            usi[str(r["ticker"]).upper()].append((d, str(r.get("owner")), float(r.get("value") or 0)))
+    _EVT.update({"kr": kr, "terms": terms, "ins": ins, "plans": plans, "earn": earn, "usi": usi,
+                 "ok": {"dart": DART_EVENTS_12M.exists(), "terms": KR_TERMS.exists(), "ins": KR_INSIDER.exists(),
+                        "plans": KR_PLANS.exists(), "earn": US_EARN.exists(), "usi": US_INSIDER.exists()}})
+    return _EVT
+
+
+def _days_since(events: list[tuple], sig: _date, kind: str | None = None) -> int | None:
+    """가장 최근(신호일 이전) 공시까지의 일수. 없으면 None."""
+    best = None
+    for e in events:
+        if kind is not None and e[1] != kind:
+            continue
+        if e[0] <= sig:
+            n = (sig - e[0]).days
+            best = n if best is None or n < best else best
+    return best
+
+
+def _cluster(events: list[tuple], sig: _date, days: int = 7, positive: bool = True) -> tuple[int, float]:
+    """(신호일−days ~ 신호일) 보고 중 (positive면 증가분만) 서로 다른 보고자 수·합계."""
+    who = set(); tot = 0.0
+    for d, name, val in events:
+        gap = (sig - d).days
+        if gap < 0 or gap > days:
+            continue
+        if positive and val <= 0:
+            continue
+        who.add(name); tot += val
+    return len(who), tot
+
+
+def event_features(t: str, sig_date: str, market: str, dates: list[str], i: int) -> dict:
+    """원장 결합 특성(신호일 기준). dates[i] = 신호봉. 이벤트 풀 통과 여부는 event_pool_pass가 판단."""
+    ev = _load_events(); ok = ev["ok"]; sig = _date.fromisoformat(sig_date); f: dict = {}   # type: ignore[index]
+    nxt = _date.fromisoformat(dates[i + 1]) if i + 1 < len(dates) else None
+    if market == "KR":
+        kr = ev["kr"].get(t, [])   # type: ignore[index]
+        f["dart_ok"] = bool(ok["dart"]) and sig_date >= DART_BACKFILL_START
+        for k in ("buyback", "major_holder_change", "rights_offering", "supply_contract", "bonus_issue"):
+            f[f"{k}_days"] = _days_since(kr, sig, k) if f["dart_ok"] else None
+        f["buyback_active"] = (False if (ok["terms"] and f["dart_ok"]) else None); f["buyback_start_next"] = False
+        f["exright_next"] = False
+        for r in ev["terms"].get(t, []):   # type: ignore[index]
+            dd = _dt(r.get("date"))
+            if not dd or dd > sig:
+                continue   # 공시 전 — 모른다
+            if r.get("kind") == "buyback" and r.get("method") == "market":
+                s0, s1 = _dt(r.get("start")), _dt(r.get("end"))
+                if s0 and s1 and s0 <= sig <= s1:
+                    f["buyback_active"] = True
+                if s0 and ((nxt is not None and nxt == s0) or (nxt is None and 1 <= (s0 - sig).days <= 4)):
+                    f["buyback_start_next"] = True   # 다음 봉 = 시작일(오늘 신호면 달력 근사)
+            if r.get("kind") == "bonus_issue":
+                R = _dt(r.get("record_date"))
+                if not R or R <= sig:
+                    continue
+                if nxt is not None:
+                    nn = _date.fromisoformat(dates[i + 2]) if i + 2 < len(dates) else None
+                    if nxt < R and (nn is None or nn >= R):
+                        f["exright_next"] = True   # 다음 봉이 기준일 직전 거래일 = 권리락일
+                elif 1 <= (R - sig).days <= 4:
+                    f["exright_next"] = True
+        n, tot = _cluster(ev["ins"].get(t, []), sig, 7, True)   # type: ignore[index]
+        f["insider_buy_n7"] = n if ok["ins"] else None; f["insider_buy_qty7"] = tot
+        f["plan_buy_days"] = None
+        if ok["plans"]:
+            best = None
+            for r in ev["plans"].get(t, []):   # type: ignore[index]
+                d = _dt(r.get("rcept_dt"))
+                if r.get("side") == "buy" and d and d <= sig:
+                    g = (sig - d).days; best = g if best is None or g < best else best
+            f["plan_buy_days"] = best
+    else:
+        f["earn_ok"] = bool(ok["earn"]); f["earn_react"] = False; f["earn_hour"] = None
+        prev = _date.fromisoformat(dates[i - 1]) if i >= 1 else None
+        for d, hour in ev["earn"].get(t.upper(), []):   # type: ignore[index]
+            # BMO: 발표일 당일이 반응봉 / AMC·DMH: 다음 거래일이 반응봉(발표일이 직전 봉 이상 ~ 신호봉 미만)
+            if (hour == "BMO" and d == sig) or (hour != "BMO" and prev is not None and prev <= d < sig):
+                f["earn_react"] = True; f["earn_hour"] = hour
+        n, tot = _cluster(ev["usi"].get(t.upper(), []), sig, 7, False)   # type: ignore[index]
+        f["insider_buy_n7"] = n if ok["usi"] else None; f["insider_buy_usd7"] = tot
+    return f
+
+
+def event_pool_pass(f: dict, market: str) -> list[str]:
+    out = []
+    if market == "US":
+        if f.get("earn_react") and f.get("gap") is not None and f["gap"] >= 8.0 and f.get("close_pos_up"):
+            out.append("xus_earn_gap")
+        if (f.get("insider_buy_n7") or 0) >= 2:
+            out.append("xus_insider")
+        if (f.get("vol_spike") is not None and f["vol_spike"] >= 3.0 and abs(f["chg"]) < 3.0
+                and f.get("vol_max60") and f.get("spike_prior20") == 0):
+            out.append("xus_volfirst")
+    else:
+        if (f.get("insider_buy_n7") or 0) >= 2:
+            out.append("xkr_insider")
+        if f.get("plan_buy_days") is not None and f["plan_buy_days"] <= 3:
+            out.append("xkr_plan_buy")
+        if f.get("exright_next"):
+            out.append("xkr_exright")
+        if f.get("buyback_start_next"):
+            out.append("xkr_buyback_start")
+    return out
 
 def _rank_key(rule: str, c: dict) -> float:
     g = lambda k, dflt: c[k] if c.get(k) is not None else dflt
@@ -198,11 +408,13 @@ def build(market: str, *, start: str | None = None) -> tuple[dict, dict]:
         b = _load_bars(p)
         if len(b) < MIN_HISTORY + 1:
             continue
+        vctx = volume_context(b)
+        bdates = [x[0] for x in b]
         for i in range(MIN_HISTORY, len(b)):
             sig_date = b[i][0]
             if sig_date < start or not bar_complete(sig_date, market):
                 continue   # 미완성 봉(당일 장중 KR·미마감 US)은 신호로 쓰지 않는다 — 풀 통계·탈락 후보에도 섞이지 않게
-            f = featurize(b, i, market)
+            f = featurize(b, i, market, vctx)
             if f is None:
                 continue
             f["ticker"] = t
@@ -210,6 +422,9 @@ def build(market: str, *, start: str | None = None) -> tuple[dict, dict]:
             if f["chg"] < 0:
                 breadth[sig_date][1] += 1
             hits = pool_pass(f, market)
+            if f["dvol"] is not None and f["dvol"] >= (US_DVOL_MIN_M if market == "US" else KR_DVOL_MIN_EOK) and (market == "US" or f["price"] >= 1000):
+                f.update(event_features(t, sig_date, market, bdates, i))   # 원장 결합(유동성 문턱 통과 종목만)
+                hits = hits + event_pool_pass(f, market)
             if not hits:
                 if (abs(f["chg"]) >= NEARMISS_BAND["chg_abs"] or (f["vol_spike"] or 0) >= NEARMISS_BAND["vol_spike"]
                         or (f["cum5"] is not None and f["cum5"] <= NEARMISS_BAND["cum5"])):

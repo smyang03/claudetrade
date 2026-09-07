@@ -222,5 +222,73 @@ class GridAndEntryTest(unittest.TestCase):
         self.assertEqual(dp.featurize(b, 199, "US")["hi_break_n"], 199)
 
 
+class EventPoolAndFilterTest(unittest.TestCase):
+    """2026-09-07 신규 전략: 이벤트 특성 no-lookahead·풀 통과·필터 키(feat_range/require_true/feat_exclude_range)."""
+
+    def test_event_features_only_use_disclosures_on_or_before_signal(self):
+        import datetime as _d
+        dp._EVT.clear()
+        dp._EVT.update({"kr": {"000001": [(_d.date(2026, 1, 10), "buyback"), (_d.date(2026, 1, 20), "major_holder_change")]},
+                        "terms": {"000001": [{"kind": "buyback", "method": "market", "date": "2026-01-10", "start": "2026-01-12", "end": "2026-03-10"},
+                                             {"kind": "bonus_issue", "date": "2026-01-05", "record_date": "2026-01-16"}]},
+                        "ins": {"000001": [(_d.date(2026, 1, 13), "갑", 1000.0), (_d.date(2026, 1, 14), "을", 500.0), (_d.date(2026, 1, 14), "병", -300.0)]},
+                        "plans": {}, "earn": {"AAA": [(_d.date(2026, 1, 14), "AMC")]}, "usi": {},
+                        "ok": {"dart": True, "terms": True, "ins": True, "plans": False, "earn": True, "usi": False}})
+        try:
+            dates = ["2026-01-09", "2026-01-12", "2026-01-13", "2026-01-14", "2026-01-15", "2026-01-16"]
+            f = dp.event_features("000001", "2026-01-14", "KR", dates, 3)
+            self.assertEqual(f["buyback_days"], 4)                  # 01-10 공시 → 01-14 신호
+            self.assertIsNone(f["major_holder_change_days"])        # 01-20 공시는 미래 → 모른다
+            self.assertTrue(f["buyback_active"])                    # 본문 기간 01-12~03-10
+            self.assertEqual(f["insider_buy_n7"], 2)                # 증가(+) 보고자 갑·을, 병(−)은 제외
+            self.assertTrue(f["exright_next"])                      # 기준일 01-16 → 권리락일 01-15 = 다음 봉
+            self.assertIn("xkr_insider", dp.event_pool_pass(f, "KR")); self.assertIn("xkr_exright", dp.event_pool_pass(f, "KR"))
+            f0 = dp.event_features("000001", "2026-01-09", "KR", dates, 0)
+            self.assertIsNone(f0["buyback_days"])                   # 공시 전 신호 → 결측(fail-closed)
+            fe = dp.event_features("AAA", "2026-01-15", "US", dates, 4)
+            self.assertTrue(fe["earn_react"])                       # AMC 01-14 → 반응봉 01-15
+            fe2 = dp.event_features("AAA", "2026-01-14", "US", dates, 3)
+            self.assertFalse(fe2["earn_react"])                     # 발표 당일 봉은 AMC면 반응봉 아님
+            fe.update({"gap": 9.0, "close_pos_up": True})
+            self.assertIn("xus_earn_gap", dp.event_pool_pass(fe, "US"))
+            old = dp.DART_BACKFILL_START
+            dp.DART_BACKFILL_START = "2026-02-01"
+            try:
+                self.assertFalse(dp.event_features("000001", "2026-01-14", "KR", dates, 3)["dart_ok"])   # 백필 창 밖 → 모름
+            finally:
+                dp.DART_BACKFILL_START = old
+        finally:
+            dp._EVT.clear()
+
+    def test_volume_context_first_event_flags(self):
+        b = _bars(90)
+        b[70] = (b[70][0], 100.0, 101.0, 99.0, 100.5, 5_000_000.0)   # 5배, 최초
+        flags, vols = dp.volume_context(b)
+        self.assertEqual(flags[70], 1); self.assertEqual(sum(flags[:70]), 0)
+        f = dp.featurize(b, 70, "US", (flags, vols))
+        self.assertTrue(f["vol_max60"]); self.assertEqual(f["spike_prior20"], 0)
+        self.assertIn("xus_volfirst", dp.event_pool_pass({**f, "insider_buy_n7": None, "earn_react": False}, "US"))
+        f2 = dp.featurize(b, 71, "US", (flags, vols))   # 다음 봉: 직전 20봉에 3배 사건 1회 → 최초 아님
+        self.assertEqual(f2["spike_prior20"], 1)
+
+    def test_candidate_filter_keys(self):
+        flt_in = {"chg_le": -5.0, "feat_range": {"buyback_days": [0, 30]}}
+        self.assertTrue(vb.candidate_filter_pass({"chg": -6.0, "buyback_days": 12}, flt_in))
+        self.assertFalse(vb.candidate_filter_pass({"chg": -6.0, "buyback_days": 45}, flt_in))
+        self.assertFalse(vb.candidate_filter_pass({"chg": -6.0, "buyback_days": None}, flt_in))   # 결측 = 불통과
+        flt_ex = {"chg_le": -5.0, "require_true": ["dart_ok"], "feat_exclude_range": {"major_holder_change_days": [0, 7]}}
+        self.assertFalse(vb.candidate_filter_pass({"chg": -6.0, "dart_ok": True, "major_holder_change_days": 3}, flt_ex))
+        self.assertTrue(vb.candidate_filter_pass({"chg": -6.0, "dart_ok": True, "major_holder_change_days": None}, flt_ex))
+        self.assertTrue(vb.candidate_filter_pass({"chg": -6.0, "dart_ok": True, "major_holder_change_days": 30}, flt_ex))
+        self.assertFalse(vb.candidate_filter_pass({"chg": -6.0, "dart_ok": False}, flt_ex))   # 원장 없음 → 배제 판단 불가 → 불통과
+
+    def test_new_arms_registered_as_candidate_views(self):
+        ids = {s["id"]: s for s in vb.STRATEGIES}
+        for sid in ("c_kr_fallen_buyback30", "c_kr_fallen_nomajor", "c_kr_insider_cluster", "c_kr_exright", "c_us_earn_gap", "c_us_volfirst"):
+            self.assertIn(sid, ids); self.assertTrue(ids[sid].get("candidate")); self.assertIn(ids[sid]["universe"], ("xus", "xkr"))
+            self.assertIn(ids[sid]["pool"], {**dp.POOLS_US, **dp.POOLS_KR})
+        self.assertEqual(ids["c_kr_fallen_buyback30"]["backfill_start"], "2025-09-08")
+
+
 if __name__ == "__main__":
     unittest.main()
