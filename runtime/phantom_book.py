@@ -264,7 +264,7 @@ def open_arm_picks_from_ledger(bot: Any, *, session_date: str, price_fn: Callabl
     opened: list[str] = []
     for r in sorted(rows, key=lambda x: (x["arm"], int(x.get("pick_pos") or 0))):
         arm, t = str(r["arm"]), str(r["ticker"]).upper()
-        if arm.startswith(("xus_", "xkr_")):
+        if arm.startswith(("xus_", "xkr_", "c_")):
             summary["skipped"][f"{arm}:{t}"] = "discovery_arm_not_phantom"   # 탐색 원장은 유령 대상 아님(09-07)
             continue
         if arm == LIVE_MIRROR_ARM:

@@ -127,7 +127,7 @@ class GridAndEntryTest(unittest.TestCase):
         src = (ROOT / "tools" / "observe_arm_picks_realtime.py").read_text(encoding="utf-8")
         self.assertIn('s.get("discovery")', src)
         src2 = (ROOT / "runtime" / "phantom_book.py").read_text(encoding="utf-8")
-        self.assertIn('startswith(("xus_", "xkr_"))', src2)
+        self.assertIn('startswith(("xus_", "xkr_", "c_"))', src2)
 
     def test_nearmiss_collected_outside_pools(self):
         with tempfile.TemporaryDirectory() as td:
@@ -157,6 +157,26 @@ class GridAndEntryTest(unittest.TestCase):
         self.assertTrue(dp.bar_complete("2026-09-07", "KR", now=datetime(2026, 9, 7, 16, 0)))
         self.assertFalse(dp.bar_complete("2026-09-04", "US", now=datetime(2026, 9, 5, 5, 0)))
         self.assertTrue(dp.bar_complete("2026-09-04", "US", now=datetime(2026, 9, 5, 6, 0)))
+
+    def test_candidate_filter_and_forward_start(self):
+        s = next(x for x in vb.STRATEGIES if x["id"] == "c_kr_fallen_regime")
+        self.assertEqual(s["universe"], "xkr"); self.assertTrue(s["candidate"]); self.assertNotIn("discovery", s)
+        ok = {"chg": -5.5, "regime": {"idx_above_ma20": False}}
+        self.assertTrue(vb.candidate_filter_pass(ok, s["filter"]))
+        self.assertFalse(vb.candidate_filter_pass({"chg": -4.9, "regime": {"idx_above_ma20": False}}, s["filter"]))
+        self.assertFalse(vb.candidate_filter_pass({"chg": -6.0, "regime": {"idx_above_ma20": True}}, s["filter"]))
+        self.assertFalse(vb.candidate_filter_pass({"chg": -6.0, "regime": {}}, s["filter"]))   # 국면 결측은 통과 금지
+        orig = (vb._x_sessions, vb.entry_of)
+        cands = [{"ticker": "A", "chg": -6.0, "dvol": 30, "signal_date": "2026-09-05", "pool_n": 2, "ranks": {}, "regime": {"idx_above_ma20": False}},
+                 {"ticker": "B", "chg": -6.0, "dvol": 30, "signal_date": "2026-09-05", "pool_n": 2, "ranks": {}, "regime": {"idx_above_ma20": True}}]
+        vb._x_sessions = lambda m: {"xkr_fallen3": {"2026-09-05": cands, "2026-09-08": [dict(cands[0], signal_date="2026-09-08")]}}
+        vb.entry_of = lambda t, sd, market="US", hold=7: (100.0, [("x", 100.0, 101.0, 99.0, 100.5, 1)])
+        try:
+            con = sqlite3.connect(":memory:"); vb.ensure_schema(con); vb.open_new_trades(con, {}, {}, {}, {})
+            rows = con.execute("SELECT session_date, ticker, backfill FROM trades WHERE strategy_id='c_kr_fallen_regime' ORDER BY 1").fetchall()
+            self.assertEqual(rows, [("2026-09-05", "A", 1), ("2026-09-08", "A", 0)])   # B는 국면 위라 제외, 09-08부터 forward
+        finally:
+            vb._x_sessions, vb.entry_of = orig
 
     def test_kr_breakout_window_120(self):
         b = _bars(200, drift=0.0)

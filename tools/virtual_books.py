@@ -214,6 +214,43 @@ STRATEGIES += [
     {"id": "xkr_volspike", "pool": "xkr_volspike", **_X_KR, "note": "X — 거래량 3배↑ & |전일|<3% 전량"},
 ]
 
+# ── 후보 arm (2026-09-07 저녁, 사전등록 family C_REGIME_V1 — docs/reports/preregistration_regime_gate_20260907.md) ─────────
+# 15개월 재계산에서 무조건 실행은 전부 무의미했고, 살아남은 조건 둘: ① 급락 매수 × 지수 MA20 아래 국면 ② 완만한 급락.
+# 탐색 풀에서 filter로 잘라 통과자 전량(한도 없음). 계약은 레퍼런스와 동일. forward는 2026-09-08 세션부터(도입 시점 = 사전등록 시점).
+CANDIDATE_FORWARD_START = "2026-09-08"
+_C_US = dict(universe="xus", pick="all", daily_cap=1_000_000, slots=1_000_000, order_krw=540_000, capital_krw=1_000_000_000_000,
+             candidate=True, backfill_start=DISCOVERY_START, forward_start=CANDIDATE_FORWARD_START)
+_C_KR = dict(universe="xkr", pick="all", daily_cap=1_000_000, slots=1_000_000, order_krw=220_000, capital_krw=1_000_000_000_000,
+             candidate=True, backfill_start=DISCOVERY_START, forward_start=CANDIDATE_FORWARD_START)
+STRATEGIES += [
+    {"id": "c_kr_fallen_regime", "pool": "xkr_fallen3", **_C_KR, "filter": {"chg_le": -5.0, "idx_above_ma20": False},
+     "note": "C1 — KR 전일 ≤−5% & 지수 MA20 아래 국면 전량. 15개월 재계산 +2.13%(t 2.0, 승 60.6%) vs 위 −1.49%. 반증: forward 30건 클러스터 t<0 또는 MA20 위 부분집합과 부호 차이 소멸"},
+    {"id": "c_us_fallen_regime", "pool": "xus_fallen3", **_C_US, "filter": {"chg_le": -5.0, "idx_above_ma20": False},
+     "note": "C2 — US 전일 ≤−5% & SPY MA20 아래 국면 전량. 15개월 +1.04%(t 2.0) vs 위 −0.21%. 반증: 동일"},
+    {"id": "c_us_slow8", "pool": "xus_slow8", **_C_US, "filter": {},
+     "note": "C3 — 5일 ≤−8% 완만하락(단일 −5% 없음) 전량. −12% 버전이 두 반기 모두 양수(+1.04%, t 1.65)의 확장. 반증: forward 30건 t<0"},
+    {"id": "c_us_slow8_regime", "pool": "xus_slow8", **_C_US, "filter": {"idx_above_ma20": False},
+     "note": "C4 — C3 × SPY MA20 아래 국면. 반증: C3 대비 개선 없음"},
+]
+
+
+def candidate_filter_pass(c: dict, flt: dict) -> bool:
+    """후보 arm 필터: chg_le / cum5_le / idx_above_ma20(국면, 신호일 기준) / dvol_ge."""
+    if not flt:
+        return True
+    if "chg_le" in flt and (c.get("chg") is None or c["chg"] > flt["chg_le"]):
+        return False
+    if "cum5_le" in flt and (c.get("cum5") is None or c["cum5"] > flt["cum5_le"]):
+        return False
+    if "dvol_ge" in flt and (c.get("dvol") is None or c["dvol"] < flt["dvol_ge"]):
+        return False
+    if "idx_above_ma20" in flt:
+        v = (c.get("regime") or {}).get("idx_above_ma20")
+        if v is None or bool(v) != bool(flt["idx_above_ma20"]):
+            return False
+    return True
+
+
 # 출구 계약 격자 — 탐색 arm의 CLOSED 행마다 같은 진입에 대해 여러 출구를 함께 정산해 meta.grid에 적는다(사후 계약 스윕용).
 # (tp, sl, hold, be_lock). hold는 진입일 포함 세션 수. 'hold_only'는 TP/SL 없이 만기 종가.
 CONTRACT_GRID = {
@@ -786,7 +823,10 @@ def strategy_passers(s: dict, sessions_us: dict, sessions_kr: dict, sd: str,
     if s["universe"] in ("krevent", "krlimitup"):
         return list(kr_event_sessions_cached().get(s["universe"], {}).get(sd, []))
     if s["universe"] in ("xus", "xkr"):
-        return list(_x_sessions("US" if s["universe"] == "xus" else "KR").get(s["pool"], {}).get(sd, []))
+        cands = list(_x_sessions("US" if s["universe"] == "xus" else "KR").get(s["pool"], {}).get(sd, []))
+        if s.get("filter"):
+            cands = [c for c in cands if candidate_filter_pass(c, s["filter"])]
+        return cands
     if s["universe"] == "slowus":
         return list((sessions_slow or {}).get(sd, []))
     if s["universe"] == "lpus":
@@ -940,7 +980,7 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
         cash = book_cash(con, s)
         start_date = str(s.get("backfill_start", BACKFILL_START))
         # 탐색 arm은 최근 세션(가격 캐시 경합 창)을 종목 단위로 재확인한다 — 세션 단위 done이면 일부 종목 누락이 영구화(Codex D1)
-        recent_keys = sorted(all_dates)[-DISCOVERY_RECHECK_SESSIONS:] if s.get("discovery") else []
+        recent_keys = sorted(all_dates)[-DISCOVERY_RECHECK_SESSIONS:] if (s.get("discovery") or s.get("candidate")) else []
         for sd in sorted(all_dates):
             if sd < start_date or (sd in done and sd not in recent_keys):
                 continue
@@ -966,12 +1006,12 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
                     break
                 eo = entry_of(c["ticker"], sd, market=market)
                 if eo is None:
-                    if not s.get("discovery"):
+                    if not (s.get("discovery") or s.get("candidate")):
                         record_entry_skip(s, sd, c["ticker"], market, all_dates)
                     continue
                 entry, _win = eo
-                if s.get("discovery"):
-                    meta = {"pool": s["pool"], "signal_date": c.get("signal_date"), "pool_n": c.get("pool_n"),
+                if s.get("discovery") or s.get("candidate"):
+                    meta = {"pool": s["pool"], "signal_date": c.get("signal_date"), "pool_n": c.get("pool_n"), "filter": s.get("filter"),
                             "lineage": {"code_commit": _CODE_COMMIT, "engine": [TP, SL, BE, HOLD_SESSIONS, FEE_US, FEE_KR],
                                         "price_source": "data/price csv (yfinance/KIS 캐시, 수정주가 미보장)", "entry_rule": "next_bar_open"},
                             "basis": f"{s['pool']} · 전일 {c.get('chg', 0):+.1f}% · 거래대금 {c.get('dvol', 0):,.0f} · 풀 {c.get('pool_n')}건",
@@ -985,7 +1025,7 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
                            entry_price, notional_krw, backfill, pick_pos, status, opened_at, meta)
                        VALUES (?,?,?,?,?,?,?, 'OPEN', ?, ?)""",
                     (s["id"], sd, c["ticker"], entry, s["order_krw"],
-                     1 if sd < FORWARD_START else 0, pos, now,
+                     1 if sd < str(s.get("forward_start", FORWARD_START)) else 0, pos, now,
                      json.dumps(meta, ensure_ascii=False)))
                 if con.execute("SELECT changes()").fetchone()[0]:
                     opened += 1
@@ -1297,7 +1337,7 @@ def report(con: sqlite3.Connection, sessions_us: dict | None = None,
         wr = 100.0 * sum(1 for n in nets if n > 0) / len(nets) if nets else 0.0
         avg = sum(nets) / len(nets) if nets else 0.0
         np_s = "  -  "
-        if sessions_us is not None and not s.get("discovery"):
+        if sessions_us is not None and not (s.get("discovery") or s.get("candidate")):
             pct = null_percentile(con, s, sessions_us, sessions_kr or {})
             if pct is not None:
                 np_s = f"{pct:5.1f}"

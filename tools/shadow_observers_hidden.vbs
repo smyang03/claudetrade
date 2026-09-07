@@ -58,3 +58,5 @@ sh.Run py & " """ & base & "earnings_pit_ledger.py""", 0, True
 sh.Run py & " """ & base & "kr_ipo_calendar.py"" --pages 2", 0, True
 ' ⑬ discovery_breakdown — 탐색 원장 조건 분해 JSON/MD 갱신(09-07). 대시보드 /api/discovery가 읽는다. 판정 아님(후보 생성).
 sh.Run py & " """ & base & "discovery_breakdown.py"" --min-n 30", 0, True
+' ⑭ avoid_filter_counterfactual — 회피 필터 반사실(사전등록 C_REGIME_V1 §4). 기존 arm 계약 불변, 제외/잔존 성적만 기록.
+sh.Run py & " """ & base & "avoid_filter_counterfactual.py""", 0, True
