@@ -55,6 +55,7 @@ PARAMS = {
 FAMILY_OF = {"b2_leader_pb": "B_TREND_V1",
              "c_kr_fallen_regime": "C_REGIME_V1", "c_us_fallen_regime": "C_REGIME_V1",
              "c_us_slow8": "C_REGIME_V1", "c_us_slow8_regime": "C_REGIME_V1", "c_kr_fallen5_nobio": "C_REGIME_V1",
+             "c_us_panic_all": "C_PANIC_V1", "c_us_panic_top5": "C_PANIC_V1",
              # 09-04 KR 공시 이벤트 family (별도 가설 — F0 max-stat에 섞지 않는다)
              "kr_bonus_issue": "F6_KR_EVENT_V1", "kr_limitup_catalyst": "F7_KR_LIMITUP_V1"}   # 나머지 활성 arm은 F0_FALLEN_V1
 OUT_DIR = ROOT / "data" / "shadow"

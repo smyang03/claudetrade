@@ -178,6 +178,13 @@ class GridAndEntryTest(unittest.TestCase):
         finally:
             vb._x_sessions, vb.entry_of = orig
 
+    def test_breadth_filter(self):
+        s = next(x for x in vb.STRATEGIES if x["id"] == "c_us_panic_top5")
+        self.assertEqual((s["pick"], s["daily_cap"], s["hold"], s["tp"], s["sl"]), ("dvol_desc", 5, 10, 20.0, -25.0))
+        self.assertTrue(vb.candidate_filter_pass({"chg": -6.0, "regime": {"breadth_down_pct": 70.0}}, s["filter"]))
+        self.assertFalse(vb.candidate_filter_pass({"chg": -6.0, "regime": {"breadth_down_pct": 60.0}}, s["filter"]))
+        self.assertFalse(vb.candidate_filter_pass({"chg": -6.0, "regime": {}}, s["filter"]))
+
     def test_exclude_sectors_filter(self):
         s = next(x for x in vb.STRATEGIES if x["id"] == "c_kr_fallen5_nobio")
         orig = dict(vb._SECTOR_CACHE); vb._SECTOR_CACHE.clear(); vb._SECTOR_CACHE.update({"KR": {"000100": "제약·바이오", "005930": "전자·반도체"}, "US": {}})

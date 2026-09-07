@@ -233,6 +233,13 @@ STRATEGIES += [
      "note": "C4 — C3 × SPY MA20 아래 국면. 반증: C3 대비 개선 없음"},
     # C5 (09-07 저녁, 운영자 "국면 무관, 매물 소진 종목 고르기"): 전반기 학습→후반기 검증에서 유일하게 살아남은 배제 규칙 = KR 제약·바이오 제외.
     # 일봉 특성(낙폭·거래량·순위)은 후반기에서 정반대로 작동해 배제 필터로 기각. 장중 정보(체결강도·호가)는 별도 수집 과제.
+    # C6/C7 (09-07 밤, alpha_hunt 64,900셀 H1→H2 생존 1위): 시장 전체 급락일(하락 종목 비율 ≥65%) 다음 시가 급락주 매수 → 10세션 보유.
+    # 15개월: breadth≥73.5 전량 hold_d10 +4.7%(t 5.5), K5 +3.8%(t 2.2); 문턱 50~80% 전 구간 단조, 낙폭 깊을수록 큼(≤−7% +6.3%).
+    # 장기 OOS(2005~, 지수 ETF 프록시): IWM D10 +0.4%(t 0.9), 2008·2020·2022 음수 → 상승 국면 의존·급락 연쇄 꼬리 위험. 개별주 초과분은 장기 검증 불가.
+    {"id": "c_us_panic_all", "pool": "xus_fallen3", **_C_US, "filter": {"chg_le": -5.0, "breadth_ge": 65.0}, "tp": 20.0, "sl": -25.0, "hold": 10,
+     "note": "C6 — US 전일 ≤−5% & 하락 종목 비율 ≥65% 전량, TP20/SL25/D10. 반증: forward 10세션 세션평균 ≤ 0 또는 IWM D10 대비 초과 없음"},
+    {"id": "c_us_panic_top5", "pool": "xus_fallen3", **{**_C_US, "pick": "dvol_desc", "daily_cap": 5}, "filter": {"chg_le": -5.0, "breadth_ge": 65.0}, "tp": 20.0, "sl": -25.0, "hold": 10,
+     "note": "C7 — C6의 실행 형태(거래대금 큰순 5종목·54만). 15개월 K5 hold_d10 +3.3~5.1%(t 2.2~3.7). 반증: 동일"},
     {"id": "c_kr_fallen5_nobio", "pool": "xkr_fallen3", **_C_KR, "filter": {"chg_le": -5.0, "exclude_sectors": ["제약·바이오"]},
      "note": "C5 — KR 전일 ≤−5% 전량, 제약·바이오 제외(국면 무관). 근거: H1 학습 규칙 중 H2에서도 유효한 유일한 배제(−2.92%, t −2.5). 반증: forward 30세션에서 바이오 부분집합이 나머지보다 낮지 않음"},
 ]
@@ -251,6 +258,10 @@ def candidate_filter_pass(c: dict, flt: dict) -> bool:
     if "idx_above_ma20" in flt:
         v = (c.get("regime") or {}).get("idx_above_ma20")
         if v is None or bool(v) != bool(flt["idx_above_ma20"]):
+            return False
+    if "breadth_ge" in flt:
+        b = (c.get("regime") or {}).get("breadth_down_pct")
+        if b is None or b < flt["breadth_ge"]:
             return False
     if flt.get("exclude_sectors"):
         if _sector_of(c.get("ticker"), "KR" if str(c.get("pool", "")).startswith("xkr") else "US") in set(flt["exclude_sectors"]):
