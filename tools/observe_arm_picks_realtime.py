@@ -88,8 +88,8 @@ def compute_picks(session_date: str) -> list[dict]:
     for s in vb.STRATEGIES:
         if s.get("retired"):
             continue
-        if s["universe"] in ("kr", "krevent", "krlimitup"):
-            continue  # KR은 다음날 09:00 진입 — 이 보드(US 밤) 대상 아님
+        if s["universe"] in ("kr", "krevent", "krlimitup", "xkr", "xus") or s.get("discovery"):
+            continue  # KR은 다음날 09:00 진입 — 이 보드(US 밤) 대상 아님. 탐색 arm(x*)은 유령·호가 경로 대상 아님(09-07 Codex)
         # S11/B2: 신호일 = 직전 세션, 진입 = 이번 세션 (virtual_books 규약)
         key_sd = session_date
         if s["universe"] in ("slowus", "lpus"):

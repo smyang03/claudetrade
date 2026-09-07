@@ -197,6 +197,7 @@ STRATEGIES: list[dict] = [
 # 진입(한도 없음)하고 특성값·풀 내 순위·국면 태그·출구 계약 격자·경로를 meta에 남긴다. 승격 게이트·널·겹침 보고·텔레그램
 # 상세에서 제외(후보 생성기이지 승격 근거가 아님). 계약(TP12/SL25/D5, 비용)은 실운영과 동일. 백필은 2025-06-02부터.
 DISCOVERY_START = "2025-06-02"
+DISCOVERY_RECHECK_SESSIONS = 10   # 최근 N 세션은 done이어도 종목 단위 재확인(INSERT OR IGNORE)
 _X_US = dict(universe="xus", pick="all", daily_cap=1_000_000, slots=1_000_000, order_krw=540_000,
              capital_krw=1_000_000_000_000, discovery=True, backfill_start=DISCOVERY_START)
 _X_KR = dict(universe="xkr", pick="all", daily_cap=1_000_000, slots=1_000_000, order_krw=220_000,
@@ -216,7 +217,9 @@ STRATEGIES += [
 # 출구 계약 격자 — 탐색 arm의 CLOSED 행마다 같은 진입에 대해 여러 출구를 함께 정산해 meta.grid에 적는다(사후 계약 스윕용).
 # (tp, sl, hold, be_lock). hold는 진입일 포함 세션 수. 'hold_only'는 TP/SL 없이 만기 종가.
 CONTRACT_GRID = {
-    "tp12_sl25_d5_be": (12.0, -25.0, 5, True),   # 실운영 계약(US) — KR은 be_lock False로 정산됨
+    "tp12_sl25_d7_be": (12.0, -25.0, HOLD_SESSIONS, True),   # 정본 계약(진입일 포함 7봉, US는 BE락·KR은 BE 없음 → KR에선 d7과 동일)
+    "tp12_sl25_d7":    (12.0, -25.0, HOLD_SESSIONS, False),
+    "tp12_sl25_d5_be": (12.0, -25.0, 5, True),   # 실험: 5봉 조기 만기(사전등록 D5→D7 전환 전 계약)
     "tp12_sl25_d5":    (12.0, -25.0, 5, False),
     "tp8_sl10_d3":     (8.0, -10.0, 3, False),
     "tp6_sl6_d2":      (6.0, -6.0, 2, False),
@@ -226,6 +229,14 @@ CONTRACT_GRID = {
     "hold_d10":        (999.0, -999.0, 10, False),
 }
 GRID_HOLD_MAX = 10
+
+
+_CODE_COMMIT = ""
+try:
+    import subprocess as _sp
+    _CODE_COMMIT = _sp.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(ROOT), capture_output=True, text=True, timeout=10).stdout.strip()
+except Exception:
+    pass
 
 
 def _x_sessions(market: str) -> dict:
@@ -403,6 +414,15 @@ def reconcile(con: sqlite3.Connection) -> bool:
             (s["id"],)).fetchone()
         if row is not None and abs(float(row[0]) - float(realized)) > 1.0:
             problems.append(f"{s['id']} 실현손익 대사 불일치 (원장 {realized:.0f} vs 북 {row[0]:.0f})")
+    # 탐색 원장 완전성: 최근 세션의 풀 통과 수와 기록 수 대사(경고만 — 봉 미완성 세션은 다음 실행에서 채워짐)
+    try:
+        for (market, key, pool, n_pass) in con.execute(
+                "SELECT market, session_key, pool, n FROM discovery_pool_stats WHERE session_key >= date('now','-14 day') ORDER BY session_key DESC").fetchall():
+            n_rows = con.execute("SELECT COUNT(*) FROM trades WHERE strategy_id=? AND session_date=?", (pool, key)).fetchone()[0]
+            if n_pass and n_rows < n_pass:
+                print(f"[VIRTUAL] 탐색 완전성 경고 {pool} {key}: 통과 {n_pass} vs 기록 {n_rows} (봉 미완성이면 다음 실행에서 보충)")
+    except sqlite3.Error:
+        pass
     if problems:
         print("[VIRTUAL] RECONCILE_REQUIRED — 성과 확정 금지:")
         for p in problems:
@@ -886,8 +906,10 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
             "SELECT DISTINCT session_date FROM trades WHERE strategy_id=?", (s["id"],))}
         cash = book_cash(con, s)
         start_date = str(s.get("backfill_start", BACKFILL_START))
+        # 탐색 arm은 최근 세션(가격 캐시 경합 창)을 종목 단위로 재확인한다 — 세션 단위 done이면 일부 종목 누락이 영구화(Codex D1)
+        recent_keys = sorted(all_dates)[-DISCOVERY_RECHECK_SESSIONS:] if s.get("discovery") else []
         for sd in sorted(all_dates):
-            if sd < start_date or sd in done:
+            if sd < start_date or (sd in done and sd not in recent_keys):
                 continue
             if s.get("forward_only") and sd < FORWARD_START:
                 continue
@@ -917,6 +939,8 @@ def open_new_trades(con: sqlite3.Connection, sessions_us: dict[str, list[dict]],
                 entry, _win = eo
                 if s.get("discovery"):
                     meta = {"pool": s["pool"], "signal_date": c.get("signal_date"), "pool_n": c.get("pool_n"),
+                            "lineage": {"code_commit": _CODE_COMMIT, "engine": [TP, SL, BE, HOLD_SESSIONS, FEE_US, FEE_KR],
+                                        "price_source": "data/price csv (yfinance/KIS 캐시, 수정주가 미보장)", "entry_rule": "next_bar_open"},
                             "basis": f"{s['pool']} · 전일 {c.get('chg', 0):+.1f}% · 거래대금 {c.get('dvol', 0):,.0f} · 풀 {c.get('pool_n')}건",
                             "feat": {k: (round(v, 3) if isinstance(v, float) else v) for k, v in c.items()
                                      if k not in ("ticker", "ranks", "regime", "pool", "pool_n", "signal_date", "date")},
@@ -1189,11 +1213,13 @@ def send_daily_summary(con: sqlite3.Connection, *, opened: int, settled: int,
         today_open = con.execute(
             f"SELECT strategy_id, ticker FROM trades WHERE backfill=0 AND opened_at>=? AND {not_x} ORDER BY strategy_id",
             (datetime.now(timezone.utc).strftime("%Y-%m-%d"),)).fetchall()
-        x_today = con.execute(f"SELECT COUNT(*) FROM trades WHERE opened_at>=? AND NOT ({not_x})",
-                              (datetime.now(timezone.utc).strftime("%Y-%m-%d"),)).fetchone()[0]
+        today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        x_today = con.execute(f"SELECT COUNT(*) FROM trades WHERE opened_at>=? AND NOT ({not_x})", (today_utc,)).fetchone()[0]
+        ref_opened = con.execute(f"SELECT COUNT(*) FROM trades WHERE opened_at>=? AND {not_x}", (today_utc,)).fetchone()[0]
+        ref_settled = con.execute(f"SELECT COUNT(*) FROM trades WHERE settled_at>=? AND {not_x}", (today_utc,)).fetchone()[0]
         x_total = con.execute(f"SELECT COUNT(*), SUM(status='CLOSED') FROM trades WHERE NOT ({not_x})").fetchone()
         lines = [f"🧪 [VIRTUAL] 가상 북 일일 요약 {today} — 실계좌 아님",
-                 f"오늘 진입 {opened} / 정산 {settled} / 대사 {'OK' if reconcile_ok else 'FAIL(성과 확정 금지)'}",
+                 f"오늘 진입 {ref_opened} / 정산 {ref_settled} (레퍼런스 arm 기준; 실행 전체 {opened}/{settled}) / 대사 {'OK' if reconcile_ok else 'FAIL(성과 확정 금지)'}",
                  f"forward 누적: 정산 {fwd_closed}건 · 미결제 {fwd_open}건 · 거래세션 {sessions} (게이트 50건/80세션)"]
         if today_open:
             lines.append("오늘 진입: " + ", ".join(f"{sid}:{tk}" for sid, tk in today_open[:12]))

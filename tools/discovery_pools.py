@@ -85,7 +85,7 @@ def featurize(b: list[tuple], i: int, market: str) -> dict | None:
     dv = c * v / (1e6 if market == "US" else 1e8)
     dv20 = st.mean(x[4] * x[5] for x in b[i - 19: i + 1]) / (1e6 if market == "US" else 1e8)
     hi20 = max(x[2] for x in b[i - 19: i + 1])
-    n_break = min(250, i)
+    n_break = min(120 if market == "KR" else 250, i)   # KR은 120봉(캐시 16개월), US는 최대 250봉
     prior_max = max(x[4] for x in b[i - n_break: i]) if n_break >= 120 else None
     streak = 0
     for j in range(i, 0, -1):
@@ -208,15 +208,14 @@ def build(market: str, *, start: str | None = None) -> tuple[dict, dict]:
     regime = _index_regime(market)
     for pid, days in per_day.items():
         for key, cands in days.items():
-            sd = cands[0]["signal_date"]
-            tot, dn = breadth.get(sd, [0, 0])
-            reg = {**regime.get(sd, {}), "breadth_down_pct": round(100.0 * dn / tot, 1) if tot else None, "universe_n": tot}
             for rule in RANK_RULES:
                 order = sorted(range(len(cands)), key=lambda j: _rank_key(rule, cands[j]))
                 for r, j in enumerate(order, start=1):
                     cands[j].setdefault("ranks", {})[rule] = r
             for c in cands:
-                c["regime"] = reg
+                sd = c["signal_date"]   # 후보별 자기 신호일 국면(US 세션 키는 다음 봉이라 결측 종목은 신호일이 다를 수 있음)
+                tot, dn = breadth.get(sd, [0, 0])
+                c["regime"] = {**regime.get(sd, {}), "breadth_down_pct": round(100.0 * dn / tot, 1) if tot else None, "universe_n": tot}
                 c["pool"] = pid
                 c["pool_n"] = len(cands)
     stats = {}

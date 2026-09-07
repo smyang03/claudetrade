@@ -42,7 +42,7 @@ def cluster_t(nets: list[float], sessions: list[str]) -> float | None:
     means = [st.mean(v) for v in by.values()]
     if len(means) < 5:
         return None
-    sd = st.pstdev(means)
+    sd = st.stdev(means)   # 표본 표준편차(소표본 t 과대 방지)
     return round(st.mean(means) / (sd / math.sqrt(len(means))), 2) if sd > 0 else None
 
 
@@ -62,6 +62,8 @@ def load(pool: str | None) -> list[dict]:
     args: tuple = ()
     if pool:
         q += " AND strategy_id=?"; args = (pool,)
+    # 성숙 코호트: 같은 (풀, 세션)에 OPEN이 남아 있으면 그 세션은 미성숙 — 빨리 정산된 TP만 먼저 보이는 선택편향 방지(Codex D1)
+    immature = {(r[0], r[1]) for r in con.execute("SELECT DISTINCT strategy_id, session_date FROM trades WHERE status='OPEN' AND strategy_id LIKE 'x%'")}
     out = []
     for sid, sd, tk, net, reason, bf, meta in con.execute(q, args):
         try:
@@ -70,6 +72,7 @@ def load(pool: str | None) -> list[dict]:
             m = {}
         f = m.get("feat") or {}
         out.append({"pool": sid, "session": sd, "ticker": tk, "net": float(net), "reason": reason, "backfill": int(bf or 0),
+                    "mature": (sid, sd) not in immature,
                     "chg": f.get("chg"), "dvol": f.get("dvol"), "max21": f.get("max21"), "from_high20": f.get("from_high20"),
                     "rank_dvol": (m.get("ranks") or {}).get("dvol_desc"), "regime": m.get("regime") or {}, "grid": m.get("grid") or {},
                     "half": ("H1" if sd < "2026-01-01" else "H2")})
@@ -91,8 +94,10 @@ def analyze(rows: list[dict], min_n: int) -> dict:
     for pool in sorted({r["pool"] for r in rows}):
         pr = [r for r in rows if r["pool"] == pool]
         market = "KR" if pool.startswith("xkr") else "US"
+        pr = [r for r in pr if r["mature"]]   # 미성숙 세션 제외(전 칸 공통)
         d = {"all": cell([(r["net"], r["session"]) for r in pr]),
              "forward": cell([(r["net"], r["session"]) for r in pr if not r["backfill"]]),
+             "note": "성숙 세션(OPEN 잔여 없음)만. forward=세션 09-01 이후이나 탐색 arm 도입은 09-07(사전등록 시점과 다름) · H1/H2=2026-01-01 전후 달력 분할",
              "by_half": {h: cell([(r["net"], r["session"]) for r in pr if r["half"] == h]) for h in ("H1", "H2")},
              "ladders": {"chg": ladder_cells(pr, "chg", LADDERS["chg"]), "rank_dvol": ladder_cells(pr, "rank_dvol", LADDERS["rank_dvol"]),
                          "dvol": ladder_cells(pr, "dvol", LADDERS["dvol_kr" if market == "KR" else "dvol_us"]),
@@ -121,10 +126,15 @@ def analyze(rows: list[dict], min_n: int) -> dict:
                     continue
                 sign = 1 if c["mean"] > 0 else -1
                 neigh = [cells[j] for j in (i - 1, i + 1) if 0 <= j < len(cells) and cells[j].get("n", 0) >= 10]
-                if neigh and any((x["mean"] > 0) != (sign > 0) for x in neigh):
-                    continue
-                cands.append({"ladder": lname, "cell": c["label"], "n": c["n"], "mean": c["mean"], "t": c["t"], "sign": sign})
-        d["needle_candidates"] = cands
+                if not neigh or any((x["mean"] > 0) != (sign > 0) for x in neigh):
+                    continue   # 유효 이웃이 없으면 통과시키지 않는다(문턱 안정성 미확인)
+                h1 = [r for r in pr if r["half"] == "H1"]; h2 = [r for r in pr if r["half"] == "H2"]
+                cands.append({"ladder": lname, "cell": c["label"], "n": c["n"], "mean": c["mean"], "t": c["t"],
+                              "kind": "buy" if sign > 0 else "avoid",
+                              "oos_halves_same_sign": None})
+        d["needle_candidates_buy"] = [x for x in cands if x["kind"] == "buy"]
+        d["needle_candidates_avoid"] = [x for x in cands if x["kind"] == "avoid"]
+        d["needle_candidates"] = cands   # 호환
         res["pools"][pool] = d
     return res
 
@@ -153,7 +163,9 @@ def to_md(res: dict) -> str:
             L += ["", "| 출구 계약(같은 진입) | n | 평균 | 승률 | t |", "|---|---:|---:|---:|---:|"]
             for name, c in d["grid"].items():
                 L.append(f"| {name} | {c['n']} | {c['mean']:+.2f} | {c['win_pct']} | {c['t'] if c['t'] is not None else '-'} |")
-        L += ["", "바늘 후보: " + (", ".join(f"{x['ladder']}={x['cell']} (n={x['n']}, {x['mean']:+.2f}%, t={x['t']})" for x in d["needle_candidates"]) or "없음"), ""]
+        L += ["", "매수 후보 칸: " + (", ".join(f"{x['ladder']}={x['cell']} (n={x['n']}, {x['mean']:+.2f}%, t={x['t']})" for x in d["needle_candidates_buy"]) or "없음"),
+              "회피 후보 칸: " + (", ".join(f"{x['ladder']}={x['cell']} (n={x['n']}, {x['mean']:+.2f}%, t={x['t']})" for x in d["needle_candidates_avoid"]) or "없음"),
+              "(반기 OOS·실운영 K=1 재계산은 후보별 수동 확인 — 자동화는 D2)", ""]
     return "\n".join(L) + "\n"
 
 

@@ -171,7 +171,7 @@ def market_sessions_since(con: sqlite3.Connection, market: str, start: str) -> i
             pass
     if not dates:
         dates = {r[0] for r in con.execute(
-            "SELECT DISTINCT session_date FROM trades WHERE session_date>=?", (start,))}
+            "SELECT DISTINCT session_date FROM trades WHERE session_date>=? AND strategy_id NOT LIKE 'x%'", (start,))}  # 탐색 arm 제외
     return len(dates)
 
 

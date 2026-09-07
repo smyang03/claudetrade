@@ -264,6 +264,9 @@ def open_arm_picks_from_ledger(bot: Any, *, session_date: str, price_fn: Callabl
     opened: list[str] = []
     for r in sorted(rows, key=lambda x: (x["arm"], int(x.get("pick_pos") or 0))):
         arm, t = str(r["arm"]), str(r["ticker"]).upper()
+        if arm.startswith(("xus_", "xkr_")):
+            summary["skipped"][f"{arm}:{t}"] = "discovery_arm_not_phantom"   # 탐색 원장은 유령 대상 아님(09-07)
+            continue
         if arm == LIVE_MIRROR_ARM:
             # 라이브 미러는 실제 봇의 REHEARSAL(브리지)만이 진입 근거다. 관측기 원장으로 만들면
             # 브리지가 BLOCKED(시가 이탈·슬롯·창)한 날에도 유령이 생겨 "실제 봇 결정"이 아니게 된다.
