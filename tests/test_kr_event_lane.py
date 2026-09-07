@@ -675,5 +675,43 @@ class ThreePointFidelityTest(unittest.TestCase):
         self.assertEqual(s["unpriced_pct"], 50.0)
 
 
+class PreopenFillTest(unittest.TestCase):
+    """2026-09-08 장전 확장: 07:30~08:59 판단 → 09:00 시가 유예 진입, 시가 급등·한도 재검사."""
+
+    def test_phase_of_preopen(self):
+        from datetime import datetime
+        self.assertEqual(k.phase_of(datetime(2026, 9, 8, 7, 45)), "PREOPEN")
+        self.assertEqual(k.phase_of(datetime(2026, 9, 8, 8, 55)), "PREOPEN")
+        self.assertEqual(k.phase_of(datetime(2026, 9, 8, 9, 0)), "KRX")
+        self.assertEqual(k.phase_of(datetime(2026, 9, 8, 7, 0)), "KRX")   # 07:30 전은 러너가 대기
+
+    def test_fill_runup_and_limits(self):
+        from datetime import datetime
+        with tempfile.TemporaryDirectory() as td:
+            old_p, old_f = k.PHANTOM_LEDGER, k.PREOPEN_FILL_LEDGER
+            k.PHANTOM_LEDGER = Path(td) / "ph.jsonl"; k.PREOPEN_FILL_LEDGER = Path(td) / "fill.jsonl"
+            try:
+                def mk(code, pc):
+                    return {"item": {"stock_code": code, "corp_name": "T" + code, "rcept_no": "r" + code},
+                            "row": {"kind": "supply_contract", "session_date": "2026-09-08", "ts_decided": "2026-09-08T07:40:00+09:00",
+                                    "rcept_no": "r" + code, "basis": "b", "liq": {"prev_close": pc}}}
+                quotes = {"000001": {"price": 10300.0, "source": "naver_polling"},   # +3% → 진입
+                          "000002": {"price": 10900.0, "source": "naver_polling"},   # +9% → SKIP(open_runup)
+                          "000003": None}                                            # 호가 없음
+                now = datetime(2026, 9, 8, 9, 0, 40)
+                opened, rows = k.fill_preopen_entries([mk("000001", 10000.0), mk("000002", 10000.0), mk("000003", 10000.0)],
+                                                      lambda c: quotes.get(c), now=now, open_n=0, new_today=0)
+                self.assertEqual(len(opened), 1); self.assertEqual(opened[0]["ticker"], "000001")
+                self.assertEqual(opened[0]["contract"], "kr_event_v1_preopen"); self.assertEqual(opened[0]["opened_at"][11:19], "09:00:40")
+                self.assertEqual([r["decision"] for r in rows], ["ENTER", "SKIP", "SKIP"])
+                self.assertTrue(rows[1]["reason"].startswith("open_runup_9.0")); self.assertEqual(rows[2]["reason"], "no_quote_at_open")
+                # 한도: max_open 3 → 이미 3개 열려 있으면 SKIP
+                opened2, rows2 = k.fill_preopen_entries([mk("000004", 10000.0)], lambda c: {"price": 10100.0}, now=now, open_n=3, new_today=0)
+                self.assertEqual(len(opened2), 0); self.assertEqual(rows2[0]["reason"], "max_open")
+                self.assertEqual(sum(1 for _ in k.PREOPEN_FILL_LEDGER.open(encoding="utf-8")), 4)
+            finally:
+                k.PHANTOM_LEDGER, k.PREOPEN_FILL_LEDGER = old_p, old_f
+
+
 if __name__ == "__main__":
     unittest.main()

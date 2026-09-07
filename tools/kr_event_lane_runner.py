@@ -179,7 +179,8 @@ def _age_sec(iso: str | None, now: datetime) -> float:
 def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | None = None, phase: str | None = None) -> dict:
     now = now or kel.now_kst()
     _PHASE["phase"] = phase or kel.phase_of(now)
-    contract = kel.CONTRACT_NXT if _PHASE["phase"] == "NXT" else kel.CONTRACT
+    contract = kel.CONTRACT_NXT if _PHASE["phase"] == "NXT" else (kel.CONTRACT_PREOPEN if _PHASE["phase"] == "PREOPEN" else kel.CONTRACT)
+    deferred: list = list(st.get("preopen_enter") or [])   # 장전 ENTER 판단 → 09:00 시가 유예 진입 목록
     seen: set = set(st.get("seen", []))
     pending: dict = dict(st.get("pending") or {})  # rcept_no → {item, first_seen, attempts, last_try} (본문 지연 재시도)
     obs: dict = dict(st.get("obs") or {})            # rcept_no → 3시점 관측(탈락 포함), 장 종료에 원장으로
@@ -196,6 +197,13 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
         if row.get("kind") in ("supply_contract", "bonus_issue", "buyback") and it.get("stock_code"):
             _ensure_cache_async(it["stock_code"])  # 일봉 arm(F6/F7)이 다음날 진입할 수 있게 CSV 선제 생성
         if row.get("decision") == "ENTER" and not dry:
+            if _PHASE["phase"] == "PREOPEN":
+                # 장전 시세는 전일 종가 → 유령을 열지 않고 09:00 시가 유예 목록에 넣는다(fill_preopen_entries가 급등·한도 재검사)
+                slim = {k: v for k, v in row.items() if k not in ("liq", "llm", "fields")}
+                slim["liq"] = {"prev_close": (row.get("liq") or {}).get("prev_close")}
+                deferred.append({"item": it, "row": slim})
+                print(f"[KR-EVENT] 장전 ENTER 판단 {it.get('corp_name')} {it['rcept_no']} — 09:00 시가 유예", flush=True)
+                return
             pos = kel.open_phantom({**it, **row}, row["quote"], notify=_notify, now=now, contract=contract)
             if pos:
                 open_pos.append(pos); new_today += 1; entered += 1
@@ -228,6 +236,19 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
             continue
         _obs_decide(obs, it["rcept_no"], row)
         _handle(it, row)
+    # 3) 장전 유예 진입 — 09:00:30 이후 첫 정규장 사이클에서 시가로 체결(유예 창 09:20 지나면 SKIP 기록)
+    if deferred and _PHASE["phase"] == "KRX" and now.strftime("%H:%M:%S") >= kel.PREOPEN["fill_from_hhmmss"] and not dry:
+        if now.strftime("%H:%M") > kel.PREOPEN["fill_until_hhmm"]:
+            for d in deferred:
+                kel._append(kel.PREOPEN_FILL_LEDGER, {"event": "PREOPEN_FILL", "contract": kel.CONTRACT_PREOPEN["version"],
+                                                     "rcept_no": (d.get("row") or {}).get("rcept_no"), "ticker": (d.get("item") or {}).get("stock_code"),
+                                                     "session_date": session_date, "filled_at": kel._iso(now), "decision": "SKIP", "reason": "fill_window_passed"})
+        else:
+            opened, fills = kel.fill_preopen_entries(deferred, _quote, now=now, open_n=len(open_pos), new_today=new_today,
+                                                     contract=kel.CONTRACT_PREOPEN, notify=_notify)
+            open_pos.extend(opened); new_today += len(opened); entered += len(opened)
+            print(f"[KR-EVENT] 장전 유예 진입 {len(opened)}/{len(deferred)} (SKIP {len(fills) - len(opened)})", flush=True)
+        deferred = []
     # 유령 평가 + 관측 결과 칸
     open_pos, closed = kel.evaluate_phantoms(open_pos, _quote, notify=_notify, now=now)
     _obs_fill(obs, _quote, now)
@@ -235,6 +256,7 @@ def cycle(session_date: str, st: dict, *, dry: bool = False, now: datetime | Non
     st["pending"] = pending
     st["obs"] = obs
     st["open_positions"] = open_pos
+    st["preopen_enter"] = deferred
     st["session_date"] = session_date
     st["phase"] = _PHASE["phase"]
     st["last_cycle_at"] = kel._iso()
@@ -300,8 +322,8 @@ def loop(poll_sec: float) -> int:
             if end_phase(sd, st, now, phase, prev_phase):
                 return 0
             continue
-        if hhmm < "08:50":
-            time.sleep(min(poll_sec, 30)); continue
+        if hhmm < kel.PREOPEN["start_hhmm"]:
+            time.sleep(min(poll_sec, 30)); continue   # 07:30 전: 대기(장전 단계는 phase_of가 PREOPEN을 돌려준다)
         try:
             r = cycle(sd, st, phase=phase)
             if r["fresh"] or r["entered"] or r["closed"]:

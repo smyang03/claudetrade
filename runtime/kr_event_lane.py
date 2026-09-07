@@ -86,13 +86,21 @@ AFTER_HOURS = {"start_hhmm": "15:41", "end_hhmm": "20:01", "entry_cutoff_hhmm": 
 # 공식 NXT 애프터마켓은 15:40~20:00(주문 접수와 체결 시간 구분). 러너는 15:41부터 NX 시세로 전환한다.
 CONTRACT_NXT = {**CONTRACT, "version": "kr_event_v1_nxt", "entry_cutoff_hhmm": AFTER_HOURS["entry_cutoff_hhmm"],
                 "eod_exit_hhmm": AFTER_HOURS["eod_exit_hhmm"]}
+# 장전 단계(2026-09-08, 신규 전략 P9): 07:30~08:59 DART 공시를 감지·본문·판단까지 하고, 진입은 09:00 시가(첫 실시간 호가)로 유예한다.
+# 장전 네이버 시세는 전일 종가라 decide()의 급등 게이트가 눈을 감는다 → 유예 진입 시점(09:00:30~)에 시가/전일종가를 다시 재서
+# max_runup_pct 초과면 SKIP, max_open·max_new_per_day도 그때 재확인한다(advisor 지적). 코드 상수(env 아님).
+PREOPEN = {"start_hhmm": "07:30", "open_hhmm": "09:00", "fill_from_hhmmss": "09:00:30", "fill_until_hhmm": "09:20"}
+CONTRACT_PREOPEN = {**CONTRACT, "version": "kr_event_v1_preopen"}
+PREOPEN_FILL_LEDGER = ROOT / "data" / "shadow" / "kr_event_preopen_fills.jsonl"
 
 
 def phase_of(now: "datetime") -> str:
-    """KRX(08:50~15:40) / NXT(15:41~20:00) / END. 주말은 END."""
+    """PREOPEN(07:30~08:59) / KRX(09:00~15:40, 러너는 08:50부터 폴링) / NXT(15:41~20:00) / END. 주말은 END."""
     if now.weekday() >= 5:
         return "END"
     hhmm = now.strftime("%H:%M")
+    if PREOPEN["start_hhmm"] <= hhmm < PREOPEN["open_hhmm"]:
+        return "PREOPEN"
     if hhmm < AFTER_HOURS["start_hhmm"]:
         return "KRX"
     if hhmm < AFTER_HOURS["end_hhmm"]:
@@ -470,6 +478,44 @@ def open_phantom(sig: dict[str, Any], quote: dict[str, Any], *, contract: dict[s
         except Exception:
             pass
     return pos
+
+
+def fill_preopen_entries(deferred: list[dict[str, Any]], quote_fn: Callable[[str], dict[str, Any] | None], *,
+                         now: datetime, open_n: int, new_today: int, contract: dict[str, Any] = CONTRACT_PREOPEN,
+                         notify: Callable[[str], Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """장전에 ENTER 판단된 공시를 09:00 시가로 진입. 반환 (opened_positions, fill_rows).
+    재검사: 시가/전일종가 급등(max_runup_pct)·min_price·max_open·max_new_per_day·호가 없음 → SKIP 기록(유령 없음)."""
+    opened: list[dict[str, Any]] = []; rows: list[dict[str, Any]] = []
+    for d in deferred:
+        it, row = d.get("item") or {}, d.get("row") or {}
+        sig = {**it, **row}
+        q = quote_fn(it.get("stock_code", ""))
+        base = {"event": "PREOPEN_FILL", "contract": contract["version"], "rcept_no": sig.get("rcept_no"), "ticker": sig.get("stock_code"),
+                "name": sig.get("corp_name"), "kind": sig.get("kind"), "session_date": sig.get("session_date"),
+                "decided_at": row.get("ts_decided"), "filled_at": _iso(now), "px_prev_close": (row.get("liq") or {}).get("prev_close"),
+                "px_open_quote": (q or {}).get("price"), "basis": sig.get("basis")}
+        reason = None
+        if not q or not q.get("price"):
+            reason = "no_quote_at_open"
+        else:
+            px = float(q["price"]); pc = base["px_prev_close"]
+            if pc and (px / float(pc) - 1.0) * 100.0 > contract["max_runup_pct"]:
+                reason = f"open_runup_{(px / float(pc) - 1) * 100:.1f}_gt_{contract['max_runup_pct']:.0f}"
+            elif px < contract["min_price"]:
+                reason = "price_lt_min"
+            elif open_n + len(opened) >= contract["max_open"]:
+                reason = "max_open"
+            elif new_today + len(opened) >= contract["max_new_per_day"]:
+                reason = "max_new_per_day"
+        if reason:
+            rows.append({**base, "decision": "SKIP", "reason": reason}); _append(PREOPEN_FILL_LEDGER, rows[-1]); continue
+        pos = open_phantom(sig, q, contract=contract, notify=notify, now=now)
+        if pos:
+            opened.append(pos); rows.append({**base, "decision": "ENTER", "entry": pos["entry"], "qty": pos["qty"]})
+        else:
+            rows.append({**base, "decision": "SKIP", "reason": "qty_zero"})
+        _append(PREOPEN_FILL_LEDGER, rows[-1])
+    return opened, rows
 
 
 def _close_row(pos: dict[str, Any], px: float, reason: str, now: datetime, *, contract: dict[str, Any],
