@@ -107,3 +107,15 @@ US Form 4 군집은 데이터가 2026-03(SEC 2026Q1)에 끊겨 H2가 3개월뿐�
 
 **미착수(사유)**: Codex N2 KR 매도 체결 흡수 — KIS WS 단일 연결 제약(봇이 점유) + 틱 수집기 설계 필요. N5/N6는 파서까지(레인 연결은 장중 호가 진입 규약 후).
 **등급 정정**: P13은 C(수집기)→B(forward 전용, 백필 불가). US Form 4 군집은 forward 수집기 가동으로 "수집기 후"→09-08부터 forward.
+
+
+## 8. 09-08 새벽 3차 — 미착수 0 (운영자 "완료하지 멈추지 말고… 커밋·푸시·재시작")
+
+| 항목 | 붙인 형태 | 운영 |
+|---|---|---|
+| Codex N2 KR 매도 체결 흡수 | **봇 WS 관측 전용 구독**: `kis_api.route_kr_tick`(순수 함수)로 관측 종목 틱을 매매 경로(on_tick·price_cache·risk·무음 카운터)에서 분리해 `runtime/ws_tick_ledger.tick_sink`(원시 문자열 버퍼, 09:40 전만, 200행/2초 flush)로만 보낸다. `trading_bot._start_ws_for_market(KR)`이 `state/ws_observe_kr.json`(오늘 날짜만, `tools/ws_observe_list.py` 08:40 생성)을 읽어 남는 자리(41−매매 구독, 최대 20)만큼 관측 구독. 파일 없음·날짜 불일치·오류 → 관측 0. 무음 재기동도 같은 함수를 타므로 승계. 판정은 봇 밖 `tools/kr_absorption_shadow.py`(09:25): 09:05~09:15 매도체결 비중 ≥55%·가격 비하락·총매수잔량 유지·체결강도<100·매수호가1 유지 → 09:16 매도호가1 진입, TP12/SL25/D7, 21:05 래퍼 정산 | schtask `claudetrade_ws_observe_list` 08:40 · `claudetrade_kr_absorption` 09:25. 매매 경로 무변경 근거: `tests/test_ws_observe_routing.py`(라우팅·관측 목록 분리·버퍼 창·날짜 가드) |
+| N6 잠정실적 흑자전환 | 레인 연결: `ENTER_KINDS`+`prelim_earnings`, 본문 `parse_provisional_results`, `decide()`는 영업이익 부호 전환 & 매출 증가만 ENTER(파싱 실패 SKIP), 출구 TP8/SL4/EOD. 3시점 관측 대상 추가 | 07:25 레인부터 |
+| N5 공급계약 긍정 정정 | 레인 연결: 정정 공급계약은 본문 "정정항목 정정전/정정후" 표를 `parse_amendment_text`로 읽어 금액 증액 ≥5% & 종료일·상대 불변만 계약 `kr_event_v1_amend`로 ENTER 판단, 그 외는 OBSERVE(진입 없음)+diff 기록. 09-08 실측 문서(기간 연장 정정) → unknown/OBSERVE | 07:25 레인부터 |
+| 대시보드 | `/virtual` 연구 카드 "2차 편입 forward 원장": 장전 유예·종가 동시호가·개장 충격·KRX 경보·N2(관측 목록·틱 원장·흡수) | 스택 재시작으로 반영 |
+
+**오늘 09:00 확인(08-19 그렙 4종 + 관측)**: `KR 관측 구독 n종목` 로그(없으면 08:40 생산자 미실행 또는 날짜 불일치), `구독 응답 rt_cd`, `끊김`, `[WS silence]`, `[WS silence restart]`. 관측 구독이 붙은 첫 세션이라 무음 재발 시 관측 20종목부터 의심.

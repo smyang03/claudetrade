@@ -62,3 +62,6 @@
 | P12 KR 종가 동시호가 눌림 | 15:19→종가 ≤−2%(거래대금 상위 300+급락 풀) → 다음날 시가 → 다음날 15:19 | `kr_close_auction.jsonl` | 30건 세션 t<0 |
 | P13 KRX 투자경고 해제 | 해제 다음 시가 D5 / 지정일 급락 회피 | `krx_market_alert.jsonl`(지정/해제 diff) | 20건 |
 | US Form 4 군집 forward | 기존 c_us_insider_cluster·k1 — 일일 수집기로 forward 시작 | `us_insider_ledger.jsonl` | 기존 |
+| N2 KR 매도 체결 흡수 | 09:05~09:15 매도체결 비중 ≥55% & 가격 ≥−0.5% & 총매수잔량 ≥90% 유지 & 체결강도<100 & 매수호가1 유지 → 09:16 매도호가1, TP12/SL25/D7 | `kr_absorption.jsonl` + 틱 `kr_ws_ticks/` | 30건 세션 t<0 또는 09:30 확인 진입(L3) 대비 증분 ≤0 |
+| N6 잠정실적 흑자전환 | 영업이익 당기>0 & 전년동기≤0 & 매출 증가 → 판단 후 시세, TP8/SL4/EOD | 공시 레인(kind prelim_earnings) | 30건 |
+| N5 공급계약 긍정 정정 | 정정전/후 금액 ≥+5% & 종료일 불변 → 계약 kr_event_v1_amend, 그 외 OBSERVE | 공시 레인 | 30건 |

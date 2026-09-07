@@ -43,7 +43,7 @@ KR_PRICE_DIR = ROOT / "data" / "price" / "kr"
 # 3시점 관측 원장(09-06, Codex 리뷰 2차 연구 설계): 감지·본문 확보·판단 완료 시점 가격 + 5분/30분/15:20/종가 결과, 탈락 공시 포함
 OBS_LEDGER = ROOT / "data" / "shadow" / "kr_event_observations.jsonl"
 DOC_DIR = ROOT / "data" / "shadow" / "kr_event_docs"      # 본문 원문 보관 → 나중에 같은 표본으로 규칙만 vs 규칙+LLM 재현
-OBS_KINDS = ("supply_contract", "bonus_issue", "buyback", "share_cancellation", "stock_split")
+OBS_KINDS = ("supply_contract", "bonus_issue", "buyback", "share_cancellation", "stock_split", "prelim_earnings")
 OBS_HORIZONS_MIN = (5, 30)
 
 CONTRACT = {
@@ -77,7 +77,7 @@ KINDS = {
     "share_cancellation": ("주식소각결정", "주식소각 결정", "자기주식소각"),
     "stock_split": ("주식분할결정", "주식분할 결정", "액면분할"),
 }
-ENTER_KINDS = ("supply_contract", "bonus_issue")
+ENTER_KINDS = ("supply_contract", "bonus_issue", "prelim_earnings")   # 09-08 N6: 잠정실적 흑자전환(파서 조건 통과 시만 ENTER)
 # NXT 시간외 단계(09-06 프로브: KIS inquire-price NX/UN 지원, NX 가격이 KRX 종가와 다르게 움직임 — 마감 후 공시를 당일 저녁에 대응)
 # 정규장 포지션은 15:41에 강제 청산하고 NXT 단계는 별도 venue로 시작한다. 이월 없음.
 AFTER_HOURS = {"start_hhmm": "15:41", "end_hhmm": "20:01", "entry_cutoff_hhmm": "19:40", "eod_exit_hhmm": "19:55",
@@ -119,6 +119,7 @@ DOC_RETRY_MAX_SEC = 900     # 최초 감지 후 이 시간까지 재시도, 넘�
 KIND_EXIT = {
     "supply_contract": {"tp_pct": 8.0, "sl_pct": -4.0, "time_stop_min": 30, "time_stop_min_gain_pct": 2.0},
     "bonus_issue": {"tp_pct": 15.0, "sl_pct": -7.0, "time_stop_min": None, "time_stop_min_gain_pct": None},
+    "prelim_earnings": {"tp_pct": 8.0, "sl_pct": -4.0, "time_stop_min": None, "time_stop_min_gain_pct": None},   # N6: EOD까지(시간정지 없음)
 }
 _LOCK = threading.Lock()
 
@@ -347,6 +348,24 @@ def parse_provisional_results(text: str) -> dict[str, Any]:
     return f
 
 
+def parse_amendment_text(text: str) -> dict[str, Any]:
+    """[기재정정] 공시 본문의 "정정사항 정정항목 정정전 정정후" 표 → 계약금액 전/후, 계약 종료일 전/후, 정정사유.
+    09-08 실측 구조: "4. 정정사항 정정항목 정정전 정정후 5. 계약기간 시작일 : A 종료일 : B 시작일 : A 종료일 : C ...".
+    금액은 "계약금액(원) X Y" 또는 "계약금액 X Y"(정정전 X, 정정후 Y). 못 찾으면 None."""
+    t = re.sub(r"\s+", " ", text or "")
+    out: dict[str, Any] = {"reason": None, "amount_before": None, "amount_after": None, "period_end_before": None, "period_end_after": None}
+    m = re.search(r"정정\s*사유\s*(.{0,80}?)\s*\d\.\s*정정\s*사항", t)
+    out["reason"] = m.group(1).strip() if m else None
+    seg = t.split("정정후", 1)[1] if "정정후" in t else t
+    m = re.search(r"계약\s*금액\s*(?:\(원\))?\s*" + _MONEY + r"\s+" + _MONEY, seg)
+    if m:
+        out["amount_before"], out["amount_after"] = _num(m.group(1)), _num(m.group(2))
+    ends = re.findall(r"종료일\s*:\s*(\d{4}-\d{2}-\d{2})", seg)
+    if len(ends) >= 2:
+        out["period_end_before"], out["period_end_after"] = ends[0], ends[1]
+    return out
+
+
 def contract_amendment_diff(orig: dict[str, Any], amended: dict[str, Any]) -> dict[str, Any]:
     """공급계약 원공시 vs 정정 파싱 필드 diff → 실제 증액(positive) / 기간만 변경 / 오기·감액 분류.
     입력은 parse_supply_contract 결과(amount, ratio_pct, counterparty, period_end 등 존재하는 키만 비교)."""
@@ -381,7 +400,11 @@ def decide(kind: str, is_correction: bool, fields: dict[str, Any], llm: dict[str
     """(decision, reason). decision ∈ ENTER / OBSERVE / SKIP."""
     if is_correction:
         return "SKIP", "correction"
-    if kind not in ENTER_KINDS:
+    if kind == "supply_contract_amend":
+        d = fields.get("amount_delta_pct")
+        if d is None or d < 5.0:
+            return "SKIP", f"amend_delta_{d}"
+    elif kind not in ENTER_KINDS:
         return "OBSERVE", f"kind_{kind}_observe_only"
     if now is not None and now.strftime("%H:%M") >= contract.get("entry_cutoff_hhmm", "15:10"):
         return "SKIP", "after_entry_cutoff"
@@ -402,6 +425,14 @@ def decide(kind: str, is_correction: bool, fields: dict[str, Any], llm: dict[str
         r = fields.get("ratio_per_share")
         if r is None or r < contract["bonus_ratio_min"]:
             return "SKIP", f"bonus_ratio_{r}"
+    if kind == "prelim_earnings":   # N6 — 영업이익 부호 전환(당기>0 & 전년동기≤0) & 매출 증가만 ENTER, 파싱 실패는 전부 SKIP
+        if fields.get("turnaround") is None:
+            return "SKIP", "prelim_parse_failed"
+        if fields.get("turnaround") is not True:
+            return "SKIP", "no_turnaround"
+        g = fields.get("revenue_growth_pct")
+        if g is None or g <= 0:
+            return "SKIP", f"revenue_growth_{g}"
     if not quote or not quote.get("price"):
         return "SKIP", "no_quote"
     if quote.get("venue") == "NXT":
@@ -690,6 +721,11 @@ def basis_text(kind: str, fields: dict[str, Any], llm: dict[str, Any]) -> str:
             parts.append(f"선급금 {fields['advance_payment']}")
     elif kind == "bonus_issue":
         parts = [f"무상증자 1주당 {fields.get('ratio_per_share')}주"]
+    elif kind == "prelim_earnings":
+        parts = [f"잠정실적 {fields.get('basis') or ''} 영업이익 {fields.get('op_prev_yr')}→{fields.get('op_cur')}"
+                 + (" 흑자전환" if fields.get("turnaround") else ""), f"매출 {fields.get('revenue_growth_pct')}%"]
+    elif kind == "supply_contract" and fields.get("amount_delta_pct") is not None:
+        parts = [f"공급계약 정정 {fields.get('kind')} 금액 {fields.get('amount_delta_pct'):+.1f}%", f"사유 {str(fields.get('reason') or '')[:30]}"]
     else:
         parts = [kind]
     if llm.get("available"):
@@ -761,15 +797,41 @@ def process_disclosure(item: dict[str, Any], *, session_date: str, quote_fn: Cal
             return row
         row["ts_parsed"] = _iso()
         row["quote_doc"] = _stamped(quote_fn(item["stock_code"]))   # 본문 확보 시점 시세(파싱·LLM 전)
-        fields = parse_supply_contract(text) if kind == "supply_contract" else parse_bonus_issue(text)
+        fields = (parse_supply_contract(text) if kind == "supply_contract"
+                  else (parse_provisional_results(text) if kind == "prelim_earnings" else parse_bonus_issue(text)))
         save_doc_text(item["rcept_no"], text)
         if kind == "supply_contract" and fields.get("ratio_pct") is not None and fields["ratio_pct"] >= contract["supply_ratio_min_pct"]:
             llm = (llm_fn or llm_judge)(kind, text, fields)
             row["ts_classified"] = _iso()
-    quote = _stamped(quote_fn(item["stock_code"])) if kind in ENTER_KINDS and not corr else None   # 판단 시점 시세
-    liq = liquidity_snapshot(item["stock_code"]) if kind in ENTER_KINDS and not corr else {}
-    decision, reason = decide(kind, corr, fields, llm, quote, liq, contract=contract, open_n=open_n, new_today=new_today,
-                              now=t0)
+    amend: dict[str, Any] | None = None
+    if kind == "supply_contract" and corr:
+        # N5(09-08): 정정 공시는 일괄 SKIP이었다 → 본문의 정정전/후 표를 읽어 실제 증액만 별도 계약(kr_event_v1_amend)으로 판단.
+        # 금액 전/후를 못 읽으면 OBSERVE(진입 없음). 관계·매출비율 확인이 없으므로 증액 ≥5% & 상대·종료일 불변만 통과.
+        text = (doc_fn or dart_document_text)(item["rcept_no"])
+        row["doc_attempts"] = doc_attempts + 1
+        if not text.strip() and not final:
+            row.update({"decision": "PENDING", "reason": "doc_unavailable", "ts_decided": _iso()})
+            return row
+        am = parse_amendment_text(text) if text.strip() else {}
+        diff = contract_amendment_diff({"amount": am.get("amount_before"), "period_end": am.get("period_end_before")},
+                                       {"amount": am.get("amount_after"), "period_end": am.get("period_end_after")}) if am else {"kind": "unknown"}
+        amend = {**am, **diff}
+        fields = dict(amend)
+        if text.strip():
+            save_doc_text(item["rcept_no"], text)
+    quote = _stamped(quote_fn(item["stock_code"])) if kind in ENTER_KINDS and (not corr or amend) else None   # 판단 시점 시세
+    liq = liquidity_snapshot(item["stock_code"]) if kind in ENTER_KINDS and (not corr or amend) else {}
+    if amend is not None:
+        if amend.get("kind") == "positive_increase":
+            c_am = {**contract, "version": "kr_event_v1_amend"}
+            decision, reason = decide("supply_contract_amend", False, fields, llm, quote, liq, contract=c_am, open_n=open_n,
+                                      new_today=new_today, now=t0)
+            row["contract"] = c_am["version"]
+        else:
+            decision, reason = "OBSERVE", f"amend_{amend.get('kind', 'unknown')}"
+    else:
+        decision, reason = decide(kind, corr, fields, llm, quote, liq, contract=contract, open_n=open_n, new_today=new_today,
+                                  now=t0)
     row.update({"fields": fields, "llm": llm, "quote": quote, "liq": {k: v for k, v in liq.items() if k != "bars"},
                 "decision": decision, "reason": reason, "ts_decided": _iso(),
                 **_latencies(row, t0, now, mono0), "basis": basis_text(kind, fields, llm)})

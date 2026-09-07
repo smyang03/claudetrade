@@ -6040,10 +6040,20 @@ class _Namespace:
 _hdfsasp0_logged = _Namespace()
 
 
+def route_kr_tick(ticker: str, observe: "set[str] | frozenset[str] | None") -> str:
+    """KR H0STCNT0 틱 라우팅 — 관측 전용 종목(observe)은 매매 경로(on_tick·price_cache·risk·무음 카운터)에 절대 넣지 않는다.
+    2026-09-08 N2: 관측 틱은 sink(원장 버퍼)로만 간다. 보유·선정 종목은 관측 목록에 있어도 'trade'."""
+    return "observe" if (observe and ticker in observe) else "trade"
+
+
 class KISWebSocket:
-    def __init__(self, token, tickers, on_tick=None, on_notice=None, market="KR"):
+    def __init__(self, token, tickers, on_tick=None, on_notice=None, market="KR", observe_tickers=None, observe_sink=None):
         self.token = token
         self.tickers = tickers
+        # 관측 전용 구독(09-08 N2): 매매 대상이 아닌 종목의 원시 틱을 sink로만 보낸다. 보유·선정과 겹치면 매매 경로 우선.
+        self.observe_tickers = [t for t in (observe_tickers or []) if t and t not in set(tickers or [])]
+        self.observe_set = frozenset(self.observe_tickers)
+        self.observe_sink = observe_sink
         self.market = _normalize_market(market)
         self.on_tick = on_tick or (lambda d: print(f"[tick]{d}"))
         self.on_notice = on_notice  # 체결통보 콜백: on_notice(event_dict)
@@ -6193,6 +6203,10 @@ class KISWebSocket:
             if self.market == "KR":
                 for t in self.tickers:
                     ws.send(self._sub(t))
+                if self.observe_tickers:   # 관측 전용(N2) — 보유·선정 뒤에 등록(세션당 41 제한 시 매매 우선)
+                    for t in self.observe_tickers:
+                        ws.send(self._sub(t))
+                    log.info(f"[KIS WS] KR 관측 구독 {len(self.observe_tickers)}종목 (매매 {len(self.tickers)})")
             # US 실시간 시세 구독 (US 세션 + 실전 서버만, VTS 미지원)
             if self.market == "US" and not profile.is_paper:
                 subscribed = 0
@@ -6295,6 +6309,14 @@ class KISWebSocket:
                 return
             fields = raw_data.split("^")
             if len(fields) < 13:
+                return
+            if route_kr_tick(fields[0], self.observe_set) == "observe":
+                # 관측 전용: 원시 문자열 그대로 sink(버퍼 append). 매매 경로·무음 카운터에 닿지 않는다.
+                try:
+                    if self.observe_sink:
+                        self.observe_sink(raw_data)
+                except Exception:
+                    pass
                 return
             try:
                 self.on_tick({"ticker": fields[0], "time": fields[1], "price": int(fields[2]), "volume": int(fields[12])})

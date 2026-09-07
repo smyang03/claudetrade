@@ -775,5 +775,37 @@ class PreopenRunnerIntegrationTest(unittest.TestCase):
                  k.dart_list_today, k.process_disclosure, rn._ensure_cache_async, rn._notify, rn._heartbeat) = keep
 
 
+class N5N6LaneWiringTest(unittest.TestCase):
+    """09-08: 잠정실적 흑자전환 ENTER 조건 · 정정 공급계약 증액 판정 · 기존 SKIP correction 경로 유지."""
+
+    def test_prelim_decide(self):
+        q = {"price": 5000.0, "venue": "KRX"}; liq = {"prev_close": 4900.0, "dvol20_krw": 5e9}
+        good = {"turnaround": True, "revenue_growth_pct": 12.0}
+        self.assertEqual(k.decide("prelim_earnings", False, good, {}, q, liq, open_n=0, new_today=0)[0], "ENTER")
+        self.assertEqual(k.decide("prelim_earnings", False, {"turnaround": False, "revenue_growth_pct": 12.0}, {}, q, liq)[0], "SKIP")
+        self.assertEqual(k.decide("prelim_earnings", False, {"turnaround": None}, {}, q, liq)[1], "prelim_parse_failed")
+        self.assertEqual(k.decide("prelim_earnings", False, {"turnaround": True, "revenue_growth_pct": -3.0}, {}, q, liq)[0], "SKIP")
+
+    def test_amendment_parse_and_paths(self):
+        txt = ("1. 정정관련 공시서류 단일판매·공급계약체결 2. 정정관련 공시서류제출일 2026-01-09 3. 정정사유 계약금액 증액 4. 정정사항 "
+               "정정항목 정정전 정정후 계약금액(원) 1,000,000,000 1,300,000,000 계약기간 시작일 : 2026-01-08 종료일 : 2027-01-07 "
+               "시작일 : 2026-01-08 종료일 : 2027-01-07")
+        am = k.parse_amendment_text(txt)
+        self.assertEqual((am["amount_before"], am["amount_after"]), (1e9, 1.3e9)); self.assertEqual(am["period_end_after"], "2027-01-07")
+        d = k.contract_amendment_diff({"amount": am["amount_before"], "period_end": am["period_end_before"]},
+                                      {"amount": am["amount_after"], "period_end": am["period_end_after"]})
+        self.assertEqual(d["kind"], "positive_increase")
+        per = ("3. 정정사유 계약기간 연장으로 인한 정정 4. 정정사항 정정항목 정정전 정정후 5. 계약기간 시작일 : 2021-09-08 종료일 : 2026-09-07 "
+               "시작일 : 2021-09-08 종료일 : 2027-09-07")
+        am2 = k.parse_amendment_text(per); self.assertIsNone(am2["amount_after"])
+        self.assertEqual(k.contract_amendment_diff({"amount": None, "period_end": am2["period_end_before"]},
+                                                   {"amount": None, "period_end": am2["period_end_after"]})["kind"], "unknown")
+        # 기존 경로: 정정이 아닌 종류의 correction은 여전히 SKIP correction
+        self.assertEqual(k.decide("bonus_issue", True, {}, {}, None, {})[1], "correction")
+        # amend 판단: 증액 5% 미만은 SKIP
+        self.assertEqual(k.decide("supply_contract_amend", False, {"amount_delta_pct": 2.0}, {}, {"price": 5000.0}, {"prev_close": 4900.0, "dvol20_krw": 5e9})[0], "SKIP")
+        self.assertEqual(k.decide("supply_contract_amend", False, {"amount_delta_pct": 30.0}, {}, {"price": 5000.0}, {"prev_close": 4900.0, "dvol20_krw": 5e9})[0], "ENTER")
+
+
 if __name__ == "__main__":
     unittest.main()

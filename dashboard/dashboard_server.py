@@ -17584,9 +17584,31 @@ def api_research():
             except OSError:
                 return 0
         sh = BASE_DIR / "data" / "shadow"; an = BASE_DIR / "data" / "analysis"
+        def _kinds(pth, key="kind"):
+            out = {}
+            for r in _jsonl(pth):
+                k = str(r.get(key) or r.get("kind_row") or r.get("event") or "?"); out[k] = out.get(k, 0) + 1
+            return out
+        def _closed_stats(pth, key_status="status"):
+            rows = [r for r in _jsonl(pth) if r.get(key_status) == "CLOSED" and r.get("net_pct") is not None]
+            if not rows:
+                return {"n": 0}
+            m = sum(float(r["net_pct"]) for r in rows) / len(rows)
+            return {"n": len(rows), "net_mean": round(m, 2), "win": round(100.0 * sum(1 for r in rows if float(r["net_pct"]) > 0) / len(rows), 1)}
+        tick_dir = sh / "kr_ws_ticks"
+        tick_files = sorted(tick_dir.glob("*.jsonl")) if tick_dir.exists() else []
         return {"kr_insider": _cnt(sh / "kr_insider_ledger.jsonl"), "kr_insider_plan": _cnt(sh / "kr_insider_plan_ledger.jsonl"),
                 "kr_dart_terms": _cnt(sh / "kr_dart_terms.jsonl"), "us_insider": _cnt(sh / "us_insider_ledger.jsonl"),
-                "us_earnings_dates": _cnt(an / "us_earnings_dates.jsonl")}
+                "us_earnings_dates": _cnt(an / "us_earnings_dates.jsonl"),
+                # 09-08 2차 편입 forward 원장(전부 0에서 시작)
+                "preopen_fills": _kinds(sh / "kr_event_preopen_fills.jsonl", "decision"),
+                "close_auction": {"kinds": _kinds(sh / "kr_close_auction.jsonl"), "closed": _closed_stats(sh / "kr_close_auction.jsonl")},
+                "open_impact": {"kinds": _kinds(sh / "us_open_impact.jsonl"), "closed": _closed_stats(sh / "us_open_impact.jsonl")},
+                "krx_alert": _kinds(sh / "krx_market_alert.jsonl", "kind_row"),
+                "absorption": {"kinds": _kinds(sh / "kr_absorption.jsonl"), "closed": _closed_stats(sh / "kr_absorption.jsonl")},
+                "ws_ticks": {"days": len(tick_files), "latest": tick_files[-1].name if tick_files else None,
+                             "latest_rows": _cnt(tick_files[-1]) if tick_files else 0},
+                "ws_observe": _load(BASE_DIR / "state" / "ws_observe_kr.json")}
 
     return jsonify({"available": True,
                     "panic_close": _panic(), "ledgers": _ledger_status(),
@@ -17934,6 +17956,13 @@ async function loadResearch() {
       '<br><span class="dim">최근 세션 ' + (pc.latest_session ? `${pc.latest_session.session_date} ${pc.latest_session.mode} breadth_1540 ${pc.latest_session.breadth_1540 ?? '-'} / eod ${pc.latest_session.breadth_eod ?? '-'} 통과 ${pc.latest_session.n_pass}` : '-') +
       ' · 백필=EOD breadth·종가≤−3% 상위집합 근사, forward=15:40 iex 스냅샷. 판정 아님(사전등록 §2)</span>' : '<span class="dim">원장 없음 — python tools/us_panic_close_shadow.py backfill</span>'));
     const lg = d.ledgers || {};
+    const kk = o => Object.entries(o || {}).map(([k, v]) => `${k} ${v}`).join(' · ') || '0';
+    const cs = c => (c && c.n) ? `정산 ${c.n} net ${f(c.net_mean)}% 승 ${c.win}%` : '정산 0';
+    const wo = lg.ws_observe || {};
+    cards.push(card('2차 편입 forward 원장 (09-08~, 전부 판정 전)', `장전 유예 진입: ${kk(lg.preopen_fills)}<br>KR 종가 동시호가: ${kk(lg.close_auction?.kinds)} · ${cs(lg.close_auction?.closed)}<br>` +
+      `US 개장 15분 충격: ${kk(lg.open_impact?.kinds)} · ${cs(lg.open_impact?.closed)}<br>KRX 시장경보: ${kk(lg.krx_alert)}<br>` +
+      `N2 매도 흡수: 관측 목록 ${wo.date || '-'} ${(wo.tickers || []).length}종목 · 틱 원장 ${lg.ws_ticks?.days || 0}일(최근 ${lg.ws_ticks?.latest || '-'} ${lg.ws_ticks?.latest_rows || 0}행) · ${kk(lg.absorption?.kinds)} · ${cs(lg.absorption?.closed)}` +
+      '<br><span class="dim">schtask: 07:25 레인(PREOPEN) · 08:40 관측 목록 · 09:25 흡수 판정 · 15:17 종가 · 21:05 원장 갱신 · 22:40 개장 충격 · 04:35 패닉 마감</span>'));
     cards.push(card('신규 전략 원장 (family C_EVENT_V1 입력)', `KR 내부자 소유보고 ${lg.kr_insider ?? 0}행 · 거래계획 ${lg.kr_insider_plan ?? 0}행 · DART 자사주기간/권리락 ${lg.kr_dart_terms ?? 0}행 · US Form 4 매수 ${lg.us_insider ?? 0}행 · US 어닝 발표일 ${lg.us_earnings_dates ?? 0}행` +
       '<br><span class="dim">arm 성적은 아래 "탐색 원장 x*/c_*" 표(c_kr_fallen_buyback30·c_kr_insider_cluster·c_kr_exright·c_us_earn_gap 등). 갱신: dart_insider_ledger / dart_corp_action_terms / us_earnings_dates_cache / edgar_form4_ledger</span>'));
     el.innerHTML = cards.join('');

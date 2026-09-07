@@ -25,6 +25,8 @@ STEPS = [
     ("krx_alert", ["tools/krx_market_alert_collector.py"]),
     ("earnings_dates", ["tools/us_earnings_dates_cache.py", "--refresh-days", "7"]),
     ("panic_settle", ["tools/us_panic_close_shadow.py", "settle"]),
+    ("absorption_settle", ["tools/kr_absorption_shadow.py", "settle"]),
+    ("open_impact_settle", ["tools/us_open_impact_collector.py", "settle"]),
 ]
 
 

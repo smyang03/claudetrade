@@ -1329,13 +1329,28 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if _tk and _tk not in _seen:
                 _sub.append(_tk)
                 _seen.add(_tk)
-        ws = KISWebSocket(
-            self._token_for_market(market_key),
-            _sub,
-            on_tick=self._on_tick,
-            on_notice=self._on_fill_notice,
-            market=market_key,
-        )
+        # 관측 전용 구독(2026-09-08 N2): state/ws_observe_kr.json(오늘 날짜, tools/ws_observe_list.py 08:40 생성)의 종목을
+        # 남는 자리(41 − 매매 구독)만큼 추가. 파일 없음·날짜 불일치·오류 → 관측 0(매매 경로 무영향). 재기동 때마다 다시 읽는다.
+        _obs: list[str] = []
+        _obs_sink = None
+        if market_key == "KR":
+            try:
+                from runtime.ws_tick_ledger import load_observe_list, tick_sink
+                _obs = [t for t in load_observe_list() if t not in _seen][: max(0, min(20, 40 - len(_sub)))]
+                _obs_sink = tick_sink if _obs else None
+                log.info(f"[KIS WS] KR 관측 구독 요청 {len(_obs)} (여유 {max(0, 40 - len(_sub))})")
+            except Exception as _obs_e:
+                log.warning(f"[KIS WS] KR 관측 목록 로드 실패 — 관측 0: {_obs_e}")
+                _obs, _obs_sink = [], None
+        _ws_kwargs = {"on_tick": self._on_tick, "on_notice": self._on_fill_notice, "market": market_key}
+        if _obs:   # 관측이 있을 때만 인자 전달(테스트 FakeSocket·구 시그니처 호환)
+            try:
+                ws = KISWebSocket(self._token_for_market(market_key), _sub, **_ws_kwargs, observe_tickers=_obs, observe_sink=_obs_sink)
+            except TypeError:   # 관측 인자를 모르는 소켓 구현(테스트 더블 등) → 관측 없이(매매 경로 우선)
+                log.warning("[KIS WS] 소켓이 관측 인자를 받지 않음 — 관측 0으로 생성")
+                ws = KISWebSocket(self._token_for_market(market_key), _sub, **_ws_kwargs)
+        else:
+            ws = KISWebSocket(self._token_for_market(market_key), _sub, **_ws_kwargs)
         try:
             ws.start()
         except Exception:
