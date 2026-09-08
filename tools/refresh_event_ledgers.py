@@ -18,6 +18,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LOG_DIR = ROOT / "logs" / "event_ledgers"
 STEPS = [
+    ("independent_inputs", ["tools/collect_independent_research_inputs.py"]),
+    ("independent_research", ["tools/independent_research_watch.py"]),  # research only; verified inputs required
     ("insider_holdings", ["tools/dart_insider_ledger.py", "--holdings-only", "--refresh-days", "1"]),
     ("insider_plans", ["tools/dart_insider_ledger.py", "--plans-only"]),
     ("corp_action_terms", ["tools/dart_corp_action_terms.py"]),

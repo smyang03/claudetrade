@@ -17618,6 +17618,7 @@ def api_research():
                     # 09-09: KOSDAQ 급락일 지수 ETF 오버나이트 · 코어 ETF 북 (사전등록 preregistration_core_etf_and_kq_panic_20260909)
                     "kq_panic": _load(BASE_DIR / "data" / "analysis" / "kr_index_etf_panic_report.json"),
                     "core_book": _load(BASE_DIR / "data" / "analysis" / "core_etf_book_report.json"),
+                    "independent_research": _load(BASE_DIR / "data" / "analysis" / "independent_research_report.json"),
                     "nxt": _load(BASE_DIR / "state" / "nxt_probe.json"),
                     "us_kr": {"generated_at": us_kr.get("generated_at"), "kr_period": us_kr.get("kr_period"), "pooled": us_kr.get("pooled"), "sectors": sectors},
                     "corp_actions": _load(BASE_DIR / "data" / "analysis" / "dart_corp_actions_12m_summary.json"),
@@ -17971,6 +17972,13 @@ async function loadResearch() {
     const cbRow = (arm, a) => (a && a.n !== 0) ? `<b>${arm}</b> ${a.start}~${a.last}: NAV ${Number(a.nav||0).toLocaleString()} (<span class="${a.ret_pct>0?'pos':'neg'}">${f(a.ret_pct)}%</span>) 벤치 K200 ${f(a.bench_ret_pct)}% maxDD ${f(a.max_dd_pct)}% · 리밸 ${a.rebalances}(live ${a.live_rebalances}) 정수주 오차 ${a.int_share_err_pct}% 세금 ${Number(a.taxes_total||0).toLocaleString()} · 목표 ${Object.entries(a.last_targets||{}).filter(([k,v])=>v>0).map(([k,v])=>k+' '+Math.round(v*100)+'%').join(' ')}` : `${arm}: 없음`;
     cards.push(card('코어 ETF 북 — 무헤지 5자산 월 배분, 가상 260만 (ew 등가중 vs absmom 12-1) — 베타 추적, 알파 게이트 아님', cb.arms ? Object.entries(arms).map(([k, v]) => cbRow(k, v)).join('<br>') +
       '<br><span class="dim">유니버스 379810·360750·411060·305080·069500. 2023~26 백필은 동반 상승 국면이라 벤치 비교 무의미 — 낙폭·정수주·세금 추적만. 판정 6~12개월 (사전등록 09-09 §2)</span>' : '<span class="dim">원장 없음 — python tools/core_etf_book_shadow.py backfill</span>'));
+    const independent = d.independent_research || {};
+    const researchEsc = v => { const node = document.createElement('span'); node.textContent = String(v ?? ''); return node.innerHTML; };
+    cards.push(card('독립 연구 — 다자산 추세 / 실적 개선 후 드리프트',
+      (independent.strategies || []).map(s => `${researchEsc(s.strategy_id)}: <b>${researchEsc(s.status)}</b> · 신호 ${(s.signals || []).length}<br>` +
+        (s.rejections || []).slice(0, 2).map(r => researchEsc(r.reason)).join(' · ')).join('<br>') +
+      '<br><span class="dim">RESEARCH ONLY · 데이터 검증 전 차단 · 체결/손익 검증 미구현 · 실주문 없음</span>' +
+      '<br>' + researchEsc(independent.input_error || independent.generated_at || '첫 실행 대기')));
     const lg = d.ledgers || {};
     const kk = o => Object.entries(o || {}).map(([k, v]) => `${k} ${v}`).join(' · ') || '0';
     const cs = c => (c && c.n) ? `정산 ${c.n} net ${f(c.net_mean)}% 승 ${c.win}%` : '정산 0';
