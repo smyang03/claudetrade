@@ -3,15 +3,18 @@
 
 입력: tools/event_family_report.py --json(가상 북 arm), data/shadow/us_panic_close.jsonl(패닉), data/analysis/discovery_breakdown.json(★4조건 셀).
 규칙(사전등록 preregistration_event_family_20260907.md):
-  - arm: forward 정산 ≥ N(기본 30, 거래계획·권리락 20)이고 forward 세션 t<0 → REFUTED / t≥2.5 & 반기 동일 부호 → CANDIDATE_STRONG / 그 외 WATCH / 표본 미달 ACCUMULATING
+  - arm: 완결 코호트 정산 ≥ N 및 진입 세션 ≥30. t<0 → REFUTED(기술적 음수 표지).
+    t≥2.5·서로 다른 반기 평균 모두 양수·상위2세션 제외 양수 → REVIEW_REQUIRED.
+    일별 t는 중첩/다중검정 보정 검정이 아니며, 이 도구는 실전 승격을 승인하지 않는다.
   - 패닉 마감: forward 패닉 세션 ≥10 & 오버나이트 세션 평균 ≤0 → REFUTED
-  - 배제 arm: 기저 대비 증분 ≤0 (forward n≥30) → REFUTED
-상태 파일 state/forward_gate_state.json — 같은 판정이면 침묵(어제 "요약 3건" 재발 방지). 어디에도 배선되지 않은 관측 도구(실매수 무관).
+  - 배제 arm의 기저 대비 증분 검정은 아직 미구현. 절대수익을 필터의 추가효과로 해석하지 않는다.
+상태 파일 state/forward_gate_state.json — RESEARCH_ONLY. 구버전 STRONG도 실주문 승인으로 사용 금지.
 사용: python tools/forward_gate_watch.py [--no-telegram]
 """
 from __future__ import annotations
 
 import json
+import math
 import statistics as st
 import sqlite3
 import subprocess
@@ -28,6 +31,8 @@ BREAKDOWN = ROOT / "data" / "analysis" / "discovery_breakdown.json"
 REPORT_JSON = ROOT / "data" / "analysis" / "event_family_report_latest.json"
 STATE = ROOT / "state" / "forward_gate_state.json"
 MIN_N = {"c_kr_plan_buy": 20, "c_kr_exright": 20}
+MIN_SESSIONS = 30
+GATE_SCHEMA = "forward_research_gate_v2"
 ARMS = ["c_kr_fallen_buyback30", "c_kr_fallen_buyback_active", "c_kr_fallen_nomajor", "c_kr_insider_cluster", "c_kr_plan_buy",
         "c_kr_exright", "c_kr_buyback_start", "c_us_earn_gap", "c_us_insider_cluster", "c_us_volfirst", "c_kr_insider_k1", "c_us_insider_k1",
         "c_kr_fallen_regime", "c_us_fallen_regime", "c_us_slow8", "c_us_slow8_regime", "c_us_panic_all", "c_us_panic_top5", "c_kr_fallen5_nobio"]
@@ -36,25 +41,49 @@ ARMS = ["c_kr_fallen_buyback30", "c_kr_fallen_buyback_active", "c_kr_fallen_noma
 def _t(vals):
     if len(vals) < 2:
         return None
-    sd = st.pstdev(vals)
-    return round(st.mean(vals) / (sd / len(vals) ** 0.5), 2) if sd else None
+    sd = st.stdev(vals)
+    return st.mean(vals) / (sd / len(vals) ** 0.5) if sd else None
 
 
 def forward_arm_stats(con) -> dict:
     out = {}
     for sid in ARMS:
-        rows = con.execute("SELECT session_date, net_pct FROM trades WHERE strategy_id=? AND status='CLOSED' AND backfill=0", (sid,)).fetchall()
+        rows = con.execute("SELECT session_date, net_pct, status FROM trades WHERE strategy_id=? AND backfill=0", (sid,)).fetchall()
         by = defaultdict(list)
-        for sd, net in rows:
-            by[sd].append(float(net))
-        sm = [st.mean(v) for v in by.values()]
-        out[sid] = {"n": len(rows), "sessions": len(sm), "session_mean": round(st.mean(sm), 2) if sm else None, "session_t": _t(sm)}
+        incomplete = set()
+        invalid = 0
+        for sd, net, status in rows:
+            try:
+                datetime.strptime(sd, "%Y-%m-%d")
+                if status != "CLOSED":
+                    incomplete.add(sd)
+                    continue
+                value = float(net)
+                if not math.isfinite(value):
+                    raise ValueError("nonfinite return")
+            except (ValueError, TypeError):
+                incomplete.add(sd)
+                invalid += 1
+                continue
+            by[sd].append(value)
+        # Early winners must not represent a cohort whose losers are still OPEN.
+        complete = sorted((sd, v) for sd, v in by.items() if sd not in incomplete)
+        sm = [st.mean(v) for _, v in complete]
+        halves = defaultdict(list)
+        for sd, values in complete:
+            halves[f"{sd[:4]}H{1 if int(sd[5:7]) <= 6 else 2}"].append(st.mean(values))
+        out[sid] = {"n": sum(len(v) for _, v in complete), "sessions": len(sm),
+                    "session_mean": st.mean(sm) if sm else None, "session_t": _t(sm),
+                    "incomplete_sessions": len(incomplete), "invalid_rows": invalid,
+                    "half_year_means": {k: st.mean(v) for k, v in halves.items()},
+                    "ex_top2_mean": st.mean(sorted(sm)[:-2]) if len(sm) > 2 else None,
+                    "live_eligible": False}
     return out
 
 
 def panic_forward() -> dict:
     rows = [json.loads(l) for l in PANIC.read_text(encoding="utf-8").splitlines() if l.strip()] if PANIC.exists() else []
-    tr = [r for r in rows if r.get("kind") == "trade" and r.get("mode") == "live" and r.get("instrument") == "stock" and r.get("overnight_pct") is not None]
+    tr = [r for r in rows if r.get("kind") == "trade" and r.get("mode") == "live" and r.get("instrument") == "stock" and r.get("status") == "CLOSED" and r.get("overnight_pct") is not None]
     by = defaultdict(list)
     for r in tr:
         by[r["session_date"]].append(float(r["overnight_pct"]))
@@ -64,14 +93,22 @@ def panic_forward() -> dict:
 
 
 def verdict(sid: str, s: dict) -> str:
+    if s.get("invalid_rows", 0):
+        return "DATA_INVALID"
     n_min = MIN_N.get(sid, 30)
     if s["n"] < n_min:
         return f"ACCUMULATING({s['n']}/{n_min})"
+    if s.get("sessions", 0) < MIN_SESSIONS:
+        return f"ACCUMULATING_SESSIONS({s.get('sessions', 0)}/{MIN_SESSIONS})"
     t = s.get("session_t")
     if t is not None and t < 0:
         return "REFUTED"
-    if t is not None and t >= 2.5:
-        return "CANDIDATE_STRONG"
+    halves = s.get("half_year_means", {})
+    if (t is not None and t >= 2.5 and len(halves) >= 2
+            and all(v > 0 for v in halves.values()) and (s.get("ex_top2_mean") or 0) > 0):
+        # Descriptive t is not an overlap/multiple-testing adjusted promotion test.
+        # Portfolio replay, contract parity and an independent review are still required.
+        return "REVIEW_REQUIRED"
     return "WATCH"
 
 
@@ -93,7 +130,9 @@ def main() -> int:
     except (OSError, ValueError):
         pass
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    cur = {"verdicts": verdicts, "stars": sorted(stars), "panic": pf, "generated_at": now}
+    cur = {"schema_version": GATE_SCHEMA, "authority": "RESEARCH_ONLY",
+           "live_eligible": False, "arms": arms,
+           "verdicts": verdicts, "stars": sorted(stars), "panic": pf, "generated_at": now}
     try:
         prev = json.loads(STATE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -101,7 +140,7 @@ def main() -> int:
     changes = [(k, prev.get("verdicts", {}).get(k), v) for k, v in verdicts.items() if prev.get("verdicts", {}).get(k) != v]
     new_stars = sorted(set(stars) - set(prev.get("stars") or []))
     STATE.parent.mkdir(parents=True, exist_ok=True); STATE.write_text(json.dumps(cur, ensure_ascii=False, indent=1), encoding="utf-8")
-    REPORT_JSON.write_text(json.dumps({"arms": arms, "verdicts": verdicts, "panic": pf, "generated_at": now}, ensure_ascii=False, indent=1), encoding="utf-8")
+    REPORT_JSON.write_text(json.dumps(cur, ensure_ascii=False, indent=1), encoding="utf-8")
     for sid, v in verdicts.items():
         s = arms.get(sid, {})
         print(f"{sid:28s} {v:22s} n={s.get('n', pf.get('closed') if sid.startswith('panic') else 0)} sess_mean={s.get('session_mean')} t={s.get('session_t')}")

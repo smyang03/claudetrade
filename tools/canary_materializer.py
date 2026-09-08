@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """캐너리 신호 물질화 + 리허설 원장 (2026-09-09, 승인 경로 1단계 — 실주문 브리지 무변경).
 
-매일 21:05 래퍼에서 실행. 캐너리 정책(config/canary_policy.json)의 우선순위 arm마다 **다음 세션**의 매수 후보 1종목을 계산해
+매일 21:05 래퍼에서 실행. 우선순위 arm 중 dvol_desc/K1 계약만 다음 실제 개장 세션의 매수 후보를 계산해
   state/canary_signals_{KR,US}.json (profit_strategy_signals_v1 스키마, strategy_id="CANARY_<ARM>", weight=50,000/시장 cap)
-을 쓴다. 2단계(첫 CANDIDATE_STRONG 후 별도 세션)에서 profit_strategy_order_bridge가 이 파일을 읽게 배선하면 승인은
-`.env.live`+`v2_start_config.json`의 PROFIT_STRATEGY_ENABLED_IDS 한 줄 + 재시작이다. 그 전까지 브리지는 이 파일을 읽지 않는다.
+을 쓴다. canary_allowed는 항상 false다. 연구 판정·원본 계약 지문은 주문 승인이 아니며,
+실행 포트폴리오·체결/위험 검증과 별도 승인/어댑터 구현 전에는 실주문에 연결하지 않는다.
 
 리허설 원장 state/canary_rehearsal.jsonl: "오늘 캐너리가 켜져 있었다면 이 종목·이 수량" — 시가·정산은 `settle`이 일봉 CSV로 채운다.
-산출물은 경로가 돌았다는 사실·수량·가격이다. 성적은 가상 북이 낸다(여기서 수익 보고 금지).
+산출물은 경로·참조 수량·참조 가격뿐이다. 가상 북의 성과도 실행 포트폴리오 수익의 증명이 아니다.
 후보 계산: 마지막 완결 봉 기준 discovery_pools.featurize + event_features + arm filter → 전일 거래대금 큰순 1종목(K=1).
 US는 탐색 체인이 "다음 봉"이 있어야 후보를 만드는 구조라(Codex P1) 여기서는 마지막 봉만으로 직접 계산한다.
 사용: python tools/canary_materializer.py [materialize|settle|both]
@@ -37,11 +37,26 @@ def _load(p: Path, default):
         return default
 
 
-def _next_session(market: str, today: date) -> str:
-    d = today + timedelta(days=1)
-    while d.weekday() >= 5:
-        d += timedelta(days=1)
-    return d.isoformat()
+def _next_session(market: str, now: datetime) -> str:
+    """First exchange open strictly after generation; never a weekday fallback."""
+    from preopen.scheduler import _exchange_session_open_dt
+    from bot.session_date import is_known_market_holiday
+    if now.tzinfo is None or market not in CAP_KRW:
+        raise ValueError("aware timestamp and supported market required")
+    for offset in range(21):
+        d = now.astimezone(timezone.utc).date() + timedelta(days=offset)
+        if is_known_market_holiday(market, d):
+            continue
+        opened = _exchange_session_open_dt(market, d.isoformat())
+        if opened is not None and opened > now:
+            return d.isoformat()
+    raise ValueError("exchange_calendar_unavailable")
+
+
+def selection_contract_error(s: dict) -> str | None:
+    if s.get("pick") != "dvol_desc" or s.get("daily_cap") != 1:
+        return "selection_contract_mismatch:rehearsal_requires_dvol_desc_K1"
+    return None
 
 
 def _last_bar_candidates(market: str) -> dict[str, list[dict]]:
@@ -52,7 +67,7 @@ def _last_bar_candidates(market: str) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {}
     latest = ""
     for p in d.glob(f"{prefix}*.csv"):
-        b = dp._load_bars(p)
+        b = [bar for bar in dp._load_bars(p) if dp.bar_complete(bar[0], market)]
         if len(b) < dp.MIN_HISTORY + 1:
             continue
         latest = max(latest, b[-1][0])
@@ -60,7 +75,7 @@ def _last_bar_candidates(market: str) -> dict[str, list[dict]]:
         return out
     regime = dp._index_regime(market)
     for p in d.glob(f"{prefix}*.csv"):
-        b = dp._load_bars(p)
+        b = [bar for bar in dp._load_bars(p) if dp.bar_complete(bar[0], market)]
         if len(b) < dp.MIN_HISTORY + 1 or b[-1][0] != latest:
             continue
         i = len(b) - 1
@@ -84,38 +99,52 @@ def materialize() -> dict:
     import virtual_books as vb
     pol = _load(POLICY, {}); verdicts = (_load(GATE, {}) or {}).get("verdicts", {})
     arms = {s["id"]: s for s in vb.STRATEGIES}
-    today = date.today(); now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now_dt = datetime.now(timezone.utc); now = now_dt.isoformat(timespec="seconds")
     result = {}
     for market in ("KR", "US"):
-        cands = _last_bar_candidates(market)
-        signals = []; planned = []
+        signals = []; planned = []; errors = []
+        try:
+            sess = _next_session(market, now_dt)
+        except ValueError as exc:
+            sess = None
+            errors.append(str(exc))
+        cands = _last_bar_candidates(market) if sess else {}
         for arm_id in pol.get("priority_queue") or []:
             s = arms.get(arm_id)
             if not s or s.get("universe") != ("xkr" if market == "KR" else "xus"):
+                continue
+            mismatch = selection_contract_error(s)
+            if mismatch:
+                errors.append(f"{arm_id}:{mismatch}")
                 continue
             pool = cands.get(s.get("pool"), [])
             passers = [c for c in pool if vb.candidate_filter_pass(c, s.get("filter") or {})]
             if not passers:
                 continue
             pick = max(passers, key=lambda c: c.get("dvol") or 0.0)   # K=1: 전일 거래대금 1위(캐너리는 arm당 1종목)
-            sess = _next_session(market, today)
             price_krw = float(pick["price"]) * (FX_USDKRW_FALLBACK if market == "US" else 1.0)
             qty = int(ORDER_KRW // price_krw) if price_krw > 0 else 0
             sig = {"strategy_id": f"CANARY_{arm_id.upper()}", "source_strategy": f"canary_{arm_id}", "market": market, "ticker": pick["ticker"],
                    "entry_session_date": sess, "signal_date": pick["signal_date"], "known_at": now, "rank": 1, "priority": 1.0,
                    "weight": round(ORDER_KRW / CAP_KRW[market], 4), "hold_sessions": int(s.get("hold", vb.HOLD_SESSIONS)),
                    "tp_pct": float(s.get("tp", vb.TP)) / 100.0, "sl_pct": abs(float(s.get("sl", vb.SL))) / 100.0,
-                   "gate_verdict": verdicts.get(arm_id), "canary_allowed": verdicts.get(arm_id) == "CANDIDATE_STRONG",
+                   "gate_verdict": verdicts.get(arm_id), "canary_allowed": False,
+                   "research_contract_hash": vb._contract_hash(s),
+                   "rehearsal_contract_version": "selection_K1_reference_v2",
+                   "execution_validation": "PENDING_PORTFOLIO_AND_FILL_REPLAY",
                    "signal_provider": "canary_materializer/discovery_pools(last_bar)", "execution_price_provider": "KIS_ONLY",
                    "pool_n": len(pool), "passers_n": len(passers), "prev_close": pick["price"], "qty_planned_at_prev_close": qty}
             signals.append(sig)
             planned.append({"kind": "planned", "session_date": sess, "market": market, "strategy_id": sig["strategy_id"], "arm": arm_id,
                             "ticker": pick["ticker"], "qty_planned": qty, "prev_close": pick["price"], "order_krw": ORDER_KRW,
                             "gate_verdict": verdicts.get(arm_id), "status": "REHEARSAL_PLANNED", "planned_at": now,
+                            "research_contract_hash": sig["research_contract_hash"],
+                            "rehearsal_contract_version": sig["rehearsal_contract_version"],
+                            "settlement_kind": "MATURITY_PRICE_REFERENCE_NOT_STRATEGY_PNL",
                             "hold_sessions": sig["hold_sessions"], "tp_pct": sig["tp_pct"], "sl_pct": sig["sl_pct"]})
         payload = {"schema_version": "profit_strategy_signals_v1", "authority": "SIGNAL_ONLY_NO_BROKER_AUTHORITY", "market": market,
-                   "session_date": _next_session(market, today), "generated_at": now, "signals": signals, "errors": [],
-                   "status": "healthy", "note": "캐너리 1단계 — 브리지 미배선. 승인 절차는 config/canary_policy.json approval_procedure"}
+                   "session_date": sess, "generated_at": now, "signals": signals, "errors": errors,
+                   "status": "blocked" if not sess else "degraded" if errors else "healthy", "note": "RESEARCH ONLY: selection parity is not executable portfolio validation; no live authority."}
         out = ROOT / "state" / f"canary_signals_{market}.json"
         out.parent.mkdir(parents=True, exist_ok=True); out.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
         have = {(r.get("session_date"), r.get("strategy_id")) for r in _jsonl(LEDGER)}
@@ -142,6 +171,7 @@ def _jsonl(p: Path) -> list[dict]:
 
 def settle() -> int:
     """리허설 행에 세션 시가(진입 가정)·보유 만기 종가를 일봉 CSV로 채운다(수익 보고용 아님 — 경로 실측)."""
+    from virtual_books import bar_complete
     rows = _jsonl(LEDGER); n = 0
     for r in rows:
         if r.get("kind") != "planned" or r.get("status") == "REHEARSAL_SETTLED":
@@ -149,7 +179,9 @@ def settle() -> int:
         d = ROOT / "data" / "price" / ("us" if r["market"] == "US" else "kr") / f"{'us' if r['market']=='US' else 'kr'}_{r['ticker']}.csv"
         if not d.exists():
             continue
-        bars = [x for x in csv.reader(d.open(encoding="utf-8-sig")) if x and x[0][:2] == "20"]
+        with d.open(encoding="utf-8-sig", newline="") as fh:
+            bars = sorted([x for x in csv.reader(fh) if len(x) >= 6 and x[0][:2] == "20"
+                           and bar_complete(x[0], r["market"])], key=lambda x: x[0])
         dates = [x[0] for x in bars]
         if r["session_date"] not in dates:
             continue
@@ -158,8 +190,11 @@ def settle() -> int:
             r["entry_open"] = o; r["qty_at_open"] = int(r["order_krw"] // (o * (FX_USDKRW_FALLBACK if r["market"] == "US" else 1.0))) if o > 0 else 0
             r["status"] = "REHEARSAL_OPENED"; n += 1
         h = int(r.get("hold_sessions") or 7)
-        if i + h < len(dates):
-            r["exit_close_at_hold"] = float(bars[i + h][4]); r["status"] = "REHEARSAL_SETTLED"; n += 1
+        if h > 0 and i + h - 1 < len(dates):
+            r["exit_close_at_hold"] = float(bars[i + h - 1][4])
+            r["reference_exit_session"] = dates[i + h - 1]
+            r["settlement_kind"] = "MATURITY_PRICE_REFERENCE_NOT_STRATEGY_PNL"
+            r["status"] = "REHEARSAL_SETTLED"; n += 1
     if n:
         tmp = LEDGER.with_suffix(".tmp"); tmp.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in rows), encoding="utf-8"); tmp.replace(LEDGER)
     print(f"[CANARY] 리허설 정산 갱신 {n}")

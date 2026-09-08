@@ -5,7 +5,7 @@
   "max_concurrent_canaries": 1,
   "total_loss_line_krw": -33000,
   "loss_line_rule": "총 손실선(자본 1%, 미실현·수수료 포함, 초기화 금지)을 동시 캐너리 수로 나눈다. 한 후보가 자기 손실선에 닿으면 그 후보만 OFF.",
-  "activation_rule": "forward_gate_state.json에서 CANDIDATE_STRONG(forward ≥30건·세션 t≥2.5·반기 동일 부호)인 후보만, 통과 순서(priority_queue) 대로 한 번에 하나. 통과 후보가 여럿이면 다음 후보는 앞 후보가 실체결 20세션 net 양수·대사 오류 0을 채운 뒤.",
+  "activation_rule": "2026-09-09 안전 보강: forward_research_gate_v2는 연구용이며 최고 판정 REVIEW_REQUIRED도 주문 승인이 아니다. 완결 코호트·최소30진입세션·반기 일관성·상위2 제외를 확인한 뒤, 별도 중첩/다중검정 검토와 동일 실행 계약의 포트폴리오 쉐도우 검증이 필요하다. 현재 신규 캐너리는 execution_validation_pending으로 차단한다.",
   "scale_up_rule": "5만→10만은 실체결 20세션 net·상위2세션 제외 net 양수 & 체결 대사 오류 0 & 운영자 승인 후 한 단계(Codex 09-07 규칙).",
   "priority_queue": [
     "c_us_insider_cluster",
@@ -28,14 +28,14 @@
     "kr_fallen_buyback30": "c_kr_fallen_buyback30"
   },
   "approval_procedure": [
-    "1. forward_gate_watch가 CANDIDATE_STRONG 판정을 텔레그램으로 알린다(상태 변화 때만)",
-    "2. 운영자 '켜' 한마디",
+    "1. forward_gate_watch의 REVIEW_REQUIRED는 검토 시작 신호일 뿐이다. 연구 성과와 동일한 선별·진입·출구·비용·자금 제약의 실행 증거를 별도로 검토한다.",
+    "2. 실행 계약·평가 기간·유효기간·체결 대사·미실현 및 대기 주문 위험 검증 완료 후 운영자가 해당 버전을 별도 승인한다.",
     "3. (2단계 배선, 첫 1회 약 1시간) profit_strategy_order_bridge가 state/canary_signals_{KR,US}.json을 읽고 CANARY_ ID를 canary_gate로 재검사, tp/sl/hold를 신호에서 받음, risk_manager.isolated_strategy_source에 canary_ 접두 허용, 테스트(미허용 ID는 제출 함수 호출 0) + /check + 재시작",
     "4. .env.live와 config/v2_start_config.json 양쪽에 PROFIT_STRATEGY_ENABLED_IDS=CANARY_<ARM_UPPER> (기존 빈 값이 3중 방벽의 하나 — 미리 넣지 않는다)",
     "5. 재시작 → effective-config 실측 → 첫 주문 5만원(weight=5만/시장 cap; cap 10만·30만은 낮추지 않는다)",
     "6. 실체결 20세션 net 양수·상위2 제외 양수·대사 오류 0 → 운영자 승인 후 한 단계 증액"
   ],
-  "stage": "1단계 완료(2026-09-09): 신호 파일·리허설 원장·주간 보고. 2단계(브리지 배선)는 첫 CANDIDATE_STRONG 후 별도 세션",
+  "stage": "1단계 연구/가격 참조 리허설만 제공. K1과 다른 선별 계약은 신호 생성 차단. 실행 포트폴리오 검증 및 2단계 주문 어댑터는 미완료; 신규 캐너리 주문 차단 유지.",
   "prerequisite_defects": [
     "유령 포지션 종목 중복(FIG×3·KVYO×3, 09-03~) — 캐너리 리허설이 같은 phantom 경로를 쓰기 전에 수리"
   ]
