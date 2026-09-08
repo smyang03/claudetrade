@@ -26,5 +26,17 @@
     "kr_insider_k1": "c_kr_insider_k1",
     "us_insider_cluster": "c_us_insider_cluster",
     "kr_fallen_buyback30": "c_kr_fallen_buyback30"
-  }
+  },
+  "approval_procedure": [
+    "1. forward_gate_watch가 CANDIDATE_STRONG 판정을 텔레그램으로 알린다(상태 변화 때만)",
+    "2. 운영자 '켜' 한마디",
+    "3. (2단계 배선, 첫 1회 약 1시간) profit_strategy_order_bridge가 state/canary_signals_{KR,US}.json을 읽고 CANARY_ ID를 canary_gate로 재검사, tp/sl/hold를 신호에서 받음, risk_manager.isolated_strategy_source에 canary_ 접두 허용, 테스트(미허용 ID는 제출 함수 호출 0) + /check + 재시작",
+    "4. .env.live와 config/v2_start_config.json 양쪽에 PROFIT_STRATEGY_ENABLED_IDS=CANARY_<ARM_UPPER> (기존 빈 값이 3중 방벽의 하나 — 미리 넣지 않는다)",
+    "5. 재시작 → effective-config 실측 → 첫 주문 5만원(weight=5만/시장 cap; cap 10만·30만은 낮추지 않는다)",
+    "6. 실체결 20세션 net 양수·상위2 제외 양수·대사 오류 0 → 운영자 승인 후 한 단계 증액"
+  ],
+  "stage": "1단계 완료(2026-09-09): 신호 파일·리허설 원장·주간 보고. 2단계(브리지 배선)는 첫 CANDIDATE_STRONG 후 별도 세션",
+  "prerequisite_defects": [
+    "유령 포지션 종목 중복(FIG×3·KVYO×3, 09-03~) — 캐너리 리허설이 같은 phantom 경로를 쓰기 전에 수리"
+  ]
 }

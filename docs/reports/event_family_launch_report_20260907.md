@@ -145,3 +145,11 @@ US Form 4 군집은 데이터가 2026-03(SEC 2026Q1)에 끊겨 H2가 3개월뿐�
 | fast 유령 **내일** | `FAST_ENABLED_FROM="2026-09-09"` 날짜 게이트 — 09-09 07:25 러너 기동부터 자동 ON(코드 변경 불필요) |
 
 검증: 관련 테스트 통과(지정가 호가단위·limit_px 전달·fail-closed 경로·fast 날짜 게이트), 재시작 후 effective config 불변 확인(§11).
+
+
+## 11. 캐너리 승인 경로 1단계 (09-09 00:xx, 운영자 "승인하게 준비해놔")
+
+- 통로 = 기존 수익 전략 MICRO 브리지(`runtime/profit_strategy_order_bridge.py`): 이미 제출 ON·ACK·micro 모드이고 `PROFIT_STRATEGY_ENABLED_IDS=""`(3중 방벽)만 막고 있다. 캡 KR 10만·US 30만은 그대로, 5만원은 weight(0.5 / 0.1667)로.
+- **1단계 완료**: `tools/canary_materializer.py`(21:05 래퍼) — 정책 큐 arm마다 마지막 완결 봉으로 다음 세션 후보 1종목(거래대금 1위) → `state/canary_signals_{KR,US}.json`(profit_strategy_signals_v1) + 리허설 원장 `state/canary_rehearsal.jsonl`(시가·만기 종가는 CSV로 채움, 수익 보고용 아님). 첫 실행: KR 09-09 `CANARY_C_KR_INSIDER_K1` 316140, US 0. 주간 다이제스트 schtask `claudetrade_weekly_forward_digest` 월 08:00. `canary_policy_check.py`가 승인 시 env 한 줄을 출력.
+- **2단계(첫 CANDIDATE_STRONG 후, 약 1시간)**: 브리지가 canary_signals를 읽고 CANARY_ ID를 canary_gate로 재검사, tp/sl/hold를 신호에서, `risk_manager.isolated_strategy_source` canary_ 접두 허용, "미허용 ID는 제출 함수 호출 0" 테스트, /check, 재시작. 선행 결함: 유령 포지션 종목 중복(FIG×3·KVYO×3) 수리.
+- 승인 절차 6단계는 `config/canary_policy.json` approval_procedure. 리허설 통보 수리(611a5c0) 반영용 1회 재시작 schtask 09-09 05:10.

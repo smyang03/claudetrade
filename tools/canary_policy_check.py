@@ -30,7 +30,12 @@ def main() -> int:
     print(f"[CANARY] CANDIDATE_STRONG {len(eligible)}/{len(gate)} · ON 가능 {len(allowed)}: {allowed or '없음'}")
     for k, v in gate.items():
         print(f"  {k:28s} {v}")
-    print("[CANARY] 배선 없음 — 스위치는 운영자 승인 후 수동(ORDER_SUBMIT_ENABLED). 이 출력은 판단 보조.")
+    for k in allowed:
+        print(f"[CANARY] 승인 시 env 한 줄: PROFIT_STRATEGY_ENABLED_IDS=CANARY_{k.upper()}  (.env.live + config/v2_start_config.json 양쪽, 재시작)")
+    sig = {m: (json.loads((ROOT / "state" / f"canary_signals_{m}.json").read_text(encoding="utf-8")) if (ROOT / "state" / f"canary_signals_{m}.json").exists() else {}) for m in ("KR", "US")}
+    for m, d in sig.items():
+        print(f"[CANARY] {m} 다음 세션 {d.get('session_date')} 신호 {[(s['strategy_id'], s['ticker']) for s in d.get('signals', [])]}")
+    print("[CANARY] 1단계 — 브리지 미배선. 절차: config/canary_policy.json approval_procedure")
     return 0
 
 

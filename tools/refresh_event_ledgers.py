@@ -31,6 +31,7 @@ STEPS = [
     ("event_family_report", ["tools/event_family_report.py", "--json", "data/analysis/event_family_report_20260907.json"]),
     ("forward_gate_watch", ["tools/forward_gate_watch.py"]),                    # 09-08: forward 판정 자동화(상태 변화 때만 텔레그램)
     ("panic_report", ["tools/us_panic_close_shadow.py", "report"]),
+    ("canary_materialize", ["tools/canary_materializer.py", "both"]),      # 09-09: 캐너리 신호 파일(다음 세션)+리허설 원장(브리지 미배선)
 ]
 
 

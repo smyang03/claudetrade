@@ -119,6 +119,26 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001
             print(f"[GATE] telegram 실패 {exc}")
     print(f"[GATE] 변화 {len(notable)}건 · ★신규 {len(new_stars)}")
+    if "--weekly" in args:   # 월요일 08:00 주간 다이제스트 — 변화 유무와 무관하게 한 통(운영자 "매주 보고")
+        def _cnt(p):
+            try:
+                return sum(1 for _ in p.open(encoding="utf-8"))
+            except OSError:
+                return 0
+        sh = ROOT / "data" / "shadow"
+        lines = ["📊 [VIRTUAL] 주간 forward 현황 (실매수 아님)"]
+        for sid, s in arms.items():
+            lines.append(f"- {sid}: {s['n']}건/{MIN_N.get(sid, 30)} t={s.get('session_t')} 평균={s.get('session_mean')}")
+        lines.append(f"- 패닉 마감: 세션 {pf['sessions']}/10 오버나이트={pf['overnight_session_mean']}")
+        lines.append(f"- 원장: 공시fast {_cnt(sh / 'kr_event_fast.jsonl')} · 개장충격 {_cnt(sh / 'us_open_impact.jsonl')} · 매도흡수 {_cnt(sh / 'kr_absorption.jsonl')} · 종가동시호가 {_cnt(sh / 'kr_close_auction.jsonl')} · 유예 {_cnt(sh / 'kr_event_preopen_fills.jsonl')}")
+        lines.append("- 판정: " + (", ".join(f"{k}={v}" for k, v in verdicts.items() if not str(v).startswith("ACCUMULATING")) or "전부 축적 중"))
+        if "--no-telegram" not in args:
+            try:
+                import telegram_reporter as tg
+                tg.send(chr(10).join(lines), parse_mode=None, critical=False)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[GATE] weekly telegram 실패 {exc}")
+        print(chr(10).join(lines))
     return 0
 
 
