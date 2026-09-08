@@ -176,3 +176,7 @@ state/kr_event_lane_heartbeat.json
 data/shadow/kr_event_docs/
 state/earnings_pit_last.json
 state/earnings_pit_last.json.tmp
+
+# 09-09 정리: 로컬 분석 산출물·런타임 스냅샷
+/reports/
+prev_state.json
