@@ -32,6 +32,8 @@ STEPS = [
     ("forward_gate_watch", ["tools/forward_gate_watch.py"]),                    # 09-08: forward 판정 자동화(상태 변화 때만 텔레그램)
     ("panic_report", ["tools/us_panic_close_shadow.py", "report"]),
     ("canary_materialize", ["tools/canary_materializer.py", "both"]),      # 09-09: 캐너리 신호 파일(다음 세션)+리허설 원장(브리지 미배선)
+    ("kq_panic_settle", ["tools/kr_index_etf_panic_shadow.py", "settle"]),  # 09-09: KOSDAQ 급락일 지수 ETF 종가매수→다음시가 정산+리포트
+    ("core_etf_book", ["tools/core_etf_book_shadow.py", "run"]),           # 09-09: 코어 ETF 북(ew·absmom) 월초 리밸런스·일일 MTM
 ]
 
 

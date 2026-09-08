@@ -17615,6 +17615,9 @@ def api_research():
 
     return jsonify({"available": True,
                     "panic_close": _panic(), "ledgers": _ledger_status(),
+                    # 09-09: KOSDAQ 급락일 지수 ETF 오버나이트 · 코어 ETF 북 (사전등록 preregistration_core_etf_and_kq_panic_20260909)
+                    "kq_panic": _load(BASE_DIR / "data" / "analysis" / "kr_index_etf_panic_report.json"),
+                    "core_book": _load(BASE_DIR / "data" / "analysis" / "core_etf_book_report.json"),
                     "nxt": _load(BASE_DIR / "state" / "nxt_probe.json"),
                     "us_kr": {"generated_at": us_kr.get("generated_at"), "kr_period": us_kr.get("kr_period"), "pooled": us_kr.get("pooled"), "sectors": sectors},
                     "corp_actions": _load(BASE_DIR / "data" / "analysis" / "dart_corp_actions_12m_summary.json"),
@@ -17958,6 +17961,16 @@ async function loadResearch() {
     cards.push(card('패닉일 마감 진입 (P1/P2, 15:45 ET, TP20/SL25/D10) — 가상 북 밖 원장', pc.n_sessions ? pcRow('급락주', pc.by?.stock) + '<br>' + pcRow('ETF(TQQQ/IWM/SPY)', pc.by?.etf) +
       '<br><span class="dim">최근 세션 ' + (pc.latest_session ? `${pc.latest_session.session_date} ${pc.latest_session.mode} breadth_1540 ${pc.latest_session.breadth_1540 ?? '-'} / eod ${pc.latest_session.breadth_eod ?? '-'} 통과 ${pc.latest_session.n_pass}` : '-') +
       ' · 백필=EOD breadth·종가≤−3% 상위집합 근사, forward=15:40 iex 스냅샷. 판정 아님(사전등록 §2)</span>' : '<span class="dim">원장 없음 — python tools/us_panic_close_shadow.py backfill</span>'));
+    const kq = d.kq_panic || {};
+    const kqRow = (tk, v) => v ? `${tk} ${v.name}: 무조건 오버나이트 ${f(v.uncond_overnight)}% · 백필 n=${v.backfill?.n ?? 0} 초과 <b class="${(v.backfill?.excess_mean||0)>0?'pos':'neg'}">${f(v.backfill?.excess_mean)}%</b>(t ${v.backfill?.t ?? '-'}) 승 ${v.backfill?.win ?? '-'}% 최악 ${f(v.backfill?.min)}% · forward n=${v.live?.n ?? 0} 초과 ${v.live?.n ? f(v.live.excess_mean) + '%' : '-'}` : `${tk}: 없음`;
+    const kqs = kq.sessions || {};
+    cards.push(card('KOSDAQ 급락일(≤−2.5%) 지수 ETF 종가 매수 → 다음 시가 — 쉐도우 (15:16 schtask, 21:05 정산)', kq.by ? Object.entries(kq.by).map(([tk, v]) => kqRow(tk, v)).join('<br>') +
+      `<br>세션 ${kqs.n ?? 0} · 15:19 신호 ${kqs.signals_1519 ?? 0} · stale ${kqs.stale ?? 0} · 어긋남 ${Object.entries(kqs.divergence || {}).map(([k, v]) => k + ' ' + v).join(' · ') || '-'} · |15:19−종가| 평균 ${kqs.abs_gap_pp_mean ?? '-'}pp · 미정산 ${kq.open_trades ?? 0}` +
+      '<br><span class="dim">판정 forward 20건: 세션 초과>0 · 승률≥55% · 어긋남≤25% (사전등록 09-09 §1). 2016~18 ≈0 국면 의존, 233740은 15.4% 과세</span>' : '<span class="dim">원장 없음 — python tools/kr_index_etf_panic_shadow.py backfill</span>'));
+    const cb = d.core_book || {}; const arms = cb.arms || {};
+    const cbRow = (arm, a) => (a && a.n !== 0) ? `<b>${arm}</b> ${a.start}~${a.last}: NAV ${Number(a.nav||0).toLocaleString()} (<span class="${a.ret_pct>0?'pos':'neg'}">${f(a.ret_pct)}%</span>) 벤치 K200 ${f(a.bench_ret_pct)}% maxDD ${f(a.max_dd_pct)}% · 리밸 ${a.rebalances}(live ${a.live_rebalances}) 정수주 오차 ${a.int_share_err_pct}% 세금 ${Number(a.taxes_total||0).toLocaleString()} · 목표 ${Object.entries(a.last_targets||{}).filter(([k,v])=>v>0).map(([k,v])=>k+' '+Math.round(v*100)+'%').join(' ')}` : `${arm}: 없음`;
+    cards.push(card('코어 ETF 북 — 무헤지 5자산 월 배분, 가상 260만 (ew 등가중 vs absmom 12-1) — 베타 추적, 알파 게이트 아님', cb.arms ? Object.entries(arms).map(([k, v]) => cbRow(k, v)).join('<br>') +
+      '<br><span class="dim">유니버스 379810·360750·411060·305080·069500. 2023~26 백필은 동반 상승 국면이라 벤치 비교 무의미 — 낙폭·정수주·세금 추적만. 판정 6~12개월 (사전등록 09-09 §2)</span>' : '<span class="dim">원장 없음 — python tools/core_etf_book_shadow.py backfill</span>'));
     const lg = d.ledgers || {};
     const kk = o => Object.entries(o || {}).map(([k, v]) => `${k} ${v}`).join(' · ') || '0';
     const cs = c => (c && c.n) ? `정산 ${c.n} net ${f(c.net_mean)}% 승 ${c.win}%` : '정산 0';
