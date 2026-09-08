@@ -470,7 +470,7 @@ def _notify_rehearsal_pick(bot: Any, *, market: str, session_date: str, ticker: 
     try:
         from telegram_reporter import rehearsal_pick_alert, send as _tg_send
         return bool(_tg_send(rehearsal_pick_alert(market, ticker, qty, price, reason, matched)
-                             + ("\n→ 유령 포지션 생성 (실전 출구 로직으로 추적)" if market == "US" else "")), critical=True)
+                             + ("\n→ 유령 포지션 생성 (실전 출구 로직으로 추적)" if market == "US" else ""), critical=True))   # 09-08 수리: 괄호 오류로 bool(..., critical=True) TypeError → 통보 매번 실패
     except Exception as exc:
         log.warning(f"[{market} handoff] REHEARSAL 통보 실패(무시): {exc}")
         return False
