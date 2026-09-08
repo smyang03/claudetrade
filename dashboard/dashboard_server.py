@@ -17387,7 +17387,7 @@ def api_phantom_positions():
                      "held_days": p.get("held_days"), "max_hold": p.get("max_hold"),
                      "entry_session_date": p.get("entry_session_date"), "source": p.get("source_strategy"),
                      "retro": bool(p.get("retro")), "last_price_at": p.get("last_price_at"),
-                     "arm": p.get("arm") or "us_live_dvol", "tp_pct": p.get("tp_pct")})
+                     "arm": p.get("arm") or "us_live_dvol", "tp_pct": p.get("tp_pct"), "arms": p.get("arms") or [p.get("arm") or "us_live_dvol"]})
     return jsonify({"available": True, "open": view, "closed": closes[-20:][::-1], "banner": "VIRTUAL — 실주문 아님"})
 
 
@@ -17844,7 +17844,7 @@ async function loadPhantom() {
         <td>${p.pnl_pct === null ? '-' : vbFmt(Number(p.pnl_pct.toFixed(2)), '%')}</td>
         <td>${vbFmt(Number((p.peak_pnl_pct||0).toFixed(2)), '%')}</td><td>${vbFmt(Number((p.trough_pnl_pct||0).toFixed(2)), '%')}</td>
         <td>${p.held_days}/${p.max_hold}</td><td style="text-align:left;">${p.entry_session_date}</td>
-        <td style="color:var(--muted);">${p.retro ? '소급' : ''} ${p.source}</td>
+        <td style="color:var(--muted);">${p.retro ? '소급' : ''} ${p.source}${(p.arms && p.arms.length > 1) ? ' · arms ' + p.arms.length : ''}</td>
       </tr>`).join('') : '<tr><td colspan="10" style="padding:6px;color:var(--muted);">유령 포지션 없음</td></tr>';
     const c = document.querySelector('#vb-phantom-closed');
     c.innerHTML = d.closed.length ? '최근 청산: ' + d.closed.slice(0,5).map(r => `${r.ticker} ${r.reason} ${vbFmt(r.gross_pct,'%')} (${(r.ts||'').slice(5,16)})`).join(' · ') : '';

@@ -53,7 +53,39 @@ def _entry_mark_path() -> Path:
     return get_runtime_path("state", "phantom_arm_entry_mark.json")
 
 
-def load_positions() -> list[dict]:
+def _pos_key(p: dict) -> tuple[str, str, str]:
+    """포지션 정체성(09-09 수리): (진입 세션, 종목, 출구 계약). arm은 정체성이 아니다 — 같은 계약의 arm들은 한 포지션을 공유한다."""
+    return (str(p.get("entry_session_date")), str(p.get("ticker")).upper(), str(p.get("exit_contract") or ""))
+
+
+def _arms_of(p: dict) -> list[str]:
+    arms = [str(a) for a in (p.get("arms") or []) if a]
+    primary = str(p.get("arm") or "")
+    if primary and primary not in arms:
+        arms.insert(0, primary)
+    return arms
+
+
+def merge_duplicates(positions: list[dict]) -> tuple[list[dict], int]:
+    """같은 (세션, 종목, 계약)의 중복 포지션을 하나로 병합 — arms 합집합, 봉우리/골 극값, 먼저 열린 행 유지. (병합 결과, 제거 수)."""
+    out: list[dict] = []; by: dict[tuple, dict] = {}; removed = 0
+    for p in sorted(positions, key=lambda x: str(x.get("opened_at") or "")):
+        k = _pos_key(p)
+        if k in by:
+            host = by[k]
+            host["arms"] = sorted(set(_arms_of(host)) | set(_arms_of(p)))
+            host["peak_pnl_pct"] = max(float(host.get("peak_pnl_pct") or 0.0), float(p.get("peak_pnl_pct") or 0.0))
+            host["position_mfe_pct"] = host["peak_pnl_pct"]
+            host["trough_pnl_pct"] = min(float(host.get("trough_pnl_pct") or 0.0), float(p.get("trough_pnl_pct") or 0.0))
+            host["position_mae_pct"] = host["trough_pnl_pct"]
+            removed += 1
+            continue
+        p["arms"] = _arms_of(p)
+        by[k] = p; out.append(p)
+    return out, removed
+
+
+def _load_positions_raw() -> list[dict]:
     p = _state_path()
     if not p.exists():
         return []
@@ -68,6 +100,18 @@ def load_positions() -> list[dict]:
     except Exception as exc:
         log.warning(f"[phantom] 상태 파일 읽기 실패(무시): {exc}")
         return []
+
+
+def load_positions() -> list[dict]:
+    """상태 파일의 포지션. 09-09: 같은 (세션, 종목, 계약) 중복은 읽을 때 병합(자가 치유)하고 즉시 저장한다."""
+    positions = _load_positions_raw()
+    merged, removed = merge_duplicates(positions)
+    if removed:
+        save_positions(merged)
+        _append_ledger({"event": "MERGE", "ts": _now_iso(), "removed": removed, "open_after": len(merged),
+                        "note": "09-09 수리: (세션, 종목, 계약) 중복 포지션 병합 — arm별 원장 행은 유지"})
+        log.warning(f"[VIRTUAL][phantom] 중복 포지션 {removed}건 병합 → {len(merged)}건")
+    return merged
 
 
 def save_positions(positions: list[dict]) -> None:
@@ -136,23 +180,32 @@ def build_position(*, ticker: str, qty: int, quote_usd: float, usd_krw: float, s
 
 
 def _open(bot: Any, pos: dict, *, reason: str, retro: bool) -> dict | None:
-    key = (str(pos["entry_session_date"]), str(pos["arm"]), str(pos["ticker"]).upper())
+    """(세션, 종목, 계약)당 포지션 1개. 같은 arm이 이미 있으면 None(멱등), 다른 arm이면 기존 포지션에 arm만 추가하고 원장엔 arm 행을 남긴다(09-09)."""
+    key = _pos_key(pos); arm = str(pos["arm"])
+    merged_into = None
     with _LOCK:
         positions = load_positions()
-        if any((str(p.get("entry_session_date")), str(p.get("arm")), str(p.get("ticker")).upper()) == key
-               for p in positions):
-            return None
-        positions.append(pos)
+        host = next((p for p in positions if _pos_key(p) == key), None)
+        if host is not None:
+            if arm in _arms_of(host):
+                return None
+            host["arms"] = sorted(set(_arms_of(host)) | {arm})
+            merged_into = host
+        else:
+            pos["arms"] = [arm]
+            positions.append(pos)
         save_positions(positions)
     _append_ledger({"event": "OPEN", "ts": pos["opened_at"], "session_date": pos["entry_session_date"],
                     "book_session_date": pos.get("book_session_date"), "arm": pos["arm"],
                     "ticker": pos["ticker"], "qty": pos["qty"], "quote_usd": pos["display_avg_price"],
                     "decision_quote": pos.get("decision_quote"), "usd_krw": float(getattr(bot, "usd_krw_rate", 0.0) or 0.0),
                     "tp_pct": pos["tp_pct"], "sl_pct": pos["sl_pct"], "reason": reason, "retro": bool(retro),
-                    "note": "retro: 장중 봉우리 이력 없음(peak=entry)" if retro else ""})
+                    "shared_position": bool(merged_into is not None),
+                    "note": ("shared: 같은 (세션, 종목, 계약) 포지션에 arm 추가" if merged_into is not None
+                             else ("retro: 장중 봉우리 이력 없음(peak=entry)" if retro else ""))})
     log.info(f"[VIRTUAL][phantom OPEN] {pos['arm']} {pos['ticker']} {pos['qty']}주 @ ${pos['display_avg_price']:.2f} "
-             f"session={pos['entry_session_date']}{' (retro)' if retro else ''} — 실주문 아님")
-    return pos
+             f"session={pos['entry_session_date']}{' (retro)' if retro else ''}{' (shared)' if merged_into is not None else ''} — 실주문 아님")
+    return merged_into if merged_into is not None else pos
 
 
 def open_from_rehearsal(bot: Any, *, ticker: str, qty: int, quote_usd: float, session_date: str,
@@ -260,7 +313,8 @@ def open_arm_picks_from_ledger(bot: Any, *, session_date: str, price_fn: Callabl
     rate = float(getattr(bot, "usd_krw_rate", 0.0) or 0.0) or 1.0
     open_by_arm: dict[str, int] = {}
     for p in load_positions():
-        open_by_arm[str(p.get("arm"))] = open_by_arm.get(str(p.get("arm")), 0) + 1
+        for a in _arms_of(p):
+            open_by_arm[a] = open_by_arm.get(a, 0) + 1
     opened: list[str] = []
     for r in sorted(rows, key=lambda x: (x["arm"], int(x.get("pick_pos") or 0))):
         arm, t = str(r["arm"]), str(r["ticker"]).upper()
@@ -374,15 +428,17 @@ def _apply_price(pos: dict, px: float, rate: float) -> None:
 def _close_row(pos: dict, *, reason: str, exit_usd: float, usd_krw: float) -> dict:
     entry_usd = float(pos.get("display_avg_price") or 0.0)
     net = (exit_usd / entry_usd - 1.0) * 100.0 if entry_usd > 0 else 0.0
+    arms = _arms_of(pos) or [str(pos.get("arm", LIVE_MIRROR_ARM))]
     row = {"event": "CLOSE", "ts": _now_iso(), "session_date": pos.get("entry_session_date"),
-           "book_session_date": pos.get("book_session_date"), "arm": pos.get("arm", LIVE_MIRROR_ARM),
+           "book_session_date": pos.get("book_session_date"), "arm": arms[0],
            "ticker": pos.get("ticker"), "qty": pos.get("qty"), "entry_usd": entry_usd, "exit_usd": exit_usd,
            "gross_pct": round(net, 4), "reason": reason, "held_days": int(pos.get("held_days", 0) or 0),
            "peak_pnl_pct": round(float(pos.get("peak_pnl_pct") or 0.0), 4),
            "trough_pnl_pct": round(float(pos.get("trough_pnl_pct") or 0.0), 4),
            "tp_pct": pos.get("tp_pct"), "sl_pct": pos.get("sl_pct"),
-           "usd_krw": usd_krw, "source": pos.get("source_strategy"), "retro": bool(pos.get("retro"))}
-    _append_ledger(row)
+           "usd_krw": usd_krw, "source": pos.get("source_strategy"), "retro": bool(pos.get("retro")), "arms": arms}
+    for a in arms:   # 09-09: 포지션은 하나지만 원장 CLOSE는 arm별 행(phantom_vs_daily·대시보드 arm 회계 보존)
+        _append_ledger({**row, "arm": a})
     log.info(f"[VIRTUAL][phantom CLOSED] {row['arm']} {row['ticker']} {reason} {net:+.2f}% "
              f"(${entry_usd:.2f}→${exit_usd:.2f}, {row['held_days']}일) — 실주문 아님")
     return row
@@ -444,8 +500,14 @@ def evaluate(bot: Any, *, price_fn: Callable | None = None) -> dict:
     with _LOCK:
         # 락 밖에서 평가하는 동안 새로 열린 포지션(브리지)이 있으면 보존
         latest = load_positions()
-        known = {(str(p.get("entry_session_date")), str(p.get("arm")), str(p.get("ticker")).upper()) for p in positions}
-        extra = [p for p in latest if (str(p.get("entry_session_date")), str(p.get("arm")), str(p.get("ticker")).upper()) not in known]
+        known = {_pos_key(p) for p in positions}
+        extra = [p for p in latest if _pos_key(p) not in known]
+        # 평가 중 다른 arm이 기존 포지션에 합류(arms 추가)했을 수 있다 — 최신 arms를 승계
+        latest_by = {_pos_key(p): p for p in latest}
+        for p in keep:
+            lp = latest_by.get(_pos_key(p))
+            if lp is not None:
+                p["arms"] = sorted(set(_arms_of(p)) | set(_arms_of(lp)))
         save_positions(keep + extra)
     summary["closed"] = len(closed_rows)
     summary["open"] = len(keep)

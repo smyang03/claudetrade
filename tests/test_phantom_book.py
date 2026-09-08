@@ -160,9 +160,11 @@ def test_arm_picks_open_from_ledger_with_dedupe_slots_and_override(phantom_paths
     assert out["skipped"]["us_wide_chg"] == "override:paused"
     assert out["skipped"]["us_wide_dvol_k3:BBB"] == "slots_full"
     rows = phantom_book.load_positions()
-    keys = {(r["arm"], r["ticker"]) for r in rows}
+    # 09-09 수리: 포지션 정체성 = (세션, 종목, 계약). AAA는 us_wide_dvol·us_wide_dvol_k3가 한 포지션을 공유(arms), 포지션 수는 3
+    keys = {(a, r["ticker"]) for r in rows for a in r["arms"]}
     assert keys == {("us_live_dvol", "SN"), ("us_wide_dvol", "AAA"), ("us_wide_tp20", "BBB"), ("us_wide_dvol_k3", "AAA")}
-    aaa = [r for r in rows if r["arm"] == "us_wide_dvol"][0]
+    assert len(rows) == 3 and sorted([r for r in rows if r["ticker"] == "AAA"][0]["arms"]) == ["us_wide_dvol", "us_wide_dvol_k3"]
+    aaa = [r for r in rows if "us_wide_dvol" in r["arms"]][0]
     assert aaa["qty"] == int(540000.0 // (50.0 * 1400.0)) and aaa["source_strategy"] == "us_swing_5d"
     assert [r for r in rows if r["arm"] == "us_wide_tp20"][0]["tp_pct"] == pytest.approx(0.20)
     # 세션당 1회 — 두 번째 호출은 마커로 스킵
@@ -239,3 +241,21 @@ def test_all_no_quote_does_not_set_entry_mark_and_retries(phantom_paths, tmp_pat
     live = lambda t: {"price": 50.0}
     out2 = phantom_book.open_arm_picks_from_ledger(bot, session_date="2026-09-03", price_fn=live, minutes_since_open=12)
     assert out2["opened"] == 1 and (tmp_path / "state" / "phantom_arm_entry_mark.json").exists()
+
+
+def test_duplicate_positions_merge_on_load_and_close_rows_per_arm(phantom_paths, tmp_path):
+    """09-09: 상태 파일에 (세션, 종목, 계약) 중복이 있으면 load가 병합하고, CLOSE 원장은 arm별 행을 낸다."""
+    bot, price_fn = _eval_bot(price_usd={"FIG": 30.0})
+    a = phantom_book.build_position(ticker="FIG", qty=15, quote_usd=25.0, usd_krw=1400.0, session_date="2026-09-03", arm="us_wide_dvol")
+    b = phantom_book.build_position(ticker="FIG", qty=15, quote_usd=25.0, usd_krw=1400.0, session_date="2026-09-03", arm="us_wide_ibs")
+    c = phantom_book.build_position(ticker="FIG", qty=15, quote_usd=25.0, usd_krw=1400.0, session_date="2026-09-03", arm="us_wide_maxlo")
+    b["peak_pnl_pct"] = 9.0
+    phantom_book.save_positions([a, b, c])
+    rows = phantom_book.load_positions()
+    assert len(rows) == 1 and sorted(rows[0]["arms"]) == ["us_wide_dvol", "us_wide_ibs", "us_wide_maxlo"] and rows[0]["peak_pnl_pct"] == 9.0
+    ledger = [json.loads(l) for l in (tmp_path / "data" / "shadow" / "phantom_ledger.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(r["event"] == "MERGE" and r["removed"] == 2 for r in ledger)
+    out = phantom_book.evaluate(bot, price_fn=price_fn)   # 30/25 = +20% → TP12 청산
+    assert out["closed"] == 1
+    closes = [r for r in [json.loads(l) for l in (tmp_path / "data" / "shadow" / "phantom_ledger.jsonl").read_text(encoding="utf-8").splitlines()] if r["event"] == "CLOSE"]
+    assert sorted(r["arm"] for r in closes) == ["us_wide_dvol", "us_wide_ibs", "us_wide_maxlo"]

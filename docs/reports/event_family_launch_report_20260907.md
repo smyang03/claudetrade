@@ -153,3 +153,9 @@ US Form 4 군집은 데이터가 2026-03(SEC 2026Q1)에 끊겨 H2가 3개월뿐�
 - **1단계 완료**: `tools/canary_materializer.py`(21:05 래퍼) — 정책 큐 arm마다 마지막 완결 봉으로 다음 세션 후보 1종목(거래대금 1위) → `state/canary_signals_{KR,US}.json`(profit_strategy_signals_v1) + 리허설 원장 `state/canary_rehearsal.jsonl`(시가·만기 종가는 CSV로 채움, 수익 보고용 아님). 첫 실행: KR 09-09 `CANARY_C_KR_INSIDER_K1` 316140, US 0. 주간 다이제스트 schtask `claudetrade_weekly_forward_digest` 월 08:00. `canary_policy_check.py`가 승인 시 env 한 줄을 출력.
 - **2단계(첫 CANDIDATE_STRONG 후, 약 1시간)**: 브리지가 canary_signals를 읽고 CANARY_ ID를 canary_gate로 재검사, tp/sl/hold를 신호에서, `risk_manager.isolated_strategy_source` canary_ 접두 허용, "미허용 ID는 제출 함수 호출 0" 테스트, /check, 재시작. 선행 결함: 유령 포지션 종목 중복(FIG×3·KVYO×3) 수리.
 - 승인 절차 6단계는 `config/canary_policy.json` approval_procedure. 리허설 통보 수리(611a5c0) 반영용 1회 재시작 schtask 09-09 05:10.
+
+
+## 12. 유령 포지션 종목 중복 수리 (09-09 00:xx, 운영자 "지금 해놔")
+- 원인: 유령 포지션 정체성이 (세션, arm, 종목)이라 같은 종목을 고른 arm마다 포지션이 따로 열렸다(WIX 10개·ASAN 8개, OPEN 42건). 시세는 종목당 1회였지만 출구 평가·표본이 arm 수만큼 중복.
+- 수리(`runtime/phantom_book.py`): 정체성 = (세션, 종목, 출구 계약). 같은 계약의 arm은 한 포지션을 공유(`arms` 목록), **원장 OPEN/CLOSE는 arm별 행 유지**(phantom_vs_daily·대시보드 arm 회계 불변). `load_positions`가 기존 중복을 읽을 때 병합(자가 치유, MERGE 원장 행). 계약이 다른 arm(TP20·B2 TP8/SL8)은 별도 포지션.
+- 테스트 13건 통과(공유 포지션·슬롯·병합·arm별 CLOSE). 프로세스 반영은 09-09 05:10 예약 재시작에서(로드 시 42건 → 종목·계약 단위로 병합).
