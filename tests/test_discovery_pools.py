@@ -178,6 +178,36 @@ class GridAndEntryTest(unittest.TestCase):
         finally:
             vb._x_sessions, vb.entry_of = orig
 
+    def test_regime_v2_variants(self):
+        """C_REGIME_V2 (09-10): 부모 arm 8개 각각에 idx_above_ma20=False만 얹은 _rg 변형 — 풀·계약 동일, forward 09-10부터, id 중복 없음."""
+        ids = [x["id"] for x in vb.STRATEGIES]
+        self.assertEqual(len(ids), len(set(ids)))
+        for pid in vb._REGIME_V2_PARENTS:
+            parent = next(x for x in vb.STRATEGIES if x["id"] == pid)
+            v = next(x for x in vb.STRATEGIES if x["id"] == pid + "_rg")
+            self.assertEqual(v["parent_id"], pid)
+            for k in ("pool", "universe", "pick", "daily_cap", "slots", "order_krw", "tp", "sl", "hold", "backfill_start"):
+                self.assertEqual(v.get(k), parent.get(k), (pid, k))
+            self.assertEqual(v["filter"], {**(parent.get("filter") or {}), "idx_above_ma20": False})
+            self.assertEqual(v["forward_start"], "2026-09-10")
+            self.assertNotEqual(vb._contract_hash(v), vb._contract_hash(parent))
+        v = next(x for x in vb.STRATEGIES if x["id"] == "c_kr_fallen_buyback30_rg")
+        below = {"chg": -6.0, "buyback_days": 3, "regime": {"idx_above_ma20": False}}
+        self.assertTrue(vb.candidate_filter_pass(below, v["filter"]))
+        self.assertFalse(vb.candidate_filter_pass({**below, "regime": {"idx_above_ma20": True}}, v["filter"]))
+        self.assertFalse(vb.candidate_filter_pass({**below, "regime": {}}, v["filter"]))          # 국면 결측 fail-closed
+        self.assertFalse(vb.candidate_filter_pass({**below, "buyback_days": 40}, v["filter"]))    # 부모 필터도 유지
+
+    def test_exclude_tickers_filter_k1_ex(self):
+        parent = next(x for x in vb.STRATEGIES if x["id"] == "c_kr_insider_k1")
+        v = next(x for x in vb.STRATEGIES if x["id"] == "c_kr_insider_k1_ex")
+        self.assertEqual((v["pool"], v["pick"], v["daily_cap"], v["hold"]), (parent["pool"], "dvol_desc", 1, 10))
+        self.assertEqual(v["filter"], {"exclude_tickers": ["005930", "000660"]})
+        self.assertFalse(vb.candidate_filter_pass({"ticker": "005930"}, v["filter"]))
+        self.assertFalse(vb.candidate_filter_pass({"ticker": "000660"}, v["filter"]))
+        self.assertTrue(vb.candidate_filter_pass({"ticker": "035420"}, v["filter"]))
+        self.assertTrue(vb.candidate_filter_pass({"ticker": "005930"}, {}))   # 필터 없으면 통과
+
     def test_breadth_filter(self):
         s = next(x for x in vb.STRATEGIES if x["id"] == "c_us_panic_top5")
         self.assertEqual((s["pick"], s["daily_cap"], s["hold"], s["tp"], s["sl"]), ("dvol_desc", 5, 10, 20.0, -25.0))

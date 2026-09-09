@@ -266,15 +266,42 @@ STRATEGIES += [
     {"id": "c_us_earn_gap", "pool": "xus_earn_gap", **_C_US, "filter": {}, "hold": 10,
      "note": "E6 — US 어닝 반응일 갭 ≥+8% & 종가≥시가 → 다음 시가, TP12/SL25/D10. 가격반응 PEAD(추정치 불필요·PIT 문제 없음). 문헌 강. 반증: forward 30건 t<0 또는 xus_rise5 비어닝 급등 대비 증분 없음"},
     {"id": "c_us_insider_cluster", "pool": "xus_insider", **{**_C_US, "backfill_start": "2025-07-01"}, "filter": {}, "hold": 10,
-     "note": "E7 — US Form 4 공개시장 매수 7일 내 2인↑ 군집(제출일 기준) 다음 시가, D10. SEC 분기 데이터셋 2025Q3~2026Q1(2026Q2+는 forward 수집기 필요). 반증: forward 30건 t<0"},
+     "note": "E7 — US Form 4 공개시장 매수 7일 내 2인↑ 군집(제출일 기준) 다음 시가, D10. SEC 분기 데이터셋 2025Q3~2026Q1(2026Q2+는 forward 수집기 필요). 반증: forward 30건 t<0. ⚠️ 판정 불가(09-10): 2026-04-21 이후 데이터 없음 — 수집기 생기기 전까지 forward 표본 0"},
     {"id": "c_us_volfirst", "pool": "xus_volfirst", **_C_US, "filter": {},
      "note": "N1(Codex) — 조용한 최초 거래량 충격(volspike & 60봉 최대 & 직전 20봉 3배 없음) 다음 시가, TP12/SL25/D7. 반증: xus_volspike 반복 사건 대비 증분 net≤0"},
     # K=1 실행 형태(09-07 백필 부산물 — 군집 안 거래대금 1위: KR +2.88%(306세션, t 5.3) vs 전량 +0.36%; US +1.35%(t 2.7)). 다중비교 의심 → forward 재확인 전용 뷰
     {"id": "c_kr_insider_k1", "pool": "xkr_insider", **{**_C_KR, "pick": "dvol_desc", "daily_cap": 1}, "filter": {}, "hold": 10,
      "note": "E3-K1 — KR 내부자 군집 중 전일 거래대금 1위 1종목·D10. 백필 +2.88%(t 5.3)는 사후 발견 → forward 30건 t<0이면 기각"},
     {"id": "c_us_insider_k1", "pool": "xus_insider", **{**_C_US, "pick": "dvol_desc", "daily_cap": 1, "backfill_start": "2025-07-01"}, "filter": {}, "hold": 10,
-     "note": "E7-K1 — US Form 4 군집 중 거래대금 1위 1종목·D10. 백필 +1.35%(t 2.7). forward는 2026Q2+ 수집기 후"},
+     "note": "E7-K1 — US Form 4 군집 중 거래대금 1위 1종목·D10. 백필 +1.35%(t 2.7). forward는 2026Q2+ 수집기 후. ⚠️ 판정 불가(09-10): 2026-04-21 이후 데이터 없음"},
 ]
+
+# ── family C_REGIME_V2 (2026-09-10 00:50 KST 등록 — docs/reports/preregistration_kr_regime_gate_v2_20260910.md) ─────────
+# 09-10 걸러내기 검증: 진입 특성 필터·arm 성적 선택은 워크포워드에서 기각. 유일하게 OOS(2023~2025 KR 3패널·전 연도) 부호가 유지된 것은
+# "KOSPI 종가 < 20일 MA(신호일)" 상태 — 인샘플 KR 10 arm 중 9개에서 아래>위(fallen5 −1.22/+1.09, buyback30 +0.56/+3.86, plan_buy −2.54/+0.42 …).
+# 부모 arm은 그대로 두고(forward 계속) 같은 풀·같은 계약에 idx_above_ma20=False만 얹은 변형을 새 id로 등록한다.
+# "위" 부분집합 = 부모 − 변형이라 별도 arm 불필요. forward는 2026-09-10 세션부터. 판정: 부모 arm과 같은 30 정산 세션·세션 t≥2 + 부모 대비 증분>0.
+REGIME_V2_FORWARD_START = "2026-09-10"
+_REGIME_V2_PARENTS = ("c_kr_fallen_buyback30", "c_kr_fallen_buyback_active", "c_kr_fallen_nomajor", "c_kr_fallen5_nobio",
+                      "c_kr_insider_cluster", "c_kr_plan_buy", "c_kr_exright", "c_kr_buyback_start")
+
+
+def _regime_v2_variant(parent: dict) -> dict:
+    v = {k: val for k, val in parent.items() if k != "note"}
+    v["id"] = parent["id"] + "_rg"
+    v["filter"] = {**(parent.get("filter") or {}), "idx_above_ma20": False}
+    v["forward_start"] = REGIME_V2_FORWARD_START
+    v["parent_id"] = parent["id"]
+    v["note"] = f"RG — {parent['id']} × KOSPI MA20 아래(신호일). 부모 필터 동일. OOS 2023~25 아래>위 6/6. 반증: forward 30세션에서 부모 대비 증분 ≤ 0 또는 위/아래 부호 차이 소멸"
+    return v
+
+
+STRATEGIES += [_regime_v2_variant(next(x for x in STRATEGIES if x["id"] == pid)) for pid in _REGIME_V2_PARENTS]
+# KR 내부자 K1의 삼성전자·SK하이닉스 착시 분리(09-09: 129+35/304건이 +2.71을 만들었고 제외 시 +1.50, 종목 t 0.37)
+_k1 = next(x for x in STRATEGIES if x["id"] == "c_kr_insider_k1")
+STRATEGIES += [{**{k: v for k, v in _k1.items() if k != "note"}, "id": "c_kr_insider_k1_ex", "parent_id": "c_kr_insider_k1",
+                "filter": {"exclude_tickers": ["005930", "000660"]}, "forward_start": REGIME_V2_FORWARD_START,
+                "note": "E3-K1-EX — KR 내부자 군집 거래대금 1위 1종목, 삼성전자·SK하이닉스 제외. 부모 백필 +2.71(t 4.9) → 제외 시 +1.50(t 1.8). 반증: forward 30건 t<0"}]
 
 
 def candidate_filter_pass(c: dict, flt: dict) -> bool:
@@ -310,6 +337,9 @@ def candidate_filter_pass(c: dict, flt: dict) -> bool:
         v = c.get(k)
         if v is not None and (lo is None or v >= lo) and (hi is None or v <= hi):
             return False
+    # 2026-09-10 종목 배제 — K=1 arm의 특정 종목 반복(KR 내부자 K1 = 삼성전자 129/304건) 착시 분리용
+    if flt.get("exclude_tickers") and str(c.get("ticker")) in set(map(str, flt["exclude_tickers"])):
+        return False
     return True
 
 
