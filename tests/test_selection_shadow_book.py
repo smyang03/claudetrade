@@ -1,8 +1,10 @@
 import concurrent.futures
+import json
 import sqlite3
 
 import pytest
 
+import runtime.selection_shadow_book as shadow_book_module
 from runtime.selection_shadow_book import SelectionShadowBook, read_report
 
 
@@ -246,3 +248,181 @@ def test_report_exposes_status_and_heartbeat_without_snapshot_or_fill(tmp_path):
         "latest_status_details": {"ticker": "005930"},
     }]
     assert report["errors"][0]["status"] == "NO_VERIFIED_QUOTE"
+
+
+def test_position_identity_is_not_reused_after_close(tmp_path):
+    book = prepared_book(tmp_path)
+    book.tick(clock(), {"005930": quote()})
+    tp_clock = clock("2026-09-10T10:00:00+09:00")
+    tp = quote(112_000, "2026-09-10T09:59:59+09:00", "2026-09-10T09:59:58+09:00")
+    tp["received_at"] = tp_clock["now"]
+    book.tick(tp_clock, {"005930": tp})
+    s = snapshot(candidates=[{"ticker": "000660", "dvol": 5, "features": {}}],
+                 completed_at="2026-09-11T09:04:01+09:00")
+    s.update(session_date="2026-09-11", signal_date="2026-09-10",
+             collected_at="2026-09-11T09:04:00+09:00")
+    c = dict(clock("2026-09-11T09:05:57+09:00"), session_date="2026-09-11",
+             open_at="2026-09-11T09:00:00+09:00", close_at="2026-09-11T15:30:00+09:00",
+             session_dates=["2026-09-10", "2026-09-11"])
+    book.record_snapshot(s); book.decide(c)
+    q = quote(100_000, "2026-09-11T09:05:59+09:00", "2026-09-11T09:05:58+09:00", "2026-09-11")
+    q["received_at"] = "2026-09-11T09:06:00+09:00"
+    book.tick(dict(c, now=q["received_at"]), {"000660": q})
+    with sqlite3.connect(tmp_path / "book.db") as db:
+        ids = [r[0] for r in db.execute("SELECT position_id FROM closed_positions UNION SELECT id FROM positions")]
+    assert len(ids) == len(set(ids)) == 6
+
+
+def test_decision_freezes_available_slots_and_pre_exit_cash(tmp_path):
+    book = SelectionShadowBook(tmp_path / "book.db")
+    book.record_snapshot(snapshot())
+    with sqlite3.connect(tmp_path / "book.db") as db:
+        db.execute("INSERT INTO accounts VALUES('KR','baseline_k1',4320000,100000,4320000)")
+        for n in range(7):
+            intent = db.execute("INSERT INTO intents(market,session_date,rule,ticker,allocation,decided_at,seed,status) VALUES('KR',?, 'baseline_k1',?,1,?,'seed','FILLED')",
+                                (f"2026-09-0{n+1}", f"H{n}", f"2026-09-0{n+1}T09:06:00+09:00")).lastrowid
+            db.execute("INSERT INTO events(event_key,type,market,rule,ticker,intent_id,at,amount,details) VALUES(?, 'OPEN','KR','baseline_k1',?,?,?,0,?)",
+                       (f"open:{intent}", f"H{n}", intent, f"2026-09-0{n+1}T09:06:00+09:00", _event_details(1)))
+            db.execute("INSERT INTO positions(intent_id,market,rule,ticker,entry_session,entry_at,entry_price,qty,fx,entry_cost,entry_fee,last_price,last_price_at,prior_peak_price) VALUES(?,'KR','baseline_k1',?,?,?,1,1,1,1,0,1,?,1)",
+                       (intent, f"H{n}", f"2026-09-0{n+1}", f"2026-09-0{n+1}T09:06:00+09:00", f"2026-09-0{n+1}T09:06:00+09:00"))
+    decisions = book.decide(clock("2026-09-10T09:05:57+09:00"))
+    assert not [d for d in decisions if d["rule"] == "baseline_k1"]
+    # A different uncapped rule freezes the cash it actually has, not future sale proceeds.
+    with sqlite3.connect(tmp_path / "book.db") as db:
+        db.execute("UPDATE accounts SET cash=100000 WHERE market='KR' AND rule='random_k1'")
+        db.execute("DELETE FROM decisions WHERE market='KR' AND session_date='2026-09-10' AND rule='random_k1'")
+        db.execute("DELETE FROM intents WHERE market='KR' AND session_date='2026-09-10' AND rule='random_k1'")
+    frozen = [d for d in book.decide(clock("2026-09-10T09:05:58+09:00")) if d["rule"] == "random_k1"]
+    assert frozen[0]["allocation"] == 100_000
+
+
+def test_late_decision_excludes_same_day_close_proceeds_from_frozen_budget(tmp_path):
+    book = SelectionShadowBook(tmp_path / "book.db")
+    book.record_snapshot(snapshot())
+    with sqlite3.connect(tmp_path / "book.db") as db:
+        db.execute("INSERT INTO accounts VALUES('KR','baseline_k1',4320000,600000,4320000)")
+        db.execute("INSERT INTO events(event_key,type,market,rule,ticker,intent_id,at,amount,details) "
+                   "VALUES('close:prior','CLOSE','KR','baseline_k1','OLD',NULL,"
+                   "'2026-09-10T09:03:00+09:00',500000,'{}')")
+    selected = [d for d in book.decide(clock("2026-09-10T09:05:57+09:00"))
+                if d["rule"] == "baseline_k1"]
+    assert selected[0]["allocation"] == 100_000
+
+
+def _event_details(qty):
+    return json.dumps({"qty": qty, "quote": {"source": "fixture"}})
+
+
+def test_exit_requires_regular_session_observation(tmp_path):
+    book = prepared_book(tmp_path)
+    book.tick(clock(), {"005930": quote()})
+    after = clock("2026-09-10T16:00:00+09:00")
+    q = quote(120_000, "2026-09-10T15:59:59+09:00", "2026-09-10T15:59:58+09:00")
+    q["received_at"] = after["now"]
+    assert not book.tick(after, {"005930": q})["exits"]
+    early = clock("2026-09-10T09:00:30+09:00")
+    premarket = quote(120_000, "2026-09-10T08:59:59+09:00", "2026-09-10T09:00:00+09:00")
+    premarket["received_at"] = early["now"]
+    assert not book.tick(early, {"005930": premarket})["exits"]
+
+
+def test_fill_rechecks_slot_cap_after_frozen_decision(tmp_path, monkeypatch):
+    book = prepared_book(tmp_path)
+    monkeypatch.setitem(shadow_book_module.RULE_SLOTS, "baseline_k1", 0)
+    book.tick(clock(), {"005930": quote()})
+    baseline = [i for i in read_report(tmp_path / "book.db")["intents"]
+                if i["rule"] == "baseline_k1"]
+    assert baseline[0]["status"] == "SLOT_LIMIT"
+
+
+def test_entry_rejects_price_observed_before_decision_even_if_requested_after(tmp_path):
+    book = prepared_book(tmp_path)
+    q = quote(100_000, "2026-09-10T09:05:56+09:00", "2026-09-10T09:05:58+09:00")
+    result = book.tick(clock(), {"005930": q})
+    assert not result["fills"]
+    assert all(i["status"] == "PENDING" for i in read_report(tmp_path / "book.db")["intents"])
+
+
+def test_worker_downtime_past_d7_exits_and_records_entry_relative_schedule(tmp_path):
+    book = prepared_book(tmp_path)
+    book.tick(clock(), {"005930": quote()})
+    dates = ["2026-09-09", "2026-09-10", "2026-09-11", "2026-09-14", "2026-09-15",
+             "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-21"]
+    c = {"market": "KR", "session_date": "2026-09-21", "now": "2026-09-21T09:01:00+09:00",
+         "open_at": "2026-09-21T09:00:00+09:00", "close_at": "2026-09-21T15:30:00+09:00", "session_dates": dates}
+    q = quote(101_000, "2026-09-21T09:00:59+09:00", "2026-09-21T09:00:58+09:00", "2026-09-21")
+    q["received_at"] = c["now"]
+    assert {x["reason"] for x in book.tick(c, {"005930": q})["exits"]} == {"D7"}
+    details = [json.loads(x["details"]) for x in read_report(tmp_path / "book.db")["closed"]]
+    assert {x["scheduled_session"] for x in details} == {"2026-09-18"}
+
+
+def test_concurrent_successful_snapshot_writers_observe_same_winner(tmp_path):
+    book = SelectionShadowBook(tmp_path / "book.db")
+    rows = [snapshot(candidates=[{"ticker": ticker, "dvol": 1, "features": {}}]) for ticker in ("A", "B")]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(book.record_snapshot, rows))
+    assert results[0] == results[1]
+
+
+def test_structural_reconciliation_blocks_missing_position_and_changed_quantity(tmp_path):
+    for name, mutation in (("missing", "DELETE FROM positions WHERE rule='baseline_k1'"),
+                           ("qty", "UPDATE positions SET qty=qty+1 WHERE rule='baseline_k1'")):
+        book = prepared_book(tmp_path / name)
+        book.tick(clock(), {"005930": quote()})
+        with sqlite3.connect(tmp_path / name / "book.db") as db:
+            db.execute(mutation)
+            db.execute("UPDATE intents SET status='PENDING' WHERE rule='random_k3'")
+        result = book.tick(clock("2026-09-10T09:07:00+09:00"), {})
+        assert any(e["code"] == "RECONCILIATION_ERROR" for e in result["errors"])
+
+
+def test_repeated_decide_does_not_manufacture_initial_capital_valuations(tmp_path):
+    book = prepared_book(tmp_path)
+    book.tick(clock(), {"005930": quote()})
+    book.decide(clock("2026-09-10T09:07:00+09:00"))
+    with sqlite3.connect(tmp_path / "book.db") as db:
+        assert db.execute("SELECT COUNT(*) FROM account_valuations WHERE nav=4320000").fetchone()[0] == 3
+
+
+def test_report_exposes_sanitized_execution_provenance(tmp_path):
+    book = prepared_book(tmp_path)
+    book.tick(clock(), {"005930": quote()})
+    report = read_report(tmp_path / "book.db")
+    for position in report["positions"]:
+        assert position["entry_source"] == "fixture"
+        assert position["entry_requested_at"] == "2026-09-10T09:05:58+09:00"
+        assert position["entry_received_at"] == "2026-09-10T09:06:00+09:00"
+        assert position["entry_price_kind"] == "LAST_PRICE_PAPER"
+    assert all(intent["fill_source"] == "fixture" for intent in report["intents"])
+
+
+def test_report_reads_one_consistent_sqlite_snapshot_during_concurrent_commit(tmp_path, monkeypatch):
+    book = prepared_book(tmp_path)
+    book.tick(clock(), {"005930": quote()})
+    writer = sqlite3.connect(tmp_path / "book.db")
+    writer.execute("PRAGMA journal_mode=WAL")
+    writer.execute("BEGIN IMMEDIATE")
+    writer.execute("UPDATE accounts SET cash=4320000")
+    writer.execute("DELETE FROM positions")
+    actual_connect = sqlite3.connect
+    committed = False
+
+    class HookConnection(sqlite3.Connection):
+        def execute(self, sql, parameters=()):
+            nonlocal committed
+            cursor = super().execute(sql, parameters)
+            if not committed and sql.startswith("SELECT * FROM positions"):
+                writer.commit()
+                committed = True
+            return cursor
+
+    def hooked_connect(*args, **kwargs):
+        if kwargs.get("uri"):
+            kwargs["factory"] = HookConnection
+        return actual_connect(*args, **kwargs)
+
+    monkeypatch.setattr(shadow_book_module.sqlite3, "connect", hooked_connect)
+    report = read_report(tmp_path / "book.db")
+    writer.close()
+    assert all(account["nav"] == pytest.approx(4_318_750) for account in report["accounts"])

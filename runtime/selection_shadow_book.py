@@ -52,29 +52,34 @@ class SelectionShadowBook:
                     decided_at TEXT NOT NULL, allocation REAL NOT NULL, seed TEXT NOT NULL,
                     PRIMARY KEY(market, session_date, rule));
                 CREATE TABLE IF NOT EXISTS intents (
-                    id INTEGER PRIMARY KEY, market TEXT NOT NULL, session_date TEXT NOT NULL,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, market TEXT NOT NULL, session_date TEXT NOT NULL,
                     rule TEXT NOT NULL, ticker TEXT NOT NULL, allocation REAL NOT NULL,
                     decided_at TEXT NOT NULL, seed TEXT NOT NULL, status TEXT NOT NULL,
                     reason TEXT, UNIQUE(market, session_date, rule, ticker));
                 CREATE TABLE IF NOT EXISTS positions (
-                    id INTEGER PRIMARY KEY, intent_id INTEGER NOT NULL UNIQUE,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, intent_id INTEGER NOT NULL UNIQUE,
                     market TEXT NOT NULL, rule TEXT NOT NULL, ticker TEXT NOT NULL,
                     entry_session TEXT NOT NULL, entry_at TEXT NOT NULL, entry_price REAL NOT NULL,
                     qty INTEGER NOT NULL, fx REAL NOT NULL, entry_cost REAL NOT NULL,
                     entry_fee REAL NOT NULL, last_price REAL NOT NULL, last_price_at TEXT NOT NULL,
                     prior_peak_price REAL NOT NULL, pending_reason TEXT, mature_at TEXT,
+                    entry_source TEXT NOT NULL DEFAULT '', entry_requested_at TEXT NOT NULL DEFAULT '',
+                    entry_received_at TEXT NOT NULL DEFAULT '', entry_price_kind TEXT NOT NULL DEFAULT '',
+                    last_source TEXT NOT NULL DEFAULT '', last_requested_at TEXT NOT NULL DEFAULT '',
+                    last_received_at TEXT NOT NULL DEFAULT '', last_price_kind TEXT NOT NULL DEFAULT '',
                     FOREIGN KEY(intent_id) REFERENCES intents(id));
                 CREATE TABLE IF NOT EXISTS events (
-                    id INTEGER PRIMARY KEY, event_key TEXT NOT NULL UNIQUE, type TEXT NOT NULL,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, event_key TEXT NOT NULL UNIQUE, type TEXT NOT NULL,
                     market TEXT, rule TEXT, ticker TEXT, intent_id INTEGER, at TEXT NOT NULL,
                     amount REAL, details TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS closed_positions (
-                    id INTEGER PRIMARY KEY, position_id INTEGER NOT NULL UNIQUE, market TEXT NOT NULL,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, position_id INTEGER NOT NULL UNIQUE, market TEXT NOT NULL,
                     rule TEXT NOT NULL, ticker TEXT NOT NULL, entry_session TEXT NOT NULL,
                     entry_at TEXT NOT NULL, exit_at TEXT NOT NULL,
                     qty INTEGER NOT NULL, entry_price REAL NOT NULL, exit_price REAL NOT NULL,
                     reason TEXT NOT NULL, pnl REAL NOT NULL, delayed INTEGER NOT NULL,
-                    mature_at TEXT, details TEXT NOT NULL);
+                    mature_at TEXT, exit_source TEXT NOT NULL DEFAULT '', exit_requested_at TEXT NOT NULL DEFAULT '',
+                    exit_received_at TEXT NOT NULL DEFAULT '', exit_price_kind TEXT NOT NULL DEFAULT '', details TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS valuations (
                     position_id INTEGER NOT NULL, session_date TEXT NOT NULL, at TEXT NOT NULL,
                     price REAL NOT NULL, fresh INTEGER NOT NULL,
@@ -84,7 +89,7 @@ class SelectionShadowBook:
                     cash REAL NOT NULL, nav REAL NOT NULL, exposure REAL NOT NULL,
                     PRIMARY KEY(market, rule, at));
                 CREATE TABLE IF NOT EXISTS statuses (
-                    id INTEGER PRIMARY KEY, market TEXT NOT NULL, session_date TEXT NOT NULL,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, market TEXT NOT NULL, session_date TEXT NOT NULL,
                     status TEXT NOT NULL, at TEXT NOT NULL, details TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS idx_positions_account ON positions(market, rule);
             """)
@@ -111,6 +116,7 @@ class SelectionShadowBook:
         if status == "EMPTY" and snapshot.get("candidates"):
             raise ValueError("EMPTY snapshot cannot contain candidates")
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             prior = db.execute("SELECT payload,status FROM snapshots WHERE market=? AND session_date=?",
                                (market, session)).fetchone()
             if prior and prior["status"] in {"READY", "EMPTY"}:
@@ -139,10 +145,11 @@ class SelectionShadowBook:
             candidates = sorted(payload["candidates"], key=lambda x: (-float(x.get("dvol", 0)), x["ticker"]))
             db.execute("BEGIN IMMEDIATE")
             for rule in RULE_COUNTS:
-                db.execute("INSERT OR IGNORE INTO accounts VALUES(?,?,?,?,?)",
-                           (market, rule, CAPITAL, CAPITAL, CAPITAL))
-                db.execute("INSERT OR IGNORE INTO account_valuations VALUES(?,?,?,?,?,?)",
-                           (market, rule, clock["now"], CAPITAL, CAPITAL, 0.0))
+                created = db.execute("INSERT OR IGNORE INTO accounts VALUES(?,?,?,?,?)",
+                                     (market, rule, CAPITAL, CAPITAL, CAPITAL)).rowcount
+                if created:
+                    db.execute("INSERT INTO account_valuations VALUES(?,?,?,?,?,?)",
+                               (market, rule, clock["now"], CAPITAL, CAPITAL, 0.0))
                 if db.execute("SELECT 1 FROM decisions WHERE market=? AND session_date=? AND rule=?",
                               (market, session, rule)).fetchone():
                     continue
@@ -150,12 +157,22 @@ class SelectionShadowBook:
                                                  (market, rule))}
                 pool = [c for c in candidates if c["ticker"] not in held]
                 seed = hashlib.sha256(f"v1|{MASTER_SEED}|{market}|{session}|{rule}".encode()).hexdigest()
+                available_slots = max(RULE_SLOTS[rule] - len(held), 0)
+                choose_count = min(RULE_COUNTS[rule], available_slots)
                 if rule == "baseline_k1":
-                    chosen = pool[:1]
+                    chosen = pool[:choose_count]
                 else:
                     chosen = sorted(pool, key=lambda c: hashlib.sha256(
-                        f"{seed}|{c['ticker']}".encode()).hexdigest())[:RULE_COUNTS[rule]]
-                allocation = DAILY_BUDGET / len(chosen) if chosen else 0.0
+                        f"{seed}|{c['ticker']}".encode()).hexdigest())[:choose_count]
+                account_cash = db.execute("SELECT cash FROM accounts WHERE market=? AND rule=?",
+                                          (market, rule)).fetchone()[0]
+                same_day_proceeds = db.execute(
+                    "SELECT COALESCE(SUM(amount),0) FROM events WHERE market=? AND rule=? "
+                    "AND type='CLOSE' AND substr(at,1,10)=?",
+                    (market, rule, session)).fetchone()[0]
+                spendable_cash = max(account_cash - same_day_proceeds, 0.0)
+                frozen_budget = min(DAILY_BUDGET, spendable_cash)
+                allocation = frozen_budget / len(chosen) if chosen else 0.0
                 db.execute("INSERT INTO decisions VALUES(?,?,?,?,?,?)",
                            (market, session, rule, clock["now"], allocation, seed))
                 for candidate in chosen:
@@ -207,11 +224,13 @@ class SelectionShadowBook:
             elif reconciled and open_at + timedelta(minutes=5) <= now <= min(open_at + timedelta(minutes=45), close_at):
                 for intent in pending:
                     quote = checked.get(intent["ticker"])
-                    if quote and _dt(quote["requested_at"], "requested_at") >= _dt(intent["decided_at"], "decided_at"):
+                    decided_at = _dt(intent["decided_at"], "decided_at")
+                    if (quote and _dt(quote["requested_at"], "requested_at") >= decided_at
+                            and _dt(quote["price_at"], "price_at") >= decided_at):
                         self._fill(db, intent, quote, clock["now"], result)
                     elif quote:
                         result["errors"].append({"ticker": intent["ticker"], "code": "NO_VERIFIED_QUOTE",
-                                                 "detail": "quote requested before decision"})
+                                                 "detail": "quote observed or requested before decision"})
             for error in result["errors"]:
                 if error["code"] != "RECONCILIATION_ERROR":
                     db.execute("INSERT INTO statuses(market,session_date,status,at,details) VALUES(?,?,?,?,?)",
@@ -243,6 +262,11 @@ class SelectionShadowBook:
         qty = math.floor(intent["allocation"] / unit)
         account = db.execute("SELECT * FROM accounts WHERE market=? AND rule=?",
                              (intent["market"], intent["rule"])).fetchone()
+        position_count = db.execute("SELECT COUNT(*) FROM positions WHERE market=? AND rule=?",
+                                    (intent["market"], intent["rule"])).fetchone()[0]
+        if position_count >= RULE_SLOTS[intent["rule"]]:
+            db.execute("UPDATE intents SET status='SLOT_LIMIT',reason='SLOT_LIMIT' WHERE id=?", (intent["id"],))
+            return
         if qty < 1:
             db.execute("UPDATE intents SET status='TOO_EXPENSIVE',reason='TOO_EXPENSIVE' WHERE id=?", (intent["id"],))
             return
@@ -258,15 +282,22 @@ class SelectionShadowBook:
                    (f"open:{intent['id']}", intent["market"], intent["rule"], intent["ticker"], intent["id"],
                     now, -(entry_cost + entry_fee), _json({"quote": quote, "qty": qty})))
         db.execute("INSERT INTO positions(intent_id,market,rule,ticker,entry_session,entry_at,entry_price,qty,fx,"
-                   "entry_cost,entry_fee,last_price,last_price_at,prior_peak_price) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   "entry_cost,entry_fee,last_price,last_price_at,prior_peak_price,entry_source,entry_requested_at,"
+                   "entry_received_at,entry_price_kind,last_source,last_requested_at,last_received_at,last_price_kind) "
+                   "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                    (intent["id"], intent["market"], intent["rule"], intent["ticker"], intent["session_date"], now,
-                    quote["price"], qty, fx, entry_cost, entry_fee, quote["price"], quote["price_at"], quote["price"]))
+                    quote["price"], qty, fx, entry_cost, entry_fee, quote["price"], quote["price_at"], quote["price"],
+                    quote["source"], quote["requested_at"], quote["received_at"], quote["price_kind"],
+                    quote["source"], quote["requested_at"], quote["received_at"], quote["price_kind"]))
         db.execute("UPDATE intents SET status='FILLED',reason=NULL WHERE id=?", (intent["id"],))
         result["fills"].append({"intent_id": intent["id"], "rule": intent["rule"], "ticker": intent["ticker"],
                                 "qty": qty, "price": quote["price"], "at": now})
 
     def _process_exits(self, db, clock, checked, result):
         now, close = _dt(clock["now"], "now"), _dt(clock["close_at"], "close_at")
+        open_at = _dt(clock["open_at"], "open_at")
+        if not open_at <= now <= close:
+            return
         dates = clock.get("session_dates") or []
         for pos in db.execute("SELECT * FROM positions WHERE market=?", (clock["market"],)).fetchall():
             held = None
@@ -276,6 +307,9 @@ class SelectionShadowBook:
             if not quote:
                 if close - timedelta(minutes=15) <= now <= close and held is not None and held >= 7:
                     db.execute("UPDATE positions SET pending_reason='EXIT_PENDING_QUOTE' WHERE id=?", (pos["id"],))
+                continue
+            observed_at = _dt(quote["price_at"], "price_at")
+            if not open_at <= observed_at <= close:
                 continue
             price = float(quote["price"])
             db.execute("INSERT OR IGNORE INTO valuations VALUES(?,?,?,?,1)",
@@ -292,8 +326,10 @@ class SelectionShadowBook:
             if not reason and in_close_window and held is not None and held >= 7:
                 reason = "D7"
             delayed = pos["pending_reason"] == "EXIT_PENDING_QUOTE"
-            if not reason and delayed:
+            overdue = held is not None and held > 7
+            if not reason and (delayed or overdue):
                 reason = "D7"
+                delayed = True
             if reason:
                 fee_pct = .50 if pos["market"] == "US" else .25
                 receipt = pos["qty"] * price * pos["fx"] - pos["entry_cost"] * fee_pct / 200
@@ -301,17 +337,22 @@ class SelectionShadowBook:
                 db.execute("UPDATE accounts SET cash=cash+? WHERE market=? AND rule=?", (receipt, pos["market"], pos["rule"]))
                 db.execute("INSERT INTO events(event_key,type,market,rule,ticker,intent_id,at,amount,details) VALUES(?, 'CLOSE',?,?,?,?,?,?,?)",
                            (f"close:{pos['id']}", pos["market"], pos["rule"], pos["ticker"], pos["intent_id"], clock["now"], receipt, _json({"reason": reason, "quote": quote})))
-                db.execute("INSERT INTO closed_positions(position_id,market,rule,ticker,entry_session,entry_at,exit_at,qty,entry_price,exit_price,reason,pnl,delayed,mature_at,details) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                entry_index = dates.index(pos["entry_session"]) if pos["entry_session"] in dates else None
+                scheduled = dates[entry_index + 6] if entry_index is not None and entry_index + 6 < len(dates) else None
+                db.execute("INSERT INTO closed_positions(position_id,market,rule,ticker,entry_session,entry_at,exit_at,qty,entry_price,exit_price,reason,pnl,delayed,mature_at,exit_source,exit_requested_at,exit_received_at,exit_price_kind,details) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                            (pos["id"], pos["market"], pos["rule"], pos["ticker"], pos["entry_session"], pos["entry_at"], clock["now"], pos["qty"], pos["entry_price"], price, reason, pnl, int(delayed), pos["mature_at"],
-                            _json({"scheduled_session": dates[6] if delayed and len(dates) > 6 else None,
+                            quote["source"], quote["requested_at"], quote["received_at"], quote["price_kind"],
+                            _json({"scheduled_session": scheduled if delayed else None,
                                    "delay_sessions": max((held or 7) - 7, 0)})))
                 db.execute("DELETE FROM positions WHERE id=?", (pos["id"],))
                 result["exits"].append({"rule": pos["rule"], "ticker": pos["ticker"], "reason": reason, "price": price})
             else:
                 # Only observations from completed earlier sessions can arm BE.
                 prior_peak = max(pos["prior_peak_price"], price) if clock["session_date"] > pos["entry_session"] else pos["prior_peak_price"]
-                db.execute("UPDATE positions SET last_price=?,last_price_at=?,prior_peak_price=? WHERE id=?",
-                           (price, quote["price_at"], prior_peak, pos["id"]))
+                db.execute("UPDATE positions SET last_price=?,last_price_at=?,prior_peak_price=?,last_source=?,"
+                           "last_requested_at=?,last_received_at=?,last_price_kind=? WHERE id=?",
+                           (price, quote["price_at"], prior_peak, quote["source"], quote["requested_at"],
+                            quote["received_at"], quote["price_kind"], pos["id"]))
 
     @staticmethod
     def _mark_mature_cohorts(db, clock):
@@ -333,6 +374,33 @@ class SelectionShadowBook:
             delta = db.execute("SELECT COALESCE(SUM(amount),0) FROM events WHERE market=? AND rule=?",
                                (market, account["rule"])).fetchone()[0]
             if abs(account["cash"] - (account["capital"] + delta)) > .01:
+                return False
+        intents = db.execute("SELECT * FROM intents WHERE market=?", (market,)).fetchall()
+        for intent in intents:
+            opens = db.execute("SELECT * FROM events WHERE event_key=? AND type='OPEN'",
+                               (f"open:{intent['id']}",)).fetchall()
+            position = db.execute("SELECT * FROM positions WHERE intent_id=?", (intent["id"],)).fetchone()
+            closed = db.execute("SELECT * FROM closed_positions WHERE position_id IN "
+                                "(SELECT id FROM positions WHERE intent_id=?) OR "
+                                "json_extract(details,'$.intent_id')=?", (intent["id"], intent["id"])).fetchone()
+            # Older close rows are linked through their OPEN event's intent and position id.
+            if not closed and opens:
+                closed = db.execute("SELECT c.* FROM closed_positions c JOIN events e "
+                                    "ON e.event_key='close:'||c.position_id WHERE e.intent_id=?", (intent["id"],)).fetchone()
+            if intent["status"] == "FILLED":
+                if len(opens) != 1 or (position is None and closed is None):
+                    return False
+                if position is not None:
+                    try:
+                        if int(json.loads(opens[0]["details"])["qty"]) != position["qty"]:
+                            return False
+                    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                        return False
+            elif position is not None or opens:
+                return False
+        for closed in db.execute("SELECT * FROM closed_positions WHERE market=?", (market,)):
+            if not db.execute("SELECT 1 FROM events WHERE event_key=? AND type='CLOSE'",
+                              (f"close:{closed['position_id']}",)).fetchone():
                 return False
         return True
 
@@ -386,9 +454,19 @@ def read_report(path, now: str | None = None) -> dict:
     try:
         db = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=.25)
         db.row_factory = sqlite3.Row
+        db.execute("BEGIN")
         positions = [dict(r) for r in db.execute("SELECT * FROM positions ORDER BY market,rule,ticker")]
         closed = [dict(r) for r in db.execute("SELECT * FROM closed_positions ORDER BY exit_at DESC")]
         intents = [dict(r) for r in db.execute("SELECT * FROM intents ORDER BY session_date DESC,rule,ticker")]
+        open_events = {r["intent_id"]: r for r in db.execute(
+            "SELECT intent_id,at,details FROM events WHERE type='OPEN'")}
+        for intent in intents:
+            event = open_events.get(intent["id"])
+            quote = json.loads(event["details"]).get("quote", {}) if event else {}
+            intent.update(fill_at=event["at"] if event else None,
+                          fill_price=quote.get("price"), fill_qty=(json.loads(event["details"]).get("qty") if event else None),
+                          fill_source=quote.get("source"), fill_requested_at=quote.get("requested_at"),
+                          fill_received_at=quote.get("received_at"), fill_price_kind=quote.get("price_kind"))
         snapshots = [dict(r) for r in db.execute(
             "SELECT market,session_date,status snapshot_status,completed_at snapshot_completed_at FROM snapshots")]
         statuses = [dict(r) for r in db.execute(
