@@ -46,6 +46,7 @@ except Exception:  # pragma: no cover
 KST = ZoneInfo("Asia/Seoul")
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from dashboard.selection_shadow_panel import PANEL_HTML as SELECTION_SHADOW_PANEL_HTML, selection_shadow_report
 from runtime_paths import get_runtime_path
 from runtime.market_resolver import infer_ticker_market, resolve_position_market
 from bot.session_date import is_known_market_holiday, resolve_session_date
@@ -17778,6 +17779,7 @@ function vbFmt(v, suffix) {
   return `<span ${cls}>${n.toLocaleString()}${suffix || ''}</span>`;
 }
 async function loadVirtual() {
+  if (typeof loadSelectionShadow === 'function') loadSelectionShadow();
   try {
     const d = await (await fetch('/api/virtual_books')).json();
     if (!d.available) return;
@@ -18036,9 +18038,15 @@ def page_virtual():
         + VIRTUAL_MODE_BANNER_HTML
         + COMMON_JS_BLOCK
         + PAGE_VIRTUAL_HTML
+        + SELECTION_SHADOW_PANEL_HTML
         + "</body></html>"
     )
     return render_template_string(html)
+
+
+@app.get('/api/selection_shadow')
+def api_selection_shadow():
+    return jsonify(selection_shadow_report(BASE_DIR / 'data/shadow/selection_forward.db'))
 
 
 @app.route("/")

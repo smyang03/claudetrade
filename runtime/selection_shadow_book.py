@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import sqlite3
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -32,14 +33,50 @@ def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _public_details(value):
+    """Expose diagnostics, never arbitrary adapter payloads or source rows."""
+    allowed = {'mode', 'required_count', 'requested_count', 'last_available_price_at',
+               'unverified_count', 'missing_reason', 'ticker', 'code', 'detail', 'reason',
+               'error', 'phase', 'intent_count', 'fills', 'exits', 'errors'}
+    return {key: item for key, item in value.items()
+            if key in allowed and (item is None or isinstance(item, (str, int, float, bool)))}
+
+
 class SelectionShadowBook:
     """Owns only a dedicated SQLite paper ledger; it has no broker interface."""
 
     def __init__(self, path):
         self.path = Path(path)
+        # File reads happen before any SQLite write lock. Persist the original
+        # experiment identity once; a restart must not rewrite its provenance.
+        parameters = dict(capital=CAPITAL, daily_budget=DAILY_BUDGET, master_seed=MASTER_SEED,
+                          rule_counts=RULE_COUNTS, rule_slots=RULE_SLOTS, contract=CONTRACT,
+                          fx_us=1390, round_trip_pct={'KR': .25, 'US': .50},
+                          entry_minutes=[5, 45], quote_max_age_seconds=60,
+                          tp_pct=12, sl_pct=-25, us_prior_peak_be_pct=4, holding_sessions=7,
+                          exit_close_window_minutes=15)
+        self._parameters = _json(parameters)
+        digest = hashlib.sha256()
+        root = Path(__file__).resolve().parents[1]
+        for relative in ('runtime/selection_shadow_book.py', 'runtime/selection_shadow_adapter.py',
+                         'tools/selection_shadow_runner.py'):
+            digest.update(relative.encode())
+            digest.update((root / relative).read_bytes())
+        self._code_fingerprint = digest.hexdigest()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.executescript("""
+                CREATE TABLE IF NOT EXISTS experiments (
+                    market TEXT PRIMARY KEY, version TEXT NOT NULL, parameters TEXT NOT NULL,
+                    parameter_fingerprint TEXT NOT NULL, code_fingerprint TEXT NOT NULL,
+                    first_observed_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS session_observations (
+                    market TEXT NOT NULL, session_date TEXT NOT NULL, open_at TEXT NOT NULL,
+                    close_at TEXT NOT NULL, observed_at TEXT NOT NULL,
+                    PRIMARY KEY(market, session_date));
+                CREATE TABLE IF NOT EXISTS position_report_metadata (
+                    position_id INTEGER PRIMARY KEY, holding_sessions INTEGER,
+                    holding_asof TEXT NOT NULL, scheduled_exit_session TEXT, scheduled_exit_at TEXT);
                 CREATE TABLE IF NOT EXISTS snapshots (
                     market TEXT NOT NULL, session_date TEXT NOT NULL, signal_date TEXT,
                     status TEXT NOT NULL, collected_at TEXT, completed_at TEXT,
@@ -102,6 +139,30 @@ class SelectionShadowBook:
         db.execute("PRAGMA foreign_keys=ON")
         return db
 
+    def _observe(self, db, market, at):
+        db.execute('INSERT OR IGNORE INTO experiments VALUES(?,?,?,?,?,?)',
+                   (market, 'v1', self._parameters, hashlib.sha256(self._parameters.encode()).hexdigest(),
+                    self._code_fingerprint, at))
+
+    @staticmethod
+    def _record_holding_metadata(db, clock):
+        dates = clock.get('session_dates') or []
+        db.execute('INSERT OR REPLACE INTO session_observations VALUES(?,?,?,?,?)',
+                   (clock['market'], clock['session_date'], clock['open_at'], clock['close_at'], clock['now']))
+        for pos in db.execute('SELECT id,entry_session FROM positions WHERE market=?', (clock['market'],)).fetchall():
+            held = scheduled = scheduled_at = None
+            if pos['entry_session'] in dates and clock['session_date'] in dates:
+                start = dates.index(pos['entry_session'])
+                held = dates.index(clock['session_date']) - start + 1
+                if start + 6 < len(dates):
+                    scheduled = dates[start + 6]
+                    bounds = db.execute('SELECT close_at FROM session_observations WHERE market=? AND session_date=?',
+                                        (clock['market'], scheduled)).fetchone()
+                    if bounds:
+                        scheduled_at = (_dt(bounds['close_at'], 'close_at') - timedelta(minutes=15)).isoformat()
+            db.execute('INSERT OR REPLACE INTO position_report_metadata VALUES(?,?,?,?,?)',
+                       (pos['id'], held, clock['now'], scheduled, scheduled_at))
+
     def record_snapshot(self, snapshot: dict) -> dict:
         market, session = snapshot["market"], snapshot["session_date"]
         status = snapshot["status"].upper()
@@ -117,6 +178,7 @@ class SelectionShadowBook:
             raise ValueError("EMPTY snapshot cannot contain candidates")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            self._observe(db, market, snapshot['collected_at'])
             prior = db.execute("SELECT payload,status FROM snapshots WHERE market=? AND session_date=?",
                                (market, session)).fetchone()
             if prior and prior["status"] in {"READY", "EMPTY"}:
@@ -204,6 +266,8 @@ class SelectionShadowBook:
                 checked[ticker] = quotes[ticker]
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            self._observe(db, market, clock['now'])
+            self._record_holding_metadata(db, clock)
             reconciled = self._reconcile(db, market)
             if not reconciled:
                 result["errors"].append({"code": "RECONCILIATION_ERROR", "market": market})
@@ -235,6 +299,7 @@ class SelectionShadowBook:
                 if error["code"] != "RECONCILIATION_ERROR":
                     db.execute("INSERT INTO statuses(market,session_date,status,at,details) VALUES(?,?,?,?,?)",
                                (market, session, error["code"], clock["now"], _json(error)))
+            self._record_holding_metadata(db, clock)
             self._record_account_valuations(db, market, clock["now"])
             db.execute("INSERT INTO statuses(market,session_date,status,at,details) VALUES(?,?,?,?,?)",
                        (market, session, "HEARTBEAT", clock["now"], _json({"fills": len(result["fills"]),
@@ -468,6 +533,7 @@ class SelectionShadowBook:
                       now: str, details: dict) -> None:
         _dt(now, "now")
         with self._connect() as db:
+            self._observe(db, market, now)
             db.execute("INSERT INTO statuses(market,session_date,status,at,details) VALUES(?,?,?,?,?)",
                        (market, session_date, status, now, _json(details)))
 
@@ -477,14 +543,20 @@ def read_report(path, now: str | None = None) -> dict:
     path = Path(path)
     empty = {"available": False, "authority": "SHADOW_ONLY", "contract": CONTRACT,
              "accounts": [], "markets": [], "positions": [], "closed": [], "intents": [],
-             "errors": [], "last_updated": None}
+             "errors": [], "experiments": [], "last_updated": None}
     if not path.is_file():
         return empty
     supplied_now = _dt(now, "now") if now is not None else None
+    db = None
     try:
         db = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=.25)
         db.row_factory = sqlite3.Row
         db.execute("BEGIN")
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        experiments = [dict(r) for r in db.execute('SELECT * FROM experiments ORDER BY market')] if 'experiments' in tables else []
+        for experiment in experiments:
+            experiment['parameters'] = json.loads(experiment['parameters'])
+        holding_metadata = {r['position_id']: dict(r) for r in db.execute('SELECT * FROM position_report_metadata')} if 'position_report_metadata' in tables else {}
         positions = [dict(r) for r in db.execute("SELECT * FROM positions ORDER BY market,rule,ticker")]
         closed = [dict(r) for r in db.execute("SELECT * FROM closed_positions ORDER BY exit_at DESC")]
         intents = [dict(r) for r in db.execute("SELECT * FROM intents ORDER BY session_date DESC,rule,ticker")]
@@ -498,7 +570,7 @@ def read_report(path, now: str | None = None) -> dict:
                           fill_source=quote.get("source"), fill_requested_at=quote.get("requested_at"),
                           fill_received_at=quote.get("received_at"), fill_price_kind=quote.get("price_kind"))
         snapshots = [dict(r) for r in db.execute(
-            "SELECT market,session_date,status snapshot_status,completed_at snapshot_completed_at FROM snapshots")]
+            "SELECT market,session_date,signal_date,collected_at,status snapshot_status,completed_at snapshot_completed_at,payload FROM snapshots")]
         statuses = [dict(r) for r in db.execute(
             "SELECT market,session_date,status,at,details FROM statuses ORDER BY at DESC,id DESC")]
         timestamp_values = [x for x in [*(p["last_price_at"] for p in positions),
@@ -506,9 +578,26 @@ def read_report(path, now: str | None = None) -> dict:
                                          *(s["at"] for s in statuses)] if x]
         last_updated = max(timestamp_values, key=lambda value: _dt(value, "persisted timestamp")) if timestamp_values else None
         effective_now = supplied_now or (_dt(last_updated, "last_updated") if last_updated else None)
+        for pos in positions + closed:
+            meta = holding_metadata.get(pos.get('position_id', pos['id']), {})
+            pos.update({key: meta.get(key) for key in ('holding_sessions', 'holding_asof', 'scheduled_exit_session', 'scheduled_exit_at')})
+            fx = 1390 if pos['market'] == 'US' else 1
+            cost = pos['qty'] * pos['entry_price'] * fx
+            fees = cost * (.005 if pos['market'] == 'US' else .0025)
+            pos.update(entry_cost=cost, total_fees=fees)
+            if 'exit_at' in pos:
+                details = json.loads(pos['details'])
+                pos['delay_sessions'] = details.get('delay_sessions')
+                pos['return_pct'] = pos['pnl'] / cost * 100 if cost else None
+            else:
+                pos['stale'] = effective_now is None or effective_now - _dt(pos['last_price_at'], 'last_price_at') > timedelta(seconds=60)
+                pos['return_pct'] = ((pos['qty'] * pos['last_price'] * fx - cost - fees) / cost * 100) if cost else None
+                pos['delay_sessions'] = max(pos['holding_sessions'] - 7, 0) if pos['holding_sessions'] is not None else None
         accounts = []
         for row in db.execute("SELECT * FROM accounts ORDER BY market,rule"):
             item = dict(row)
+            experiment = next((e for e in experiments if e['market'] == row['market']), None)
+            item['experiment_id'] = f"{experiment['version']}:{row['market']}:{row['rule']}" if experiment else None
             held = [p for p in positions if p["market"] == row["market"] and p["rule"] == row["rule"]]
             closed_for = [p for p in closed if p["market"] == row["market"] and p["rule"] == row["rule"]]
             reserve = sum(p["entry_fee"] for p in held)
@@ -526,7 +615,7 @@ def read_report(path, now: str | None = None) -> dict:
             if effective_now is not None:
                 stale_count = sum(effective_now - _dt(p["last_price_at"], "last_price_at") > timedelta(seconds=60)
                                   for p in held)
-            item.update(nav=nav, return_pct=((nav / row["capital"] - 1) * 100 if held or closed_for else None),
+            item.update(marked_value=marked, exit_fee_reserve=reserve, nav=nav, return_pct=((nav / row["capital"] - 1) * 100 if held or closed_for else None),
                         mdd_pct=mdd, exposure_pct=(marked / nav * 100 if nav else 0.0),
                         closed_count=len(closed_for), open_count=len(held),
                         mature_count=sum(x.get("mature_at") is not None for x in held + closed_for),
@@ -539,12 +628,35 @@ def read_report(path, now: str | None = None) -> dict:
         for market_name, session_date in keys:
             snap = next((r for r in snapshots if r["market"] == market_name and r["session_date"] == session_date), None)
             diagnostic = next((r for r in statuses if r["market"] == market_name and
-                               r["session_date"] == session_date and r["status"] != "HEARTBEAT"), None)
+                               r["session_date"] == session_date and r["status"] not in {"HEARTBEAT", "QUOTE_SOURCE"}), None)
             heartbeat = next((r for r in statuses if r["market"] == market_name and
                               r["session_date"] == session_date and r["status"] == "HEARTBEAT"), None)
             market = {"market": market_name, "session_date": session_date,
                       "snapshot_status": snap["snapshot_status"] if snap else "MISSING",
                       "snapshot_completed_at": snap["snapshot_completed_at"] if snap else None}
+            payload = json.loads(snap['payload']) if snap else {}
+            provenance = payload.get('provenance', {})
+            safe_provenance = {k: provenance[k] for k in ('calendar', 'source_completion', 'source_rows_sha256', 'historical_availability') if k in provenance}
+            inventory = provenance.get('inventory')
+            feature_sessions = provenance.get('feature_sessions')
+            safe_provenance.update(
+                inventory_count=len(inventory) if inventory is not None else None,
+                instrument_types=dict(Counter(row.get('instrument_type', 'UNKNOWN') for row in inventory)) if inventory is not None else None,
+                feature_session_count=len(feature_sessions) if feature_sessions is not None else None,
+                feature_start=feature_sessions[0] if feature_sessions else None,
+                feature_end=feature_sessions[-1] if feature_sessions else None)
+            quote_source = next((r for r in statuses if r['market'] == market_name and r['session_date'] == session_date and r['status'] == 'QUOTE_SOURCE'), None)
+            market.update(signal_date=payload.get('signal_date'), collected_at=payload.get('collected_at'),
+                          candidate_count=len(payload.get('candidates', [])) if snap else None,
+                          excluded_count=len(payload.get('excluded', [])) if snap else None,
+                          source_row_count=len(payload.get('source_rows', [])) if snap else None,
+                          excluded_reasons=sorted({x.get('reason', 'UNKNOWN') for x in payload.get('excluded', [])}),
+                          provenance=safe_provenance,
+                          quote_source=_public_details(json.loads(quote_source['details'])) if quote_source else None,
+                          quote_source_at=quote_source['at'] if quote_source else None,
+                          last_mark_at=max([p['last_price_at'] for p in positions if p['market'] == market_name] +
+                                           [p['exit_at'] for p in closed if p['market'] == market_name],
+                                           key=lambda value: _dt(value, 'mark timestamp'), default=None))
             relevant = [i["status"] for i in intents if i["market"] == market["market"] and i["session_date"] == market["session_date"]]
             if market["snapshot_status"] in {"FAILED", "MISSING", "EMPTY", "INPUT_INCOMPLETE", "ERROR"}:
                 execution = "BLOCKED"
@@ -562,14 +674,16 @@ def read_report(path, now: str | None = None) -> dict:
             market["heartbeat_at"] = heartbeat["at"] if heartbeat else None
             market["latest_status"] = diagnostic["status"] if diagnostic else None
             market["latest_status_at"] = diagnostic["at"] if diagnostic else None
-            market["latest_status_details"] = json.loads(diagnostic["details"]) if diagnostic else None
+            market["latest_status_details"] = _public_details(json.loads(diagnostic["details"])) if diagnostic else None
             markets.append(market)
-        errors = [{**row, "details": json.loads(row["details"])} for row in statuses
-                  if row["status"] != "HEARTBEAT"]
+        errors = [{**row, "details": _public_details(json.loads(row["details"]))} for row in statuses
+                  if row["status"] not in {"HEARTBEAT", "QUOTE_SOURCE"}]
         report = {**empty, "available": True, "accounts": accounts, "markets": markets,
                   "positions": positions, "closed": closed, "intents": intents, "errors": errors,
-                  "last_updated": last_updated}
-        db.close()
+                  "experiments": experiments, "last_updated": last_updated}
         return report
-    except sqlite3.Error as exc:
-        return {**empty, "errors": [{"code": "REPORT_READ_ERROR", "detail": str(exc), "at": now}]}
+    except (sqlite3.Error, ValueError, TypeError, KeyError) as exc:
+        return {**empty, "errors": [{"code": "REPORT_READ_ERROR", "detail": type(exc).__name__, "at": now}]}
+    finally:
+        if db is not None:
+            db.close()

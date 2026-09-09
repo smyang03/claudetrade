@@ -42,6 +42,95 @@ def prepared_book(tmp_path, candidates=None):
     return book
 
 
+def test_experiment_metadata_survives_restart_and_summarizes_safe_inputs(tmp_path):
+    book = SelectionShadowBook(tmp_path / 'book.db')
+    snap = snapshot()
+    snap['source_rows'] = [{'raw': {'token': 'NEVER_EXPOSE'}, 'recorded_at': None}]
+    snap['excluded'] = [{'ticker': 'BAD', 'reason': 'UNKNOWN_SOURCE_TIMESTAMP'}]
+    snap['provenance'] = {'calendar': 'XKRX', 'source_rows_sha256': 'abc',
+                          'historical_availability': 'UNKNOWN', 'token': 'NEVER_EXPOSE',
+                          'inventory': [{'instrument_type': 'UNKNOWN', 'path': 'NEVER_EXPOSE'}],
+                          'feature_sessions': ['2026-09-08', '2026-09-09']}
+    book.record_snapshot(snap)
+    report = read_report(book.path)
+    assert report.get('experiments'), 'persist experiment metadata on observation'
+    experiment = report['experiments'][0]
+    assert experiment['first_observed_at'] == snap['collected_at']
+    assert experiment['version'] == 'v1'
+    assert len(experiment['code_fingerprint']) == 64
+    assert len(experiment['parameter_fingerprint']) == 64
+    restarted = SelectionShadowBook(book.path)
+    restarted.record_status('KR', '2026-09-10', 'QUOTE_SOURCE', clock()['now'], {'mode': 'NAVER_BOUNDED'})
+    again = read_report(book.path)
+    assert again['experiments'] == report['experiments']
+    market = again['markets'][0]
+    assert market['candidate_count'] == 1 and market['excluded_count'] == 1
+    assert market['source_row_count'] == 1
+    assert market['provenance']['calendar'] == 'XKRX'
+    assert market['provenance']['inventory_count'] == 1
+    assert market['provenance']['instrument_types'] == {'UNKNOWN': 1}
+    assert market['provenance']['feature_session_count'] == 2
+    assert market['provenance']['feature_end'] == '2026-09-09'
+    assert market['quote_source']['mode'] == 'NAVER_BOUNDED'
+    assert 'NEVER_EXPOSE' not in json.dumps(again)
+    assert not again['errors'], 'QUOTE_SOURCE is a diagnostic, not an error'
+
+
+def test_holding_report_uses_persisted_calendar_not_quote_days(tmp_path):
+    book = prepared_book(tmp_path)
+    book.tick(clock(), {'005930': quote()})
+    assert read_report(book.path)['positions'][0].get('holding_sessions') == 1
+    dates = ['2026-09-10', '2026-09-11', '2026-09-14', '2026-09-15',
+             '2026-09-16', '2026-09-17', '2026-09-18']
+    c = dict(clock(), session_date='2026-09-18', now='2026-09-18T15:20:00+09:00',
+             open_at='2026-09-18T09:00:00+09:00', close_at='2026-09-18T15:30:00+09:00', session_dates=dates)
+    book.tick(c, {})
+    pos = read_report(book.path, c['now'])['positions'][0]
+    assert pos['holding_sessions'] == 7
+    assert pos['scheduled_exit_session'] == '2026-09-18'
+    assert pos['scheduled_exit_at'] == '2026-09-18T15:15:00+09:00'
+    assert pos['stale'] and pos['pending_reason'] == 'EXIT_PENDING_QUOTE'
+    c.update(session_date='2026-09-21', now='2026-09-21T09:06:00+09:00',
+             open_at='2026-09-21T09:00:00+09:00', close_at='2026-09-21T15:30:00+09:00',
+             session_dates=dates + ['2026-09-21'])
+    q = dict(quote(), session_date=c['session_date'], price_at=c['now'],
+             received_at=c['now'], requested_at=c['now'])
+    book.tick(c, {'005930': q})
+    closed = read_report(book.path, c['now'])['closed'][0]
+    assert closed['holding_sessions'] == 8
+    assert closed['delay_sessions'] == 1
+    assert closed['scheduled_exit_at'] == '2026-09-18T15:15:00+09:00'
+    assert closed['total_fees'] == 1250
+
+
+def test_report_exposes_account_identity_and_preserves_mark_after_close(tmp_path):
+    book = prepared_book(tmp_path)
+    book.tick(clock(), {'005930': quote()})
+    later = clock('2026-09-10T09:07:00+09:00')
+    book.tick(later, {'005930': dict(quote(113_000), price_at=later['now'], received_at=later['now'], requested_at=later['now'])})
+    report = read_report(book.path)
+    assert report['accounts'][0].get('experiment_id') == 'v1:KR:baseline_k1'
+    assert report['markets'][0]['last_mark_at'] == later['now']
+
+
+def test_quote_diagnostics_redact_unrecognized_payload_fields(tmp_path):
+    book = SelectionShadowBook(tmp_path / 'book.db')
+    book.record_status('US', '2026-09-10', 'QUOTE_SOURCE', clock()['now'],
+                       {'mode': 'CACHE_ONLY', 'token': 'NEVER_EXPOSE', 'raw': {'secret': 'NEVER_EXPOSE'}})
+    report = read_report(book.path)
+    assert report['markets'][0]['quote_source'] == {'mode': 'CACHE_ONLY'}
+
+
+def test_read_report_of_legacy_schema_does_not_create_metadata(tmp_path):
+    book = prepared_book(tmp_path)
+    with sqlite3.connect(book.path) as db:
+        for table in ('experiments', 'position_report_metadata', 'session_observations'):
+            db.execute(f'DROP TABLE {table}')
+    assert read_report(book.path)['experiments'] == []
+    with sqlite3.connect(book.path) as db:
+        assert not db.execute("SELECT name FROM sqlite_master WHERE name='experiments'").fetchone()
+
+
 def test_three_rules_have_independent_cash_positions_and_fee_math(tmp_path):
     book = prepared_book(tmp_path)
     result = book.tick(clock(), {"005930": quote()})
@@ -240,13 +329,14 @@ def test_report_exposes_status_and_heartbeat_without_snapshot_or_fill(tmp_path):
                        "2026-09-10T09:06:15+09:00", {"phase": "tick"})
     report = read_report(tmp_path / "book.db", "2026-09-10T09:06:20+09:00")
     assert report["last_updated"] == "2026-09-10T09:06:15+09:00"
-    assert report["markets"] == [{
+    expected = {
         "market": "KR", "session_date": "2026-09-10", "snapshot_status": "MISSING",
         "snapshot_completed_at": None, "execution_status": "BLOCKED",
         "heartbeat_at": "2026-09-10T09:06:15+09:00",
         "latest_status": "NO_VERIFIED_QUOTE", "latest_status_at": "2026-09-10T09:06:00+09:00",
         "latest_status_details": {"ticker": "005930"},
-    }]
+    }
+    assert {key: report['markets'][0][key] for key in expected} == expected
     assert report["errors"][0]["status"] == "NO_VERIFIED_QUOTE"
 
 
