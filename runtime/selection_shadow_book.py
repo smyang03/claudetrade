@@ -79,6 +79,10 @@ class SelectionShadowBook:
                     position_id INTEGER NOT NULL, session_date TEXT NOT NULL, at TEXT NOT NULL,
                     price REAL NOT NULL, fresh INTEGER NOT NULL,
                     PRIMARY KEY(position_id, session_date, at));
+                CREATE TABLE IF NOT EXISTS account_valuations (
+                    market TEXT NOT NULL, rule TEXT NOT NULL, at TEXT NOT NULL,
+                    cash REAL NOT NULL, nav REAL NOT NULL, exposure REAL NOT NULL,
+                    PRIMARY KEY(market, rule, at));
                 CREATE TABLE IF NOT EXISTS statuses (
                     id INTEGER PRIMARY KEY, market TEXT NOT NULL, session_date TEXT NOT NULL,
                     status TEXT NOT NULL, at TEXT NOT NULL, details TEXT NOT NULL);
@@ -137,6 +141,8 @@ class SelectionShadowBook:
             for rule in RULE_COUNTS:
                 db.execute("INSERT OR IGNORE INTO accounts VALUES(?,?,?,?,?)",
                            (market, rule, CAPITAL, CAPITAL, CAPITAL))
+                db.execute("INSERT OR IGNORE INTO account_valuations VALUES(?,?,?,?,?,?)",
+                           (market, rule, clock["now"], CAPITAL, CAPITAL, 0.0))
                 if db.execute("SELECT 1 FROM decisions WHERE market=? AND session_date=? AND rule=?",
                               (market, session, rule)).fetchone():
                     continue
@@ -194,6 +200,10 @@ class SelectionShadowBook:
             if now > open_at + timedelta(minutes=45):
                 db.execute("UPDATE intents SET status='ENTRY_WINDOW_MISSED',reason='ENTRY_WINDOW_MISSED' "
                            "WHERE market=? AND session_date=? AND status='PENDING'", (market, session))
+                if pending:
+                    db.execute("INSERT INTO statuses(market,session_date,status,at,details) VALUES(?,?,?,?,?)",
+                               (market, session, "ENTRY_WINDOW_MISSED", clock["now"],
+                                _json({"intent_count": len(pending)})))
             elif reconciled and open_at + timedelta(minutes=5) <= now <= min(open_at + timedelta(minutes=45), close_at):
                 for intent in pending:
                     quote = checked.get(intent["ticker"])
@@ -202,7 +212,29 @@ class SelectionShadowBook:
                     elif quote:
                         result["errors"].append({"ticker": intent["ticker"], "code": "NO_VERIFIED_QUOTE",
                                                  "detail": "quote requested before decision"})
+            for error in result["errors"]:
+                if error["code"] != "RECONCILIATION_ERROR":
+                    db.execute("INSERT INTO statuses(market,session_date,status,at,details) VALUES(?,?,?,?,?)",
+                               (market, session, error["code"], clock["now"], _json(error)))
+            self._record_account_valuations(db, market, clock["now"])
+            db.execute("INSERT INTO statuses(market,session_date,status,at,details) VALUES(?,?,?,?,?)",
+                       (market, session, "HEARTBEAT", clock["now"], _json({"fills": len(result["fills"]),
+                                                                            "exits": len(result["exits"]),
+                                                                            "errors": len(result["errors"])})))
         return result
+
+    @staticmethod
+    def _record_account_valuations(db, market, at):
+        for account in db.execute("SELECT * FROM accounts WHERE market=?", (market,)).fetchall():
+            positions = db.execute("SELECT * FROM positions WHERE market=? AND rule=?",
+                                   (market, account["rule"])).fetchall()
+            marked = sum(p["qty"] * p["last_price"] * p["fx"] for p in positions)
+            reserve = sum(p["entry_fee"] for p in positions)
+            nav = account["cash"] + marked - reserve
+            db.execute("INSERT OR REPLACE INTO account_valuations VALUES(?,?,?,?,?,?)",
+                       (market, account["rule"], at, account["cash"], nav, marked))
+            db.execute("UPDATE accounts SET peak_nav=MAX(peak_nav,?) WHERE market=? AND rule=?",
+                       (nav, market, account["rule"]))
 
     def _fill(self, db, intent, quote, now, result):
         fx = 1390.0 if intent["market"] == "US" else 1.0
@@ -291,7 +323,9 @@ class SelectionShadowBook:
             rows = db.execute(f"SELECT id,entry_session FROM {table} WHERE market=? AND mature_at IS NULL",
                               (clock["market"],)).fetchall()
             for row in rows:
-                if row["entry_session"] in dates and current - dates.index(row["entry_session"]) + 1 >= 7:
+                elapsed = current - dates.index(row["entry_session"]) + 1 if row["entry_session"] in dates else 0
+                window_complete = elapsed > 7 or (elapsed == 7 and _dt(clock["now"], "now") >= _dt(clock["close_at"], "close_at"))
+                if window_complete:
                     db.execute(f"UPDATE {table} SET mature_at=? WHERE id=?", (clock["now"], row["id"]))
 
     def _reconcile(self, db, market):
@@ -348,14 +382,22 @@ def read_report(path, now: str | None = None) -> dict:
              "errors": [], "last_updated": None}
     if not path.is_file():
         return empty
-    if now is not None:
-        _dt(now, "now")
+    supplied_now = _dt(now, "now") if now is not None else None
     try:
         db = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=.25)
         db.row_factory = sqlite3.Row
         positions = [dict(r) for r in db.execute("SELECT * FROM positions ORDER BY market,rule,ticker")]
         closed = [dict(r) for r in db.execute("SELECT * FROM closed_positions ORDER BY exit_at DESC")]
         intents = [dict(r) for r in db.execute("SELECT * FROM intents ORDER BY session_date DESC,rule,ticker")]
+        snapshots = [dict(r) for r in db.execute(
+            "SELECT market,session_date,status snapshot_status,completed_at snapshot_completed_at FROM snapshots")]
+        statuses = [dict(r) for r in db.execute(
+            "SELECT market,session_date,status,at,details FROM statuses ORDER BY at DESC,id DESC")]
+        timestamp_values = [x for x in [*(p["last_price_at"] for p in positions),
+                                         *(s["snapshot_completed_at"] for s in snapshots),
+                                         *(s["at"] for s in statuses)] if x]
+        last_updated = max(timestamp_values, key=lambda value: _dt(value, "persisted timestamp")) if timestamp_values else None
+        effective_now = supplied_now or (_dt(last_updated, "last_updated") if last_updated else None)
         accounts = []
         for row in db.execute("SELECT * FROM accounts ORDER BY market,rule"):
             item = dict(row)
@@ -364,16 +406,37 @@ def read_report(path, now: str | None = None) -> dict:
             reserve = sum(p["entry_fee"] for p in held)
             marked = sum(p["qty"] * p["last_price"] * p["fx"] for p in held)
             nav = row["cash"] + marked - reserve
+            nav_history = [v[0] for v in db.execute(
+                "SELECT nav FROM account_valuations WHERE market=? AND rule=? ORDER BY at",
+                (row["market"], row["rule"]))]
+            peak = row["capital"]
+            mdd = 0.0
+            for historical_nav in nav_history:
+                peak = max(peak, historical_nav)
+                mdd = min(mdd, (historical_nav / peak - 1) * 100)
+            stale_count = 0
+            if effective_now is not None:
+                stale_count = sum(effective_now - _dt(p["last_price_at"], "last_price_at") > timedelta(seconds=60)
+                                  for p in held)
             item.update(nav=nav, return_pct=((nav / row["capital"] - 1) * 100 if held or closed_for else None),
-                        mdd_pct=0.0, exposure_pct=(marked / nav * 100 if nav else 0.0),
+                        mdd_pct=mdd, exposure_pct=(marked / nav * 100 if nav else 0.0),
                         closed_count=len(closed_for), open_count=len(held),
                         mature_count=sum(x.get("mature_at") is not None for x in held + closed_for),
-                        stale_count=0, closed_pnl=sum(x["pnl"] for x in closed_for),
+                        stale_count=stale_count, closed_pnl=sum(x["pnl"] for x in closed_for),
                         open_pnl=nav - row["capital"] - sum(x["pnl"] for x in closed_for))
             accounts.append(item)
-        markets = [dict(r) for r in db.execute(
-            "SELECT market,session_date,status snapshot_status,completed_at snapshot_completed_at FROM snapshots ORDER BY session_date DESC")]
-        for market in markets:
+        keys = sorted({(r["market"], r["session_date"]) for r in snapshots + statuses},
+                      key=lambda value: (value[1], value[0]), reverse=True)
+        markets = []
+        for market_name, session_date in keys:
+            snap = next((r for r in snapshots if r["market"] == market_name and r["session_date"] == session_date), None)
+            diagnostic = next((r for r in statuses if r["market"] == market_name and
+                               r["session_date"] == session_date and r["status"] != "HEARTBEAT"), None)
+            heartbeat = next((r for r in statuses if r["market"] == market_name and
+                              r["session_date"] == session_date and r["status"] == "HEARTBEAT"), None)
+            market = {"market": market_name, "session_date": session_date,
+                      "snapshot_status": snap["snapshot_status"] if snap else "MISSING",
+                      "snapshot_completed_at": snap["snapshot_completed_at"] if snap else None}
             relevant = [i["status"] for i in intents if i["market"] == market["market"] and i["session_date"] == market["session_date"]]
             if market["snapshot_status"] in {"FAILED", "MISSING", "EMPTY"}:
                 execution = "BLOCKED"
@@ -381,15 +444,23 @@ def read_report(path, now: str | None = None) -> dict:
                 execution = "ACTIVE"
             elif relevant and all(status == "ENTRY_WINDOW_MISSED" for status in relevant):
                 execution = "BLOCKED"
+            elif any(status == "PENDING" for status in relevant):
+                execution = "PENDING"
+            elif diagnostic:
+                execution = "BLOCKED"
             else:
                 execution = "PENDING"
             market["execution_status"] = execution
-        errors = [dict(r) for r in db.execute("SELECT market,session_date,status,at,details FROM statuses WHERE status LIKE '%ERROR%' ORDER BY at DESC")]
-        updated_values = [x for x in [*(p["last_price_at"] for p in positions),
-                                      *(m["snapshot_completed_at"] for m in markets)] if x]
+            market["heartbeat_at"] = heartbeat["at"] if heartbeat else None
+            market["latest_status"] = diagnostic["status"] if diagnostic else None
+            market["latest_status_at"] = diagnostic["at"] if diagnostic else None
+            market["latest_status_details"] = json.loads(diagnostic["details"]) if diagnostic else None
+            markets.append(market)
+        errors = [{**row, "details": json.loads(row["details"])} for row in statuses
+                  if row["status"] != "HEARTBEAT"]
         report = {**empty, "available": True, "accounts": accounts, "markets": markets,
                   "positions": positions, "closed": closed, "intents": intents, "errors": errors,
-                  "last_updated": max(updated_values) if updated_values else None}
+                  "last_updated": last_updated}
         db.close()
         return report
     except sqlite3.Error as exc:

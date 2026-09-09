@@ -207,4 +207,42 @@ def test_closed_early_cohort_becomes_mature_after_seven_verified_sessions(tmp_pa
                    "open_at": "2026-09-18T09:00:00+09:00", "close_at": "2026-09-18T15:30:00+09:00",
                    "session_dates": sessions}
     book.tick(observation, {})
+    assert all(a["mature_count"] == 0 for a in read_report(tmp_path / "book.db")["accounts"])
+    book.tick(dict(observation, now="2026-09-18T15:30:00+09:00"), {})
     assert all(a["mature_count"] == 1 for a in read_report(tmp_path / "book.db")["accounts"])
+
+
+def test_report_uses_persisted_nav_history_for_drawdown_and_quote_age_staleness(tmp_path):
+    book = prepared_book(tmp_path)
+    book.tick(clock(), {"005930": quote()})
+    down_clock = clock("2026-09-10T10:00:00+09:00")
+    down = quote(90_000, "2026-09-10T09:59:59+09:00", "2026-09-10T09:59:58+09:00")
+    down["received_at"] = down_clock["now"]
+    book.tick(down_clock, {"005930": down})
+    fresh = read_report(tmp_path / "book.db", "2026-09-10T10:00:30+09:00")
+    for account in fresh["accounts"]:
+        assert account["nav"] == pytest.approx(4_268_750)
+        assert account["mdd_pct"] == pytest.approx(-1.18634259259)
+        assert account["stale_count"] == 0
+    stale = read_report(tmp_path / "book.db", "2026-09-10T10:01:01+09:00")
+    assert all(account["stale_count"] == 1 for account in stale["accounts"])
+    with sqlite3.connect(tmp_path / "book.db") as db:
+        assert db.execute("SELECT COUNT(*) FROM account_valuations").fetchone()[0] >= 9
+
+
+def test_report_exposes_status_and_heartbeat_without_snapshot_or_fill(tmp_path):
+    book = SelectionShadowBook(tmp_path / "book.db")
+    book.record_status("KR", "2026-09-10", "NO_VERIFIED_QUOTE",
+                       "2026-09-10T09:06:00+09:00", {"ticker": "005930"})
+    book.record_status("KR", "2026-09-10", "HEARTBEAT",
+                       "2026-09-10T09:06:15+09:00", {"phase": "tick"})
+    report = read_report(tmp_path / "book.db", "2026-09-10T09:06:20+09:00")
+    assert report["last_updated"] == "2026-09-10T09:06:15+09:00"
+    assert report["markets"] == [{
+        "market": "KR", "session_date": "2026-09-10", "snapshot_status": "MISSING",
+        "snapshot_completed_at": None, "execution_status": "BLOCKED",
+        "heartbeat_at": "2026-09-10T09:06:15+09:00",
+        "latest_status": "NO_VERIFIED_QUOTE", "latest_status_at": "2026-09-10T09:06:00+09:00",
+        "latest_status_details": {"ticker": "005930"},
+    }]
+    assert report["errors"][0]["status"] == "NO_VERIFIED_QUOTE"
