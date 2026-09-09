@@ -105,7 +105,7 @@ class SelectionShadowBook:
     def record_snapshot(self, snapshot: dict) -> dict:
         market, session = snapshot["market"], snapshot["session_date"]
         status = snapshot["status"].upper()
-        if status not in {"READY", "EMPTY", "FAILED", "MISSING"}:
+        if status not in {"READY", "EMPTY", "FAILED", "MISSING", "INPUT_INCOMPLETE", "ERROR"}:
             raise ValueError("unsupported snapshot status")
         collected = _dt(snapshot["collected_at"], "collected_at")
         completed = _dt(snapshot["completed_at"], "completed_at")
@@ -546,7 +546,7 @@ def read_report(path, now: str | None = None) -> dict:
                       "snapshot_status": snap["snapshot_status"] if snap else "MISSING",
                       "snapshot_completed_at": snap["snapshot_completed_at"] if snap else None}
             relevant = [i["status"] for i in intents if i["market"] == market["market"] and i["session_date"] == market["session_date"]]
-            if market["snapshot_status"] in {"FAILED", "MISSING", "EMPTY"}:
+            if market["snapshot_status"] in {"FAILED", "MISSING", "EMPTY", "INPUT_INCOMPLETE", "ERROR"}:
                 execution = "BLOCKED"
             elif any(status == "FILLED" for status in relevant):
                 execution = "ACTIVE"

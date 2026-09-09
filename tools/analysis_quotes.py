@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import time
+import threading
+from datetime import datetime, timezone
 from typing import Optional
 
 import requests
@@ -22,6 +24,7 @@ import requests
 _SESSION = requests.Session()
 _LAST_CALL = 0.0
 _MIN_INTERVAL = 0.25
+_CALL_LOCK = threading.Lock()
 _URL = "https://polling.finance.naver.com/api/realtime/domestic/stock/{code}"
 
 
@@ -35,12 +38,15 @@ def _num(raw) -> float:
 def get_quote_kr(code: str, timeout: float = 5.0) -> Optional[dict]:
     """네이버 실시간 시세 1건. 실패 시 None (예외 안 던짐)."""
     global _LAST_CALL
-    wait = _MIN_INTERVAL - (time.time() - _LAST_CALL)
-    if wait > 0:
-        time.sleep(wait)
-    _LAST_CALL = time.time()
+    with _CALL_LOCK:
+        wait = _MIN_INTERVAL - (time.time() - _LAST_CALL)
+        if wait > 0:
+            time.sleep(wait)
+        _LAST_CALL = time.time()
     try:
+        requested_at = datetime.now(timezone.utc).isoformat()
         r = _SESSION.get(_URL.format(code=str(code).strip()), timeout=timeout)
+        received_at = datetime.now(timezone.utc).isoformat()
         r.raise_for_status()
         datas = (r.json() or {}).get("datas") or []
         if not datas:
@@ -58,6 +64,11 @@ def get_quote_kr(code: str, timeout: float = 5.0) -> Optional[dict]:
             "volume": _num(d.get("accumulatedTradingVolume")),
             "change_pct": _num(d.get("fluctuationsRatio")),
             "source": "naver_polling",
+            "price_at": d.get("localTradedAt"),
+            "requested_at": requested_at,
+            "received_at": received_at,
+            "price_kind": "LAST_PRICE_PAPER",
+            "market_status": d.get("marketStatus"),
         }
     except Exception:
         return None

@@ -1248,15 +1248,27 @@ def _get_price_us_kis(ticker: str, token: str) -> dict:
     }
 
 
+_FINNHUB_OBSERVED_QUOTES: dict[str, dict] = {}
+
+
+def get_observed_finnhub_quote(ticker: str) -> dict | None:
+    """Read existing source-timestamped observations without issuing a request."""
+    quote = _FINNHUB_OBSERVED_QUOTES.get(str(ticker).upper())
+    return dict(quote) if quote else None
+
+
 def _get_price_us_finnhub(ticker: str) -> dict:
     """Finnhub /quote — 무료 60회/분 (일 한도 없음)"""
     if not FINNHUB_KEY:
         raise RuntimeError("FINNHUB_API_KEY 없음")
+    from datetime import timezone as _quote_timezone
+    requested_at = datetime.now(_quote_timezone.utc).isoformat()
     resp = requests.get(
         "https://finnhub.io/api/v1/quote",
         params={"symbol": ticker, "token": FINNHUB_KEY},
         timeout=10,
     )
+    received_at = datetime.now(_quote_timezone.utc).isoformat()
     resp.raise_for_status()
     q = resp.json()
     price = float(q.get("c", 0))
@@ -1264,7 +1276,7 @@ def _get_price_us_finnhub(ticker: str) -> dict:
         raise ValueError(f"Finnhub: {ticker} 가격 없음")
     prev = float(q.get("pc", price))
     change = price - prev
-    return {
+    result = {
         "ticker": ticker, "name": ticker,
         "price": round(price, 4),
         "prev_close": round(prev, 4),
@@ -1275,6 +1287,16 @@ def _get_price_us_finnhub(ticker: str) -> dict:
         "high": round(float(q.get("h", price)), 4),
         "low": round(float(q.get("l", price)), 4),
     }
+    try:
+        price_at = datetime.fromtimestamp(float(q['t']), _quote_timezone.utc).isoformat()
+    except (KeyError, TypeError, ValueError, OverflowError, OSError):
+        price_at = None
+    result.update(price_at=price_at, requested_at=requested_at, received_at=received_at,
+                  source='finnhub', price_kind='LAST_PRICE_PAPER')
+    _FINNHUB_OBSERVED_QUOTES[str(ticker).upper()] = dict(result)
+    if len(_FINNHUB_OBSERVED_QUOTES) > 256:
+        _FINNHUB_OBSERVED_QUOTES.pop(next(iter(_FINNHUB_OBSERVED_QUOTES)), None)
+    return result
 
 
 def _get_price_us_alpha(ticker):

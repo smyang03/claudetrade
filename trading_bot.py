@@ -42933,6 +42933,13 @@ def main(is_paper: bool = True):
     consecutive_loop_errors = 0
     try:
         while True:
+            # Paper observations use verified calendars, including US winter close.
+            try:
+                from runtime.selection_shadow_adapter import maybe_start as _selection_shadow_start
+                for _shadow_market in sorted(getattr(bot, "enabled_markets", {"KR", "US"})):
+                    _selection_shadow_start(bot, _shadow_market)
+            except Exception as shadow_exc:
+                log.warning("selection shadow hook failed: %s", type(shadow_exc).__name__)
             # 한 잡 콜백의 비포획 예외가 스케줄러 루프를 무너뜨려 양 시장을 동시에
             # 죽이지 않도록 사이클 단위로 격리한다. 예외는 삼키지 않고 로그+텔레그램
             # (폭주 방지 스로틀)으로 알린 뒤 다음 사이클을 계속한다. 손절·청산은
