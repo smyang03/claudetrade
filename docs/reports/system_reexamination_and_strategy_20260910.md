@@ -148,3 +148,19 @@ ew +127.4% maxDD −12.0% 세금 10.4만 리밸 45회 vs **ew_band8 +149.1% maxD
 - **보수 추정 합계: 월 3.5~4.7만 = 자본 대비 월 0.8~1.1%, 연 10~13%.** 최악월은 −10~−16%를 각오해야 한다(2026-07 실측 −16.5%).
 
 이것이 이 자본에서 검증된 것만으로 낼 수 있는 값이다. 개별주 19+9 arm이 forward를 통과하면 여기에 월 1~3만이 더해지지만, 통과 여부는 10월~내년 1월에 정해진다.
+
+## 11. QA 게이트 복구 (05:00) — 전체 테스트 130 failed → 2 failed
+
+전체 스위트가 **130 failed / 3776 passed**였는데, 실패 파일을 개별로 돌리면 전부 통과했다. 테스트 간 오염이었다.
+이분 탐색(254개 후보)으로 오염원 특정: **`tests/test_kr_event_lane.py`가 실행 중 `load_dotenv()` 경로를 타면서 실계정 `.env` 477개 키를 통째로 `os.environ`에 올린다.**
+그 뒤 알파벳순으로 실행되는 테스트들이 테스트 기본값 대신 라이브 설정을 읽어 깨졌다(예: `_pathb_qty_with_context`가 라이브 `PATHB_FIXED_ORDER_KRW_US`를 읽어 수량 1→0).
+
+**수리**: 남의 테스트 파일을 건드리지 않고 `tests/conftest.py`의 `_restore_live_control_env_keys`를 **키 6개 목록 → `os.environ` 전체 스냅샷·복원**으로 확장(커밋 19471c2).
+검증: 전체 스위트 **2 failed / 3904 passed**(8분 29초).
+
+**남은 2건은 오염이 아니라 낡은 테스트**다(개별 실행에서도 실패):
+- `test_us_swing_dvol_band::test_fail_open_when_dollar_volume_missing` — fail-open 기대인데 09-09 운영자 결정으로 **fail-closed**가 됐다. 코드가 맞고 테스트가 낡음.
+- `test_trading_bot_intraday_evidence::test_fail_closed_below_threshold_does_not_overwrite_partial_store` — partial 보존 기대인데 코드가 `minute_missing`으로 덮는다. **의도된 변경인지 미확인.**
+
+둘 다 다른 세션의 동작 변경이라 임의로 고치지 않았다. 테스트를 코드에 맞추는 방향은 위험하다.
+**이제 전체 QA를 다시 회귀 게이트로 쓸 수 있다 — 기준선은 2 failed.**
