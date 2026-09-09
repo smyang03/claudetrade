@@ -8,6 +8,60 @@ import pytest
 from tools.selection_shadow_runner import collect_snapshot
 
 
+@pytest.mark.parametrize('market,previous,last,volume,expected', [
+    ('KR', '100', '97', '30000000', 'READY'),
+    ('KR', '100', '97.000000001', '30000000', 'EMPTY'),
+    ('KR', '100', '96.999999999', '30000000', 'READY'),
+    ('KR', '125', '100', '20000000', 'READY'),
+    ('KR', '125', '100', '19999999.999999', 'EMPTY'),
+    ('US', '1.75', '1.89', '150000000', 'READY'),
+    ('US', '1.75', '1.889999999', '150000000', 'EMPTY'),
+    ('US', '1.75', '1.890000001', '150000000', 'READY'),
+    ('US', '1', '2', '50000000', 'READY'),
+    ('US', '1', '2', '49999999.999999', 'EMPTY'),
+    ('US', '1', '2', '250000000', 'EMPTY'),
+    ('US', '1', '2', '249999999.999999', 'READY'),
+])
+def test_exact_collector_boundaries(tmp_path, market, previous, last, volume, expected):
+    if market == 'US':
+        source(tmp_path, [('2026-09-10', 'ABC', 1, 1, '2026-09-10T12:00:00+00:00')])
+    path = prices(tmp_path, market, 'ABC')
+    with path.open(newline='') as fh:
+        rows = list(csv.DictReader(fh))
+    for row in rows:
+        row['close'] = previous
+    rows[-1].update(close=last, volume=volume)
+    with path.open('w', newline='') as fh:
+        writer = csv.DictWriter(fh, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+    now = '2026-09-10T09:34:00-04:00' if market == 'US' else '2026-09-10T08:55:00+09:00'
+    assert collect_snapshot(tmp_path, market, '2026-09-10', now)['status'] == expected
+
+
+@pytest.mark.parametrize('broken_schema', [False, True])
+def test_collector_source_connections_close_on_success_and_error(tmp_path, monkeypatch, broken_schema):
+    source(tmp_path, [('2026-09-10', 'ABC', 1, 1, '2026-09-10T12:00:00+00:00')])
+    prices(tmp_path, 'US', 'ABC')
+    if broken_schema:
+        from contextlib import closing
+        with closing(sqlite3.connect(tmp_path / 'data/analysis/us_swing_shadow.db')) as db, db:
+            db.execute('DROP TABLE candidate_pool_all')
+    original = sqlite3.connect
+    connections = []
+    def connect(*args, **kwargs):
+        db = original(*args, **kwargs)
+        connections.append(db)
+        return db
+    monkeypatch.setattr(sqlite3, 'connect', connect)
+    result = collect_snapshot(tmp_path, 'US', '2026-09-10', '2026-09-10T09:34:00-04:00')
+    assert result['status'] == ('INPUT_INCOMPLETE' if broken_schema else 'READY')
+    assert connections
+    for db in connections:
+        with pytest.raises(sqlite3.ProgrammingError, match='closed'):
+            db.execute('SELECT 1')
+
+
 def prices(root, market, ticker, missing=False):
     cal = xc.get_calendar('XNYS' if market == 'US' else 'XKRX')
     dates = [str(d.date()) for d in cal.sessions_in_range('2026-07-20', '2026-09-09')][-22:]

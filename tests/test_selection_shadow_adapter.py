@@ -296,3 +296,102 @@ def test_worker_failure_is_persisted_and_releases_single_worker(monkeypatch, tmp
     report = read_report(tmp_path / 'data/shadow/selection_forward.db')
     assert report['markets'][0]['latest_status'] == 'ERROR'
     assert 'secret URL' not in str(report)
+def test_restart_expires_old_pending_before_quote_requests(tmp_path, monkeypatch):
+    import runtime.selection_shadow_adapter as adapter
+    import tools.selection_shadow_runner as runner
+    from runtime.selection_shadow_book import SelectionShadowBook, read_report
+    from tests.test_selection_shadow_book import snapshot, clock
+    path = tmp_path / 'data/shadow/selection_forward.db'
+    book = SelectionShadowBook(path)
+    book.record_snapshot(snapshot())
+    book.decide(clock())
+    current = build_clock('KR', '2026-09-11T10:00:00+09:00')
+    monkeypatch.setattr(adapter, 'build_clock', lambda *args: current)
+    monkeypatch.setattr(runner, 'collect_snapshot', lambda *args: pytest.fail('late collection'))
+    requests = []
+    def provider(market, tickers):
+        requests.extend(tickers)
+        return {}
+    adapter.run_cycle(tmp_path, current, provider)
+    adapter.run_cycle(tmp_path, current, provider)
+    report = read_report(path)
+    assert {i['status'] for i in report['intents']} == {'ENTRY_WINDOW_MISSED'}
+    assert not requests
+    expirations = [e for e in report['errors'] if e['status'] == 'ENTRY_WINDOW_MISSED' and e['session_date'] == '2026-09-10']
+    assert len(expirations) == 1 and expirations[0]['at'] == current['now']
+    assert expirations[0]['details']['intent_count'] == 3
+
+
+def test_preopen_diagnostics_do_not_reuse_previous_market(tmp_path, monkeypatch):
+    import runtime.selection_shadow_adapter as adapter
+    import tools.selection_shadow_runner as runner
+    from tests.test_selection_shadow_book import snapshot
+    from runtime.selection_shadow_book import SelectionShadowBook, read_report
+    book = SelectionShadowBook(tmp_path / 'data/shadow/selection_forward.db')
+    book.record_snapshot(snapshot(completed_at='2026-09-10T09:04:01+09:00'))
+    current = build_clock('KR', '2026-09-11T08:45:00+09:00')
+    monkeypatch.setattr(adapter, 'build_clock', lambda *args: current)
+    monkeypatch.setattr(runner, 'collect_snapshot', lambda *args: dict(snapshot(status='EMPTY', candidates=[]), session_date='2026-09-11', collected_at=current['now'], completed_at=current['now']))
+    class Provider:
+        diagnostics = {'mode': 'CACHE_ONLY', 'requested_count': 4, 'last_available_price_at': 'OLD'}
+        def __call__(self, *args):
+            pytest.fail('provider called before open')
+    result = adapter.run_cycle(tmp_path, current, Provider())
+    assert result['quote_source']['mode'] == 'NAVER_BOUNDED'
+    assert result['quote_source']['requested_count'] == 0
+    assert result['quote_source']['last_available_price_at'] is None
+    assert read_report(book.path)['markets'][0]['quote_source'] == result['quote_source']
+
+
+@pytest.mark.parametrize('provider_error', [False, True])
+def test_cycle_connections_close_on_success_and_provider_error(tmp_path, monkeypatch, provider_error):
+    import sqlite3
+    import runtime.selection_shadow_adapter as adapter
+    from runtime.selection_shadow_book import SelectionShadowBook
+    from tests.test_selection_shadow_book import snapshot
+    book = SelectionShadowBook(tmp_path / 'data/shadow/selection_forward.db')
+    book.record_snapshot(snapshot(status='EMPTY', candidates=[]))
+    current = build_clock('KR', '2026-09-10T09:06:00+09:00')
+    monkeypatch.setattr(adapter, 'build_clock', lambda *args: current)
+    original = sqlite3.connect
+    connections = []
+    def connect(*args, **kwargs):
+        db = original(*args, **kwargs)
+        connections.append(db)
+        return db
+    monkeypatch.setattr(sqlite3, 'connect', connect)
+    def provider(*args):
+        if provider_error:
+            raise RuntimeError('fixture')
+        return {}
+    if provider_error:
+        with pytest.raises(RuntimeError, match='fixture'):
+            adapter.run_cycle(tmp_path, current, provider)
+    else:
+        assert adapter.run_cycle(tmp_path, current, provider)['errors'] == []
+    assert connections
+    for db in connections:
+        with pytest.raises(sqlite3.ProgrammingError, match='closed'):
+            db.execute('SELECT 1')
+
+
+@pytest.mark.parametrize('market', ['KR', 'US'])
+def test_provider_latest_timestamp_is_aware_max_and_rejections_keep_evidence(monkeypatch, market):
+    import runtime.selection_shadow_adapter as adapter
+    import kis_api
+    import tools.analysis_quotes as analysis
+    now = datetime.fromisoformat('2026-09-10T10:00:00+09:00')
+    rows = {
+        'A': dict(price=100, price_at='2026-09-10T10:00:00+09:00', requested_at=now.isoformat(), received_at=now.isoformat(), source='fixture', token='SECRET'),
+        'B': dict(price=100, price_at='2026-09-10T01:00:01+00:00', requested_at=now.isoformat(), received_at=now.isoformat(), source='fixture', token='SECRET'),
+        'C': dict(price=100, price_at='2026-09-10T09:59:00+09:00', requested_at=now.isoformat(), received_at=now.isoformat(), source='fixture', token='SECRET'),
+    }
+    monkeypatch.setattr(kis_api, 'get_observed_finnhub_quote', lambda ticker: rows[ticker])
+    monkeypatch.setattr(analysis, 'get_quote_kr', lambda ticker, **kwargs: rows[ticker])
+    provider = adapter.ExistingQuoteProvider()
+    result = provider(market, rows)
+    assert provider.diagnostics['last_available_price_at'] == rows['B']['price_at']
+    rejected = normalize_quote(market, rows['B'], now)
+    assert rejected['status'] == 'NO_VERIFIED_QUOTE'
+    assert rejected['source'] == 'fixture' and rejected['price_at'] == rows['B']['price_at']
+    assert 'token' not in rejected and 'price' not in rejected

@@ -7,8 +7,11 @@ import json
 import math
 import sqlite3
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 
 CAPITAL = 4_320_000.0
@@ -35,11 +38,23 @@ def _json(value):
 
 def _public_details(value):
     """Expose diagnostics, never arbitrary adapter payloads or source rows."""
+    value = _object(value)
     allowed = {'mode', 'required_count', 'requested_count', 'last_available_price_at',
+               'source', 'requested_at', 'received_at', 'price_at', 'price_kind',
                'unverified_count', 'missing_reason', 'ticker', 'code', 'detail', 'reason',
                'error', 'phase', 'intent_count', 'fills', 'exits', 'errors'}
     return {key: item for key, item in value.items()
             if key in allowed and (item is None or isinstance(item, (str, int, float, bool)))}
+
+
+def _object(value):
+    if not isinstance(value, dict):
+        raise ValueError('expected JSON object')
+    return value
+
+
+def _load_object(value):
+    return _object(json.loads(value))
 
 
 class SelectionShadowBook:
@@ -73,6 +88,10 @@ class SelectionShadowBook:
                 CREATE TABLE IF NOT EXISTS session_observations (
                     market TEXT NOT NULL, session_date TEXT NOT NULL, open_at TEXT NOT NULL,
                     close_at TEXT NOT NULL, observed_at TEXT NOT NULL,
+                    PRIMARY KEY(market, session_date));
+                CREATE TABLE IF NOT EXISTS session_coverage (
+                    market TEXT NOT NULL, session_date TEXT NOT NULL,
+                    status TEXT NOT NULL, diagnosed_at TEXT NOT NULL,
                     PRIMARY KEY(market, session_date));
                 CREATE TABLE IF NOT EXISTS position_report_metadata (
                     position_id INTEGER PRIMARY KEY, holding_sessions INTEGER,
@@ -131,13 +150,59 @@ class SelectionShadowBook:
                 CREATE INDEX IF NOT EXISTS idx_positions_account ON positions(market, rule);
             """)
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.path, timeout=2.0)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA journal_mode=WAL")
-        db.execute("PRAGMA busy_timeout=2000")
-        db.execute("PRAGMA foreign_keys=ON")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA busy_timeout=2000")
+            db.execute("PRAGMA foreign_keys=ON")
+            with db:
+                yield db
+        finally:
+            db.close()
+
+    def diagnose_coverage(self, clock):
+        """Diagnose fully skipped verified sessions; partial evidence is never complete.
+
+        Calendar acquisition in session_observations is deliberately not evidence
+        of execution. Existing snapshots/statuses preserve legacy observation days.
+        """
+        market, session, now = clock['market'], clock['session_date'], clock['now']
+        zone = ZoneInfo('Asia/Seoul' if market == 'KR' else 'America/New_York')
+        with self._connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            experiment = db.execute('SELECT first_observed_at FROM experiments WHERE market=?', (market,)).fetchone()
+            if not experiment:
+                return
+            first = _dt(experiment[0], 'first_observed_at').astimezone(zone).date().isoformat()
+            evidence = {r[0] for r in db.execute(
+                'SELECT session_date FROM snapshots WHERE market=? UNION '
+                'SELECT session_date FROM statuses WHERE market=? AND status != ? UNION '
+                'SELECT session_date FROM decisions WHERE market=?',
+                (market, market, 'SKIPPED_SESSION', market))}
+            for day in clock.get('session_dates', []):
+                if first <= day < session:
+                    status = 'OBSERVED_PARTIAL' if day in evidence else 'SKIPPED_SESSION'
+                    db.execute('INSERT OR IGNORE INTO session_coverage VALUES(?,?,?,?)',
+                               (market, day, status, now))
+
+    def expire_pending(self, clock):
+        """Expire old intents before quote allocation, retaining their session."""
+        now = _dt(clock['now'], 'now')
+        session = clock['session_date']
+        expired_today = bool(clock.get('open_at') and now > _dt(clock['open_at'], 'open_at') + timedelta(minutes=45))
+        with self._connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            rows = db.execute("SELECT session_date,COUNT(*) FROM intents WHERE market=? AND status='PENDING' "
+                              "AND (session_date<? OR (session_date=? AND ?)) GROUP BY session_date",
+                              (clock['market'], session, session, expired_today)).fetchall()
+            for day, count in rows:
+                db.execute("UPDATE intents SET status='ENTRY_WINDOW_MISSED',reason='ENTRY_WINDOW_MISSED' "
+                           "WHERE market=? AND session_date=? AND status='PENDING'", (clock['market'], day))
+                db.execute('INSERT INTO statuses(market,session_date,status,at,details) VALUES(?,?,?,?,?)',
+                           (clock['market'], day, 'ENTRY_WINDOW_MISSED', clock['now'], _json({'intent_count': count})))
 
     def _observe(self, db, market, at):
         db.execute('INSERT OR IGNORE INTO experiments VALUES(?,?,?,?,?,?)',
@@ -266,6 +331,8 @@ class SelectionShadowBook:
                     or opened.date().isoformat() != day or closed.date().isoformat() != day
                     or not opened < closed <= now):
                 raise ValueError('invalid historical schedule bounds')
+        self.expire_pending(clock)
+        self.diagnose_coverage(clock)
         market, session = clock["market"], clock["session_date"]
         result = {"market": market, "session_date": session, "now": clock["now"],
                   "fills": [], "exits": [], "errors": []}
@@ -274,7 +341,8 @@ class SelectionShadowBook:
         for ticker in self.required_tickers(market):
             error = self._quote_error(quotes.get(ticker), ticker, session, now)
             if error:
-                result["errors"].append({"ticker": ticker, "code": "NO_VERIFIED_QUOTE", "detail": error})
+                evidence = _public_details(quotes[ticker]) if isinstance(quotes.get(ticker), dict) else {}
+                result["errors"].append({**evidence, "ticker": ticker, "code": "NO_VERIFIED_QUOTE", "detail": error})
             else:
                 checked[ticker] = quotes[ticker]
         with self._connect() as db:
@@ -393,18 +461,19 @@ class SelectionShadowBook:
             db.execute("INSERT OR IGNORE INTO valuations VALUES(?,?,?,?,1)",
                        (pos["id"], clock["session_date"], clock["now"], price))
             in_close_window = close - timedelta(minutes=15) <= now <= close
-            reason = "TP" if price >= pos["entry_price"] * 1.12 else None
-            if not reason and in_close_window and price <= pos["entry_price"] * .75:
+            entry_decimal = Decimal(str(pos['entry_price']))
+            reason = "TP" if Decimal(str(price)) >= entry_decimal * Decimal('1.12') else None
+            if not reason and in_close_window and Decimal(str(price)) <= entry_decimal * Decimal('.75'):
                 reason = "SL"
             historical_peak = db.execute(
                 "SELECT MAX(price) FROM valuations WHERE position_id=? AND session_date<?",
                 (pos["id"], clock["session_date"])).fetchone()[0]
-            if not reason and in_close_window and pos["market"] == "US" and historical_peak is not None and historical_peak >= pos["entry_price"] * 1.04 and price <= pos["entry_price"]:
+            if not reason and in_close_window and pos["market"] == "US" and historical_peak is not None and Decimal(str(historical_peak)) >= entry_decimal * Decimal('1.04') and price <= pos["entry_price"]:
                 reason = "BE"
             if not reason and in_close_window and held is not None and held >= 7:
                 reason = "D7"
-            delayed = pos["pending_reason"] == "EXIT_PENDING_QUOTE"
             overdue = held is not None and held > 7
+            delayed = pos["pending_reason"] == "EXIT_PENDING_QUOTE" or overdue
             if not reason and (delayed or overdue):
                 reason = "D7"
                 delayed = True
@@ -523,6 +592,8 @@ class SelectionShadowBook:
     def _quote_error(quote, ticker, session, now):
         if not quote:
             return "missing quote"
+        if not isinstance(quote, dict) or quote.get('status') == 'NO_VERIFIED_QUOTE':
+            return 'unverified quote'
         try:
             price = float(quote["price"])
             price_at = _dt(quote["price_at"], "price_at")
@@ -556,7 +627,7 @@ def read_report(path, now: str | None = None) -> dict:
     path = Path(path)
     empty = {"available": False, "authority": "SHADOW_ONLY", "contract": CONTRACT,
              "accounts": [], "markets": [], "positions": [], "closed": [], "intents": [],
-             "errors": [], "experiments": [], "last_updated": None}
+             "errors": [], "experiments": [], "coverage": [], "last_updated": None}
     if not path.is_file():
         return empty
     supplied_now = _dt(now, "now") if now is not None else None
@@ -568,7 +639,8 @@ def read_report(path, now: str | None = None) -> dict:
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         experiments = [dict(r) for r in db.execute('SELECT * FROM experiments ORDER BY market')] if 'experiments' in tables else []
         for experiment in experiments:
-            experiment['parameters'] = json.loads(experiment['parameters'])
+            experiment['parameters'] = _load_object(experiment['parameters'])
+        coverage = [dict(r) for r in db.execute('SELECT * FROM session_coverage ORDER BY market,session_date')] if 'session_coverage' in tables else []
         holding_metadata = {r['position_id']: dict(r) for r in db.execute('SELECT * FROM position_report_metadata')} if 'position_report_metadata' in tables else {}
         positions = [dict(r) for r in db.execute("SELECT * FROM positions ORDER BY market,rule,ticker")]
         closed = [dict(r) for r in db.execute("SELECT * FROM closed_positions ORDER BY exit_at DESC")]
@@ -577,9 +649,10 @@ def read_report(path, now: str | None = None) -> dict:
             "SELECT intent_id,at,details FROM events WHERE type='OPEN'")}
         for intent in intents:
             event = open_events.get(intent["id"])
-            quote = json.loads(event["details"]).get("quote", {}) if event else {}
+            event_details = _load_object(event['details']) if event else {}
+            quote = _object(event_details.get('quote', {}))
             intent.update(fill_at=event["at"] if event else None,
-                          fill_price=quote.get("price"), fill_qty=(json.loads(event["details"]).get("qty") if event else None),
+                          fill_price=quote.get("price"), fill_qty=event_details.get('qty'),
                           fill_source=quote.get("source"), fill_requested_at=quote.get("requested_at"),
                           fill_received_at=quote.get("received_at"), fill_price_kind=quote.get("price_kind"))
         snapshots = [dict(r) for r in db.execute(
@@ -599,8 +672,10 @@ def read_report(path, now: str | None = None) -> dict:
             fees = cost * (.005 if pos['market'] == 'US' else .0025)
             pos.update(entry_cost=cost, total_fees=fees)
             if 'exit_at' in pos:
-                details = json.loads(pos['details'])
+                details = _load_object(pos['details'])
                 pos['delay_sessions'] = details.get('delay_sessions')
+                # Correct the display of existing rows without rewriting trades.
+                pos['delayed'] = int(bool(pos['delayed'] or (pos['delay_sessions'] or 0) > 0))
                 pos['return_pct'] = pos['pnl'] / cost * 100 if cost else None
             else:
                 pos['stale'] = effective_now is None or effective_now - _dt(pos['last_price_at'], 'last_price_at') > timedelta(seconds=60)
@@ -647,11 +722,19 @@ def read_report(path, now: str | None = None) -> dict:
             market = {"market": market_name, "session_date": session_date,
                       "snapshot_status": snap["snapshot_status"] if snap else "MISSING",
                       "snapshot_completed_at": snap["snapshot_completed_at"] if snap else None}
-            payload = json.loads(snap['payload']) if snap else {}
-            provenance = payload.get('provenance', {})
+            payload = _load_object(snap['payload']) if snap else {}
+            provenance = _object(payload.get('provenance', {}))
             safe_provenance = {k: provenance[k] for k in ('calendar', 'source_completion', 'source_rows_sha256', 'historical_availability') if k in provenance}
             inventory = provenance.get('inventory')
             feature_sessions = provenance.get('feature_sessions')
+            for name in ('candidates', 'excluded', 'source_rows'):
+                rows = payload.get(name, [])
+                if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                    raise ValueError('invalid snapshot collection')
+            if inventory is not None and (not isinstance(inventory, list) or any(not isinstance(row, dict) for row in inventory)):
+                raise ValueError('invalid inventory')
+            if feature_sessions is not None and (not isinstance(feature_sessions, list) or any(not isinstance(day, str) for day in feature_sessions)):
+                raise ValueError('invalid feature sessions')
             safe_provenance.update(
                 inventory_count=len(inventory) if inventory is not None else None,
                 instrument_types=dict(Counter(row.get('instrument_type', 'UNKNOWN') for row in inventory)) if inventory is not None else None,
@@ -693,7 +776,7 @@ def read_report(path, now: str | None = None) -> dict:
                   if row["status"] not in {"HEARTBEAT", "QUOTE_SOURCE"}]
         report = {**empty, "available": True, "accounts": accounts, "markets": markets,
                   "positions": positions, "closed": closed, "intents": intents, "errors": errors,
-                  "experiments": experiments, "last_updated": last_updated}
+                  "experiments": experiments, "coverage": coverage, "last_updated": last_updated}
         return report
     except (sqlite3.Error, ValueError, TypeError, KeyError) as exc:
         return {**empty, "errors": [{"code": "REPORT_READ_ERROR", "detail": type(exc).__name__, "at": now}]}

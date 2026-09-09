@@ -72,7 +72,9 @@ def normalize_quote(market, raw, now=None):
                     received_at=received.isoformat(), session_date=clock['session_date'],
                     source=raw['source'], price_kind='LAST_PRICE_PAPER')
     except (KeyError, TypeError, ValueError):
-        return {'status': 'NO_VERIFIED_QUOTE', 'reason': 'missing, invalid or stale source timestamp'}
+        evidence = {key: raw[key] for key in ('source', 'requested_at', 'received_at', 'price_at', 'price_kind')
+                    if isinstance(raw, dict) and isinstance(raw.get(key), str)}
+        return {**evidence, 'status': 'NO_VERIFIED_QUOTE', 'reason': 'missing, invalid or stale source timestamp'}
 
 
 class ExistingQuoteProvider:
@@ -94,9 +96,7 @@ class ExistingQuoteProvider:
                 raw = get_observed_finnhub_quote(ticker)
                 if raw:
                     result[ticker] = normalize_quote(market, raw)
-                    stamp = raw.get('price_at')
-                    if stamp and stamp > (self.diagnostics['last_available_price_at'] or ''):
-                        self.diagnostics['last_available_price_at'] = stamp
+                    self._record_available_timestamp(raw)
         elif tickers:
             from tools.analysis_quotes import get_quote_kr
             offset = self.cursor % len(tickers)
@@ -106,12 +106,23 @@ class ExistingQuoteProvider:
                 self.diagnostics['requested_count'] += 1
                 raw = get_quote_kr(ticker, timeout=2.0)
                 result[ticker] = normalize_quote(market, raw)
-                if raw and raw.get('price_at'):
-                    self.diagnostics['last_available_price_at'] = raw['price_at']
+                self._record_available_timestamp(raw)
         self.diagnostics['unverified_count'] = sum(q.get('status') == 'NO_VERIFIED_QUOTE' for q in result.values())
         self.diagnostics['missing_reason'] = ('no fresh original request/price timestamp available'
                                               if self.diagnostics['unverified_count'] else None)
         return result
+
+    def _record_available_timestamp(self, raw):
+        stamp = raw.get('price_at') if isinstance(raw, dict) else None
+        if not isinstance(stamp, str):
+            return
+        try:
+            parsed = aware_now(stamp)
+            prior = self.diagnostics['last_available_price_at']
+            if prior is None or parsed > aware_now(prior):
+                self.diagnostics['last_available_price_at'] = stamp
+        except (TypeError, ValueError):
+            pass
 
 
 def _with_missing_schedule_bounds(path, clock):
@@ -151,9 +162,12 @@ def run_cycle(root, clock: dict, quote_provider) -> dict:
     book = SelectionShadowBook(path)
     market, session = clock['market'], clock['session_date']
     now = aware_now(clock['now'])
+    book.expire_pending(clock)
+    book.diagnose_coverage(clock)
     source_info = {'mode': ('NO_QUOTE_PROVIDER' if quote_provider is None else
                            ('CACHE_ONLY' if market == 'US' else 'NAVER_BOUNDED')),
-                   'last_available_price_at': None, 'missing_reason': 'outside regular session'}
+                   'last_available_price_at': None, 'missing_reason': 'outside regular session',
+                   'required_count': 0, 'requested_count': 0, 'unverified_count': 0}
     if not clock.get('is_session', True):
         book.record_status(market, session, 'CLOSED', clock['now'], source_info)
         return {'status': 'CLOSED', 'errors': [], 'quote_source': source_info}
@@ -162,7 +176,7 @@ def run_cycle(root, clock: dict, quote_provider) -> dict:
         book.tick(_with_missing_schedule_bounds(path, clock), {})
         book.record_status(market, session, 'CLOSED', clock['now'], source_info)
         return {'status': 'CLOSED', 'errors': [], 'quote_source': source_info}
-    with sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True) as db:
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
         prior = db.execute('SELECT status,completed_at FROM snapshots WHERE market=? AND session_date=?',
                            (market, session)).fetchone()
     frozen = prior and prior[0] in {'READY', 'EMPTY'}
@@ -177,15 +191,18 @@ def run_cycle(root, clock: dict, quote_provider) -> dict:
         book.record_status(market, session, 'CLOSED', fresh['now'], {'reason': 'session changed during collection'})
         return {'status': 'CLOSED', 'errors': []}
     book.decide(fresh)
+    book.expire_pending(fresh)
     tickers = book.required_tickers(market)
     in_session = aware_now(fresh['open_at']) <= aware_now(fresh['now']) <= aware_now(fresh['close_at'])
-    quotes = quote_provider(market, tickers) if in_session and quote_provider else {}
+    provider_called = bool(in_session and quote_provider)
+    quotes = quote_provider(market, tickers) if provider_called else {}
     final_clock = build_clock(market)
     if final_clock['session_date'] != session or not final_clock['is_session']:
         book.record_status(market, session, 'CLOSED', final_clock['now'], {'reason': 'session changed during quotes'})
         return {'status': 'CLOSED', 'errors': []}
     result = book.tick(_with_missing_schedule_bounds(path, final_clock), quotes)
-    diagnostics = getattr(quote_provider, 'diagnostics', {'mode': 'NO_QUOTE_PROVIDER' if quote_provider is None else 'INJECTED'})
+    diagnostics = dict(getattr(quote_provider, 'diagnostics', {'mode': 'INJECTED'})) if provider_called else {
+        **source_info, 'required_count': len(tickers), 'unverified_count': len(tickers)}
     book.record_status(market, session, 'QUOTE_SOURCE', final_clock['now'], diagnostics)
     if aware_now(final_clock['now']) > opened + timedelta(minutes=45) and not frozen:
         book.record_status(market, session, 'ENTRY_WINDOW_MISSED', final_clock['now'], diagnostics)

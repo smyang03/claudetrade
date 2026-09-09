@@ -7,6 +7,8 @@ import json
 import math
 import sqlite3
 import sys
+from contextlib import closing
+from decimal import Decimal
 from pathlib import Path
 
 if __package__ in {None, ''}:
@@ -37,7 +39,7 @@ def collect_snapshot(root, market: str, session_date: str, now=None) -> dict:
         price_dir = root / 'data/price' / market.lower()
         if market == 'US':
             source = root / 'data/analysis/us_swing_shadow.db'
-            with sqlite3.connect(source.resolve().as_uri() + '?mode=ro', uri=True) as db:
+            with closing(sqlite3.connect(source.resolve().as_uri() + '?mode=ro', uri=True)) as db:
                 db.row_factory = sqlite3.Row
                 db.execute('BEGIN')
                 records = [dict(row) for row in db.execute(
@@ -92,13 +94,15 @@ def collect_snapshot(root, market: str, session_date: str, now=None) -> dict:
                     volume = float(window[-1]['volume'])
                     if not all(math.isfinite(c) and c > 0 for c in closes) or not math.isfinite(volume) or volume < 0:
                         raise ValueError('INVALID_FEATURE_VALUE')
-                    returns = [100 * (b / a - 1) for a, b in zip(closes, closes[1:])]
-                    features = {'max21': max(returns), 'chg_pct': returns[-1], 'dvol': closes[-1] * volume}
+                    decimal_closes = [Decimal(r['close']) for r in window]
+                    returns = [100 * (b / a - 1) for a, b in zip(decimal_closes, decimal_closes[1:])]
+                    dvol = decimal_closes[-1] * Decimal(window[-1]['volume'])
+                    features = {'max21': float(max(returns)), 'chg_pct': float(returns[-1]), 'dvol': float(dvol)}
                     if not all(math.isfinite(value) for value in features.values()):
                         raise ValueError('INVALID_DERIVED_FEATURE_VALUE')
                     item['features'] = features
-                    qualifies = (features['chg_pct'] <= -3 and features['dvol'] >= 2e9) if market == 'KR' else (
-                        1e8 <= features['dvol'] < 5e8 and features['max21'] >= 8)
+                    qualifies = (decimal_closes[-1] * 100 <= decimal_closes[-2] * 97 and dvol >= 2_000_000_000) if market == 'KR' else (
+                        100_000_000 <= dvol < 500_000_000 and any(b * 100 >= a * 108 for a, b in zip(decimal_closes, decimal_closes[1:])))
                     if qualifies:
                         snap['candidates'].append(dict(ticker=ticker, dvol=features['dvol'], features=features))
                     else:

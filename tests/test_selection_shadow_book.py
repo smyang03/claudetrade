@@ -42,6 +42,115 @@ def prepared_book(tmp_path, candidates=None):
     return book
 
 
+@pytest.mark.parametrize('price,exits', [(111999.999999, 0), (112000, 3), (112000.000001, 3)])
+def test_exact_tp_boundary(tmp_path, price, exits):
+    book = prepared_book(tmp_path)
+    assert len(book.tick(clock(), {'005930': quote()})['fills']) == 3
+    c = clock('2026-09-10T10:00:00+09:00')
+    q = dict(quote(price), price_at=c['now'], requested_at=c['now'], received_at=c['now'])
+    assert len(book.tick(c, {'005930': q})['exits']) == exits
+
+
+@pytest.mark.parametrize('peak,exits', [(2.859999999, 0), (2.86, 3), (2.860000001, 3)])
+def test_exact_prior_peak_be_boundary(tmp_path, peak, exits):
+    from runtime.selection_shadow_adapter import build_clock
+    book = SelectionShadowBook(tmp_path / 'book.db')
+    s = dict(snapshot(), market='US', collected_at='2026-09-10T09:34:00-04:00', completed_at='2026-09-10T09:34:01-04:00')
+    book.record_snapshot(s)
+    c = build_clock('US', '2026-09-10T09:36:00-04:00')
+    book.decide(c)
+    def observe(c, price):
+        return book.tick(c, {'005930': dict(quote(price), session_date=c['session_date'], price_at=c['now'], requested_at=c['now'], received_at=c['now'])})
+    assert len(observe(c, 2.75)['fills']) == 3
+    observe(build_clock('US', '2026-09-10T10:00:00-04:00'), peak)
+    assert len(observe(build_clock('US', '2026-09-11T15:50:00-04:00'), 2.75)['exits']) == exits
+
+
+def test_overdue_tp_keeps_reason_and_reports_delay(tmp_path):
+    from runtime.selection_shadow_adapter import build_clock
+    book = prepared_book(tmp_path)
+    assert len(book.tick(clock(), {'005930': quote()})['fills']) == 3
+    c = build_clock('KR', '2026-09-21T10:00:00+09:00')
+    q = dict(quote(113000), session_date=c['session_date'], price_at=c['now'], requested_at=c['now'], received_at=c['now'])
+    assert {e['reason'] for e in book.tick(c, {'005930': q})['exits']} == {'TP'}
+    assert {p['delayed'] for p in read_report(book.path)['closed']} == {1}
+
+
+def test_writer_closes_connections_on_success_and_rollback(tmp_path, monkeypatch):
+    from contextlib import closing
+    original = sqlite3.connect
+    connections = []
+    def connect(*args, **kwargs):
+        db = original(*args, **kwargs)
+        connections.append(db)
+        return db
+    monkeypatch.setattr(shadow_book_module.sqlite3, 'connect', connect)
+    book = prepared_book(tmp_path)
+    with closing(original(book.path)) as db, db:
+        db.execute("CREATE TRIGGER abort_open BEFORE INSERT ON positions BEGIN SELECT RAISE(ABORT, 'boom'); END")
+    with pytest.raises(sqlite3.IntegrityError):
+        book.tick(clock(), {'005930': quote()})
+    for db in connections:
+        with pytest.raises(sqlite3.ProgrammingError, match='closed'):
+            db.execute('SELECT 1')
+
+
+def test_rejected_quote_evidence_is_persisted_but_never_executable(tmp_path):
+    from runtime.selection_shadow_adapter import normalize_quote
+    book = prepared_book(tmp_path)
+    raw = dict(quote(), price_at='2026-09-10T09:00:00+09:00', token='SECRET')
+    rejected = normalize_quote('KR', raw, clock()['now'])
+    # Even an accidentally reattached price cannot override rejection status.
+    result = book.tick(clock(), {'005930': dict(rejected, price=100000, session_date='2026-09-10')})
+    assert not result['fills']
+    details = read_report(book.path)['errors'][0]['details']
+    assert details['code'] == 'NO_VERIFIED_QUOTE'
+    assert details['source'] == raw['source']
+    assert details['price_at'] == raw['price_at']
+    assert details['requested_at'] == raw['requested_at']
+    assert details['received_at'] == raw['received_at']
+    assert 'price' not in details and 'SECRET' not in json.dumps(details)
+    with sqlite3.connect(book.path) as db:
+        assert db.execute('SELECT COUNT(*) FROM events').fetchone()[0] == 0
+        assert {r[0] for r in db.execute('SELECT status FROM intents')} == {'PENDING'}
+
+
+def test_coverage_migrates_legacy_evidence_and_ignores_schedule_lookup(tmp_path):
+    from runtime.selection_shadow_adapter import build_clock
+    book = SelectionShadowBook(tmp_path / 'book.db')
+    book.record_status('KR', '2026-09-10', 'HEARTBEAT', '2026-09-10T09:06:00+09:00', {})
+    book.record_status('KR', '2026-09-11', 'ERROR', '2026-09-11T08:00:00+09:00', {})
+    original_experiment = read_report(book.path)['experiments']
+    with sqlite3.connect(book.path) as db:
+        db.execute('DROP TABLE session_coverage')
+        db.execute("INSERT INTO session_observations VALUES('KR','2026-09-14','2026-09-14T09:00:00+09:00','2026-09-14T15:30:00+09:00','2026-09-21T10:00:00+09:00')")
+    book = SelectionShadowBook(book.path)
+    c = build_clock('KR', '2026-09-21T10:00:00+09:00')
+    book.diagnose_coverage(c)
+    report = read_report(book.path)
+    assert report['experiments'] == original_experiment
+    assert {r['session_date'] for r in report['coverage'] if r['status'] == 'OBSERVED_PARTIAL'} == {'2026-09-10', '2026-09-11'}
+    assert {r['session_date'] for r in report['coverage'] if r['status'] == 'SKIPPED_SESSION'} == {'2026-09-14', '2026-09-15', '2026-09-16', '2026-09-17', '2026-09-18'}
+    assert {r['diagnosed_at'] for r in report['coverage']} == {c['now']}
+    book.diagnose_coverage(dict(c, now='2026-09-21T11:00:00+09:00'))
+    assert read_report(book.path)['coverage'] == report['coverage']
+    assert not report['intents'] and not report['positions']
+
+
+def test_legacy_overdue_close_display_does_not_rewrite_trade(tmp_path):
+    from runtime.selection_shadow_adapter import build_clock
+    book = prepared_book(tmp_path)
+    assert len(book.tick(clock(), {'005930': quote()})['fills']) == 3
+    c = build_clock('KR', '2026-09-21T10:00:00+09:00')
+    q = dict(quote(113000), session_date=c['session_date'], price_at=c['now'], requested_at=c['now'], received_at=c['now'])
+    assert len(book.tick(c, {'005930': q})['exits']) == 3
+    with sqlite3.connect(book.path) as db:
+        db.execute('UPDATE closed_positions SET delayed=0')
+    assert {p['delayed'] for p in read_report(book.path)['closed']} == {1}
+    with sqlite3.connect(book.path) as db:
+        assert {r[0] for r in db.execute('SELECT delayed FROM closed_positions')} == {0}
+
+
 def test_experiment_metadata_survives_restart_and_summarizes_safe_inputs(tmp_path):
     book = SelectionShadowBook(tmp_path / 'book.db')
     snap = snapshot()
@@ -215,7 +324,9 @@ def test_fill_transaction_rolls_back_when_position_insert_aborts(tmp_path):
     report = read_report(tmp_path / "book.db")
     assert not report["positions"]
     assert all(a["cash"] == 4_320_000 for a in report["accounts"])
-    assert not [e for e in report.get("events", []) if e["type"] == "OPEN"]
+    with sqlite3.connect(book.path) as db:
+        assert db.execute("SELECT COUNT(*) FROM events WHERE type='OPEN'").fetchone()[0] == 0
+        assert {r[0] for r in db.execute('SELECT status FROM intents')} == {'PENDING'}
 
 
 def test_report_absent_is_read_only(tmp_path):
@@ -228,8 +339,9 @@ def test_report_absent_is_read_only(tmp_path):
 def test_same_day_close_proceeds_do_not_fund_frozen_allocations(tmp_path):
     book = prepared_book(tmp_path)
     book.tick(clock(), {"005930": quote()})
-    book.tick(clock("2026-09-10T10:00:00+09:00"), {"005930": quote(
-        112_000, "2026-09-10T09:59:59+09:00", "2026-09-10T09:59:58+09:00")})
+    result = book.tick(clock("2026-09-10T10:00:00+09:00"), {"005930": dict(quote(
+        112_000, "2026-09-10T09:59:59+09:00", "2026-09-10T09:59:58+09:00"), received_at='2026-09-10T10:00:00+09:00')})
+    assert len(result['exits']) == 3
     # The day's frozen decisions remain the only intents despite sale proceeds.
     assert len(read_report(tmp_path / "book.db")["intents"]) == 3
 
@@ -291,6 +403,7 @@ def test_closed_early_cohort_becomes_mature_after_seven_verified_sessions(tmp_pa
     tp = quote(112_000, "2026-09-10T09:59:59+09:00", "2026-09-10T09:59:58+09:00")
     tp["received_at"] = tp_clock["now"]
     book.tick(tp_clock, {"005930": tp})
+    assert len(read_report(book.path)['closed']) == 3
     assert all(a["mature_count"] == 0 for a in read_report(tmp_path / "book.db")["accounts"])
     sessions = ["2026-09-10", "2026-09-11", "2026-09-14", "2026-09-15",
                 "2026-09-16", "2026-09-17", "2026-09-18"]
@@ -347,6 +460,7 @@ def test_position_identity_is_not_reused_after_close(tmp_path):
     tp = quote(112_000, "2026-09-10T09:59:59+09:00", "2026-09-10T09:59:58+09:00")
     tp["received_at"] = tp_clock["now"]
     book.tick(tp_clock, {"005930": tp})
+    assert len(read_report(book.path)['closed']) == 3
     s = snapshot(candidates=[{"ticker": "000660", "dvol": 5, "features": {}}],
                  completed_at="2026-09-11T09:04:01+09:00")
     s.update(session_date="2026-09-11", signal_date="2026-09-10",

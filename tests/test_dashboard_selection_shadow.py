@@ -1,5 +1,4 @@
 import json
-import gc
 import sqlite3
 import subprocess
 from datetime import datetime
@@ -85,8 +84,6 @@ def test_locked_and_invalid_db_report_warning(client, tmp_path):
     path = tmp_path / 'data/shadow/selection_forward.db'
     book = SelectionShadowBook(path)
     book.record_snapshot(snapshot())
-    # sqlite connection context managers commit but are closed on collection.
-    gc.collect()
     with sqlite3.connect(path) as lock:
         lock.execute('PRAGMA journal_mode=DELETE')
         lock.execute('BEGIN EXCLUSIVE')
@@ -130,6 +127,26 @@ def test_api_corrupt_persisted_metadata_is_unavailable_not_server_error(client, 
     assert response.json['errors'][0]['code'] == 'REPORT_READ_ERROR'
 
 
+@pytest.mark.parametrize('payload', ['[]', 'null', '"SECRET"'])
+@pytest.mark.parametrize('target', ['quote_source', 'parameters', 'snapshot', 'provenance'])
+def test_api_rejects_wrong_json_object_shapes(client, tmp_path, payload, target):
+    book = SelectionShadowBook(tmp_path / 'data/shadow/selection_forward.db')
+    book.record_snapshot(snapshot())
+    book.record_status('KR', '2026-09-10', 'QUOTE_SOURCE', clock()['now'], {})
+    with sqlite3.connect(book.path) as db:
+        if target == 'quote_source':
+            db.execute('UPDATE statuses SET details=?', (payload,))
+        elif target == 'parameters':
+            db.execute('UPDATE experiments SET parameters=?', (payload,))
+        else:
+            value = json.dumps(dict(snapshot(), provenance=json.loads(payload))) if target == 'provenance' else payload
+            db.execute('UPDATE snapshots SET payload=?', (value,))
+    response = client.get('/api/selection_shadow')
+    assert response.status_code == 200 and response.json['available'] is False
+    assert response.json['errors'][0]['code'] == 'REPORT_READ_ERROR'
+    assert 'SECRET' not in response.get_data(as_text=True)
+
+
 def test_cycle_restart_skipping_entire_d7_records_verified_schedule_on_get(client, tmp_path, monkeypatch):
     import runtime.selection_shadow_adapter as adapter
     import tools.selection_shadow_runner as runner
@@ -156,6 +173,11 @@ def test_cycle_restart_skipping_entire_d7_records_verified_schedule_on_get(clien
     monkeypatch.setattr(adapter, '_calendar', lambda *args: pytest.fail('calendar lookup on GET'))
     report = client.get('/api/selection_shadow').json
     assert len(report['closed']) == 3
+    gaps = [r for r in report['coverage'] if r['status'] == 'SKIPPED_SESSION']
+    assert [r['session_date'] for r in gaps] == ['2026-09-11', '2026-09-14', '2026-09-15', '2026-09-16', '2026-09-17', '2026-09-18']
+    assert {r['diagnosed_at'] for r in gaps} == {current['now']}
+    assert report['experiments'][0]['first_observed_at'] == snap['collected_at']
+    assert {r['status'] for r in report['coverage'] if r['session_date'] == '2026-09-10'} == {'OBSERVED_PARTIAL'}
     for position in report['closed']:
         assert position['scheduled_exit_session'] == '2026-09-18'
         assert position['scheduled_exit_at'] == '2026-09-18T15:15:00+09:00'
@@ -177,12 +199,15 @@ global.document = {getElementById: id => nodes[id] ||= {innerHTML:'', textConten
 ''' + PANEL_JS + '''
 const hostile = '<img src=x onerror="global.pwned=1">&';
 renderSelectionShadow({available:true, authority:'SHADOW_ONLY', contract:'forward_quote_v1',
- experiments:[], markets:[{market:'US',snapshot_status:'INPUT_INCOMPLETE',latest_status:'ENTRY_WINDOW_MISSED',quote_source:{mode:'CACHE_ONLY'}}],
+ experiments:[{market:'US',code_fingerprint:'original-code'}], markets:[{market:'US',snapshot_status:'INPUT_INCOMPLETE',latest_status:'ENTRY_WINDOW_MISSED',quote_source:{mode:'CACHE_ONLY'}}],
+ coverage:[{market:'US',session_date:'2026-09-11',status:'SKIPPED_SESSION',diagnosed_at:'2026-09-21T10:00:00-04:00'}],
  accounts:[{market:'US',rule:'baseline_k1',return_pct:null}],
  intents:[{ticker:hostile,reason:hostile}], positions:[],closed:[],errors:[]});
 const html = nodes['selection-shadow-content'].innerHTML;
 if(html.includes('<img') || !html.includes('&lt;img') || !html.includes('&amp;')) throw Error('unsafe HTML');
 if(!html.includes('CACHE_ONLY') || !html.includes('INPUT_INCOMPLETE') || !html.includes('ENTRY_WINDOW_MISSED')) throw Error('missing states');
+if(!html.includes('SKIPPED_SESSION') || !html.includes('OBSERVED_PARTIAL') || !html.includes('2026-09-21T10:00:00-04:00')) throw Error('missing coverage');
+if(!html.includes('원래 실험 코드 지문') || !html.includes('original-code')) throw Error('ambiguous identity');
 if(!html.includes('첫 유효 관측 대기')) throw Error('false zero success');
 renderSelectionShadow({available:false,errors:[{code:'REPORT_READ_ERROR',at:'failure-time'}]});
 if(nodes['selection-shadow-content'].innerHTML !== html) throw Error('lost previous report');
