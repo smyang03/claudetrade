@@ -390,12 +390,14 @@ class SelectionShadowBook:
                 if (opens[0]["market"], opens[0]["rule"], opens[0]["ticker"], opens[0]["intent_id"]) != identity:
                     return False
                 try:
-                    open_qty = int(json.loads(opens[0]["details"])["qty"])
+                    open_qty = json.loads(opens[0]["details"])["qty"]
                 except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                    return False
+                if type(open_qty) is not int or open_qty <= 0:
                     return False
                 if position is not None:
                     if closes or (position["market"], position["rule"], position["ticker"],
-                                  position["intent_id"]) != identity or position["qty"] != open_qty:
+                                  position["intent_id"]) != identity or type(position["qty"]) is not int or position["qty"] != open_qty:
                         return False
                 else:
                     if len(closes) != 1 or not closes[0]["event_key"].startswith("close:"):
@@ -409,13 +411,15 @@ class SelectionShadowBook:
                     if closed is None:
                         return False
                     try:
-                        close_qty = int(json.loads(closes[0]["details"])["qty"])
+                        close_qty = json.loads(closes[0]["details"])["qty"]
                     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                        return False
+                    if type(close_qty) is not int or close_qty <= 0:
                         return False
                     if ((closes[0]["market"], closes[0]["rule"], closes[0]["ticker"],
                          closes[0]["intent_id"]) != identity
                             or (closed["market"], closed["rule"], closed["ticker"]) != identity[:3]
-                            or closed["qty"] != open_qty or close_qty != open_qty):
+                            or type(closed["qty"]) is not int or closed["qty"] != open_qty or close_qty != open_qty):
                         return False
             elif position is not None or opens or closes:
                 return False

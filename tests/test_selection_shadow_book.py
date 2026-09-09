@@ -401,7 +401,9 @@ def test_reconciliation_rejects_closed_position_and_event_identity_or_quantity_m
     assert any(error["code"] == "RECONCILIATION_ERROR" for error in result["errors"])
 
 
-def test_close_event_records_quantity_and_reconciliation_rejects_its_mutation(tmp_path):
+@pytest.mark.parametrize("event_key", ["open:1", "close:1"])
+@pytest.mark.parametrize("corrupt_qty", [999, 5.5, "5", True, None])
+def test_close_event_records_quantity_and_reconciliation_rejects_its_mutation(tmp_path, event_key, corrupt_qty):
     book = prepared_book(tmp_path)
     book.tick(clock(), {"005930": quote()})
     tp_clock = clock("2026-09-10T10:00:00+09:00")
@@ -411,8 +413,30 @@ def test_close_event_records_quantity_and_reconciliation_rejects_its_mutation(tm
     with sqlite3.connect(tmp_path / "book.db") as db:
         details = json.loads(db.execute("SELECT details FROM events WHERE event_key='close:1'").fetchone()[0])
         assert details["qty"] == 5
-        details["qty"] = 999
-        db.execute("UPDATE events SET details=? WHERE event_key='close:1'", (json.dumps(details),))
+        details = json.loads(db.execute("SELECT details FROM events WHERE event_key=?", (event_key,)).fetchone()[0])
+        details["qty"] = corrupt_qty
+        db.execute("UPDATE events SET details=? WHERE event_key=?", (json.dumps(details), event_key))
+    result = book.tick(clock("2026-09-10T10:01:00+09:00"), {})
+    assert any(error["code"] == "RECONCILIATION_ERROR" for error in result["errors"])
+
+
+@pytest.mark.parametrize("closed", [False, True])
+@pytest.mark.parametrize("corrupt_qty", [0, -5, 5.5, True])
+def test_reconciliation_rejects_matching_invalid_quantities(tmp_path, closed, corrupt_qty):
+    book = prepared_book(tmp_path)
+    book.tick(clock(), {"005930": quote()})
+    if closed:
+        tp_clock = clock("2026-09-10T10:00:00+09:00")
+        tp = quote(120_000, "2026-09-10T09:59:59+09:00", "2026-09-10T09:59:58+09:00")
+        tp["received_at"] = tp_clock["now"]
+        assert len(book.tick(tp_clock, {"005930": tp})["exits"]) == 3
+    with sqlite3.connect(tmp_path / "book.db") as db:
+        for event_key, raw_details in db.execute("SELECT event_key,details FROM events WHERE intent_id=1").fetchall():
+            details = json.loads(raw_details)
+            details["qty"] = corrupt_qty
+            db.execute("UPDATE events SET details=? WHERE event_key=?", (json.dumps(details), event_key))
+        table = "closed_positions" if closed else "positions"
+        db.execute(f"UPDATE {table} SET qty=? WHERE rule='baseline_k1'", (corrupt_qty,))
     result = book.tick(clock("2026-09-10T10:01:00+09:00"), {})
     assert any(error["code"] == "RECONCILIATION_ERROR" for error in result["errors"])
 
