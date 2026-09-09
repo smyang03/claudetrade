@@ -29,6 +29,9 @@ class DecideTest(unittest.TestCase):
         self.assertAlmostEqual(m.quote_age_sec("2026-09-09T15:18:30+09:00", now), 30.0)
         self.assertEqual(m.quote_age_sec(None, now), float("inf"))
         self.assertGreater(m.quote_age_sec("2026-09-08T18:59:00+09:00", now), m.STALE_SEC)
+        # 09-09 실측: 네이버 지수 localTradedAt은 분 단위라 15:18:00을 15:19:00에 읽으면 60s — stale이 아니어야 한다
+        self.assertLessEqual(m.quote_age_sec("2026-09-09T15:18:00+09:00", now), m.STALE_SEC)
+        self.assertEqual(m.decide(-3.0, m.quote_age_sec("2026-09-09T15:18:00+09:00", now) > m.STALE_SEC, "OPEN"), (True, "signal"))
 
 
 class DivergenceTest(unittest.TestCase):
