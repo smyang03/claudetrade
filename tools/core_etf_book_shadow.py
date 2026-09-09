@@ -34,7 +34,16 @@ BENCH = "069500"
 CAPITAL = 2_600_000.0
 FEE_SIDE = 0.00015
 TAX = 0.154
-ARMS = ("ew", "absmom")
+ARMS = ("ew", "absmom", "ew_band8")
+# 2026-09-10 추가 — 밴드 리밸런스. 목표(20%) 대비 어느 하나라도 ±8%p 벗어나면 그날 전체 복귀. 월 강제 리밸런스 없음.
+# 근거(tools/research/research_core_book_rebalance.py, 2021-12~2026-09 4.7년, 260만·정수주·세금 15.4%):
+#   월 1회(현행) 청산후 +95.1% maxDD −16.2% 실현세 8.8만 회전 3.71배
+#   밴드 ±8%p     청산후 +102.6% maxDD −16.7% 실현세 4.9만 회전 2.26배  ← 낙폭은 같은데 세금·회전 절반
+#   연 1회        청산후 +104.6% maxDD −20.8% (수익 최고지만 낙폭 악화)
+#   무리밸런스      청산후 +96.1%  maxDD −20.1%
+# 세금·수수료 절감분만 자본의 약 1.5%p로 확실하고, 나머지 차이는 4.7년 한 창의 국면(069500 단독 +179%)일 수 있다.
+# 그래서 현행 ew를 **교체하지 않고** 세 번째 arm으로 병행 관측한다. 전환은 운영자 결정.
+BAND_ARMS = {"ew_band8": 0.08}      # arm → 허용 이탈(비중 pp/100)
 
 
 # ── 순수 함수 (테스트 대상) ─────────────────────────────────────────────────
@@ -67,7 +76,7 @@ def absmom_signal(mends: list[tuple[str, dict[str, float]]], tickers: list[str])
 
 
 def target_weights(arm: str, signal: dict[str, bool], tickers: list[str]) -> dict[str, float]:
-    if arm == "ew":
+    if arm == "ew" or arm in BAND_ARMS:
         return {t: 1.0 / len(tickers) for t in tickers}
     passing = [t for t in tickers if signal.get(t)]
     return {t: (1.0 / len(passing) if t in passing else 0.0) for t in tickers}
@@ -190,6 +199,26 @@ def _state(rows: list[dict], arm: str) -> dict | None:
     return rb[-1] if rb else None
 
 
+def should_rebalance(arm: str, state: dict | None, d: str, prices: dict[str, float],
+                     band_arms: dict[str, float] | None = None) -> bool:
+    """리밸런스 발동 여부. 밴드 arm은 목표(등가중) 대비 이탈이 밴드를 넘을 때만, 나머지는 달이 바뀔 때."""
+    bands = BAND_ARMS if band_arms is None else band_arms
+    if state is None:
+        return True
+    if arm not in bands:
+        return state["month"] < month_key(d)
+    hold = state.get("holdings") or {}
+    nav = nav_of(state.get("cash_after", 0.0), hold, prices)
+    if nav <= 0:
+        return True
+    tgt = 1.0 / len(UNIVERSE)
+    for t in UNIVERSE:
+        w = (hold.get(t, {}).get("qty", 0) * prices[t] / nav) if prices.get(t) else 0.0
+        if abs(w - tgt) >= bands[arm]:
+            return True
+    return False
+
+
 def _rebalance(arm: str, d: str, dates: list[str], cache: dict, rows: list[dict], mode: str) -> dict:
     prev = _state(rows, arm)
     prices = cache[d]
@@ -230,8 +259,10 @@ def backfill() -> int:
     cache = refresh_cache(force=not CACHE.exists())
     dates = _complete_dates(cache)
     rows = _load()
-    if any(r.get("mode") == "backfill" for r in rows):
+    todo = [a for a in ARMS if not any(r.get("mode") == "backfill" and r.get("arm") == a for r in rows)]
+    if not todo:
         print("[COREBOOK] backfill 이미 존재 — 스킵"); return 0
+    print(f"[COREBOOK] backfill 대상 arm {todo}")
     # 첫 결정 월: 13개 월말 이력이 있는 첫 달
     months = sorted({month_key(d) for d in dates})
     first = next((m for m in months if len(month_end_closes(dates, cache, m)) >= 13), None)
@@ -241,13 +272,19 @@ def backfill() -> int:
     start_day = next(d for d in dates if month_key(d) == first)
     bq, bc = _bench(dates, cache, start_day)
     n = 0
-    for m in months:
+    month_last = {}
+    for d in dates:
+        month_last[month_key(d)] = d
+    for d in dates:
+        m = month_key(d)
         if m < first or m >= this_month:
             continue
-        mdays = [d for d in dates if month_key(d) == m]
-        for arm in ARMS:
-            _rebalance(arm, mdays[0], dates, cache, rows, "backfill"); n += 1
-            _mtm(arm, mdays[-1], cache, rows, "backfill", bq, bc)
+        for arm in todo:
+            if should_rebalance(arm, _state(rows, arm), d, cache[d]):
+                _rebalance(arm, d, dates, cache, rows, "backfill"); n += 1
+        if month_last.get(m) == d:
+            for arm in todo:
+                _mtm(arm, d, cache, rows, "backfill", bq, bc)
     print(f"[COREBOOK] backfill 리밸런스 {n}행 (첫 달 {first}, 벤치 {BENCH} {bq}주)"); return n
 
 
@@ -264,7 +301,7 @@ def run() -> None:
     bq, bc = _bench(dates, cache, first_rb["date"] if first_rb else d)
     for arm in ARMS:
         st_ = _state(rows, arm)
-        if not st_ or st_["month"] < month_key(d):
+        if should_rebalance(arm, st_, d, cache[d]):
             r = _rebalance(arm, d, dates, cache, rows, "live")
             print(f"[COREBOOK] {arm} 리밸런스 {d} nav {r['nav_after']:,} 주문 {len(r['orders'])} 정수주 오차 {r['int_share_err_pct']}%")
         if not any(r.get("kind") == "mtm" and r.get("arm") == arm and r.get("date") == d for r in rows):
