@@ -401,6 +401,48 @@ def test_reconciliation_rejects_closed_position_and_event_identity_or_quantity_m
     assert any(error["code"] == "RECONCILIATION_ERROR" for error in result["errors"])
 
 
+def test_close_event_records_quantity_and_reconciliation_rejects_its_mutation(tmp_path):
+    book = prepared_book(tmp_path)
+    book.tick(clock(), {"005930": quote()})
+    tp_clock = clock("2026-09-10T10:00:00+09:00")
+    tp = quote(120_000, "2026-09-10T09:59:59+09:00", "2026-09-10T09:59:58+09:00")
+    tp["received_at"] = tp_clock["now"]
+    book.tick(tp_clock, {"005930": tp})
+    with sqlite3.connect(tmp_path / "book.db") as db:
+        details = json.loads(db.execute("SELECT details FROM events WHERE event_key='close:1'").fetchone()[0])
+        assert details["qty"] == 5
+        details["qty"] = 999
+        db.execute("UPDATE events SET details=? WHERE event_key='close:1'", (json.dumps(details),))
+    result = book.tick(clock("2026-09-10T10:01:00+09:00"), {})
+    assert any(error["code"] == "RECONCILIATION_ERROR" for error in result["errors"])
+
+
+def test_other_market_closed_corruption_does_not_block_healthy_market(tmp_path):
+    book = SelectionShadowBook(tmp_path / "book.db")
+    us_snapshot = snapshot(candidates=[{"ticker": "ABC", "dvol": 10, "features": {}}])
+    us_snapshot.update(market="US", collected_at="2026-09-10T09:04:00-04:00",
+                       completed_at="2026-09-10T09:04:01-04:00")
+    us_clock = {"market": "US", "session_date": "2026-09-10", "now": "2026-09-10T09:05:57-04:00",
+                "open_at": "2026-09-10T09:00:00-04:00", "close_at": "2026-09-10T15:30:00-04:00",
+                "session_dates": ["2026-09-10"]}
+    book.record_snapshot(us_snapshot); book.decide(us_clock)
+    us_entry = quote(100, "2026-09-10T09:05:59-04:00", "2026-09-10T09:05:58-04:00")
+    us_entry.update(received_at="2026-09-10T09:06:00-04:00")
+    book.tick(dict(us_clock, now=us_entry["received_at"]), {"ABC": us_entry})
+    us_tp = quote(120, "2026-09-10T09:59:59-04:00", "2026-09-10T09:59:58-04:00")
+    us_tp.update(received_at="2026-09-10T10:00:00-04:00")
+    book.tick(dict(us_clock, now=us_tp["received_at"]), {"ABC": us_tp})
+    with sqlite3.connect(tmp_path / "book.db") as db:
+        db.execute("UPDATE closed_positions SET ticker='CORRUPT' WHERE market='US' AND rule='baseline_k1'")
+    assert any(error["code"] == "RECONCILIATION_ERROR" for error in
+               book.tick(dict(us_clock, now="2026-09-10T10:01:00-04:00"), {})["errors"])
+    book.record_snapshot(snapshot())
+    book.decide(clock("2026-09-10T09:05:57+09:00"))
+    result = book.tick(clock(), {"005930": quote()})
+    assert len(result["fills"]) == 3
+    assert not any(error["code"] == "RECONCILIATION_ERROR" for error in result["errors"])
+
+
 def test_repeated_decide_does_not_manufacture_initial_capital_valuations(tmp_path):
     book = prepared_book(tmp_path)
     book.tick(clock(), {"005930": quote()})

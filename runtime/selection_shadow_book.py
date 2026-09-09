@@ -336,7 +336,8 @@ class SelectionShadowBook:
                 pnl = receipt - pos["entry_cost"] - pos["entry_fee"]
                 db.execute("UPDATE accounts SET cash=cash+? WHERE market=? AND rule=?", (receipt, pos["market"], pos["rule"]))
                 db.execute("INSERT INTO events(event_key,type,market,rule,ticker,intent_id,at,amount,details) VALUES(?, 'CLOSE',?,?,?,?,?,?,?)",
-                           (f"close:{pos['id']}", pos["market"], pos["rule"], pos["ticker"], pos["intent_id"], clock["now"], receipt, _json({"reason": reason, "quote": quote})))
+                           (f"close:{pos['id']}", pos["market"], pos["rule"], pos["ticker"], pos["intent_id"],
+                            clock["now"], receipt, _json({"reason": reason, "quote": quote, "qty": pos["qty"]})))
                 entry_index = dates.index(pos["entry_session"]) if pos["entry_session"] in dates else None
                 scheduled = dates[entry_index + 6] if entry_index is not None and entry_index + 6 < len(dates) else None
                 db.execute("INSERT INTO closed_positions(position_id,market,rule,ticker,entry_session,entry_at,exit_at,qty,entry_price,exit_price,reason,pnl,delayed,mature_at,exit_source,exit_requested_at,exit_received_at,exit_price_kind,details) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -407,10 +408,14 @@ class SelectionShadowBook:
                                         (position_id,)).fetchone()
                     if closed is None:
                         return False
+                    try:
+                        close_qty = int(json.loads(closes[0]["details"])["qty"])
+                    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                        return False
                     if ((closes[0]["market"], closes[0]["rule"], closes[0]["ticker"],
                          closes[0]["intent_id"]) != identity
                             or (closed["market"], closed["rule"], closed["ticker"]) != identity[:3]
-                            or closed["qty"] != open_qty):
+                            or closed["qty"] != open_qty or close_qty != open_qty):
                         return False
             elif position is not None or opens or closes:
                 return False
@@ -418,7 +423,7 @@ class SelectionShadowBook:
             if not db.execute("SELECT 1 FROM intents WHERE id=? AND status='FILLED'",
                               (position["intent_id"],)).fetchone():
                 return False
-        for closed in db.execute("SELECT * FROM closed_positions"):
+        for closed in db.execute("SELECT * FROM closed_positions WHERE market=?", (market,)):
             close = db.execute("SELECT * FROM events WHERE event_key=? AND type='CLOSE'",
                                (f"close:{closed['position_id']}",)).fetchone()
             if close is None or close["market"] != closed["market"] or close["rule"] != closed["rule"] or close["ticker"] != closed["ticker"]:
