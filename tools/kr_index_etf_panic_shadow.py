@@ -41,6 +41,7 @@ ETFS = {"233740": "KODEX 코스닥150레버리지", "229200": "KODEX 코스닥15
 INDEX = "KOSDAQ"
 THR = -2.5           # 코스닥 종가 등락률 문턱(%) — 백필 단조 구간(≤−2.5 +0.9 / −2.5~−2 +0.58 / −2~−1.5 +0.13)
 GAP_THR = -1.0       # 코스닥 시가 갭 문턱(%) — 09-10 확장. 갭 사다리 −0.5 +0.49 / −1 +0.71 / −1.5 +1.34 / −2 +2.09(t 3.93)
+GAP_STRONG = -2.0    # 강신호 — 스윕 270셀 중 t 최고(3.83) 셀이자 갭 사다리 단조의 끝. 2단 사이징 후보(관측만, 크기는 운영자 결정)
 COST = 0.05          # 왕복 비용(%) — ETF 거래세 없음, 수수료 0.015%×2 + 스프레드 근사
 STALE_SEC = 150.0    # 네이버 localTradedAt은 분 단위(15:18:00을 15:19:00에 읽으면 60s) + 폴링 70s → 150s 넘으면 stale (09-09 첫 실행에서 60s 문턱이 정상 시세를 stale로 오판)
 BACKFILL_START = "2015-12-17"
@@ -71,6 +72,17 @@ def decide(ratio_pct: float | None, stale: bool, market_status: str | None, thr:
         return True, "signal_close"
     return False, "above_thr"
 
+
+def signal_strength(gap_pct: float | None, ratio_pct: float | None,
+                    gap_strong: float = GAP_STRONG) -> str:
+    """신호 강도 — 강신호는 시가 갭 ≤ GAP_STRONG. 11년 백필 233740 강신호 +2.086%/회(t 3.93, 승 72%, 연 4회) vs 전체 +0.715%.
+
+    2단 사이징(강신호 2배) 백필: 단위당 +0.917 vs 단일 +0.715, t 3.90 vs 3.40. 관측 필드일 뿐 실행 크기는 바꾸지 않는다."""
+    if gap_pct is not None and gap_pct <= gap_strong:
+        return "strong"
+    if gap_pct is None and ratio_pct is None:
+        return "unknown"
+    return "normal"
 
 def classify_divergence(sig_1519: bool, ratio_close: float | None, thr: float = THR,
                         gap_pct: float | None = None, gap_thr: float = GAP_THR) -> str:
@@ -210,9 +222,20 @@ def backfill() -> int:
             r["contract"] = CONTRACT
             r.setdefault("signal_kind", "signal_close")
             relabeled += 1
-    if relabeled:
+    # 기존 행에 kq_gap·strength 소급(캐시에서). 강도 분해·2단 사이징 평가에 필요.
+    filled = 0
+    for r in rows:
+        if r.get("kind") != "trade":
+            continue
+        c = cache.get(r.get("session_date")) or {}
+        if r.get("kq_gap") is None and c.get("kq_gap") is not None:
+            r["kq_gap"] = c["kq_gap"]; filled += 1
+        want = signal_strength(r.get("kq_gap"), r.get("kq_chg_close"))
+        if r.get("strength") != want:
+            r["strength"] = want; filled += 1
+    if relabeled or filled:
         _rewrite(rows)
-        print(f"[KQPANIC] v1 백필 {relabeled}행 v2 재라벨(규칙 확장, 기존 신호는 부분집합)")
+        print(f"[KQPANIC] v1→v2 재라벨 {relabeled}행 / kq_gap·strength 소급 {filled}건")
     n = 0
     for d in sorted(cache):
         c = cache[d]
@@ -227,7 +250,7 @@ def backfill() -> int:
             if (d, tk) in have or not c.get(f"{tk}_close"):
                 continue
             _append({"kind": "trade", "mode": "backfill", "session_date": d, "ticker": tk, "index": INDEX, "kq_chg_close": c["kq_chg"],
-                     "kq_gap": c.get("kq_gap"), "signal_kind": kind,
+                     "kq_gap": c.get("kq_gap"), "signal_kind": kind, "strength": signal_strength(c.get("kq_gap"), c["kq_chg"]),
                      "entry_close": c[f"{tk}_close"], "entry_1519": None, "contract": CONTRACT, "status": "OPEN",
                      "opened_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
             n += 1
@@ -321,7 +344,7 @@ def live() -> None:
             if (today, tk) in have:
                 continue
             rows.append({"kind": "trade", "mode": "live", "session_date": today, "ticker": tk, "index": INDEX, "kq_chg_1519": idx.get("ratio"),
-                         "kq_gap": gp.get("gap"), "signal_kind": reason,
+                         "kq_gap": gp.get("gap"), "signal_kind": reason, "strength": signal_strength(gp.get("gap"), idx.get("ratio")),
                          "kq_chg_close": None, "entry_1519": px.get(tk), "entry_close": None, "contract": CONTRACT, "status": "OPEN",
                          "opened_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
     _rewrite(rows)
@@ -405,6 +428,25 @@ def report() -> dict:
                        "net_mean": round(st.mean(r["net_pct"] for r in sub if r.get("mode") == mode), 3),
                        "net_1519_mean": (round(st.mean(r["net_1519_pct"] for r in sub if r.get("mode") == mode and r.get("net_1519_pct") is not None), 3)
                                          if any(r.get("net_1519_pct") is not None for r in sub if r.get("mode") == mode) else None)}
+        # 강도·신호종류 분해(백필) + 2단 사이징 환산 — 관측용
+        bf = [r for r in sub if r.get("mode") == "backfill"]
+        parts = {}
+        for key, getter in (("strength", lambda r: r.get("strength") or "unknown"),
+                            ("signal_kind", lambda r: r.get("signal_kind") or "unknown")):
+            grp: dict = {}
+            for r in bf:
+                grp.setdefault(getter(r), []).append(r["net_pct"] + COST)
+            parts[key] = {k: {"n": len(v), "overnight_mean": round(st.mean(v), 3),
+                              "excess_mean": round(st.mean(v) - (base or 0.0), 3),
+                              "win": round(100.0 * sum(1 for x in v if x > 0) / len(v), 1)}
+                          for k, v in sorted(grp.items())}
+        if bf:
+            w = [(r["net_pct"] + COST) * (2 if r.get("strength") == "strong" else 1) for r in bf]
+            units = sum(2 if r.get("strength") == "strong" else 1 for r in bf)
+            parts["two_tier"] = {"units": units, "total_pct": round(sum(w), 1),
+                                 "per_unit": round(sum(w) / units, 3),
+                                 "single_per_unit": round(sum(r["net_pct"] + COST for r in bf) / len(bf), 3)}
+        d["backfill_parts"] = parts
         out["by"][tk] = d
     sess = [r for r in rows if r.get("kind") == "session"]
     div: dict[str, int] = {}
@@ -421,6 +463,12 @@ def report() -> dict:
         b = d.get("backfill", {}); l = d.get("live", {})
         print(f"[KQPANIC] {tk} {d['name']}: uncond {d['uncond_overnight']} | backfill n {b.get('n')} excess {b.get('excess_mean')} t {b.get('t')} win {b.get('win')} min {b.get('min')} "
               f"| forward n {l.get('n')} excess {l.get('excess_mean')}")
+    for tk, d in out["by"].items():
+        p = (d.get("backfill_parts") or {}).get("strength") or {}
+        tt = (d.get("backfill_parts") or {}).get("two_tier") or {}
+        if p:
+            print(f"[KQPANIC] {tk} 강도별 " + " | ".join(f"{k} n{v['n']} 초과 {v['excess_mean']:+.3f} 승 {v['win']}%" for k, v in p.items())
+                  + (f" | 2단 단위당 {tt.get('per_unit')} vs 단일 {tt.get('single_per_unit')}" if tt else ""))
     print(f"[KQPANIC] sessions {out['sessions']['n']} stale {out['sessions']['stale']} divergence {div}")
     return out
 
