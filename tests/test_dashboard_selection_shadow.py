@@ -130,6 +130,43 @@ def test_api_corrupt_persisted_metadata_is_unavailable_not_server_error(client, 
     assert response.json['errors'][0]['code'] == 'REPORT_READ_ERROR'
 
 
+def test_cycle_restart_skipping_entire_d7_records_verified_schedule_on_get(client, tmp_path, monkeypatch):
+    import runtime.selection_shadow_adapter as adapter
+    import tools.selection_shadow_runner as runner
+    prices(tmp_path, 'KR', '005930')
+    snap = collect_snapshot(tmp_path, 'KR', '2026-09-10', datetime.fromisoformat('2026-09-10T08:55:00+09:00'))
+    real_clock = adapter.build_clock
+    current = real_clock('KR', '2026-09-10T09:06:00+09:00')
+    monkeypatch.setattr(adapter, 'build_clock', lambda *args: current)
+    monkeypatch.setattr(runner, 'collect_snapshot', lambda *args: snap)
+    def quotes(market, tickers):
+        return {t: dict(price=100_000, price_at=current['now'], requested_at=current['now'],
+                        received_at=current['now'], session_date=current['session_date'],
+                        source='fixture', price_kind='LAST_PRICE_PAPER') for t in tickers}
+    adapter.run_cycle(tmp_path, current, quotes)
+    path = tmp_path / 'data/shadow/selection_forward.db'
+    with sqlite3.connect(path) as db:
+        assert db.execute('SELECT COUNT(*) FROM positions').fetchone()[0] == 3
+        assert not db.execute("SELECT 1 FROM session_observations WHERE session_date='2026-09-18'").fetchone()
+    # A fresh run_cycle constructs a new book. No D2-D7 tick or quote occurred.
+    current = real_clock('KR', '2026-09-21T10:00:00+09:00')
+    monkeypatch.setattr(runner, 'collect_snapshot', lambda *args: pytest.fail('late collection'))
+    result = adapter.run_cycle(tmp_path, current, quotes)
+    assert len(result['exits']) == 3
+    monkeypatch.setattr(adapter, '_calendar', lambda *args: pytest.fail('calendar lookup on GET'))
+    report = client.get('/api/selection_shadow').json
+    assert len(report['closed']) == 3
+    for position in report['closed']:
+        assert position['scheduled_exit_session'] == '2026-09-18'
+        assert position['scheduled_exit_at'] == '2026-09-18T15:15:00+09:00'
+        assert position['exit_at'] == '2026-09-21T10:00:00+09:00'
+        assert position['holding_sessions'] == 8 and position['delay_sessions'] == 1
+        assert position['delayed'] == 1 and position['pnl'] == -1250
+    with sqlite3.connect(path) as db:
+        # Lookup happened on restart; do not invent a D7 observation timestamp.
+        assert db.execute("SELECT observed_at FROM session_observations WHERE session_date='2026-09-18'").fetchone()[0] == current['now']
+
+
 def test_panel_executes_escaping_and_retains_last_good_on_failure(client):
     page = client.get('/virtual').get_data(as_text=True)
     assert 'id="selection-shadow-panel"' in page

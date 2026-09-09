@@ -7,6 +7,7 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from contextlib import closing
 from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -113,6 +114,36 @@ class ExistingQuoteProvider:
         return result
 
 
+def _with_missing_schedule_bounds(path, clock):
+    """Fetch only missing D7 bounds for held cohorts, before the write lock.
+
+    session_dates already comes from the verified calendar/holiday contract.
+    Persisted bounds are reused; no full historical open/close rebuild is needed.
+    """
+    dates = clock.get('session_dates') or []
+    indices = {day: index for index, day in enumerate(dates)}
+    needed = set()
+    with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as db:
+        db.execute('BEGIN')
+        for (entry,) in db.execute('SELECT DISTINCT entry_session FROM positions WHERE market=?', (clock['market'],)):
+            index = indices.get(entry)
+            if index is not None and index + 6 < len(dates):
+                day = dates[index + 6]
+                if day < clock['session_date']:
+                    needed.add(day)
+        needed = {day for day in needed if not db.execute(
+            'SELECT 1 FROM session_observations WHERE market=? AND session_date=?',
+            (clock['market'], day)).fetchone()}
+    bounds = {}
+    if needed:
+        cal = _calendar(clock['market'])
+        zone = ZoneInfo({'KR': 'Asia/Seoul', 'US': 'America/New_York'}[clock['market']])
+        for day in sorted(needed):
+            bounds[day] = dict(open_at=cal.session_open(day).to_pydatetime().astimezone(zone).isoformat(),
+                               close_at=cal.session_close(day).to_pydatetime().astimezone(zone).isoformat())
+    return {**clock, 'schedule_bounds': bounds}
+
+
 def run_cycle(root, clock: dict, quote_provider) -> dict:
     from runtime.selection_shadow_book import SelectionShadowBook
     from tools.selection_shadow_runner import collect_snapshot
@@ -128,7 +159,7 @@ def run_cycle(root, clock: dict, quote_provider) -> dict:
         return {'status': 'CLOSED', 'errors': [], 'quote_source': source_info}
     opened, closed = aware_now(clock['open_at']), aware_now(clock['close_at'])
     if now < opened - timedelta(minutes=30) or now > closed:
-        book.tick(clock, {})
+        book.tick(_with_missing_schedule_bounds(path, clock), {})
         book.record_status(market, session, 'CLOSED', clock['now'], source_info)
         return {'status': 'CLOSED', 'errors': [], 'quote_source': source_info}
     with sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True) as db:
@@ -153,7 +184,7 @@ def run_cycle(root, clock: dict, quote_provider) -> dict:
     if final_clock['session_date'] != session or not final_clock['is_session']:
         book.record_status(market, session, 'CLOSED', final_clock['now'], {'reason': 'session changed during quotes'})
         return {'status': 'CLOSED', 'errors': []}
-    result = book.tick(final_clock, quotes)
+    result = book.tick(_with_missing_schedule_bounds(path, final_clock), quotes)
     diagnostics = getattr(quote_provider, 'diagnostics', {'mode': 'NO_QUOTE_PROVIDER' if quote_provider is None else 'INJECTED'})
     book.record_status(market, session, 'QUOTE_SOURCE', final_clock['now'], diagnostics)
     if aware_now(final_clock['now']) > opened + timedelta(minutes=45) and not frozen:

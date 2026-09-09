@@ -147,6 +147,11 @@ class SelectionShadowBook:
     @staticmethod
     def _record_holding_metadata(db, clock):
         dates = clock.get('session_dates') or []
+        # These are verified calendar bounds acquired now, not a fabricated
+        # historical quote/tick. Keep the actual acquisition clock as observed_at.
+        for day, bounds in clock.get('schedule_bounds', {}).items():
+            db.execute('INSERT OR IGNORE INTO session_observations VALUES(?,?,?,?,?)',
+                       (clock['market'], day, bounds['open_at'], bounds['close_at'], clock['now']))
         db.execute('INSERT OR REPLACE INTO session_observations VALUES(?,?,?,?,?)',
                    (clock['market'], clock['session_date'], clock['open_at'], clock['close_at'], clock['now']))
         for pos in db.execute('SELECT id,entry_session FROM positions WHERE market=?', (clock['market'],)).fetchall():
@@ -253,6 +258,14 @@ class SelectionShadowBook:
 
     def tick(self, clock: dict, quotes: dict) -> dict:
         now = self._validate_clock(clock)
+        # Validate the optional plain-data metadata contract before any write.
+        for day, bounds in clock.get('schedule_bounds', {}).items():
+            opened = _dt(bounds['open_at'], 'schedule open_at')
+            closed = _dt(bounds['close_at'], 'schedule close_at')
+            if (day not in clock.get('session_dates', []) or day >= clock['session_date']
+                    or opened.date().isoformat() != day or closed.date().isoformat() != day
+                    or not opened < closed <= now):
+                raise ValueError('invalid historical schedule bounds')
         market, session = clock["market"], clock["session_date"]
         result = {"market": market, "session_date": session, "now": clock["now"],
                   "fills": [], "exits": [], "errors": []}

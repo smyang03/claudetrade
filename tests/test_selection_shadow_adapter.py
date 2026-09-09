@@ -25,6 +25,38 @@ def test_kr_holiday_override_and_calendar_failure(monkeypatch):
         build_clock('KR', datetime.fromisoformat('2026-09-10T10:00:00+09:00'))
 
 
+def test_missing_schedule_uses_early_close_once_for_shared_held_cohort(tmp_path, monkeypatch):
+    import runtime.selection_shadow_adapter as adapter
+    from runtime.selection_shadow_book import SelectionShadowBook, read_report
+    first = build_clock('US', '2026-11-18T09:36:00-05:00')
+    resumed = build_clock('US', '2026-11-30T10:30:00-05:00')
+    path = tmp_path / 'data/shadow/selection_forward.db'
+    book = SelectionShadowBook(path)
+    book.record_snapshot(dict(market='US', session_date='2026-11-18', signal_date='2026-11-17',
+                              status='READY', collected_at='2026-11-18T09:34:00-05:00',
+                              completed_at='2026-11-18T09:34:01-05:00', candidates=[{'ticker':'AAA','dvol':200_000_000}]))
+    book.decide(first)
+    book.tick(first, {'AAA': dict(price=100, price_at=first['now'], requested_at=first['now'], received_at=first['now'],
+                                 session_date=first['session_date'], source='fixture', price_kind='LAST_PRICE_PAPER')})
+    actual_calendar = adapter._calendar('US')
+    requested = []
+    class CalendarProxy:
+        def session_open(self, day):
+            requested.append(('open', day))
+            return actual_calendar.session_open(day)
+        def session_close(self, day):
+            requested.append(('close', day))
+            return actual_calendar.session_close(day)
+    monkeypatch.setattr(adapter, '_calendar', lambda market: CalendarProxy())
+    monkeypatch.setattr(adapter, 'build_clock', lambda *args: resumed)
+    adapter.run_cycle(tmp_path, resumed, lambda *args: {})
+    adapter.run_cycle(tmp_path, resumed, lambda *args: {})
+    report = read_report(path)
+    assert len(report['positions']) == 3
+    assert {p['scheduled_exit_at'] for p in report['positions']} == {'2026-11-27T12:45:00-05:00'}
+    assert requested == [('open', '2026-11-27'), ('close', '2026-11-27')]
+
+
 def test_quote_requires_observed_timestamp_and_preserves_provenance():
     now = datetime.fromisoformat('2026-09-10T10:00:00+09:00')
     raw = dict(price=100, requested_at='2026-09-10T09:59:58+09:00', received_at=now.isoformat(), source='naver_polling')
