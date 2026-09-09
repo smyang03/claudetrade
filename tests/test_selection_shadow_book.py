@@ -377,6 +377,30 @@ def test_structural_reconciliation_blocks_missing_position_and_changed_quantity(
         assert any(e["code"] == "RECONCILIATION_ERROR" for e in result["errors"])
 
 
+@pytest.mark.parametrize("mutation", [
+    "UPDATE closed_positions SET qty=qty+1 WHERE rule='baseline_k1'",
+    "UPDATE closed_positions SET ticker='CORRUPT' WHERE rule='baseline_k1'",
+    "UPDATE closed_positions SET rule='corrupt' WHERE rule='baseline_k1'",
+    "UPDATE closed_positions SET market='US' WHERE rule='baseline_k1'",
+    "UPDATE events SET ticker='CORRUPT' WHERE event_key='open:1'",
+    "UPDATE events SET ticker='CORRUPT' WHERE event_key='close:1'",
+    "UPDATE events SET rule='corrupt' WHERE event_key='close:1'",
+    "UPDATE events SET market='US' WHERE event_key='close:1'",
+    "UPDATE events SET intent_id=999999 WHERE event_key='close:1'",
+])
+def test_reconciliation_rejects_closed_position_and_event_identity_or_quantity_mismatch(tmp_path, mutation):
+    book = prepared_book(tmp_path)
+    book.tick(clock(), {"005930": quote()})
+    tp_clock = clock("2026-09-10T10:00:00+09:00")
+    tp = quote(120_000, "2026-09-10T09:59:59+09:00", "2026-09-10T09:59:58+09:00")
+    tp["received_at"] = tp_clock["now"]
+    book.tick(tp_clock, {"005930": tp})
+    with sqlite3.connect(tmp_path / "book.db") as db:
+        db.execute(mutation)
+    result = book.tick(clock("2026-09-10T10:01:00+09:00"), {})
+    assert any(error["code"] == "RECONCILIATION_ERROR" for error in result["errors"])
+
+
 def test_repeated_decide_does_not_manufacture_initial_capital_valuations(tmp_path):
     book = prepared_book(tmp_path)
     book.tick(clock(), {"005930": quote()})

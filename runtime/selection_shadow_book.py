@@ -380,27 +380,48 @@ class SelectionShadowBook:
             opens = db.execute("SELECT * FROM events WHERE event_key=? AND type='OPEN'",
                                (f"open:{intent['id']}",)).fetchall()
             position = db.execute("SELECT * FROM positions WHERE intent_id=?", (intent["id"],)).fetchone()
-            closed = db.execute("SELECT * FROM closed_positions WHERE position_id IN "
-                                "(SELECT id FROM positions WHERE intent_id=?) OR "
-                                "json_extract(details,'$.intent_id')=?", (intent["id"], intent["id"])).fetchone()
-            # Older close rows are linked through their OPEN event's intent and position id.
-            if not closed and opens:
-                closed = db.execute("SELECT c.* FROM closed_positions c JOIN events e "
-                                    "ON e.event_key='close:'||c.position_id WHERE e.intent_id=?", (intent["id"],)).fetchone()
+            closes = db.execute("SELECT * FROM events WHERE intent_id=? AND type='CLOSE'",
+                                (intent["id"],)).fetchall()
             if intent["status"] == "FILLED":
-                if len(opens) != 1 or (position is None and closed is None):
+                if len(opens) != 1:
+                    return False
+                identity = (intent["market"], intent["rule"], intent["ticker"], intent["id"])
+                if (opens[0]["market"], opens[0]["rule"], opens[0]["ticker"], opens[0]["intent_id"]) != identity:
+                    return False
+                try:
+                    open_qty = int(json.loads(opens[0]["details"])["qty"])
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                     return False
                 if position is not None:
-                    try:
-                        if int(json.loads(opens[0]["details"])["qty"]) != position["qty"]:
-                            return False
-                    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                    if closes or (position["market"], position["rule"], position["ticker"],
+                                  position["intent_id"]) != identity or position["qty"] != open_qty:
                         return False
-            elif position is not None or opens:
+                else:
+                    if len(closes) != 1 or not closes[0]["event_key"].startswith("close:"):
+                        return False
+                    try:
+                        position_id = int(closes[0]["event_key"].split(":", 1)[1])
+                    except (ValueError, IndexError):
+                        return False
+                    closed = db.execute("SELECT * FROM closed_positions WHERE position_id=?",
+                                        (position_id,)).fetchone()
+                    if closed is None:
+                        return False
+                    if ((closes[0]["market"], closes[0]["rule"], closes[0]["ticker"],
+                         closes[0]["intent_id"]) != identity
+                            or (closed["market"], closed["rule"], closed["ticker"]) != identity[:3]
+                            or closed["qty"] != open_qty):
+                        return False
+            elif position is not None or opens or closes:
                 return False
-        for closed in db.execute("SELECT * FROM closed_positions WHERE market=?", (market,)):
-            if not db.execute("SELECT 1 FROM events WHERE event_key=? AND type='CLOSE'",
-                              (f"close:{closed['position_id']}",)).fetchone():
+        for position in db.execute("SELECT * FROM positions WHERE market=?", (market,)):
+            if not db.execute("SELECT 1 FROM intents WHERE id=? AND status='FILLED'",
+                              (position["intent_id"],)).fetchone():
+                return False
+        for closed in db.execute("SELECT * FROM closed_positions"):
+            close = db.execute("SELECT * FROM events WHERE event_key=? AND type='CLOSE'",
+                               (f"close:{closed['position_id']}",)).fetchone()
+            if close is None or close["market"] != closed["market"] or close["rule"] != closed["rule"] or close["ticker"] != closed["ticker"]:
                 return False
         return True
 
