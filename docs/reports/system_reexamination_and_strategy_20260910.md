@@ -31,7 +31,7 @@
 | arm 성적 기반 선택(t≥2) | 유지 arm이 삼성 착시·데이터 끊김·OOS 0 |
 | KR 내부자 K1 원본 | 삼성전자 129 + 하이닉스 35 / 304건 |
 | US 국면 게이트(SPY MA20) | OOS 역전 |
-| **c_us_insider_cluster / c_us_insider_k1** | **xus_insider 풀이 2026-04-21 이후 142일 후보 0건**. SEC 분기셋 2026Q1까지 = 데이터 공급 단절. forward 불가 |
+| **c_us_insider_cluster / c_us_insider_k1** | **xus_insider 풀이 2026-04-21 이후 후보 0건** — arm 자체는 OOS 실패로 이미 폐기. (아래 §7 정정: 공급 단절이 아니라 백필 진행 중) |
 | TSMOM sleeve(US/KR) | 원장 62일 방치, 스케줄 호출 없음 |
 | index_trend_shadow | 56일 방치 |
 | codex_shadow_monitor(US/KR) | 82~83일 방치 |
@@ -105,3 +105,26 @@ ew +127.4% maxDD −12.0% 세금 10.4만 리밸 45회 vs **ew_band8 +149.1% maxD
 
 ## 부록. 재현
 `tools/research/research_forced_selling_fingerprint.py`(지문 1차) · `research_forced_selling_exit_grid.py`(출구 9계약) · `research_gapdown_breadth_session.py`(갭다운 시장폭) · `research_gapdown_breadth_oos.py`(OOS 2패널) · `research_avoid_rules_combined.py`(회피 규칙 결합) · `research_index_gap_etf.py`·`research_index_gap_etf_detail.py`(지수 ETF 이식). 지수·ETF OHLC는 yfinance 재다운로드.
+
+## 7. 정정 (03:20) — US 내부자 데이터는 "단절"이 아니라 "백필 진행 중"
+
+§2에서 "SEC 분기셋이 2026Q1까지라 데이터 공급이 끊겼다"고 썼는데 **틀렸다.** 09-08 커밋으로 일일 수집기 `tools/edgar_form4_daily.py`가 이미 배선돼 있다.
+21:05 래퍼 STEPS에 `("form4_daily", [..., "--from", "2026-04-01", "--max-days", "8"])`로 들어가 있고, 래퍼는 **매일** 돈다(claudetrade_event_ledgers, 마지막 09-09 21:05 rc 0).
+`data/analysis/edgar_form345/daily_state.json` 실측: `days_done` 17건(2026-04-01~04-23). 09-08·09-09 두 번 실행 × 8거래일 = 16, 첫 실행분 포함 17로 정확히 맞는다.
+04-24~09-09 공백 약 100거래일은 하루 8일씩이면 **약 12일 뒤 자동으로 메워진다.** 조치 불필요.
+단 `c_us_insider_*` arm 자체는 OOS 실패(09-09)로 이미 폐기 상태이므로, 이 백필은 arm 부활이 아니라 내부자 신호 재료 확보용이다.
+
+## 8. 운영 진단 4건 (03:20, 전부 실행 결과 기준)
+
+| 항목 | 원인 | 조치 |
+|---|---|---|
+| `kr_r2`·`kr_limitup_catalyst` 거래 0건 | **자연 희소.** 09-01 이후 `disc≤−25 & rv20≤8` 동시 충족 0건(근접 2건은 한쪽만), 상한가+당일촉매는 08-06 이후 상한가 히트 자체가 0건 | 불필요 |
+| `claudetrade_token_am` 09-09 rc=1 | **사유 특정 불가** — `refresh_token.py`가 stdout/stderr를 어디에도 남기지 않고 TaskScheduler 이벤트 로그도 비활성. 앱 로그는 0바이트(에러 없음) | 실거래 영향 없음(00:01 봇 자체 갱신이 정상 동작, 이 작업은 예열). **로그 리다이렉트 추가 여부는 운영자 결정** — 없으면 다음에도 원인 불명 반복 |
+| TSMOM·index_trend·codex_shadow 원장 방치 | **코드만 남고 호출 경로가 애초에 없었다.** git 전체 히스토리에서 래퍼 참조 0건 | 다른 코드가 읽지 않음. 삭제 여부는 운영자 판단, 급하지 않음 |
+| `pathb_kr_paired_exit_events` 48일 방치 | **정상.** 호출 경로는 살아있고(`trading_bot.py`·`pathb_runtime.py`가 매 사이클 호출), `PATHB_KR_LIVE_ENABLED=false`라 관측 대상 포지션이 없을 뿐 | **정리 대상 아님.** 코드를 지우면 라이브 경로를 건드린다 |
+
+## 9. 실행 가능성 확인 — 유동성은 병목이 아니다
+
+패닉 레인 v2 신호일 ETF 거래대금(전체 기간): 233740 중앙 **2,784억**(하위10% 1,322억, 최소 107억) · 229200 중앙 1,033억 · 069500 중앙 2,139억.
+100만원 주문은 신호일 중앙 거래대금의 **0.0004%**, 최악의 날에도 0.009%. 종가·시가 동시호가 체결 가정에 유동성 제약은 없다.
+`fetch_index_gap` 실측 확인(09-10 01:59): 09-09 갭 +0.39%(시가 815.06 / 전일 종가 811.88)로 yfinance와 일치, 당일 행이 없으면 `no_today_row`로 갭 조건만 빠진다.
