@@ -52,6 +52,27 @@ At **08:55:25–26 KST**, dashboard PID30604 owned TCP5000; `/api/selection_shad
 
 The broker refresh is a recovery/continuity check. It does not submit, cancel, synthesize or reconcile away orders. The checkpoint contains existing real runtime recovery data; it is not a newly initialized SHADOW ledger. `config/v2_start_config.json` also matches its checkpoint copy, SHA256 `a13e751ee6d529a6bff4f3a89064cb07347fc400450986459a3fe5f9f5249173` at 08:58:25 KST. Normal bot startup continues its existing runtime synchronization/input work; no manual order, source, universe-policy or configuration change was added.
 
+### Account-balance continuity: persisted snapshot comparison
+
+The initial activation probe emitted positions and orders but omitted the `account_summary` it obtained. A subsequent read-only comparison on September10 at approximately 09:06 KST checked the actual account-summary fields in the immutable pre-restart checkpoint and the available persisted post-restart snapshot; no broker refresh, reconciliation, process action or timestamp rewrite was performed for this check.
+
+Before: `data/backups/live_maintenance_20260909_235303_before_selection_shadow_b0b99c6/live_broker_truth_snapshot.json`, generated and both markets successfully observed at **2026-09-09T23:53:02+00:00 (08:53:02 KST)**, SHA256 `9e71637c937d20933099e3e73ecf867b4b28c2894428e63be296da5b923823d1`. After: `state/live_broker_truth_snapshot.json`, generated **2026-09-10T00:04:47+00:00**, with KR `last_success_at=00:04:46+00:00` and US `last_success_at=00:04:47+00:00` (**09:04:46/47 KST**), SHA256 `833ab7071435714854bba13e0062a20b17a1b47fe75b76bb2eaa2720640cb6b7`. The `.last_good` post-restart file had the same snapshot timestamps and listed values. These balance observations are later than the 08:54:51 position/order readback; they are not relabelled as immediate restart observations.
+
+| Market / literal broker-summary field | Before | After | Comparison |
+|---|---:|---:|---|
+| KR `cash`, `orderable_cash` (KRW; each) | 979,270 | 979,270 | Both unchanged |
+| KR `cash_settlement_krw`, `d1_settlement_krw`, `d2_settlement_krw` (each) | 979,270 | 979,270 | All three unchanged |
+| US `cash`, `asset_cash` (USD; each) | 2,312.59 | 2,312.59 | Both unchanged |
+| US `orderable_cash` (USD) | 2,299.94 | 2,299.94 | Unchanged |
+| US `asset_cash_krw` | 3,094,014 | 3,094,014 | Unchanged |
+| US `kis_domestic_cash_krw` | 979,270 | 979,270 | Unchanged |
+
+Ten explicitly allowlisted cash/buying-power fields compared equal. Both snapshots label the KR currency KRW and US currency USD, with `orderable_cash_source=orderable_cash`; the `orderable_cash_nets_open_orders` metadata stayed false for KR and true for US. The US summary does not expose separate settled-cash/D1/D2 fields, so US settlement-bucket continuity is not independently established or inferred from `cash`.
+
+Valuations are distinct: KR `total_eval` increased **75,000 → 75,090 KRW**, `total_profit` **−1,935 → −1,845**, and each of `asset_total_krw`, `net_asset_krw`, `total_asset_krw` **1,054,270 → 1,054,360**. The +90 KRW difference is in reported holdings valuation while the compared cash fields remain fixed; total account value is therefore not claimed unchanged. US `total_eval` stayed **175.05 USD**, `total_eval_krw` **234,199**, `market_asset_krw` **3,328,213**, and `kis_exchange_rate` **1,337.9**. Both endpoint snapshots retain KR/US position counts 2/1, open-order counts 0/0 and today-fill counts 0/0; KR reported today's buy/sell amounts remain zero. This establishes equality of the listed cash/buying-power fields at the stated endpoints, not an unobserved continuous balance history or all possible account fields.
+
+Verification used PowerShell `Get-Content -Raw -Encoding UTF8 | ConvertFrom-Json` to inspect only account-summary field names and the above allowlisted values; a second pass used `[IO.File]::ReadAllBytes`, SHA256 over those same bytes, JSON parsing and field-by-field `-ceq` comparisons. Result: **10/10 equal**, with the timestamps and valuation differences above. No account identifiers, credentials or raw broker payloads are included in this report.
+
 ## Preserved observation identity and real data
 
 The dedicated `data/shadow/selection_forward.db` already existed before this task, created around 04:56:40 KST by an earlier execution. It was preserved without reset, imported fills, historical replay, or relabelling of its start. Original experiment code fingerprint remains `74a8f06db748d8f95c0ff8a961e506bcd7a6cbf89a298047453f0cf621e2b40d`; the separately activated runtime revision is `b0b99c6`. Parameter fingerprint is `fd7afddc8c75a111440319354564260cb4c6d9289ad026f99d5b5b7a8ffa3670`.
