@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -896,6 +896,10 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
         self.assertEqual(bot._intraday_evidence_retry_due_by_market["US"], "2026-05-13T22:46:00")
 
     def test_fail_closed_below_threshold_does_not_overwrite_partial_store(self) -> None:
+        # known_at은 **실행 시각 기준 상대값**이어야 한다. 절대 날짜(2026-05-13)로 두면
+        # 실제 시각이 흐르면서 (new_dt - old_dt)가 stale_sec 문턱을 넘어 09-06부터 자동으로 깨졌다.
+        # (코드 변경이 아니라 픽스처 만료 — 2026-09-10 확인. cf. 커밋 69ab312 PathB 동일 계열 수리)
+        recent = (datetime.now(KST).replace(tzinfo=None) - timedelta(seconds=60)).isoformat(timespec="seconds")
         bot = _make_bot(lambda **kwargs: _candles()[:1])
         bot.runtime_config.values["KR_INTRADAY_EVIDENCE_MIN_COMPLETE_RATIO"] = 1.0
         bot.runtime_config.values["INTRADAY_EVIDENCE_FAIL_CLOSED_REPLACE_STALE_SEC"] = 9999999
@@ -904,7 +908,7 @@ class TradingBotIntradayEvidenceTests(unittest.TestCase):
                 "005930": {
                     "ticker": "005930",
                     "market": "KR",
-                    "known_at": "2026-05-13T09:01:00",
+                    "known_at": recent,
                     "current_price": 100.0,
                     "ret_3m_pct": None,
                     "ret_5m_pct": None,

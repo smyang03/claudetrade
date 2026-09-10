@@ -61,14 +61,20 @@ class DollarVolumeBandTests(unittest.TestCase):
         self.assertEqual(kept, [])
         self.assertTrue(meta["applied"])
 
-    def test_fail_open_when_dollar_volume_missing(self):
-        # 거래대금 원장이 비면 매매를 멈추지 않고 현행(rank1)으로 간다
+    def test_fail_closed_when_dollar_volume_missing(self):
+        """거래대금 원장이 비면 **진입을 막는다**(fail-closed).
+
+        2026-09-09 운영자 결정(커밋 9a9202f "US 거래대금 결측 fail-closed")으로 계약이 바뀌었다.
+        그 전 계약은 fail-open(원장이 없어도 rank1으로 진행)이었고 이 테스트가 그것을 붙잡고 있어
+        09-09 이후 계속 실패했다. 밴드를 못 확인한 채로 사는 것이 밴드 자체보다 위험하다는 판단이다.
+        """
         con = _con([])
         signals = [{"ticker": "A", "rank": 1}]
         kept, meta = _apply_dollar_volume_band(_Bot(), con, SD, signals)
-        self.assertEqual([s["ticker"] for s in kept], ["A"])
+        self.assertEqual(kept, [])
         self.assertFalse(meta["applied"])
-        self.assertEqual(meta["reason"], "dollar_volume_unavailable")
+        self.assertTrue(meta["fail_closed"])
+        self.assertEqual(meta["reason"], "dollar_volume_unavailable_fail_closed")
 
     def test_disabled_is_noop(self):
         con = _con([(SD, "A", 2_000e6)])
