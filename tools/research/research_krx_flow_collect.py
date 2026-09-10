@@ -10,8 +10,13 @@
 수집: `stock.get_market_net_purchases_of_equities(d, d, "ALL", 투자자)` — 하루 전종목이 0.4~0.8초.
 세션 하나당 개인·기관합계·외국인 3회. 결과는 JSONL 캐시에 쌓아 재실행 시 건너뛴다.
 
-⚠️ 2026-09-10 실측: 무제한으로 때리면 **약 270요청(5분) 뒤부터 전부 실패**한다(응답이 JSON이 아니게 되고 파서가 KeyError).
-KRX가 속도를 제한한다. 그래서 요청 간 간격(THROTTLE_SEC)을 두고, 실패하면 재로그인 + 지수 백오프로 재시도한다.
+⚠️ 2026-09-10 실측 — 두 가지 한도에 각각 걸렸다.
+ ① 조회 한도: 무제한으로 때리면 **약 270요청(5분) 뒤부터 전부 실패**한다(응답이 JSON이 아니게 되고 파서가 KeyError).
+    → 요청 간 간격 THROTTLE_SEC.
+ ② **로그인 한도**: 실패할 때마다 재로그인하게 만들었더니(3투자자 × 4시도 × 100세션) 로그인 자체가 막혀
+    `MDCCOMS001D1.cmd`가 JSON 대신 **에러 HTML**을 돌려주고, pykrx는 import 시점에 자동 로그인하므로 **import부터 깨졌다.**
+    → **실패해도 재로그인하지 않는다.** 세션이 실제로 만료됐을 때만(만료 5분 전 버퍼) 1회 갱신한다.
+막혔으면 더 두드리지 말고 쿨다운을 기다린다.
 **에러로 기록된 날짜는 '수집 완료'로 치지 않는다** — 재실행하면 그 날짜만 다시 받는다.
 자격증명은 `.env`의 KRX_ID/KRX_PW(환경변수)만 쓰고 어디에도 기록하지 않는다.
 
@@ -28,8 +33,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DB = f"file:{ROOT / 'data' / 'shadow' / 'virtual_books.db'}?mode=ro"
 INVESTORS = ("개인", "기관합계", "외국인")
-THROTTLE_SEC = 0.6      # 요청 간 최소 간격 — 09-10 실측 무제한 호출 시 5분 뒤 전량 차단
-MAX_TRIES = 4           # 실패 시 재로그인 + 백오프(2/4/8초)
+THROTTLE_SEC = 1.2      # 요청 간 최소 간격 — 09-10 실측 무제한 호출 시 5분(약 270요청) 뒤 전량 차단
+MAX_TRIES = 3           # 실패 시 백오프(3/9초)만 — 재로그인은 하지 않는다
+ABORT_AFTER_FAILS = 8   # 연속 실패가 이만큼이면 차단으로 보고 즉시 중단(쿨다운)
 
 
 def session_dates(lo: str, hi: str) -> list[str]:
@@ -83,7 +89,7 @@ def main() -> int:
     from pykrx import stock
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    ok = fail = 0
+    ok = fail = streak = 0
     t_start = time.time()
     with out.open("a", encoding="utf-8") as fh:
         for i, d in enumerate(todo, 1):
@@ -103,19 +109,26 @@ def main() -> int:
                             row.setdefault("errors", []).append(f"{inv}:{type(exc).__name__}")
                             bad = True
                             break
-                        # 차단은 세션이 상해서 오는 경우가 많다 — 재로그인 후 백오프
-                        time.sleep(2 ** attempt)
-                        try:
-                            if sess.refresh(os.environ["KRX_ID"], os.environ["KRX_PW"]):
-                                auth.set_auth_session(sess)
-                        except Exception:  # noqa: BLE001
-                            pass
+                        time.sleep(3 ** attempt)
+                        # 세션이 진짜 만료됐을 때만 1회 갱신한다. 실패마다 재로그인하면 로그인 자체가 막힌다(09-10 실측).
+                        if not sess.is_valid():
+                            try:
+                                if sess.refresh(os.environ["KRX_ID"], os.environ["KRX_PW"]):
+                                    auth.set_auth_session(sess)
+                            except Exception:  # noqa: BLE001
+                                pass
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
             fh.flush()
             ok += 0 if bad else 1
             fail += 1 if bad else 0
             if bad:
+                streak += 1
+                if streak >= ABORT_AFTER_FAILS:
+                    print(f"[FLOW] 연속 실패 {streak}회 — 차단으로 보고 중단(쿨다운 후 재실행하면 실패분만 다시 받는다)", flush=True)
+                    break
                 time.sleep(5)   # 연속 차단을 끊는다
+            else:
+                streak = 0
             if i % 20 == 0 or i == len(todo):
                 el = time.time() - t_start
                 print(f"[FLOW] {i}/{len(todo)} 성공 {ok} 실패 {fail} · {el:.0f}s "
