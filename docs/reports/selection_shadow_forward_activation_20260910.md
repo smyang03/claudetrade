@@ -97,6 +97,7 @@ The public quote diagnostics include source mode, required/requested counts, las
 4. Permit the narrow book-interface addition of retryable `INPUT_INCOMPLETE`/`ERROR` snapshots, preserving READY/EMPTY locks and accounting. Cost if wrong: a small backward-compatible validation change must be reverted.
 5. Use existing timestamped US Finnhub cache only because there is no shared cross-caller request budget and rewriting legacy request behavior exceeds this adapter task. The approved contract allows `NO_VERIFIED_QUOTE`. Cost: US fills may remain absent; original request times are never fabricated.
 6. Permit Task3 additive persisted experiment/report/holding-session metadata and the bounded writer/calendar extension needed for skipped D7 timing, because approved dashboard/storage requirements otherwise remain unmet. Cost: metadata schema/report rework, with no change to financial rules or read-only GET.
+7. Retain the active dashboard logs and their parent directory during scratch cleanup. Dashboard30604 was launched with stdout at `.superpowers/sdd/2026-09-10-selection-shadow-forward/dashboard-activation.out.log` and stderr at `.superpowers/sdd/2026-09-10-selection-shadow-forward/dashboard-activation.err.log`; these files remain in use. Preserve both files and their directory to avoid interrupting the healthy process, and do not restart it merely for cleanup. Cost if wrong: a small ignored residue; log-path cleanup can occur at a future authorized restart.
 
 ## Remaining limitations and handoff
 
