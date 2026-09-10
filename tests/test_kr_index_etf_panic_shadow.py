@@ -79,6 +79,41 @@ class SettleTest(unittest.TestCase):
         self.assertAlmostEqual(r["net_pct"], -1.0 - m.COST, places=6)
 
 
+class TestTwoTierSizing(unittest.TestCase):
+    """2단 사이징(운영자 지시 09-10 승인) — 강신호 2단위·보통 1단위, 단위 50만, 파생형 15.4% 과세."""
+
+    def test_units_table(self):
+        self.assertEqual(m.UNIT_KRW, 500_000)
+        self.assertEqual(m.units_for("strong"), 2)
+        self.assertEqual(m.units_for("normal"), 1)
+        self.assertEqual(m.units_for(None), 1)        # 강도 미상은 보수적으로 1단위
+        self.assertEqual(m.units_for("unknown"), 1)
+        self.assertEqual(m.UNIT_KRW * m.units_for("strong"), 1_000_000)   # 최대 노출
+
+    def test_strength_drives_units(self):
+        self.assertEqual(m.signal_strength(-2.0, -0.5), "strong")
+        self.assertEqual(m.signal_strength(-1.99, -3.0), "normal")
+        self.assertEqual(m.signal_strength(None, None), "unknown")
+        self.assertEqual(m.units_for(m.signal_strength(-2.5, +1.0)), 2)
+        self.assertEqual(m.units_for(m.signal_strength(-1.0, -3.0)), 1)
+
+    def test_pnl_krw_taxes_gains_only(self):
+        gross, after = m.pnl_krw(2.0, 2)              # 강신호 100만 × +2%
+        self.assertAlmostEqual(gross, 20_000.0, places=1)
+        self.assertAlmostEqual(after, 20_000.0 * (1 - m.TAX_RATE), places=1)
+        gross, after = m.pnl_krw(-13.01, 2)           # 최악 1건은 손실 그대로(공제 없음)
+        self.assertAlmostEqual(gross, -130_100.0, places=1)
+        self.assertEqual(gross, after)
+        self.assertAlmostEqual(m.pnl_krw(1.0, 1)[0], 5_000.0, places=1)
+        self.assertEqual(m.pnl_krw(None, 1), (None, None))
+
+    def test_two_tier_beats_single_on_backfill_numbers(self):
+        """강신호가 실제로 강해야 2단이 이긴다 — 백필 실측(강 +2.030 / 보통 +0.419)으로 검산."""
+        rows = [("strong", 2.030)] * 43 + [("normal", 0.419)] * 204
+        two = sum(v * m.units_for(k) for k, v in rows) / sum(m.units_for(k) for k, _ in rows)
+        single = sum(v for _, v in rows) / len(rows)
+        self.assertGreater(two, single)
+
 class TestFetchIndexGap(unittest.TestCase):
     """당일 시가 갭 파싱 — 네이버 지수 일별 price 응답 형태(2026-09-09 실측 payload)."""
 
