@@ -18,7 +18,7 @@
   B. `idx_rv20`  — 직전 20봉 일간수익률 표준편차 ×√252 (변동성)
   C. `k≥5 조건부 rv20` — k축은 이미 작동한다(k≥5 +2.51~2.74%).
      진짜 질문은 **k를 알고 난 뒤 변동성이 정보를 더하는가**이다.
-     k≥5인 59일을 rv20 3분위로 갈라 상·하위를 본다. 이것이 2020 질문의 정직한 형태다.
+     k≥5인 79일을 rv20 3분위로 갈라 상·하위를 본다. 이것이 2020 질문의 정직한 형태다.
 
 (idx_ret5·idx_ret20·down_streak는 A와 상관 0.6~0.9인 같은 축이라 뺀다.
  6개를 돌리면 3개 축을 6번 세어 적중률이 부풀려진다.)
@@ -106,6 +106,41 @@ def split_report(name, rows, key, note=""):
     return row, passed, note
 
 
+ORDER_KRW = 220000          # KR_FALLEN_ORDER_MAX_KRW (08-21 개정)
+SLOTS = 3                   # KR_FALLEN_MAX_OPEN_SLOTS_PHASE3
+MONTHS = 104                # 2018-01 ~ 2026-09
+
+
+def ladder(k):
+    """KR_FALLEN 사전등록 일한도 사다리 — k≤1→1건 / k 2~9→2건 / k 10+→3건."""
+    return 1 if k <= 1 else (2 if k <= 9 else 3)
+
+
+def money(days, min_k, skip_2026=False):
+    """현재 자본·슬롯으로 이 문턱을 실제로 돌렸을 때의 월 초과이익.
+
+    후보 순서는 풀 순서(라이브 랭킹과 무관 — 09-11에 랭킹은 무엣지로 기각됐다).
+    각 진입의 초과분은 그날의 일가중 초과로 근사한다.
+    """
+    order = {r["day"]: r for r in days}
+    held, entered, total, fired = {}, 0, 0.0, 0
+    for r in sorted(order.values(), key=lambda x: x["day"]):
+        if skip_2026 and r["day"][:4] == "2026":
+            continue
+        if r["k"] < min_k:
+            continue
+        held = {t: e for t, e in held.items() if e > r["day"]}
+        room = min(ladder(r["k"]), SLOTS - len(held))
+        if room <= 0:
+            continue                                   # 슬롯 포화 — 연속 급락일에서 실제로 문다
+        fired += 1
+        for j in range(room):
+            held[f"{r['day']}#{j}"] = r["exit_day"]
+            entered += 1
+            total += ORDER_KRW * r["day_excess"] / 100
+    return fired, entered, total, total / (92 if skip_2026 else MONTHS)
+
+
 def main():
     if not LONG.exists():
         print(f"장기 캐시 없음: {LONG}", file=sys.stderr)
@@ -143,7 +178,9 @@ def main():
         if not exs:
             miss_bench += 1
             continue
+        i_entry = idx.get(pool[0]["entry_date"])
         days.append({"day": sig, "k": len(pool), "n": len(exs),
+                     "exit_day": bars[min(i_entry + HOLD - 1, len(bars) - 1)][0],
                      "day_excess": st.mean(exs), **feat})
     days.sort(key=lambda r: r["day"])
 
@@ -220,10 +257,26 @@ def main():
           "같은 표에서 k≥5 **+2.07%(t 3.00, 79일)**, k≥20 **+3.68%(t 3.19, 26일)**.",
           "국면 변수를 얹어도 이 수치가 안 움직인다는 것이 오늘의 결과다.",
           "**즉 이 레인의 전부는 '시장이 무너진 날에만 산다'이고, 그 외 조건은 장식이다.**", "",
+          "### 그래서 현재 자본으로 월 얼마인가", "",
+          f"주문 {ORDER_KRW:,}원 · 슬롯 {SLOTS} · 사전등록 일한도 사다리 그대로 돌린 결과다.",
+          "초과분만 세고 지수 수익은 뺀 값이다.", "",
+          "| 문턱 | 신호일 | 실제 진입 | 8.7년 초과이익 | **월** | 2026 제외 월 |",
+          "|---|---:|---:|---:|---:|---:|"]
+    for lab, mk in (("k≥20", 20), ("k≥5", 5)):
+        f_all, n_all, t_all, m_all = money(days, mk)
+        _, _, _, m_ex = money(days, mk, skip_2026=True)
+        L.append(f"| {lab} | {f_all} | {n_all}건 | {t_all:,.0f}원 | **{m_all:,.0f}원** | {m_ex:,.0f}원 |")
+    L += ["",
+          "**월 3천원대다.** 슬롯 3이 물려서 k≥20인 26일 중 실제로 들어갈 수 있는 건 14일뿐이다",
+          "(연속 급락일에 D5 보유가 슬롯을 다 차지한다 — 2026-07-28/29/30이 전형이다).",
+          "8.7년 누적 33만원. 통계적으로 살아 있는 것과",
+          "돈이 되는 것은 다르다 — 용량을 늘리지 않으면 이 축은 유의해도 금액이 안 된다.", "",
           "1. **k 문턱을 사전등록하고 forward로 간다.** k≥5와 k≥20 중 실측으로 고르면 과적합이다.",
           "   (k=10~19가 −0.04%로 단조를 깨는 것도 20일뿐인 표본 탓일 수 있다.)",
-          "2. **dd60은 기각이지만 유일하게 전후반 부호가 같았다**(전반 −0.38 / 후반 −3.09,",
-          "   깊은 하락일수록 좋음, t 1.82). 게이트로 쓸 근거는 없고 **forward 관측 항목**으로만 둔다.",
+          "2. **dd60은 기각이다. 독립 축으로 읽지 말 것.** 전후반 부호만 같았고(깊을수록 좋음, t 1.82),",
+          "   무엇보다 **k와 교락**이다 — 위 26일 표에서 2026-07의 k≥20인 날은 dd60이 전부 −17~−41%다.",
+          "   −1.84%p 차이는 k 효과가 새어 나온 것일 수 있다. dd60|k≥5는 사전등록하지 않았으므로",
+          "   돌리지 않는다. forward 관측 항목으로만 둔다.",
           "3. **rv20 백분위 재설계**는 새 사전등록으로 분리한다. 오늘 결과를 보고 돌리면 인샘플이다.",
           "4. 승격 전 선결: **상폐 목록 확보**. 3.3%가 하한인 한 장기 수치는 승격 근거가 못 된다.", "",
           "⚠️ 생존편향 하한 3.3% 그대로 적용(`kr_pool_long_verdict_20260912.md`).",
