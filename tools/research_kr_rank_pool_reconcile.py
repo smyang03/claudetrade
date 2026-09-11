@@ -132,16 +132,19 @@ def per_pick(sessions, chooser):
     return [chooser(v)["net"] for v in sessions.values()]
 
 
-def sequence(sessions, chooser, *, order_krw=ORDER_KRW, slots=SLOTS, per_day=1):
+def sequence(sessions, chooser, *, order_krw=ORDER_KRW, slots=SLOTS, per_day=1,
+             per_day_fn=None):
     """라이브 KR 계약 순차 집행: 건당 22만, 보유 중 동일종목 재진입 금지.
 
     기본값은 현행 계약(슬롯 3 · 일 1건). per_day/slots를 올리면 용량 사다리가 된다.
+    per_day_fn(k)를 주면 그날 후보 수 k에 따라 진입 건수를 정한다(k-조건부 사이징).
     """
     held, pnl, trades = {}, 0.0, []
     for day, pool in sessions.items():
         held = {t: d for t, d in held.items() if d >= day}
         avail = [c for c in pool if c["ticker"] not in held]
-        for _ in range(max(0, min(per_day, slots - len(held)))):
+        room = per_day_fn(len(pool)) if per_day_fn is not None else per_day
+        for _ in range(max(0, min(room, slots - len(held)))):
             if not avail:
                 break
             pick = chooser(avail)
