@@ -4,9 +4,16 @@
 schtasks 액션에 출력 리다이렉트가 없고 TaskScheduler 이벤트 로그도 비활성이라
 **실패 사유가 어디에도 남지 않았다**(수동 실행은 성공, token_pm은 정상, 두 태스크 정의는 동일).
 스케줄 정의를 건드리지 않고 스크립트가 직접 `logs/system/token_refresh.log`에 남긴다.
+
+2026-09-11: 그 로그가 바로 원인을 잡았다 —
+  `EGW00133 접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)` / cooldown 70초.
+08:20은 KR 장 준비 구간이라 봇·프리오픈 스케줄러가 같은 분에 토큰을 발급받고,
+이 스크립트의 `force_refresh`가 **1분당 1회 제한**에 부딪힌다. 21:50(PM)은 KR이 조용해서 안 겹쳤다.
+→ rate limit이면 서버가 알려준 `retry_after_sec`만큼 기다렸다 **한 번 더** 시도한다. 그래도 막히면 실패로 남긴다.
 """
 import os
 import sys
+import time
 import traceback
 from datetime import datetime
 
@@ -17,6 +24,7 @@ os.chdir(ROOT)
 sys.path.insert(0, ROOT)
 
 LOG_PATH = os.path.join(ROOT, "logs", "system", "token_refresh.log")
+MAX_WAIT_SEC = 120          # 예약 작업이 무한정 물고 있지 않도록 상한
 
 
 def _log(line: str) -> None:
@@ -34,7 +42,7 @@ def _log(line: str) -> None:
 
 def main() -> int:
     try:
-        from kis_api import get_access_token, IS_PAPER
+        from kis_api import get_access_token, IS_PAPER, KISTokenRateLimitError
     except Exception as exc:  # noqa: BLE001
         _log(f"[ERROR] kis_api import 실패: {type(exc).__name__}: {exc}")
         _log("[TRACE] " + traceback.format_exc(limit=6).replace("\n", " | "))
@@ -42,14 +50,26 @@ def main() -> int:
 
     mode = "paper" if IS_PAPER else "live"
     _log(f"[START] KIS {mode} 토큰 강제 갱신 요청 (호출자 pid {os.getpid()})")
-    try:
-        get_access_token(force_refresh=True)
-    except Exception as exc:  # noqa: BLE001
-        _log(f"[ERROR] KIS {mode} 토큰 갱신 실패: {type(exc).__name__}: {exc}")
-        _log("[TRACE] " + traceback.format_exc(limit=6).replace("\n", " | "))
-        return 1
-    _log(f"[OK] KIS {mode} 토큰 갱신 완료")
-    return 0
+    for attempt in (1, 2):
+        try:
+            get_access_token(force_refresh=True)
+        except KISTokenRateLimitError as exc:
+            wait = min(int(getattr(exc, "retry_after_sec", 0) or 0) + 5, MAX_WAIT_SEC)
+            if attempt == 1 and wait > 0:
+                # 1분당 1회 제한 — 같은 분에 다른 프로세스가 먼저 발급받은 경우다. 기다렸다 한 번만 더.
+                _log(f"[RETRY] rate limit(EGW00133) — {wait}초 대기 후 재시도 "
+                     f"(cooldown_until={getattr(exc, 'cooldown_until', '')})")
+                time.sleep(wait)
+                continue
+            _log(f"[ERROR] KIS {mode} 토큰 갱신 실패(rate limit 지속): {exc}")
+            return 1
+        except Exception as exc:  # noqa: BLE001
+            _log(f"[ERROR] KIS {mode} 토큰 갱신 실패: {type(exc).__name__}: {exc}")
+            _log("[TRACE] " + traceback.format_exc(limit=6).replace("\n", " | "))
+            return 1
+        _log(f"[OK] KIS {mode} 토큰 갱신 완료" + (" (재시도 성공)" if attempt == 2 else ""))
+        return 0
+    return 1
 
 
 if __name__ == "__main__":
