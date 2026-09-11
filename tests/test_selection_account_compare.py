@@ -26,12 +26,13 @@ DAYS = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04",
         "2026-09-07", "2026-09-08", "2026-09-09"]
 
 
-def candidate(sc, ticker="A", start=0, closes=None, rank=100, ibs=60, disc=-5):
+def candidate(sc, ticker="A", start=0, closes=None, rank=100, ibs=60, disc=-5, live=None):
     closes = closes or [100] * (7 - start)
     win = [(day, 100, max(100, close), min(100, close), close, 1000)
            for day, close in zip(DAYS[start:], closes)]
     return sc.Candidate(ticker, "2026-08-31" if start == 0 else DAYS[start - 1],
-                        DAYS[start], rank, win, ibs, disc)
+                        DAYS[start], rank, win, ibs, disc,
+                        rank if live is None else live)
 
 
 def config(sc, **kwargs):
@@ -338,3 +339,50 @@ def test_feature_window_gap_is_not_silently_treated_as_daily_return(sc, tmp_path
     cs, _, audit = sc.load_dataset(tmp_path, "KR", DAYS[0], DAYS[-1])
     assert cs == []
     assert audit["counts"]["feature_window_gap"] == 1
+
+
+def test_kr_live_rule_buys_deepest_ma20_discount_not_largest_dollar_volume(sc):
+    # kr_fallen_order_bridge sorts by feats.ma20_disc ascending; the tool's
+    # baseline sorts by dollar volume descending. They must disagree here.
+    cs = [candidate(sc, "A", rank=1000, live=-5.0), candidate(sc, "B", rank=1, live=-30.0)]
+    assert sc.simulate(cs, DAYS[:1], config(sc), "baseline")["trades"][0]["ticker"] == "A"
+    assert sc.simulate(cs, DAYS[:1], config(sc), "live")["trades"][0]["ticker"] == "B"
+
+
+def test_us_live_rule_is_the_same_dollar_volume_order_as_baseline(sc):
+    cfg = sc.Config(market="US", capital=1000, daily_budget=500, fx=1)
+    cs = [candidate(sc, "A", rank=10, live=10), candidate(sc, "B", rank=99, live=99)]
+    base = sc.simulate(cs, DAYS, cfg, "baseline")
+    live = sc.simulate(cs, DAYS, cfg, "live")
+    assert base["trades"][0]["ticker"] == live["trades"][0]["ticker"] == "B"
+    assert base["nav"] == live["nav"]
+
+
+def test_live_rule_fails_loudly_when_live_ranking_value_is_missing(sc):
+    bare = replace(candidate(sc), live_rank_value=None)
+    with pytest.raises(ValueError, match="live ranking"):
+        sc.simulate([bare], DAYS[:1], config(sc), "live")
+
+
+def test_live_ma20_window_excludes_the_signal_bar(sc):
+    bars = [(f"2026-08-{i:02}", 100, 110, 90, 100, 1000) for i in range(1, 22)]
+    bars.append(("2026-08-31", 50, 110, 40, 50, 1000))
+    f = sc.prior_features(bars, DAYS[0])
+    # Live scanner averages the 20 bars before the signal bar: 100 flat.
+    assert f["ma20_disc_live"] == pytest.approx(-50.0)
+    # The diagnostic field keeps the signal bar inside the average.
+    assert f["ma20_disc"] == pytest.approx((50 / 97.5 - 1) * 100)
+
+
+def test_loader_uses_live_window_discount_as_kr_live_ranking_value(sc, tmp_path):
+    history, _ = build_source(tmp_path)
+    kr_db(tmp_path, history, ["000001"])
+    cs, _, _ = sc.load_dataset(tmp_path, "KR", DAYS[0], DAYS[-1])
+    assert cs[0].live_rank_value == pytest.approx(0.0)
+    assert cs[0].rank_value == pytest.approx(100 * 2_000_000)
+
+
+def test_compare_reports_live_rule_alongside_baseline(sc):
+    report = sc.compare([candidate(sc)], DAYS, config(sc), repeats=2)
+    assert "live_rule" in report["strategies"]
+    assert report["version"] == "selection-account-v2"

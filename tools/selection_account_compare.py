@@ -28,7 +28,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from tools.virtual_books import contract_exit_v2, bar_complete  # noqa: E402
 
-VERSION = "selection-account-v1"
+VERSION = "selection-account-v2"
 HOLD = 7
 
 
@@ -63,6 +63,7 @@ class Candidate:
     win: list
     ibs: float | None = None
     ma20_disc: float | None = None
+    live_rank_value: float | None = None
 
 
 def simulate(candidates, calendar, cfg, rule, *, seed=0, allowed_days=None):
@@ -72,7 +73,7 @@ def simulate(candidates, calendar, cfg, rule, *, seed=0, allowed_days=None):
     Missing subsequent marks carry forward with a stale flag. No overnight cash
     from a same-day closing sale is available to the opening auction.
     """
-    if rule not in {"baseline", "random1", "random3", "risk"}:
+    if rule not in {"baseline", "live", "random1", "random3", "risk"}:
         raise ValueError("unknown selection rule")
     if not calendar or calendar != sorted(set(calendar)):
         raise ValueError("calendar must be nonempty, unique and ordered")
@@ -84,6 +85,8 @@ def simulate(candidates, calendar, cfg, rule, *, seed=0, allowed_days=None):
         keys.add(key)
         if not math.isfinite(c.rank_value):
             raise ValueError("non-finite ranking value")
+        if rule == "live" and (c.live_rank_value is None or not math.isfinite(c.live_rank_value)):
+            raise ValueError("missing live ranking value")
         if c.signal_date >= c.entry_date:
             raise ValueError("features must precede entry")
         if c.win and (c.win[0][0] != c.entry_date or
@@ -111,6 +114,12 @@ def simulate(candidates, calendar, cfg, rule, *, seed=0, allowed_days=None):
                 available.append(c)
         if rule.startswith("random"):
             selected = rng.sample(available, min(k, len(available)))
+        elif rule == "live":
+            # KR live buys the deepest MA20 discount (ascending); US live buys the
+            # largest drop-day dollar volume among band/MAX survivors (descending).
+            selected = sorted(available, key=(
+                (lambda c: (c.live_rank_value, c.ticker)) if cfg.market == "KR"
+                else (lambda c: (-c.live_rank_value, c.ticker))))[:1]
         else:
             selected = sorted(available, key=lambda c: (-c.rank_value, c.ticker))[:1]
         slots = max(0, HOLD * k - len(positions))
@@ -179,7 +188,8 @@ def simulate(candidates, calendar, cfg, rule, *, seed=0, allowed_days=None):
 def compare(candidates, calendar, cfg, *, repeats=200, include_risk=False):
     if repeats < 2:
         raise ValueError("at least two random seeds required")
-    strategies = {"baseline": simulate(candidates, calendar, cfg, "baseline")}
+    strategies = {"baseline": simulate(candidates, calendar, cfg, "baseline"),
+                  "live_rule": simulate(candidates, calendar, cfg, "live")}
     if include_risk:
         strategies["risk_diagnostic"] = simulate(candidates, calendar, cfg, "risk")
     for rule, allowed in [("random1", None), ("random3", None)] + (
@@ -217,6 +227,12 @@ def compare(candidates, calendar, cfg, *, repeats=200, include_risk=False):
                         "Open fills are hypothetical; no spread, latency, fill rejection or settlement restrictions.",
                         "US FX is constant, not actual KRW FX-inclusive performance.",
                         "Risk IBS>=50 and MA20 discount>=-10 is a rejected diagnostic, not a new strategy.",
+                        "live_rule reproduces the live ordering: KR deepest MA20 discount first "
+                        "(kr_fallen_order_bridge), US largest drop-day dollar volume first "
+                        "(us_swing_order_bridge with US_SWING_PICK_ORDER=dvol_desc). "
+                        "US live_rule is identical to baseline by construction.",
+                        "KR live MA20 averages the 20 bars before the signal bar, excluding it "
+                        "(kr_fallen_shadow_scan). The ma20_disc diagnostic field includes it.",
                         "Matched dates do not guarantee identical amounts, holding times or exposure.",
                         "Historical input caches may contain revisions and survivorship bias."]}
 
@@ -275,8 +291,12 @@ def prior_features(bars, day):
     if len(prior) < 22:
         return None
     _, _, hi, lo, close, volume = prior[-1]
+    # Two MA20 windows on purpose. The diagnostic field keeps the original
+    # definition; ma20_disc_live matches the live scanner, which averages the 20
+    # bars *before* the signal bar and excludes it.
     return {"signal_date": prior[-1][0], "ibs": (close - lo) / (hi - lo) * 100 if hi > lo else None,
             "ma20_disc": (close / statistics.mean(b[4] for b in prior[-20:]) - 1) * 100,
+            "ma20_disc_live": (close / statistics.mean(b[4] for b in prior[-21:-1]) - 1) * 100,
             "dvol": close * volume,
             "max21": max((prior[i][4] / prior[i - 1][4] - 1) * 100 for i in range(len(prior) - 21, len(prior)))}
 
@@ -353,7 +373,9 @@ def load_dataset(root, market, start, as_of, universe="live"):
                 issue(row, "missing_entry_bar" if not win else "price_path_gap")
                 break
             win.append(by_date[d])
-        candidates.append(Candidate(ticker, f["signal_date"], day, f["dvol"], win, f["ibs"], f["ma20_disc"]))
+        live_rank = f["ma20_disc_live"] if market == "KR" else f["dvol"]
+        candidates.append(Candidate(ticker, f["signal_date"], day, f["dvol"], win, f["ibs"],
+                                    f["ma20_disc"], live_rank))
     counts["prepared_candidates"] = len(candidates)
     observed_days = {entry_date(market, row["session_date"], all_days) for row in rows}
     unverified = [d for d in calendar if d not in observed_days]
@@ -364,6 +386,7 @@ def load_dataset(root, market, start, as_of, universe="live"):
              "notes": ["All observations are retrospective, including rows labelled backfill=0 upstream.",
                        "KR universe is recorded xkr_fallen3 trades, not a complete pre-entry candidate archive; ETFs may be included.",
                        "US band/MAX and rankings use prior-bar recomputation, not guaranteed original decision-time features.",
+                       "live_rule re-ranks this same pool; it does not reproduce the live lane's own universe.",
                        "Missing source/feature data changes the available pool; incomplete coverage prevents inference."]}
     audit["notes"].append("Absent source sessions are unknown, not proven zero-candidate days. Coverage covers observable inputs only.")
     return candidates, calendar, audit
