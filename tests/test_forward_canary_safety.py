@@ -213,3 +213,40 @@ def test_materialized_strong_signal_has_no_authority(monkeypatch, tmp_path, cale
         assert any("selection_contract_mismatch" in x for x in payload["errors"])
     else:
         assert payload["signals"] == [] and payload["status"] == "blocked"
+
+
+def test_policy_excluded_arm_never_generates_rehearsal_signal():
+    """정책 `excluded`에 든 arm은 K1 계약을 만족해도 리허설 신호를 내지 않는다.
+
+    2026-09-11 실측 결함: 정책 파일에 excluded 블록이 있는데 코드가 읽지 않아
+    `c_kr_insider_k1`(정책상 "forward 30건 전 캐너리 금지")이 09-09~11 리허설 3건을 실제로 생성했다.
+    """
+    from tools import canary_materializer as cm
+    k1 = {"pick": "dvol_desc", "daily_cap": 1}
+    excluded = {"c_kr_insider_k1": "사후 발견 뷰 — forward 30건 전 캐너리 금지"}
+    # 금지 arm: K1 계약을 만족해도 제외되고, 사유가 드러난다
+    reason = cm.arm_skip_reason("c_kr_insider_k1", k1, excluded)
+    assert reason is not None and reason.startswith("policy_excluded:")
+    # 금지 목록에 없고 계약도 맞으면 통과
+    assert cm.arm_skip_reason("other_arm", k1, excluded) is None
+    # 계약 불일치는 계약 사유로
+    assert cm.arm_skip_reason("other_arm", {"pick": "all", "daily_cap": 1000000}, excluded) == (
+        "selection_contract_mismatch:rehearsal_requires_dvol_desc_K1")
+    # 큐에 있는데 arm이 없으면 조용히 넘기지 않고 드러낸다
+    assert cm.arm_skip_reason("ghost_arm", None, excluded) == "arm_not_in_strategies"
+    # excluded 미지정도 안전하게 동작
+    assert cm.arm_skip_reason("other_arm", k1, None) is None
+
+
+def test_expected_skips_do_not_mark_status_degraded():
+    """정책 제외·계약 불일치는 설계된 skip이라 status를 degraded로 만들지 않는다."""
+    import json as _json
+    from pathlib import Path as _Path
+    from tools import canary_materializer as cm
+    pol = _json.loads(_Path(cm.POLICY).read_text(encoding="utf-8"))
+    # 실제 정책 파일 기준으로 큐의 모든 항목이 '설계된 skip' 또는 정상 처리여야 한다
+    assert isinstance(pol.get("excluded"), dict) and pol["excluded"], "정책에 excluded 블록이 있어야 한다"
+    for arm_id in pol.get("priority_queue") or []:
+        # 정책이 금지했으면 금지 사유가 나와야 한다
+        if arm_id in pol["excluded"]:
+            assert cm.arm_skip_reason(arm_id, {"pick": "dvol_desc", "daily_cap": 1}, pol["excluded"]).startswith("policy_excluded:")

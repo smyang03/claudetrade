@@ -6,11 +6,13 @@ import json
 import sys
 import tempfile
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 _MID = chr(0x318D)
+# 진입 마감(entry_cutoff 15:10) 전 장중 시각. 벽시계를 쓰면 저녁 실행에서 SKIP이 나 테스트가 시각 의존이 된다(09-11 실측).
+_NOW_INTRADAY = datetime(2026, 9, 4, 11, 30, 0, tzinfo=timezone(timedelta(hours=9)))
 sys.path.insert(0, str(ROOT))
 
 from runtime import kr_event_lane as k  # noqa: E402
@@ -156,12 +158,14 @@ class ProcessTest(unittest.TestCase):
         item = {"rcept_no": "9", "stock_code": "000100", "corp_name": "유한양행", "report_nm": "단일판매" + _MID + "공급계약체결"}
         row = k.process_disclosure(item, session_date="2026-09-04", quote_fn=lambda t: {"price": 81500.0, "source": "t"},
                                    open_n=0, new_today=0, doc_fn=lambda r: DOC.replace("매출액대비(%) 6.0", "매출액대비(%) 35.0"),
-                                   llm_fn=lambda kind, text, f: {"available": True, "quality": "strong", "reason": "신규 외부"})
+                                   llm_fn=lambda kind, text, f: {"available": True, "quality": "strong", "reason": "신규 외부"},
+                                   now=_NOW_INTRADAY)
         self.assertEqual(row["decision"], "ENTER")
         self.assertIn("매출대비 35%", row["basis"])
         self.assertIn("LLM strong", row["basis"])
         other = k.process_disclosure({"rcept_no": "10", "stock_code": "000100", "report_nm": "소송등의제기"},
-                                     session_date="2026-09-04", quote_fn=lambda t: None, open_n=0, new_today=0)
+                                     session_date="2026-09-04", quote_fn=lambda t: None, open_n=0, new_today=0,
+                                     now=_NOW_INTRADAY)
         self.assertEqual(other["decision"], "IGNORE")
         self.assertEqual(len(k.read_jsonl(k.SIGNAL_LEDGER)), 2)
 
@@ -192,7 +196,7 @@ class DocRetryTest(unittest.TestCase):
     def test_retry_keeps_first_seen_and_parses(self):
         row = k.process_disclosure(self.item, session_date="2026-09-04", quote_fn=lambda t: {"price": 1087.0},
                                    open_n=0, new_today=0, doc_fn=lambda r: DOC, first_seen="2026-09-04T11:09:11+09:00",
-                                   doc_attempts=1)
+                                   doc_attempts=1, now=_NOW_INTRADAY)
         self.assertEqual(row["ts_detected"], "2026-09-04T11:09:11+09:00")
         self.assertEqual(row["doc_attempts"], 2)
         self.assertGreater(row["latency_sec"], 600)          # 총 지연 = 최초 감지 기준(본문 대기 포함)

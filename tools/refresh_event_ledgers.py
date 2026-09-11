@@ -23,7 +23,11 @@ STEPS = [
     ("insider_holdings", ["tools/dart_insider_ledger.py", "--holdings-only", "--refresh-days", "1"]),
     ("insider_plans", ["tools/dart_insider_ledger.py", "--plans-only"]),
     ("corp_action_terms", ["tools/dart_corp_action_terms.py"]),
-    ("form4_daily", ["tools/edgar_form4_daily.py", "--from", "2026-04-01", "--max-days", "8"]),   # 2026-04~ 공백을 하루 8거래일씩 이어받아 채운다(재개 가능)
+    # 2026-04~ 공백을 하루 N거래일씩 이어받아 채운다(재개 가능). 09-11: 8 → 20으로 상향.
+    # 근거: 1거래일 처리 1분51초(SEC ≤8req/s 준수 sleep 포함) · 남은 공백 93거래일 → 8일이면 12일, 20일이면 5일.
+    # 시간 여유: 래퍼 전체가 21:05~21:33(28분)이고 US 개장 22:30까지 85분. 20일이면 +22분 → 약 50분으로 개장 35분 전 종료.
+    # 40일은 22:32 종료라 개장과 겹쳐 금지.
+    ("form4_daily", ["tools/edgar_form4_daily.py", "--from", "2026-04-01", "--max-days", "20"]),
     ("krx_alert", ["tools/krx_market_alert_collector.py"]),
     ("earnings_dates", ["tools/us_earnings_dates_cache.py", "--refresh-days", "7"]),
     ("panic_settle", ["tools/us_panic_close_shadow.py", "settle"]),

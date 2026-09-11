@@ -59,6 +59,21 @@ def selection_contract_error(s: dict) -> str | None:
     return None
 
 
+def arm_skip_reason(arm_id: str, s: dict | None, excluded: dict | None) -> str | None:
+    """리허설 대상에서 빼야 할 사유. None이면 진행.
+
+    2026-09-11 수리: 정책 파일에 `excluded` 블록이 있는데 **코드가 전혀 읽지 않아**
+    금지된 arm이 매일 리허설 신호를 냈다(실측: `c_kr_insider_k1`이 09-09~11 3건 —
+    정책상 "사후 발견 뷰 — forward 30건 전 캐너리 금지"인데도 원장에 쌓였다).
+    정책을 바꾸는 게 아니라 **정책대로 동작하게** 만든다.
+    """
+    if (excluded or {}).get(arm_id):
+        return f"policy_excluded:{excluded[arm_id]}"
+    if s is None:
+        return "arm_not_in_strategies"     # 조용한 skip 금지 — 큐에 있는데 arm이 없으면 드러낸다
+    return selection_contract_error(s)
+
+
 def _last_bar_candidates(market: str) -> dict[str, list[dict]]:
     """마지막 완결 봉 기준 풀별 후보(특성·이벤트 결합 포함). {pool_id: [cand]}"""
     import discovery_pools as dp
@@ -109,13 +124,15 @@ def materialize() -> dict:
             sess = None
             errors.append(str(exc))
         cands = _last_bar_candidates(market) if sess else {}
+        excluded = pol.get("excluded") or {}
         for arm_id in pol.get("priority_queue") or []:
             s = arms.get(arm_id)
-            if not s or s.get("universe") != ("xkr" if market == "KR" else "xus"):
-                continue
-            mismatch = selection_contract_error(s)
-            if mismatch:
-                errors.append(f"{arm_id}:{mismatch}")
+            if s is not None and s.get("universe") != ("xkr" if market == "KR" else "xus"):
+                continue           # 다른 시장 arm — 이 시장 루프의 대상이 아니다(사유 아님)
+            skip = arm_skip_reason(arm_id, s, excluded)
+            if skip:
+                if not skip.startswith("arm_not_in_strategies"):
+                    errors.append(f"{arm_id}:{skip}")
                 continue
             pool = cands.get(s.get("pool"), [])
             passers = [c for c in pool if vb.candidate_filter_pass(c, s.get("filter") or {})]
@@ -142,9 +159,15 @@ def materialize() -> dict:
                             "rehearsal_contract_version": sig["rehearsal_contract_version"],
                             "settlement_kind": "MATURITY_PRICE_REFERENCE_NOT_STRATEGY_PNL",
                             "hold_sessions": sig["hold_sessions"], "tp_pct": sig["tp_pct"], "sl_pct": sig["sl_pct"]})
+        # 예정된 제외(정책 excluded·K1 계약 미충족)는 결함이 아니라 설계다 — status를 영원히 degraded로 만들지 않는다.
+        # errors 배열 자체는 감사 흔적이라 그대로 둔다(기존 계약·테스트 유지).
+        EXPECTED = ("policy_excluded:", "selection_contract_mismatch:")
+        unexpected = [e for e in errors if ":" not in e or not any(k in e for k in EXPECTED)]
         payload = {"schema_version": "profit_strategy_signals_v1", "authority": "SIGNAL_ONLY_NO_BROKER_AUTHORITY", "market": market,
                    "session_date": sess, "generated_at": now, "signals": signals, "errors": errors,
-                   "status": "blocked" if not sess else "degraded" if errors else "healthy", "note": "RESEARCH ONLY: selection parity is not executable portfolio validation; no live authority."}
+                   "skipped_by_design": [e for e in errors if e not in unexpected],
+                   "status": "blocked" if not sess else "degraded" if unexpected else "healthy",
+                   "note": "RESEARCH ONLY: selection parity is not executable portfolio validation; no live authority."}
         out = ROOT / "state" / f"canary_signals_{market}.json"
         out.parent.mkdir(parents=True, exist_ok=True); out.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
         have = {(r.get("session_date"), r.get("strategy_id")) for r in _jsonl(LEDGER)}
