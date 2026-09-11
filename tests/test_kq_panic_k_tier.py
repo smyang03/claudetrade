@@ -98,3 +98,34 @@ def test_missing_cache_returns_nonzero(monkeypatch, tmp_path):
 @pytest.mark.parametrize("k,tier", [(0, "t0"), (5, "t1_19"), (20, "t20p")])
 def test_tier_of_parametrized(k, tier):
     assert K.tier_of(k) == tier
+
+
+def test_recent_held_date_warns(monkeypatch, tmp_path, capsys):
+    """최근 신호일이 캐시 결측으로 보류되면 WARN을 낸다.
+
+    오래된 날짜 보류는 정상이지만, 최근 것이 보류되면 캐시 갱신이 멈춘 것이다.
+    경고가 없으면 '보류'가 정상처럼 보여 forward가 영영 안 쌓인다.
+    """
+    from datetime import date, timedelta
+
+    recent = (date.today() - timedelta(days=2)).isoformat()
+    old = "2019-01-10"
+    covered = (date.today() - timedelta(days=3)).isoformat()
+    _wire(monkeypatch, tmp_path, _cache([covered], K.MIN_COVERAGE + 50),
+          {recent: {"mode": "live", "strength": "normal"},
+           old: {"mode": "backfill", "strength": "normal"}})
+    assert K.annotate() == 0
+    out = capsys.readouterr().out
+    assert "[KTIER][WARN]" in out
+    assert recent in out
+    assert old not in out.split("[KTIER][WARN]")[1]   # 오래된 날짜는 경고에 안 들어간다
+
+
+def test_no_warn_when_only_old_dates_held(monkeypatch, tmp_path, capsys):
+    from datetime import date, timedelta
+
+    covered = (date.today() - timedelta(days=3)).isoformat()
+    _wire(monkeypatch, tmp_path, _cache([covered], K.MIN_COVERAGE + 50),
+          {"2019-01-10": {"mode": "backfill", "strength": "normal"}})
+    assert K.annotate() == 0
+    assert "[KTIER][WARN]" not in capsys.readouterr().out

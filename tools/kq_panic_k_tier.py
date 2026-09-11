@@ -27,7 +27,7 @@ import json
 import statistics as st
 import sys
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +37,7 @@ if str(ROOT) not in sys.path:
 CACHE = ROOT / "data" / "analysis" / "kr_fallen_price_cache.json"
 OUT = ROOT / "data" / "shadow" / "kq_panic_k_tier.jsonl"
 MIN_COVERAGE = 300          # 그 날짜에 바를 가진 종목 수 하한(라이브 유니버스 811 기준)
+STALE_WARN_DAYS = 10        # 최근 신호일이 계속 보류되면 캐시 갱신이 멈춘 것이다
 TIERS = ((0, 0, "t0"), (1, 19, "t1_19"), (20, 10 ** 9, "t20p"))
 
 
@@ -98,12 +99,16 @@ def annotate():
         return 0
 
     written = skipped = 0
+    held_recent = []
+    cutoff = (date.today() - timedelta(days=STALE_WARN_DAYS)).isoformat()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with OUT.open("a", encoding="utf-8") as fh:
         for d in todo:
             cov = coverage.get(d, 0)
             if cov < MIN_COVERAGE:
                 skipped += 1          # 캐시 결측 — k=0으로 세지 않는다. 다음 실행에서 재시도.
+                if d >= cutoff:
+                    held_recent.append(d)
                 continue
             k = kcount.get(d, 0)
             fh.write(json.dumps({"session_date": d, "k": k, "tier": tier_of(k),
@@ -113,6 +118,14 @@ def annotate():
             written += 1
     print(f"[KTIER] 주석 {written}건 · 캐시 결측으로 보류 {skipped}건 "
           f"(누적 {len(got) + written} / 신호 {len(sigs)})", flush=True)
+    if held_recent:
+        # 오래된 날짜 보류는 정상(라이브 캐시가 2024-11~)이지만, **최근** 신호일이 보류되면
+        # 캐시 갱신(`kr_fallen_shadow_scan.py --update-cache`)이 멈춘 것이다.
+        # 그대로 두면 "보류"가 정상처럼 보여서 forward가 영영 안 쌓인다.
+        newest = max(coverage) if coverage else "?"
+        print(f"[KTIER][WARN] 최근 {STALE_WARN_DAYS}일 내 신호일 {len(held_recent)}건이 보류됐다 "
+              f"({', '.join(held_recent)}). 캐시 최신일 {newest} — "
+              f"`kr_fallen_shadow_scan.py --update-cache` 확인 필요.", flush=True)
     return 0
 
 
