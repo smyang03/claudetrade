@@ -40,6 +40,7 @@ STEPS = [
     ("canary_materialize", ["tools/canary_materializer.py", "both"]),      # 09-09: 캐너리 신호 파일(다음 세션)+리허설 원장(브리지 미배선)
     ("kq_panic_settle", ["tools/kr_index_etf_panic_shadow.py", "settle"]),  # 09-09: KOSDAQ 급락일 지수 ETF 종가매수→다음시가 정산+리포트
     ("core_etf_book", ["tools/core_etf_book_shadow.py", "run"]),           # 09-09: 코어 ETF 북(ew·absmom) 월초 리밸런스·일일 MTM
+    ("kq_panic_k_tier", ["tools/kq_panic_k_tier.py"]),                    # 09-12: 패닉 신호일에 급락 후보수(k) 등급 주석 — 사전등록 D의 판정 입력. 라이브 모듈 미변경, 캐시 결측일은 보류 후 재시도
 ]
 
 
