@@ -14,7 +14,13 @@
     그래도 "그 창에 그냥 지수를 샀으면?"이 실무 질문이므로 이대로 비교한다.
   · 클러스터는 진입일과 월 둘 다 낸다. D10 이상은 보유가 겹쳐 날짜 t가 부풀려진다.
 
-벤치마크 CSV는 2025-04-29부터라 그 이전 진입은 평가 불가(결측으로 보고).
+벤치마크 출처(2026-09-11 백필 후):
+  · KR 069500/229200 — `data/price_backfill_yf/kr/`(yfinance, 2018-01-02~). 라이브
+    CSV(2025-04-29~)와는 배당 소급 재계산 계단만 다르다(무해). **이어붙이지 않고
+    이 파일 하나를 전 구간 단일 출처로 쓴다** — 계단을 넘나드는 창의 왜곡 방지.
+  · US IWM — `data/price_backfill_alpaca/us/`(2023-01-03~2025-04-30) + 라이브
+    CSV(2025-04-29~). 경계가 일정비율(−0.236%)이라 **백필 구간을 비율 보정해** 잇는다.
+  · 두 백필 모두 라이브 수집 CSV와 분리 보관이며 병합하지 않는다.
 """
 from __future__ import annotations
 
@@ -34,22 +40,55 @@ from tools.selection_account_compare import read_bars  # noqa: E402
 from tools.virtual_books import contract_exit_v2  # noqa: E402
 
 _CACHE: dict[str, list] = {}
+_BENCH: dict[str, list] = {}
+
+BACKFILL = {"kr": ROOT / "data" / "price_backfill_yf" / "kr",
+            "us": ROOT / "data" / "price_backfill_alpaca" / "us"}
+
+
+def _read(path):
+    try:
+        return read_bars(path, "2099-12-31", invalid_dates=set())
+    except (OSError, ValueError):
+        return []
 
 
 def bars(market, ticker):
     key = f"{market}:{str(ticker).upper()}"
     if key not in _CACHE:
-        path = ROOT / "data" / "price" / market / f"{market}_{str(ticker).upper()}.csv"
-        try:
-            _CACHE[key] = read_bars(path, "2099-12-31", invalid_dates=set())
-        except (OSError, ValueError):
-            _CACHE[key] = []
+        _CACHE[key] = _read(ROOT / "data" / "price" / market / f"{market}_{str(ticker).upper()}.csv")
     return _CACHE[key]
+
+
+def bench_bars(market, ticker):
+    """벤치마크 전용 시계열 — 백필을 앞에 붙인다.
+
+    KR은 백필 하나가 전 구간을 덮으므로 그대로 쓴다(단일 출처).
+    US는 백필이 2025-04-30까지라 라이브와 이어야 하는데, 경계가 일정비율이므로
+    겹침 구간 종가비로 백필을 보정한 뒤 라이브 앞에 붙인다.
+    """
+    key = f"{market}:{str(ticker).upper()}"
+    if key in _BENCH:
+        return _BENCH[key]
+    live = bars(market, ticker)
+    back = _read(BACKFILL[market] / f"{market}_{str(ticker).upper()}.csv")
+    if not back:
+        _BENCH[key] = live
+    elif not live or back[-1][0] >= live[-1][0]:
+        _BENCH[key] = back                      # 백필이 전 구간을 덮는다(KR)
+    else:
+        lv = {x[0]: x for x in live}
+        pairs = [(x, lv[x[0]]) for x in back if x[0] in lv and x[4] > 0]
+        ratio = st.mean(l[4] / b[4] for b, l in pairs) if pairs else 1.0
+        scaled = [(d, o * ratio, h * ratio, lo * ratio, c * ratio, v)
+                  for d, o, h, lo, c, v in back if d < live[0][0]]
+        _BENCH[key] = scaled + live
+    return _BENCH[key]
 
 
 def benchmark_window(market, symbol, day, hold):
     """같은 창의 벤치마크 수익 — 진입일 시가 → hold세션 뒤 종가."""
-    b = bars(market, symbol)
+    b = bench_bars(market, symbol)
     idx = {x[0]: i for i, x in enumerate(b)}.get(day)
     if idx is None or idx + hold > len(b):
         return None
