@@ -41,6 +41,7 @@ STEPS = [
     ("kq_panic_settle", ["tools/kr_index_etf_panic_shadow.py", "settle"]),  # 09-09: KOSDAQ 급락일 지수 ETF 종가매수→다음시가 정산+리포트
     ("core_etf_book", ["tools/core_etf_book_shadow.py", "run"]),           # 09-09: 코어 ETF 북(ew·absmom) 월초 리밸런스·일일 MTM
     ("kq_panic_k_tier", ["tools/kq_panic_k_tier.py"]),                    # 09-12: 패닉 신호일에 급락 후보수(k) 등급 주석 — 사전등록 D의 판정 입력. 라이브 모듈 미변경, 캐시 결측일은 보류 후 재시도
+    ("kq_close_rung", ["tools/kq_close_rung_shadow.py"]),                   # 09-13: 패닉 v2 바로 아래 종가 칸(-2.5~-2.0) 관측 — 별도 원장이라 v2 신호 오염 없음. 갭 칸은 회당 +0.003%로 죽었고 종가 칸만 살아 있어서 forward 30건을 쌓는다
 ]
 
 
