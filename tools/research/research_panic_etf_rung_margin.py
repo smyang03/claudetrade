@@ -94,14 +94,21 @@ def collect(cache, dates, by_year, pooled, cond):
     return out
 
 
-def summarize(recs):
+def summarize(recs, span_years=None):
+    """span_years를 주면 연 환산 분모를 그 값으로 고정한다.
+
+    강신호는 10년 중 9년에만 나온다. 자기 연도 수(9)로 나누면 연 회수가 부풀어
+    강/약을 합쳐도 기준 집합과 안 맞는다(20.6 vs 20.3). 부분집합끼리 더할 때는
+    반드시 **같은 분모**(기준 집합의 연도 수)를 써야 한다.
+    """
     if not recs:
         return None
     ys = sorted({r[0] for r in recs})
     pos = sum(1 for y in ys if st.mean(r[1] for r in recs if r[0] == y) > 0)
+    denom = span_years or len(ys)
     return {"n": len(recs), "years": len(ys), "pos": pos,
             "mean": st.mean(r[1] for r in recs), "t": t_stat([r[1] for r in recs]),
-            "per_year": len(recs) / len(ys), "total": st.mean(r[1] for r in recs) * len(recs) / len(ys)}
+            "per_year": len(recs) / denom, "total": st.mean(r[1] for r in recs) * len(recs) / denom}
 
 
 def fmt(s):
@@ -181,7 +188,8 @@ def main():
     strong = collect(cache, dates, by_year, pooled, is_strong)
     weak = collect(cache, dates, by_year, pooled, lambda c: in_base(c) and not is_strong(c))
     assert len(strong) + len(weak) == len(base), "강/약 분해가 기준 집합과 안 맞는다"
-    ss, ws = summarize(strong), summarize(weak)
+    span = bs["years"]          # 강/약은 기준 집합과 같은 연도 분모로 환산한다
+    ss, ws = summarize(strong, span), summarize(weak, span)
     L += ["", "## 부록 — 2단 사이징은 얼마짜리인가", "",
           f"강신호 = 갭 ≤ {P.GAP_STRONG}%(사전등록된 등급). 새 검정이 아니라 환산이다.", "",
           "| 등급 | 건수 | 연 회수 | 회당 초과(비용후) | t | **연 기여(1단위)** |",
@@ -189,22 +197,37 @@ def main():
           f"| 강신호(갭≤{P.GAP_STRONG}) {fmt(ss)[1:]}",
           f"| 약신호 {fmt(ws)[1:]}"]
     if ss and ws:
-        flat = bs["total"]
-        # 강한 밤에 3배를 실으면: 기여는 3×강 + 1×약, 평균 배치자본은 (3n_s+n_w)/(n_s+n_w) 단위
-        tier_contrib = 3 * ss["total"] + ws["total"]
-        avg_units = (3 * ss["n"] + ws["n"]) / (ss["n"] + ws["n"])
-        per_cap = tier_contrib / avg_units
+        WORST_1U = 12.96      # 1단위 기준 최악 1박(사전등록 기록)
+
+        def tier(mult):
+            """강신호에 mult단위, 약신호 1단위일 때 (연 기여, 평균 배치단위, 자본당)."""
+            contrib = mult * ss["total"] + ws["total"]
+            avg = (mult * ss["n"] + ws["n"]) / (ss["n"] + ws["n"])
+            return contrib, avg, contrib / avg
+
+        rows = []
+        for mult, tag in ((1, "평탄(참고)"), (2, "**현행 등록 계약**"), (3, "3배(가정)")):
+            c, a, pc = tier(mult)
+            rows.append((mult, tag, c, a, pc))
+        cur = next(r for r in rows if r[0] == 2)
         L += ["",
-              f"- 전액 평탄(현행 가정): 자본당 연 **{flat:+.2f}%p**. 최악 1박 −12.96%.",
-              f"- 강한 밤 3배·약한 밤 1배: 연 {tier_contrib:+.2f}%p, 평균 배치 {avg_units:.2f}단위 → "
-              f"**자본당 {per_cap:+.2f}%p** (평탄 대비 **{per_cap - flat:+.2f}%p**).",
-              f"  대가는 **최악 1박이 −12.96% → 약 −{12.96 * 3:.0f}%**다(강신호 밤에만).",
+              "⚠️ **현행 쉐도우 계약은 이미 강신호 2단위다**(09-10 운영자 지시로 등록, `UNITS`).",
+              "그래서 비교 기준은 '평탄'이 아니라 **2배**다.", "",
+              "| 강신호 배수 | 연 기여 | 평균 배치 | **자본당 연** | 현행 대비 | 최악 1박 |",
+              "|---|---:|---:|---:|---:|---:|"]
+        for mult, tag, c, a, pc in rows:
+            L.append(f"| {mult}배 {tag} | {c:+.2f}%p | {a:.3f}단위 | **{pc:+.2f}%p** | "
+                     f"{pc - cur[4]:+.2f}%p | −{WORST_1U * mult:.1f}% |")
+        c3 = next(r for r in rows if r[0] == 3)
+        L += ["",
+              f"- **2배 → 3배는 자본당 {c3[4] - cur[4]:+.2f}%p**, 대가는 최악 1박 "
+              f"−{WORST_1U * 2:.1f}% → **−{WORST_1U * 3:.1f}%**.",
               "",
-              "**읽기 — 이게 '연 10%'를 올리는 유일한 안쪽 레버다.**",
-              "1박 보유라 밤이 겹치지 않아서, 모든 신호에 이미 전액을 넣을 수 있다. 따라서",
-              "사이징으로 수익을 올리려면 **강한 밤에 평소 한도를 넘어서** 실어야 한다.",
-              "그건 사이징 튜닝이 아니라 **리스크 한도 결정**이고 운영자 몫이다.",
-              "거래는 연 3.2회뿐이라 forward로 이걸 확인하려면 여러 해가 걸린다 —",
+              "**읽기 — 지금은 바꾸지 않는다.**",
+              "강신호 2단위는 사전등록 §D의 **검정 중인 계약**이다(forward 30건 판정 대기).",
+              "검정 도중에 배수를 바꾸면 그 검정이 무효가 된다. 그래서 3배는 **가격표로만** 남기고",
+              "`UNITS`는 건드리지 않는다. 채택하려면 별도 arm으로 등록해야 한다.",
+              "덧붙여 강신호가 연 3.2회뿐이라 forward로 배수를 가르는 데는 여러 해가 걸린다 —",
               "판단 근거는 백필과 한도 감수 여부이지 forward 표본이 아니다."]
 
     out = ROOT / "docs" / "reports" / f"panic_etf_rung_margin_{date.today().strftime('%Y%m%d')}.md"
