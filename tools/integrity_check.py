@@ -116,8 +116,15 @@ def check_job_freshness(ml_db: Path, event_db: Path, audit_db: Path, now: dateti
         checks.append(evaluate_freshness("forward 측정기(FORWARD_MEASURED)", fm, now, warn_days=3, fail_days=5,
                                          note="세션마감 자동 측정. 5/27~6/19 3주 정지 사례"))
         closed = ev.execute("SELECT MAX(occurred_at) FROM lifecycle_events WHERE event_type='CLOSED'").fetchone()[0]
-        checks.append(evaluate_freshness("CLOSED 이벤트(봇 청산 기록)", closed, now, warn_days=4, fail_days=7,
-                                         note="장기 무청산이면 봇/체결 흐름 점검"))
+        submit_on, why = _submit_lanes_enabled()
+        row = evaluate_freshness("CLOSED 이벤트(봇 청산 기록)", closed, now, warn_days=4, fail_days=7,
+                                 note="장기 무청산이면 봇/체결 흐름 점검")
+        if not submit_on and row["status"] in (WARN, FAIL):
+            # 제출 OFF면 무청산은 결함이 아니라 그 설정의 정상 귀결이다.
+            row = {**row, "status": OK,
+                   "detail": f"{row['detail']} — 의도({why}), 결함 아님",
+                   "note": "제출 ON으로 되돌리면 이 검사는 다시 FAIL을 든다"}
+        checks.append(row)
     with _connect_ro(ml_db) as ml:
         synced = ml.execute("SELECT MAX(synced_at) FROM v2_learning_performance").fetchone()[0]
         checks.append(evaluate_freshness("학습원장 sync(synced_at)", synced, now, warn_days=2, fail_days=4,
@@ -630,6 +637,33 @@ def _latest_effective_config() -> tuple[str, dict[str, str]]:
         return latest.name, {}
     effective = payload.get("effective") or {}
     return latest.name, {str(k): str(v) for k, v in effective.items()}
+
+
+def _submit_lanes_enabled() -> tuple[bool, str]:
+    """실주문 제출이 켜져 있나 — effective-config 스냅샷 기준.
+
+    09-01 운영자 결정(커밋 603d22f)으로 두 sleeve의 SUBMIT_ENABLED가 false다.
+    그러면 신규 실체결이 없으니 **CLOSED 이벤트가 안 쌓이는 게 정상**인데,
+    stale 검사가 이걸 FAIL로 올려 종합 판정이 상시 FAIL로 켜져 있었다.
+    상시 FAIL은 진짜 고장을 가린다 — "의도된 OFF"와 "고장난 OFF"를 갈라야 한다.
+
+    ⚠️ `os.getenv`를 쓰지 않는다. 이 도구는 봇과 다른 프로세스라 자기 환경에는
+    라이브 값이 없다. **봇이 시작할 때 남긴 effective-config 스냅샷**이 실효값이다.
+    스냅샷이 없으면 판단하지 않고 (True, 사유)를 돌려 기존 동작(FAIL)을 유지한다 —
+    모르는 상태를 '의도된 OFF'로 오해하면 이번엔 반대 방향으로 눈을 감는다.
+    """
+    keys = ("US_SWING_ORDER_SUBMIT_ENABLED", "KR_FALLEN_ORDER_SUBMIT_ENABLED")
+    snap_name, effective = _latest_effective_config()
+    if not effective:
+        return True, "effective-config 스냅샷 없음(판단보류)"
+    vals = {k: effective.get(k) for k in keys}
+    if any(v is None for v in vals.values()):
+        missing = ", ".join(k for k, v in vals.items() if v is None)
+        return True, f"스냅샷에 {missing} 없음(판단보류)"
+    on = [k for k, v in vals.items() if str(v).strip().lower() in ("true", "1", "yes")]
+    if on:
+        return True, f"제출 ON: {', '.join(on)}"
+    return False, f"두 레인 제출 OFF({snap_name})"
 
 
 def check_max_hold_drift(now: datetime) -> list[dict[str, Any]]:
