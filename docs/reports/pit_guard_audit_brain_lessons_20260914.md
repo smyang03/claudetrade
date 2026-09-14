@@ -49,12 +49,19 @@ recency = max(0, 20 - _days_old(item.get("generated_at") or item.get("date"), to
 
 **판정: 라이브 결함 아님. 재생 경로가 하나라도 생기는 순간 즉시 구멍.**
 
-수리 모양(미적용, 제안): `as_of: date | None = None`을 얇게 관통시키고 `None → date.today()`.
-라이브 동작은 그대로고, `generated_at ≤ as_of` 필터를 추가한다.
-⚠️ 타임스탬프만으로는 부족하다 — **검증 플래그로도 샌다.** T에 생성돼 T+30에 검증된 교훈이
-T+10 재생에 `status="validated"`로 들어오면 그것도 lookahead다
-(`_lesson_truth_status` · `lesson_validation.py`). 필터는 `generated_at ≤ D` **그리고**
-`validated_at ≤ D` 여야 한다.
+**→ 09-14 수리 완료** (운영자 지시). `as_of: date | None = None`을 공개 API부터
+`_select_items`까지 얇게 관통시키고 `None → date.today()`. **라이브 동작 불변.**
+`_is_future_item`이 `generated_at`(brain은 `date`) > `as_of` 인 항목을 `future_lesson`으로
+버린다. 날짜를 못 읽으면 **통과**시킨다 — 가드가 기능을 죽이는 쪽이 더 나쁘다.
+테스트 16건. 기존 교훈 테스트 95건 회귀 없음.
+
+**검증 플래그 누수는 이 코드엔 없다 — 최초 우려를 정정한다.** `:267~269`가
+`truth_status != "fresh"`인 항목을 **이미 전부 버린다.** 즉 검증·수동검토를 거친 교훈은
+애초에 주입 대상이 아니라, T+30 검증 플래그가 T+10 재생에 새는 경로가 없다.
+
+**가드가 하나 더 있었다(감사 시 못 봤던 것).** `:448~` 승인 컨베이어(2026-06-12) —
+*"운영자 승인 전 교훈은 프롬프트 주입 금지"*. 근거가 주석에 있다: 무승인 권고문 주입
+14일간 지표 무변화 실증. 실제로 PIT 필터보다 **뒤에서** 거의 전부를 막는다.
 
 ---
 

@@ -181,6 +181,27 @@ def _allowed_prompt_scopes(item: dict[str, Any]) -> list[str]:
     return ["selection"]
 
 
+def _is_future_item(item: dict[str, Any], as_of: date) -> bool:
+    """분석일(as_of) 이후에 생성된 교훈인가 — point-in-time 가드.
+
+    라이브에서는 as_of == 오늘이라 항상 False다. 이 가드가 일하는 건 **과거를 재생할 때**다.
+    2026-09-14 감사에서 확인: `generated_at`이 recency 점수에만 쓰이고 컷오프로는 쓰이지
+    않아서, 과거 재생 경로가 생기는 순간 미래 교훈이 프롬프트에 들어갈 수 있었다
+    (TradingAgents #1300과 같은 모양). 재생 경로를 만드는 사람이 문서를 못 봐도 막히도록
+    코드에 박는다 — 우리는 같은 계열을 08-22·08-25·09-03 세 번 놓쳤고 전부 사후 발견이었다.
+
+    날짜를 못 읽으면 **통과시킨다**. 여기서 막으면 라이브에서 날짜 없는 교훈이 조용히
+    전부 사라진다 — 가드가 기능을 죽이는 쪽이 더 나쁘다.
+    """
+    prefix = _date_prefix(item.get("generated_at") or item.get("date"))
+    if not prefix:
+        return False
+    try:
+        return date.fromisoformat(prefix) > as_of
+    except ValueError:
+        return False
+
+
 def _score_item(item: dict[str, Any], today: date) -> float:
     severity = str(item.get("severity") or "info").lower()
     sample_count = _as_int(item.get("sample_count"), 0)
@@ -397,8 +418,9 @@ def _collect_brain_items(
     return items
 
 
-def _select_items(market: str, max_items: int, *, prompt_scope: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
-    today = date.today()
+def _select_items(market: str, max_items: int, *, prompt_scope: str,
+                  as_of: date | None = None) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    today = as_of or date.today()
     ignored: list[dict[str, str]] = []
     items = _collect_lesson_candidate_items(market, today, ignored, prompt_scope=prompt_scope)
     items.extend(_collect_brain_items(market, today, ignored, prompt_scope=prompt_scope))
@@ -412,6 +434,9 @@ def _select_items(market: str, max_items: int, *, prompt_scope: str) -> tuple[li
             continue
         if key in seen:
             ignored.append({"source": str(item.get("source") or ""), "reason": "duplicate"})
+            continue
+        if _is_future_item(item, today):
+            ignored.append({"source": str(item.get("source") or ""), "reason": "future_lesson"})
             continue
         seen.add(key)
         item["score"] = round(_score_item(item, today), 2)
@@ -479,8 +504,13 @@ def build_active_lesson_context(
     prompt_scope: str = "selection",
     max_items: int | None = None,
     max_chars: int | None = None,
+    as_of: date | None = None,
 ) -> dict[str, Any]:
-    """Build compact active lesson metadata and optional prompt section."""
+    """Build compact active lesson metadata and optional prompt section.
+
+    `as_of`는 point-in-time 기준일이다. None이면 오늘 — 라이브 동작은 바뀌지 않는다.
+    과거를 재생할 때만 그 세션 날짜를 넘겨서 미래 교훈이 새지 않게 한다(`_is_future_item`).
+    """
     normalized_market = str(market or "").upper()
     if normalized_market not in ("KR", "US"):
         normalized_market = str(market or "")
@@ -517,7 +547,8 @@ def build_active_lesson_context(
             },
         }
 
-    selected, ignored = _select_items(normalized_market, item_limit, prompt_scope=normalized_prompt_scope)
+    selected, ignored = _select_items(normalized_market, item_limit,
+                                      prompt_scope=normalized_prompt_scope, as_of=as_of)
     preview = _format_section(selected, char_limit)
     injected = bool(enabled and not shadow and preview)
     prompt_scope_counts = dict(Counter(str(item.get("target_prompt_scope") or "") for item in selected))
