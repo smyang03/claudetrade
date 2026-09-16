@@ -79,14 +79,32 @@ def test_bench_unavailable_does_not_fall_back_to_raw(monkeypatch):
     assert G.verdict("c_kr_fallen_regime", s) == "BENCH_UNAVAILABLE"
 
 
-def test_hold_horizon_read_from_note(monkeypatch):
-    """보유기간을 strategies.note의 D<n>에서 읽는다 — D10 전략에 D5 벤치를 대면 초과가 과대평가된다."""
+def test_hold_horizon_comes_from_strategies_not_note(monkeypatch):
+    """보유기간 정본은 `virtual_books.STRATEGIES["hold"]`다 — note 표기가 아니다.
+
+    09-16 정정. 전에는 note의 D<n>을 읽고 없으면 "KR이면 5"로 추정했는데, 56 arm 중 46개는
+    note에 D표기가 없고 KR 가상 북은 **전부 hold=7**이다. 짧은 창을 대면 벤치 수익이
+    작게 잡혀 **초과가 과대평가**된다. 그래서 note와 소스가 엇갈리면 **소스가 이긴다.**
+    """
     days = [f"2026-03-{d:02d}" for d in range(1, 20)]
     _wire_bench(monkeypatch, _bars(days, open_px=100.0, close_px=110.0))
+    # note는 D10이라 우기지만 c_kr_fallen_regime의 실제 계약은 hold=7이다.
     con = _db([(days[0], 5.0, "CLOSED")], note="E3 — ... TP12/SL25/D10. 반증: forward 30건 t<0")
-    assert G.forward_arm_stats(con)["c_kr_fallen_regime"]["hold_sessions"] == 10
+    assert G.forward_arm_stats(con)["c_kr_fallen_regime"]["hold_sessions"] == 7
+    # note가 비어도 추정(KR=5)으로 떨어지지 않는다.
     con2 = _db([(days[0], 5.0, "CLOSED")], note="보유기간 표기 없음")
-    assert G.forward_arm_stats(con2)["c_kr_fallen_regime"]["hold_sessions"] == 5   # KR 기본값
+    assert G.forward_arm_stats(con2)["c_kr_fallen_regime"]["hold_sessions"] == 7
+
+
+def test_unknown_arm_falls_back_to_note(monkeypatch):
+    """STRATEGIES에 없는(은퇴한) id만 note 표기로 보조한다."""
+    import sqlite3
+    days = [f"2026-03-{d:02d}" for d in range(1, 20)]
+    _wire_bench(monkeypatch, _bars(days, open_px=100.0, close_px=110.0))
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE strategies (id TEXT, note TEXT)")
+    con.execute("INSERT INTO strategies VALUES (?,?)", ("c_retired_arm", "옛 계약 TP12/SL25/D10"))
+    assert G.arm_hold(con, "c_retired_arm", "KR") == 10
 
 
 def test_open_session_still_excluded(monkeypatch):

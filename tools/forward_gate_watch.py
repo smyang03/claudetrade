@@ -75,8 +75,22 @@ def bench_index(market: str):
 
 
 def arm_hold(con, sid: str, market: str) -> int:
-    """보유 세션 수 — strategies.note의 D<n>에서 읽고, 없으면 KR 5 / US 7."""
-    default = 5 if market == "KR" else 7
+    """보유 세션 수 — 정본은 `virtual_books.STRATEGIES[i]["hold"]`다.
+
+    09-16 정정: 전에는 `strategies.note`의 D표기를 읽고 없으면 "KR이면 5"로 추정했다.
+    그런데 56개 arm 중 **46개는 note에 D표기가 없고**, KR 가상 북은 전부 `hold=7`이다.
+    D5 창으로 D7 거래의 초과를 재면 벤치 창이 2세션 짧아져 **초과가 과대평가**된다.
+    (09-08 진입분 실측: D5 창이면 벤치 −5.77%지만 실제 계약은 D7이다.)
+    추정 대신 소스를 읽고, 소스에 없는 은퇴 id만 note → 기본값 순으로 보조한다.
+    """
+    try:
+        from tools.virtual_books import HOLD_SESSIONS, STRATEGIES
+        hold = {s["id"]: int(s.get("hold", HOLD_SESSIONS)) for s in STRATEGIES}.get(sid)
+        if hold:
+            return hold
+        default = HOLD_SESSIONS
+    except Exception:                                   # noqa: BLE001 — 판정 단계를 죽이지 않는다
+        default = 5 if market == "KR" else 7
     try:
         row = con.execute("SELECT note FROM strategies WHERE id=?", (sid,)).fetchone()
     except sqlite3.Error:

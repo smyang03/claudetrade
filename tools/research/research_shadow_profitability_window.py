@@ -40,6 +40,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.research_benchmark_excess import bench_bars  # noqa: E402
+from tools.virtual_books import HOLD_SESSIONS, STRATEGIES  # noqa: E402
+
+# 보유기간 정본은 STRATEGIES["hold"]다(09-16 정정 — 상세는 research_full_audit_20260912.py).
+HOLDS = {s["id"]: int(s.get("hold", HOLD_SESSIONS)) for s in STRATEGIES}
 
 SHADOW = ROOT / "data" / "shadow"
 VB = SHADOW / "virtual_books.db"
@@ -141,8 +145,10 @@ def main():
     groups = defaultdict(lambda: {"win": 0, "cl": 0, "mat": 0, "net": [], "ex": []})
     for sid, v in vb.items():
         mk = "KR" if "kr" in sid else "US"
-        m = re.search(r"\bD(\d+)\b", notes.get(sid, ""))
-        hold = int(m.group(1)) if m else (5 if mk == "KR" else 7)
+        hold = HOLDS.get(sid)
+        if hold is None:      # 원장에만 남은 은퇴 id — note 표기로 보조
+            m = re.search(r"\bD(\d+)\b", notes.get(sid, ""))
+            hold = int(m.group(1)) if m else HOLD_SESSIONS
         g = groups[kind_of(sid)]
         for d, net, stt in v:
             if not (START <= d <= END):

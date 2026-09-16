@@ -37,6 +37,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.research_benchmark_excess import bench_bars  # noqa: E402
+from tools.virtual_books import HOLD_SESSIONS, STRATEGIES  # noqa: E402
+
+# 보유기간 정본은 `STRATEGIES[i]["hold"]`다(기본 HOLD_SESSIONS=7).
+# 09-16 정정: 전에는 note의 D표기를 읽고 없으면 "KR이면 5"로 추정했는데, 46/56 전략은
+# note에 D표기가 없고 KR 가상 북은 **전부 hold=7**이다. D5 창으로 D7 거래의 초과를 재면
+# 벤치 창이 2세션 짧아져 **초과가 과대평가**된다. 추정하지 말고 소스를 읽는다.
+HOLDS = {s["id"]: int(s.get("hold", HOLD_SESSIONS)) for s in STRATEGIES}
 
 DB = ROOT / "data" / "shadow" / "virtual_books.db"
 TODAY = date.today().isoformat()
@@ -75,8 +82,10 @@ def main():
     recs = []
     for sid, v in rows.items():
         market = "KR" if "kr" in sid else "US"
-        hold = int(m.group(1)) if (m := re.search(r"\bD(\d+)\b", notes.get(sid, ""))) \
-            else (5 if market == "KR" else 7)
+        hold = HOLDS.get(sid)
+        if hold is None:      # 원장에만 남은 은퇴 id — note 표기로 보조
+            m = re.search(r"\bD(\d+)\b", notes.get(sid, ""))
+            hold = int(m.group(1)) if m else HOLD_SESSIONS
         fwd = [x for x in v if not x[3]]
         last_supply = max((x[0] for x in fwd), default=None)
         stale = None
