@@ -43,6 +43,11 @@ AI의 사고 방식은 **트레이너이자 개발자**다. 시장·전략·분�
 
 ## 코드 작업 범위
 
+**권한 경계 (2026-09-16 명문화).** "시킨 것만 한다"와 "멈추라 할 때까지 다음 판은 내가 시작한다"는 서로 다른 층에 걸리는 규칙이고 둘 다 유효하다. 층을 이렇게 가른다.
+- **분석·측정·리포트** — 승인된 목표와 범위 안에서는 확인 없이 자율로 끝까지 진행한다. 판정이 나왔다고 멈추지 않는다.
+- **코드·config·저장소 안 문서 변경** — 운영자의 명시적 지시가 있을 때만 한다. 예외는 **세션 메모리 갱신**(`memory/` 파일과 `MEMORY.md` 인덱스) — 연속성 유지 장치라 상시 허용이다.
+- **라이브 파라미터·실자금** — 운영자만 결정한다. 중단·폐기·방향 전환도 여기에 속한다.
+
 - 코드 수정·작성·파일 편집은 운영자가 "수정해 / 구현해 / 작성해" 등 **명시적 지시**를 한 경우에만 한다. "검토 / 분석 / 확인 / 어떻게 생각해"는 분석·의견만 내고 코드를 건드리지 않는다.
 - 설계/개선은 기본적으로 `enforce`/`live` 적용을 전제로 계획한다. 행동 자체가 불확실하거나 운영 데이터가 부족할 때만 `shadow`로 두고, 예외 사유·관찰 지표/기간·전환 조건을 함께 명시한다.
 - 짧은 기간 성과만으로 전략 철학을 갈아엎지 않는다. 축소 → shadow 관찰 → 검증 → 승인 순서로 간다.
@@ -53,7 +58,8 @@ AI의 사고 방식은 **트레이너이자 개발자**다. 시장·전략·분�
 - Path A: `trading_bot.py`의 `TradingBot` — Claude selection → 전략 신호 → 주문.
 - Path B: `runtime/pathb_runtime.py`의 `PathBRuntime` — Claude 가격 플랜 기반 진입/청산. **2026-08-01 재구성으로 KR/US 모두 신규 진입 off**(`PATHB_KR_LIVE_ENABLED`/`PATHB_US_LIVE_ENABLED=false`). 기존 보유 관리·청산 경로는 살아 있다.
 - 두 경로는 `runtime/action_routing.py`의 `RouteDecision`으로 합류한다. **selection 품질 문제와 execution/risk 문제를 한 패치에서 섞지 않는다.**
-- **현재 실제로 신규 매수를 내는 레인은 sleeve 2종뿐이다** — `us_swing_5d`(`runtime/us_swing_order_bridge.py`), `kr_fallen_5d`(`runtime/kr_fallen_order_bridge.py`). 계약 TP12/SL25/D5, 출구는 `isolated_exit_owner`가 쥔다.
+- **매수 레인은 sleeve 2종뿐이고, 지금 둘 다 실주문 제출이 꺼져 있다** — `us_swing_5d`(`runtime/us_swing_order_bridge.py`), `kr_fallen_5d`(`runtime/kr_fallen_order_bridge.py`). **2026-09-01 운영자 결정으로 `US_SWING_ORDER_SUBMIT_ENABLED`/`KR_FALLEN_ORDER_SUBMIT_ENABLED` 모두 `false`** — 후보 생성·원장·평가는 그대로 돌고 주문만 안 나간다. `integrity_check`는 이 상태를 effective-config 스냅샷에서 읽어 **FAIL이 아니라 WARN**으로 낸다(09-16 `aa3f6a9` — 의도 상태를 검증기가 결함으로 읽던 5호 수리). 계약 **TP12/SL25/D7**(08-25 D5→D7 전환), 출구는 `isolated_exit_owner`가 쥔다.
+  ⚠️ **보유기간·슬롯·금액은 문서가 아니라 소스에서 읽는다** — env(`*_MAX_HOLD_SESSIONS`)와 effective-config 스냅샷이 정본이고, 가상 북은 `tools/virtual_books.py`의 `STRATEGIES[i]["hold"]`(기본 `HOLD_SESSIONS=7`)다. 09-16에 낡은 "D5" 문서 기억으로 보유기간을 추정하다 벤치 창이 2세션 짧아져 초과 수익률 부호가 뒤집힌 사고가 있었다.
 
 **환경 로딩 순서 (live 설정이 두 곳에서 결정됨)**
 1. `--live`면 `.env.live`, 아니면 `.env.paper` 로드(없으면 `.env` fallback).
@@ -104,9 +110,10 @@ AI의 사고 방식은 **트레이너이자 개발자**다. 시장·전략·분�
   - ⚠️ **`US_SWING_MAX_NEW_PER_DAY`는 "하루 최대 건수"가 아니다**(2026-08-22 운영자 결정 A안).
     `us_swing_order_handoff.py`가 이 값을 **"밴드 내 순위가 N 이하인가"**로 쓴다. 진입한
     종목이 다음 사이클에서 후보 목록에서 빠지면 그 다음 종목이 1순위로 승격해 또 통과한다.
-    → **실질 계약은 "슬롯 5까지 밴드 순서대로 순차 진입"이다.** 08-21 실측: SEI 22:44 체결
-    직후 AVAV가 1순위가 되어 22:46에 추가 진입(하루 2건).
-    **리스크 한도는 변하지 않는다** — 최악 손실을 정하는 것은 슬롯(5)이지 일한도가 아니다.
+    → **실질 계약은 "슬롯 상한까지 밴드 순서대로 순차 진입"이다**(현행 `US_SWING_MAX_OPEN_SLOTS=7`
+    — 08-25 재배분 이후. 아래 08-21 실측 문구의 "슬롯 5"는 당시 값이다).
+    08-21 실측: SEI 22:44 체결 직후 AVAV가 1순위가 되어 22:46에 추가 진입(하루 2건).
+    **리스크 한도는 변하지 않는다** — 최악 손실을 정하는 것은 슬롯이지 일한도가 아니다.
     일한도는 "슬롯을 며칠에 걸쳐 채우나"의 속도 문제일 뿐이다.
     실제 제약은 **현금**이다(08-22 실측: 달러현금 13.8만원 → 76만 주문 1건도 불가).
   - KR fallen: `KR_FALLEN_ORDER_MAX_KRW=220000`(08-21 개정, 그 전 30만) /
