@@ -98,18 +98,61 @@ def binom_le(k: int, n: int, p: float) -> float:
     return sum(math.comb(n, i) * p ** i * (1 - p) ** (n - i) for i in range(k + 1))
 
 
+def _norm_axis(a) -> str:
+    import re
+    return re.sub(r"[^0-9A-Za-z가-힣]", "", str(a or "")).lower()
+
+
+def _count_hint(v) -> int:
+    """자유형 count_hint를 관대하게 읽는다. 숫자가 없으면 1(=검정 1회)로 센다."""
+    if isinstance(v, (int, float)):
+        return max(1, int(v))
+    import re
+    m = re.search(r"\d[\d,]*", str(v or ""))
+    return max(1, int(m.group(0).replace(",", ""))) if m else 1
+
+
+def _is_meta(e) -> bool:
+    """가설 검정이 아닌 것(회계·환산·후보생성)은 분모에서 뺀다."""
+    v = str(e.get("verdict", "")) + " " + str(e.get("note", ""))
+    return any(k in v for k in ("후보 생성용", "판정 아님", "회계", "N 미수집"))
+
+
+def _is_retest(e) -> bool:
+    """같은 축의 재검정은 새 검정으로 세지 않는다(같은 데이터를 다시 본 것)."""
+    n = str(e.get("note", ""))
+    return any(k in n for k in ("재검정", "재검증", "재확인", "중복", "같은 축", "재실행"))
+
+
 def load_registry():
-    """수집된 가설 레지스트리(있으면)를 합쳐 N을 센다."""
+    """레지스트리를 합쳐 계층별 N을 센다. 깨진 파일은 건너뛰고 사실대로 보고한다."""
     scratch = Path(sys.argv[1]) if len(sys.argv) > 1 else None
     if not scratch or not scratch.exists():
-        return None, []
-    entries = []
+        return None, [], []
+    entries, broken = [], []
     for f in sorted(scratch.glob("denom_*.json")):
         try:
-            entries += json.loads(f.read_text(encoding="utf-8"))
+            data = json.loads(f.read_text(encoding="utf-8"))
+            for e in data:
+                e["_src"] = f.name
+            entries += data
         except Exception as e:      # noqa: BLE001
-            print(f"  ⚠️ {f.name} 읽기 실패: {e}")
-    return scratch, entries
+            broken.append(f"{f.name}: {type(e).__name__}")
+    return scratch, entries, broken
+
+
+def tiers(entries):
+    """T0 = 모든 통계 비교(스윕 셀 포함) · T3 = 고유 축(재검정·메타 제외)."""
+    live = [e for e in entries if not _is_meta(e)]
+    t0 = sum(_count_hint(e.get("count_hint")) for e in live)
+    axes = {}
+    for e in live:
+        if _is_retest(e):
+            continue
+        axes.setdefault(_norm_axis(e.get("axis")), e)
+    return {"raw": len(entries), "t0": t0, "t3": len(axes),
+            "passed": [e for e in axes.values()
+                       if str(e.get("verdict", "")).startswith(("통과", "부분"))]}
 
 
 def main():
@@ -167,24 +210,31 @@ def main():
           f"{'백필 분포와 어긋난다(5% 수준).' if pb < 0.05 else '아직 백필 분포와 모순되지 않는다.'} "
           f"다만 n={fwd_n}이라 **이것만으로 기각하지 않는다** — 반증 조건은 사전등록 문서를 따른다.", ""]
 
-    scratch, entries = load_registry()
+    scratch, entries, broken = load_registry()
     L += ["## ④ 실제 분모", ""]
     if not entries:
-        L += ["레지스트리 미수집 — **N을 가정하지 않는다.** 위 경계표만 유효하다.",
-              "가설 레지스트리를 모아 다시 돌리면 이 절에 실제 판정이 찍힌다.", ""]
+        L += ["레지스트리 미수집 — **N을 가정하지 않는다.** 위 경계표만 유효하다.", ""]
     else:
-        counted = sum(int(e.get("count_hint") or 1) for e in entries
-                      if not str(e.get("note", "")).startswith("재검정"))
-        passed = [e for e in entries if e.get("verdict") == "통과"]
-        need = ALPHA / counted if counted else None
-        L += [f"수집 항목 {len(entries)}건 · **유효 검정 수 N = {counted}**(재검정 제외, 스윕 셀 포함)",
-              f"· 통과로 기록된 축 {len(passed)}개", "",
-              f"Bonferroni 요구 p = {need:.6f} · 패닉 p = {p:.6f} → "
-              f"**{'생존' if need and p < need else '기각'}**",
-              f"· α=0.05 기대 거짓양성 **{0.05*counted:.1f}개** vs 실제 통과 {len(passed)}개", ""]
-        if passed:
-            L.append("통과 기록 축: " + ", ".join(f"`{e.get('axis')}`" for e in passed))
-            L.append("")
+        tt = tiers(entries)
+        srcs = sorted({e.get("_src", "?") for e in entries})
+        L += [f"레지스트리 {len(srcs)}종({', '.join(srcs)}) · 원 항목 {tt['raw']}건", ""]
+        if broken:
+            L += [f"⚠️ 읽기 실패 {len(broken)}건({'; '.join(broken)}) — "
+                  "**그만큼 N은 과소집계다.** 아래 판정은 하한이다.", ""]
+        L += ["| 분모 정의 | N | Bonferroni 요구 p | 패닉 p | 판정 |",
+              "|---|---:|---:|---:|---|"]
+        for nm, N in (("T3 — 고유 축(재검정·메타 제외, **가장 관대**)", tt["t3"]),
+                      ("T0 — 모든 통계 비교(스윕 셀 포함, **가장 엄격**)", tt["t0"])):
+            need = ALPHA / N if N else None
+            L.append(f"| {nm} | {N:,} | {need:.8f} | {p:.6f} | "
+                     f"**{'생존' if need and p < need else '기각'}** |")
+        need3 = ALPHA / tt["t3"] if tt["t3"] else None
+        q3 = 1.0 - (1.0 - p) ** tt["t3"]
+        L += ["", f"**가장 관대한 분모(T3 = {tt['t3']})에서도 경계 {math.floor(n_break)}을 "
+              f"{'넘는다' if tt['t3'] > n_break else '넘지 않는다'}.** "
+              f"엣지 없는 축을 {tt['t3']}번 칠 때 이만한 t가 하나라도 나올 확률 **{q3*100:.1f}%**.", "",
+              f"통과/부분통과로 기록된 축 {len(tt['passed'])}개 — 다만 대부분은 "
+              "**귀무 유지·방법론 확인**이거나 이후 재검정에서 뒤집혔다(예: C6, 밴드+MAX, KR 급락 레인).", ""]
 
     L += ["## 읽는 법", "",
           "- 이 계산은 **패닉 레인을 죽이려는 게 아니다.** 분모를 세지 않으면 살았는지 죽었는지",
