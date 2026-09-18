@@ -86,19 +86,25 @@ def static_book(prices, dates, tickers, weights):
     return nav, qty, cash
 
 
-def stats(nav):
+def stats(nav, base=None, base_date=None):
     """연수는 **행 수가 아니라 날짜 간격**으로 낸다.
 
     원장의 arm nav는 일별이 아니라 mtm 시점만 있다(arm당 ~48행). 행 수를 252로 나누면
     연수가 0.19로 잡혀 CAGR이 +5044%처럼 나온다 — 초안에서 실제로 그렇게 나왔다.
+
+    `base`(=투입 자본)를 주면 수익률을 **자본 기준**으로 낸다. 이것도 초안 결함이었다 —
+    arm의 첫 mtm 행이 2023-01-31(nav 2,670,226)인데 북 시작은 2023-01-02 260만이다.
+    첫 행을 분모로 쓰면 arm만 첫 달 +2.7%를 잃고 들어가, 정적 벤치에 선행을 주게 된다.
     """
     from datetime import date
-    start, end = nav[0][1], nav[-1][1]
+    start = base if base is not None else nav[0][1]
+    end = nav[-1][1]
     peak, dd = -1e18, 0.0
     for _, v in nav:
         peak = max(peak, v)
         dd = min(dd, v / peak - 1)
-    d0, d1 = date.fromisoformat(nav[0][0]), date.fromisoformat(nav[-1][0])
+    d0 = date.fromisoformat(base_date or nav[0][0])
+    d1 = date.fromisoformat(nav[-1][0])
     yrs = max((d1 - d0).days / 365.25, 1e-9)
     cagr = (end / start) ** (1 / yrs) - 1 if start > 0 else 0.0
     ret = (end / start - 1) * 100
@@ -138,27 +144,30 @@ def main():
 
     ew_w = {t: 1 / len(tick) for t in tick}
     nav_static, _, _ = static_book(prices, dates, tick, ew_w)
-    s_static = stats(nav_static)
+    s_static = stats(nav_static, base=CAPITAL, base_date=dates[0])
 
     singles = {}
     for t in tick:
         nav, _, _ = static_book(prices, dates, [t], {t: 1.0})
-        singles[t] = stats(nav)
+        singles[t] = stats(nav, base=CAPITAL, base_date=dates[0])
 
     arms = arm_navs()
     a_stats = {}
     for a, series in arms.items():
         series = [x for x in series if x[0] >= start]
         if len(series) > 5:
-            a_stats[a] = stats(series)
+            # 시작점 (북 개시일, 자본)을 앞에 붙인다 — 첫 달 움직임이 낙폭에서 빠지지 않게.
+            a_stats[a] = stats([(dates[0], CAPITAL)] + series,
+                               base=CAPITAL, base_date=dates[0])
 
     # ⚠️ 낙폭 비교 보정. arm nav는 원장 mtm 시점만이라 arm당 ~48개(월 단위)인데
     # 정적 벤치는 887일 일별이다. **드문드문 보면 최대낙폭이 작게 잡힌다** — 그대로 비교하면
     # arm에 유리한 착시가 생긴다. 그래서 정적 벤치를 **arm과 같은 날짜로 샘플링**해 다시 낸다.
     arm_dates = sorted({d for s in arms.values() for d, _ in s if d >= start})
     nav_map = dict(nav_static)
-    sparse = [(d, nav_map[d]) for d in arm_dates if d in nav_map]
-    s_static_sparse = stats(sparse) if len(sparse) > 5 else None
+    sparse = [(dates[0], CAPITAL)] + [(d, nav_map[d]) for d in arm_dates if d in nav_map]
+    s_static_sparse = (stats(sparse, base=CAPITAL, base_date=dates[0])
+                       if len(sparse) > 5 else None)
 
     L = [f"# 코어 북 중립 벤치 — 운용이 값을 더하는가 ({start} ~ {dates[-1]})", "",
          "read-only. `tools/research/research_core_book_neutral_bench_20260918.py`(규약은 docstring).",
