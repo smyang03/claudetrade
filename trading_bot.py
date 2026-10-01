@@ -143,8 +143,12 @@ from execution.claude_price_adapter import (
 from risk_manager import (
     HARD_RULES,
     ISOLATED_GENERIC_EXIT_FIELDS,
+    KR_BUYBACK_CANARY_SOURCE,
+    US_EARNINGS_T1_SOURCE,
     RiskManager,
     isolated_strategy_source,
+    kr_buyback_canary_manifest,
+    us_earnings_t1_manifest,
 )
 from telegram_reporter import (
     send,
@@ -23501,8 +23505,13 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             for row in broker_open
             if str(row.get("order_no", "") or "").strip()
         }
+        t1_order_nos = (us_earnings_t1_manifest()["order_nos"] if market_key == "US"
+                        else kr_buyback_canary_manifest()["order_nos"] if market_key == "KR" else frozenset())
         for order_no, row in broker_by_order_no.items():
             if order_no in local_by_order_no:
+                continue
+            if order_no in t1_order_nos:
+                # T1 도구가 낸 LOO/MOO 주문(개장 전 대기) — 봇 밖 주문이지만 소유자가 명확하다.
                 continue
             ticker = str(row.get("ticker", "") or "").strip()
             remaining_qty = int(row.get("remaining_qty", 0) or 0)
@@ -23992,6 +24001,23 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         pos["position_origin"] = str(pos.get("position_origin") or origin)
         pos["position_integrity"] = str(pos.get("position_integrity") or integrity)
         pos["management_protected"] = bool(pos.get("management_protected", management_protected))
+        # T1(US 실적 서프라이즈) 귀속 복원: 봇 밖 도구가 산 종목은 브로커 동기화 때 출처가 비어
+        # 일반 손절·손실한도 대상이 된다. T1 실운영 원장의 보유 목록으로 출처를 붙여 격리한다(fail-closed).
+        if market_key == "US" and not str(pos.get("source_strategy") or "").strip():
+            ticker_u = str(pos.get("ticker") or "").strip().upper()
+            if ticker_u and ticker_u in us_earnings_t1_manifest()["open_tickers"]:
+                pos["source_strategy"] = US_EARNINGS_T1_SOURCE
+                pos["exit_owner"] = US_EARNINGS_T1_SOURCE
+                pos["exit_policy"] = "isolated_strategy"
+                log.warning(f"[T1 귀속 복원] US {ticker_u} 출처 없음 → {US_EARNINGS_T1_SOURCE} (T1 원장 보유)")
+        # KR 자사주 canary 귀속 복원 — T1과 같은 계약(도구 원장의 보유 목록으로 격리).
+        if market_key == "KR" and not str(pos.get("source_strategy") or "").strip():
+            ticker_k = str(pos.get("ticker") or "").strip().upper()
+            if ticker_k and ticker_k in kr_buyback_canary_manifest()["open_tickers"]:
+                pos["source_strategy"] = KR_BUYBACK_CANARY_SOURCE
+                pos["exit_owner"] = KR_BUYBACK_CANARY_SOURCE
+                pos["exit_policy"] = "isolated_strategy"
+                log.warning(f"[canary 귀속 복원] KR {ticker_k} 출처 없음 → {KR_BUYBACK_CANARY_SOURCE} (canary 원장 보유)")
         self._recover_position_mfe_state(pos, market_key, origin=origin)
         if pos["management_protected"]:
             pos.setdefault("recovery_session_date", current_session)

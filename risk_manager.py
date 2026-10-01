@@ -38,7 +38,61 @@ ISOLATED_STRATEGY_SOURCES = frozenset({
     "kr_us_sector_pulse_3d",
     # 2026-08-04: KR 급락 반등 micro (게이트 통과 전까지 브리지 플래그 off — 포지션 미발생)
     "kr_fallen_5d",
+    # 2026-09-29: T1 US 실적 서프라이즈(LOO 매수 → 20세션 뒤 MOO 청산). 청산은 T1 도구만 한다.
+    "us_earnings_t1",
+    # 2026-09-30: KR 자사주 canary(장전 시장가 → 5세션 뒤 장전 시장가 청산). 청산은 canary 도구만 한다.
+    "kr_buyback_canary",
 })
+
+US_EARNINGS_T1_SOURCE = "us_earnings_t1"
+_US_EARNINGS_T1_LEDGER = __import__("pathlib").Path(__file__).resolve().parent / "data" / "shadow" / "us_earnings_t1_live.jsonl"
+_T1_MANIFEST_CACHE: dict = {"mtime": None, "value": {"open_tickers": frozenset(), "order_nos": frozenset()}}
+
+
+def us_earnings_t1_manifest(path=None) -> dict:
+    """T1 실운영 원장에서 '보유 중 티커'와 'T1이 낸 주문번호'를 읽는다(읽기 전용, mtime 캐시).
+
+    원장 행(tools/us_earnings_t1_live.py가 씀):
+      {"kind": "order", "ticker", "order_no", "side": "buy"|"sell", ...}
+      {"kind": "position", "ticker", "status": "OPEN"|"CLOSED", ...}  — 같은 티커는 마지막 행이 현재 상태.
+    파일이 없거나 깨지면 빈 집합(로그만) — 귀속 복원이 안 될 뿐 매매를 막지 않는다.
+    """
+    import json as _json
+    p = __import__("pathlib").Path(path) if path else _US_EARNINGS_T1_LEDGER
+    try:
+        mtime = p.stat().st_mtime
+    except OSError:
+        return {"open_tickers": frozenset(), "order_nos": frozenset()}
+    if path is None and _T1_MANIFEST_CACHE["mtime"] == mtime:
+        return _T1_MANIFEST_CACHE["value"]
+    status: dict[str, str] = {}
+    orders: set[str] = set()
+    try:
+        for line in p.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = _json.loads(line)
+            tk = str(row.get("ticker") or "").strip().upper()
+            if row.get("kind") == "position" and tk:
+                status[tk] = str(row.get("status") or "").upper()
+            elif row.get("kind") == "order" and str(row.get("order_no") or "").strip():
+                orders.add(str(row.get("order_no")).strip())
+    except (OSError, ValueError) as exc:
+        log.warning(f"[T1 manifest] 원장 읽기 실패(귀속 복원 생략): {exc}")
+        return {"open_tickers": frozenset(), "order_nos": frozenset()}
+    value = {"open_tickers": frozenset(t for t, s in status.items() if s == "OPEN"), "order_nos": frozenset(orders)}
+    if path is None:
+        _T1_MANIFEST_CACHE.update(mtime=mtime, value=value)
+    return value
+
+
+KR_BUYBACK_CANARY_SOURCE = "kr_buyback_canary"
+_KR_BUYBACK_CANARY_LEDGER = __import__("pathlib").Path(__file__).resolve().parent / "data" / "shadow" / "kr_buyback_canary_live.jsonl"
+
+
+def kr_buyback_canary_manifest(path=None) -> dict:
+    """KR 자사주 canary 원장(tools/kr_buyback_canary.py)의 보유 티커·주문번호. 원장 형식은 T1과 같다."""
+    return us_earnings_t1_manifest(path if path else _KR_BUYBACK_CANARY_LEDGER)
 
 # Generic advisor state must never own an isolated sleeve.  Keep this list in
 # the same module as ISOLATED_STRATEGY_SOURCES so runtime cleanup, preflight,
@@ -1380,7 +1434,10 @@ class RiskManager:
         source = self._isolated_strategy_source(pos)
         if not source:
             return False, None
-        if source in {"us_schg_bil_trend_v1", "kr_factor_trend_v1"}:
+        if source in {"us_schg_bil_trend_v1", "kr_factor_trend_v1", US_EARNINGS_T1_SOURCE, KR_BUYBACK_CANARY_SOURCE}:
+            # T1은 비상 손절이 오히려 성과를 깎았다(T1_improve4_20260928: −25% 손절 쌍대 t −2.35)
+            # → 봇은 청산하지 않고 T1 도구가 진입+20세션 MOO로만 청산한다.
+            # KR 자사주 canary도 같은 계약 — canary 도구가 진입+5세션 장전 시장가로만 청산한다.
             return True, None
         current_krw = float(pos.get("current_price") or 0.0)
         is_us = pos.get("display_currency") == "USD"

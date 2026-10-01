@@ -3755,11 +3755,26 @@ _US_EXCHANGE_MAP = {
 }
 
 
-def _submit_order_us_once(ticker, qty, price, side, token) -> dict:
+# 미국 주문 구분(KIS 공식 샘플 open-trading-api overseas_stock order 기준, 2026-09-28 확인):
+#   매수 TTTT1002U: 00 지정가 · 32 LOO(장개시지정가) · 34 LOC(장마감지정가)
+#   매도 TTTT1006U: 00 지정가 · 31 MOO(장개시시장가) · 32 LOO · 33 MOC(장마감시장가) · 34 LOC
+#   모의투자는 00만 가능. 시장가 계열(31·33)은 단가 0.
+US_ORD_DVSN_ALLOWED = {"buy": {"00", "32", "34"}, "sell": {"00", "31", "32", "33", "34"}}
+US_ORD_DVSN_MARKET = {"31", "33"}
+
+
+def _submit_order_us_once(ticker, qty, price, side, token, ord_dvsn: str = "00") -> dict:
     profile = get_kis_market_profile("US")
     acnt_no, acnt_prdt = profile.account_no.split("-")
     qty_i = int(qty or 0)
     price_f = float(price or 0)
+    ord_dvsn = str(ord_dvsn or "00")
+    if ord_dvsn not in US_ORD_DVSN_ALLOWED.get(side, set()):
+        raise ValueError(f"US order [{side} {ticker}] 허용되지 않는 ORD_DVSN={ord_dvsn}")
+    if IS_PAPER_US and ord_dvsn != "00":
+        raise ValueError(f"US order [{side} {ticker}] 모의투자는 지정가(00)만 가능 — ORD_DVSN={ord_dvsn}")
+    if ord_dvsn in US_ORD_DVSN_MARKET:
+        price_f = 0.0
     tr_map = {
         ("buy",  True):  "VTTT1002U",
         ("sell", True):  "VTTT1001U",
@@ -3776,7 +3791,7 @@ def _submit_order_us_once(ticker, qty, price, side, token) -> dict:
         "CTAC_TLNO":       "",
         "MGCO_APTM_ODNO":  "",
         "ORD_SVR_DVSN_CD": "0",
-        "ORD_DVSN":        "00",   # 모의투자는 지정가(00)만 가능
+        "ORD_DVSN":        ord_dvsn,   # 기본 00 지정가. 모의투자는 00만 가능(위에서 검증)
         "SLL_TYPE":        "" if side == "buy" else "00",
     }
     headers = _headers(token, tr_map[(side, IS_PAPER_US)], market="US")
@@ -3818,13 +3833,17 @@ def _order_result_from_us_truth(ticker, qty, price, side, row: dict) -> dict:
     }
 
 
-def _place_order_us(ticker, qty, price, side, token):
+def _place_order_us(ticker, qty, price, side, token, ord_dvsn: str = "00"):
     ticker_u = str(ticker or "").strip().upper()
     qty_i = int(qty or 0)
     price_f = float(price or 0)
     submitted_at = datetime.now()
+    submit_fn = _submit_order_us_once
+    if str(ord_dvsn or "00") != "00":
+        import functools
+        submit_fn = functools.partial(_submit_order_us_once, ord_dvsn=str(ord_dvsn))
     try:
-        return _submit_order_with_rate_retry(_submit_order_us_once, ticker_u, qty_i, price_f, side, token)
+        return _submit_order_with_rate_retry(submit_fn, ticker_u, qty_i, price_f, side, token)
     except KISOrderHTTPError as first_error:
         if first_error.status_code != 500:
             raise
@@ -3855,7 +3874,7 @@ def _place_order_us(ticker, qty, price, side, token):
 
         log.warning(f"[KIS US order retry] {side} {ticker_u} HTTP 500 with no broker truth; retrying once")
         try:
-            return _submit_order_with_rate_retry(_submit_order_us_once, ticker_u, qty_i, price_f, side, token)
+            return _submit_order_with_rate_retry(submit_fn, ticker_u, qty_i, price_f, side, token)
         except KISOrderHTTPError as retry_error:
             msg = f"{retry_error}; retry_after_no_broker_truth_failed"
             raise KISOrderHTTPError(
@@ -3866,9 +3885,14 @@ def _place_order_us(ticker, qty, price, side, token):
             ) from retry_error
 
 
-def place_order(ticker, qty, price, side, token, market="KR"):
+def place_order(ticker, qty, price, side, token, market="KR", ord_dvsn: str | None = None):
+    """ord_dvsn: US 전용 주문 구분(None=기존 지정가 00). KR에 지정하면 거부한다."""
     if market == "US":
-        return _place_order_us(ticker, qty, price, side, token)
+        if ord_dvsn is None:
+            return _place_order_us(ticker, qty, price, side, token)
+        return _place_order_us(ticker, qty, price, side, token, ord_dvsn=ord_dvsn)
+    if ord_dvsn is not None:
+        raise ValueError("ord_dvsn은 US 주문 전용이다")
     return _place_order_kr(ticker, qty, price, side, token)
 
 
