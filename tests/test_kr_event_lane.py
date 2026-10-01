@@ -17,6 +17,17 @@ sys.path.insert(0, str(ROOT))
 
 from runtime import kr_event_lane as k  # noqa: E402
 
+
+_SUPPLY_ENTER_ORIG = k.SUPPLY_ENTER_ENABLED
+
+
+def setUpModule():   # 기존 테스트는 공급계약 게이트 로직 검증용 — ENTER 경로를 켠 상태로 검증한다
+    k.SUPPLY_ENTER_ENABLED = True
+
+
+def tearDownModule():
+    k.SUPPLY_ENTER_ENABLED = _SUPPLY_ENTER_ORIG
+
 k.DOC_DIR = Path(tempfile.mkdtemp()) / "kr_event_docs"  # 본문 보관은 임시 디렉터리로 (저장소 오염 방지)
 
 DOC = ("유한양행/단일판매" + _MID + "공급계약체결/(2026.09.01) 1. 판매" + _MID + "공급계약 구분 상품공급 - 체결계약명 원료의약품(API) 공급계약 "
@@ -835,3 +846,25 @@ class FastPrecheckTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SupplyEnterOffTest(unittest.TestCase):
+    """09-30 운영자 승인: 공급계약은 규칙 통과해도 OBSERVE(+supply_enter_off)로만 기록."""
+
+    def test_default_is_off(self):
+        self.assertFalse(_SUPPLY_ENTER_ORIG)
+
+    def test_supply_rules_pass_becomes_observe(self):
+        k.SUPPLY_ENTER_ENABLED = False
+        try:
+            fields = {"ratio_pct": 50.0, "related_party": False}
+            quote = {"price": 10000.0}
+            liq = {"prev_close": 10000.0, "dvol20_krw": 50e8}
+            d, r = k.decide("supply_contract", False, fields, {}, quote, liq)
+            self.assertEqual(d, "OBSERVE")
+            self.assertIn("rules_pass", r)
+            self.assertIn("supply_enter_off", r)
+            d2, _ = k.decide("bonus_issue", False, {"ratio_per_share": 1.0}, {}, quote, liq)
+            self.assertEqual(d2, "ENTER")          # 다른 종류는 영향 없음
+        finally:
+            k.SUPPLY_ENTER_ENABLED = True

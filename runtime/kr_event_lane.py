@@ -78,6 +78,9 @@ KINDS = {
     "stock_split": ("주식분할결정", "주식분할 결정", "액면분할"),
 }
 ENTER_KINDS = ("supply_contract", "bonus_issue", "prelim_earnings")   # 09-08 N6: 잠정실적 흑자전환(파서 조건 통과 시만 ENTER)
+# 09-30 운영자 승인: 공급계약 ENTER 중지. 백필 2019~26 매출대비 ≥30% OOS h5 −2.14%(t −3.8, 8년 전부 음),
+# 라이브 한 달도 감지 전 +3.0% 선반영 후 되돌림(docs/reports/kr_event_20260930.md). 규칙 통과분은 OBSERVE로 계속 기록.
+SUPPLY_ENTER_ENABLED = False
 # NXT 시간외 단계(09-06 프로브: KIS inquire-price NX/UN 지원, NX 가격이 KRX 종가와 다르게 움직임 — 마감 후 공시를 당일 저녁에 대응)
 # 정규장 포지션은 15:41에 강제 청산하고 NXT 단계는 별도 venue로 시작한다. 이월 없음.
 AFTER_HOURS = {"start_hhmm": "15:41", "end_hhmm": "20:01", "entry_cutoff_hhmm": "19:40", "eod_exit_hhmm": "19:55",
@@ -491,7 +494,10 @@ def decide(kind: str, is_correction: bool, fields: dict[str, Any], llm: dict[str
         return "SKIP", "slots_full"
     if new_today >= contract["max_new_per_day"]:
         return "SKIP", "daily_cap"
-    return "ENTER", "rules_pass" + ("+llm_" + str(llm.get("quality")) if llm.get("available") else "")
+    reason = "rules_pass" + ("+llm_" + str(llm.get("quality")) if llm.get("available") else "")
+    if kind in ("supply_contract", "supply_contract_amend") and not SUPPLY_ENTER_ENABLED:
+        return "OBSERVE", reason + "+supply_enter_off"   # 규칙 통과는 기록하되 진입하지 않는다
+    return "ENTER", reason
 
 
 # ── NXT 시세 (KIS inquire-price, 시장구분 NX) ─────────────────────────────────
