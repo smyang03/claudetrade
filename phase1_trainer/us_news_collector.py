@@ -447,38 +447,99 @@ def fetch_kis_market_news(target_date: str) -> list[dict]:
 
 # ── SEC EDGAR 공시 수집 ───────────────────────────────────────────────────────
 
+SEC_HEADERS = {"User-Agent": "trading-bot contact@example.com"}
+SEC_FORMS = {"8-K", "8-K/A", "10-Q", "10-K"}
+SEC_TICKER_MAP_PATH = Path(__file__).parent.parent / "data" / "cache" / "sec_company_tickers.json"
+SEC_TICKER_MAP_MAX_AGE_SEC = 7 * 24 * 3600
+_SEC_TICKER_MAP: dict[str, int] | None = None
+
+
+def _sec_ticker_key(ticker: str) -> str:
+    return str(ticker or "").strip().upper().replace(".", "-")
+
+
+def _sec_ticker_to_cik(ticker: str) -> int | None:
+    """company_tickers.json(7일 캐시)으로 티커 → CIK."""
+    global _SEC_TICKER_MAP
+    if _SEC_TICKER_MAP is None:
+        raw = None
+        try:
+            fresh = SEC_TICKER_MAP_PATH.exists() and (
+                time.time() - SEC_TICKER_MAP_PATH.stat().st_mtime < SEC_TICKER_MAP_MAX_AGE_SEC)
+            if fresh:
+                raw = json.loads(SEC_TICKER_MAP_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raw = None
+        if raw is None:
+            try:
+                resp = requests.get("https://www.sec.gov/files/company_tickers.json", headers=SEC_HEADERS, timeout=20)
+                resp.raise_for_status()
+                raw = resp.json()
+                SEC_TICKER_MAP_PATH.parent.mkdir(parents=True, exist_ok=True)
+                SEC_TICKER_MAP_PATH.write_text(json.dumps(raw), encoding="utf-8")
+            except Exception as e:
+                log.debug(f"SEC 티커 맵 실패: {e}")
+                if SEC_TICKER_MAP_PATH.exists():   # 낡은 캐시라도 사용
+                    try:
+                        raw = json.loads(SEC_TICKER_MAP_PATH.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        raw = None
+        if raw is None:
+            return None
+        _SEC_TICKER_MAP = {_sec_ticker_key(v.get("ticker")): int(v.get("cik_str"))
+                           for v in (raw.values() if isinstance(raw, dict) else raw) if v.get("ticker")}
+    return _SEC_TICKER_MAP.get(_sec_ticker_key(ticker))
+
+
 @log_retry(max_retries=3, delay=2.0, logger=log)
 def fetch_sec_filings(ticker: str, target_date: str) -> list[dict]:
     """
-    SEC EDGAR 최근 공시 조회
-    완전 무료, 인증 불필요
-    """
-    headers = {"User-Agent": "trading-bot contact@example.com"}
+    SEC EDGAR 해당 종목 자신의 공시(target_date 접수분) 조회. 완전 무료, 인증 불필요.
 
-    # 티커 → CIK 변환
-    cik_url  = f"https://efts.sec.gov/LATEST/search-index?q=%22{ticker}%22&dateRange=custom&startdt={target_date}&enddt={target_date}&forms=8-K,10-Q,10-K"
+    2026-09-29 수리: 예전 구현은 전문검색(efts)에 티커 문자열을 넣어 '그 글자가 들어간 아무 회사 공시'를
+    가져와 해당 종목 공시로 붙였다(15세션 실측: 타사 공시 37건 오주입, 자사 공시 22건은 form 필드 누락으로
+    weak_generic 탈락 — docs/reports/jev_prompt_opt_20260929.md). 지금은 티커→CIK 후 그 회사의
+    submissions 목록에서 해당 날짜 공시만 가져온다.
+    """
+    cik = _sec_ticker_to_cik(ticker)
+    if cik is None:
+        log.debug(f"SEC CIK 없음 [{ticker}]")
+        return []
     try:
-        resp = requests.get(cik_url, headers=headers, timeout=15)
+        resp = requests.get(f"https://data.sec.gov/submissions/CIK{cik:010d}.json", headers=SEC_HEADERS, timeout=15)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        log.debug(f"SEC 검색 실패 [{ticker}]: {e}")
+        log.debug(f"SEC 조회 실패 [{ticker}]: {e}")
         return []
 
-    hits    = data.get("hits", {}).get("hits", [])
+    recent = (data.get("filings") or {}).get("recent") or {}
+    forms = recent.get("form") or []
+    name = str(data.get("name") or "")
     results = []
-    for hit in hits[:5]:
-        src = hit.get("_source", {})
+    for i, form in enumerate(forms):
+        if form not in SEC_FORMS or (recent.get("filingDate") or [""] * len(forms))[i] != target_date:
+            continue
+        acc = str((recent.get("accessionNumber") or [""] * len(forms))[i])
+        doc = str((recent.get("primaryDocument") or [""] * len(forms))[i])
+        items = str((recent.get("items") or [""] * len(forms))[i] or "")
+        url = (f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc.replace('-', '')}/{doc}" if acc and doc else "")
+        title = f"[{form}] {name} ({ticker.upper()})" + (f" Items {items}" if items else "")
         results.append({
-            "source":    "SEC EDGAR",
-            "provider":  "SEC EDGAR",
-            "date":      target_date,
-            "title":     f"[{src.get('form_type','')}] {src.get('display_names','')}",
-            "content":   src.get("file_date", ""),
-            "url":       f"https://www.sec.gov{src.get('file_date','')}",
-            "form_type": src.get("form_type", ""),
-            "ticker":    ticker.upper(),
+            "source":      "SEC EDGAR",
+            "provider":    "SEC EDGAR",
+            "source_type": "disclosure",
+            "date":        target_date,
+            "title":       title,
+            "content":     title,
+            "url":         url,
+            "form_type":   form,
+            "items":       items,
+            "accession":   acc,
+            "ticker":      ticker.upper(),
         })
+        if len(results) >= 5:
+            break
 
     log.debug(f"SEC [{ticker}] {target_date}: {len(results)}건")
     return results
