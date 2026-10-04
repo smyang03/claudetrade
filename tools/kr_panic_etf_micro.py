@@ -36,12 +36,13 @@ SHADOW = ROOT / "data" / "shadow" / "kr_index_etf_panic.jsonl"
 LEDGER = ROOT / "data" / "shadow" / "kr_panic_etf_micro_live.jsonl"
 START_CFG = ROOT / "config" / "v2_start_config.json"
 SOURCE = "kr_panic_etf_micro"
-TICKER = "233740"
+TICKER = "233740"          # 기본값 — 실제 매매 상품은 KR_PANIC_MICRO_TICKER(10-05: 229200 2배 금액, 세후 우위)
 MARKET_BUFFER = 1.30
-TAX_RATE = 0.154          # 파생형 ETF 매매차익 배당소득세(이익에만)
+TAX_RATE = 0.154          # 기타 ETF(레버리지·인버스) 매매차익 배당소득세(이익에만, 보유기간과세 상한)
+TAXED_TICKERS = {"233740"}   # 229200(KODEX 코스닥150)은 국내주식형 ETF라 매매차익 비과세
 FEE_RATE = 0.00015        # 위탁수수료 편도 근사 — 정확값은 브로커 기간손익으로 대조
 KST = timezone(timedelta(hours=9))
-KEYS = ["KR_PANIC_MICRO_ENABLED", "KR_PANIC_MICRO_UNIT_KRW", "KR_PANIC_MICRO_LOSS_LIMIT_KRW"]
+KEYS = ["KR_PANIC_MICRO_ENABLED", "KR_PANIC_MICRO_UNIT_KRW", "KR_PANIC_MICRO_LOSS_LIMIT_KRW", "KR_PANIC_MICRO_TICKER"]
 
 
 def _now_iso() -> str:
@@ -77,14 +78,14 @@ def realized_pnl(rows: list[dict]) -> float:
     return sum(float(r.get("pnl_krw") or 0) for r in rows if r.get("kind") == "close")
 
 
-def today_signal(shadow_rows: list[dict], day: str) -> dict | None:
+def today_signal(shadow_rows: list[dict], day: str, ticker: str = TICKER) -> dict | None:
     """쉐도우 원장의 오늘 세션 행이 신호면 {units, price, reason} — 아니면 None."""
     sess = next((r for r in shadow_rows if r.get("kind") == "session" and r.get("session_date") == day), None)
     if not sess or not sess.get("signal_1519") or sess.get("holiday") or sess.get("stale_1519"):
         return None
     trade = next((r for r in shadow_rows if r.get("kind") == "trade" and r.get("session_date") == day
-                  and r.get("ticker") == TICKER), None)
-    px = float(((sess.get("etf_1519") or {}).get(TICKER)) or (trade or {}).get("entry_1519") or 0)
+                  and r.get("ticker") == ticker), None)
+    px = float(((sess.get("etf_1519") or {}).get(ticker)) or (trade or {}).get("entry_1519") or 0)
     if px <= 0:
         return None
     return {"units": int((trade or {}).get("units") or 1), "price": px, "reason": sess.get("reason_1519")}
@@ -107,6 +108,7 @@ def _env_gate() -> tuple[bool, dict]:
     enabled = a["KR_PANIC_MICRO_ENABLED"].lower() == "true" and not mismatch
     return enabled, {"unit_krw": float(a["KR_PANIC_MICRO_UNIT_KRW"] or 100_000),
                      "loss_limit": float(a["KR_PANIC_MICRO_LOSS_LIMIT_KRW"] or 50_000),
+                     "ticker": a["KR_PANIC_MICRO_TICKER"] or TICKER,
                      "mismatch": mismatch, "enabled_flag": a["KR_PANIC_MICRO_ENABLED"]}
 
 
@@ -148,22 +150,23 @@ def cmd_buy(dry: bool) -> int:
         print("[panic-micro] 보유 중 — 동시 1건"); return 0
     if realized_pnl(rows) <= -cfg["loss_limit"]:
         print(f"[panic-micro] 누적 실현손실 {realized_pnl(rows):,.0f} ≤ −{cfg['loss_limit']:,.0f} — 신규 매수 중단"); return 0
-    sig = today_signal(_read(SHADOW), day)
+    tk = cfg["ticker"]
+    sig = today_signal(_read(SHADOW), day, tk)
     if not sig:
         print(f"[panic-micro] {day} 신호 없음"); return 0
     qty = plan_qty(cfg["unit_krw"], sig["units"], sig["price"])
-    print(f"[panic-micro] {'(dry) ' if dry else ''}시장가 매수 {TICKER} x{qty} (15:19 {sig['price']:,.0f}, units {sig['units']}, {sig['reason']})")
+    print(f"[panic-micro] {'(dry) ' if dry else ''}시장가 매수 {tk} x{qty} (15:19 {sig['price']:,.0f}, units {sig['units']}, {sig['reason']})")
     if dry or qty < 1:
         return 0
     kis, token = _kis()
     cash = safe_cash_krw(kis.get_balance(token, market="KR", force_refresh=True))   # 미결제 매수 반영(리뷰 H2)
     if qty * sig["price"] * MARKET_BUFFER > cash:
         print(f"[panic-micro] 주문가능현금 부족 {cash:,.0f}"); return 0
-    res = place_safely(kis, TICKER, qty, 0, "buy", token, market="KR")
+    res = place_safely(kis, tk, qty, 0, "buy", token, market="KR")
     state = order_state(res)
-    _append([{"kind": "order", "session": day, "ticker": TICKER, "side": "buy", "qty": qty, "order_no": res.get("order_no", ""),
+    _append([{"kind": "order", "session": day, "ticker": tk, "side": "buy", "qty": qty, "order_no": res.get("order_no", ""),
               "success": res.get("success"), "state": state, "msg": res.get("msg", ""), "units": sig["units"], "at": _now_iso()}]
-            + ([{"kind": "position", "ticker": TICKER, "status": "OPEN", "entry_session": day, "qty": qty, "source": SOURCE,
+            + ([{"kind": "position", "ticker": tk, "status": "OPEN", "entry_session": day, "qty": qty, "source": SOURCE,
                  "order_state": state, "at": _now_iso()}] if state != "rejected" else []))   # unknown도 OPEN(리뷰 H3)
     if state == "unknown":
         print(f"  ⚠️ 주문 접수 여부 불명 — 브로커 확인 필요: {res.get('msg')}")
@@ -175,26 +178,26 @@ def cmd_sell(dry: bool) -> int:
         cmd_reconcile()                                # 전날 체결 확인이 빠져도 1박 계약이 2박이 되지 않게(리뷰 M4)
     day = _today()
     rows = _read(LEDGER)
-    p = _positions(rows).get(TICKER)
+    p = next((q for q in _positions(rows).values() if q.get("status") == "OPEN"), None)   # 상품이 바뀌어도 보유분을 판다
     if not p or p.get("status") != "OPEN" or not p.get("filled_qty") or p.get("entry_session") >= day:
         print("[panic-micro] 매도 대상 없음"); return 0
     if any(r.get("kind") == "order" and r.get("side") == "sell" and r.get("session") == day for r in rows):
         print("[panic-micro] 오늘 매도 이미 있음"); return 0
-    print(f"[panic-micro] {'(dry) ' if dry else ''}장전 시장가 매도 {TICKER} x{p['filled_qty']} (진입 {p['entry_session']})")
+    print(f"[panic-micro] {'(dry) ' if dry else ''}장전 시장가 매도 {p['ticker']} x{p['filled_qty']} (진입 {p['entry_session']})")
     if dry:
         return 0
     kis, token = _kis()
-    res = place_safely(kis, TICKER, int(p["filled_qty"]), 0, "sell", token, market="KR")
-    _append([{"kind": "order", "session": day, "ticker": TICKER, "side": "sell", "qty": int(p["filled_qty"]),
+    res = place_safely(kis, p["ticker"], int(p["filled_qty"]), 0, "sell", token, market="KR")
+    _append([{"kind": "order", "session": day, "ticker": p["ticker"], "side": "sell", "qty": int(p["filled_qty"]),
               "order_no": res.get("order_no", ""), "success": res.get("success"), "state": order_state(res),
               "msg": res.get("msg", ""), "at": _now_iso()}])
     return 0
 
 
-def close_pnl(entry: float, exit_px: float, qty: int) -> float:
+def close_pnl(entry: float, exit_px: float, qty: int, ticker: str = TICKER) -> float:
     gross = (exit_px - entry) * qty
     fee = (entry + exit_px) * qty * FEE_RATE
-    tax = max(0.0, gross) * TAX_RATE
+    tax = max(0.0, gross) * TAX_RATE if ticker in TAXED_TICKERS else 0.0
     return round(gross - fee - tax)
 
 
@@ -220,7 +223,7 @@ def cmd_reconcile() -> int:
             out.append({**p, "kind": "position", "status": "OPEN" if filled else "CLOSED", "filled_qty": filled,
                         "entry_price": px, "at": _now_iso()})
         elif filled:
-            pnl = close_pnl(float(p.get("entry_price") or px), px, filled)
+            pnl = close_pnl(float(p.get("entry_price") or px), px, filled, o["ticker"])
             remaining = int(p.get("filled_qty") or filled) - filled
             out.append({**p, "kind": "position", "status": "OPEN" if remaining > 0 else "CLOSED",   # 부분 체결(리뷰 M2)
                         "filled_qty": max(remaining, 0), "exit_price": px, "at": _now_iso()})
