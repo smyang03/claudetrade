@@ -142,12 +142,16 @@ from execution.claude_price_adapter import (
 )
 from risk_manager import (
     HARD_RULES,
+    CASH_PARKING_SOURCE,
     ISOLATED_GENERIC_EXIT_FIELDS,
     KR_BUYBACK_CANARY_SOURCE,
+    KR_PANIC_ETF_MICRO_SOURCE,
     US_EARNINGS_T1_SOURCE,
     RiskManager,
+    cash_parking_manifest,
     isolated_strategy_source,
     kr_buyback_canary_manifest,
+    kr_panic_etf_micro_manifest,
     us_earnings_t1_manifest,
 )
 from telegram_reporter import (
@@ -23507,6 +23511,7 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         }
         t1_order_nos = (us_earnings_t1_manifest()["order_nos"] if market_key == "US"
                         else kr_buyback_canary_manifest()["order_nos"] if market_key == "KR" else frozenset())
+        t1_order_nos = t1_order_nos | cash_parking_manifest()["order_nos"] | kr_panic_etf_micro_manifest()["order_nos"]
         for order_no, row in broker_by_order_no.items():
             if order_no in local_by_order_no:
                 continue
@@ -24018,6 +24023,17 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 pos["exit_owner"] = KR_BUYBACK_CANARY_SOURCE
                 pos["exit_policy"] = "isolated_strategy"
                 log.warning(f"[canary 귀속 복원] KR {ticker_k} 출처 없음 → {KR_BUYBACK_CANARY_SOURCE} (canary 원장 보유)")
+        # 대기 현금 파킹·패닉 ETF 소액 귀속 복원(KR·US 공통) — 각 도구 원장의 보유 목록으로 격리.
+        for _src, _manifest in ((CASH_PARKING_SOURCE, cash_parking_manifest),
+                                (KR_PANIC_ETF_MICRO_SOURCE, kr_panic_etf_micro_manifest)):
+            if str(pos.get("source_strategy") or "").strip():
+                break
+            ticker_p = str(pos.get("ticker") or "").strip().upper()
+            if ticker_p and ticker_p in _manifest()["open_tickers"]:
+                pos["source_strategy"] = _src
+                pos["exit_owner"] = _src
+                pos["exit_policy"] = "isolated_strategy"
+                log.warning(f"[격리 귀속 복원] {market_key} {ticker_p} 출처 없음 → {_src} (도구 원장 보유)")
         self._recover_position_mfe_state(pos, market_key, origin=origin)
         if pos["management_protected"]:
             pos.setdefault("recovery_session_date", current_session)

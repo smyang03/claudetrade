@@ -42,6 +42,10 @@ ISOLATED_STRATEGY_SOURCES = frozenset({
     "us_earnings_t1",
     # 2026-09-30: KR 자사주 canary(장전 시장가 → 5세션 뒤 장전 시장가 청산). 청산은 canary 도구만 한다.
     "kr_buyback_canary",
+    # 2026-10-05: 대기 현금 파킹(US SGOV / KR 423160). 매매는 파킹 도구만 한다(docs/operating_model.md §7).
+    "cash_parking",
+    # 2026-10-05: KR 코스닥 패닉 ETF 소액 실전(종가 매수 → 다음날 장전 시장가 청산). 청산은 전용 도구만 한다.
+    "kr_panic_etf_micro",
 })
 
 US_EARNINGS_T1_SOURCE = "us_earnings_t1"
@@ -93,6 +97,24 @@ _KR_BUYBACK_CANARY_LEDGER = __import__("pathlib").Path(__file__).resolve().paren
 def kr_buyback_canary_manifest(path=None) -> dict:
     """KR 자사주 canary 원장(tools/kr_buyback_canary.py)의 보유 티커·주문번호. 원장 형식은 T1과 같다."""
     return us_earnings_t1_manifest(path if path else _KR_BUYBACK_CANARY_LEDGER)
+
+
+CASH_PARKING_SOURCE = "cash_parking"
+_CASH_PARKING_LEDGER = __import__("pathlib").Path(__file__).resolve().parent / "data" / "shadow" / "cash_parking_live.jsonl"
+
+
+def cash_parking_manifest(path=None) -> dict:
+    """대기 현금 파킹 원장(tools/cash_parking.py)의 보유 티커·주문번호. 원장 형식은 T1과 같다."""
+    return us_earnings_t1_manifest(path if path else _CASH_PARKING_LEDGER)
+
+
+KR_PANIC_ETF_MICRO_SOURCE = "kr_panic_etf_micro"
+_KR_PANIC_ETF_MICRO_LEDGER = __import__("pathlib").Path(__file__).resolve().parent / "data" / "shadow" / "kr_panic_etf_micro_live.jsonl"
+
+
+def kr_panic_etf_micro_manifest(path=None) -> dict:
+    """KR 패닉 ETF 소액 실전 원장(tools/kr_panic_etf_micro.py)의 보유 티커·주문번호. 원장 형식은 T1과 같다."""
+    return us_earnings_t1_manifest(path if path else _KR_PANIC_ETF_MICRO_LEDGER)
 
 # Generic advisor state must never own an isolated sleeve.  Keep this list in
 # the same module as ISOLATED_STRATEGY_SOURCES so runtime cleanup, preflight,
@@ -1434,7 +1456,8 @@ class RiskManager:
         source = self._isolated_strategy_source(pos)
         if not source:
             return False, None
-        if source in {"us_schg_bil_trend_v1", "kr_factor_trend_v1", US_EARNINGS_T1_SOURCE, KR_BUYBACK_CANARY_SOURCE}:
+        if source in {"us_schg_bil_trend_v1", "kr_factor_trend_v1", US_EARNINGS_T1_SOURCE, KR_BUYBACK_CANARY_SOURCE,
+                      CASH_PARKING_SOURCE, KR_PANIC_ETF_MICRO_SOURCE}:
             # T1은 비상 손절이 오히려 성과를 깎았다(T1_improve4_20260928: −25% 손절 쌍대 t −2.35)
             # → 봇은 청산하지 않고 T1 도구가 진입+20세션 MOO로만 청산한다.
             # KR 자사주 canary도 같은 계약 — canary 도구가 진입+5세션 장전 시장가로만 청산한다.
