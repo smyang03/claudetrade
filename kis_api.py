@@ -349,6 +349,18 @@ def _cache_invalidate(cache: dict, key):
     cache.pop(key, None)
 
 
+def _cache_prune_expired(cache: dict) -> None:
+    """만료 항목 제거. 분봉 캐시는 키에 초 단위 end_at이 들어가 재사용이 거의 없고 지우는 곳도 없어
+    봇 프로세스에서 하루 수십~백 MB씩 쌓였다(2026-10-02 메모리 진단 2순위)."""
+    now = datetime.now()
+    for key, item in list(cache.items()):
+        try:
+            if (now - item["ts"]).total_seconds() > KIS_CACHE_TTL_SEC:
+                cache.pop(key, None)
+        except (KeyError, TypeError):
+            cache.pop(key, None)
+
+
 def _log_cache_use_throttled(key: str, message: str, interval_sec: int = 300):
     now = time.monotonic()
     last_ts = _CACHE_LOG_TS.get(key, 0.0)
@@ -1829,6 +1841,7 @@ def get_intraday_candles(
     else:
         raise RuntimeError(f"unsupported {market_key} intraday provider: {provider_key}")
 
+    _cache_prune_expired(_INTRADAY_CACHE)
     return _cache_set(_INTRADAY_CACHE, cache_key, df.copy())
 
 

@@ -200,7 +200,16 @@ class LocalTimeNormalizedRvolStore:
                     )
         except (OSError, csv.Error):
             return []
+        # 2026-10-02 메모리 진단 1순위: 세션마다 5월 이후 전체 행을 새 키로 캐시하고 지우지 않아
+        # 봇이 하루 수백 MB씩 커졌다. 계산은 최근 lookback_sessions 세션만 쓰므로(compute_time_normalized_rvol
+        # selected_dates) 넉넉히 2배 세션만 보관하고, 같은 시장의 지난 session_date 키는 버린다.
+        keep_dates = sorted({str(row["ts"])[:10] for row in rows})[-self.lookback_sessions * 2:]
+        if keep_dates:
+            first_kept = keep_dates[0]
+            rows = [row for row in rows if str(row["ts"])[:10] >= first_kept]
         with self._lock:
+            for old in [k for k in self._cache if k[0] == key[0] and k[2] != key[2]]:
+                self._cache.pop(old, None)
             self._cache[key] = (modified, list(rows))
         return rows
 

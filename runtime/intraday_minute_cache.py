@@ -141,6 +141,11 @@ class IntradayMinuteCache:
             ttl_sec = float(self.ttl_sec)
         with self._lock:
             cached_at = self._now()
+            # 2026-10-02 메모리 진단 3순위: TTL 만료는 _cache만 지우고 _bar_cache는 남겨, 세션이 바뀌어도
+            # 지난 날짜 키가 누적됐다. 같은 시장의 다른 session_date 키는 저장 시점에 정리한다(세션 내 동작 불변).
+            for store in (self._cache, self._bar_cache):
+                for old in [k for k in store if k[0] == key[0] and k[1] != key[1]]:
+                    store.pop(old, None)
             self._cache[key] = {"cached_at": cached_at, "ttl_sec": ttl_sec, "features": dict(features)}
             if bars is not None:
                 immutable_rows = tuple(tuple(sorted(dict(row).items())) for row in bars)
