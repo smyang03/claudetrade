@@ -127,6 +127,38 @@ def failed_tasks() -> list[str]:
     return sorted(bad)
 
 
+# 조용히 멈춘 레인 감지: 평일마다 도는 작업의 로그가 이 시간 넘게 안 바뀌면 경고(결과 코드 0이어도 안 돈 경우를 잡는다).
+STALE_LOGS = {
+    "T1 채점": ("logs/t1/shadow_score.log", 30),
+    "T1 매수": ("logs/t1/live_trade.log", 30),
+    "canary 매수": ("logs/canary/buy.log", 30),
+    "패닉 소액 매수": ("logs/panic_micro/buy.log", 30),
+    "Form 4 수집": ("logs/insider/form4_daily.log", 30),
+    "KR 자사주 수집": ("logs/buyback/kr_scan.log", 30),
+    "첫 커버 수집": ("logs/target_price/collect.log", 30),
+}
+
+
+def stale_lanes(now: datetime | None = None) -> list[str]:
+    now = now or datetime.now(KST)
+    if now.weekday() == 0 and now.hour < 12:          # 월요일 아침은 주말을 건넜으니 72시간 기준
+        grace = 72
+    elif now.weekday() >= 5:
+        return []
+    else:
+        grace = None
+    out = []
+    for name, (rel, hours) in STALE_LOGS.items():
+        p = ROOT / rel
+        if not p.exists():
+            out.append(f"{name}: 로그 없음")
+            continue
+        age_h = (now.timestamp() - p.stat().st_mtime) / 3600
+        if age_h > (grace or hours):
+            out.append(f"{name}: {age_h:.0f}시간째 기록 없음")
+    return out
+
+
 def bot_memory() -> tuple[str, bool]:
     try:
         pid = json.loads((ROOT / "state" / "live_trading_bot.pid").read_text(encoding="utf-8"))["pid"]
@@ -140,11 +172,14 @@ def bot_memory() -> tuple[str, bool]:
 def build() -> str:
     mem, mem_bad = bot_memory()
     fails = failed_tasks()
+    stale = stale_lanes()
     warn = []
     if mem_bad:
         warn.append(mem)
     if fails:
         warn.append(f"실패한 예약 작업 {len(fails)}개")
+    if stale:
+        warn.append("멈춘 듯한 작업: " + ", ".join(stale))
     lines = [f"[운영 요약] {datetime.now(KST):%m-%d %H:%M}"]
     if warn:
         lines.append("⚠️ 확인 필요: " + " / ".join(warn))

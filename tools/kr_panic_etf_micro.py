@@ -30,6 +30,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
+from live_lane_common import order_state, place_safely, safe_cash_krw  # noqa: E402
+
 SHADOW = ROOT / "data" / "shadow" / "kr_index_etf_panic.jsonl"
 LEDGER = ROOT / "data" / "shadow" / "kr_panic_etf_micro_live.jsonl"
 START_CFG = ROOT / "config" / "v2_start_config.json"
@@ -154,19 +156,23 @@ def cmd_buy(dry: bool) -> int:
     if dry or qty < 1:
         return 0
     kis, token = _kis()
-    cash = float(kis.get_balance(token, market="KR", force_refresh=True).get("orderable_cash") or 0)
+    cash = safe_cash_krw(kis.get_balance(token, market="KR", force_refresh=True))   # 미결제 매수 반영(리뷰 H2)
     if qty * sig["price"] * MARKET_BUFFER > cash:
         print(f"[panic-micro] 주문가능현금 부족 {cash:,.0f}"); return 0
-    res = kis.place_order(TICKER, qty, 0, "buy", token, market="KR")
-    okk = bool(res.get("success"))
+    res = place_safely(kis, TICKER, qty, 0, "buy", token, market="KR")
+    state = order_state(res)
     _append([{"kind": "order", "session": day, "ticker": TICKER, "side": "buy", "qty": qty, "order_no": res.get("order_no", ""),
-              "success": okk, "msg": res.get("msg", ""), "units": sig["units"], "at": _now_iso()}]
+              "success": res.get("success"), "state": state, "msg": res.get("msg", ""), "units": sig["units"], "at": _now_iso()}]
             + ([{"kind": "position", "ticker": TICKER, "status": "OPEN", "entry_session": day, "qty": qty, "source": SOURCE,
-                 "at": _now_iso()}] if okk else []))
+                 "order_state": state, "at": _now_iso()}] if state != "rejected" else []))   # unknown도 OPEN(리뷰 H3)
+    if state == "unknown":
+        print(f"  ⚠️ 주문 접수 여부 불명 — 브로커 확인 필요: {res.get('msg')}")
     return 0
 
 
 def cmd_sell(dry: bool) -> int:
+    if not dry:
+        cmd_reconcile()                                # 전날 체결 확인이 빠져도 1박 계약이 2박이 되지 않게(리뷰 M4)
     day = _today()
     rows = _read(LEDGER)
     p = _positions(rows).get(TICKER)
@@ -178,9 +184,10 @@ def cmd_sell(dry: bool) -> int:
     if dry:
         return 0
     kis, token = _kis()
-    res = kis.place_order(TICKER, int(p["filled_qty"]), 0, "sell", token, market="KR")
+    res = place_safely(kis, TICKER, int(p["filled_qty"]), 0, "sell", token, market="KR")
     _append([{"kind": "order", "session": day, "ticker": TICKER, "side": "sell", "qty": int(p["filled_qty"]),
-              "order_no": res.get("order_no", ""), "success": bool(res.get("success")), "msg": res.get("msg", ""), "at": _now_iso()}])
+              "order_no": res.get("order_no", ""), "success": res.get("success"), "state": order_state(res),
+              "msg": res.get("msg", ""), "at": _now_iso()}])
     return 0
 
 
@@ -214,7 +221,9 @@ def cmd_reconcile() -> int:
                         "entry_price": px, "at": _now_iso()})
         elif filled:
             pnl = close_pnl(float(p.get("entry_price") or px), px, filled)
-            out.append({**p, "kind": "position", "status": "CLOSED", "exit_price": px, "at": _now_iso()})
+            remaining = int(p.get("filled_qty") or filled) - filled
+            out.append({**p, "kind": "position", "status": "OPEN" if remaining > 0 else "CLOSED",   # 부분 체결(리뷰 M2)
+                        "filled_qty": max(remaining, 0), "exit_price": px, "at": _now_iso()})
             out.append({"kind": "close", "ticker": o["ticker"], "entry_session": p.get("entry_session"), "exit_session": o["session"],
                         "entry_price": p.get("entry_price"), "exit_price": px, "qty": filled, "pnl_krw": pnl, "at": _now_iso()})
         print(f"  {o['side']} {o['ticker']} 체결 {filled}주 @ {px:,.0f}")

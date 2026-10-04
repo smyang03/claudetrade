@@ -26,6 +26,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools"))
+from live_lane_common import order_state, place_safely, safe_cash_krw  # noqa: E402
+
 LEDGER = ROOT / "data" / "shadow" / "cash_parking_live.jsonl"
 START_CFG = ROOT / "config" / "v2_start_config.json"
 SOURCE = "cash_parking"
@@ -148,6 +151,21 @@ def cmd_plan() -> int:
     return 0
 
 
+def held_from_fills(rows: list[dict], ticker: str) -> int:
+    """보유 수량은 체결 합계로만 계산한다(position 행 덮어쓰기로 수량을 잃던 문제 — 리뷰 H1)."""
+    q = 0
+    for r in rows:
+        if r.get("kind") == "fill" and r.get("ticker") == ticker:
+            q += int(r.get("filled_qty") or 0) * (1 if r.get("side") == "buy" else -1)
+    return max(q, 0)
+
+
+def pending_orders(rows: list[dict], ticker: str) -> list[dict]:
+    final = {r["order_no"] for r in rows if r.get("kind") == "fill" and r.get("final")}
+    return [r for r in rows if r.get("kind") == "order" and r.get("ticker") == ticker and r.get("state") != "rejected"
+            and r.get("success") is not False and r.get("order_no") not in final]
+
+
 def cmd_park(market: str, dry: bool) -> int:
     enabled, cfg = _env_gate()
     if not dry and not enabled:
@@ -157,10 +175,16 @@ def cmd_park(market: str, dry: bool) -> int:
         print(f"[parking] {msg} — 주문 거부(fail-closed)"); return 2
     if not dry and not market_open(market):
         print(f"[parking] {market} 장 시간 아님 — 주문 안 함"); return 0
+    tk = cfg["us_ticker"] if market == "US" else cfg["kr_ticker"]
+    rows = _read()
+    session = datetime.now(KST).date().isoformat()
+    if pending_orders(rows, tk):
+        print(f"[parking] {tk} 체결 확인 전 주문 있음 — 새 주문 안 함(reconcile 먼저)"); return 0
+    if any(r.get("kind") == "order" and r.get("ticker") == tk and r.get("session") == session for r in rows):
+        print(f"[parking] {tk} 오늘 주문 이미 있음 — 멱등 종료"); return 0
     kis, token = _kis(market)
     bal = kis.get_balance(token, market=market, force_refresh=True)
-    cash = float(bal.get("orderable_cash") or 0)
-    tk = cfg["us_ticker"] if market == "US" else cfg["kr_ticker"]
+    cash = float(bal.get("orderable_cash") or 0) if market == "US" else safe_cash_krw(bal)   # KR 미결제 반영(리뷰 H2)
     keep = cfg["us_keep_usd"] if market == "US" else cfg["kr_keep_krw"]
     last = _last_price(market, tk)
     limit = round(last * 1.001, 2) if market == "US" else kr_limit_price(last)
@@ -168,61 +192,86 @@ def cmd_park(market: str, dry: bool) -> int:
     print(f"[parking] {'(dry) ' if dry else ''}{market} {tk} 지정가 {limit} x{qty} (주문가능 {cash:,.2f}, 유지 {keep:,.0f})")
     if dry or qty < 1:
         return 0
-    res = kis.place_order(tk, qty, limit, "buy", token, market=market)
-    okk = bool(res.get("success"))
-    session = datetime.now(KST).date().isoformat()
-    _append([{"kind": "order", "session": session, "market": market, "ticker": tk, "side": "buy", "qty": qty,
-              "limit": limit, "order_no": res.get("order_no", ""), "success": okk, "msg": res.get("msg", ""), "at": _now_iso()}]
-            + ([{"kind": "position", "market": market, "ticker": tk, "status": "OPEN", "qty_ordered": qty,
-                 "source": SOURCE, "at": _now_iso()}] if okk else []))
+    res = place_safely(kis, tk, qty, limit, "buy", token, market=market)
+    state = order_state(res)
+    _append([{"kind": "order", "session": session, "market": market, "ticker": tk, "side": "buy", "qty": qty, "limit": limit,
+              "order_no": res.get("order_no", ""), "success": res.get("success"), "state": state, "msg": res.get("msg", ""),
+              "at": _now_iso()}]
+            + ([{"kind": "position", "market": market, "ticker": tk, "status": "OPEN", "filled_qty": held_from_fills(rows, tk),
+                 "source": SOURCE, "order_state": state, "at": _now_iso()}] if state != "rejected" else []))
+    if state == "unknown":
+        print(f"  ⚠️ 주문 접수 여부 불명 — 브로커 확인 필요: {res.get('msg')}")
     return 0
 
 
+def _usdkrw() -> float:
+    import yfinance as yf
+    return float(yf.Ticker("KRW=X").fast_info["last_price"])
+
+
 def cmd_unpark(market: str, krw: float, dry: bool) -> int:
+    if krw <= 0:
+        print("[parking] --krw 금액을 지정해야 한다"); return 2       # 기본 0으로 1주를 팔던 문제(리뷰 M7)
     enabled, cfg = _env_gate()
     if not dry and not market_open(market):
         print(f"[parking] {market} 장 시간 아님 — 주문 안 함"); return 0
     tk = cfg["us_ticker"] if market == "US" else cfg["kr_ticker"]
-    pos = _positions().get(tk)
-    if not pos or pos.get("status") != "OPEN":
-        print(f"[parking] {tk} 보유 없음"); return 0
+    rows = _read()
+    if pending_orders(rows, tk):
+        print(f"[parking] {tk} 체결 확인 전 주문 있음 — reconcile 먼저"); return 0
+    held = held_from_fills(rows, tk)
+    if held < 1:
+        print(f"[parking] {tk} 체결 보유 없음"); return 0
     last = _last_price(market, tk)
-    held = int(pos.get("filled_qty") or pos.get("qty_ordered") or 0)
-    unit = last if market == "KR" else last * 1400.0
+    unit = last if market == "KR" else last * _usdkrw()
     qty = min(held, max(1, int(math.ceil(krw / unit))))
     limit = round(last * 0.999, 2) if market == "US" else max(5, int(math.floor(last / 5.0) * 5 - 5))
-    print(f"[parking] {'(dry) ' if dry else ''}{market} {tk} 지정가 매도 {limit} x{qty}")
+    print(f"[parking] {'(dry) ' if dry else ''}{market} {tk} 지정가 매도 {limit} x{qty} (보유 {held})")
     if dry:
         return 0
     kis, token = _kis(market)
-    res = kis.place_order(tk, qty, limit, "sell", token, market=market)
+    res = place_safely(kis, tk, qty, limit, "sell", token, market=market)
     _append([{"kind": "order", "session": datetime.now(KST).date().isoformat(), "market": market, "ticker": tk,
               "side": "sell", "qty": qty, "limit": limit, "order_no": res.get("order_no", ""),
-              "success": bool(res.get("success")), "msg": res.get("msg", ""), "at": _now_iso()}])
+              "success": res.get("success"), "state": order_state(res), "msg": res.get("msg", ""), "at": _now_iso()}])
     return 0
 
 
 def cmd_reconcile() -> int:
     rows = _read()
-    done = {r["order_no"] for r in rows if r.get("kind") == "fill"}
-    todo = [r for r in rows if r.get("kind") == "order" and r.get("success") and r.get("order_no") and r["order_no"] not in done]
+    final = {r["order_no"] for r in rows if r.get("kind") == "fill" and r.get("final")}
+    todo = [r for r in rows if r.get("kind") == "order" and r.get("success") and r.get("order_no")
+            and r["order_no"] not in final]
     if not todo:
         print("[parking] 확인할 주문 없음"); return 0
-    out = []
-    pos = _positions(rows)
+    out: list[dict] = []
+    seen = {}
+    for r in rows:
+        if r.get("kind") == "fill":
+            seen[r["order_no"]] = seen.get(r["order_no"], 0) + int(r.get("filled_qty") or 0)
+    today = datetime.now(KST).date().isoformat()
     for o in todo:
         kis, token = _kis(o["market"])
         f = (kis.get_order_fill_us(token, o["order_no"], o["ticker"], o.get("at", "")) if o["market"] == "US"
              else kis.get_order_fill_kr(token, o["order_no"], o["ticker"], o["session"].replace("-", "")))
-        filled = int((f or {}).get("filled_qty") or 0)
         if f is None:
             continue
-        out.append({"kind": "fill", "order_no": o["order_no"], "market": o["market"], "ticker": o["ticker"],
-                    "side": o["side"], "filled_qty": filled, "fill_price": float(f.get("fill_price") or 0), "at": _now_iso()})
-        p = pos.get(o["ticker"], {"kind": "position", "market": o["market"], "ticker": o["ticker"], "source": SOURCE})
-        held = int(p.get("filled_qty") or 0) + (filled if o["side"] == "buy" else -filled)
-        out.append({**p, "kind": "position", "status": "OPEN" if held > 0 else "CLOSED", "filled_qty": held, "at": _now_iso()})
-        print(f"  {o['side']} {o['ticker']} 체결 {filled}주 @ {f.get('fill_price')} → 보유 {held}")
+        filled = int(f.get("filled_qty") or 0)
+        delta = filled - seen.get(o["order_no"], 0)           # 같은 주문의 누적 체결 증분만 더한다
+        is_final = filled >= int(o.get("qty") or 0) or o["session"] < today
+        if delta > 0 or is_final:
+            out.append({"kind": "fill", "order_no": o["order_no"], "market": o["market"], "ticker": o["ticker"],
+                        "side": o["side"], "filled_qty": max(delta, 0), "fill_price": float(f.get("fill_price") or 0),
+                        "final": is_final, "at": _now_iso()})
+        print(f"  {o['side']} {o['ticker']} 체결 누적 {filled}/{o.get('qty')}주 @ {f.get('fill_price')}"
+              f"{' (확정)' if is_final else ' (대기)'}")
+    after = rows + out                                          # 루프 결과까지 반영해 보유 재계산(리뷰 H1)
+    for tk in sorted({o["ticker"] for o in todo}):
+        held = held_from_fills(after, tk)
+        mk = next(o["market"] for o in todo if o["ticker"] == tk)
+        out.append({"kind": "position", "market": mk, "ticker": tk,
+                    "status": "OPEN" if (held > 0 or pending_orders(after, tk)) else "CLOSED",
+                    "filled_qty": held, "source": SOURCE, "at": _now_iso()})
     _append(out)
     return 0
 

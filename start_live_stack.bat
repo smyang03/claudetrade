@@ -104,13 +104,15 @@ echo      자동복구: watchdog(%WATCHDOG_TASK%)이 5분마다 죽은 역할을
 echo [CLEANUP] 이전 로그 tail 창 정리...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%\tools\stop_log_tails.ps1"
 
+:: 2026-07-22: 탭 3개를 1개로 줄였다. 재시작할 때마다 tail 창이 3개씩 쌓였다
+:: (재시작 5회에 15개 잔존 실측). -Role all 이 같은 세 로그를 한 창에 합쳐 보여준다.
+:: 2026-10-05: 위 주석이 if 블록 안에 있어 '->'와 괄호가 파싱돼 ". was unexpected"로
+:: 스크립트가 여기서 종료(exit 255)됐다 — 블록 밖으로 옮겼다(기동 자체는 위에서 이미 끝난 뒤라 무해했음).
 where wt >nul 2>nul
 if errorlevel 1 (
-  echo [INFO] Windows Terminal(wt^)이 없어 로그 탭을 열지 않는다. 대시보드: http://localhost:5000
+  echo [INFO] Windows Terminal^(wt^)이 없어 로그 탭을 열지 않는다. 대시보드: http://localhost:5000
 ) else (
-  echo [VIEW] 통합 로그 탭 여는 중(창 1개^)...
-  :: 2026-07-22: 탭 3개 -> 1개. 재시작할 때마다 tail 창이 3개씩 쌓였다
-  :: (재시작 5회에 15개 잔존 실측). -Role all 이 같은 세 로그를 한 창에 합쳐 보여준다.
+  echo [VIEW] 통합 로그 탭 여는 중^(창 1개^)...
   wt new-tab --title "claudetrade" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File "%PROJECT_DIR%\tools\tail_live_logs.ps1" -Role all
 )
 

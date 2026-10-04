@@ -30,6 +30,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools"))
+from live_lane_common import order_state, place_safely  # noqa: E402
+
 SHADOW = ROOT / "data" / "shadow" / "us_earnings_t1_shadow.jsonl"
 LEDGER = ROOT / "data" / "shadow" / "us_earnings_t1_live.jsonl"
 START_CFG = ROOT / "config" / "v2_start_config.json"
@@ -166,22 +169,22 @@ def cmd_buy(dry: bool) -> int:
               f"(전일종가 ${p['close_a']:.2f}, 약 {p['cost_krw']:,}원, score {p['score']:.4f})")
         if dry:
             continue
-        res = kis.place_order(p["ticker"], p["qty"], p["limit"], "buy", token, market="US", ord_dvsn="32")
-        ok = bool(res.get("success"))
+        res = place_safely(kis, p["ticker"], p["qty"], p["limit"], "buy", token, market="US", ord_dvsn="32")
+        state = order_state(res)
         _append([{"kind": "order", "session": today, "ticker": p["ticker"], "side": "buy", "ord_dvsn": "32",
-                  "qty": p["qty"], "limit": p["limit"], "order_no": res.get("order_no", ""), "success": ok,
-                  "msg": res.get("msg", ""), "at": _now_iso()}]
+                  "qty": p["qty"], "limit": p["limit"], "order_no": res.get("order_no", ""), "success": res.get("success"),
+                  "state": state, "msg": res.get("msg", ""), "at": _now_iso()}]
                 + ([{"kind": "position", "ticker": p["ticker"], "status": "OPEN", "entry_session": today,
-                     "qty": p["qty"], "cost_krw": p["cost_krw"], "source": SOURCE, "at": _now_iso()}] if ok else []))
+                     "qty": p["qty"], "cost_krw": p["cost_krw"], "source": SOURCE, "order_state": state, "at": _now_iso()}]
+                   if state != "rejected" else []))          # unknown도 OPEN(리뷰 H3)
+        if state == "unknown":
+            print(f"  ⚠️ {p['ticker']} 주문 접수 여부 불명 — 브로커 확인 필요: {res.get('msg')}")
     return 0
 
 
 # ------------------------------------------------------------------ sell
 def cmd_sell(dry: bool) -> int:
-    enabled, cfg = _env_gate()
-    if not dry and not enabled:
-        print(f"[T1 live] 꺼짐 — 매도도 하지 않음(보유가 있으면 수동 확인 필요): {cfg['mismatch'] or cfg['enabled_flag']}")
-        return 0
+    # 만기 청산은 ENABLED와 무관 — 플래그는 신규 매수만 막는다(봇은 격리로 팔지 않으므로, 리뷰 M3).
     today = _today_et()
     due = []
     for tk, p in _positions().items():
@@ -200,10 +203,10 @@ def cmd_sell(dry: bool) -> int:
         print(f"[T1 live] {'(dry) ' if dry else ''}MOO 매도 {tk} x{p['filled_qty']} (진입 {p['entry_session']}, {n}번째 세션)")
         if dry:
             continue
-        res = kis.place_order(tk, int(p["filled_qty"]), 0, "sell", token, market="US", ord_dvsn="31")
+        res = place_safely(kis, tk, int(p["filled_qty"]), 0, "sell", token, market="US", ord_dvsn="31")
         _append([{"kind": "order", "session": str(today), "ticker": tk, "side": "sell", "ord_dvsn": "31",
-                  "qty": int(p["filled_qty"]), "order_no": res.get("order_no", ""), "success": bool(res.get("success")),
-                  "msg": res.get("msg", ""), "at": _now_iso()}])
+                  "qty": int(p["filled_qty"]), "order_no": res.get("order_no", ""), "success": res.get("success"),
+                  "state": order_state(res), "msg": res.get("msg", ""), "at": _now_iso()}])
     return 0
 
 
@@ -225,8 +228,11 @@ def cmd_reconcile() -> int:
         if f is None or (filled == 0 and o.get("session") == str(_today_et())):
             continue                           # 아직 결과 없음 — 다음 실행에서
         px = float(f.get("fill_price") or 0)
-        bars = yf.download(o["ticker"], start=o["session"], progress=False, auto_adjust=False)
-        off_open = float(bars["Open"].values.ravel()[0]) if len(bars) else float("nan")
+        try:                                   # 공식 시가 조회 실패가 체결 기록 전체를 막지 않게(리뷰 M4)
+            bars = yf.download(o["ticker"], start=o["session"], progress=False, auto_adjust=False)
+            off_open = float(bars["Open"].values.ravel()[0]) if len(bars) else float("nan")
+        except Exception:  # noqa: BLE001
+            off_open = float("nan")
         bp = (px / off_open - 1) * 1e4 if filled and off_open == off_open and off_open > 0 else None
         out.append({"kind": "fill", "order_no": o["order_no"], "ticker": o["ticker"], "side": o["side"],
                     "filled_qty": filled, "fill_price": px, "official_open": off_open, "slip_bp_vs_open": bp,
@@ -240,8 +246,10 @@ def cmd_reconcile() -> int:
                 out.append({**p, "kind": "position", "status": "CLOSED", "close_reason": "loo_unfilled", "at": _now_iso()})
         elif filled > 0:
             ret = (px / float(p.get("entry_price") or px) - 1) if p else None
-            out.append({**p, "kind": "position", "status": "CLOSED", "close_reason": "moo_exit", "exit_price": px,
-                        "gross_ret": ret, "at": _now_iso()})
+            remaining = int(p.get("filled_qty") or filled) - filled
+            out.append({**p, "kind": "position", "status": "OPEN" if remaining > 0 else "CLOSED",   # 부분 체결(리뷰 M2)
+                        "filled_qty": max(remaining, 0), "close_reason": None if remaining > 0 else "moo_exit",
+                        "exit_price": px, "gross_ret": ret, "at": _now_iso()})
         print(f"  {o['side']} {o['ticker']} 체결 {filled}주 @ {px} (공식 시가 {off_open:.2f}, 차이 {bp if bp is None else round(bp, 1)}bp)")
     _append(out)
     return 0

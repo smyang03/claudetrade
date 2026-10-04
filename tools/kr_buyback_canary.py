@@ -34,6 +34,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
+from live_lane_common import order_state, place_safely, safe_cash_krw  # noqa: E402
+
 SHADOW = ROOT / "data" / "shadow" / "kr_buyback_shadow.jsonl"
 LEDGER = ROOT / "data" / "shadow" / "kr_buyback_canary_live.jsonl"
 START_CFG = ROOT / "config" / "v2_start_config.json"
@@ -75,7 +77,11 @@ def _positions(rows: list[dict] | None = None) -> dict[str, dict]:
 
 
 def _realized_pnl(rows: list[dict] | None = None) -> float:
-    return sum(float(p.get("pnl_krw") or 0) for p in _positions(rows).values() if p.get("status") == "CLOSED")
+    """청산 행을 전부 합산한다(같은 종목을 다시 사도 이전 손실이 빠지지 않게 — 리뷰 M1)."""
+    rows = rows if rows is not None else _read(LEDGER)
+    return sum(float(r.get("pnl_krw") or 0) for r in rows
+               if (r.get("kind") == "position" and r.get("status") == "CLOSED" and r.get("pnl_krw") is not None)
+               or r.get("kind") == "close")
 
 
 def signals_for(day: date, shadow_rows: list[dict]) -> list[dict]:
@@ -198,7 +204,7 @@ def cmd_buy(dry: bool) -> int:
         kis, token = _kis()
         bal = kis.get_balance(token, market="KR", force_refresh=True)
         held = {str(s.get("ticker") or "").strip() for s in bal.get("stocks", [])}
-        cash = float(bal.get("orderable_cash") or 0)
+        cash = safe_cash_krw(bal)                      # 미결제 매수 반영(리뷰 H2)
     plans, notes = plan_buys(sigs, cfg, open_pos, held, cash, _realized_pnl(rows))
     for n in notes:
         print("  건너뜀", n)
@@ -207,13 +213,17 @@ def cmd_buy(dry: bool) -> int:
               f"(전일종가 {p['close_D']:,.0f}, 약 {p['cost_krw']:,}원, {p['rule']}, 비율 {float(p['ratio'] or 0) * 100:.2f}%)")
         if dry:
             continue
-        res = kis.place_order(p["ticker"], p["qty"], 0, "buy", token, market="KR")
-        ok = bool(res.get("success"))
+        res = place_safely(kis, p["ticker"], p["qty"], 0, "buy", token, market="KR")
+        state = order_state(res)
         _append([{"kind": "order", "session": today.isoformat(), "ticker": p["ticker"], "side": "buy", "qty": p["qty"],
-                  "order_no": res.get("order_no", ""), "success": ok, "msg": res.get("msg", ""), "at": _now_iso()}]
+                  "order_no": res.get("order_no", ""), "success": res.get("success"), "state": state,
+                  "msg": res.get("msg", ""), "at": _now_iso()}]
                 + ([{"kind": "position", "ticker": p["ticker"], "name": p["name"], "status": "OPEN",
                      "entry_session": today.isoformat(), "qty": p["qty"], "cost_krw": p["cost_krw"], "rule": p["rule"],
-                     "rcept_no": p["rcept_no"], "source": SOURCE, "at": _now_iso()}] if ok else []))
+                     "rcept_no": p["rcept_no"], "source": SOURCE, "order_state": state, "at": _now_iso()}]
+                   if state != "rejected" else []))   # unknown도 OPEN으로 남겨 봇 청산을 막는다(리뷰 H3)
+        if state == "unknown":
+            print(f"  ⚠️ {p['ticker']} 주문 접수 여부 불명 — 브로커 확인 필요: {res.get('msg')}")
     return 0
 
 
@@ -230,10 +240,10 @@ def due_exits(positions: dict[str, dict], today: date) -> list[tuple[str, dict, 
 
 
 def cmd_sell(dry: bool) -> int:
-    enabled, cfg = _env_gate()
-    if not dry and not enabled:
-        print(f"[canary] 꺼짐 — 매도도 하지 않음(보유가 있으면 수동 확인 필요): {cfg['mismatch'] or cfg['enabled_flag']}")
-        return 0
+    # 만기 청산은 ENABLED 플래그와 무관하게 한다 — 플래그는 신규 매수만 막는다. 봇은 격리 때문에 팔지 않으므로
+    # 여기서 안 팔면 청산 주체가 없어진다(리뷰 M3).
+    if not dry:
+        cmd_reconcile()                                # 체결 확인이 빠졌어도 만기 매도가 건너뛰어지지 않게(리뷰 M4)
     today = _today_kst()
     rows = _read(LEDGER)
     due = due_exits(_positions(rows), today)
@@ -247,10 +257,10 @@ def cmd_sell(dry: bool) -> int:
         print(f"[canary] {'(dry) ' if dry else ''}시장가 매도 {tk} x{p['filled_qty']} (진입 {p['entry_session']}, {n}번째 세션)")
         if dry:
             continue
-        res = kis.place_order(tk, int(p["filled_qty"]), 0, "sell", token, market="KR")
+        res = place_safely(kis, tk, int(p["filled_qty"]), 0, "sell", token, market="KR")
         _append([{"kind": "order", "session": today.isoformat(), "ticker": tk, "side": "sell", "qty": int(p["filled_qty"]),
-                  "order_no": res.get("order_no", ""), "success": bool(res.get("success")), "msg": res.get("msg", ""),
-                  "at": _now_iso()}])
+                  "order_no": res.get("order_no", ""), "success": res.get("success"), "state": order_state(res),
+                  "msg": res.get("msg", ""), "at": _now_iso()}])
     return 0
 
 
@@ -299,8 +309,14 @@ def cmd_reconcile() -> int:
             entry = float(p.get("entry_price") or px)
             gross = (px - entry) * filled
             fee = (px + entry) * filled * 0.00015 + px * filled * 0.0020   # 위탁수수료 근사 + 거래세 — 정확값은 브로커 기간손익으로 대조
-            out.append({**p, "kind": "position", "status": "CLOSED", "close_reason": "h5_exit", "exit_price": px,
-                        "gross_ret": px / entry - 1, "pnl_krw": round(gross - fee), "at": _now_iso()})
+            remaining = int(p.get("filled_qty") or filled) - filled
+            if remaining > 0:                          # 부분 체결 — 남은 주식은 OPEN으로 유지(리뷰 M2)
+                out.append({"kind": "close", "ticker": o["ticker"], "partial": True, "qty": filled,
+                            "pnl_krw": round(gross - fee), "at": _now_iso()})
+                out.append({**p, "kind": "position", "status": "OPEN", "filled_qty": remaining, "at": _now_iso()})
+            else:
+                out.append({**p, "kind": "position", "status": "CLOSED", "close_reason": "h5_exit", "exit_price": px,
+                            "gross_ret": px / entry - 1, "pnl_krw": round(gross - fee), "at": _now_iso()})
         print(f"  {o['side']} {o['ticker']} 체결 {filled}주 @ {px:,.0f} (공식 시가 {off_open:,.0f}, 차이 "
               f"{bp if bp is None else round(bp, 1)}bp)")
     _append(out)
