@@ -130,6 +130,10 @@ def atomic_json(p: Path, obj) -> None:
 def window_state(t: datetime) -> str:
     """'ok' | 'skip'(22:10~22:35) | 'closed'(16:05 전 · 23:59 이후). 자정 넘으면 load_token 이 어차피 None."""
     hm = t.hour * 60 + t.minute
+    # 2026-10-07: 아침 창 08:21~08:38 추가 — KIS가 리포트를 다음날 올려 16:15 수집만으로는 R3가 진입 시가 뒤에
+    # 잡혀 전부 actionable=False였다(13건 중 11건). 08:20 아침 토큰 발급 뒤, canary·패닉 장전 주문(08:40~) 전에 끝낸다.
+    if 8 * 60 + 21 <= hm < 8 * 60 + 38:
+        return "ok"
     if hm < 16 * 60 + 5 or hm >= 23 * 60 + 59:
         return "closed"
     if 22 * 60 + 10 <= hm < 22 * 60 + 35:
