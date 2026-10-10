@@ -452,3 +452,23 @@ def test_kr_kind_matches_research_on_real_titles():
             assert (B.kr_kind(nm) == "buyback") == (K.event_kind(nm) == "buyback"), nm
             n += 1
     assert n > 1000
+
+
+def test_us_v3_increment_annotation():
+    geo = ("GEO recently announced that its Board of Directors approved a $750 million increase to the Company's share "
+           "repurchase authorization program, which is effective through December 31, 2029, from $500 million to $1.25 billion.")
+    assert B.parse_buyback_v2(geo, "2026-10-08")["usd"] == 1.25e9                  # 사전등록 v2는 총액(유지)
+    p = B.parse_buyback_v3(geo, "2026-10-08")
+    assert p["usd"] == 750e6 and p["usd_basis"] == "increment"
+    lea = ("Lear Increases Share Repurchase Authorization to $1.5 Billion SOUTHFIELD, Michigan, September 24, 2026 -- Lear "
+           "Corporation today announced that its Board of Directors has approved an increase to the Company's share repurchase authorization.")
+    assert B.parse_buyback_v3(lea, "2026-09-24")["usd_basis"] == "total_only"
+    assert B.parse_buyback_v3(lea, "2026-09-24")["usd"] is None
+    ft = ("Acme Corp. today announced that its Board of Directors has approved an amendment to the share repurchase program, "
+          "increasing the authorization from $25 million to $50 million.")
+    assert B.parse_buyback_v3(ft, "2026-09-24")["usd"] == 25e6
+    klac = ("KLA INCREASES QUARTERLY DIVIDEND LEVEL TO $0.50 PER SHARE AND ANNOUNCES $1 BILLION SHARE REPURCHASE "
+            "AUTHORIZATION today announced that its Board of Directors has authorized the repurchase.")
+    assert B.parse_buyback_v3(klac, "2026-09-24")["usd"] == 1e9                    # 배당 "to $0.50 per share"는 총액 아님
+    new = "Acme Corp. today announced that its Board of Directors has authorized a new $250 million share repurchase program."
+    assert B.parse_buyback_v3(new, "2026-09-24")["usd"] == 250e6

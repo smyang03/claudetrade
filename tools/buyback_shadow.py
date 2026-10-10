@@ -882,6 +882,51 @@ def parse_buyback_v2(snip, fdate):
     return None
 
 
+# ------------------------------------------------------------------ US: v3 증액분 보정 (10-10)
+# v2(연구 원본과 바이트 동일 — 계약 테스트)는 그대로 두고, 결과의 usd만 문장에서 다시 본다.
+#   ① 명시 증액분("$750 million increase" / "increase of|by $X" / "additional $X") → X
+#   ② "from $Y to $X" → X − Y
+#   ③ 증액 동사 뒤 "to $X"만 있고 증액분이 없다(LEA "Increases ... to $1.5 Billion") → usd None(규모 미상)
+# 근거: GEO 10-08 $1.25B(총액) 채택·LEA 09-24 총액 25.7% 채택. 검증 표본 T(총액 혼동) 17건 중 v2 잔존 오류 유형.
+_U = r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*(million|billion|mm|bn)?"
+INC_EXPL = re.compile(_U + r"\s+(?:increase|addition|expansion)\b|"
+                      r"(?:increase[sd]?|increasing|expand(?:s|ed|ing)?|upsiz\w*)\s+(?:\w+\s+){0,8}?(?:of|by)\s+"
+                      r"(?:an?\s+)?(?:additional\s+)?(?:approximately\s+)?" + _U + r"|"
+                      r"\badditional\s+(?:approximately\s+)?" + _U, re.I)
+FROM_TO = re.compile(r"\bfrom\s+(?:approximately\s+)?" + _U + r"\s+to\s+(?:approximately\s+)?" + _U, re.I)
+TOTAL_ONLY = re.compile(r"(?:increas|expand|rais|upsiz)\w*\b[^.]{0,160}?(?<!up )\bto\s+(?:approximately\s+)?" + _U, re.I)
+
+
+def _usd(v, u):
+    x = num(v)
+    u = (u or "").lower()
+    return x * (1e9 if u in ("billion", "bn") else (1e6 if u in ("million", "mm") else 1))
+
+
+def parse_buyback_v3(snip, fdate):
+    p = parse_buyback_v2(snip, fdate)
+    if not p or p.get("usd") is None:
+        return p
+    s = next((x for x in (snip or "").split(" || ") if x.startswith(p["sent"])), p["sent"])
+    m = INC_EXPL.search(s)
+    if m:
+        g = [x for x in m.groups()]
+        for i in range(0, len(g), 2):
+            if g[i]:
+                v = _usd(g[i], g[i + 1])
+                if v >= 1e5:
+                    return {**p, "usd": v, "usd_basis": "increment"}
+    m = FROM_TO.search(s)
+    if m:
+        a, b = _usd(m.group(1), m.group(2)), _usd(m.group(3), m.group(4))
+        if b > a >= 0 and b - a >= 1e5:
+            return {**p, "usd": b - a, "usd_basis": "from_to"}
+    for m in TOTAL_ONLY.finditer(s):   # 배당 "to $0.50 per share" 같은 비자사주 금액은 제외
+        if _usd(m.group(1), m.group(2)) >= 1e5 and not re.match(r"\s*per share", s[m.end():], re.I):
+            return {**p, "usd": None, "usd_basis": "total_only"}
+    return {**p, "usd_basis": "v2"}
+
+
 # ------------------------------------------------------------------ US: 세션·시각
 def _ins():
     """NYSE 달력·yfinance 행렬·연구 유니버스는 tools/us_insider_cluster_shadow.py 를 read-only import."""
@@ -1225,7 +1270,8 @@ def us_scan(d0: date, d1: date, dry: bool, now: Optional[datetime] = None) -> in
         if b is None:
             nfetch += 1
             continue
-        p = parse_buyback_v2(snippet(html_text(b)), h["file_date"])
+        snip = snippet(html_text(b))
+        p = parse_buyback_v2(snip, h["file_date"])
         if not p:
             nparse += 1
             continue
@@ -1239,6 +1285,7 @@ def us_scan(d0: date, d1: date, dry: bool, now: Optional[datetime] = None) -> in
                       "anchor_date": us_prev_or_same(fd).isoformat(), "entry_date": us_next_session(fd).isoformat(),
                       "sentence": s, "usd": p["usd"], "shares_n": p["shares"], "pct": p["pct"], "new_kw": p["new_kw"],
                       "total_word": tw, "increase_word": iw, "ambiguous_total_vs_increment": bool(tw or iw),
+                      "_v3": parse_buyback_v3(snip, h["file_date"]),
                       "hold_sessions": 60, "hold_aux": 20, "cost_roundtrip": US_COST})
     # 접수시각·가격·발행주식
     memo: Dict = {}
@@ -1265,6 +1312,10 @@ def us_scan(d0: date, d1: date, dry: bool, now: Optional[datetime] = None) -> in
         c["mcap_raw"] = (c["raw_close_a"] * c["so"]) if (c.get("raw_close_a") and c.get("so")) else None
         c["size"], c["size_basis"] = us_size({"pct": c["pct"], "usd": c["usd"], "shares": c["shares_n"]},
                                              c.get("raw_close_a"), c.get("so"))
+        v3 = c.pop("_v3", None) or {}   # 주석 전용 — 채택은 사전등록 v2 규모로만(v3는 10-10 백테스트 t 2.50→2.17로 약화)
+        c["usd_v3"], c["usd_basis_v3"] = v3.get("usd"), v3.get("usd_basis")
+        c["size_v3"], _ = us_size({"pct": c["pct"], "usd": v3.get("usd"), "shares": c["shares_n"]},
+                                  c.get("raw_close_a"), c.get("so"))
         c["detected_at_et"] = now.strftime("%Y-%m-%d %H:%M")
         c["actionable"] = now < datetime.combine(date.fromisoformat(c["entry_date"]), datetime.min.time()).replace(
             hour=9, minute=30)

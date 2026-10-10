@@ -82,15 +82,16 @@ def main() -> int:
     with OUT.open("a", encoding="utf-8") as fh:
         for r in rows[:mx]:
             text = dart_document_text(r["rcept_no"], max_chars=60000); n += 1; time.sleep(SLEEP)
-            c = classify(text) if text else {"reasons": ["doc_unavailable"], "reason_text": None}
-            if text:
-                ok += 1
+            if not text:   # 10-10: 조회 실패를 doc_unavailable로 박제하면 영구 유실(10-08~09 DART 장애 25건) → 다음 실행 재시도
+                continue
+            c = classify(text)
+            ok += 1
             fh.write(json.dumps({"rcept_no": r["rcept_no"], "stock": r["stock"], "rcept_dt": r["rcept_dt"], "repror": r.get("repror"),
                                  "irds_cnt": r.get("irds_cnt"), **c, "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds")},
                                 ensure_ascii=False) + "\n")
             if n % 100 == 0:
                 fh.flush(); print(f"[REASON] {n}/{min(mx, len(rows))} 본문 {ok}")
-    print(f"[REASON] 완료 — 본문 {n}건(성공 {ok}) · 잔여 {max(0, len(rows) - n)} · 원장 {len(done) + n}")
+    print(f"[REASON] 완료 — 본문 {n}건(성공 {ok}) · 잔여 {max(0, len(rows) - ok)} · 원장 {len(done) + ok}")
     return 0
 
 
