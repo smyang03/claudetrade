@@ -59,7 +59,8 @@ def cf_value(cik, D):
                 continue
             ytd = [x for tt, x in ents if tt == t and x.get("start") == e["start"] and 260 <= (dur(x) or 0) <= 285]
             if ytd:
-                vals.add(float(e["val"]) - float(ytd[-1]["val"]))
+                y0 = min(ytd, key=lambda x: x["filed"])          # 9M YTD도 원 공시(최소 filed) — 최신 값은 재공시 비교치일 수 있다
+                vals.add(float(e["val"]) - float(y0["val"]))
                 tags.add(t)
         if vals:
             return vals, "q4", "|".join(sorted(tags))
@@ -110,6 +111,8 @@ for r in m.itertuples():
     rec.update(kind=kind, tag=tag, cf_val=max(vals) if vals else None)
     if not vals:
         rec.update(cat="cf_missing" if kind == "nocf" else "cf_no_value"); rows.append(rec); continue
+    if max(vals) <= 0:
+        rec.update(cat="cf_zero"); rows.append(rec); continue                 # 무매출(바이오 등) — 매출 SUE 정의 불가, 분모 제외
     nums, units = doc_numbers(fp.read_text(encoding="utf-8", errors="ignore"))
     if not nums:
         rec.update(cat="extract_fail"); rows.append(rec); continue
@@ -140,9 +143,11 @@ d.to_csv(OUT / "gate_events.csv", index=False)
 
 def rate(x):
     have = x[x.cat.isin(["matched", "mismatch"])]
+    strict = x[x.cat.isin(["matched", "mismatch", "extract_fail"])]            # extract_fail을 불일치로 치는 보수 분모
     return dict(n=int(len(x)), n_have=int(len(have)),
-                cov=round(len(x[x.cat.isin(["matched", "mismatch", "extract_fail"])]) / max(len(x), 1), 4),
+                cov=round(len(x[x.cat.isin(["matched", "mismatch", "extract_fail", "cf_zero"])]) / max(len(x), 1), 4),
                 match=round(float((have.cat == "matched").mean()), 4) if len(have) else None,
+                match_strict=round(float((strict.cat == "matched").mean()), 4) if len(strict) else None,
                 cats={k: int(v) for k, v in x.cat.value_counts().items()})
 
 
