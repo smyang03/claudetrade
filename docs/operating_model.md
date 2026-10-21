@@ -90,6 +90,8 @@ Path A 신규 매수, PathB KR/US, US swing·KR 급락 실주문, US gap pullbac
 
 분기 창 밖에서는 새 가설을 검정하지 않는다. 운영 중 발견한 아이디어는 다음 분기 후보 목록에 적어 둔다.
 
+2026 Q4 등록(10-22): KR 지수 정기변경 편입 · T1+매출 서프라이즈(T1-rev) · KR 현금배당 증가 — `docs/reports/preregistration_q4_2026_20261022.md`.
+
 ## 5. 역할
 
 | 주체 | 한다 | 하지 않는다 |
