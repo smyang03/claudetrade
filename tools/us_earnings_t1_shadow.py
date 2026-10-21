@@ -204,13 +204,24 @@ def _finnhub_calendar(prev: pd.Timestamp, today: pd.Timestamp) -> dict[tuple, di
     return {(str(x.get("symbol") or "").upper(), str(x.get("date") or "")): x for x in cal}
 
 
-def _finnhub_actual(tk: str, ds: str, evt_row: dict, fh_cal: dict, prior_status: str) -> tuple[dict | None, str]:
+def _finnhub_actual(tk: str, ds: str, evt_row: dict, fh_cal: dict, prior_status: str,
+                    prev_ds: str | None = None) -> tuple[dict | None, str]:
     """BMO 실적치 대체(09-30 수리 A): yfinance는 BMO 실적을 개장 뒤(09:37~47 ET)에야 붙인다.
     실적치는 Finnhub, 추정치는 기존과 같은 yfinance 예정 행(eps_est) — 모델 학습 기준 유지(선택 91% 일치 실측).
-    추정치 부호가 두 소스에서 엇갈리면 기준 불일치로 보고 채점하지 않는다."""
+    추정치 부호가 두 소스에서 엇갈리면 기준 불일치로 보고 채점하지 않는다.
+    10-21 수리(T1_supply_diagnosis_20261021 §5): ① 결측 사유를 fh_row_absent(캘린더에 행 없음 — 날짜 오매핑·미등재)와
+    fh_act_null(행은 있는데 실적 null — 반영 지연)로 분리 ② 정확일 행이 없으면 **전일(prev_ds) AMC 행**만 대체로 인정한다
+    — 전일 장 마감 뒤 발표는 오늘 시가 진입에 BMO와 같은 정보 시점이다. 전일 bmo(하루 늦음)·hour 공란(시점 불명)은 건너뛴다."""
     x = fh_cal.get((tk.upper(), ds))
-    if not x or x.get("epsActual") is None:
-        return None, f"{prior_status}|fh_no_actual"
+    used_ds = ds
+    if not x and prev_ds:
+        x1 = fh_cal.get((tk.upper(), prev_ds))
+        if x1 and str(x1.get("hour") or "").lower() == "amc":
+            x, used_ds = x1, prev_ds
+    if not x:
+        return None, f"{prior_status}|fh_row_absent"
+    if x.get("epsActual") is None:
+        return None, f"{prior_status}|fh_act_null"
     est = evt_row.get("eps_est")
     if est is None:
         return None, f"{prior_status}|no_yf_est"
@@ -218,7 +229,7 @@ def _finnhub_actual(tk: str, ds: str, evt_row: dict, fh_cal: dict, prior_status:
     if fe is not None and est != 0 and fe != 0 and (est > 0) != (fe > 0):
         return None, f"{prior_status}|feed_conflict"
     return {"eps_act": float(x["epsActual"]), "eps_est": float(est), "hour": "BMO", "act_source": "finnhub_cal",
-            "feed_seen_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}, "ok"
+            "fh_date": used_ds, "feed_seen_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}, "ok"
 
 
 # ------------------------------------------------------------------ score
@@ -246,7 +257,7 @@ def cmd_score(dry: bool = False) -> int:
         if hour == "DMH" or (day == today and hour != "BMO") or (day == prev and hour == "BMO"):
             continue                           # 오늘 시가 진입 대상이 아님
         if status != "ok" and hour == "BMO":
-            info, status = _finnhub_actual(tk, ds, r, fh_cal, status)
+            info, status = _finnhub_actual(tk, ds, r, fh_cal, status, prev_ds=str(prev.date()))
         if status != "ok":
             missed.append({"ticker": tk, "date": ds, "hour": hour, "status": status}); continue
         fresh.append({"ticker": tk, "date": ds, "act_source": "yfinance", **info})
