@@ -16,8 +16,13 @@
 명령 (운영 파이썬 — kis_api 필요)
   buy        장전(KST 08:40, 자사주 KR 스캔 08:30 뒤). 오늘 진입일인 채택 행 중 dvol 큰 순으로 시장가 매수
              → 08:30~09:00 장전 동시호가에 접수돼 09:00 시가에 체결된다.
-  sell       장전(KST 08:41). 진입 후 5번째 세션이 된 보유를 시장가 매도(같은 방식으로 시가 체결).
+  sell       장전(KST 08:41·09:10). 진입 후 5번째 세션이 된 보유를 시장가 매도(같은 방식으로 시가 체결).
+             예약매도가 있으면 처리결과부터: 전송됨 → 일반 매도 안 냄 / 거부·취소 → 일반 매도 / 미처리(09:05 전) → 09:10 재확인
+             / 조회 실패 → 매도 안 냄(rc 3).
   reconcile  장 마감 후(KST 16:10). 오늘 주문 체결 확인, 체결가 − 공식 시가(네이버 일봉) 차이 bp 기록, 손익 기록.
+             + 4번째 세션 저녁에 다음 영업일(만기) 시가 시장가 매도 예약(KIS 예약주문, 2026-10-21 A1) + unknown 주문 되짚기
+             + 만기 지연 탐지(rc 3).
+  reserve_sell  수동 — 다음 영업일이 만기인 보유분을 지금 예약 매도.
   status     원장 요약.
   --dry      게이트를 통과시키되 주문은 내지 않고 출력만.
 원장: data/shadow/kr_buyback_canary_live.jsonl — risk_manager.kr_buyback_canary_manifest()가 봇 귀속 복원에 쓴다.
@@ -34,7 +39,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
-from live_lane_common import order_state, place_safely, safe_cash_krw  # noqa: E402
+from live_lane_common import (KST as _KST, absorb_transmitted_resv_rows, active_resv, check_resv, kr_order_window,  # noqa: E402
+                              kr_resv_window, order_state, place_safely, reserve_exit_rows, resolve_unknown_order_rows,
+                              resv_exit_decision, resv_rows_to_absorb, resv_target_session, safe_cash_krw,
+                              unresolved_unknown_orders)
 
 SHADOW = ROOT / "data" / "shadow" / "kr_buyback_shadow.jsonl"
 LEDGER = ROOT / "data" / "shadow" / "kr_buyback_canary_live.jsonl"
@@ -95,11 +103,12 @@ def signals_for(day: date, shadow_rows: list[dict]) -> list[dict]:
 
 
 def sessions_since(entry: str, today: date) -> int:
-    """entry(진입 세션)부터 today까지 지난 세션 수 — today가 진입+N번째 세션이면 N."""
+    """entry(진입 세션)부터 today까지 지난 세션 수 — today가 진입+N번째 세션이면 N.
+    today가 휴장일이면 today 이전 세션까지만 센다(10-09 한글날에 다음 세션을 미리 세어 만기 매도를 낸 버그)."""
     from buyback_shadow import kr_next_session
     d, n = date.fromisoformat(entry), 0
-    while d < today:
-        d = kr_next_session(d)
+    while (nxt := kr_next_session(d)) <= today:
+        d = nxt
         n += 1
     return n
 
@@ -208,6 +217,9 @@ def cmd_buy(dry: bool) -> int:
     plans, notes = plan_buys(sigs, cfg, open_pos, held, cash, _realized_pnl(rows))
     for n in notes:
         print("  건너뜀", n)
+    win_ok, win_msg = kr_order_window("open_auction")
+    if plans and not dry and not win_ok:
+        print(f"[canary] {win_msg} — 매수 주문 안 냄(시가 진입 계약, 늦은 실행)"); return 0
     for p in plans:
         print(f"[canary] {'(dry) ' if dry else ''}시장가 매수 {p['ticker']} {p['name']} x{p['qty']} "
               f"(전일종가 {p['close_D']:,.0f}, 약 {p['cost_krw']:,}원, {p['rule']}, 비율 {float(p['ratio'] or 0) * 100:.2f}%)")
@@ -249,19 +261,100 @@ def cmd_sell(dry: bool) -> int:
     due = due_exits(_positions(rows), today)
     if not due:
         print("[canary] 오늘 만기 없음"); return 0
-    kis, token = (None, None) if dry else _kis()
+    win_ok, win_msg = kr_order_window("exit")
+    kis = token = None                                 # KIS는 실제로 조회·주문할 때만 연다(창 밖이면 호출 없음)
+    rc = 0
     for tk, p, n in due:
         if any(r.get("kind") == "order" and r.get("side") == "sell" and r.get("ticker") == tk
-               and r.get("session") == today.isoformat() for r in rows):
-            continue
+               and r.get("session") == today.isoformat() and order_state(r) != "rejected" for r in rows):
+            print(f"[canary] {tk} 오늘 매도 주문 이미 있음"); continue   # 거부 주문은 브로커에 없으니 재시도한다
+        resv = active_resv(rows, tk, today.isoformat())
+        if resv and not dry:                            # A1: 예약매도 처리결과부터 — 이중 매도 방지
+            if kis is None:
+                kis, token = _kis()
+            try:
+                status, detail = check_resv(kis, token, resv)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[canary] ⚠️ {tk} 예약매도 seq={resv.get('rsvn_seq') or '-'} 처리결과 조회 실패({type(exc).__name__}) — "
+                      "예약이 살아 있을 수 있어 일반 매도 안 냄"); rc = 3; continue
+            act = resv_exit_decision(status)
+            print(f"[canary] {tk} 예약매도 seq={resv.get('rsvn_seq') or '-'} 처리결과 {status} {detail} → {act}")
+            if act == "skip":
+                _append([{"kind": "order", "session": today.isoformat(), "ticker": tk, "side": "sell", "qty": int(p["filled_qty"]),
+                          "order_no": detail, "success": True, "state": "ok", "msg": "resv_transmitted", "via": "resv",
+                          "rsvn_seq": resv.get("rsvn_seq"), "at": _now_iso()}])
+                continue
+            if act == "wait":
+                print(f"[canary] {tk} 예약주문 전송 대기 — 09:10 재확인"); continue
+            print(f"[canary] {tk} 예약매도 미전송 — 일반 시장가 매도로 대체")
         print(f"[canary] {'(dry) ' if dry else ''}시장가 매도 {tk} x{p['filled_qty']} (진입 {p['entry_session']}, {n}번째 세션)")
         if dry:
             continue
+        if not win_ok:
+            print(f"[canary] {win_msg} — 만기 매도 보류, 다음 정상 실행에서 매도: {tk}"); continue
+        if kis is None:
+            kis, token = _kis()
         res = place_safely(kis, tk, int(p["filled_qty"]), 0, "sell", token, market="KR")
         _append([{"kind": "order", "session": today.isoformat(), "ticker": tk, "side": "sell", "qty": int(p["filled_qty"]),
                   "order_no": res.get("order_no", ""), "success": res.get("success"), "state": order_state(res),
                   "msg": res.get("msg", ""), "at": _now_iso()}])
-    return 0
+    return rc
+
+
+def due_next_session(positions: dict[str, dict], target: date) -> list[tuple[str, dict]]:
+    """target 세션이 만기(진입+HOLD 이상)인 보유 — 예약매도 대상."""
+    return [(tk, p) for tk, p in positions.items()
+            if p.get("status") == "OPEN" and p.get("filled_qty") and sessions_since(p["entry_session"], target) >= HOLD]
+
+
+def cmd_reserve_sell(dry: bool = False) -> int:
+    """다음 영업일이 만기인 보유분을 지금 예약 매도(A1). reconcile이 16:10에 같은 일을 하고, 이 명령은 수동 1회용."""
+    rows = _read(LEDGER)
+    now = datetime.now(_KST)
+    due = due_next_session(_positions(rows), resv_target_session(now))
+    if not due:
+        print("[canary] 다음 영업일 만기 보유 없음"); return 0
+    if dry:
+        for tk, p in due:
+            print(f"[canary] {reserve_exit_rows(None, None, rows, tk, int(p['filled_qty']), now=now, dry=True)[1]}")
+        return 0
+    ok, why = kr_resv_window(now)
+    if not ok:
+        print(f"[canary] {why} — 예약 안 냄"); return 2
+    kis, token = _kis()
+    rc = 0
+    for tk, p in due:
+        new, why = reserve_exit_rows(kis, token, rows, tk, int(p["filled_qty"]), now=now)
+        print(f"[canary] {why}")
+        if new:
+            _append(new); rows = _read(LEDGER)
+            if new[0]["state"] != "ok":
+                rc = 2
+    return rc
+
+
+def _reserve_and_overdue(rows: list[dict], kis=None, token=None) -> int:
+    """reconcile 후반부 — ① 다음 영업일 만기분 예약매도 ② 만기 지연 탐지(15:30 이후에도 만기 보유가 OPEN이면 rc 3)."""
+    rc = 0
+    now = datetime.now(_KST)
+    pos = _positions(rows)
+    if kr_resv_window(now)[0]:
+        for tk, p in due_next_session(pos, resv_target_session(now)):
+            if kis is None:
+                kis, token = _kis()
+            new, why = reserve_exit_rows(kis, token, rows, tk, int(p["filled_qty"]), now=now)
+            print(f"[canary] 예약매도: {why}")
+            if new:
+                _append(new); rows = _read(LEDGER)
+                if new[0]["state"] != "ok":
+                    rc = 3
+    today = _today_kst()
+    if now.time() >= datetime.strptime("15:30", "%H:%M").time():
+        for tk, p, n in due_exits(pos, today):
+            print(f"[canary] ⚠️ 만기 지연 — {tk} x{p['filled_qty']} 진입 {p['entry_session']} {n}번째 세션인데 장 마감까지 OPEN. "
+                  "브로커 보유·예약주문 확인 필요")
+            rc = 3
+    return rc
 
 
 # ------------------------------------------------------------------ reconcile
@@ -277,12 +370,32 @@ def _official_open(ticker: str, day: str) -> float:
 
 def cmd_reconcile() -> int:
     rows = _read(LEDGER)
+    kis = token = None
+    if unresolved_unknown_orders(rows):                  # A1: 접수 응답을 못 받은 주문을 브로커 당일 체결조회로 되짚는다
+        kis, token = _kis()
+        rec, notes = resolve_unknown_order_rows(kis, token, rows)
+        for n in notes:
+            print(f"[canary] {n}")
+        if rec:
+            _append(rec)
+            rows = _read(LEDGER)
+    if resv_rows_to_absorb(rows, _today_kst().isoformat()):   # A1: 매도 작업이 안 돈 날의 예약매도 전송분을 흡수
+        if kis is None:
+            kis, token = _kis()
+        rec, notes = absorb_transmitted_resv_rows(kis, token, rows, _today_kst().isoformat())
+        for n in notes:
+            print(f"[canary] {n}")
+        if rec:
+            _append(rec)
+            rows = _read(LEDGER)
     done = {r["order_no"] for r in rows if r.get("kind") == "fill"}
     todo = [r for r in rows if r.get("kind") == "order" and r.get("success") and r.get("order_no")
             and r["order_no"] not in done]
     if not todo:
-        print("[canary] 확인할 주문 없음"); return 0
-    kis, token = _kis()
+        print("[canary] 확인할 주문 없음")
+        return _reserve_and_overdue(rows, kis, token)
+    if kis is None:
+        kis, token = _kis()
     pos = _positions(rows)
     out = []
     for o in todo:
@@ -320,7 +433,7 @@ def cmd_reconcile() -> int:
         print(f"  {o['side']} {o['ticker']} 체결 {filled}주 @ {px:,.0f} (공식 시가 {off_open:,.0f}, 차이 "
               f"{bp if bp is None else round(bp, 1)}bp)")
     _append(out)
-    return 0
+    return _reserve_and_overdue(_read(LEDGER), kis, token)
 
 
 def cmd_status() -> int:
@@ -340,11 +453,11 @@ def cmd_status() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["buy", "sell", "reconcile", "status"])
+    ap.add_argument("cmd", choices=["buy", "sell", "reconcile", "reserve_sell", "status"])
     ap.add_argument("--dry", action="store_true")
     a = ap.parse_args()
     return {"buy": lambda: cmd_buy(a.dry), "sell": lambda: cmd_sell(a.dry),
-            "reconcile": cmd_reconcile, "status": cmd_status}[a.cmd]()
+            "reconcile": cmd_reconcile, "reserve_sell": lambda: cmd_reserve_sell(a.dry), "status": cmd_status}[a.cmd]()
 
 
 if __name__ == "__main__":

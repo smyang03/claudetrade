@@ -55,6 +55,29 @@ def test_due_exits_after_five_sessions_skips_holiday():
     assert c.due_exits({"B": {"status": "OPEN", "filled_qty": 0, "entry_session": "2026-09-30"}}, date(2026, 10, 20)) == []
 
 
+def test_due_exits_not_triggered_on_holiday_today():
+    # 10-09 한글날 실사고: 10-01 진입분을 휴장일에 5세션으로 세어 매도를 냈다(브로커 거부)
+    pos = {"A": {"status": "OPEN", "filled_qty": 5, "entry_session": "2026-10-01"}}
+    assert c.sessions_since("2026-10-01", date(2026, 10, 9)) == 4
+    assert c.due_exits(pos, date(2026, 10, 9)) == []
+    assert c.sessions_since("2026-10-01", date(2026, 10, 10)) == 4      # 토요일
+    assert [n for _, _, n in c.due_exits(pos, date(2026, 10, 12))] == [5]
+
+
+def test_sell_outside_window_places_no_order(tmp_path, monkeypatch, capsys):
+    led = tmp_path / "led.jsonl"
+    led.write_text(json.dumps({"kind": "position", "ticker": "A", "status": "OPEN", "entry_session": "2026-10-01",
+                             "filled_qty": 5}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(c, "LEDGER", led)
+    monkeypatch.setattr(c, "cmd_reconcile", lambda: 0)
+    monkeypatch.setattr(c, "_today_kst", lambda: date(2026, 10, 12))
+    monkeypatch.setattr(c, "kr_order_window", lambda kind: (False, "주문 창 밖(20:11)"))
+    monkeypatch.setattr(c, "_kis", lambda: (_ for _ in ()).throw(AssertionError("KIS 호출 금지")))
+    assert c.cmd_sell(False) == 0
+    assert "만기 매도 보류" in capsys.readouterr().out
+    assert len(led.read_text(encoding="utf-8").splitlines()) == 1        # 거부 주문 행도 남기지 않는다
+
+
 def test_realized_pnl_uses_last_position_row(tmp_path):
     rows = [{"kind": "position", "ticker": "A", "status": "OPEN"},
             {"kind": "position", "ticker": "A", "status": "CLOSED", "pnl_krw": -30_000},
@@ -112,3 +135,15 @@ def test_isolated_exit_owner_never_sells_canary():
     pos = {"source_strategy": c.SOURCE, "entry": 10_000, "current_price": 5_000, "market": "KR"}
     handled, cand = rm._isolated_strategy_exit_candidate(pos)
     assert handled is True and cand is None
+
+
+def test_rejected_sell_today_does_not_block_retry(tmp_path, monkeypatch, capsys):
+    led = tmp_path / "led.jsonl"
+    rows = [{"kind": "position", "ticker": "A", "status": "OPEN", "entry_session": "2026-10-01", "filled_qty": 5},
+            {"kind": "order", "session": "2026-10-12", "ticker": "A", "side": "sell", "qty": 5, "order_no": "",
+             "success": False, "state": "rejected", "msg": "장운영시간이 아닙니다"}]
+    led.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+    monkeypatch.setattr(c, "LEDGER", led)
+    monkeypatch.setattr(c, "_today_kst", lambda: date(2026, 10, 12))
+    assert c.cmd_sell(True) == 0
+    assert "(dry) 시장가 매도 A x5" in capsys.readouterr().out

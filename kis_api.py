@@ -3738,6 +3738,167 @@ def _place_order_kr(ticker, qty, price, side, token):
             ) from retry_error
 
 
+# ── 국내 예약주문 (2026-10-21 A1 — 격리 레인 매도의 PC 의존 제거) ──────────────────────
+# 공식 예제 open-trading-api examples_llm/domestic_stock/order_resv (v1_국내주식-017~020) 기준.
+#   접수 CTSC0008U POST /uapi/domestic-stock/v1/trading/order-resv
+#   조회 CTSC0004R GET  /uapi/domestic-stock/v1/trading/order-resv-ccnl
+#   취소 CTSC0009U POST /uapi/domestic-stock/v1/trading/order-resv-rvsecncl
+# 접수 가능 15:40 ~ 익영업일 07:30 (23:40~00:10 서버 초기화 제외). 종료일 미입력이면 최초 도래 영업일에 1회 전송.
+# 시장가는 ORD_DVSN_CD "01" + ORD_UNPR "0". 처리내역은 통보되지 않으므로 처리일 장 시작 전 조회로 확인해야 한다.
+# 거부 사유(처리일 기준): 매도가능수량 부족·호가단위 오류·시가형성 종목(신규상장)의 시장가 등. 모의투자 미지원.
+RESV_TR = {"order": "CTSC0008U", "inquire": "CTSC0004R", "cancel": "CTSC0009U", "modify": "CTSC0013U"}
+
+
+def _resv_output(data: dict) -> dict:
+    out = _first_record(data.get("output", {})) if isinstance(data, dict) else {}
+    return {str(k).lower(): v for k, v in (out or {}).items()}
+
+
+def place_reserved_order_kr(ticker, qty, price, side, token, end_date: str = "") -> dict:
+    """국내 예약주문 접수. price 0 → 시장가. end_date(YYYYMMDD) 입력 시 기간예약주문(미체결분 매 영업일 재전송).
+    반환 {success, msg, rsvn_seq, market, side, ticker, qty, price, price_type, raw}. 접수 창 밖이면 브로커가 거부한다."""
+    if IS_PAPER:
+        raise RuntimeError("KR 예약주문은 모의투자를 지원하지 않는다")
+    ticker = str(ticker or "").strip()
+    qty_i, price_i = _normalize_kr_order_inputs(qty, price)
+    if qty_i < 1:
+        raise ValueError(f"KR 예약주문 수량 오류: {qty!r}")
+    if side not in ("buy", "sell"):
+        raise ValueError(f"KR 예약주문 side 오류: {side!r}")
+    acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
+    body = {
+        "CANO": acnt_no,
+        "ACNT_PRDT_CD": acnt_prdt,
+        "PDNO": ticker,
+        "ORD_QTY": str(qty_i),
+        "ORD_UNPR": "0" if price_i == 0 else str(price_i),
+        "SLL_BUY_DVSN_CD": "01" if side == "sell" else "02",
+        "ORD_DVSN_CD": "01" if price_i == 0 else "00",
+        "ORD_OBJT_CBLC_DVSN_CD": "10",          # 현금
+        "LOAN_DT": "",
+        "RSVN_ORD_END_DT": str(end_date or ""),
+        "LDNG_DT": "",
+    }
+    headers = _headers(token, RESV_TR["order"])
+    headers["custtype"] = "P"
+    headers["hashkey"] = get_hashkey(body, token)
+    resp = _kis_post(f"{BASE_URL}/uapi/domestic-stock/v1/trading/order-resv", headers=headers, json=body, timeout=15)
+    if int(getattr(resp, "status_code", 0) or 0) >= 400:
+        _raise_order_http_error(f"KR 예약주문 [{side} {ticker}]", resp, body)
+    r = resp.json()
+    if _is_egw00201(r):
+        _note_rate_limit_hit(f"KR 예약주문 [{side} {ticker}]")
+        raise KISOrderRateLimitedError(
+            f"KR 예약주문 [{side} {ticker}] EGW00201 초당 거래건수 초과 (주문 미접수)",
+            status_code=int(getattr(resp, "status_code", 0) or 0),
+            response_text=_response_text(resp), order_body=_mask_order_body(body))
+    out = _resv_output(r)
+    seq = ""
+    for k, v in out.items():
+        if "seq" in k and str(v or "").strip():
+            seq = str(v).strip()
+            break
+    return {
+        "success": r.get("rt_cd") == "0",
+        "msg": r.get("msg1") or r.get("msg") or r.get("msg_cd", ""),
+        "rsvn_seq": seq,
+        "order_no": "",                        # 일반주문 번호는 처리일 전송 뒤에야 생긴다(inquire_reserved_orders_kr로 확인)
+        "market": "KR", "side": side, "ticker": ticker, "qty": qty_i, "price": float(price_i),
+        "price_type": "market" if price_i == 0 else "limit",
+        "raw": r,
+    }
+
+
+def inquire_reserved_orders_kr(token, start_date: str, end_date: str = None, *, ticker: str = "",
+                               side: str = "", rsvn_seq: str = "", include_cancelled: bool = True) -> list[dict]:
+    """국내 예약주문 처리내역 조회(CTSC0004R). 행 키는 소문자로 정규화해 그대로 돌려준다(필드명은 브로커 응답 그대로).
+    start/end는 예약주문 접수일 범위(YYYYMMDD). 한 번에 최대 20건 — 연속조회 키로 이어 받는다."""
+    acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
+    params = {
+        "RSVN_ORD_ORD_DT": str(start_date),
+        "RSVN_ORD_END_DT": str(end_date or start_date),
+        "TMNL_MDIA_KIND_CD": "00",
+        "CANO": acnt_no,
+        "ACNT_PRDT_CD": acnt_prdt,
+        "PRCS_DVSN_CD": "0",                    # 0 전체
+        "CNCL_YN": "Y" if include_cancelled else "N",
+        "RSVN_ORD_SEQ": str(rsvn_seq or ""),
+        "PDNO": str(ticker or "").strip(),
+        "SLL_BUY_DVSN_CD": {"sell": "01", "buy": "02"}.get(side, ""),
+        "CTX_AREA_FK200": "",
+        "CTX_AREA_NK200": "",
+    }
+    rows: list[dict] = []
+    tr_cont = ""
+    for _ in range(10):
+        headers = _headers(token, RESV_TR["inquire"])
+        headers["custtype"] = "P"
+        if tr_cont:
+            headers["tr_cont"] = tr_cont
+
+        def _fetch():
+            resp = _kis_get(f"{BASE_URL}/uapi/domestic-stock/v1/trading/order-resv-ccnl",
+                            headers=headers, params=params, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+            _require_kis_success(data, "국내 예약주문조회")
+            return resp, data
+
+        resp, data = _retry_kis("KR resv ccnl", _fetch)
+        out = data.get("output", []) or []
+        if isinstance(out, dict):
+            out = [out]
+        rows.extend({str(k).lower(): v for k, v in row.items()} for row in out if isinstance(row, dict))
+        cont = str(resp.headers.get("tr_cont", "") or "").strip()
+        if cont not in ("M", "F"):
+            break
+        params["CTX_AREA_FK200"] = str(data.get("ctx_area_fk200", "") or "")
+        params["CTX_AREA_NK200"] = str(data.get("ctx_area_nk200", "") or "")
+        tr_cont = "N"
+    if rsvn_seq:
+        want = str(rsvn_seq).strip().lstrip("0")
+        exact = [r for r in rows if str(r.get("rsvn_ord_seq", "") or "").strip().lstrip("0") == want]
+        rows = exact or rows
+    return rows
+
+
+def cancel_reserved_order_kr(token, rsvn_seq: str, rsvn_orgno: str, rsvn_ord_dt: str) -> dict:
+    """국내 예약주문 취소(CTSC0009U). orgno·접수일은 조회 행(rsvn_ord_orgno·rsvn_ord_ord_dt)에서 가져온다."""
+    acnt_no, acnt_prdt = ACCOUNT_NO.split("-")
+    body = {"CANO": acnt_no, "ACNT_PRDT_CD": acnt_prdt, "RSVN_ORD_SEQ": str(rsvn_seq),
+            "RSVN_ORD_ORGNO": str(rsvn_orgno), "RSVN_ORD_ORD_DT": str(rsvn_ord_dt)}
+    headers = _headers(token, RESV_TR["cancel"])
+    headers["custtype"] = "P"
+    headers["hashkey"] = get_hashkey(body, token)
+    resp = _kis_post(f"{BASE_URL}/uapi/domestic-stock/v1/trading/order-resv-rvsecncl", headers=headers, json=body, timeout=15)
+    if int(getattr(resp, "status_code", 0) or 0) >= 400:
+        _raise_order_http_error(f"KR 예약주문 취소 [{rsvn_seq}]", resp, body)
+    r = resp.json()
+    return {"success": r.get("rt_cd") == "0", "msg": r.get("msg1") or r.get("msg") or r.get("msg_cd", ""), "raw": r}
+
+
+def find_kr_order_truth_by_session(token, *, ticker: str, side: str, session: str, qty: int = 0) -> Optional[dict]:
+    """주문번호를 모르는 주문(접수 응답을 못 받은 unknown, 예약주문 전송분)을 당일 주문체결조회로 찾는다.
+    session YYYYMMDD. 같은 종목·방향·(수량) 행 중 가장 늦은 것. 없으면 None, 조회 실패는 예외 그대로."""
+    side_code = "02" if side == "buy" else "01"
+    rows = inquire_daily_ccld_kr(token, start_date=session, end_date=session, ticker=str(ticker or "").strip(),
+                                 side_code=side_code, filled_code="00")
+    hits = []
+    for row in rows:
+        if str(row.get("ticker", "")).strip() != str(ticker or "").strip():
+            continue
+        if row.get("side") and str(row.get("side")) != str(side):
+            continue
+        rq = int(row.get("order_qty", 0) or 0)
+        if qty and rq and rq != int(qty):
+            continue
+        hits.append(row)
+    if not hits:
+        return None
+    hits.sort(key=lambda r: (str(r.get("order_time", "") or ""), str(r.get("order_no", "") or "")), reverse=True)
+    return hits[0]
+
+
 # 미국 거래소 코드 매핑. 미확인 종목을 기본 NASD로 보내지 않고 명시적으로 막는다.
 #
 # ⚠️ 기준은 **KIS가 그 종목을 어느 EXCD로 서비스하는가**이지 실제 상장 거래소가 아니다.

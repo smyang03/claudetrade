@@ -62,3 +62,27 @@ def test_configurable_instrument_and_tax_only_on_leveraged():
     assert m.today_signal(rows, "2026-10-06", "229200")["price"] == 14150.0
     assert m.close_pnl(14000, 14100, 10, "229200") == round(1000 - (14000 + 14100) * 10 * m.FEE_RATE)   # 비과세
     assert m.close_pnl(7000, 7100, 10, "233740") < m.close_pnl(7000, 7100, 10, "229200")
+
+
+def test_signal_status_separates_missing_from_no_signal():
+    rows = [{"kind": "session", "session_date": "2026-10-08", "signal_1519": False},
+            {"kind": "session", "session_date": "2026-10-09", "holiday": True, "stale_1519": True},
+            {"kind": "session", "session_date": "2026-10-07", "stale_1519": True},
+            {"kind": "session", "session_date": "2026-10-06", "signal_1519": True}]
+    assert m.signal_status(rows, "2026-10-08") == "none"
+    assert m.signal_status(rows, "2026-10-09") == "holiday"
+    assert m.signal_status(rows, "2026-10-07") == "stale"
+    assert m.signal_status(rows, "2026-10-06") == "signal"
+    assert m.signal_status(rows, "2026-10-13") == "missing"     # 10-13 PC 절전 실사고: 거래일인데 판정 행 없음
+    assert m.signal_status(rows, "2026-10-10") == "holiday"     # 토요일은 행이 없어도 휴장
+
+
+def test_buy_reports_missing_judgment_with_nonzero_rc(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(m, "LEDGER", tmp_path / "led.jsonl")
+    monkeypatch.setattr(m, "SHADOW", tmp_path / "shadow.jsonl")
+    monkeypatch.setattr(m, "_today", lambda: "2026-10-13")
+    monkeypatch.setattr(m, "_env_gate", lambda: (True, {"loss_limit": 50_000.0, "ticker": "229200", "unit_krw": 100_000.0,
+                                                       "mismatch": {}, "enabled_flag": "true"}))
+    monkeypatch.setattr(m, "_bot_has_isolation", lambda: (True, ""))
+    assert m.cmd_buy(False) == 3
+    assert "판정 못 함" in capsys.readouterr().out

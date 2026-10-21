@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import cash_parking as cp  # noqa: E402
 import kr_buyback_canary as can  # noqa: E402
-from live_lane_common import order_state, place_safely, safe_cash_krw  # noqa: E402
+from live_lane_common import KST, kr_order_window, order_state, place_safely, safe_cash_krw  # noqa: E402
 
 
 class _Boom:
@@ -57,3 +57,17 @@ def test_canary_realized_pnl_counts_every_close_even_after_rebuy():
             {"kind": "position", "ticker": "A", "status": "OPEN"},                    # 같은 종목 재매수
             {"kind": "close", "ticker": "B", "partial": True, "pnl_krw": -5_000}]
     assert can._realized_pnl(rows) == -35_000
+
+
+def test_kr_order_window_blocks_holiday_and_off_hours():
+    from datetime import datetime
+    at = lambda m, d, h, mi: datetime(2026, m, d, h, mi, tzinfo=KST)  # noqa: E731
+    assert kr_order_window("exit", at(10, 12, 8, 42))[0]
+    assert kr_order_window("exit", at(10, 12, 11, 0))[0]                 # 시가 놓쳐도 장중 청산 허용
+    assert not kr_order_window("exit", at(10, 12, 20, 11))[0]            # 10-12 늦은 실행 실사고
+    assert not kr_order_window("exit", at(10, 9, 8, 42))[0]              # 한글날 휴장
+    assert not kr_order_window("exit", at(10, 10, 8, 42))[0]             # 토요일
+    assert kr_order_window("open_auction", at(10, 13, 8, 40))[0]
+    assert not kr_order_window("open_auction", at(10, 13, 9, 30))[0]     # 시가 진입 계약 — 장중 추격 금지
+    assert kr_order_window("close_auction", at(10, 13, 15, 20))[0]
+    assert not kr_order_window("close_auction", at(10, 13, 15, 30))[0]

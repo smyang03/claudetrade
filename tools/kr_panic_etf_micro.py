@@ -13,9 +13,13 @@
 
 명령 (운영 파이썬)
   buy        KST 15:20:30 — 오늘 15:19 신호가 있으면 시장가 매수(장 마감 동시호가 → 종가 체결)
-  sell       KST 08:42 — 전 거래일 매수분을 장전 시장가 매도(시가 체결)
-  reconcile  KST 16:12 — 체결 확인·손익 기록
+  reconcile  KST 16:12 — 체결 확인·손익 기록 + **매수 체결 확인 즉시 다음 영업일 시가 시장가 매도 예약**(KIS 예약주문
+             CTSC0008U, 접수 15:40~익일 07:30) + unknown 주문 되짚기 + 청산 지연 탐지(rc 3)
+  sell       KST 08:42·09:10 — 예약매도 처리결과를 먼저 본다: 전송됨(odno) → 일반 매도 안 냄 / 거부·취소 → 일반 시장가
+             매도 / 미처리(09:05 전) → 09:10 재확인 / 조회 실패 → 매도 안 냄(rc 3). 예약이 없으면 종전처럼 장전 시장가 매도.
+  reserve_sell  수동 — 지금 보유분의 다음 영업일 시가 매도 예약(운영자 1회 실행용)
   status     원장 요약
+2026-10-21 A1: 매도의 PC 의존을 "다음 날 08:42"에서 "매수 당일 16:12"로 옮겼다(10-20 PC 꺼짐 → 매도 보류 → 10-21 DNS 실패 사고).
 원장: data/shadow/kr_panic_etf_micro_live.jsonl (risk_manager.kr_panic_etf_micro_manifest)
 """
 from __future__ import annotations
@@ -30,7 +34,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
-from live_lane_common import order_state, place_safely, safe_cash_krw  # noqa: E402
+from live_lane_common import (KST as _KST, absorb_transmitted_resv_rows, active_resv, check_resv, kr_order_window,  # noqa: E402
+                              kr_resv_window, order_state, place_safely, reserve_exit_rows, resolve_unknown_order_rows,
+                              resv_exit_decision, resv_rows_to_absorb, safe_cash_krw, unresolved_unknown_orders)
 
 SHADOW = ROOT / "data" / "shadow" / "kr_index_etf_panic.jsonl"
 LEDGER = ROOT / "data" / "shadow" / "kr_panic_etf_micro_live.jsonl"
@@ -89,6 +95,21 @@ def today_signal(shadow_rows: list[dict], day: str, ticker: str = TICKER) -> dic
     if px <= 0:
         return None
     return {"units": int((trade or {}).get("units") or 1), "price": px, "reason": sess.get("reason_1519")}
+
+
+def signal_status(shadow_rows: list[dict], day: str) -> str:
+    """오늘 15:19 판정 상태 — signal / none / holiday / stale / missing.
+    missing·stale은 '신호 없음'이 아니라 '판정 못 함'이다(10-12·13 PC 꺼짐으로 판정 행이 없어 급락일을 '신호 없음'으로 기록)."""
+    sess = next((r for r in shadow_rows if r.get("kind") == "session" and r.get("session_date") == day), None)
+    if not sess:
+        from buyback_shadow import kr_is_session
+        from datetime import date as _date
+        return "missing" if kr_is_session(_date.fromisoformat(day)) else "holiday"
+    if sess.get("holiday"):
+        return "holiday"
+    if sess.get("stale_1519"):
+        return "stale"
+    return "signal" if sess.get("signal_1519") else "none"
 
 
 def plan_qty(unit_krw: float, units: int, price: float) -> int:
@@ -151,13 +172,22 @@ def cmd_buy(dry: bool) -> int:
     if realized_pnl(rows) <= -cfg["loss_limit"]:
         print(f"[panic-micro] 누적 실현손실 {realized_pnl(rows):,.0f} ≤ −{cfg['loss_limit']:,.0f} — 신규 매수 중단"); return 0
     tk = cfg["ticker"]
-    sig = today_signal(_read(SHADOW), day, tk)
+    shadow_rows = _read(SHADOW)
+    sig = today_signal(shadow_rows, day, tk)
     if not sig:
-        print(f"[panic-micro] {day} 신호 없음"); return 0
+        status = signal_status(shadow_rows, day)
+        if status in ("missing", "stale"):
+            why = "15:19 쉐도우 판정 행 없음(PC 꺼짐·절전 또는 claudetrade_kr_etf_panic 미실행)" if status == "missing"                 else "15:19 시세가 stale"
+            print(f"[panic-micro] ⚠️ {day} 판정 못 함 — {why}. 신호 여부 모름(신호 없음 아님)")
+            return 3                                   # 0이 아니면 일일 운영 리포트가 실패 작업으로 잡는다
+        print(f"[panic-micro] {day} {'휴장' if status == 'holiday' else '신호 없음'}"); return 0
     qty = plan_qty(cfg["unit_krw"], sig["units"], sig["price"])
     print(f"[panic-micro] {'(dry) ' if dry else ''}시장가 매수 {tk} x{qty} (15:19 {sig['price']:,.0f}, units {sig['units']}, {sig['reason']})")
     if dry or qty < 1:
         return 0
+    win_ok, win_msg = kr_order_window("close_auction")
+    if not win_ok:
+        print(f"[panic-micro] {win_msg} — 매수 주문 안 냄(종가 진입 계약, 늦은 실행)"); return 0
     kis, token = _kis()
     cash = safe_cash_krw(kis.get_balance(token, market="KR", force_refresh=True))   # 미결제 매수 반영(리뷰 H2)
     if qty * sig["price"] * MARKET_BUFFER > cash:
@@ -181,12 +211,37 @@ def cmd_sell(dry: bool) -> int:
     p = next((q for q in _positions(rows).values() if q.get("status") == "OPEN"), None)   # 상품이 바뀌어도 보유분을 판다
     if not p or p.get("status") != "OPEN" or not p.get("filled_qty") or p.get("entry_session") >= day:
         print("[panic-micro] 매도 대상 없음"); return 0
-    if any(r.get("kind") == "order" and r.get("side") == "sell" and r.get("session") == day for r in rows):
+    if any(r.get("kind") == "order" and r.get("side") == "sell" and r.get("session") == day
+           and order_state(r) != "rejected" for r in rows):                 # 거부 주문은 브로커에 없으니 재시도한다
         print("[panic-micro] 오늘 매도 이미 있음"); return 0
-    print(f"[panic-micro] {'(dry) ' if dry else ''}장전 시장가 매도 {p['ticker']} x{p['filled_qty']} (진입 {p['entry_session']})")
+    resv = active_resv(rows, p["ticker"], day)
     if dry:
+        print(f"[panic-micro] (dry) 매도 {p['ticker']} x{p['filled_qty']} (진입 {p['entry_session']}) 예약={resv and resv.get('rsvn_seq')}")
         return 0
-    kis, token = _kis()
+    kis = token = None
+    if resv:                                           # A1: 예약매도가 있으면 처리결과부터 — 이중 매도 방지
+        kis, token = _kis()
+        try:
+            status, detail = check_resv(kis, token, resv)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[panic-micro] ⚠️ 예약매도 seq={resv.get('rsvn_seq') or '-'} 처리결과 조회 실패({type(exc).__name__}) — "
+                  "예약이 살아 있을 수 있어 일반 매도 안 냄"); return 3
+        act = resv_exit_decision(status)
+        print(f"[panic-micro] 예약매도 seq={resv.get('rsvn_seq') or '-'} 처리결과 {status} {detail} → {act}")
+        if act == "skip":
+            _append([{"kind": "order", "session": day, "ticker": p["ticker"], "side": "sell", "qty": int(p["filled_qty"]),
+                      "order_no": detail, "success": True, "state": "ok", "msg": "resv_transmitted", "via": "resv",
+                      "rsvn_seq": resv.get("rsvn_seq"), "at": _now_iso()}])
+            return 0
+        if act == "wait":
+            print("[panic-micro] 예약주문 전송 대기 — 09:10 재확인"); return 0
+        print("[panic-micro] 예약매도 미전송 — 일반 시장가 매도로 대체")
+    print(f"[panic-micro] 장전 시장가 매도 {p['ticker']} x{p['filled_qty']} (진입 {p['entry_session']})")
+    win_ok, win_msg = kr_order_window("exit")
+    if not win_ok:
+        print(f"[panic-micro] {win_msg} — 매도 보류, 다음 정상 실행에서 매도"); return 0
+    if kis is None:
+        kis, token = _kis()
     res = place_safely(kis, p["ticker"], int(p["filled_qty"]), 0, "sell", token, market="KR")
     _append([{"kind": "order", "session": day, "ticker": p["ticker"], "side": "sell", "qty": int(p["filled_qty"]),
               "order_no": res.get("order_no", ""), "success": res.get("success"), "state": order_state(res),
@@ -201,13 +256,81 @@ def close_pnl(entry: float, exit_px: float, qty: int, ticker: str = TICKER) -> f
     return round(gross - fee - tax)
 
 
+def _open_position(rows: list[dict]) -> dict | None:
+    return next((q for q in _positions(rows).values() if q.get("status") == "OPEN" and q.get("filled_qty")), None)
+
+
+def cmd_reserve_sell(dry: bool = False) -> int:
+    """보유분의 다음 영업일 시가 시장가 매도 예약(A1). reconcile이 매일 16:12에 같은 일을 하고, 이 명령은 수동 1회용."""
+    rows = _read(LEDGER)
+    p = _open_position(rows)
+    if not p:
+        print("[panic-micro] 예약할 보유 없음"); return 0
+    if dry:
+        _, why = reserve_exit_rows(None, None, rows, p["ticker"], int(p["filled_qty"]), dry=True)
+        print(f"[panic-micro] {why}"); return 0
+    ok, why = kr_resv_window()
+    if not ok:
+        print(f"[panic-micro] {why} — 예약 안 냄"); return 2
+    kis, token = _kis()
+    new, why = reserve_exit_rows(kis, token, rows, p["ticker"], int(p["filled_qty"]))
+    print(f"[panic-micro] {why}")
+    if new:
+        _append(new)
+        return 0 if new[0]["state"] == "ok" else 2
+    return 0
+
+
+def _reserve_and_overdue(rows: list[dict], kis=None, token=None) -> int:
+    """reconcile 후반부 — ① 보유 확인분 예약매도 ② 청산 지연 탐지(15:30 이후에도 전날 매수분이 OPEN이면 rc 3)."""
+    rc = 0
+    p = _open_position(rows)
+    if not p:
+        return 0
+    now = datetime.now(_KST)
+    if kr_resv_window(now)[0]:
+        if kis is None:
+            kis, token = _kis()
+        new, why = reserve_exit_rows(kis, token, rows, p["ticker"], int(p["filled_qty"]), now=now)
+        print(f"[panic-micro] 예약매도: {why}")
+        if new:
+            _append(new)
+            if new[0]["state"] != "ok":
+                rc = 3
+    if p.get("entry_session", "") < _today() and now.time() >= datetime.strptime("15:30", "%H:%M").time():
+        print(f"[panic-micro] ⚠️ 청산 지연 — {p['ticker']} x{p['filled_qty']} 진입 {p['entry_session']} 이 {_today()} 장 마감까지 OPEN"
+              "(계약은 익일 시가 매도). 브로커 보유·예약주문 확인 필요")
+        rc = 3
+    return rc
+
+
 def cmd_reconcile() -> int:
     rows = _read(LEDGER)
+    kis = token = None
+    if unresolved_unknown_orders(rows):                  # A1: 접수 응답을 못 받은 주문을 브로커 당일 체결조회로 되짚는다
+        kis, token = _kis()
+        rec, notes = resolve_unknown_order_rows(kis, token, rows)
+        for n in notes:
+            print(f"[panic-micro] {n}")
+        if rec:
+            _append(rec)
+            rows = _read(LEDGER)
+    if resv_rows_to_absorb(rows, _today()):              # A1: 매도 작업이 안 돈 날의 예약매도 전송분을 흡수(아니면 매일 재예약)
+        if kis is None:
+            kis, token = _kis()
+        rec, notes = absorb_transmitted_resv_rows(kis, token, rows, _today())
+        for n in notes:
+            print(f"[panic-micro] {n}")
+        if rec:
+            _append(rec)
+            rows = _read(LEDGER)
     done = {r["order_no"] for r in rows if r.get("kind") == "fill"}
     todo = [r for r in rows if r.get("kind") == "order" and r.get("success") and r.get("order_no") and r["order_no"] not in done]
     if not todo:
-        print("[panic-micro] 확인할 주문 없음"); return 0
-    kis, token = _kis()
+        print("[panic-micro] 확인할 주문 없음")
+        return _reserve_and_overdue(rows, kis, token)
+    if kis is None:
+        kis, token = _kis()
     pos = _positions(rows)
     out = []
     for o in todo:
@@ -231,7 +354,7 @@ def cmd_reconcile() -> int:
                         "entry_price": p.get("entry_price"), "exit_price": px, "qty": filled, "pnl_krw": pnl, "at": _now_iso()})
         print(f"  {o['side']} {o['ticker']} 체결 {filled}주 @ {px:,.0f}")
     _append(out)
-    return 0
+    return _reserve_and_overdue(_read(LEDGER), kis, token)
 
 
 def cmd_status() -> int:
@@ -246,11 +369,11 @@ def cmd_status() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["buy", "sell", "reconcile", "status"])
+    ap.add_argument("cmd", choices=["buy", "sell", "reconcile", "reserve_sell", "status"])
     ap.add_argument("--dry", action="store_true")
     a = ap.parse_args()
     return {"buy": lambda: cmd_buy(a.dry), "sell": lambda: cmd_sell(a.dry), "reconcile": cmd_reconcile,
-            "status": cmd_status}[a.cmd]()
+            "reserve_sell": lambda: cmd_reserve_sell(a.dry), "status": cmd_status}[a.cmd]()
 
 
 if __name__ == "__main__":
