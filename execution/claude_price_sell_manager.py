@@ -29,7 +29,7 @@ def _fee_rates_for_market(market: str) -> tuple[float, float]:
     if str(market or "").upper() == "US":
         per_side = _env_rate("US_FEE_RATE_PER_SIDE", 0.0025)
         return per_side, per_side
-    return _env_rate("KR_FEE_RATE_BUY", 0.00015), _env_rate("KR_FEE_RATE_SELL", 0.00195)
+    return _env_rate("KR_FEE_RATE_BUY", 0.00015), _env_rate("KR_FEE_RATE_SELL", 0.00215)
 
 
 def _fx_spread_rate_per_side(market: str) -> float:

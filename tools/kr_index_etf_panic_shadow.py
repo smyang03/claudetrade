@@ -47,7 +47,8 @@ GAP_STRONG = -2.0    # 강신호 — 스윕 270셀 중 t 최고(3.83) 셀이자 
 # 최악 1건 강신호 기준 −13.01% × 100만 = −13만. 파생형 ETF라 이익에 15.4% 배당소득세.
 UNIT_KRW = 500_000
 UNITS = {"strong": 2, "normal": 1, "unknown": 1}
-TAX_RATE = 0.154     # 파생형 ETF 매매차익 배당소득세(233740·229200 둘 다 해당)
+TAX_RATE = 0.154     # 파생형(레버리지) ETF 매매차익 배당소득세 — 233740만. 229200(KODEX 코스닥150)은 국내주식형이라 비과세
+TAXED_TICKERS = {"233740"}   # 실매매 코드(kr_panic_etf_micro.TAXED_TICKERS)와 같은 구분 — 10-21 정정(그 전엔 둘 다 과세로 과소 계산)
 COST = 0.05          # 왕복 비용(%) — ETF 거래세 없음, 수수료 0.015%×2 + 스프레드 근사
 STALE_SEC = 150.0    # 네이버 localTradedAt은 분 단위(15:18:00을 15:19:00에 읽으면 60s) + 폴링 70s → 150s 넘으면 stale (09-09 첫 실행에서 60s 문턱이 정상 시세를 stale로 오판)
 BACKFILL_START = "2015-12-17"
@@ -96,9 +97,23 @@ def units_for(strength: str | None, units: dict[str, int] | None = None) -> int:
     return int(table.get(str(strength or "unknown"), 1))
 
 
+def tax_rate_for(ticker: str | None) -> float:
+    return TAX_RATE if str(ticker or "") in TAXED_TICKERS else 0.0
+
+
+def months_spanned(dates: list[str]) -> int:
+    """구간이 걸친 달력 월 수(무신호 달 포함) — 월평균 분모. 10-21 정정: 그 전엔 신호가 있던 달만 세어 월평균이 과대."""
+    ds = [str(d)[:7] for d in dates if d]
+    if not ds:
+        return 1
+    y0, m0 = (int(x) for x in min(ds).split("-"))
+    y1, m1 = (int(x) for x in max(ds).split("-"))
+    return max(1, (y1 - y0) * 12 + (m1 - m0) + 1)
+
+
 def pnl_krw(net_pct: float | None, units: int, unit_krw: float = UNIT_KRW,
             tax_rate: float = TAX_RATE) -> tuple[float | None, float | None]:
-    """(세전 손익, 세후 손익) — 이익에만 과세, 손실은 그대로."""
+    """(세전 손익, 세후 손익) — 이익에만 과세, 손실은 그대로. 종목별 세율은 tax_rate_for(ticker)로 넘긴다."""
     if net_pct is None:
         return None, None
     gross = unit_krw * units * net_pct / 100.0
@@ -258,7 +273,7 @@ def backfill() -> int:
         if r.get("units") != u or r.get("notional_krw") != UNIT_KRW * u:
             r["units"] = u; r["notional_krw"] = UNIT_KRW * u; filled += 1
         if r.get("status") == "CLOSED" and r.get("net_pct") is not None:
-            g, a = pnl_krw(r["net_pct"], u)
+            g, a = pnl_krw(r["net_pct"], u, tax_rate=tax_rate_for(r.get("ticker")))
             if r.get("pnl_krw") != g or r.get("pnl_krw_after_tax") != a:
                 r["pnl_krw"] = g; r["pnl_krw_after_tax"] = a; filled += 1
     if relabeled or filled:
@@ -424,7 +439,7 @@ def settle() -> int:
             r["kq_chg_close"] = c0.get("kq_chg")
         r.update(settle_math(r["entry_close"], c1[f"{tk}_open"], c1.get(f"{tk}_close"), r.get("entry_1519")))
         u = units_for(r.get("strength"))
-        g, a = pnl_krw(r.get("net_pct"), u)
+        g, a = pnl_krw(r.get("net_pct"), u, tax_rate=tax_rate_for(r.get("ticker")))
         r.update({"units": u, "notional_krw": UNIT_KRW * u, "pnl_krw": g, "pnl_krw_after_tax": a,
                   "exit_date": nxt, "exit_reason": "NEXT_OPEN", "status": "CLOSED", "settled_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
         n += 1
@@ -448,7 +463,7 @@ def report() -> dict:
     rows = _load()
     closed = [r for r in rows if r.get("kind") == "trade" and r.get("status") == "CLOSED"]
     out: dict = {"generated_at": datetime.now(KST).isoformat(timespec="seconds"), "thr": THR, "gap_thr": GAP_THR, "gap_strong": GAP_STRONG,
-                 "cost": COST, "contract": CONTRACT, "sizing": {"unit_krw": UNIT_KRW, "units": UNITS, "tax_rate": TAX_RATE},
+                 "cost": COST, "contract": CONTRACT, "sizing": {"unit_krw": UNIT_KRW, "units": UNITS, "tax_rate": TAX_RATE, "taxed_tickers": sorted(TAXED_TICKERS)},
                  "by": {}}
     for tk, name in ETFS.items():
         base = _uncond_overnight(cache, tk)
@@ -480,7 +495,7 @@ def report() -> dict:
         if bf:
             w = [(r["net_pct"] + COST) * units_for(r.get("strength")) for r in bf]
             units = sum(units_for(r.get("strength")) for r in bf)
-            months = len({r["session_date"][:7] for r in bf}) or 1
+            months = months_spanned([r["session_date"] for r in bf])   # 무신호 달 포함(달력 월)
             gross = sum(r.get("pnl_krw") or 0.0 for r in bf)
             after = sum(r.get("pnl_krw_after_tax") or 0.0 for r in bf)
             parts["two_tier"] = {"unit_krw": UNIT_KRW, "units": units, "total_pct": round(sum(w), 1),

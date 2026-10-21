@@ -147,8 +147,8 @@ class NetPnlCostMetaTests(unittest.TestCase):
         )
         plan = self.store.find_path_run(run_id)["plan"]
         self.assertNotIn("entry_fx", plan)
-        self.assertAlmostEqual(plan["fee_pct_round_trip"], 0.21, places=4)
-        expected_fee = 70000 * 7 * 0.00015 + 71500 * 7 * 0.00195
+        self.assertAlmostEqual(plan["fee_pct_round_trip"], 0.23, places=4)   # 0.015 + 0.215 (2026 거래세 0.20%)
+        expected_fee = 70000 * 7 * 0.00015 + 71500 * 7 * 0.00215
         self.assertAlmostEqual(plan["fee_krw_est"], round(expected_fee, 0), delta=1.0)
 
     def test_missing_entry_data_keeps_close_working_without_meta(self):

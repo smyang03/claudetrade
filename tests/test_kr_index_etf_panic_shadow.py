@@ -107,6 +107,15 @@ class TestTwoTierSizing(unittest.TestCase):
         self.assertAlmostEqual(m.pnl_krw(1.0, 1)[0], 5_000.0, places=1)
         self.assertEqual(m.pnl_krw(None, 1), (None, None))
 
+    def test_tax_only_on_leveraged_and_months_include_quiet_months(self):
+        self.assertEqual(m.tax_rate_for("233740"), m.TAX_RATE)
+        self.assertEqual(m.tax_rate_for("229200"), 0.0)                       # 국내주식형 비과세(10-21 정정)
+        g, a = m.pnl_krw(2.0, 1, tax_rate=m.tax_rate_for("229200"))
+        self.assertEqual(g, a)
+        self.assertEqual(m.months_spanned(["2026-01-05", "2026-04-20"]), 4)   # 2·3월 무신호여도 분모에 포함
+        self.assertEqual(m.months_spanned(["2025-12-01", "2026-01-02"]), 2)
+        self.assertEqual(m.months_spanned([]), 1)
+
     def test_two_tier_beats_single_on_backfill_numbers(self):
         """강신호가 실제로 강해야 2단이 이긴다 — 백필 실측(강 +2.030 / 보통 +0.419)으로 검산."""
         rows = [("strong", 2.030)] * 43 + [("normal", 0.419)] * 204
