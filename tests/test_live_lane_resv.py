@@ -89,6 +89,7 @@ def test_check_resv_matches_by_seq_or_qty():
     class K:
         def inquire_reserved_orders_kr(self, token, s, e, **kw):
             assert (s, e) == ("20261021", "20261022")        # 접수일~전송일(조회 기준은 전송일 rsvn_ord_ord_dt — 10-21 실측)
+            assert not kw.get("rsvn_seq")                     # 10-23 실측: 예약번호 필터는 KIS가 INVALID INPUT_FILED_SIZE로 거부 — 로컬 매칭
             return [{"rsvn_ord_seq": "0000016", "pdno": "229200", "ord_rsvn_qty": "10", "odno": "", "rjct_rson2": "x"},
                     {"rsvn_ord_seq": "0000017", "pdno": "229200", "ord_rsvn_qty": "29", "odno": "0009001"}]
     resv = {"rsvn_seq": "17", "ticker": "229200", "qty": 29, "placed_session": "2026-10-21", "target_session": "2026-10-22"}

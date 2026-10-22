@@ -154,8 +154,11 @@ def check_resv(kis: Any, token: Any, resv: dict) -> tuple[str, str]:
     # 전송일(10-22)로 조회해야 행이 나온다. 접수일~전송일 범위로 묶어 양쪽을 덮는다.
     placed = str(resv.get("placed_session") or "").replace("-", "")
     target = str(resv.get("target_session") or "").replace("-", "") or placed
+    # ⚠️ RSVN_ORD_SEQ는 조회 필터로 넘기지 않는다 — 10-23 실측: 넘기면 KIS가 `ERROR INVALID INPUT_FILED_SIZE [RSVN_ORD_SEQ]`로
+    # 거부(0패딩 9·10·11자리 전부)해 첫 실전(229200 63981)에서 09:10·17:59 조회가 RuntimeError로 끝나 체결을 못 읽었다.
+    # 종목·방향·날짜로 조회한 뒤 예약번호는 아래서 로컬 매칭한다.
     rows = kis.inquire_reserved_orders_kr(token, min(placed, target), max(placed, target), ticker=resv.get("ticker", ""),
-                                          side="sell", rsvn_seq=resv.get("rsvn_seq") or "")
+                                          side="sell")
     seq = str(resv.get("rsvn_seq") or "").strip().lstrip("0")
     cand = [r for r in rows if not seq or str(r.get("rsvn_ord_seq") or "").strip().lstrip("0") == seq]
     if not cand and not seq:
