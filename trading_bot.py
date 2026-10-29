@@ -145,12 +145,14 @@ from risk_manager import (
     CASH_PARKING_SOURCE,
     ISOLATED_GENERIC_EXIT_FIELDS,
     KR_BUYBACK_CANARY_SOURCE,
+    KR_INDEX_INCLUSION_SOURCE,
     KR_PANIC_ETF_MICRO_SOURCE,
     US_EARNINGS_T1_SOURCE,
     RiskManager,
     cash_parking_manifest,
     isolated_strategy_source,
     kr_buyback_canary_manifest,
+    kr_index_inclusion_manifest,
     kr_panic_etf_micro_manifest,
     us_earnings_t1_manifest,
 )
@@ -23511,7 +23513,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
         }
         t1_order_nos = (us_earnings_t1_manifest()["order_nos"] if market_key == "US"
                         else kr_buyback_canary_manifest()["order_nos"] if market_key == "KR" else frozenset())
-        t1_order_nos = t1_order_nos | cash_parking_manifest()["order_nos"] | kr_panic_etf_micro_manifest()["order_nos"]
+        t1_order_nos = (t1_order_nos | cash_parking_manifest()["order_nos"] | kr_panic_etf_micro_manifest()["order_nos"]
+                        | kr_index_inclusion_manifest()["order_nos"])
         for order_no, row in broker_by_order_no.items():
             if order_no in local_by_order_no:
                 continue
@@ -24025,7 +24028,8 @@ class TradingBot(MarketUtilsMixin, StateMixin):
                 log.warning(f"[canary 귀속 복원] KR {ticker_k} 출처 없음 → {KR_BUYBACK_CANARY_SOURCE} (canary 원장 보유)")
         # 대기 현금 파킹·패닉 ETF 소액 귀속 복원(KR·US 공통) — 각 도구 원장의 보유 목록으로 격리.
         for _src, _manifest in ((CASH_PARKING_SOURCE, cash_parking_manifest),
-                                (KR_PANIC_ETF_MICRO_SOURCE, kr_panic_etf_micro_manifest)):
+                                (KR_PANIC_ETF_MICRO_SOURCE, kr_panic_etf_micro_manifest),
+                                (KR_INDEX_INCLUSION_SOURCE, kr_index_inclusion_manifest)):
             if str(pos.get("source_strategy") or "").strip():
                 break
             ticker_p = str(pos.get("ticker") or "").strip().upper()

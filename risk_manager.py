@@ -46,6 +46,8 @@ ISOLATED_STRATEGY_SOURCES = frozenset({
     "cash_parking",
     # 2026-10-05: KR 코스닥 패닉 ETF 소액 실전(종가 매수 → 다음날 장전 시장가 청산). 청산은 전용 도구만 한다.
     "kr_panic_etf_micro",
+    # 2026-10-30: KR 지수 정기변경 편입(발표 다음 시가 매수 → 효력일 전 종가 청산). 청산은 전용 도구만 한다.
+    "kr_index_inclusion",
 })
 
 US_EARNINGS_T1_SOURCE = "us_earnings_t1"
@@ -115,6 +117,15 @@ _KR_PANIC_ETF_MICRO_LEDGER = __import__("pathlib").Path(__file__).resolve().pare
 def kr_panic_etf_micro_manifest(path=None) -> dict:
     """KR 패닉 ETF 소액 실전 원장(tools/kr_panic_etf_micro.py)의 보유 티커·주문번호. 원장 형식은 T1과 같다."""
     return us_earnings_t1_manifest(path if path else _KR_PANIC_ETF_MICRO_LEDGER)
+
+
+KR_INDEX_INCLUSION_SOURCE = "kr_index_inclusion"
+_KR_INDEX_INCLUSION_LEDGER = __import__("pathlib").Path(__file__).resolve().parent / "data" / "shadow" / "kr_index_inclusion_live.jsonl"
+
+
+def kr_index_inclusion_manifest(path=None) -> dict:
+    """KR 지수 정기변경 편입 실전 원장(tools/kr_index_inclusion_live.py)의 보유 티커·주문번호. 원장 형식은 T1과 같다."""
+    return us_earnings_t1_manifest(path if path else _KR_INDEX_INCLUSION_LEDGER)
 
 # Generic advisor state must never own an isolated sleeve.  Keep this list in
 # the same module as ISOLATED_STRATEGY_SOURCES so runtime cleanup, preflight,
