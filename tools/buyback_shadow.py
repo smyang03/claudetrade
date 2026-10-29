@@ -735,6 +735,11 @@ def kr_settle_rows(rows: List[Dict], bk: Book, done: set) -> List[Dict]:
                    "entry": cal[e], "exit": cal[x], "entry_ledger": r["entry_date"], "entry_open": _nz(bk.o[e, j]),
                    "r_px": ry, "r_naver": rn, "kospi200": ki, "kosdaq150": kq, "valueup_period": r.get("valueup_period"),
                    "actionable": r.get("actionable"), "settled_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+            # 실주문 계약(10-30 대조): 캐너리는 e+h번째 세션 **시가**에 판다(장전 시장가·예약매도) — 연구 계약(e+h-1 종가)보다
+            # 하룻밤 길다. 판정이 실제로 거래한 계약을 재도록 같이 기록한다. 다음 시가가 아직 없으면 None(보조 필드).
+            if x + 1 < len(cal) and bk.o[e, j] == bk.o[e, j] and bk.o[e, j] > 0 and bk.o[x + 1, j] == bk.o[x + 1, j]:
+                rec["exit_live"] = cal[x + 1]
+                rec["r_live_open"] = round(float((bk.o[x + 1, j] / bk.o[e, j] - 1.0) * 100.0), 4)
             if r["rule"] == "Y1":
                 rec["elig_final"] = bool(bk.eligible(s, e)[j])
                 sb = bk.size_bench(s, e, h, dv)

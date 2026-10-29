@@ -254,6 +254,12 @@ def test_kr_settle_math(monkeypatch, kr_env):
     assert rec["entry"] == cal[cal.index("2026-08-03") + 1]
     assert abs(rec["ex"] - (float(bk.fwd(j, e, 5)) - 0.25 - sb)) < 1e-9
     assert rec["elig_final"] is True
+    # 10-30: 실주문 계약(e+5 시가 청산) 수익을 보조 필드로 — 연구 계약(e+4 종가)과 하룻밤 차이
+    x = e + 4
+    assert rec["exit"] == cal[cal.index(rec["entry"]) + 4]
+    if x + 1 < len(bk.cal):
+        assert rec["exit_live"] == bk.cal[x + 1]
+        assert abs(rec["r_live_open"] - (float(bk.o[x + 1, j] / bk.o[e, j]) - 1) * 100) < 1e-3
 
 
 # ------------------------------------------------------------------ US 규칙
