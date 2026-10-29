@@ -475,6 +475,9 @@ def main() -> int:
     ap.add_argument("cmd", choices=["buy", "sell", "reconcile", "reserve_sell", "status"])
     ap.add_argument("--dry", action="store_true")
     a = ap.parse_args()
+    if a.cmd != "status" and not a.dry:                # 10-30: 아침 DNS 일시 장애로 작업이 죽던 것 — 이름 해석될 때까지 최대 2분 대기
+        from net_ready import wait_dns
+        wait_dns(["openapi.koreainvestment.com"], tag="canary")
     return {"buy": lambda: cmd_buy(a.dry), "sell": lambda: cmd_sell(a.dry),
             "reconcile": cmd_reconcile, "reserve_sell": lambda: cmd_reserve_sell(a.dry), "status": cmd_status}[a.cmd]()
 

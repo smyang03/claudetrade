@@ -1534,6 +1534,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     a = ap.parse_args(argv)
     try:
         if a.cmd == "kr-scan":
+            if not a.dry:                                  # 10-30: 10-15 08:30 DNS 실패로 스캔 전체(대기 행 재평가 포함)가 중단돼 에스원을 놓쳤다
+                from net_ready import wait_dns
+                wait_dns(["opendart.fss.or.kr"], tag="BUYBACK-KR")
             t = datetime.now(KST).date()
             d0, d1 = _dates(a, t - timedelta(days=3), t)          # 주말 공시·DS005 지연분까지 멱등 재조회
             return kr_scan(d0, d1, a.dry)
