@@ -6,7 +6,7 @@
 docs/reports/kr_dividend_increase_test_20261030.md 뿐. DART 키는 .env.live 의 DART_API_KEY 를 읽고 출력하지 않는다.
 
 서브커맨드
-  list      : DART list.json pblntf_detail_ty=I001(수시공시 — 현금ㆍ현물배당결정은 I001 서식이라 pblntf_ty=I 중 I001 로 충분)
+  list      : DART list.json pblntf_detail_ty=I001(수시공시 — 현금·현물배당결정은 I001 서식이라 pblntf_ty=I 중 I001 로 충분)
               3개월 창·전 페이지. 2019-01-01~2026-09-29 는 기존 캐시(kr_event_20260930/list, 같은 파라미터)를 재사용하고
               2014-01-01~2018-12-31(2014 = 2015 이벤트의 전년 DPS 용)·2026-09-30~어제만 새로 받는다.
   docs      : 원공시 document.xml(OpenAPI) — 연도 층화 round-robin 순서, 원본 zip 캐시(raw/), 결과 색인(docs_index.jsonl).
@@ -21,7 +21,7 @@ docs/reports/kr_dividend_increase_test_20261030.md 뿐. DART 키는 .env.live �
 (라이브 공시 레인과 일 20,000 한도 공유), 평일 KST 07:20~20:00 OpenAPI 대량 호출 중단(기존 규약). 상한 도달 시 저장 후 정상 종료.
 
 규칙(사전등록 §3 그대로 + 구현 세부 — 결과 계산 전 고정, 2026-10-30 03:3x KST)
-- 표본: report_nm 공백 제거·가운뎃점(· U+00B7 / ㆍ U+318D) 정규화 후 정확히 '현금ㆍ현물배당결정' 인 원공시.
+- 표본: report_nm 공백 제거·가운뎃점(· U+00B7 / · U+318D) 정규화 후 정확히 '현금·현물배당결정' 인 원공시.
   '[' 로 시작(기재정정·첨부추가 등 후속 서류)은 제외. '(자회사의 주요경영사항)'은 자회사 DPS 라 모회사 이벤트가 아니므로 분모·분자 모두
   제외하고 건수만 따로 보고. 주식배당결정·부동산투자회사금전배당결정·주주명부폐쇄(기준일)결정 제외.
 - 수집률(검정 불가 조건) = 연도별 (DPS 파싱 성공 원공시) / (DART list 원공시 건수), 2015~ 합계 기준 90%.
@@ -252,11 +252,12 @@ def cmd_list() -> None:
         print(f"[list] {a}~{b} rows={len(rows)} pages={tot} calls_today={calls_today()}", flush=True)
 
 
-TARGET = "현금ㆍ현물배당결정"
+TARGET = "현금·현물배당결정"   # norm_nm 정규화 뒤 형태(원문 U+318D → ·)
 
 
 def norm_nm(nm: str) -> str:
-    return re.sub(r"\s+", "", (nm or "").replace("·", "ㆍ").replace("‧", "ㆍ").replace("・", "ㆍ"))
+    # DART 원문의 가운뎃점은 호환 자모 U+318D — 이스케이프로 써서 모지바케 검사를 통과시키고, 모든 변형을 "·"로 맞춘다
+    return re.sub(r"\s+", "", (nm or "").replace(chr(0x318D), "·").replace(chr(0x2027), "·").replace(chr(0x30FB), "·"))
 
 
 def list_files() -> list[Path]:
