@@ -49,3 +49,14 @@ def test_isolated_exit_owner_never_sells_parking():
     rm = risk_manager.RiskManager.__new__(risk_manager.RiskManager)
     handled, cand = rm._isolated_strategy_exit_candidate({"source_strategy": c.SOURCE, "entry": 100, "current_price": 50})
     assert handled is True and cand is None
+
+
+def test_rebalance_decision_parks_excess_unparks_deficit_with_hysteresis():
+    import cash_parking as cp
+    assert cp.rebalance_decision(1708.0, 600.0, 100.7, 6) == ("park", 11)        # 10-30 실측 현금·SGOV 단가
+    assert cp.rebalance_decision(650.0, 600.0, 100.7, 6) == ("hold", 0)          # 한 단위 미만 초과
+    assert cp.rebalance_decision(500.0, 600.0, 100.7, 6) == ("hold", 0)          # 80% 위 → 왕복 방지
+    assert cp.rebalance_decision(300.0, 600.0, 100.7, 6) == ("unpark", 3)        # ceil(300/100.7)
+    assert cp.rebalance_decision(0.0, 600.0, 100.7, 2) == ("unpark", 2)          # 보유 상한
+    assert cp.rebalance_decision(0.0, 600.0, 100.7, 0) == ("hold", 0)
+    assert cp.rebalance_decision(10.0, 600.0, 0.0, 3) == ("hold", 0)

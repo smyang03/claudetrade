@@ -12,6 +12,8 @@
   park  --market M  초과 현금만큼 파킹 ETF 지정가 매수 (M = KR | US)
   unpark --market M --krw N   레인 자금이 모자랄 때 N원어치 매도
   reconcile         체결 확인·포지션 갱신
+  rebalance --market M   (10-30) reconcile → 현금이 유지액보다 한 단위 이상 많으면 파킹, 유지액의 80% 아래로 내려가면
+                    모자란 만큼 매도. 예약작업으로 장중 하루 1회(KR 14:50 — 15:20 패닉 매수 전 / US 00:40 KST).
   status            원장 요약
 원장: data/shadow/cash_parking_live.jsonl — risk_manager.cash_parking_manifest()가 봇 귀속 복원에 쓴다.
 """
@@ -109,6 +111,20 @@ def plan_qty(cash: float, keep: float, price: float) -> int:
     if price <= 0:
         return 0
     return max(0, int(math.floor((cash - keep) / price)))
+
+
+UNPARK_BELOW = 0.8      # 현금이 유지액의 80% 아래면 해제(파킹·해제 왕복 방지 폭)
+
+
+def rebalance_decision(cash: float, keep: float, unit: float, held: int) -> tuple[str, int]:
+    """(park|unpark|hold, 주수). 순수 함수. unit = 1주 가격(현금과 같은 통화)."""
+    if unit <= 0:
+        return "hold", 0
+    if cash - keep >= unit:
+        return "park", int(math.floor((cash - keep) / unit))
+    if cash < keep * UNPARK_BELOW and held > 0:
+        return "unpark", min(held, int(math.ceil((keep - cash) / unit)))
+    return "hold", 0
 
 
 def kr_limit_price(last: float) -> int:
@@ -276,6 +292,36 @@ def cmd_reconcile() -> int:
     return 0
 
 
+def cmd_rebalance(market: str, dry: bool) -> int:
+    """유지액 기준 양방향 재조정(10-30). 주문은 기존 park/unpark 경로를 그대로 쓴다."""
+    enabled, cfg = _env_gate()
+    if not dry and not enabled:
+        print(f"[parking] 꺼짐 — {cfg['mismatch'] or cfg['enabled_flag']}"); return 0
+    if not dry and not market_open(market):
+        print(f"[parking] {market} 장 시간 아님 — 재조정 안 함"); return 0
+    if not dry:
+        cmd_reconcile()
+    tk = cfg["us_ticker"] if market == "US" else cfg["kr_ticker"]
+    rows = _read()
+    if pending_orders(rows, tk):
+        print(f"[parking] {tk} 체결 확인 전 주문 있음 — 재조정 안 함"); return 0
+    kis, token = _kis(market)
+    bal = kis.get_balance(token, market=market, force_refresh=True)
+    cash = float(bal.get("orderable_cash") or 0) if market == "US" else safe_cash_krw(bal)
+    keep = cfg["us_keep_usd"] if market == "US" else cfg["kr_keep_krw"]
+    last = _last_price(market, tk)
+    unit = round(last * 1.001, 2) if market == "US" else kr_limit_price(last)
+    held = held_from_fills(rows, tk)
+    act, qty = rebalance_decision(cash, keep, unit, held)
+    print(f"[parking] {market} 재조정: 주문가능 {cash:,.2f} · 유지 {keep:,.0f} · {tk} {last:,.2f} · 보유 {held} → {act} {qty}")
+    if act == "park":
+        return cmd_park(market, dry)
+    if act == "unpark":
+        krw = (keep - cash) * (_usdkrw() if market == "US" else 1.0)
+        return cmd_unpark(market, krw, dry)
+    return 0
+
+
 def cmd_status() -> int:
     enabled, cfg = _env_gate()
     print(f"[parking] enabled={enabled} flag={cfg['enabled_flag']!r} 두소스불일치={cfg['mismatch']} 봇격리={_bot_has_isolation()}")
@@ -286,15 +332,15 @@ def cmd_status() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["plan", "park", "unpark", "reconcile", "status"])
+    ap.add_argument("cmd", choices=["plan", "park", "unpark", "reconcile", "rebalance", "status"])
     ap.add_argument("--market", choices=["KR", "US"])
     ap.add_argument("--krw", type=float, default=0)
     ap.add_argument("--dry", action="store_true")
     a = ap.parse_args()
-    if a.cmd in ("park", "unpark") and not a.market:
+    if a.cmd in ("park", "unpark", "rebalance") and not a.market:
         ap.error("--market 필요")
     return {"plan": cmd_plan, "park": lambda: cmd_park(a.market, a.dry), "unpark": lambda: cmd_unpark(a.market, a.krw, a.dry),
-            "reconcile": cmd_reconcile, "status": cmd_status}[a.cmd]()
+            "reconcile": cmd_reconcile, "rebalance": lambda: cmd_rebalance(a.market, a.dry), "status": cmd_status}[a.cmd]()
 
 
 if __name__ == "__main__":
