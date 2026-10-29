@@ -38,6 +38,11 @@ LEDGER = ROOT / "data" / "shadow" / "us_earnings_t1_live.jsonl"
 START_CFG = ROOT / "config" / "v2_start_config.json"
 HOLD = 20
 LOO_CAP = 1.25
+# 10-29 실측: 실적 시즌 후보 286건이라 채점(22:15 시작)이 22:20:44에 끝났고, 22:20:02 매수 작업은 그 전에 원장을 읽어
+# 선정 9건을 "선택 없음"으로 놓쳤다. 매수는 오늘 채점 완료 행(kind=run)을 기다린다 — 채점은 signal 행과 run 행을 한 번에 쓴다.
+# 마감은 LOO 접수 한계(09:28 ET) 앞 09:26 ET.
+SCORE_WAIT_DEADLINE_ET = (9, 26)
+SCORE_WAIT_POLL_SEC = 15
 SOURCE = "us_earnings_t1"
 
 
@@ -112,6 +117,30 @@ def _usdkrw() -> float:
     return float(fx["Close"].dropna().values.ravel()[-1])
 
 
+def _score_ran(today: str) -> bool:
+    return any(r.get("kind") == "run" and r.get("session") == today for r in _read(SHADOW))
+
+
+def _wait_for_score(today: str, *, now_et=None, sleep=None) -> bool:
+    """오늘 채점 run 행이 생길 때까지 기다린다. 마감(SCORE_WAIT_DEADLINE_ET)까지 없으면 False."""
+    import time as _time
+    import zoneinfo
+    now_et = now_et or (lambda: datetime.now(zoneinfo.ZoneInfo("America/New_York")))
+    sleep = sleep or _time.sleep
+    waited = False
+    while not _score_ran(today):
+        t = now_et()
+        if (t.hour, t.minute) >= SCORE_WAIT_DEADLINE_ET:
+            return False
+        if not waited:
+            print(f"[T1 live] 오늘({today}) 채점 미완료 — 완료 대기(마감 {SCORE_WAIT_DEADLINE_ET[0]:02d}:{SCORE_WAIT_DEADLINE_ET[1]:02d} ET)")
+            waited = True
+        sleep(SCORE_WAIT_POLL_SEC)
+    if waited:
+        print("[T1 live] 채점 완료 확인 — 진행")
+    return True
+
+
 def _sessions_between(d0: str, d1) -> int:
     """d0(진입일) 다음 날부터 d1 전날까지 IWM 거래일 수 + 1(= d1이 진입 후 몇 번째 세션인지, d1이 거래일이라는 가정)."""
     import yfinance as yf
@@ -130,6 +159,11 @@ def cmd_buy(dry: bool) -> int:
     today = str(_today_et())
     if any(r.get("kind") == "order" and r.get("side") == "buy" and r.get("session") == today for r in _read(LEDGER)):
         print("[T1 live] 오늘 매수 주문 이미 있음 — 멱등 종료"); return 0
+    if not _wait_for_score(today):
+        print(f"[T1 live] ⚠️ 오늘({today}) 채점이 마감까지 안 끝남 — 매수 안 함(선정 여부 모름, '선택 없음' 아님)")
+        if not dry:
+            _append([{"kind": "skip", "session": today, "reason": "score_not_ready", "at": _now_iso()}])
+        return 3
     sigs = [r for r in _read(SHADOW) if r.get("kind") == "signal" and r.get("session") == today
             and r.get("selected_I1") and float(r.get("dvol20") or 0) >= cfg["min_dvol"]]
     if not sigs:
