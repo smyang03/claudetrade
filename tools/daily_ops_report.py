@@ -47,6 +47,21 @@ def _recent(rows: list[dict], hours: int = 24) -> list[dict]:
     return res
 
 
+def account_total_krw(kr: dict, us: dict) -> float:
+    """계좌 총자산 = KR 보유 평가 + KR 현금(필드 중 최솟값) + US 자산(market_asset_krw).
+    10-30 수리: 전엔 KIS `kis_total_asset_krw`를 그대로 썼는데 그 값은 **KR 결제 전 현금 + US 자산**이라 KR 보유 평가가
+    빠진다(10-29 실측 430.0만 vs 실제 436.3만). KR 레인이 매수하면 총자산이 줄어 보이고 매도하면 늘어 보여
+    하루 ±40만씩 출렁였다(10-27 386.4만 → 10-29 427.1만). 필드가 없으면 예전 값으로 되돌아간다."""
+    # KR 현금은 필드마다 결제 반영 시점이 달라 하루 내내 맞는 값이 없다(10-30 실측: 23:43 D+2 58.3만 → 자정 뒤
+    # 당일 매수 금액이 0으로 초기화되며 D+2가 87.9만으로 되돌아감). 가장 작은 값(가장 보수적)을 쓴다 — 자정~KIS 일괄
+    # 처리 사이에는 결제 전 매수분만큼 여전히 과대일 수 있다.
+    hold, us_asset = kr.get("total_eval"), us.get("market_asset_krw")
+    cash = [float(kr[k]) for k in ("cash", "d1_settlement_krw", "d2_settlement_krw") if kr.get(k) is not None]
+    if hold is not None and us_asset is not None and cash:
+        return float(hold) + min(cash) + float(us_asset)
+    return float(us.get("kis_total_asset_krw") or 0)
+
+
 def account_lines() -> list[str]:
     try:
         s = json.loads((ROOT / "state" / "live_broker_truth_snapshot.json").read_text(encoding="utf-8"))
@@ -54,7 +69,7 @@ def account_lines() -> list[str]:
         return ["계좌: 스냅샷 없음"]
     us = s["markets"]["US"].get("account_summary", {})
     kr = s["markets"]["KR"].get("account_summary", {})
-    lines = [f"계좌 총 {float(us.get('kis_total_asset_krw') or 0) / 1e4:,.1f}만 · KR현금 {float(kr.get('cash') or 0) / 1e4:,.1f}만"
+    lines = [f"계좌 총 {account_total_krw(kr, us) / 1e4:,.1f}만 · KR현금 {float(kr.get('cash') or 0) / 1e4:,.1f}만"
              f" · US현금 ${float(us.get('cash') or 0):,.0f}"]
     for m in ("KR", "US"):
         for x in s["markets"][m].get("positions", []):
