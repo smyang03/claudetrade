@@ -183,21 +183,26 @@ def cmd_buy(dry: bool) -> int:
     bal = kis.get_balance(token, market="US", force_refresh=True)
     held = {str(s["ticker"]).upper() for s in bal.get("stocks", [])}
     fx = _usdkrw()
-    plans = []
-    for s in sorted(sigs, key=lambda r: -float(r["score"])):
+    plans, skips = [], []
+    ranked = sorted(sigs, key=lambda r: -float(r["score"]))
+    for i, s in enumerate(ranked):
         tk = str(s["ticker"]).upper()
+        if len(plans) >= cfg["max_new"]:               # 하루 한도에 밀린 후보도 수율 분모에 남긴다
+            skips += [(str(x["ticker"]).upper(), x, "daily_cap") for x in ranked[i:]]
+            break
         if tk in held or tk in open_pos:
-            print(f"  건너뜀 {tk}: 이미 보유"); continue
+            print(f"  건너뜀 {tk}: 이미 보유"); skips.append((tk, s, "already_held")); continue
         limit = round(float(s["close_a"]) * LOO_CAP, 2)
         qty = int(math.floor(cfg["slot"] / (float(s["close_a"]) * fx)))
         if qty < 1:
-            print(f"  건너뜀 {tk}: 1주 가격이 슬롯 초과"); continue
+            print(f"  건너뜀 {tk}: 1주 가격이 슬롯 초과"); skips.append((tk, s, "price_gt_slot")); continue
         if qty * limit > float(bal.get("orderable_cash") or 0):
-            print(f"  건너뜀 {tk}: 달러 주문가능현금 부족({bal.get('orderable_cash')})"); continue
+            print(f"  건너뜀 {tk}: 달러 주문가능현금 부족({bal.get('orderable_cash')})"); skips.append((tk, s, "cash_short")); continue
         plans.append({"ticker": tk, "qty": qty, "limit": limit, "score": s["score"], "close_a": s["close_a"],
                       "cost_krw": round(qty * float(s["close_a"]) * fx)})
-        if len(plans) >= cfg["max_new"]:
-            break
+    if skips and not dry:                              # 실행 수율 추적(10-30) — 쉐도우 선정 → 실주문 → 사유
+        _append([{"kind": "skip", "session": today, "reason": why, "ticker": tk, "score": x.get("score"),
+                  "close_a": x.get("close_a"), "n_candidates": len(sigs), "at": _now_iso()} for tk, x, why in skips])
     for p in plans:
         print(f"[T1 live] {'(dry) ' if dry else ''}LOO 매수 {p['ticker']} x{p['qty']} 한도 ${p['limit']} "
               f"(전일종가 ${p['close_a']:.2f}, 약 {p['cost_krw']:,}원, score {p['score']:.4f})")
