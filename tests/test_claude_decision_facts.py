@@ -416,7 +416,8 @@ class ClaudeDecisionFactsBuilderTests(unittest.TestCase):
                     """
                 )
                 conn.commit()
-            before_count = sqlite3.connect(audit_db).execute("SELECT COUNT(*) FROM audit_candidate_rows").fetchone()[0]
+            with closing(sqlite3.connect(audit_db)) as conn:   # 안 닫으면 Windows가 임시 DB를 못 지운다(10-30 QA 수리)
+                before_count = conn.execute("SELECT COUNT(*) FROM audit_candidate_rows").fetchone()[0]
 
             summary = build_claude_decision_facts(
                 db_path=mart,
@@ -430,7 +431,8 @@ class ClaudeDecisionFactsBuilderTests(unittest.TestCase):
             )
 
             self.assertEqual(summary["fact_execution_rows"], 1)
-            after_count = sqlite3.connect(audit_db).execute("SELECT COUNT(*) FROM audit_candidate_rows").fetchone()[0]
+            with closing(sqlite3.connect(audit_db)) as conn:
+                after_count = conn.execute("SELECT COUNT(*) FROM audit_candidate_rows").fetchone()[0]
             self.assertEqual(before_count, after_count)
             with closing(_connect(mart)) as conn:
                 row = conn.execute("SELECT * FROM fact_execution").fetchone()

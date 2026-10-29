@@ -38,7 +38,17 @@ def test_thirty_trades_in_two_sessions_cannot_promote(book):
     assert gate.verdict(gate.ARMS[0], s) == "ACCUMULATING_SESSIONS(2/30)"
 
 
-def test_open_cohort_excluded_as_a_whole(book):
+def _flat_bench(monkeypatch):
+    """지수 봉을 평탄(시가=종가=100)으로 고정 — 초과분 = 원 net. 09-12 게이트 v3 이후 실제 IWM·069500 캐시를 읽어
+    9월 봉이 쌓이자 기대값이 바뀌던 것(10-30 QA 수리)."""
+    from datetime import date as _d
+    days = [(_d(2026, 9, 1) + timedelta(days=i)).isoformat() for i in range(90)]
+    bars = [(d, 100.0, 100.0, 100.0, 100.0, 1.0) for d in days]
+    monkeypatch.setattr(gate, "bench_index", lambda market: (bars, {b[0]: i for i, b in enumerate(bars)}))
+
+
+def test_open_cohort_excluded_as_a_whole(book, monkeypatch):
+    _flat_bench(monkeypatch)
     insert(book, "2026-09-07", 10)
     insert(book, "2026-09-07", None, "OPEN")
     insert(book, "2026-09-08", -1)
@@ -55,7 +65,8 @@ def test_invalid_closed_return_fails_closed(book, bad):
 
 
 def strong_stats():
-    return {"n": 100, "sessions": 60, "session_t": 4,
+    # bench_available: 09-12 게이트 v3는 벤치가 없으면 BENCH_UNAVAILABLE을 낸다(원 net 대체 금지) — 강한 증거 판정은 벤치가 있을 때다.
+    return {"n": 100, "sessions": 60, "session_t": 4, "bench_available": True,
             "half_year_means": {"2026H1": .5, "2026H2": .6}, "ex_top2_mean": .4}
 
 

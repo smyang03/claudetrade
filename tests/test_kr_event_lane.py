@@ -157,12 +157,14 @@ class PhantomTest(unittest.TestCase):
 class ProcessTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.orig = (k.PHANTOM_LEDGER, k.SIGNAL_LEDGER)
+        self.orig = (k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.liquidity_snapshot)
         k.PHANTOM_LEDGER = Path(self.tmp.name) / "ph.jsonl"
         k.SIGNAL_LEDGER = Path(self.tmp.name) / "sig.jsonl"
+        # 실제 가격 캐시의 최신 종가를 전일 종가로 읽어 주가가 움직이면 급등 게이트(runup)에 걸리던 것 — 고정값(10-30 QA 수리)
+        k.liquidity_snapshot = lambda t: {"prev_close": 80000.0, "dvol20_krw": 5e10, "bars": 60, "last_bar_date": "2026-09-03"}
 
     def tearDown(self):
-        k.PHANTOM_LEDGER, k.SIGNAL_LEDGER = self.orig
+        k.PHANTOM_LEDGER, k.SIGNAL_LEDGER, k.liquidity_snapshot = self.orig
         self.tmp.cleanup()
 
     def test_process_records_all_and_enters_on_strong(self):
