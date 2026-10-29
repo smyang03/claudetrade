@@ -34,8 +34,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
-from live_lane_common import (KST as _KST, absorb_transmitted_resv_rows, active_resv, check_resv, kr_order_window,  # noqa: E402
-                              kr_resv_window, order_state, place_safely, reserve_exit_rows, resolve_unknown_order_rows,
+from live_lane_common import (KST as _KST, absorb_transmitted_resv_rows, active_resv, cancel_orphan_resv,  # noqa: E402
+                              check_resv, kr_order_window, kr_resv_window, live_sell_order_exists, orphan_resv_candidates,
+                              order_state, place_safely, reserve_exit_rows, resolve_unknown_order_rows,
                               resv_exit_decision, resv_rows_to_absorb, safe_cash_krw, unresolved_unknown_orders)
 
 SHADOW = ROOT / "data" / "shadow" / "kr_index_etf_panic.jsonl"
@@ -211,9 +212,12 @@ def cmd_sell(dry: bool) -> int:
     p = next((q for q in _positions(rows).values() if q.get("status") == "OPEN"), None)   # 상품이 바뀌어도 보유분을 판다
     if not p or p.get("status") != "OPEN" or not p.get("filled_qty") or p.get("entry_session") >= day:
         print("[panic-micro] 매도 대상 없음"); return 0
-    if any(r.get("kind") == "order" and r.get("side") == "sell" and r.get("session") == day
-           and order_state(r) != "rejected" for r in rows):                 # 거부 주문은 브로커에 없으니 재시도한다
+    if live_sell_order_exists(rows, day):              # 거부·미접수 확정 주문은 브로커에 없으니 재시도한다(10-30 수리)
         print("[panic-micro] 오늘 매도 이미 있음"); return 0
+    stale = [r for r in resv_rows_to_absorb(rows, day) if r.get("ticker") == p["ticker"] and r.get("target_session") < day]
+    if stale and not dry:                              # 지난 예약이 이미 팔았을 수 있다 — 확인 전엔 일반 매도 안 냄(10-30 수리)
+        print(f"[panic-micro] ⚠️ 이전 예약 seq={stale[-1].get('rsvn_seq') or '-'}({stale[-1].get('target_session')}) "
+              "처리결과 미확인 — 이미 팔렸을 수 있어 일반 매도 안 냄"); return 3
     resv = active_resv(rows, p["ticker"], day)
     if dry:
         print(f"[panic-micro] (dry) 매도 {p['ticker']} x{p['filled_qty']} (진입 {p['entry_session']}) 예약={resv and resv.get('rsvn_seq')}")
@@ -284,15 +288,29 @@ def cmd_reserve_sell(dry: bool = False) -> int:
 def _reserve_and_overdue(rows: list[dict], kis=None, token=None) -> int:
     """reconcile 후반부 — ① 보유 확인분 예약매도 ② 청산 지연 탐지(15:30 이후에도 전날 매수분이 OPEN이면 rc 3)."""
     rc = 0
+    open_qty = {t: int(q.get("filled_qty") or 0) for t, q in _positions(rows).items() if q.get("status") == "OPEN"}
+    if orphan_resv_candidates(rows, _today(), open_qty):  # 청산·수량 변경 뒤 남은 예약 취소(10-30 수리, 코덱스 지적 1)
+        if kis is None:
+            kis, token = _kis()
+        rec, notes = cancel_orphan_resv(kis, token, rows, _today(), open_qty)
+        for n in notes:
+            print(f"[panic-micro] {n}")
+            if n.startswith("⚠️"):
+                rc = 3
+        if rec:
+            _append(rec)
+            rows = _read(LEDGER)
     p = _open_position(rows)
     if not p:
-        return 0
+        return rc
     now = datetime.now(_KST)
     if kr_resv_window(now)[0]:
         if kis is None:
             kis, token = _kis()
         new, why = reserve_exit_rows(kis, token, rows, p["ticker"], int(p["filled_qty"]), now=now)
         print(f"[panic-micro] 예약매도: {why}")
+        if why.startswith("⚠️"):
+            rc = 3
         if new:
             _append(new)
             if new[0]["state"] != "ok":

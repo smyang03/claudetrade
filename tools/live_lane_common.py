@@ -98,14 +98,48 @@ def order_state(res: dict) -> str:
 
 
 # ────────────────────────────────────────────── 예약주문 원장 (kind=resv_order)
+def _resolved_resv_refs(rows: list[dict]) -> set:
+    return {r.get("ref_at") for r in rows if r.get("kind") == "resv_resolved" and r.get("ref_at")}
+
+
+def live_resv_rows(rows: list[dict]) -> list[dict]:
+    """살아 있는 예약 행 전부(접수 ok·unknown 중 resv_resolved로 닫히지 않은 것)."""
+    done = _resolved_resv_refs(rows)
+    return [r for r in rows if r.get("kind") == "resv_order" and r.get("state") in ("ok", "unknown") and r.get("at") not in done]
+
+
 def active_resv(rows: list[dict], ticker: str, target_session: str) -> dict | None:
-    """해당 종목·전송일의 살아 있는 예약 행(접수 ok 또는 unknown — unknown도 브로커에 있을 수 있어 살아 있는 것으로 본다)."""
+    """해당 종목·전송일의 살아 있는 예약 행(접수 ok 또는 unknown — unknown도 브로커에 있을 수 있어 살아 있는 것으로 본다).
+    10-30: resv_resolved(취소·거부·사라짐 확정)로 닫힌 예약은 제외한다 — 10-23 취소한 61142가 매일 'missing'으로 재조회되던 것."""
     hit = None
-    for r in rows:
-        if r.get("kind") == "resv_order" and r.get("ticker") == ticker and r.get("target_session") == target_session \
-                and r.get("state") in ("ok", "unknown"):
+    for r in live_resv_rows(rows):
+        if r.get("ticker") == ticker and r.get("target_session") == target_session:
             hit = r
     return hit
+
+
+def resv_resolved_row(resv: dict, result: str, detail: str = "") -> dict:
+    return {"kind": "resv_resolved", "ref_at": resv.get("at"), "ticker": resv.get("ticker"), "rsvn_seq": resv.get("rsvn_seq"),
+            "target_session": resv.get("target_session"), "result": result, "detail": str(detail)[:120],
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+
+def live_sell_order_exists(rows: list[dict], session: str, ticker: str | None = None) -> bool:
+    """그 세션에 브로커에 살아 있을 수 있는 매도 주문이 있는가. 거부 주문과 **미접수 확정(order_resolved not_found)된 unknown**은 제외
+    — 10-30 수리(코덱스 지적 2): 원본 unknown 행을 그대로 보면 DNS 실패 뒤 09:10 재매도가 영영 막혔다."""
+    gone = {r.get("ref_at") for r in rows if r.get("kind") == "order_resolved"}
+    for r in rows:
+        if r.get("kind") != "order" or r.get("side") != "sell" or r.get("session") != session:
+            continue
+        if ticker is not None and r.get("ticker") != ticker:
+            continue
+        st = order_state(r) if "success" in r else r.get("state")
+        if st == "rejected":
+            continue
+        if st == "unknown" and not r.get("order_no") and r.get("at") in gone:
+            continue
+        return True
+    return False
 
 
 def reserve_exit_rows(kis: Any, token: Any, rows: list[dict], ticker: str, qty: int, *, now: datetime | None = None,
@@ -120,6 +154,10 @@ def reserve_exit_rows(kis: Any, token: Any, rows: list[dict], ticker: str, qty: 
     target = resv_target_session(now).isoformat()
     if active_resv(rows, ticker, target):
         return [], f"{target} 예약 이미 있음"
+    stale = [r for r in resv_rows_to_absorb(rows, now.date().isoformat()) if r.get("ticker") == ticker]
+    if stale:                                          # 10-30 수리(코덱스 지적 1): 10-22 63981 확인 실패 상태에서 61142를 또 넣었다
+        return [], (f"⚠️ 이전 예약 seq={stale[-1].get('rsvn_seq') or '-'}({stale[-1].get('target_session')}) 처리결과 미확인 — "
+                    "새 예약 보류(이미 팔렸을 수 있다)")
     if dry:
         return [], f"(dry) {ticker} x{qty} {target} 시가 시장가 매도 예약"
     res = reserve_safely(kis, ticker, int(qty), 0, "sell", token)
@@ -152,6 +190,11 @@ def check_resv(kis: Any, token: Any, resv: dict) -> tuple[str, str]:
     """예약 행의 브로커 처리결과. 조회 실패는 예외 그대로(호출 측이 매도를 내지 않게)."""
     # 조회 날짜 범위는 **예약주문주문일자(rsvn_ord_ord_dt = 전송 영업일)** 기준이다 — 10-21 실측: 접수일(10-21)로 조회하면 0행,
     # 전송일(10-22)로 조회해야 행이 나온다. 접수일~전송일 범위로 묶어 양쪽을 덮는다.
+    return classify_resv_row(find_resv_row(kis, token, resv))
+
+
+def find_resv_row(kis: Any, token: Any, resv: dict) -> dict | None:
+    """원장 예약 행에 대응하는 브로커 조회 행. 없으면 None, 조회 실패·후보 여럿(모호)이면 예외."""
     placed = str(resv.get("placed_session") or "").replace("-", "")
     target = str(resv.get("target_session") or "").replace("-", "") or placed
     # ⚠️ RSVN_ORD_SEQ는 조회 필터로 넘기지 않는다 — 10-23 실측: 넘기면 KIS가 `ERROR INVALID INPUT_FILED_SIZE [RSVN_ORD_SEQ]`로
@@ -160,11 +203,15 @@ def check_resv(kis: Any, token: Any, resv: dict) -> tuple[str, str]:
     rows = kis.inquire_reserved_orders_kr(token, min(placed, target), max(placed, target), ticker=resv.get("ticker", ""),
                                           side="sell")
     seq = str(resv.get("rsvn_seq") or "").strip().lstrip("0")
-    cand = [r for r in rows if not seq or str(r.get("rsvn_ord_seq") or "").strip().lstrip("0") == seq]
-    if not cand and not seq:
+    if seq:
+        cand = [r for r in rows if str(r.get("rsvn_ord_seq") or "").strip().lstrip("0") == seq]
+    else:                                              # 10-30 수리(코덱스 지적 3): 번호가 없으면 종목·수량·전송일로 좁히고, 여럿이면 보류
         cand = [r for r in rows if str(r.get("pdno") or "").strip() == str(resv.get("ticker") or "").strip()
-                and int(float(r.get("ord_rsvn_qty") or 0)) == int(resv.get("qty") or 0)]
-    return classify_resv_row(cand[-1] if cand else None)
+                and int(float(r.get("ord_rsvn_qty") or 0)) == int(resv.get("qty") or 0)
+                and (not r.get("rsvn_ord_ord_dt") or str(r.get("rsvn_ord_ord_dt")).strip() == target)]
+        if len(cand) > 1:
+            raise RuntimeError(f"예약번호 없는 예약 후보 {len(cand)}건 — 모호해 판정 보류")
+    return cand[-1] if cand else None
 
 
 def resv_exit_decision(status: str, now: datetime | None = None) -> str:
@@ -178,14 +225,10 @@ def resv_exit_decision(status: str, now: datetime | None = None) -> str:
 
 def resv_rows_to_absorb(rows: list[dict], today: str) -> list[dict]:
     """전송일이 지났거나 오늘인데 그 세션의 매도 order 행이 없는 살아 있는 예약 — 08:42/09:10 작업이 안 돈 날(PC 꺼짐)의 흔적."""
-    have = {(r.get("ticker"), r.get("session")) for r in rows
-            if r.get("kind") == "order" and r.get("side") == "sell" and r.get("state") != "rejected"}
     out = []
-    for r in rows:
-        if r.get("kind") != "resv_order" or r.get("state") not in ("ok", "unknown"):
-            continue
+    for r in live_resv_rows(rows):
         tgt = str(r.get("target_session") or "")
-        if not tgt or tgt > today or (r.get("ticker"), tgt) in have:
+        if not tgt or tgt > today or live_sell_order_exists(rows, tgt, r.get("ticker")):
             continue
         if active_resv(rows, r["ticker"], tgt) is r:
             out.append(r)
@@ -209,6 +252,41 @@ def absorb_transmitted_resv_rows(kis: Any, token: Any, rows: list[dict], today: 
             notes.append(f"{r['ticker']} {r['target_session']} 예약매도 전송 확인 → 주문 {detail} (매도 작업 미실행분 흡수)")
         else:
             notes.append(f"{r['ticker']} {r['target_session']} 예약매도 {status} {detail} — 전송 안 됨")
+            if status in ("cancelled", "rejected") or (status == "missing" and str(r.get("target_session")) < today):
+                out.append(resv_resolved_row(r, status, detail))
+                notes.append(f"{r['ticker']} {r['target_session']} 예약 seq={r.get('rsvn_seq') or '-'} 종결({status}) — 재조회 안 함")
+    return out, notes
+
+
+def orphan_resv_candidates(rows: list[dict], today: str, open_qty: dict) -> list[dict]:
+    """앞으로 전송될(전송일 > 오늘) 살아 있는 예약 중 보유 수량과 안 맞는 것 — 브로커 조회 없이 원장만으로."""
+    return [r for r in live_resv_rows(rows) if str(r.get("target_session") or "") > today
+            and int(open_qty.get(r.get("ticker")) or 0) != int(r.get("qty") or 0)]
+
+
+def cancel_orphan_resv(kis: Any, token: Any, rows: list[dict], today: str, open_qty: dict) -> tuple[list[dict], list[str]]:
+    """앞으로 전송될 예약 중 현재 보유와 안 맞는 것(보유 없음·수량 다름)을 브로커에서 취소한다 — 10-30 수리(코덱스 지적 1).
+    전송 전(미처리)만 취소하고, 이미 취소·사라짐이면 종결 행만 남긴다. 조회·취소 실패는 건너뛴다(다음 실행 재시도)."""
+    out, notes = [], []
+    for r in orphan_resv_candidates(rows, today, open_qty):
+        tk, tgt = r.get("ticker"), str(r.get("target_session") or "")
+        try:
+            row = find_resv_row(kis, token, r)
+            status, detail = classify_resv_row(row)
+            if status == "pending":
+                res = kis.cancel_reserved_order_kr(token, str(row.get("rsvn_ord_seq") or r.get("rsvn_seq") or ""),
+                                                   str(row.get("rsvn_ord_orgno") or ""), str(row.get("rsvn_ord_ord_dt") or ""))
+                if not (res or {}).get("success"):
+                    notes.append(f"⚠️ {tk} 잔여 예약 seq={r.get('rsvn_seq')} 취소 실패: {(res or {}).get('msg')}")
+                    continue
+                status, detail = "cancelled_orphan", f"보유 {open_qty.get(tk) or 0}주 != 예약 {r.get('qty')}주"
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"⚠️ {tk} 잔여 예약 seq={r.get('rsvn_seq') or '-'} 확인 실패: {type(exc).__name__}")
+            continue
+        if status == "transmitted":
+            continue                                   # 전송분은 체결 경로(흡수·fill)가 처리
+        out.append(resv_resolved_row(r, status, detail))
+        notes.append(f"{tk} 잔여 예약 seq={r.get('rsvn_seq') or '-'} {tgt} → {status} {detail}")
     return out, notes
 
 

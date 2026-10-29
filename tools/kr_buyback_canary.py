@@ -39,8 +39,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
-from live_lane_common import (KST as _KST, absorb_transmitted_resv_rows, active_resv, check_resv, kr_order_window,  # noqa: E402
-                              kr_resv_window, order_state, place_safely, reserve_exit_rows, resolve_unknown_order_rows,
+from live_lane_common import (KST as _KST, absorb_transmitted_resv_rows, active_resv, cancel_orphan_resv,  # noqa: E402
+                              check_resv, kr_order_window, kr_resv_window, live_sell_order_exists, orphan_resv_candidates,
+                              order_state, place_safely, reserve_exit_rows, resolve_unknown_order_rows,
                               resv_exit_decision, resv_rows_to_absorb, resv_target_session, safe_cash_krw,
                               unresolved_unknown_orders)
 
@@ -265,9 +266,13 @@ def cmd_sell(dry: bool) -> int:
     kis = token = None                                 # KIS는 실제로 조회·주문할 때만 연다(창 밖이면 호출 없음)
     rc = 0
     for tk, p, n in due:
-        if any(r.get("kind") == "order" and r.get("side") == "sell" and r.get("ticker") == tk
-               and r.get("session") == today.isoformat() and order_state(r) != "rejected" for r in rows):
-            print(f"[canary] {tk} 오늘 매도 주문 이미 있음"); continue   # 거부 주문은 브로커에 없으니 재시도한다
+        if live_sell_order_exists(rows, today.isoformat(), tk):   # 거부·미접수 확정 주문은 브로커에 없으니 재시도(10-30 수리)
+            print(f"[canary] {tk} 오늘 매도 주문 이미 있음"); continue
+        stale = [r for r in resv_rows_to_absorb(rows, today.isoformat())
+                 if r.get("ticker") == tk and r.get("target_session") < today.isoformat()]
+        if stale and not dry:                          # 지난 예약이 이미 팔았을 수 있다(10-30 수리)
+            print(f"[canary] ⚠️ {tk} 이전 예약 seq={stale[-1].get('rsvn_seq') or '-'}({stale[-1].get('target_session')}) "
+                  "처리결과 미확인 — 일반 매도 안 냄"); rc = 3; continue
         resv = active_resv(rows, tk, today.isoformat())
         if resv and not dry:                            # A1: 예약매도 처리결과부터 — 이중 매도 방지
             if kis is None:
@@ -338,12 +343,26 @@ def _reserve_and_overdue(rows: list[dict], kis=None, token=None) -> int:
     rc = 0
     now = datetime.now(_KST)
     pos = _positions(rows)
+    today_s = _today_kst().isoformat()
+    open_qty = {t: int(q.get("filled_qty") or 0) for t, q in pos.items() if q.get("status") == "OPEN"}
+    if orphan_resv_candidates(rows, today_s, open_qty):  # 청산·수량 변경 뒤 남은 예약 취소(10-30 수리)
+        if kis is None:
+            kis, token = _kis()
+        rec, notes = cancel_orphan_resv(kis, token, rows, today_s, open_qty)
+        for n in notes:
+            print(f"[canary] {n}")
+            if n.startswith("⚠️"):
+                rc = 3
+        if rec:
+            _append(rec); rows = _read(LEDGER)
     if kr_resv_window(now)[0]:
         for tk, p in due_next_session(pos, resv_target_session(now)):
             if kis is None:
                 kis, token = _kis()
             new, why = reserve_exit_rows(kis, token, rows, tk, int(p["filled_qty"]), now=now)
             print(f"[canary] 예약매도: {why}")
+            if why.startswith("⚠️"):
+                rc = 3
             if new:
                 _append(new); rows = _read(LEDGER)
                 if new[0]["state"] != "ok":
