@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """매일 아침 운영 요약 텔레그램 (2026-10-05 운영자 권한 D, docs/operating_model.md §4). 조회 전용 — 주문·설정 변경 없음.
 
-내용: 계좌(브로커 스냅샷) · 실전 레인(T1 · KR 자사주 canary · 패닉 ETF 소액 · 파킹) · 지난 24시간 체결 ·
+내용: 계좌(브로커 스냅샷) · 실전 레인(T1 · KR 자사주 canary · 패닉 ETF 소액 · 파킹) · 레인 중단·확대 조건 진행도
+(tools/lane_conditions.py, 10-30) · 지난 24시간 체결 ·
 쉐도우 새 신호 수 · 실패한 예약 작업 · 봇 메모리. 이상이 있으면 맨 위에 '⚠️ 확인 필요'로 올린다.
   python tools/daily_ops_report.py [--dry]   (--dry: 전송 없이 출력)
 """
@@ -184,6 +185,16 @@ def bot_memory() -> tuple[str, bool]:
         return f"봇 상태 확인 실패({type(exc).__name__}) — 봇이 죽었을 수 있음", True
 
 
+def condition_lines() -> list[dict]:
+    try:
+        sys.path.insert(0, str(ROOT / "tools"))
+        from lane_conditions import all_conditions
+        return all_conditions(SH)
+    except Exception as exc:  # noqa: BLE001
+        return [{"lane": "조건", "cond": "계산", "reached": True, "verdict": f"실패 {type(exc).__name__}",
+                 "line": f"레인 조건 계산 실패: {type(exc).__name__}"}]
+
+
 def build() -> str:
     mem, mem_bad = bot_memory()
     fails = failed_tasks()
@@ -195,10 +206,15 @@ def build() -> str:
         warn.append(f"실패한 예약 작업 {len(fails)}개")
     if stale:
         warn.append("멈춘 듯한 작업: " + ", ".join(stale))
+    conds = condition_lines()
+    hit = [c for c in conds if c.get("reached")]
+    if hit:
+        warn.append("레인 판정 시점: " + ", ".join(f"{c['lane']} {c['cond']} {c['verdict']}" for c in hit))
     lines = [f"[운영 요약] {datetime.now(KST):%m-%d %H:%M}"]
     if warn:
         lines.append("⚠️ 확인 필요: " + " / ".join(warn))
-    lines += account_lines() + lane_lines() + shadow_lines() + [mem]
+    lines += account_lines() + lane_lines() + ["레인 조건(계약서 §2, 결정은 운영자):"] + \
+        [f"  {c['line']}" for c in conds] + shadow_lines() + [mem]
     if fails:
         lines += ["실패 작업:"] + [f"  {f}" for f in fails[:10]]
     return "\n".join(lines)
