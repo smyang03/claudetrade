@@ -13,6 +13,17 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import us_earnings_t1_live as t1  # noqa: E402
 
+_REAL_DEADLINE = t1._past_order_deadline
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _before_deadline(monkeypatch):
+    """cmd_buy·cmd_sell은 실행 시각(ET)으로 늦은 시작을 막는다 — 테스트가 벽시계에 따라 갈리지 않게 고정."""
+    monkeypatch.setattr(t1, "_past_order_deadline", lambda now_et=None: False)
+
 
 def _w(path, rows):
     path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
@@ -97,3 +108,33 @@ def test_buy_records_every_unexecuted_candidate_with_reason(tmp_path, monkeypatc
     assert skips == {"HELD": "already_held", "ARGX": "price_gt_slot", "NMRK": "daily_cap"}
     assert [r["ticker"] for r in rows if r["kind"] == "order"] == ["ALKT"]
     assert all(r["kind"] != "position" or r["ticker"] == "ALKT" for r in rows)
+
+
+
+def test_deadline_boundary():
+    """09:26 ET부터 마감 — 따라잡기 실행이 장 시작 뒤 개장가 주문을 내지 않는다(11-01)."""
+    assert _REAL_DEADLINE(lambda: datetime(2026, 11, 2, 9, 25)) is False
+    assert _REAL_DEADLINE(lambda: datetime(2026, 11, 2, 9, 26)) is True
+    assert _REAL_DEADLINE(lambda: datetime(2026, 11, 2, 15, 0)) is True
+    assert _REAL_DEADLINE(lambda: datetime(2026, 11, 2, 8, 20)) is False
+
+
+def test_late_buy_skips_without_order(tmp_path, monkeypatch, capsys):
+    led = tmp_path / "live.jsonl"
+    monkeypatch.setattr(t1, "LEDGER", led)
+    monkeypatch.setattr(t1, "_env_gate", lambda: (True, {"enabled_flag": "true", "mismatch": False, "min_dvol": 5e6}))
+    monkeypatch.setattr(t1, "_isolation_gate", lambda: True)
+    monkeypatch.setattr(t1, "_today_et", lambda: datetime(2026, 11, 2).date())
+    monkeypatch.setattr(t1, "_past_order_deadline", lambda now_et=None: True)
+    monkeypatch.setattr(t1, "_wait_for_score", lambda today: (_ for _ in ()).throw(AssertionError("대기하면 안 됨")))
+    assert t1.cmd_buy(False) == 0
+    rows = [json.loads(x) for x in led.read_text(encoding="utf-8").splitlines()]
+    assert rows[-1]["reason"] == "late_start"
+
+
+def test_late_sell_places_nothing(monkeypatch, capsys):
+    monkeypatch.setattr(t1, "_past_order_deadline", lambda now_et=None: True)
+    monkeypatch.setattr(t1, "_positions", lambda: (_ for _ in ()).throw(AssertionError("원장 조회 전에 끝나야 함")))
+    monkeypatch.setattr(t1, "_kis", lambda: (_ for _ in ()).throw(AssertionError("주문 경로 진입 금지")))
+    assert t1.cmd_sell(False) == 0
+    assert "다음 세션에 청산" in capsys.readouterr().out

@@ -141,6 +141,14 @@ def _wait_for_score(today: str, *, now_et=None, sleep=None) -> bool:
     return True
 
 
+def _past_order_deadline(now_et=None) -> bool:
+    """LOO/MOO 접수 마감(SCORE_WAIT_DEADLINE_ET) 이후인가. 11-01: 예약 작업이 놓친 실행을 PC 복귀 때 따라잡게 되면서,
+    장 시작 뒤에 개장가 주문이 나가지 않도록 매수·청산 진입부에서 막는다(청산은 다음 세션에 다시 만기로 잡힌다)."""
+    import zoneinfo
+    t = (now_et or (lambda: datetime.now(zoneinfo.ZoneInfo("America/New_York"))))()
+    return (t.hour, t.minute) >= SCORE_WAIT_DEADLINE_ET
+
+
 def _sessions_between(d0: str, d1) -> int:
     """d0(진입일) 다음 날부터 d1 전날까지 IWM 거래일 수 + 1(= d1이 진입 후 몇 번째 세션인지, d1이 거래일이라는 가정)."""
     import yfinance as yf
@@ -159,6 +167,11 @@ def cmd_buy(dry: bool) -> int:
     today = str(_today_et())
     if any(r.get("kind") == "order" and r.get("side") == "buy" and r.get("session") == today for r in _read(LEDGER)):
         print("[T1 live] 오늘 매수 주문 이미 있음 — 멱등 종료"); return 0
+    if _past_order_deadline():
+        print(f"[T1 live] ⚠️ 접수 마감({SCORE_WAIT_DEADLINE_ET[0]:02d}:{SCORE_WAIT_DEADLINE_ET[1]:02d} ET) 이후 실행 — 매수 안 함(늦은 시작)")
+        if not dry:
+            _append([{"kind": "skip", "session": today, "reason": "late_start", "at": _now_iso()}])
+        return 0
     if not _wait_for_score(today):
         print(f"[T1 live] ⚠️ 오늘({today}) 채점이 마감까지 안 끝남 — 매수 안 함(선정 여부 모름, '선택 없음' 아님)")
         if not dry:
@@ -224,6 +237,9 @@ def cmd_buy(dry: bool) -> int:
 # ------------------------------------------------------------------ sell
 def cmd_sell(dry: bool) -> int:
     # 만기 청산은 ENABLED와 무관 — 플래그는 신규 매수만 막는다(봇은 격리로 팔지 않으므로, 리뷰 M3).
+    if _past_order_deadline():
+        print(f"[T1 live] ⚠️ 접수 마감({SCORE_WAIT_DEADLINE_ET[0]:02d}:{SCORE_WAIT_DEADLINE_ET[1]:02d} ET) 이후 실행 — MOO 안 냄, 다음 세션에 청산")
+        return 0
     today = _today_et()
     due = []
     for tk, p in _positions().items():
