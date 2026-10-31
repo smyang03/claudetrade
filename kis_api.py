@@ -4486,8 +4486,8 @@ def _kis_volume_rank(
         _mkt_type = "ALL"
     result = []
     for it in items[:top_n]:
-        ticker = it.get("mksc_shrn_iscd", "").strip()
-        if not ticker or not ticker.isdigit():
+        ticker = it.get("mksc_shrn_iscd", "").strip().upper()
+        if len(ticker) != 6 or not ticker.isalnum():      # 신규 상장 영숫자 코드(0009K0 등) 포함
             continue
         try:
             result.append({
