@@ -31131,8 +31131,9 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             if market == "KR":
                 close_dt = now_kst.replace(hour=15, minute=30, second=0, microsecond=0)
             else:
-                close_dt = now_kst.replace(hour=5, minute=0, second=0, microsecond=0)
-                if now_kst.time() >= dt_time(22, 20):
+                _k = _us_kst_shift_hours(now_kst)
+                close_dt = now_kst.replace(hour=5 + _k, minute=0, second=0, microsecond=0)
+                if now_kst.time() >= _shift_hm(22, 20, _k):
                     close_dt += timedelta(days=1)
         return max(0.0, (close_dt - now_kst).total_seconds())
     def _compute_startup_guard_sec(self, market: str, trigger: str) -> float:
@@ -42756,13 +42757,30 @@ class TradingBot(MarketUtilsMixin, StateMixin):
             log.warning(f"[candidate audit daily] {market} 라벨 갱신 이상: {result['reason']}")
         else:
             log.info(f"[candidate audit daily] {market} 일 지평 라벨 갱신 완료: 세션 {len(result.get('dates') or [])}개")
+def _us_kst_shift_hours(now: Optional[datetime] = None) -> int:
+    """US 고정 KST 일정(여름 EDT 기준 22:20 개장 준비·05:00 마감)에 더할 시간 — EDT 0, EST(겨울) 1.
+
+    2026-11-01 서머타임 종료로 실제 US 장이 23:30~06:00 KST가 됐는데 봇 일정은 22:20~05:00 고정이라
+    마지막 1시간 보유 관리가 세션 밖으로 빠졌다. 일정은 ET 기준으로 계절마다 한 시간 밀린다.
+    """
+    now = now or datetime.now(ZoneInfo("Asia/Seoul"))
+    off = now.astimezone(ZoneInfo("America/New_York")).utcoffset().total_seconds() / 3600
+    return 0 if off == -4 else 1
+
+
+def _shift_hm(hh: int, mm: int, hours: int) -> dt_time:
+    return dt_time((hh + hours) % 24, mm)
+
+
 def _in_session_now(market: str) -> bool:
     """현재 KST 시각이 해당 시장 세션 중인지 확인"""
-    now = datetime.now(ZoneInfo("Asia/Seoul")).time()
+    now_dt = datetime.now(ZoneInfo("Asia/Seoul"))
+    now = now_dt.time()
     if market == "KR":
         return dt_time(8, 50) <= now < dt_time(16, 0)
-    else:  # US: 22:20 ~ (자정 넘어) 05:00
-        return now >= dt_time(22, 20) or now < dt_time(5, 0)
+    else:  # US: 여름 22:20 ~ (자정 넘어) 05:00 · 겨울 23:20 ~ 06:00
+        k = _us_kst_shift_hours(now_dt)
+        return now >= _shift_hm(22, 20, k) or now < _shift_hm(5, 0, k)
 def _check_duplicate_bot(is_paper: bool = True) -> bool:
     """동일 모드 봇이 이미 실행 중이면 True"""
     _pid_file = _bot_pid_file(is_paper)
@@ -42892,9 +42910,17 @@ def main(is_paper: bool = True):
     if "KR" in enabled_markets:
         schedule.every().day.at("08:20").do(_supplement_collect, "KR")   # KR 수급 (외국인/기관)
         schedule.every().day.at("08:30").do(_screener_collect, "KR")
+    def _every_us_day_at(hhmm: str, fn, *args):
+        """US 일정 — 여름(EDT) 시각과 +1시간(겨울 EST) 두 번 걸고, 그날 계절에 맞는 쪽만 실행한다(11-01 서머타임)."""
+        hh, mm = (int(x) for x in hhmm.split(":"))
+        for k in (0, 1):
+            def _job(_k=k):
+                if _us_kst_shift_hours() == _k:
+                    fn(*args)
+            schedule.every().day.at(_shift_hm(hh, mm, k).strftime("%H:%M")).do(_job)
     if "US" in enabled_markets:
-        schedule.every().day.at("21:20").do(_supplement_collect, "US")   # US VIX/DXY
-        schedule.every().day.at("21:30").do(_screener_collect, "US")
+        _every_us_day_at("21:20", _supplement_collect, "US")   # US VIX/DXY
+        _every_us_day_at("21:30", _screener_collect, "US")
     _midnight_retry_state = {"count": 0}
 
     def _do_midnight_token_refresh(attempt: int = 0) -> bool:
@@ -42940,11 +42966,12 @@ def main(is_paper: bool = True):
         schedule.every().day.at("16:10").do(_data_update, "KR")          # KR 장 후 종가 확정
         schedule.every().day.at("16:15").do(_repo_health_check, "KR_POSTCLOSE")
     if "US" in enabled_markets:
-        schedule.every().day.at("22:10").do(_repo_health_check, "US_PREOPEN")
-        schedule.every().day.at("22:20").do(bot.session_open, "US")
-        schedule.every().day.at("05:00").do(bot.session_close, "US")
-        schedule.every().day.at("05:10").do(_repo_health_check, "US_POSTCLOSE")
-        schedule.every().day.at("06:30").do(_data_update, "US")          # US 장 후 종가 확정
+        # 시각은 여름(EDT) 기준 — 겨울에는 _every_us_day_at이 한 시간 뒤에 실행한다.
+        _every_us_day_at("22:10", _repo_health_check, "US_PREOPEN")
+        _every_us_day_at("22:20", bot.session_open, "US")
+        _every_us_day_at("05:00", bot.session_close, "US")
+        _every_us_day_at("05:10", _repo_health_check, "US_POSTCLOSE")
+        _every_us_day_at("06:30", _data_update, "US")          # US 장 후 종가 확정
     for _mkt in sorted(enabled_markets):
         schedule.every(5).minutes.do(bot.run_housekeeping, _mkt)
         schedule.every(1).minutes.do(bot.run_entry_scan, _mkt)
@@ -42967,7 +42994,8 @@ def main(is_paper: bool = True):
     now_kst = datetime.now(KST)
     now_t   = now_kst.time()
     kr_open  = dt_time(8, 50);  kr_close = dt_time(16, 0)
-    us_open  = dt_time(22, 20); us_close = dt_time(5, 0)
+    _us_k = _us_kst_shift_hours(now_kst)
+    us_open  = _shift_hm(22, 20, _us_k); us_close = _shift_hm(5, 0, _us_k)
     kr_mid_session = kr_open <= now_t < kr_close
     us_mid_session = now_t >= us_open or now_t < us_close  # 자정 걸침
     if kr_mid_session and "KR" in enabled_markets:
