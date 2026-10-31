@@ -118,14 +118,23 @@ def test_stale_closed_still_fails_when_submit_on(tmp_path, monkeypatch):
     assert row["status"] == I.FAIL
 
 
+def _add_event(db, event_type, occurred_at):
+    import sqlite3
+    con = sqlite3.connect(db)
+    con.execute("INSERT INTO lifecycle_events VALUES (?,?)", (event_type, occurred_at))
+    con.commit()
+    con.close()
+
+
 def test_other_freshness_checks_untouched(tmp_path, monkeypatch):
-    """FORWARD_MEASURED·학습 sync는 제출 플래그와 무관하다 — 같이 내리면 안 된다."""
+    """FORWARD_MEASURED·학습 sync는 제출 플래그와 무관하다 — 밀린 입력이 있으면 그대로 FAIL."""
     from datetime import datetime, timedelta, timezone
     now = datetime(2026, 9, 13, tzinfo=timezone.utc)
     old = (now - timedelta(days=30)).isoformat()
     _snap(monkeypatch, BOTH_OFF)
-    rows = I.check_job_freshness(_ml_db(tmp_path, old), _events_db(tmp_path, old),
-                                 tmp_path / "missing_audit.db", now)
+    ev = _events_db(tmp_path, old)
+    _add_event(ev, "CLAUDE_TRADE_READY", (now - timedelta(days=20)).isoformat())
+    rows = I.check_job_freshness(_ml_db(tmp_path, old), ev, tmp_path / "missing_audit.db", now)
     others = [r for r in rows if not r["check"].startswith("CLOSED 이벤트")]
     assert others and all(r["status"] == I.FAIL for r in others)
 
@@ -140,3 +149,64 @@ def test_snapshot_payload_shape_is_what_we_read(tmp_path, monkeypatch):
     name, eff = I._latest_effective_config()
     assert name.startswith("effective_config_")
     assert eff["US_SWING_ORDER_SUBMIT_ENABLED"] == "false"
+
+
+def _job_rows(tmp_path, *, pending_days=None, pending_type="CLAUDE_TRADE_READY", output_days=30):
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 10, 31, tzinfo=timezone.utc)
+    old = (now - timedelta(days=output_days)).isoformat()
+    ev = _events_db(tmp_path, old)
+    if pending_days is not None:
+        _add_event(ev, pending_type, (now - timedelta(days=pending_days)).isoformat())
+    rows = I.check_job_freshness(_ml_db(tmp_path, old), ev, tmp_path / "missing_audit.db", now)
+    return {r["check"].split("(")[0]: r for r in rows}
+
+
+def test_idle_input_is_not_a_dead_job(tmp_path, monkeypatch):
+    """10-31: 마지막 산출 뒤 입력이 없으면 측정·sync 정체는 결함이 아니다(PathB 플랜 정지)."""
+    _snap(monkeypatch, BOTH_OFF)
+    rows = _job_rows(tmp_path)
+    for key in ("forward 측정기", "학습원장 sync"):
+        assert rows[key]["status"] == I.OK
+        assert "입력 없음" in rows[key]["detail"]
+
+
+def test_dead_job_with_waiting_input_fails(tmp_path, monkeypatch):
+    """입력이 6일째 기다리는데 산출이 없으면 잡 정지다 — 둘 다 FAIL."""
+    _snap(monkeypatch, BOTH_OFF)
+    rows = _job_rows(tmp_path, pending_days=6)
+    assert rows["forward 측정기"]["status"] == I.FAIL
+    assert rows["학습원장 sync"]["status"] == I.FAIL
+    assert "미처리 입력" in rows["forward 측정기"]["detail"]
+
+
+def test_fresh_input_after_long_idle_is_not_flagged(tmp_path, monkeypatch):
+    """긴 휴지 뒤 입력이 오늘 막 들어왔으면 산출 공백(30일)을 잡 정지로 오인하지 않는다."""
+    _snap(monkeypatch, BOTH_OFF)
+    rows = _job_rows(tmp_path, pending_days=0.5)
+    assert rows["forward 측정기"]["status"] == I.OK
+    assert rows["학습원장 sync"]["status"] == I.OK
+
+
+def test_measurer_own_events_are_not_inputs(tmp_path, monkeypatch):
+    """측정기 자신의 FORWARD_PENDING_DATA는 측정 입력이 아니다(sync 입력으로는 센다)."""
+    _snap(monkeypatch, BOTH_OFF)
+    rows = _job_rows(tmp_path, pending_days=6, pending_type="FORWARD_PENDING_DATA")
+    assert rows["forward 측정기"]["status"] == I.OK
+    assert rows["학습원장 sync"]["status"] == I.FAIL
+
+
+def test_sync_measures_oldest_unsynced_event(tmp_path, monkeypatch):
+    """이벤트가 매일 오는데 sync가 죽으면, 최신 이벤트가 아니라 가장 오래 밀린 이벤트로 잰다."""
+    from datetime import datetime, timedelta, timezone
+    _snap(monkeypatch, BOTH_OFF)
+    now = datetime(2026, 10, 31, tzinfo=timezone.utc)
+    old = (now - timedelta(days=30)).isoformat()
+    ev = _events_db(tmp_path, old)
+    for d in (6, 3, 0.2):
+        _add_event(ev, "FORWARD_MEASURED", (now - timedelta(days=d)).isoformat())
+    rows = I.check_job_freshness(_ml_db(tmp_path, old), ev, tmp_path / "missing_audit.db", now)
+    sync = next(r for r in rows if r["check"].startswith("학습원장 sync"))
+    fwd = next(r for r in rows if r["check"].startswith("forward 측정기"))
+    assert sync["status"] == I.FAIL
+    assert fwd["status"] == I.OK

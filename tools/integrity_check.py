@@ -108,13 +108,52 @@ def _connect_ro(path: Path) -> sqlite3.Connection:
     return conn
 
 
+# forward 측정기 자신이 남기는 이벤트 — 측정기 입력(측정할 결정)으로 세지 않는다.
+FORWARD_OUTPUT_TYPES = ("FORWARD_MEASURED", "FORWARD_PENDING_DATA")
+
+
+def _oldest_input_after(conn: sqlite3.Connection, after: Any, *, exclude: tuple[str, ...]) -> Any:
+    """`after` 이후 들어온 입력 이벤트 중 가장 오래된 시각. 없으면 None(밀린 입력 없음)."""
+    if _parse_ts(after) is None:
+        return None
+    sql = "SELECT MIN(occurred_at) FROM lifecycle_events WHERE occurred_at > ?"
+    if exclude:
+        sql += f" AND event_type NOT IN ({','.join('?' for _ in exclude)})"
+    return conn.execute(sql, (str(after), *exclude)).fetchone()[0]
+
+
+def evaluate_idle_aware_freshness(name: str, latest_output: Any, pending_since: Any, now: datetime, *,
+                                  warn_days: float, fail_days: float, note: str = "") -> dict[str, Any]:
+    """입력이 끊겨 산출이 멈춘 것과 잡이 죽은 것을 가른다(10-31).
+
+    09-28 PathB 가격 플랜이 끊긴 뒤 forward 측정·학습 sync가 할 일이 없어 멈췄는데,
+    산출 시각만 보던 stale 검사가 이걸 상시 FAIL로 들었다(의도 오독 — CLOSED 검사와 같은 계열).
+    - 마지막 산출 뒤 들어온 입력이 없으면 OK(입력 정지, 결함 아님).
+    - 밀린 입력이 있으면 **가장 오래 기다린 입력**부터 경과를 잰다. 입력은 매일 오는데 잡이 죽으면
+      그 입력이 계속 늙어 FAIL이 된다 — 입력이 다시 들어온 첫날 산출 공백을 잡 정지로 오인하지 않는다.
+    """
+    if _parse_ts(latest_output) is not None and pending_since is None:
+        row = evaluate_freshness(name, latest_output, now, warn_days=warn_days, fail_days=fail_days, note=note)
+        if row["status"] == OK:
+            return row
+        return {**row, "status": OK,
+                "detail": f"마지막 산출 {row['detail']} — 이후 입력 없음(입력 정지, 결함 아님)",
+                "note": "입력이 다시 들어오면 그 시각부터 경과를 잰다"}
+    if pending_since is None:
+        return evaluate_freshness(name, latest_output, now, warn_days=warn_days, fail_days=fail_days, note=note)
+    row = evaluate_freshness(name, pending_since, now, warn_days=warn_days, fail_days=fail_days, note=note)
+    return {**row, "detail": f"미처리 입력 대기 {row['detail']}"}
+
+
 def check_job_freshness(ml_db: Path, event_db: Path, audit_db: Path, now: datetime) -> list[dict[str, Any]]:
     """D형: 잡이 멈췄나. 각 파이프라인의 최신 산출 시각 age로 본다."""
     checks: list[dict[str, Any]] = []
     with _connect_ro(event_db) as ev:
         fm = ev.execute("SELECT MAX(occurred_at) FROM lifecycle_events WHERE event_type='FORWARD_MEASURED'").fetchone()[0]
-        checks.append(evaluate_freshness("forward 측정기(FORWARD_MEASURED)", fm, now, warn_days=3, fail_days=5,
-                                         note="세션마감 자동 측정. 5/27~6/19 3주 정지 사례"))
+        fm_pending = _oldest_input_after(ev, fm, exclude=FORWARD_OUTPUT_TYPES)
+        checks.append(evaluate_idle_aware_freshness("forward 측정기(FORWARD_MEASURED)", fm, fm_pending, now,
+                                                    warn_days=3, fail_days=5,
+                                                    note="세션마감 자동 측정. 5/27~6/19 3주 정지 사례"))
         closed = ev.execute("SELECT MAX(occurred_at) FROM lifecycle_events WHERE event_type='CLOSED'").fetchone()[0]
         submit_on, why = _submit_lanes_enabled()
         row = evaluate_freshness("CLOSED 이벤트(봇 청산 기록)", closed, now, warn_days=4, fail_days=7,
@@ -127,8 +166,11 @@ def check_job_freshness(ml_db: Path, event_db: Path, audit_db: Path, now: dateti
         checks.append(row)
     with _connect_ro(ml_db) as ml:
         synced = ml.execute("SELECT MAX(synced_at) FROM v2_learning_performance").fetchone()[0]
-        checks.append(evaluate_freshness("학습원장 sync(synced_at)", synced, now, warn_days=2, fail_days=4,
-                                         note="세션마감 자동 sync"))
+    # sync 입력은 이벤트 저장소 전체다. 마지막 sync 뒤에 새 이벤트가 없으면 밀린 일이 없다.
+    with _connect_ro(event_db) as ev:
+        sync_pending = _oldest_input_after(ev, synced, exclude=())
+    checks.append(evaluate_idle_aware_freshness("학습원장 sync(synced_at)", synced, sync_pending, now,
+                                                warn_days=2, fail_days=4, note="세션마감 자동 sync"))
     try:
         with _connect_ro(audit_db) as ac:
             out = ac.execute("SELECT MAX(updated_at) FROM audit_candidate_outcomes").fetchone()[0]
