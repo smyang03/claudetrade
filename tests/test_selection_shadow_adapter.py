@@ -3,6 +3,9 @@ from datetime import datetime
 import pytest
 
 from runtime.selection_shadow_adapter import build_clock, normalize_quote
+# run_cycle이 처음 import하는 러너는 `from ... import build_clock`으로 묶는다. 어떤 테스트가 build_clock을 패치한 동안
+# 러너가 처음 import되면 패치본이 러너에 남아 뒤 테스트를 오염시킨다(10-31, 실행 순서에 따라 1건 실패) — 미리 import한다.
+import tools.selection_shadow_runner  # noqa: E402,F401
 
 
 @pytest.mark.parametrize('stamp,opening,closing', [
