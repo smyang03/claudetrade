@@ -74,7 +74,8 @@ def _market_of(ticker: str, rec: dict) -> str:
     if m in ("US", "KR"):
         return m
     t = str(ticker or "")
-    return "KR" if t.isdigit() else "US"
+    # KR 코드는 숫자로 시작하는 6자리 영숫자다(신규 상장 0009K0 등).
+    return "KR" if (len(t) == 6 and t[:1].isdigit() and t.isalnum()) else "US"
 
 
 def _confidence(rec: dict) -> float | None:

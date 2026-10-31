@@ -54,7 +54,8 @@ def _holdings_at(snapshots: list[tuple[datetime, list[str]]], when: datetime) ->
 
 
 def _is_market(ticker: str, market: str) -> bool:
-    return (market == "KR") == ticker.isdigit()
+    # KR 코드는 숫자로 시작하는 6자리 영숫자다(신규 상장 0009K0 등).
+    return (market == "KR") == (len(ticker) == 6 and ticker[:1].isdigit() and ticker.isalnum())
 
 
 def main() -> int:

@@ -100,7 +100,8 @@ def confirmed_fill_orders() -> set[tuple[str, str]]:
 
 
 def _is_us_ticker(ticker: str) -> bool:
-    return not ticker.isdigit()
+    # KR 코드는 숫자로 시작하는 6자리 영숫자다(신규 상장 0009K0 등). US 티커는 숫자로 시작하지 않는다.
+    return not (len(ticker) == 6 and ticker[:1].isdigit() and ticker.isalnum())
 
 
 def _us_session_date(ts: str) -> str:
