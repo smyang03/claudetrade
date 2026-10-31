@@ -57,6 +57,17 @@ def test_load_rounds_adds_only_and_index_filter(tmp_path):
     assert [x["ticker"] for x in L.load_rounds(p, {"KOSDAQ150"})["2026-11-20"]["adds"]] == ["000001"]
 
 
+def test_load_rounds_accepts_alphanumeric_codes_and_warns_on_bad_rows(tmp_path, capsys):
+    p = tmp_path / "chg.csv"
+    p.write_text("index,announce_date,effective_date,ticker,name,action,source_url\n"
+                 "KOSDAQ150,2026-02-26,2026-03-13,0009K0,에임드바이오,add,u\n"
+                 "KOSPI200,2026-02-26,2026-03-13,12345,다섯자리,add,u\n"
+                 "KOSPI200,,2026-03-13,022100,발표일없음,add,u\n", encoding="utf-8")
+    r = L.load_rounds(p, {"KOSPI200", "KOSDAQ150"})
+    assert [x["ticker"] for x in r["2026-02-26"]["adds"]] == ["0009K0", "012345"]
+    assert "발표일없음" in capsys.readouterr().out
+
+
 def test_season_warning():
     assert L.season_warning(date(2026, 11, 24), {}) is not None
     assert L.season_warning(date(2026, 11, 24), {"2026-11-20": {}}) is None

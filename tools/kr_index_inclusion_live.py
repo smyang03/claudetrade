@@ -114,8 +114,9 @@ def load_rounds(path: Path | None = None, indexes: set[str] | None = None) -> di
             if indexes and (r.get("index") or "").strip() not in indexes:
                 continue
             a = (r.get("announce_date") or "").strip()
-            tk = (r.get("ticker") or "").strip().zfill(6)
-            if not a or not tk.isdigit():
+            tk = (r.get("ticker") or "").strip().upper().zfill(6)
+            if not a or len(tk) != 6 or not tk.isalnum():      # 신규 상장 영숫자 코드(0009K0 등) 포함
+                print(f"[idx-incl] ⚠️ CSV 행 건너뜀(발표일·코드 형식): {r.get('announce_date')} {r.get('ticker')} {r.get('name')}")
                 continue
             g = out.setdefault(a, {"effective": (r.get("effective_date") or "").strip(), "adds": []})
             if tk not in {x["ticker"] for x in g["adds"]}:
