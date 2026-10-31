@@ -3,6 +3,8 @@
 레인 계약은 `docs/operating_model.md` L7, 도구는 `tools/kr_index_inclusion_live.py`. 이 문서는 회차마다 사람이(또는 Claude 세션이) 하는 일만 적는다.
 예약 작업 3개(10-31 확인, 전부 Ready·직전 결과 0): `claudetrade_kr_index_incl_buy` 평일 08:41 · `_sell` 15:20:40 · `_reconcile` 16:15. 로그 `logs/index_incl/`.
 
+**특례편입 감시**(10-31): `claudetrade_kr_fast_entry_watch` 평일 18:30 → `tools/kr_fast_entry_watch.py`. 상장 8~20거래일째이고 시총 순위가 KOSPI 50위 / KOSDAQ 30위 안인 신규·이전 상장 종목이 CSV에 없으면 텔레그램을 보낸다(알림만, CSV는 사람이 쓴다). 로그 `logs/index_incl/fast_entry_watch.log`. 순위는 오늘 시총 기준 근사다(규정은 15거래일 평균) — 경계 종목은 KRX 발표로 확인한다.
+
 ## D0 — 발표일 저녁 (정기: 5월·11월 하순, 특례편입: 수시)
 
 1. **명단 확인**: KRX 보도자료를 기사 두 곳 이상으로 교차 확인한다(KRX 사이트 자동수집 금지). 편입·편출 종목명, 효력일.
