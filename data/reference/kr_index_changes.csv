@@ -1,4 +1,5 @@
 index,announce_date,effective_date,ticker,name,action,source_url
+KOSPI200,2010-06-25,2010-09-10,032830,삼성생명,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=02207446593005328 | https://newstomato.com/ReadNews.aspx?no=111282
 KOSPI200,2013-05-28,2013-06-14,004130,대덕GDS,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=02374726602813512 | https://www.etoday.co.kr/news/view/739281
 KOSPI200,2013-05-28,2013-06-14,139480,이마트,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=02374726602813512 | https://www.etoday.co.kr/news/view/739281
 KOSPI200,2013-05-28,2013-06-14,007810,코리아써키트,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=02374726602813512 | https://www.etoday.co.kr/news/view/739281
@@ -27,6 +28,8 @@ KOSPI200,2014-05-29,2014-06-13,001630,종근당홀딩스,delete,https://edaily.c
 KOSPI200,2014-05-29,2014-06-13,044820,코스맥스비티아이,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=02978246606093840 | https://www.etoday.co.kr/news/view/923218
 KOSPI200,2014-05-29,2014-06-13,005690,파미셀,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=02978246606093840 | https://www.etoday.co.kr/news/view/923218
 KOSPI200,2014-05-29,2014-06-13,009420,한올바이오파마,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=02978246606093840 | https://www.etoday.co.kr/news/view/923218
+KOSPI200,2014-12-26,2015-03-13,018260,삼성에스디에스,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=02456726606322456 | https://www.seoul.co.kr/news/economy/securities/2015/03/02/20150302800194
+KOSPI200,2015-01-12,2015-03-13,028260,제일모직,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03138966609237064 | https://www.seoul.co.kr/news/economy/securities/2015/03/02/20150302800194
 KOSPI200,2015-05-27,2015-06-12,000050,경방,add,http://v.daum.net/v/20150527154820169 | http://v.daum.net/v/20150527162355942
 KOSPI200,2015-05-27,2015-06-12,014820,동원시스템즈,add,http://v.daum.net/v/20150527154820169 | http://v.daum.net/v/20150527162355942
 KOSPI200,2015-05-27,2015-06-12,145990,삼양사,add,http://v.daum.net/v/20150527154820169 | http://v.daum.net/v/20150527162355942
@@ -197,6 +200,8 @@ KOSPI200,2017-05-17,2017-06-09,003200,일신방직,delete,https://edaily.co.kr/N
 KOSPI200,2017-05-17,2017-06-09,004700,조광피혁,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=04047526615929904
 KOSPI200,2017-05-17,2017-06-09,005740,크라운해태홀딩스,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=04047526615929904 | https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03663766615929904
 KOSPI200,2017-05-17,2017-06-09,000140,하이트진로홀딩스,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=04047526615929904 | https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03663766615929904
+KOSPI200,2017-06-01,2017-06-09,251270,넷마블게임즈,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=04040966615957456 | https://www.etoday.co.kr/news/view/1498463
+KOSPI200,2017-07-28,2017-09-15,035720,카카오,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=01485846616059464 | https://www.etoday.co.kr/news/view/1579000
 KOSDAQ150,2017-11-23,2017-12-15,007390,네이처셀,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03804806616128672 | https://www.etoday.co.kr/news/view/1566390
 KOSDAQ150,2017-11-23,2017-12-15,080420,모다이노칩,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03804806616128672 | https://www.etoday.co.kr/news/view/1566390
 KOSDAQ150,2017-11-23,2017-12-15,049950,미래컴퍼니,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03804806616128672 | https://www.etoday.co.kr/news/view/1566390
@@ -398,6 +403,7 @@ KOSPI200,2020-05-27,2020-06-12,025540,한국단자,delete,https://edaily.co.kr/N
 KOSPI200,2020-05-27,2020-06-12,002960,한국쉘석유,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=04031126625773184 | https://www.etoday.co.kr/news/view/1899533
 KOSPI200,2020-05-27,2020-06-12,079430,현대리바트,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=04031126625773184 | https://www.etoday.co.kr/news/view/1899533
 KOSPI200,2020-05-27,2020-06-12,298040,효성중공업,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=04031126625773184 | https://www.etoday.co.kr/news/view/1899533
+KOSPI200,2020-08-07,2020-09-11,326030,SK바이오팜,add,https://www.etoday.co.kr/news/view/1927221
 KOSDAQ150,2020-11-25,2020-12-11,194700,노바렉스,add,https://www.edaily.co.kr/news/read?mediaCodeNo=257&newsId=04129526625969328 | https://www.mt.co.kr/stock/2020/11/27/2020112615051682980
 KOSDAQ150,2020-11-25,2020-12-11,078600,대주전자재료,add,https://www.edaily.co.kr/news/read?mediaCodeNo=257&newsId=04129526625969328 | https://www.mt.co.kr/stock/2020/11/27/2020112615051682980
 KOSDAQ150,2020-11-25,2020-12-11,100130,동국S&C,add,https://www.edaily.co.kr/news/read?mediaCodeNo=257&newsId=04129526625969328 | https://www.mt.co.kr/stock/2020/11/27/2020112615051682980
@@ -496,6 +502,9 @@ KOSPI200,2021-05-25,2021-06-11,145990,삼양사,delete,https://www.edaily.co.kr/
 KOSPI200,2021-05-25,2021-06-11,018250,애경산업,delete,https://www.edaily.co.kr/news/read?mediaCodeNo=257&newsId=03968806629052528 | https://www.etoday.co.kr/news/view/2029390
 KOSPI200,2021-05-25,2021-06-11,009410,태영건설,delete,https://www.edaily.co.kr/news/read?mediaCodeNo=257&newsId=03968806629052528 | https://www.etoday.co.kr/news/view/2029390
 KOSPI200,2021-05-25,2021-06-11,006390,한일현대시멘트,delete,https://www.edaily.co.kr/news/read?mediaCodeNo=257&newsId=03968806629052528 | https://www.etoday.co.kr/news/view/2029390
+KOSPI200,2021-06-02,2021-06-11,361610,SK아이이테크놀로지,add,https://www.edaily.co.kr/news/read?mediaCodeNo=257&newsId=03686726629052528 | https://moneys.mt.co.kr/news/mwView.php?no=2021060716178053696
+KOSPI200,2021-08-31,2021-09-10,323410,카카오뱅크,add,https://www.samsungpop.com/common.do?cmd=down&saveKey=research.pdf&fileName=1040%2F2021090107213084K_01_04.pdf&contentType=application%2Fpdf | https://news.bizwatch.co.kr/article/market/2021/09/06/0019
+KOSPI200,2021-08-31,2021-09-10,259960,크래프톤,add,https://www.samsungpop.com/common.do?cmd=down&saveKey=research.pdf&fileName=1040%2F2021090107213084K_01_04.pdf&contentType=application%2Fpdf | https://news.bizwatch.co.kr/article/market/2021/09/06/0019
 KOSDAQ150,2021-11-24,2021-12-10,195940,HK이노엔,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03463686629249000 | https://www.fnnews.com/news/202111241626087777
 KOSDAQ150,2021-11-24,2021-12-10,151910,나노스,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03463686629249000 | https://www.fnnews.com/news/202111241626087777
 KOSDAQ150,2021-11-24,2021-12-10,064550,바이오니아,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03463686629249000 | https://www.fnnews.com/news/202111241626087777
@@ -530,6 +539,7 @@ KOSPI200,2021-11-24,2021-12-10,178920,PI첨단소재,add,https://edaily.co.kr/Ne
 KOSPI200,2021-11-24,2021-12-10,138040,메리츠금융지주,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03463686629249000 | https://www.fnnews.com/news/202111241626087777
 KOSPI200,2021-11-24,2021-12-10,009900,명신산업,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03463686629249000 | https://www.fnnews.com/news/202111241626087777
 KOSPI200,2021-11-24,2021-12-10,005850,에스엘,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03463686629249000 | https://www.fnnews.com/news/202111241626087777
+KOSPI200,2021-11-24,2021-12-10,377300,카카오페이,add,https://www.inews24.com/view/1426035 | https://www.newsis.com/view/?id=NISX20211124_0001663797
 KOSPI200,2021-11-24,2021-12-10,329180,현대중공업,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03463686629249000 | https://www.fnnews.com/news/202111241626087777
 KOSPI200,2021-11-24,2021-12-10,007700,F&F홀딩스,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03463686629249000 | https://www.fnnews.com/news/202111241626087777
 KOSPI200,2021-11-24,2021-12-10,108670,LX하우시스,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03463686629249000 | https://www.fnnews.com/news/202111241626087777
@@ -537,6 +547,7 @@ KOSPI200,2021-11-24,2021-12-10,383800,LX홀딩스,delete,https://edaily.co.kr/Ne
 KOSPI200,2021-11-24,2021-12-10,003230,삼양식품,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03463686629249000 | https://www.fnnews.com/news/202111241626087777
 KOSPI200,2021-11-24,2021-12-10,214320,이노션,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03463686629249000 | https://www.fnnews.com/news/202111241626087777
 KOSPI200,2021-11-24,2021-12-10,007570,일양약품,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03463686629249000 | https://www.fnnews.com/news/202111241626087777
+KOSPI200,2022-02-22,2022-03-11,373220,LG에너지솔루션,add,https://www.etoday.co.kr/news/view/2108233 | https://www.news1.kr/finance/general-stock/4593512
 KOSDAQ150,2022-05-24,2022-06-10,215000,골프존,add,https://economist.co.kr/article/view/ecn202205280035 | https://www.etoday.co.kr/news/view/2137085
 KOSDAQ150,2022-05-24,2022-06-10,121600,나노신소재,add,https://economist.co.kr/article/view/ecn202205280035 | https://www.etoday.co.kr/news/view/2137085
 KOSDAQ150,2022-05-24,2022-06-10,225570,넥슨게임즈,add,https://economist.co.kr/article/view/ecn202205280035 | https://www.etoday.co.kr/news/view/2137085
@@ -667,6 +678,7 @@ KOSPI200,2023-11-23,2023-12-15,284740,쿠쿠홈시스,delete,https://edaily.co.k
 KOSPI200,2023-11-23,2023-12-15,003240,태광산업,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03119286635808672 | https://www.dnews.co.kr/uhtml/view.jsp?idxno=202311231633023270533
 KOSPI200,2023-11-23,2023-12-15,020000,한섬,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03119286635808672 | https://www.dnews.co.kr/uhtml/view.jsp?idxno=202311231633023270533
 KOSPI200,2023-11-23,2023-12-15,057050,현대홈쇼핑,delete,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=03119286635808672 | https://www.dnews.co.kr/uhtml/view.jsp?idxno=202311231633023270533
+KOSPI200,2023-12-08,2023-12-15,450080,에코프로머티리얼즈,add,https://edaily.co.kr/News/Read?mediaCodeNo=257&newsId=02587926635836552 | https://www.etoday.co.kr/news/view/2310248
 KOSDAQ150,2024-05-24,2024-06-14,417200,LS머트리얼즈,add,https://m.ceoscoredaily.com/page/view/2024052416233346839 | https://www.seoulfn.com/news/articleView.html?idxno=520797
 KOSDAQ150,2024-05-24,2024-06-14,399720,가온칩스,add,https://m.ceoscoredaily.com/page/view/2024052416233346839 | https://www.seoulfn.com/news/articleView.html?idxno=520797
 KOSDAQ150,2024-05-24,2024-06-14,420770,기가비스,add,https://m.ceoscoredaily.com/page/view/2024052416233346839 | https://www.seoulfn.com/news/articleView.html?idxno=520797
@@ -811,6 +823,7 @@ KOSPI200,2025-11-18,2025-12-12,002710,TCC스틸,delete,https://www.mt.co.kr/arti
 KOSPI200,2025-11-18,2025-12-12,145720,덴티움,delete,https://www.mt.co.kr/article/2025111816232470990 | https://www.sedaily.com/article/14144970
 KOSPI200,2025-11-18,2025-12-12,039130,하나투어,delete,https://www.mt.co.kr/article/2025111816232470990 | https://www.sedaily.com/article/14144970
 KOSPI200,2025-11-18,2025-12-12,489790,한화비전,delete,https://www.mt.co.kr/article/2025111816232470990 | https://www.sedaily.com/article/14144970
+KOSDAQ150,2026-02-26,2026-03-13,0009K0,에임드바이오,add,https://www.hankyung.com/article/2026022790016 | https://samsungpop.com/common.do?cmd=down&contentType=application%2Fpdf&fileName=1040%2F2026032617070277K_02_02.pdf&inlineYn=Y&saveKey=research.pdf
 KOSDAQ150,2026-05-22,2026-06-12,420770,기가비스,add,https://www.fnnews.com/news/202605221709058346 | https://www.smarttoday.co.kr/ko-kr/articles/107787
 KOSDAQ150,2026-05-22,2026-06-12,090360,로보스타,add,https://www.fnnews.com/news/202605221709058346 | https://www.smarttoday.co.kr/ko-kr/articles/107787
 KOSDAQ150,2026-05-22,2026-06-12,100790,미래에셋벤처투자,add,https://www.fnnews.com/news/202605221709058346 | https://www.smarttoday.co.kr/ko-kr/articles/107787
