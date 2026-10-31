@@ -411,3 +411,14 @@ def test_earlier_row_supersede_reason():
     S.cmd_signals(None)
     r = S.read_jsonl(S.LEDGER)[0]
     assert r["superseded"] is True and r["superseded_reason"] == "earlier_row"
+
+
+
+@pytest.mark.parametrize("d,hm,state", [
+    ((2026, 10, 30), (22, 20), "skip"), ((2026, 10, 30), (23, 20), "ok"),     # 여름(EDT) — T1 22:15~22:21
+    ((2026, 11, 2), (22, 20), "ok"), ((2026, 11, 2), (23, 10), "skip"),       # 겨울(EST) — T1 23:15~23:21
+    ((2026, 11, 2), (23, 34), "skip"), ((2026, 11, 2), (23, 35), "ok"),
+])
+def test_t1_pause_follows_us_dst(d, hm, state):
+    """11-01: T1 대기 창은 ET 09:10~09:35에 묶인다 — 서머타임 종료로 KST 창이 한 시간 밀린다."""
+    assert S.window_state(datetime(*d, *hm, tzinfo=KST)) == state
