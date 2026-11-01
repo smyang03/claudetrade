@@ -233,7 +233,20 @@ def _finnhub_actual(tk: str, ds: str, evt_row: dict, fh_cal: dict, prior_status:
 
 
 # ------------------------------------------------------------------ score
+# 채점 ET 창. 예약 작업은 22:15·23:15 KST 트리거를 둘 다 갖고, 계절에 맞지 않는 쪽은 창 밖이라 무동작(11-01).
+# 09:26 ET 이후 채점은 개장 뒤 정보가 섞일 수 있어 하지 않는다(라이브 매수 마감과 같다).
+SCORE_WINDOW_ET = ((9, 5), (9, 26))
+
+
+def _score_window_ok(now_et=None) -> bool:
+    import zoneinfo
+    t = (now_et or (lambda: datetime.now(zoneinfo.ZoneInfo("America/New_York"))))()
+    return SCORE_WINDOW_ET[0] <= (t.hour, t.minute) < SCORE_WINDOW_ET[1]
+
+
 def cmd_score(dry: bool = False) -> int:
+    if not dry and not _score_window_ok():
+        print("[T1] 채점 창(09:05~09:26 ET) 밖 실행 — 건너뜀(다른 계절 트리거·늦은 실행)"); return 0
     import lightgbm as lgb
     if not MODEL.exists():
         print("[T1] 모델 없음 — 먼저 train"); return 2

@@ -10,9 +10,9 @@
   4. 이미 계좌에 있는 종목(코어 SCHG·다른 전략 보유)은 사지 않는다. 달러 주문가능현금이 모자라면 건너뛴다.
 
 명령 (운영 파이썬으로 실행 — kis_api 필요)
-  buy        개장 전(09:20 ET = KST 여름 22:20 · 겨울 23:20, 쉐도우 score 09:15 ET 뒤). 오늘 쉐도우 선택(I1·유동) 중 점수 최고 1종목을
+  buy        개장 전(09:20 ET — 예약 작업은 22:20·23:20 KST 둘 다, 창 밖 쪽은 무동작. 쉐도우 score 09:15 ET 뒤). 오늘 쉐도우 선택(I1·유동) 중 점수 최고 1종목을
              LOO(ORD_DVSN 32) 매수. 한도가 = 전일 종가 × 1.25(백테스트의 '시가 무조건 체결'에 최대한 맞춤).
-  sell       개장 전(09:21 ET = KST 여름 22:21 · 겨울 23:21). 진입 후 20번째 세션인 보유를 MOO(ORD_DVSN 31) 매도.
+  sell       개장 전(09:21 ET — 22:21·23:21 KST 둘 다, 창 밖 쪽은 무동작). 진입 후 20번째 세션인 보유를 MOO(ORD_DVSN 31) 매도.
   reconcile  장 마감 후(KST 07:40). 오늘 낸 주문의 체결을 확인하고, 체결가 − 공식 시가(yfinance) 차이 bp 기록.
   status     원장 요약.
   --dry      모든 게이트를 통과시키되 주문은 내지 않고 출력만.
@@ -141,12 +141,23 @@ def _wait_for_score(today: str, *, now_et=None, sleep=None) -> bool:
     return True
 
 
-def _past_order_deadline(now_et=None) -> bool:
-    """LOO/MOO 접수 마감(SCORE_WAIT_DEADLINE_ET) 이후인가. 11-01: 예약 작업이 놓친 실행을 PC 복귀 때 따라잡게 되면서,
-    장 시작 뒤에 개장가 주문이 나가지 않도록 매수·청산 진입부에서 막는다(청산은 다음 세션에 다시 만기로 잡힌다)."""
+# 매수·청산이 실제로 일하는 ET 창의 시작. 예약 작업은 여름(22:20 KST)·겨울(23:20 KST) 트리거를 둘 다 갖고,
+# 그날 계절에 맞지 않는 쪽은 이 창 밖이라 아무것도 하지 않는다(11-01 — 3월·11월 수동 이동 제거).
+ORDER_WINDOW_START_ET = (9, 5)
+
+
+def _order_window(now_et=None) -> str:
+    """'early'(09:05 ET 전) | 'ok' | 'late'(SCORE_WAIT_DEADLINE_ET 이후 — LOO/MOO 접수 마감).
+
+    late: 예약 작업이 놓친 실행을 PC 복귀 때 따라잡았거나 계절이 다른 트리거가 돈 경우다. 장 시작 뒤에 개장가 주문이
+    나가지 않도록 막는다(청산은 다음 세션에 다시 만기로 잡힌다). 원장에는 쓰지 않는다 — 여름엔 23시대 트리거가
+    매일 late로 돌기 때문에 skip 행을 쓰면 수율 추적이 오염된다. 로그(logs/t1/*.log)에만 남긴다."""
     import zoneinfo
     t = (now_et or (lambda: datetime.now(zoneinfo.ZoneInfo("America/New_York"))))()
-    return (t.hour, t.minute) >= SCORE_WAIT_DEADLINE_ET
+    hm = (t.hour, t.minute)
+    if hm < ORDER_WINDOW_START_ET:
+        return "early"
+    return "late" if hm >= SCORE_WAIT_DEADLINE_ET else "ok"
 
 
 def _sessions_between(d0: str, d1) -> int:
@@ -167,10 +178,9 @@ def cmd_buy(dry: bool) -> int:
     today = str(_today_et())
     if any(r.get("kind") == "order" and r.get("side") == "buy" and r.get("session") == today for r in _read(LEDGER)):
         print("[T1 live] 오늘 매수 주문 이미 있음 — 멱등 종료"); return 0
-    if _past_order_deadline():
-        print(f"[T1 live] ⚠️ 접수 마감({SCORE_WAIT_DEADLINE_ET[0]:02d}:{SCORE_WAIT_DEADLINE_ET[1]:02d} ET) 이후 실행 — 매수 안 함(늦은 시작)")
-        if not dry:
-            _append([{"kind": "skip", "session": today, "reason": "late_start", "at": _now_iso()}])
+    win = _order_window()
+    if win != "ok":
+        print(f"[T1 live] 주문 창(09:05~09:26 ET) 밖 실행({win}) — 매수 안 함(다른 계절 트리거·늦은 따라잡기)")
         return 0
     if not _wait_for_score(today):
         print(f"[T1 live] ⚠️ 오늘({today}) 채점이 마감까지 안 끝남 — 매수 안 함(선정 여부 모름, '선택 없음' 아님)")
@@ -237,8 +247,9 @@ def cmd_buy(dry: bool) -> int:
 # ------------------------------------------------------------------ sell
 def cmd_sell(dry: bool) -> int:
     # 만기 청산은 ENABLED와 무관 — 플래그는 신규 매수만 막는다(봇은 격리로 팔지 않으므로, 리뷰 M3).
-    if _past_order_deadline():
-        print(f"[T1 live] ⚠️ 접수 마감({SCORE_WAIT_DEADLINE_ET[0]:02d}:{SCORE_WAIT_DEADLINE_ET[1]:02d} ET) 이후 실행 — MOO 안 냄, 다음 세션에 청산")
+    win = _order_window()
+    if win != "ok":
+        print(f"[T1 live] 주문 창(09:05~09:26 ET) 밖 실행({win}) — MOO 안 냄" + (", 다음 세션에 청산" if win == "late" else ""))
         return 0
     today = _today_et()
     due = []
