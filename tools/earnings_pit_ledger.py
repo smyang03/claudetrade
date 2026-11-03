@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
 CALENDAR = ROOT / "data" / "earnings_calendar.json"
 LEDGER = ROOT / "data" / "shadow" / "earnings_pit_ledger.jsonl"
 STATE = ROOT / "state" / "earnings_pit_last.json"
@@ -92,7 +93,13 @@ def main() -> int:
     ap.add_argument("--calendar", default=str(CALENDAR))
     ap.add_argument("--ledger", default=str(LEDGER))
     ap.add_argument("--state", default=str(STATE))
+    ap.add_argument("--et-window", default=None,
+                    help="HH:MM-HH:MM ET 밖이면 무동작(예약 작업 여름·겨울 트리거 중 계절 맞는 쪽만, 11-01)")
     a = ap.parse_args()
+    from et_window import in_et_window
+    if not in_et_window(a.et_window):
+        print(f"[PIT] ET 창({a.et_window}) 밖 실행 — 건너뜀")
+        return 0
     run(Path(a.calendar), Path(a.ledger), Path(a.state))
     return 0
 

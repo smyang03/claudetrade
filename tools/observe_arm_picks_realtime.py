@@ -120,7 +120,13 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--session-date", default=None)
     ap.add_argument("--no-quotes", action="store_true")
+    ap.add_argument("--et-window", default=None,
+                    help="HH:MM-HH:MM ET 밖이면 무동작(예약 작업 여름·겨울 트리거 중 계절 맞는 쪽만, 11-01)")
     args = ap.parse_args()
+    from et_window import in_et_window
+    if not in_et_window(args.et_window):
+        print(f"[arm_picks] ET 창({args.et_window}) 밖 실행 — 건너뜀")
+        return 0
     us = vb.load_sessions()
     sd = args.session_date or latest_us_session(us)
     if not sd:
