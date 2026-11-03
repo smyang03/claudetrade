@@ -85,6 +85,33 @@ def realized_pnl(rows: list[dict]) -> float:
     return sum(float(r.get("pnl_krw") or 0) for r in rows if r.get("kind") == "close")
 
 
+def _notify_halt_once(rows: list[dict], loss_limit: float, day: str, send=None) -> bool:
+    """손실 한도 자동 중단을 한 번만 알린다(11-03 운영자 결정: 중단되면 그대로 두고 쉐도우 forward 20건 판정 뒤 재개 결정).
+
+    로그에만 찍히면 중단을 모르고 지나간다. 원장 halt 행으로 멱등 — 한도를 다시 설정해 재개하면 다음 중단 때 또 알린다."""
+    halts = [r for r in rows if r.get("kind") == "halt"]
+    closes_after = [r for r in rows if r.get("kind") == "close"
+                    and (not halts or str(r.get("at", "")) > str(halts[-1].get("at", "")))]
+    if halts and not closes_after:
+        return False
+    pnl = realized_pnl(rows)
+    msg = (f"⛔ KR 패닉 ETF(L3) 손실 한도 도달 — 신규 매수 자동 중단\n"
+           f"누적 실현 {pnl:,.0f}원 ≤ −{loss_limit:,.0f}원 ({day})\n"
+           f"재개 기준: 쉐도우 forward 20건 평균 net > 0이면 운영자가 한도 재설정(operating_model L3). 그 전까지 중단 유지.")
+    try:
+        if send is None:
+            from dotenv import load_dotenv
+            load_dotenv(str(ROOT / ".env.live"), override=False)
+            import telegram_reporter as tg
+            send = lambda t: tg.send(t, parse_mode=None, critical=True)
+        send(msg)
+    except Exception as exc:  # noqa: BLE001 — 알림 실패가 중단 자체를 막지 않는다
+        print(f"[panic-micro] 중단 알림 실패: {exc}")
+    _append([{"kind": "halt", "reason": "loss_limit", "realized_pnl": pnl, "loss_limit": loss_limit,
+              "session": day, "at": _now_iso()}])
+    return True
+
+
 def today_signal(shadow_rows: list[dict], day: str, ticker: str = TICKER) -> dict | None:
     """쉐도우 원장의 오늘 세션 행이 신호면 {units, price, reason} — 아니면 None."""
     sess = next((r for r in shadow_rows if r.get("kind") == "session" and r.get("session_date") == day), None)
@@ -171,7 +198,10 @@ def cmd_buy(dry: bool) -> int:
     if any(p.get("status") == "OPEN" for p in _positions(rows).values()):
         print("[panic-micro] 보유 중 — 동시 1건"); return 0
     if realized_pnl(rows) <= -cfg["loss_limit"]:
-        print(f"[panic-micro] 누적 실현손실 {realized_pnl(rows):,.0f} ≤ −{cfg['loss_limit']:,.0f} — 신규 매수 중단"); return 0
+        print(f"[panic-micro] 누적 실현손실 {realized_pnl(rows):,.0f} ≤ −{cfg['loss_limit']:,.0f} — 신규 매수 중단")
+        if not dry:
+            _notify_halt_once(rows, cfg["loss_limit"], day)
+        return 0
     tk = cfg["ticker"]
     shadow_rows = _read(SHADOW)
     sig = today_signal(shadow_rows, day, tk)

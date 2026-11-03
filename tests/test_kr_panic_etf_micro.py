@@ -86,3 +86,28 @@ def test_buy_reports_missing_judgment_with_nonzero_rc(tmp_path, monkeypatch, cap
     monkeypatch.setattr(m, "_bot_has_isolation", lambda: (True, ""))
     assert m.cmd_buy(False) == 3
     assert "판정 못 함" in capsys.readouterr().out
+
+
+
+def test_halt_notifies_once_and_again_after_reset(tmp_path, monkeypatch):
+    """11-03: 손실 한도 중단은 텔레그램으로 한 번만 알린다. 재개 후 다시 닿으면 또 알린다."""
+    led = tmp_path / "live.jsonl"
+    monkeypatch.setattr(m, "LEDGER", led)
+    sent = []
+    rows = [{"kind": "close", "pnl_krw": -51_000, "at": "2026-11-01T00:10:00+00:00"}]
+    assert m._notify_halt_once(rows, 50_000, "2026-11-10", send=sent.append) is True
+    rows = rows + m._read(led)
+    assert m._notify_halt_once(rows, 50_000, "2026-11-11", send=sent.append) is False
+    assert len(sent) == 1 and "손실 한도" in sent[0]
+    rows = rows + [{"kind": "close", "pnl_krw": -2_000, "at": "2099-01-01T00:00:00+00:00"}]
+    assert m._notify_halt_once(rows, 50_000, "2099-01-02", send=sent.append) is True
+    assert len(sent) == 2
+
+
+def test_halt_notify_failure_still_records(tmp_path, monkeypatch):
+    led = tmp_path / "live.jsonl"
+    monkeypatch.setattr(m, "LEDGER", led)
+    def boom(_):
+        raise RuntimeError("net down")
+    assert m._notify_halt_once([{"kind": "close", "pnl_krw": -60_000, "at": "x"}], 50_000, "d", send=boom) is True
+    assert m._read(led)[-1]["kind"] == "halt"
