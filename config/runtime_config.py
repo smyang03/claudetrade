@@ -32,6 +32,17 @@ NON_SECRET_SUFFIXES = (
     "_MAX_TOKENS",
 )
 
+# 11-07: KRX_PW가 "PASS" 표식에 안 걸려 스냅샷에 평문으로 남았다. 접미사로 따로 잡는다.
+SECRET_SUFFIXES = (
+    "_PW",
+    "_PWD",
+    "_CLIENT_ID",
+)
+
+# 비밀번호 계열은 앞뒤 글자도 남기지 않는다.
+FULL_MASK_MARKERS = ("PASSWORD", "PASSWD", "PASS")
+FULL_MASK_SUFFIXES = ("_PW", "_PWD")
+
 
 def _is_secret_key(key: str) -> bool:
     upper = str(key or "").upper()
@@ -39,7 +50,14 @@ def _is_secret_key(key: str) -> bool:
         return False
     if any(upper.endswith(suffix) for suffix in NON_SECRET_SUFFIXES):
         return False
+    if any(upper.endswith(suffix) for suffix in SECRET_SUFFIXES):
+        return True
     return any(marker in upper for marker in SECRET_MARKERS)
+
+
+def _is_full_mask_key(key: str) -> bool:
+    upper = str(key or "").upper()
+    return any(m in upper for m in FULL_MASK_MARKERS) or any(upper.endswith(s) for s in FULL_MASK_SUFFIXES)
 
 
 def redact_config_value(key: str, value: Any) -> Any:
@@ -48,7 +66,7 @@ def redact_config_value(key: str, value: Any) -> Any:
     if not _is_secret_key(key):
         return value
     text = str(value)
-    if len(text) <= 4:
+    if len(text) <= 4 or _is_full_mask_key(key):
         return "***"
     return f"{text[:2]}***{text[-2:]}"
 

@@ -32,6 +32,14 @@ class EffectiveRuntimeConfigTests(unittest.TestCase):
         self.assertEqual(redact_config_value("V2_START_CONFIG_PATH", "config/v2_start_config.json"), "config/v2_start_config.json")
         self.assertNotEqual(redact_config_value("TELEGRAM_TOKEN", "abcdef123456"), "abcdef123456")
 
+    def test_redaction_masks_pw_suffix_fully(self) -> None:
+        # 11-07: KRX_PW가 평문으로 스냅샷에 남던 결함
+        self.assertEqual(redact_config_value("KRX_PW", "abcdefgh123!"), "***")
+        self.assertEqual(redact_config_value("DB_PWD", "abcdefgh123!"), "***")
+        self.assertEqual(redact_config_value("SOME_PASSWORD", "abcdefgh123!"), "***")
+        self.assertNotEqual(redact_config_value("NAVER_CLIENT_ID", "abcdefgh1234"), "abcdefgh1234")
+        self.assertEqual(redact_config_value("KR_PANIC_MICRO_UNIT_KRW", "200000"), "200000")
+
     def test_redaction_keeps_token_limit_values_visible(self) -> None:
         self.assertEqual(redact_config_value("CLAUDE_ANALYST_R1_MAX_TOKENS", "700"), "700")
         self.assertEqual(redact_config_value("CLAUDE_SELECTION_RETRY_MAX_TOKENS", "3500"), "3500")
