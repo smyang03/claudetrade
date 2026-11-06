@@ -100,8 +100,8 @@ def _args(**kw):
 
 
 # ------------------------------------------------------------------ 창 가드·토큰·상한
-@pytest.mark.parametrize("hm,state", [((15, 59), "closed"), ((16, 4), "closed"), ((16, 5), "ok"), ((22, 9), "ok"),
-                                      ((22, 10), "skip"), ((22, 34), "skip"), ((22, 35), "ok"), ((23, 58), "ok"),
+@pytest.mark.parametrize("hm,state", [((15, 59), "closed"), ((16, 4), "closed"), ((16, 5), "ok"), ((21, 59), "ok"),
+                                      ((22, 0), "skip"), ((22, 10), "skip"), ((22, 34), "skip"), ((22, 35), "ok"), ((23, 58), "ok"),
                                       ((23, 59), "closed"), ((0, 30), "closed"), ((7, 0), "closed")])
 def test_window_state(hm, state):
     assert S.window_state(datetime(2026, 9, 30, *hm, tzinfo=KST)) == state
@@ -416,9 +416,10 @@ def test_earlier_row_supersede_reason():
 
 @pytest.mark.parametrize("d,hm,state", [
     ((2026, 10, 30), (22, 20), "skip"), ((2026, 10, 30), (23, 20), "ok"),     # 여름(EDT) — T1 22:15~22:21
-    ((2026, 11, 2), (22, 20), "ok"), ((2026, 11, 2), (23, 10), "skip"),       # 겨울(EST) — T1 23:15~23:21
+    ((2026, 11, 2), (22, 20), "ok"), ((2026, 11, 2), (23, 10), "skip"),       # 겨울(EST) — T1 23:05~23:21
+    ((2026, 11, 2), (22, 59), "ok"), ((2026, 11, 2), (23, 0), "skip"),        # 11-06 채점 09:05 ET로 당김 → 창 09:00부터
     ((2026, 11, 2), (23, 34), "skip"), ((2026, 11, 2), (23, 35), "ok"),
 ])
 def test_t1_pause_follows_us_dst(d, hm, state):
-    """11-01: T1 대기 창은 ET 09:10~09:35에 묶인다 — 서머타임 종료로 KST 창이 한 시간 밀린다."""
+    """11-01: T1 대기 창은 ET 09:00~09:35에 묶인다(11-06 채점 시작 09:05) — 서머타임 종료로 KST 창이 한 시간 밀린다."""
     assert S.window_state(datetime(*d, *hm, tzinfo=KST)) == state

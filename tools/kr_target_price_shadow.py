@@ -143,13 +143,14 @@ def window_state(t: datetime) -> str:
 
 
 def _t1_pause_kst(t: datetime) -> tuple[int, int]:
-    """T1 US 도구(채점·LOO 매수·MOO 청산, 09:15~09:21 ET) 대기 창 = 09:10~09:35 ET를 KST 분으로.
-    11-01 서머타임 종료로 T1 작업이 23:15 KST로 옮겨져, 고정 22:10~22:35로는 겹침을 못 막는다.
-    여름(EDT) 22:10~22:35 · 겨울(EST) 23:10~23:35."""
+    """T1 US 도구(채점 09:05·LOO 매수 09:20·MOO 청산 09:21 ET) 대기 창 = 09:00~09:35 ET를 KST 분으로.
+    11-01 서머타임 종료로 T1 작업이 23시대 KST로 옮겨져, 고정 22시대 창으로는 겹침을 못 막는다.
+    11-06 채점 시작을 09:15→09:05 ET로 당겨(실적 시즌 후보 415개에 채점 11.7분, 09:26 마감 초과) 창도 09:00부터.
+    여름(EDT) 22:00~22:35 · 겨울(EST) 23:00~23:35."""
     import zoneinfo
     et = zoneinfo.ZoneInfo("America/New_York")
     off_h = 9 - round(datetime(t.year, t.month, t.day, 12, tzinfo=et).utcoffset().total_seconds() / 3600)  # 13 or 14
-    return (9 + off_h) * 60 + 10, (9 + off_h) * 60 + 35
+    return (9 + off_h) * 60, (9 + off_h) * 60 + 35
 
 
 # ─────────────────────────── 창 분할 (연구 179~210행 그대로) ───────────────────────────
