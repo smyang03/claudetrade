@@ -12,9 +12,11 @@
   2. 봇 격리 계약: risk_manager.ISOLATED_STRATEGY_SOURCES 에 kr_index_inclusion, 실행 중인 봇이 그 코드를 싣고 떴다.
   3. 누적 실현손실 > −KR_INDEX_INCL_LOSS_LIMIT_KRW.
 
-**명단 입력은 사람(또는 Claude 세션)이 한다.** KRX 자동수집은 약관상 금지다. 발표(5월·11월 하순) 당일 저녁에
-data/reference/kr_index_changes.csv 에 새 회차 행(index, announce_date, effective_date, ticker, name, action=add/delete,
-source_url)을 추가하면 다음 거래일 08:40 매수 작업이 집는다. 발표 시즌인데 새 회차가 없으면 매수 작업이 경고를 남긴다.
+**명단 입력**: 정기 회차는 tools/kr_index_changes_fetch.py(예약 작업, 11-08)가 네이버 검색 API 기사에서 검증 게이트를
+통과한 명단만 자동으로 넣는다. 보류(⚠️ 텔레그램)·특례편입은 사람(또는 Claude 세션)이 넣는다. KRX 사이트 자동수집은 약관상 금지다.
+발표(5월·11월 하순) 당일 저녁에 data/reference/kr_index_changes.csv 에 새 회차 행(index, announce_date, effective_date,
+ticker, name, action=add/delete, source_url)이 들어가면 다음 거래일 08:40 매수 작업이 집는다. 발표 시즌인데 새 회차가 없으면
+매수 작업이 경고를 남긴다.
 
 명령 (운영 파이썬 — kis_api 필요)
   buy        장전(KST 08:40). 오늘이 진입 세션인 회차를 장전 시장가 매수.
