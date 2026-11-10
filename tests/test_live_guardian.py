@@ -8,8 +8,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from tools.live_guardian import (
     GuardianAction,
+    _alert_items,
     _apply_auto_fixes,
     _alert_state_path,
     _bot_main_loop_hang_finding,
@@ -21,6 +25,9 @@ from tools.live_guardian import (
     classify_preflight_check,
     run_guardian_once,
 )
+
+# 2026-11-10(화) 10:00 KST — KR 정규장 중, US 장 밖.
+_KR_SESSION_DT = datetime(2026, 11, 10, 10, 0, tzinfo=ZoneInfo("Asia/Seoul"))
 
 
 class LiveGuardianTests(unittest.TestCase):
@@ -1093,12 +1100,56 @@ class LiveGuardianTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp, patch("telegram_reporter.send", return_value=True) as send_mock:
             state_path = Path(tmp) / "alert_state.json"
-            first = _maybe_send_telegram_alert(report, state_path=state_path)
-            second = _maybe_send_telegram_alert(report, state_path=state_path)
+            first = _maybe_send_telegram_alert(report, state_path=state_path, now_dt=_KR_SESSION_DT)
+            second = _maybe_send_telegram_alert(report, state_path=state_path, now_dt=_KR_SESSION_DT)
 
         self.assertEqual(first.status, "PASS")
         self.assertEqual(second.status, "SKIP")
         send_mock.assert_called_once()
+
+    @staticmethod
+    def _stale_report(name: str) -> dict:
+        return {
+            "mode": "live",
+            "gate": "BLOCK_START",
+            "counts": {"hard_fail": 1, "soft_fail": 0},
+            "report_paths": {"md": "data/v2_reports/example.md"},
+            "findings": [
+                {
+                    "name": name,
+                    "status": "WARN",
+                    "classification": "hard_fail",
+                    "detail": "snapshot stale",
+                    "data": {},
+                }
+            ],
+            "actions": [],
+        }
+
+    def test_alert_skips_broker_stale_for_closed_market(self) -> None:
+        # 11-10 13:21 KST: US 장 밖 → US stale은 알림 지문에서 빠진다.
+        report = self._stale_report("broker_truth.us_stale_state")
+        self.assertEqual(_alert_items(report, now_dt=_KR_SESSION_DT.replace(hour=13, minute=21)), [])
+        # 11-10 03:00 KST: KR 장 밖 → KR stale도 빠진다.
+        report = self._stale_report("broker_truth.kr_stale_state")
+        self.assertEqual(_alert_items(report, now_dt=_KR_SESSION_DT.replace(hour=3, minute=0)), [])
+
+    def test_alert_keeps_broker_stale_inside_refresh_window(self) -> None:
+        report = self._stale_report("broker_truth.kr_stale_state")
+        items = _alert_items(report, now_dt=_KR_SESSION_DT)
+        self.assertEqual([item["name"] for item in items], ["broker_truth.kr_stale_state"])
+        # 장전 20분 창(08:40~)도 알림 대상이다.
+        items = _alert_items(report, now_dt=_KR_SESSION_DT.replace(hour=8, minute=45))
+        self.assertEqual(len(items), 1)
+
+    def test_alert_keeps_broker_stale_on_calendar_error(self) -> None:
+        report = self._stale_report("broker_truth.us_stale_state")
+        with patch(
+            "tools.broker_truth_scheduler.market_refresh_window",
+            return_value={"market": "US", "active": False, "reason": "calendar_error:boom"},
+        ):
+            items = _alert_items(report, now_dt=_KR_SESSION_DT.replace(hour=13, minute=21))
+        self.assertEqual(len(items), 1)
 
     def test_telegram_alert_sends_recovery_after_problem_clears(self) -> None:
         blocked = {

@@ -1042,13 +1042,41 @@ def _save_alert_state(path: Path, state: dict[str, Any]) -> None:
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _alert_items(report: dict[str, Any], *, include_soft: bool = False) -> list[dict[str, str]]:
+def _broker_stale_outside_refresh_window(name: str, *, now_dt: datetime | None = None) -> bool:
+    """장 닫힌 시장의 broker snapshot stale인지 — 텔레그램 알림에서만 뺀다.
+
+    2026-11-10 실측: 장 밖 시장의 스냅샷은 약 15분 간격으로만 갱신되는데 TTL은
+    180초라, 5분 주기 가디언이 돌 때마다 stale↔fresh가 번갈아 ALERT/RECOVERED가
+    하루 22회 나갔다. hard_fail·market_gates·기동 예외는 그대로 두고 알림 지문만 거른다.
+    달력 오류(calendar_error:*)는 장 밖으로 보지 않는다 — 알림을 계속 보낸다.
+    """
+
+    market = _broker_truth_market(name)
+    if not market or not str(name or "").endswith("_stale_state"):
+        return False
+    try:
+        from tools.broker_truth_scheduler import market_refresh_window
+
+        window = market_refresh_window(market, now_dt=now_dt)
+    except Exception:
+        return False
+    return str(window.get("reason") or "") == "outside_refresh_window"
+
+
+def _alert_items(
+    report: dict[str, Any],
+    *,
+    include_soft: bool = False,
+    now_dt: datetime | None = None,
+) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     for finding in report.get("findings") or []:
         if not isinstance(finding, dict):
             continue
         classification = str(finding.get("classification") or "")
         if classification == "hard_fail" or (include_soft and classification == "soft_fail"):
+            if _broker_stale_outside_refresh_window(str(finding.get("name") or ""), now_dt=now_dt):
+                continue
             items.append(
                 {
                     "kind": "finding",
@@ -1129,11 +1157,12 @@ def _maybe_send_telegram_alert(
     *,
     include_soft: bool = False,
     state_path: Path | None = None,
+    now_dt: datetime | None = None,
 ) -> GuardianAction:
     path = state_path or _alert_state_path(str(report.get("mode") or "live"))
     state = _load_alert_state(path)
     previous = str(state.get("fingerprint") or "")
-    items = _alert_items(report, include_soft=include_soft)
+    items = _alert_items(report, include_soft=include_soft, now_dt=now_dt)
     fingerprint = _alert_fingerprint(items) if items else ""
     if fingerprint == previous:
         return GuardianAction("telegram_alert", "SKIP", "alert state unchanged", {"state_path": str(path)})
