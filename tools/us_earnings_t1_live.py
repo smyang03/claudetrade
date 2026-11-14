@@ -321,14 +321,29 @@ def cmd_reconcile() -> int:
     return 0
 
 
+def slip_stats(rows: list[dict], side: str = "buy") -> dict | None:
+    """체결가 − 공식 시가(bp) 요약. 매수는 +가 불리, 매도는 +가 유리라 한쪽씩만 센다.
+    중단 조건은 중앙값(+20bp)이지만 손익에는 평균이 들어간다 — 둘 다 낸다(11-14).
+    그전 표시는 매수·매도를 섞고 짝수 건에서 위쪽 값을 중앙값으로 찍었다."""
+    import statistics
+    v = [float(r["slip_bp_vs_open"]) for r in rows
+         if r.get("kind") == "fill" and r.get("side") == side and r.get("slip_bp_vs_open") is not None]
+    if not v:
+        return None
+    return {"n": len(v), "median": statistics.median(v), "mean": statistics.fmean(v), "min": min(v), "max": max(v)}
+
+
 def cmd_status() -> int:
     enabled, cfg = _env_gate()
     pos = _positions()
-    fills = [r for r in _read(LEDGER) if r.get("kind") == "fill" and r.get("slip_bp_vs_open") is not None]
+    rows = _read(LEDGER)
     print(f"[T1 live] enabled={enabled} flag={cfg['enabled_flag']!r} 두소스불일치={cfg['mismatch']} 격리={_isolation_gate()}")
-    print(f"  보유 {sum(1 for p in pos.values() if p.get('status') == 'OPEN')} · 종료 {sum(1 for p in pos.values() if p.get('status') == 'CLOSED')}"
-          f" · 체결 {len(fills)}건 · 시가 대비 중앙 차이 "
-          f"{sorted(f['slip_bp_vs_open'] for f in fills)[len(fills)//2] if fills else '-'}bp")
+    print(f"  보유 {sum(1 for p in pos.values() if p.get('status') == 'OPEN')} · 종료 {sum(1 for p in pos.values() if p.get('status') == 'CLOSED')}")
+    for side, label in (("buy", "매수(+가 불리)"), ("sell", "매도(+가 유리)")):
+        s = slip_stats(rows, side)
+        if s:
+            print(f"  {label} 체결 {s['n']}건 · 시가 대비 중앙 {s['median']:+.1f}bp · 평균 {s['mean']:+.1f}bp · "
+                  f"범위 {s['min']:+.1f}~{s['max']:+.1f}bp")
     return 0
 
 

@@ -85,10 +85,60 @@ def test_buy_dry_plans_due_round_and_is_idempotent(tmp_path, monkeypatch, capsys
     assert L.cmd_buy(True) == 0
     out = capsys.readouterr().out
     assert "편입 2 · 매수 2 · 예산상 제외 0" in out and "000002 x1" in out and "청산 2026-12-10" in out
-    led.write_text(json.dumps({"kind": "order", "side": "buy", "round": "2026-11-20", "ticker": "000001"}) + "\n", encoding="utf-8")
+    led.write_text("".join(json.dumps({"kind": "order", "side": "buy", "round": "2026-11-20", "ticker": t, "state": "ok"}) + "\n"
+                           for t in ("000001", "000002")), encoding="utf-8")
     monkeypatch.setattr(L, "_bot_has_isolation", lambda: (True, ""))
     monkeypatch.setattr(L, "kr_order_window", lambda kind: (True, ""))
     assert L.cmd_buy(False) == 0 and "이미 있음" in capsys.readouterr().out
+
+
+def test_buy_rerun_fills_only_missing_tickers(tmp_path, monkeypatch, capsys):
+    """11-14 — 회차 일부만 주문된 뒤 재실행하면 빠진 종목(미주문·거부)만, 처음과 같은 수량으로 낸다."""
+    monkeypatch.setattr(L, "CHANGES", _csv(tmp_path))
+    led = tmp_path / "led.jsonl"
+    monkeypatch.setattr(L, "LEDGER", led)
+    monkeypatch.setattr(L, "_today", lambda: date(2026, 11, 23))
+    monkeypatch.setattr(L, "_env_gate", lambda: (True, {"round_krw": 500_000, "loss_limit": 100_000,
+                                                       "indexes": {"KOSPI200", "KOSDAQ150"}, "mismatch": {}, "enabled_flag": "true"}))
+    px = {"000001": 12_000.0, "000002": 300_000.0}
+    monkeypatch.setattr(L, "_prev_close", lambda t, d: px[t])
+    monkeypatch.setattr(L, "_bot_has_isolation", lambda: (True, ""))
+    monkeypatch.setattr(L, "kr_order_window", lambda kind: (True, ""))
+    full = L.allocate(500_000, px)
+
+    class _Kis:
+        @staticmethod
+        def get_balance(token, market, force_refresh):
+            return {}
+
+    sent = []
+
+    def _place(kis, t, q, price, side, token, market):
+        sent.append((t, q))
+        return {"success": True, "order_no": "1", "msg": "ok"}
+
+    monkeypatch.setattr(L, "_kis", lambda: (_Kis, "tok"))
+    monkeypatch.setattr(L, "safe_cash_krw", lambda bal: 10_000_000.0)
+    monkeypatch.setattr(L, "place_safely", _place)
+    monkeypatch.setattr(L, "order_state", lambda res: "ok")
+
+    def _row(t, st):
+        return json.dumps({"kind": "order", "side": "buy", "round": "2026-11-20", "ticker": t, "state": st}) + "\n"
+
+    # 000001은 접수됨(보유 OPEN), 000002는 거부됨 → 000002만 다시 낸다
+    led.write_text(_row("000001", "ok")
+                   + json.dumps({"kind": "position", "ticker": "000001", "status": "OPEN", "round": "2026-11-20"}) + "\n"
+                   + _row("000002", "rejected"), encoding="utf-8")
+    assert L.cmd_buy(False) == 0
+    assert sent == [("000002", full["000002"])]
+    assert "재실행" in capsys.readouterr().out
+    sent.clear()                                                  # 한 번 더 — 이제 전부 주문됨 → 아무것도 안 낸다
+    assert L.cmd_buy(False) == 0 and sent == []
+    assert "이미 있음" in capsys.readouterr().out
+    led.write_text(_row("000001", "ok") + _row("000002", "unknown"), encoding="utf-8")   # unknown은 다시 내지 않는다
+    assert L.cmd_buy(False) == 0 and sent == []
+    led.write_text(_row("000001", "ok"), encoding="utf-8")        # 첫 주문 뒤 죽은 경우 — 주문 기록이 없는 종목을 낸다
+    assert L.cmd_buy(False) == 0 and sent == [("000002", full["000002"])]
 
 
 def test_due_sells_today_or_overdue_only():

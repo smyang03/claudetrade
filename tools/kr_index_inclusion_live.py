@@ -235,22 +235,30 @@ def cmd_buy(dry: bool) -> int:
     kis = token = None
     rc = 0
     for a, g in due:
-        if any(r.get("kind") == "order" and r.get("side") == "buy" and r.get("round") == a for r in rows):
-            print(f"[idx-incl] 회차 {a} 매수 주문 이미 있음 — 멱등"); continue
+        # 멱등은 종목 단위(11-14) — 회차 단위였을 때는 첫 주문 뒤 죽거나 일부가 거부·현금 부족이면 재실행해도
+        # 빠진 종목이 채워지지 않았다. 거부(rejected)는 주문이 없던 것으로 보고 다시 낸다.
+        # unknown은 접수됐을 수 있어 다시 내지 않는다(중복 매수 방지).
+        done = {r.get("ticker") for r in rows if r.get("kind") == "order" and r.get("side") == "buy"
+                and r.get("round") == a and r.get("state") != "rejected"}
         held_open = {t for t, p in _positions(rows).items() if p.get("status") == "OPEN"}
         prices = {}
         for x in g["adds"]:
-            if x["ticker"] in held_open:
+            if x["ticker"] in held_open and x["ticker"] not in done:   # 이 회차에서 낸 종목은 배분 계산에 남긴다(같은 계획 재현)
                 print(f"  건너뜀 {x['ticker']} {x['name']}: 이미 보유"); continue
             px = _prev_close(x["ticker"], today)
             if px is None:
                 print(f"  건너뜀 {x['ticker']} {x['name']}: 전일 종가 없음"); continue
             prices[x["ticker"]] = px
-        plan = allocate(cfg["round_krw"], prices)
-        dropped = sorted(set(prices) - set(plan))
+        full = allocate(cfg["round_krw"], prices)
+        dropped = sorted(set(prices) - set(full))
+        plan = {t: q for t, q in full.items() if t not in done}
+        if done and not plan:
+            print(f"[idx-incl] 회차 {a} 매수 주문 이미 있음 — 멱등"); continue
         ex = exit_session(date.fromisoformat(g["effective"])).isoformat()
-        print(f"[idx-incl] 회차 {a}(효력 {g['effective']}, 청산 {ex}) 편입 {len(g['adds'])} · 매수 {len(plan)} · "
+        print(f"[idx-incl] 회차 {a}(효력 {g['effective']}, 청산 {ex}) 편입 {len(g['adds'])} · 매수 {len(full)} · "
               f"예산상 제외 {len(dropped)}")
+        if done:
+            print(f"[idx-incl] 회차 {a} 재실행 — 이미 주문 {len(done & set(full))} · 빠진 종목 {len(plan)}: {', '.join(sorted(plan))}")
         if dry or not plan:
             for t, q in plan.items():
                 print(f"  (dry) {t} x{q} @≈{prices[t]:,.0f}")
