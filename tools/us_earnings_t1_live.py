@@ -111,6 +111,61 @@ def _kis():
     return kis_api, kis_api.get_access_token(market="US")
 
 
+# NYSE 한도 가드(11-16) — KIS의 NYSE 라우팅은 LOO 매수 한도가 제출 시점 NBBO의 +20%를 넘으면 거부한다
+# (YSS 11-13 원문: "LimitPrice {8.25 > 40.78% Limit 20.00% thru nbbo } nbbo:5.85"). 전일종가×1.25 한도는
+# 장전 호가가 전일종가 +4.2% 미만이면 전부 거부된다(쉐도우 선정 NYSE의 약 66%). NASDAQ은 같은 조건에서 체결(VRRM·UNIT).
+NYSE_NBBO_CAP = 1.15          # 20% 상한 안쪽 여유 — 지연 호가(15분)와 제출 시점 호가 차이를 흡수
+NBBO_GUARD_EXCHANGES = {"NYSE", "AMEX"}
+
+
+def _premarket_ref_price(ticker: str) -> tuple[float | None, str]:
+    """Alpaca delayed_sip 스냅샷(15분 지연, 장전 포함)의 기준가 = 양수인 bid·ask·최근 체결가의 중앙값
+    (장전 호가는 한쪽이 멀리 떨어져 있기 쉽다 — 최소값을 쓰면 한도가 너무 낮아져 미체결, 최대값이면 거부).
+    무료 구독은 실시간 SIP를 막고(403), IEX는 장전 호가가 비어 있다(11-16 실측). 실패하면 (None, 사유)."""
+    try:
+        import requests
+        env = {}
+        for line in (ROOT / ".env.alpaca").read_text(encoding="utf-8", errors="replace").splitlines():
+            if "=" in line and not line.strip().startswith("#"):
+                k, _, v = line.partition("="); env[k.strip()] = v.strip()
+        r = requests.get("https://data.alpaca.markets/v2/stocks/snapshots",
+                         headers={"APCA-API-KEY-ID": env["ALPACA_API_KEY_ID"], "APCA-API-SECRET-KEY": env["ALPACA_API_SECRET_KEY"]},
+                         params={"symbols": ticker, "feed": "delayed_sip"}, timeout=15)
+        r.raise_for_status()
+        snap = (r.json() or {}).get(ticker) or {}
+        q, t = snap.get("latestQuote") or {}, snap.get("latestTrade") or {}
+        vals = [float(x) for x in (q.get("bp"), q.get("ap"), t.get("p")) if x and float(x) > 0]
+        if not vals:
+            return None, "no_quote"
+        import statistics
+        return statistics.median(vals), f"bid={q.get('bp')} ask={q.get('ap')} last={t.get('p')} at={q.get('t') or t.get('t')}"
+    except Exception as exc:  # noqa: BLE001 — 호가 실패가 주문 전체를 막지 않게
+        return None, f"error:{type(exc).__name__}"
+
+
+def loo_limit(close_a: float, exchange: str, ref: float | None) -> tuple[float, str]:
+    """LOO 매수 한도. 기본 전일종가×LOO_CAP. NYSE/AMEX는 장전 기준가×NYSE_NBBO_CAP와 비교해 낮은 쪽.
+    기준가가 없으면 기본 한도 그대로(거부될 수 있음 — 사유를 원장에 남긴다)."""
+    base = round(float(close_a) * LOO_CAP, 2)
+    if exchange not in NBBO_GUARD_EXCHANGES:
+        return base, "base"
+    if not ref:
+        return base, "nbbo_missing"
+    guarded = round(float(ref) * NYSE_NBBO_CAP, 2)
+    return (guarded, "nbbo_guard") if guarded < base else (base, "base")
+
+
+def _telegram(msg: str) -> bool:
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(str(ROOT / ".env.live"), override=False)
+        import telegram_reporter as tg
+        return bool(tg.send(msg, parse_mode=None, critical=True))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[T1 live] 텔레그램 실패: {type(exc).__name__}")
+        return False
+
+
 def _usdkrw() -> float:
     import yfinance as yf
     fx = yf.download("KRW=X", period="10d", progress=False, auto_adjust=True)
@@ -215,14 +270,22 @@ def cmd_buy(dry: bool) -> int:
             break
         if tk in held or tk in open_pos:
             print(f"  건너뜀 {tk}: 이미 보유"); skips.append((tk, s, "already_held")); continue
-        limit = round(float(s["close_a"]) * LOO_CAP, 2)
+        try:
+            exch = kis._get_ovrs_excg_cd(tk, token=token)
+        except Exception:  # noqa: BLE001 — 거래소 모름이면 가드 없이(기본 한도)
+            exch = ""
+        ref, ref_note = _premarket_ref_price(tk) if exch in NBBO_GUARD_EXCHANGES else (None, "")
+        limit, limit_rule = loo_limit(float(s["close_a"]), exch, ref)
+        if limit_rule != "base":
+            print(f"  {tk} {exch} 한도 {limit_rule}: ${limit} (전일×{LOO_CAP} ${round(float(s['close_a']) * LOO_CAP, 2)}, 장전 {ref_note})")
         qty = int(math.floor(cfg["slot"] / (float(s["close_a"]) * fx)))
         if qty < 1:
             print(f"  건너뜀 {tk}: 1주 가격이 슬롯 초과"); skips.append((tk, s, "price_gt_slot")); continue
         if qty * limit > float(bal.get("orderable_cash") or 0):
             print(f"  건너뜀 {tk}: 달러 주문가능현금 부족({bal.get('orderable_cash')})"); skips.append((tk, s, "cash_short")); continue
         plans.append({"ticker": tk, "qty": qty, "limit": limit, "score": s["score"], "close_a": s["close_a"],
-                      "cost_krw": round(qty * float(s["close_a"]) * fx)})
+                      "cost_krw": round(qty * float(s["close_a"]) * fx), "exchange": exch,
+                      "limit_rule": limit_rule, "ref_price": ref})
     if skips and not dry:                              # 실행 수율 추적(10-30) — 쉐도우 선정 → 실주문 → 사유
         _append([{"kind": "skip", "session": today, "reason": why, "ticker": tk, "score": x.get("score"),
                   "close_a": x.get("close_a"), "n_candidates": len(sigs), "at": _now_iso()} for tk, x, why in skips])
@@ -234,7 +297,8 @@ def cmd_buy(dry: bool) -> int:
         res = place_safely(kis, p["ticker"], p["qty"], p["limit"], "buy", token, market="US", ord_dvsn="32")
         state = order_state(res)
         _append([{"kind": "order", "session": today, "ticker": p["ticker"], "side": "buy", "ord_dvsn": "32",
-                  "qty": p["qty"], "limit": p["limit"], "order_no": res.get("order_no", ""), "success": res.get("success"),
+                  "qty": p["qty"], "limit": p["limit"], "exchange": p["exchange"], "limit_rule": p["limit_rule"],
+                  "ref_price": p["ref_price"], "order_no": res.get("order_no", ""), "success": res.get("success"),
                   "state": state, "msg": res.get("msg", ""), "at": _now_iso()}]
                 + ([{"kind": "position", "ticker": p["ticker"], "status": "OPEN", "entry_session": today,
                      "qty": p["qty"], "cost_krw": p["cost_krw"], "source": SOURCE, "order_state": state, "at": _now_iso()}]
@@ -308,8 +372,15 @@ def cmd_reconcile() -> int:
             if filled > 0:
                 out.append({**p, "kind": "position", "status": "OPEN", "filled_qty": filled, "entry_price": px,
                             "at": _now_iso()})
-            else:
-                out.append({**p, "kind": "position", "status": "CLOSED", "close_reason": "loo_unfilled", "at": _now_iso()})
+            else:                              # 거부와 미체결을 가른다(11-16) — 거부는 주문 응답이 '전송 완료'라 여기서만 보인다
+                raw = (f or {}).get("raw") or {}
+                rejected = "거부" in str(raw.get("prcs_stat_name") or "")
+                reason = str(raw.get("rjct_rson_name") or raw.get("rjct_rson") or "")[:200]
+                out.append({**p, "kind": "position", "status": "CLOSED",
+                            "close_reason": "loo_rejected" if rejected else "loo_unfilled",
+                            "reject_reason": reason or None, "at": _now_iso()})
+                if rejected:
+                    _telegram(f"⚠️ T1 매수 거부 {o['ticker']} x{o.get('qty')} 한도 ${o.get('limit')} — {reason or '사유 없음'}")
         elif filled > 0:
             ret = (px / float(p.get("entry_price") or px) - 1) if p else None
             remaining = int(p.get("filled_qty") or filled) - filled
