@@ -208,6 +208,15 @@ def _prev_close(ticker: str, before: date) -> float | None:
     return float(bars[ds[-1]][3]) if ds else None
 
 
+def _skip(today: date, rnd: str, ticker: str | None, reason: str, detail: str = "") -> dict:
+    r = {"kind": "skip", "session": today.isoformat(), "round": rnd, "reason": reason, "at": _now_iso()}
+    if ticker:
+        r["ticker"] = ticker
+    if detail:
+        r["detail"] = detail
+    return r
+
+
 # ------------------------------------------------------------------ buy
 def cmd_buy(dry: bool) -> int:
     enabled, cfg = _env_gate()
@@ -228,9 +237,12 @@ def cmd_buy(dry: bool) -> int:
     if not dry and not bot_ok:
         print(f"[idx-incl] {bot_msg} — 주문 거부(fail-closed)"); return 2
     if realized_pnl(rows) <= -cfg["loss_limit"]:
+        if not dry:
+            _append([_skip(today, a, None, "loss_limit") for a, _ in due])
         print(f"[idx-incl] 누적 실현손실 {realized_pnl(rows):,.0f} ≤ −{cfg['loss_limit']:,.0f} — 신규 매수 중단"); return 0
     win_ok, win_msg = kr_order_window("open_auction")
     if not dry and not win_ok:
+        _append([_skip(today, a, None, "late_run", win_msg) for a, _ in due])
         print(f"[idx-incl] {win_msg} — 매수 안 냄(시가 진입 계약, 늦은 실행)"); return 0
     kis = token = None
     rc = 0
@@ -242,15 +254,22 @@ def cmd_buy(dry: bool) -> int:
                 and r.get("round") == a and r.get("state") != "rejected"}
         held_open = {t for t, p in _positions(rows).items() if p.get("status") == "OPEN"}
         prices = {}
+        skips = []                                     # 건너뜀도 원장에 남긴다(11-17) — 수율 점검(lane_yield)이 '안 돈 것'과 가른다
         for x in g["adds"]:
             if x["ticker"] in held_open and x["ticker"] not in done:   # 이 회차에서 낸 종목은 배분 계산에 남긴다(같은 계획 재현)
-                print(f"  건너뜀 {x['ticker']} {x['name']}: 이미 보유"); continue
+                print(f"  건너뜀 {x['ticker']} {x['name']}: 이미 보유")
+                skips.append(_skip(today, a, x["ticker"], "already_held")); continue
             px = _prev_close(x["ticker"], today)
             if px is None:
-                print(f"  건너뜀 {x['ticker']} {x['name']}: 전일 종가 없음"); continue
+                print(f"  건너뜀 {x['ticker']} {x['name']}: 전일 종가 없음")
+                skips.append(_skip(today, a, x["ticker"], "no_prev_close")); continue
             prices[x["ticker"]] = px
         full = allocate(cfg["round_krw"], prices)
         dropped = sorted(set(prices) - set(full))
+        skips += [_skip(today, a, t, "budget") for t in dropped]
+        if not dry:
+            logged = {(x.get("ticker"), x.get("reason")) for x in rows if x.get("kind") == "skip" and x.get("round") == a}
+            _append([r for r in skips if (r.get("ticker"), r["reason"]) not in logged])
         plan = {t: q for t, q in full.items() if t not in done}
         if done and not plan:
             print(f"[idx-incl] 회차 {a} 매수 주문 이미 있음 — 멱등"); continue
@@ -270,7 +289,8 @@ def cmd_buy(dry: bool) -> int:
         for t, q in sorted(plan.items(), key=lambda kv: kv[1] * prices[kv[0]]):
             need = q * prices[t] * MARKET_BUFFER
             if need > cash:
-                print(f"  건너뜀 {t}: 주문가능현금 부족({cash:,.0f} < {need:,.0f})"); continue
+                print(f"  건너뜀 {t}: 주문가능현금 부족({cash:,.0f} < {need:,.0f})")
+                _append([_skip(today, a, t, "cash_short", f"{cash:,.0f} < {need:,.0f}")]); continue
             cash -= need
             res = place_safely(kis, t, q, 0, "buy", token, market="KR")
             st = order_state(res)

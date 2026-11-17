@@ -189,6 +189,19 @@ def plan_buys(sigs: list[dict], cfg: dict, open_pos: dict, held: set, cash: floa
     return plans, notes
 
 
+def skip_rows(notes: list[str], sig_tickers: set[str], session: str) -> list[dict]:
+    """plan_buys 건너뜀 문구 → 원장 skip 행. "종목: 사유"는 종목 행, 그 밖(손실 한도 등)은 세션 행(ticker 없음)."""
+    out = []
+    for n in notes:
+        tk, sep, why = n.partition(":")
+        tk = tk.strip()
+        row = {"kind": "skip", "session": session, "reason": (why if sep else n).strip(), "at": _now_iso()}
+        if sep and tk in sig_tickers:
+            row["ticker"] = tk
+        out.append(row)
+    return out
+
+
 # ------------------------------------------------------------------ buy
 def cmd_buy(dry: bool) -> int:
     enabled, cfg = _env_gate()
@@ -218,8 +231,12 @@ def cmd_buy(dry: bool) -> int:
     plans, notes = plan_buys(sigs, cfg, open_pos, held, cash, _realized_pnl(rows))
     for n in notes:
         print("  건너뜀", n)
+    if not dry:                                        # 건너뜀도 원장에 남긴다(11-17) — 수율 점검이 '안 돈 것'과 '계약대로 건너뛴 것'을 가른다
+        _append(skip_rows(notes, {str(s["stock_code"]).strip() for s in sigs}, today.isoformat()))
     win_ok, win_msg = kr_order_window("open_auction")
     if plans and not dry and not win_ok:
+        _append([{"kind": "skip", "session": today.isoformat(), "ticker": p["ticker"], "reason": "late_run",
+                  "detail": win_msg, "at": _now_iso()} for p in plans])
         print(f"[canary] {win_msg} — 매수 주문 안 냄(시가 진입 계약, 늦은 실행)"); return 0
     for p in plans:
         print(f"[canary] {'(dry) ' if dry else ''}시장가 매수 {p['ticker']} {p['name']} x{p['qty']} "
@@ -459,14 +476,14 @@ def cmd_status() -> int:
     enabled, cfg = _env_gate()
     rows = _read(LEDGER)
     pos = _positions(rows)
-    fills = [r for r in rows if r.get("kind") == "fill" and r.get("slip_bp_vs_open") is not None]
+    from live_lane_common import slip_line
     print(f"[canary] enabled={enabled} flag={cfg['enabled_flag']!r} 두소스불일치={cfg['mismatch']} 격리={_isolation_gate()}"
           f" 건당 {cfg['order_krw']:,.0f} · 동시 {cfg['max_open']} · 손실한도 {cfg['loss_limit']:,.0f}"
           f" · 봇격리반영={_bot_has_isolation()}")
     print(f"  보유 {sum(1 for p in pos.values() if p.get('status') == 'OPEN')} · 종료 "
-          f"{sum(1 for p in pos.values() if p.get('status') == 'CLOSED')} · 누적 실현 {_realized_pnl(rows):,.0f}원"
-          f" · 체결 {len(fills)}건 · 시가 대비 중앙 "
-          f"{sorted(f['slip_bp_vs_open'] for f in fills)[len(fills) // 2] if fills else '-'}bp")
+          f"{sum(1 for p in pos.values() if p.get('status') == 'CLOSED')} · 누적 실현 {_realized_pnl(rows):,.0f}원")
+    for line in slip_line(rows):                       # 11-17: 짝수 건 중앙값 오표시·매수매도 혼합 수리(T1과 같은 결함)
+        print(line)
     return 0
 
 

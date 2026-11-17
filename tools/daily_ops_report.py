@@ -195,11 +195,25 @@ def condition_lines() -> list[dict]:
                  "line": f"레인 조건 계산 실패: {type(exc).__name__}"}]
 
 
+def yield_lines() -> tuple[list[str], int]:
+    """신호 → 주문 → 체결 누수(tools/lane_yield.py, 11-17). 계약대로 건너뛴 건은 누수가 아니다."""
+    try:
+        sys.path.insert(0, str(ROOT / "tools"))
+        import lane_yield
+        leaks = lane_yield.all_leaks()
+        return lane_yield.lines(leaks), len(leaks)
+    except Exception as exc:  # noqa: BLE001
+        return [f"실행 수율 점검 실패: {type(exc).__name__}"], 1
+
+
 def build() -> str:
     mem, mem_bad = bot_memory()
     fails = failed_tasks()
     stale = stale_lanes()
+    ylines, n_leak = yield_lines()
     warn = []
+    if n_leak:
+        warn.append(f"실행 누수 {n_leak}건(신호→주문→체결)")
     if mem_bad:
         warn.append(mem)
     if fails:
@@ -213,7 +227,7 @@ def build() -> str:
     lines = [f"[운영 요약] {datetime.now(KST):%m-%d %H:%M}"]
     if warn:
         lines.append("⚠️ 확인 필요: " + " / ".join(warn))
-    lines += account_lines() + lane_lines() + ["레인 조건(계약서 §2, 결정은 운영자):"] + \
+    lines += account_lines() + lane_lines() + ylines + ["레인 조건(계약서 §2, 결정은 운영자):"] + \
         [f"  {c['line']}" for c in conds] + shadow_lines() + [mem]
     if fails:
         lines += ["실패 작업:"] + [f"  {f}" for f in fails[:10]]
