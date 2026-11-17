@@ -164,7 +164,9 @@ def _features(ev: dict, hist: pd.DataFrame, px: pd.DataFrame, entry: pd.Timestam
             "lsize": float(np.log(max(ca * float(np.mean(V[-60:])), 1))),
             "month_sin": float(np.sin(2 * np.pi * entry.month / 12)),
             "month_cos": float(np.cos(2 * np.pi * entry.month / 12)),
-            "_close_a": float(ca), "_dvol20": dv}
+            "_close_a": float(ca), "_dvol20": dv,
+            # 관측 전용(모델 입력 아님, 11-18 사전등록 preregistration_t1_hi52_20261118): 52주(252세션) 최고 종가 대비 위치
+            "_hi52": float(ca / np.max(C[-252:])), "_hi52_n": int(min(len(C), 252))}
 
 
 def _candidates(today: pd.Timestamp, prev: pd.Timestamp, path: Path | None = None) -> dict[tuple, dict]:
@@ -274,7 +276,8 @@ def cmd_score(dry: bool = False) -> int:
         if status != "ok":
             missed.append({"ticker": tk, "date": ds, "hour": hour, "status": status}); continue
         fresh.append({"ticker": tk, "date": ds, "act_source": "yfinance", **info})
-    bars = _bars([e["ticker"] for e in fresh], (today - timedelta(days=130)).strftime("%Y-%m-%d"))
+    # 400일: 피처는 61세션이면 되지만 관측 필드 hi52(252세션)를 위해 늘림(11-18)
+    bars = _bars([e["ticker"] for e in fresh], (today - timedelta(days=400)).strftime("%Y-%m-%d"))
     for e in fresh:
         px = bars.get(e["ticker"])
         f = _features(e, _history(e["ticker"]), px, today) if px is not None else None
@@ -288,6 +291,7 @@ def cmd_score(dry: bool = False) -> int:
                      "threshold": thr, "tradable": tradable, "liquid_5m": f["_dvol20"] >= 5e6,
                      "selected_I1": sel, "status": "OPEN" if sel else "NOT_SELECTED", "act_source": e["act_source"],
                      "features": {k: f[k] for k in FEATS}, "close_a": f["_close_a"], "dvol20": f["_dvol20"],
+                     "obs": {"hi52": f["_hi52"], "hi52_n": f["_hi52_n"]},
                      "entry_rule": "LOO@open", "exit_rule": "MOO@open+20 (+30 병행)"})
     sel_rows = [r for r in rows if r["selected_I1"]]
     if sel_rows:
