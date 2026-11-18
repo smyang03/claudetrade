@@ -62,3 +62,20 @@ def test_evaluate_verdicts(tmp_path, monkeypatch):
             x["net_excess"] -= 0.06
     assert H.evaluate(rows)["verdict"] == "기각"
     assert H.evaluate([])["verdict"].startswith("관측")
+
+
+def test_regime_split_tags_market_down_without_changing_verdict(tmp_path, monkeypatch):
+    monkeypatch.setattr(H, "OUT", tmp_path)
+    rows = []
+    for i, d in enumerate(pd.bdate_range("2026-10-01", periods=120)):
+        s = str(d.date()); dn = i % 2 == 0
+        for k, low in enumerate((True, False)):
+            tk = f"T{i}{k}"
+            rows.append({"kind": "signal", "selected_I1": True, "session": s, "ticker": tk, "obs": {"hi52": 0.3 if low else 0.8}})
+            rows.append({"kind": "settle", "hold": 20, "ticker": tk, "session": s, "iwm": -0.05 if dn else 0.01,
+                         "net_excess": (0.0 if dn else 0.08) if low else 0.0})
+    r = H.evaluate(rows)
+    rg = r["regime"]
+    assert rg["하락장"]["n_low"] == 60 and abs(rg["하락장"]["diff"]) < 1e-12
+    assert abs(rg["평상시"]["diff"] - 0.08) < 1e-12 and rg["IWM 결측"]["n"] == 0
+    assert abs(r["diff"] - 0.04) < 1e-12          # 전체 판정 지표는 국면 표시와 무관

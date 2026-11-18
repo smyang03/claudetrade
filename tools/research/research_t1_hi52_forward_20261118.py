@@ -80,7 +80,8 @@ def evaluate(rows) -> dict:
         x = st.get((s["ticker"], s["session"]))
         if h is None or x is None:
             continue
-        recs.append({"session": s["session"], "low": h <= CUT, "net": x["net_excess"], "top": bool(s.get("selected_I2"))})
+        recs.append({"session": s["session"], "low": h <= CUT, "net": x["net_excess"], "top": bool(s.get("selected_I2")),
+                     "iwm": x.get("iwm")})
     if not recs:
         return {"n": 0, "verdict": "관측(정산 0건)"}
     d = pd.DataFrame(recs)
@@ -109,7 +110,26 @@ def evaluate(rows) -> dict:
             "mean_rest": float(hi.net.mean()) if len(hi) else None, "diff": float(diff), "t_block": t,
             "median_diff": float(lo.net.median() - hi.net.median()) if n_low and len(hi) else None,
             "top_diff": float(d[d.top & d.low].net.mean() - d[d.top & ~d.low].net.mean()) if d.top.any() else None,
+            "regime": regime_split(d),
             "verdict": verdict}
+
+
+MKT_DN = -0.03   # 보유 중 IWM 시가→시가 수익률 이 값 미만 = 하락장(사후 표시 전용, 판정 기준 아님)
+
+
+def regime_split(d: pd.DataFrame) -> dict:
+    """11-18 운영자 '진행' — 판정은 불변, 원인 구분용 표시만: 보유 중 하락장(IWM < −3%) vs 평상시의 low−비low 차.
+    역사 선택분(2017–26): 하락장 low +0.5% vs 비low +1.4%, 평상시 +7.0% vs +1.0%."""
+    out = {}
+    iw = pd.to_numeric(d["iwm"], errors="coerce") if "iwm" in d else pd.Series(np.nan, index=d.index)
+    for name, m in (("하락장", iw < MKT_DN), ("평상시", iw >= MKT_DN), ("IWM 결측", iw.isna())):
+        g = d[m.values]
+        lo, hi = g[g.low], g[~g.low]
+        out[name] = {"n": int(len(g)), "n_low": int(len(lo)),
+                     "mean_low": float(lo.net.mean()) if len(lo) else None,
+                     "mean_rest": float(hi.net.mean()) if len(hi) else None,
+                     "diff": float(lo.net.mean() - hi.net.mean()) if len(lo) and len(hi) else None}
+    return out
 
 
 def cmd_evaluate() -> int:
