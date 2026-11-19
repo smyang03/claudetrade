@@ -79,3 +79,11 @@ def test_regime_split_tags_market_down_without_changing_verdict(tmp_path, monkey
     assert rg["하락장"]["n_low"] == 60 and abs(rg["하락장"]["diff"]) < 1e-12
     assert abs(rg["평상시"]["diff"] - 0.08) < 1e-12 and rg["IWM 결측"]["n"] == 0
     assert abs(r["diff"] - 0.04) < 1e-12          # 전체 판정 지표는 국면 표시와 무관
+
+
+def test_t1_data_health_flags_silent_yfinance_failure():
+    assert S.data_health(False, 10, []) is not None                      # IWM 빈 결과
+    assert S.data_health(True, 10, [{"status": "date_not_found"}] * 5) is None   # 평소 미수집은 정상
+    bad = [{"status": "fetch_error:YFDataException"}] * 4 + [{"status": "empty|fh_row_absent"}] * 2
+    assert "6/8" in S.data_health(True, 2, bad)
+    assert S.data_health(True, 0, [{"status": "empty"}] * 3) is None      # 표본 5건 미만은 경고 안 함

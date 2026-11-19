@@ -246,6 +246,33 @@ def _score_window_ok(now_et=None) -> bool:
     return SCORE_WINDOW_ET[0] <= (t.hour, t.minute) < SCORE_WINDOW_ET[1]
 
 
+YF_BAD = ("fetch_error", "empty", "no_price_history")
+
+
+def data_health(iwm_ok: bool, n_fresh: int, missed: list[dict]) -> str | None:
+    """yfinance 수집 이상 감지(11-19) — 야후가 엔드포인트를 바꾸면(11-18 뉴스 API 404 실측) 예외 없이
+    빈 결과·fetch_error로 조용히 0매수가 된다. 이상이면 사람이 읽을 경고 문구, 정상이면 None."""
+    if not iwm_ok:
+        return "IWM 가격 수집 실패(yfinance 다운로드 빈 결과)"
+    bad = [m for m in missed if str(m.get("status", "")).split("|")[0].split(":")[0] in YF_BAD]
+    tot = n_fresh + len(missed)
+    if tot >= 5 and len(bad) / tot >= 0.5:
+        return f"실적·가격 수집 실패 {len(bad)}/{tot}건(fetch_error·empty·no_price_history)"
+    return None
+
+
+def _alert(msg: str) -> None:
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(str(ROOT / ".env.live"), override=False)
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        import telegram_reporter as tg
+        tg.send(msg, parse_mode=None, critical=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[T1] 텔레그램 실패: {type(exc).__name__}")
+
+
 def cmd_score(dry: bool = False) -> int:
     if not dry and not _score_window_ok():
         print("[T1] 채점 창(09:05~09:26 ET) 밖 실행 — 건너뜀(다른 계절 트리거·늦은 실행)"); return 0
@@ -301,7 +328,13 @@ def cmd_score(dry: bool = False) -> int:
     run = {"kind": "run", "session": str(today.date()), "prev_session": str(prev.date()),
            "ran_at": datetime.now(timezone.utc).isoformat(), "candidates": len(cands), "scored": len(rows),
            "selected_I1": len(sel_rows), "missed_feed": missed, "threshold": thr}
+    health = data_health(iwm is not None and len(iwm) > 0, len(fresh), missed)
+    run["data_health"] = health or "ok"
     print(json.dumps({k: v for k, v in run.items() if k != "missed_feed"}, ensure_ascii=False), f"missed={len(missed)}")
+    if health:
+        print(f"[T1] ⚠️ 데이터 수집 이상: {health}")
+        if not dry:
+            _alert(f"⚠️ T1 데이터 수집 이상 {today.date()} — {health}. 오늘 매수가 누락될 수 있음(yfinance 확인)")
     for r in sel_rows:
         print(f"  선택 {r['ticker']} score={r['score']:.4f} sue1={r['features']['sue1']:+.2f} liquid5m={r['liquid_5m']}")
     if not dry:
