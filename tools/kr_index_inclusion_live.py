@@ -39,7 +39,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
-from live_lane_common import (KST as _KST, kr_order_window, live_sell_order_exists, order_state,  # noqa: E402
+from live_lane_common import (KST as _KST, kr_order_window, kr_wait_for_delayed_open, live_sell_order_exists, order_state,  # noqa: E402
                               place_safely, reserve_exit_rows, kr_resv_window, resolve_unknown_order_rows,
                               safe_cash_krw, unresolved_unknown_orders, absorb_transmitted_resv_rows,
                               resv_rows_to_absorb)
@@ -217,8 +217,40 @@ def _skip(today: date, rnd: str, ticker: str | None, reason: str, detail: str = 
     return r
 
 
+def _alert(msg: str) -> None:
+    """거부·창 밖 등 사람이 봐야 할 일(11-19 수능일 24건 전량 거부가 로그에만 남았다)."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(str(ROOT / ".env.live"), override=False)
+        import telegram_reporter as tg
+        tg.send(msg, parse_mode=None, critical=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[idx-incl] 텔레그램 실패: {type(exc).__name__}")
+
+
+def late_due(rounds: dict, rows: list[dict], late_round: str | None, today: date, max_late: int = 2) -> list:
+    """운영자 지시 1회 지연 진입(11-19 수능일 전량 거부 → 11-20 시가). 진입일이 지났고 지연 ≤ max_late세션이며
+    그 회차에 진입일 이후 낸 살아 있는(거부 아닌) 매수 주문이 없을 때만 대상. 반환 [(회차, 그룹, 지연 세션 수)]."""
+    from buyback_shadow import kr_next_session
+    if not late_round or late_round not in rounds:
+        return []
+    e = entry_session(date.fromisoformat(late_round))
+    if not e < today:
+        return []
+    n, d = 0, e
+    while d < today:
+        d = kr_next_session(d); n += 1
+    if d != today or n > max_late:
+        return []
+    live = [r for r in rows if r.get("kind") == "order" and r.get("side") == "buy" and r.get("round") == late_round
+            and r.get("state") != "rejected" and r.get("session", "") > str(e)]
+    if live:
+        return []
+    return [(late_round, rounds[late_round], n)]
+
+
 # ------------------------------------------------------------------ buy
-def cmd_buy(dry: bool) -> int:
+def cmd_buy(dry: bool, late_round: str | None = None) -> int:
     enabled, cfg = _env_gate()
     today = _today()
     rounds = load_rounds(indexes=cfg["indexes"])
@@ -231,6 +263,10 @@ def cmd_buy(dry: bool) -> int:
         print("[idx-incl] 봇 격리 계약(kr_index_inclusion) 없음 — 주문 거부(fail-closed)"); return 2
     rows = _read(LEDGER)
     due = [(a, g) for a, g in sorted(rounds.items()) if entry_session(date.fromisoformat(a)) == today]
+    late = {a: n for a, _, n in late_due(rounds, rows, late_round, today)}
+    due += [(a, rounds[a]) for a in late if a not in {x for x, _ in due}]
+    if late_round and not late:
+        print(f"[idx-incl] 지연 진입 {late_round} 대상 아님(진입일 미경과·지연 초과·이미 주문)")
     if not due:
         print(f"[idx-incl] 오늘({today}) 진입 회차 없음"); return 0
     bot_ok, bot_msg = _bot_has_isolation()
@@ -240,12 +276,18 @@ def cmd_buy(dry: bool) -> int:
         if not dry:
             _append([_skip(today, a, None, "loss_limit") for a, _ in due])
         print(f"[idx-incl] 누적 실현손실 {realized_pnl(rows):,.0f} ≤ −{cfg['loss_limit']:,.0f} — 신규 매수 중단"); return 0
+    if not dry:
+        waited = kr_wait_for_delayed_open("open_auction")
+        if waited:
+            print(f"[idx-incl] {waited}")
     win_ok, win_msg = kr_order_window("open_auction")
     if not dry and not win_ok:
         _append([_skip(today, a, None, "late_run", win_msg) for a, _ in due])
+        _alert(f"⚠️ L7 지수편입 매수 안 냄 {today} — {win_msg}")
         print(f"[idx-incl] {win_msg} — 매수 안 냄(시가 진입 계약, 늦은 실행)"); return 0
     kis = token = None
     rc = 0
+    bad: list[str] = []
     for a, g in due:
         # 멱등은 종목 단위(11-14) — 회차 단위였을 때는 첫 주문 뒤 죽거나 일부가 거부·현금 부족이면 재실행해도
         # 빠진 종목이 채워지지 않았다. 거부(rejected)는 주문이 없던 것으로 보고 다시 낸다.
@@ -297,14 +339,19 @@ def cmd_buy(dry: bool) -> int:
             print(f"  시장가 매수 {t} {names[t]['name']} x{q} (전일종가 {prices[t]:,.0f}) → {st} {res.get('msg', '')}")
             _append([{"kind": "order", "session": today.isoformat(), "round": a, "ticker": t, "side": "buy", "qty": q,
                       "order_no": res.get("order_no", ""), "success": res.get("success"), "state": st,
-                      "msg": str(res.get("msg") or "")[:160], "at": _now_iso()}]
+                      "msg": str(res.get("msg") or "")[:160], "at": _now_iso(),
+                      **({"late_entry_sessions": late[a]} if a in late else {})}]
                     + ([{"kind": "position", "ticker": t, "name": names[t]["name"], "index": names[t]["index"],
                          "status": "OPEN", "round": a, "entry_session": today.isoformat(), "exit_session": ex,
                          "qty": q, "cost_krw": round(q * prices[t]), "source": SOURCE, "order_state": st,
                          "at": _now_iso()}] if st != "rejected" else []))
             if st == "unknown":
                 rc = 3
+            if st != "ok":
+                bad.append(f"{t} {st} {str(res.get('msg') or '')[:40]}")
         rows = _read(LEDGER)
+    if bad:
+        _alert(f"⚠️ L7 지수편입 매수 {len(bad)}건 실패 {today}: " + "; ".join(bad[:5]) + (" …" if len(bad) > 5 else ""))
     return rc
 
 
@@ -434,11 +481,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["buy", "sell", "reconcile", "status"])
     ap.add_argument("--dry", action="store_true")
+    ap.add_argument("--late-round", default=None, help="운영자 지시 1회 지연 진입 회차(발표일 YYYY-MM-DD)")
     a = ap.parse_args()
     if a.cmd != "status" and not a.dry:
         from net_ready import wait_dns
         wait_dns(["openapi.koreainvestment.com"], tag="idx-incl")
-    return {"buy": lambda: cmd_buy(a.dry), "sell": lambda: cmd_sell(a.dry),
+    return {"buy": lambda: cmd_buy(a.dry, a.late_round), "sell": lambda: cmd_sell(a.dry),
             "reconcile": cmd_reconcile, "status": cmd_status}[a.cmd]()
 
 

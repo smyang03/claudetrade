@@ -36,16 +36,72 @@ def _now_kst(now: datetime | None = None) -> datetime:
     return (now or datetime.now(KST)).astimezone(KST)
 
 
+# 개장 지연일(분) — 11-19 실측: 수능일 08:41 L7 시가 매수 24건이 "장운영시간이 아닙니다"로 전부 거부(정규장 10:00 개장,
+# 장 운영 시각 전체가 1시간 뒤로 밀린다). 수능일은 교육부가 매년 정하므로 확정되면 여기에 추가한다.
+# 새해 첫 거래일(10:00 개장)은 규칙으로 처리한다(kr_open_delay_min).
+KR_DELAYED_OPEN_MIN = {
+    "2026-11-19": (60, 60),   # 2027학년도 수능 — 개장·마감 모두 1시간 늦춤 (개장 지연, 마감 지연)
+}
+
+
+def kr_session_delay_min(d: date) -> tuple[int, int]:
+    """그날 KRX (개장 지연분, 마감 지연분). 수능일은 둘 다 60, 새해 첫 거래일은 개장만 60(마감 15:30 그대로)."""
+    if d.isoformat() in KR_DELAYED_OPEN_MIN:
+        return KR_DELAYED_OPEN_MIN[d.isoformat()]
+    from buyback_shadow import kr_is_session
+    if kr_is_session(d) and not any(kr_is_session(date(d.year, 1, 1) + timedelta(days=i))
+                                    for i in range((d - date(d.year, 1, 1)).days)):
+        return 60, 0
+    return 0, 0
+
+
+def kr_open_delay_min(d: date) -> int:
+    return kr_session_delay_min(d)[0]
+
+
+def _shift(t: time, minutes: int) -> time:
+    return (datetime.combine(date(2000, 1, 1), t) + timedelta(minutes=minutes)).time()
+
+
+def kr_window_bounds(kind: str, d: date) -> tuple[time, time]:
+    """open_auction은 개장 지연만큼, close_auction은 마감 지연만큼, exit은 앞은 개장·뒤는 마감 지연만큼 민다."""
+    lo, hi = KR_ORDER_WINDOWS[kind]
+    o, c = kr_session_delay_min(d)
+    if kind == "open_auction":
+        return _shift(lo, o), _shift(hi, o)
+    if kind == "close_auction":
+        return _shift(lo, c), _shift(hi, c)
+    return _shift(lo, o), _shift(hi, c)
+
+
 def kr_order_window(kind: str, now: datetime | None = None) -> tuple[bool, str]:
-    """KR 주문을 지금 내도 되는가 — (허용, 사유). 휴장 달력은 buyback_shadow.KR_HOLIDAYS."""
+    """KR 주문을 지금 내도 되는가 — (허용, 사유). 휴장 달력은 buyback_shadow.KR_HOLIDAYS. 개장 지연일은 창을 함께 민다."""
     from buyback_shadow import kr_is_session
     now = _now_kst(now)
     if not kr_is_session(now.date()):
         return False, f"{now.date()} KRX 휴장일"
-    lo, hi = KR_ORDER_WINDOWS[kind]
+    lo, hi = kr_window_bounds(kind, now.date())
     if not lo <= now.time() < hi:
-        return False, f"주문 창 밖({now:%H:%M} — {kind} {lo:%H:%M}~{hi:%H:%M})"
+        late = kr_open_delay_min(now.date())
+        return False, f"주문 창 밖({now:%H:%M} — {kind} {lo:%H:%M}~{hi:%H:%M}{f', 개장 {late}분 지연일' if late else ''})"
     return True, ""
+
+
+def kr_wait_for_delayed_open(kind: str, now: datetime | None = None, *, lead_min: int = 11,
+                             sleep=None) -> str | None:
+    """개장 지연일에 평소 시각(예: 08:41)으로 돈 작업을 밀린 창(09:41)까지 재운다. 기다렸으면 안내 문구, 아니면 None.
+    평소 날·창 안·창 지난 뒤는 그대로 돌려보낸다(창 밖 판정은 kr_order_window가 한다)."""
+    import time as _time
+    now = _now_kst(now)
+    if not kr_open_delay_min(now.date()):
+        return None
+    lo, _ = kr_window_bounds(kind, now.date())
+    target = datetime.combine(now.date(), _shift(lo, lead_min), tzinfo=KST)
+    wait = (target - now).total_seconds()
+    if wait <= 0 or wait > 3 * 3600:
+        return None
+    (sleep or _time.sleep)(wait)
+    return f"개장 {kr_open_delay_min(now.date())}분 지연일 — {target:%H:%M}까지 대기 후 진행"
 
 
 def kr_resv_window(now: datetime | None = None) -> tuple[bool, str]:
