@@ -807,7 +807,7 @@
     "KR_INDEX_INCL_ENABLED": "true",
     "KR_INDEX_INCL_ROUND_KRW": "700000",
     "KR_INDEX_INCL_LOSS_LIMIT_KRW": "100000",
-    "KR_INDEX_INCL_INDEXES": "KOSPI200,KOSDAQ150"
+    "KR_INDEX_INCL_INDEXES": "KOSDAQ150"
   },
   "updated_at": "2026-06-09T21:27:06+09:00",
   "updated_by": "dashboard_order_size_control"
